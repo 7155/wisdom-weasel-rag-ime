@@ -274,3 +274,18 @@ Verification:
 - Acceptance passed.
 - macOS prototype build passed.
 - Repeated-case eval smoke showed one cache hit and one miss.
+
+### 2026-07-01
+Topic:
+- Add latency to Codex-history eval.
+
+Changes:
+- `eval-codex-history` now records per-case `elapsedMs` around `adapter.suggest(...)`.
+- Reports include `latency.caseCount`, `totalMs`, `avgMs`, `p50Ms`, `p95Ms`, and `maxMs`.
+- Docs describe latency as adapter-level time covering cache lookup, retrieval, ranking, and suggestion compilation.
+
+Verification:
+- 58 Python tests passed.
+- Acceptance passed.
+- macOS prototype build passed.
+- Repeated-case eval smoke printed `elapsedMs`, `latency`, and `cacheStats`.

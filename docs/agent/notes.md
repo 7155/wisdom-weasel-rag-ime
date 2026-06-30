@@ -307,6 +307,25 @@ Commands:
 Next:
 - Use `cacheStats` with ranked Codex-history metrics to compare no-cache, cache, embedding recall, rerank, and VCP-style context-cache strategies on the same cases.
 
+### 2026-07-01 02:05 CST
+Problem:
+- Ranked Codex-history evaluation had quality and cache metrics, but not end-to-end latency.
+- For an input method, a candidate that is accurate but slow is still not usable, so quality/caching/latency need to be visible in the same report.
+
+Changes:
+- `eval-codex-history` now times each `adapter.suggest(...)` call.
+- Reports include per-case `elapsedMs` and summary `latency.caseCount`, `totalMs`, `avgMs`, `p50Ms`, `p95Ms`, and `maxMs`.
+- Docs now describe latency as adapter-level time covering core retrieval, cache lookup, ranking, and suggestion compilation.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `scripts/build_macos_frontend.sh`
+- Repeated-case CLI eval smoke confirmed `elapsedMs`, `latency`, and `cacheStats` output together.
+
+Next:
+- Use this combined report to compare local FTS-only, cache on/off, embedding recall, rerank, and future shared-core/VCP-style strategies.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.

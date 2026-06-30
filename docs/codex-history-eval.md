@@ -114,6 +114,26 @@ When `--core-mode local` is used, the report also includes process-local cache s
 
 Use `RAG_IME_SUGGESTION_CACHE_SIZE=0` or `--suggestion-cache-size 0` to benchmark uncached retrieval.
 
+The eval command also records end-to-end per-case latency for the actual adapter call:
+
+```json
+{
+  "latency": {
+    "caseCount": 20,
+    "totalMs": 123,
+    "avgMs": 6.15,
+    "p50Ms": 4,
+    "p95Ms": 18,
+    "maxMs": 21
+  },
+  "cases": [
+    {"caseId": "squirrel-rag", "elapsedMs": 4}
+  ]
+}
+```
+
+This is intentionally measured around `adapter.suggest(...)`, so it includes core retrieval, cache lookup, ranking, and suggestion compilation. It does not include local LLM prediction unless the eval path is extended to call the model lane.
+
 Per-case fields include:
 
 - `firstMatchRank`: first candidate rank that satisfies `--match`;
@@ -121,6 +141,7 @@ Per-case fields include:
 - `top1Passed`: whether the first visible suggestion already matched;
 - `termFirstRanks`: where each expected term first appeared;
 - `forbiddenMatchedTerms`: noise terms found in returned suggestions. If any forbidden term appears, the case fails even if expected terms matched.
+- `elapsedMs`: end-to-end adapter suggestion time for that case.
 
 ## Why This Matters
 

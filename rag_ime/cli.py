@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import sys
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -454,7 +455,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "eval-codex-history":
         cases = load_eval_cases(Path(args.cases_file))
         results = []
+        elapsed_ms_by_case: dict[str, int] = {}
         for case in cases:
+            started = time.perf_counter()
             suggestions = adapter.suggest(
                 SuggestionRequest(
                     current_input=case.query,
@@ -463,8 +466,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     top_k=args.top_k,
                 )
             )
+            elapsed_ms_by_case[case.case_id] = int((time.perf_counter() - started) * 1000)
             results.append(evaluate_suggestions(case, suggestions, match=args.match))
         report = eval_report(results)
+        _attach_eval_latency(report, elapsed_ms_by_case)
         cache_stats = getattr(core, "suggestion_cache_stats", None)
         if callable(cache_stats):
             report["cacheStats"] = cache_stats()
@@ -642,6 +647,30 @@ def _read_json_payload(payload_file: str) -> dict[str, object]:
     if not isinstance(data, dict):
         raise SystemExit("JSON payload must be an object")
     return data
+
+
+def _attach_eval_latency(report: dict[str, object], elapsed_ms_by_case: dict[str, int]) -> None:
+    cases = report.get("cases")
+    if isinstance(cases, list):
+        for item in cases:
+            if not isinstance(item, dict):
+                continue
+            case_id = item.get("caseId")
+            if isinstance(case_id, str):
+                item["elapsedMs"] = elapsed_ms_by_case.get(case_id, 0)
+    elapsed_values = list(elapsed_ms_by_case.values())
+    sorted_values = sorted(elapsed_values)
+    count = len(sorted_values)
+    p50 = sorted_values[count // 2] if sorted_values else 0
+    p95 = sorted_values[min(count - 1, int(count * 0.95))] if sorted_values else 0
+    report["latency"] = {
+        "caseCount": count,
+        "totalMs": sum(elapsed_values),
+        "avgMs": (sum(elapsed_values) / count) if count else 0.0,
+        "p50Ms": p50,
+        "p95Ms": p95,
+        "maxMs": max(elapsed_values) if elapsed_values else 0,
+    }
 
 
 def _core_has_event_tag(core, tag: str) -> bool:
