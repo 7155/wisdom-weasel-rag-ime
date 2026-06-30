@@ -7,6 +7,31 @@
 
 ## Log
 
+### 2026-06-30 23:40 CST
+Problem:
+- Full patched Squirrel validation is blocked by missing full Xcode on this Mac.
+
+Findings:
+- Active developer directory is `/Library/Developer/CommandLineTools`; no local `Xcode.app` or `.xip` was found.
+- Installed `xcodes` and `mas` to prepare both Apple Developer and App Store install paths.
+- `xcodes list` shows `27.0 Beta 2`, matching the macOS 27 beta host, but download requires Apple ID credentials.
+- `mas info 497799835` shows App Store Xcode 26.6, but `mas get` requires administrator password in an interactive terminal.
+- Root disk has limited free space, so Xcode download/install should prefer `/Volumes/undo 4t`.
+
+Changes:
+- Added `scripts/setup_xcode_for_squirrel.sh`.
+- Added `docs/xcode-squirrel-setup.md`.
+- Enhanced `scripts/doctor_squirrel_integration.sh` to report active developer directory and `DEVELOPER_DIR`.
+
+Commands:
+- `brew install xcodes`
+- `brew install mas`
+- `xcodes list`
+- `mas info 497799835`
+
+Next:
+- Complete Apple Developer/App Store/admin-password install step, then rerun setup and strict doctor.
+
 ### 2026-06-30 22:53 CST
 Problem:
 - Squirrel side candidates could be inserted, but the first patch did not write accepted RAG choices back to the memory core.

@@ -2,6 +2,26 @@
 
 ### 2026-06-30
 Topic:
+- Make full Xcode setup explicit for patched Squirrel validation.
+
+Decisions:
+- Keep Squirrel/Rime as the production frontend and treat full Xcode as a first-class local prerequisite.
+- Prefer external-disk Xcode download/install on this host because root disk free space is limited.
+
+Changes:
+- Added `scripts/setup_xcode_for_squirrel.sh`.
+- Added `docs/xcode-squirrel-setup.md`.
+- Enhanced the Squirrel doctor to show `xcode-select` and `DEVELOPER_DIR` state.
+
+Verification:
+- Local machine currently has only Command Line Tools selected.
+- `xcodes` and `mas` are installed, but actual Xcode install is blocked by Apple ID/admin-password UI.
+
+Next steps:
+- Install full Xcode through Apple Developer `xcodes` or App Store UI, then run `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh`.
+
+### 2026-06-30
+Topic:
 - Continue RAG-IME toward a usable Squirrel/Rime macOS input method.
 
 Decisions:

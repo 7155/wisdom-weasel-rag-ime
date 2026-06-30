@@ -238,6 +238,14 @@ Check the current Squirrel/sidecar state:
 scripts/doctor_squirrel_integration.sh
 ```
 
+Check the full Xcode requirement:
+
+```bash
+scripts/setup_xcode_for_squirrel.sh
+```
+
+On macOS beta hosts, prefer installing the matching beta Xcode with `xcodes` to an external disk, then export `DEVELOPER_DIR` or run the setup script with `RAG_IME_USE_SUDO=1`. See `docs/xcode-squirrel-setup.md`.
+
 ## Prepare Patched Squirrel
 
 Prepare a disposable Squirrel checkout with the RAG-IME patch applied:

@@ -47,7 +47,9 @@ bool_true() {
 printf 'RAG-IME Squirrel integration doctor\n'
 printf 'repo: %s\n' "$ROOT"
 printf 'squirrel_workdir: %s\n' "$SQUIRREL_WORKDIR"
-printf 'sidecar: %s\n\n' "$SIDECAR_BASE_URL"
+printf 'sidecar: %s\n' "$SIDECAR_BASE_URL"
+printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
+printf 'DEVELOPER_DIR: %s\n\n' "${DEVELOPER_DIR:-<unset>}"
 
 if [[ -x "$PYTHON_EXECUTABLE" ]]; then
   ok "python executable: $PYTHON_EXECUTABLE"
@@ -88,10 +90,15 @@ else
   warn "Squirrel workdir not prepared; run scripts/prepare_squirrel_workspace.sh"
 fi
 
-if command -v xcodebuild >/dev/null 2>&1 && xcodebuild -version >/dev/null 2>&1; then
-  ok "xcodebuild is available"
+if command -v xcodebuild >/dev/null 2>&1 && xcodebuild_version="$(xcodebuild -version 2>/dev/null)"; then
+  ok "xcodebuild is available: $(printf '%s' "$xcodebuild_version" | tr '\n' ' ')"
 else
-  require_or_warn "$REQUIRE_XCODE" "full Xcode/xcodebuild is not available; Squirrel build cannot be verified here"
+  active_developer_dir="$(xcode-select -p 2>/dev/null || true)"
+  if [[ "$active_developer_dir" == *CommandLineTools* ]]; then
+    require_or_warn "$REQUIRE_XCODE" "active developer directory is CommandLineTools; install/select full Xcode with scripts/setup_xcode_for_squirrel.sh"
+  else
+    require_or_warn "$REQUIRE_XCODE" "full Xcode/xcodebuild is not available; run scripts/setup_xcode_for_squirrel.sh"
+  fi
 fi
 
 if command -v swiftc >/dev/null 2>&1; then
