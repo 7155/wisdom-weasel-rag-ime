@@ -181,6 +181,9 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(report["cases"][0]["firstMatchRank"], 1)
         self.assertTrue(report["cases"][0]["top1Passed"])
         self.assertGreaterEqual(report["cacheStats"]["hits"], 1)
+        self.assertEqual(report["latency"]["caseCount"], 2)
+        self.assertGreaterEqual(report["latency"]["totalMs"], 0)
+        self.assertIn("elapsedMs", report["cases"][0])
 
     def test_load_eval_cases_and_match_results(self) -> None:
         cases_file = self.root / "manual-cases.jsonl"
