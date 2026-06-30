@@ -35,6 +35,12 @@ This clones Squirrel into `/tmp/rag-ime-squirrel`, checks out `2158538`, applies
 
 Copy that `rag_ime` block into Squirrel's `squirrel.yaml` while testing.
 
+Run the doctor after preparing the checkout and starting the sidecar:
+
+```bash
+scripts/doctor_squirrel_integration.sh
+```
+
 Manual apply:
 
 ```bash
