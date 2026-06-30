@@ -40,10 +40,10 @@ index 813deae..1bec8e3 100644
  			);
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000..b97cfaa
+index 0000000..635de1f
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,263 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -60,6 +60,7 @@ index 0000000..b97cfaa
 +  let maxSideCandidates: Int
 +  let latencyBudgetMs: Int
 +  let timeoutSeconds: TimeInterval
++  let sidecarURL: URL?
 +
 +  init?(config: SquirrelConfig?) {
 +    guard config?.getBool("rag_ime/enabled") == true else { return nil }
@@ -71,6 +72,7 @@ index 0000000..b97cfaa
 +    let configuredPython = Self.trimmed(config?.getString("rag_ime/python"))
 +    let configuredDbPath = Self.trimmed(config?.getString("rag_ime/db_path"))
 +    let configuredProject = Self.trimmed(config?.getString("rag_ime/project"))
++    let configuredSidecarURL = Self.trimmed(config?.getString("rag_ime/sidecar_url"))
 +
 +    self.pythonExecutable = configuredPython.isEmpty ? "/usr/bin/python3" : configuredPython
 +    self.repoRoot = repoRoot
@@ -80,9 +82,19 @@ index 0000000..b97cfaa
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 2, range: 0...6)
 +    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 180, range: 30...2000)
 +    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 100...5000)) / 1000
++    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
 +  }
 +
 +  func request(_ request: RagImeSidecarRequest) throws -> RagImeSidecarResponse {
++    if let sidecarURL {
++      do {
++        let outputData = try postJSON(request, to: endpoint("rime-suggest", base: sidecarURL))
++        return try JSONDecoder().decode(RagImeSidecarResponse.self, from: outputData)
++      } catch {
++        print("RAG IME sidecar HTTP request failed, falling back to CLI: \(error)")
++      }
++    }
++
 +    let requestFile = FileManager.default.temporaryDirectory
 +      .appendingPathComponent("rag-ime-\(request.sessionId)-\(request.requestSeq).json")
 +    let requestData = try JSONEncoder().encode(request)
@@ -105,22 +117,34 @@ index 0000000..b97cfaa
 +  ) throws {
 +    let insertText = candidate.insertText.isEmpty ? candidate.text : candidate.insertText
 +    guard !Self.trimmed(insertText).isEmpty else { return }
-+    _ = try runCli([
-+      "commit",
-+      insertText,
-+      "--recent-context",
-+      recentContext,
-+      "--preedit",
-+      preedit,
-+      "--source",
-+      "squirrel_rime_sidecar",
-+      "--project",
-+      project,
-+      "--tag",
-+      "squirrel",
-+      "--tag",
-+      "rime-sidecar",
-+    ])
++    let commitPayload = RagImeCommitPayload(
++      text: insertText,
++      recentContext: recentContext,
++      preedit: preedit,
++      project: project,
++      source: "squirrel_rime_sidecar",
++      tags: ["squirrel", "rime-sidecar"]
++    )
++    if let sidecarURL {
++      _ = try postJSON(commitPayload, to: endpoint("commit", base: sidecarURL))
++    } else {
++      _ = try runCli([
++        "commit",
++        insertText,
++        "--recent-context",
++        recentContext,
++        "--preedit",
++        preedit,
++        "--source",
++        "squirrel_rime_sidecar",
++        "--project",
++        project,
++        "--tag",
++        "squirrel",
++        "--tag",
++        "rime-sidecar",
++      ])
++    }
 +
 +    guard candidate.sourceType == "rag",
 +          !candidate.memoryId.isEmpty,
@@ -128,26 +152,58 @@ index 0000000..b97cfaa
 +          let sourceEventId = candidate.sourceEventId else {
 +      return
 +    }
-+    _ = try runCli([
-+      "action-json",
-+      "accepted",
-+      "--memory-id",
-+      candidate.memoryId,
-+      "--suggestion-id",
-+      candidate.suggestionId,
-+      "--source-event-id",
-+      String(sourceEventId),
-+      "--query",
-+      query,
-+      "--surface-text",
-+      candidate.text,
-+    ])
++    let actionPayload = RagImeActionPayload(
++      actionType: "accepted",
++      memoryId: candidate.memoryId,
++      suggestionId: candidate.suggestionId,
++      sourceEventId: sourceEventId,
++      query: query,
++      surfaceText: candidate.text
++    )
++    if let sidecarURL {
++      _ = try postJSON(actionPayload, to: endpoint("action", base: sidecarURL))
++    } else {
++      _ = try runCli([
++        "action-json",
++        "accepted",
++        "--memory-id",
++        candidate.memoryId,
++        "--suggestion-id",
++        candidate.suggestionId,
++        "--source-event-id",
++        String(sourceEventId),
++        "--query",
++        query,
++        "--surface-text",
++        candidate.text,
++      ])
++    }
 +  }
++}
++
++struct RagImeCommitPayload: Encodable {
++  let text: String
++  let recentContext: String
++  let preedit: String
++  let project: String
++  let source: String
++  let tags: [String]
++}
++
++struct RagImeActionPayload: Encodable {
++  let actionType: String
++  let memoryId: String
++  let suggestionId: String
++  let sourceEventId: Int
++  let query: String
++  let surfaceText: String
 +}
 +
 +enum RagImeSidecarError: Error, CustomStringConvertible {
 +  case timeout
 +  case failedExit(Int, String)
++  case badResponse(Int)
++  case transport(String)
 +
 +  var description: String {
 +    switch self {
@@ -155,6 +211,10 @@ index 0000000..b97cfaa
 +      return "sidecar timed out"
 +    case .failedExit(let status, let stderr):
 +      return "sidecar exited with \(status): \(stderr)"
++    case .badResponse(let status):
++      return "sidecar HTTP returned \(status)"
++    case .transport(let message):
++      return "sidecar HTTP transport failed: \(message)"
 +    }
 +  }
 +}
@@ -197,6 +257,42 @@ index 0000000..b97cfaa
 +      throw RagImeSidecarError.failedExit(Int(process.terminationStatus), stderrText)
 +    }
 +    return outputData
++  }
++
++  func endpoint(_ name: String, base: URL) -> URL {
++    return base.appendingPathComponent(name)
++  }
++
++  func postJSON<T: Encodable>(_ payload: T, to url: URL) throws -> Data {
++    var request = URLRequest(url: url, timeoutInterval: timeoutSeconds)
++    request.httpMethod = "POST"
++    request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
++    request.httpBody = try JSONEncoder().encode(payload)
++
++    let semaphore = DispatchSemaphore(value: 0)
++    var result: Result<(Data, HTTPURLResponse), Error>?
++    let task = URLSession.shared.dataTask(with: request) { data, response, error in
++      defer { semaphore.signal() }
++      if let error {
++        result = .failure(error)
++        return
++      }
++      guard let httpResponse = response as? HTTPURLResponse else {
++        result = .failure(RagImeSidecarError.transport("missing HTTP response"))
++        return
++      }
++      result = .success((data ?? Data(), httpResponse))
++    }
++    task.resume()
++    if semaphore.wait(timeout: .now() + timeoutSeconds) == .timedOut {
++      task.cancel()
++      throw RagImeSidecarError.timeout
++    }
++    let (data, response) = try result?.get() ?? (Data(), HTTPURLResponse())
++    guard (200..<300).contains(response.statusCode) else {
++      throw RagImeSidecarError.badResponse(response.statusCode)
++    }
++    return data
 +  }
 +
 +  func sidecarEnvironment() -> [String: String] {
