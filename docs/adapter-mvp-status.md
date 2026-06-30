@@ -2,14 +2,17 @@
 
 ## What This Commit Proves
 
-This repo now has an input-method adapter layer that can run without cloud models and without a duplicate local memory database.
+This repo now has an input-method adapter layer and a local SQLite/FTS5 CoreClient that can run without cloud models.
 
 It proves:
 
 - RAG results can be candidateized into short input suggestions.
+- committed input events are written into local SQLite;
+- FTS5 retrieval returns personal memories;
 - `SuggestionCompiler` is an explicit IME adapter layer between retrieved memory and candidate UI.
 - Evidence preview and expanded evidence can be shown separately.
 - Candidate actions can be wired back to a core client.
+- delete/pin/downrank actions persist and change later ranking;
 - Background RAG refresh can be gated by idle time, punctuation, explicit request, and privacy blockers.
 - Agent first-run memory injection can be built from the same core client.
 - Three realistic UI scenarios can be rendered and checked by scripts.
@@ -20,17 +23,15 @@ The full product goal still requires the shared core to expose stable persistenc
 
 Not yet proven here:
 
-- real committed input events written into SQLite;
-- real SQLite/FTS5 retrieval from personal memory;
-- durable accepted/skipped/pinned/downranked/delete state;
 - shared core CLI/import wiring against the PI memory database;
-- end-to-end test against the real shared core.
+- end-to-end test against the future PI shared core.
 
-The fixture client is intentionally deterministic and local. It is only for adapter/UI development while the shared core is being extracted.
+The fixture client is intentionally deterministic and local. It is only for adapter/UI unit tests. The acceptance script uses the local SQLite/FTS5 backend.
 
 ## Acceptance Commands
 
 ```bash
+python3 -m rag_ime.cli seed-demo --reset
 python3 -m unittest discover -s tests
 python3 -m rag_ime.cli demo --top-k 3
 python3 scripts/acceptance.py
@@ -82,9 +83,9 @@ Expected short candidates:
 - 把本地记忆注入 Agent 首次运行上下文
 - 高频实时场景里的个人记忆系统
 
-## Shared Core Integration Gate
+## Future Shared Core Integration Gate
 
-Before marking the full product goal complete, replace the fixture client with the real shared core and verify:
+Before replacing the local MVP backend with the shared core, verify:
 
 ```text
 committed text

@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
+from rag_ime.agent_hook import build_first_run_injection
+from rag_ime.cli import run_acceptance, seed_demo_memories
+from rag_ime.core_client import default_fixture_memories
+from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.models import MemoryAction
+
+
+class LocalSqliteCoreClientTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-core-test-")
+        self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"
+        self.core = LocalSqliteCoreClient(self.db_path)
+        self.core.initialize()
+        self.adapter = InputMethodAdapter(self.core)
+        seed_demo_memories(self.adapter, default_fixture_memories())
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_records_events_into_sqlite_and_retrieves_with_fts5(self) -> None:
+        self.assertGreaterEqual(self.core.event_count(), 8)
+        suggestions = self.adapter.suggest(
+            SuggestionRequest(
+                current_input="SQLite 和 FTS5 第一版",
+                recent_context="MVP 先 local-first, 先验证检索和排序",
+                top_k=5,
+            )
+        )
+        surfaces = [item.surface_text for item in suggestions]
+        self.assertIn("先用 FTS5 证明召回收益", surfaces)
+        self.assertTrue(all(item.evidence_preview for item in suggestions))
+        self.assertTrue(all(item.metadata.get("memory_id", "").startswith("event:") for item in suggestions))
+
+    def test_delete_pin_and_downrank_are_durable_actions(self) -> None:
+        request = SuggestionRequest(
+            current_input="SQLite 和 FTS5 第一版",
+            recent_context="MVP 先 local-first, 先验证检索和排序",
+            top_k=4,
+        )
+        before = self.adapter.suggest(request)
+        deleted = before[0]
+        pinned = before[-1]
+        self.adapter.delete(deleted, query=request.current_input)
+        self.adapter.pin(pinned, query=request.current_input)
+        self.adapter.downrank(before[1], query=request.current_input)
+        after = self.adapter.suggest(request)
+        self.assertNotIn(deleted.surface_text, [item.surface_text for item in after])
+        self.assertEqual(after[0].metadata["memory_id"], pinned.metadata["memory_id"])
+        self.assertEqual(self.core.action_count(), 3)
+
+    def test_apply_action_accepts_suggestion_id_fallback_shape(self) -> None:
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="FTS5", top_k=1))
+        suggestion = suggestions[0]
+        action = self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=0,
+                memory_id=suggestion.suggestion_id,
+                action_type="pin",
+                query="FTS5",
+                suggestion_id=suggestion.suggestion_id,
+            )
+        )
+        self.assertEqual(action.source_event_id, suggestion.source_event_id)
+
+    def test_sensitive_commit_is_not_written_to_local_db(self) -> None:
+        before = self.core.event_count()
+        result = self.adapter.commit_text("银行卡密码", field_is_sensitive=True)
+        self.assertEqual(result, "skipped:sensitive_field")
+        self.assertEqual(self.core.event_count(), before)
+
+    def test_agent_hook_reads_from_local_memory_db(self) -> None:
+        injection = build_first_run_injection(
+            self.adapter,
+            project="wisdom-weasel-rag-ime",
+            query="Agent 首次运行 PROJECT_MEMORY_BLOCK",
+            top_k=3,
+        )
+        self.assertIn("PROJECT_MEMORY_BLOCK", injection.block)
+        self.assertIn("local SQLite/FTS5", injection.block)
+        self.assertGreaterEqual(len(injection.source_event_ids), 1)
+
+    def test_acceptance_can_run_against_local_sqlite_core(self) -> None:
+        report = run_acceptance(self.adapter)
+        self.assertTrue(report["local_first"])
+        self.assertFalse(report["cloud_default"])
+        self.assertTrue(report["action_result"]["deleted_removed"])
+        self.assertTrue(report["agent_hook"]["has_project_memory_block"])
+
+
+if __name__ == "__main__":
+    unittest.main()

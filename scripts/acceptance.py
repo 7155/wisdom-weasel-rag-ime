@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from tempfile import TemporaryDirectory
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,12 +10,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rag_ime.adapter import InputMethodAdapter
-from rag_ime.cli import run_acceptance
-from rag_ime.core_client import FixtureCoreClient
+from rag_ime.cli import run_acceptance, seed_demo_memories
+from rag_ime.core_client import default_fixture_memories
+from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 
 
 def main() -> int:
-    report = run_acceptance(InputMethodAdapter(FixtureCoreClient()))
+    with TemporaryDirectory(prefix="rag-ime-acceptance-") as tmp:
+        core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
+        core.initialize()
+        adapter = InputMethodAdapter(core)
+        seed_demo_memories(adapter, default_fixture_memories())
+        report = run_acceptance(adapter)
+        report["db_backend"] = "local_sqlite_fts5"
+        report["event_count"] = core.event_count()
+        report["action_count"] = core.action_count()
     print(json.dumps(report, ensure_ascii=False, indent=2))
     failures = []
     if not report["local_first"]:
@@ -41,6 +51,12 @@ def main() -> int:
         failures.append("trigger policy should refresh after semantic idle threshold")
     if trigger["sensitive"]:
         failures.append("trigger policy should not refresh in sensitive fields")
+    if report["db_backend"] != "local_sqlite_fts5":
+        failures.append("acceptance must use local SQLite/FTS5 backend")
+    if report["event_count"] < 3:
+        failures.append("acceptance did not seed enough local input events")
+    if report["action_count"] < 2:
+        failures.append("acceptance did not write memory actions")
     if failures:
         for failure in failures:
             print(f"FAIL: {failure}", file=sys.stderr)

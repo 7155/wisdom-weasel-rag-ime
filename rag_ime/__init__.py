@@ -4,6 +4,7 @@ __all__ = [
     "adapter",
     "agent_hook",
     "core_client",
+    "local_sqlite_core",
     "models",
     "renderer",
     "scenarios",

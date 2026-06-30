@@ -67,3 +67,28 @@ shared core search/suggest
 ```
 
 The compiler decides whether a memory becomes `phrase`, `sentence`, `structure`, `style_hint`, `paragraph`, `quote`, `rewrite`, `continue`, or `template`.
+
+## Current MVP Backend
+
+Until the shared core exposes stable write/action APIs, this product repo uses `LocalSqliteCoreClient` as the Mac MVP backend.
+
+It implements the same adapter-facing contract:
+
+```text
+record_event
+suggest_for_input
+apply_action
+build_agent_context
+```
+
+This keeps the UI/adapter code stable while still proving the full local loop:
+
+```text
+committed text
+  -> SQLite input_events
+  -> FTS5 memory_fts
+  -> SuggestionCompiler
+  -> InputSuggestion
+  -> apply_action
+  -> later ranking change
+```

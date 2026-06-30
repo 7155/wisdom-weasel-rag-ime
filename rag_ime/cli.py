@@ -5,24 +5,56 @@ import json
 import os
 import shlex
 import sys
+from pathlib import Path
 from typing import Sequence
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .agent_hook import build_first_run_injection
-from .core_client import FixtureCoreClient, JsonCommandCoreClient
+from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, default_fixture_memories
+from .local_sqlite_core import LocalSqliteCoreClient
+from .models import InputEvent
 from .renderer import render_agent_injection, render_terminal_panel
 from .scenarios import SCENARIOS, get_scenario
+from .text_utils import now_ms
 from .trigger_policy import TypingState, should_refresh_rag
+
+
+DEFAULT_DB_PATH = Path(os.environ.get("RAG_IME_DB_PATH", ".rag-ime-data/rag-ime.sqlite"))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="rag-ime", description="Wisdom-Weasel RAG IME adapter prototype")
     parser.add_argument(
+        "--core-mode",
+        choices=("local", "fixture", "json"),
+        default=os.environ.get("RAG_IME_CORE_MODE", "local"),
+        help="Core backend. Defaults to local SQLite/FTS5.",
+    )
+    parser.add_argument(
+        "--db-path",
+        default=str(DEFAULT_DB_PATH),
+        help="SQLite DB path for --core-mode local.",
+    )
+    parser.add_argument(
         "--core-command",
         default=os.environ.get("RAG_MEMORY_CORE_COMMAND", ""),
-        help="Optional JSON core command. Defaults to fixture core.",
+        help="JSON core command when --core-mode json.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("init-db", help="Initialize the local SQLite/FTS5 database")
+
+    seed = subparsers.add_parser("seed-demo", help="Seed local DB with deterministic demo memories")
+    seed.add_argument("--reset", action="store_true", help="Reset local DB before seeding")
+
+    commit = subparsers.add_parser("commit", help="Record one committed input event")
+    commit.add_argument("text")
+    commit.add_argument("--recent-context", default="")
+    commit.add_argument("--project", default="wisdom-weasel-rag-ime")
+    commit.add_argument("--preedit", default="")
+    commit.add_argument("--tag", action="append", default=[])
+    commit.add_argument("--sensitive", action="store_true", help="Do not record this input")
+    commit.add_argument("--recording-disabled", action="store_true", help="Skip recording for this commit")
 
     suggest = subparsers.add_parser("suggest", help="Render suggestions for one input")
     suggest.add_argument("current_input")
@@ -51,7 +83,49 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers.add_parser("acceptance", help="Run deterministic adapter acceptance scenarios")
 
     args = parser.parse_args(argv)
-    adapter = InputMethodAdapter(_build_core(args.core_command), project="wisdom-weasel-rag-ime")
+    core = _build_core(args)
+    adapter = InputMethodAdapter(core, project="wisdom-weasel-rag-ime")
+
+    if args.command == "init-db":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("init-db requires --core-mode local")
+        core.initialize()
+        print(json.dumps({"db_path": str(core.db_path), "initialized": True}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "seed-demo":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("seed-demo requires --core-mode local")
+        if args.reset:
+            core.reset()
+        seed_demo_memories(adapter, default_fixture_memories())
+        print(
+            json.dumps(
+                {"db_path": str(core.db_path), "event_count": core.event_count(), "seeded": True},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "commit":
+        event_id = adapter.commit_text(
+            args.text,
+            recent_context=args.recent_context,
+            preedit=args.preedit,
+            project=args.project,
+            tags=tuple(args.tag),
+            recording_enabled=not args.recording_disabled,
+            field_is_sensitive=args.sensitive,
+        )
+        print(
+            json.dumps(
+                {"event_id": event_id, "recorded": not event_id.startswith("skipped:")},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
 
     if args.command == "suggest":
         suggestions = adapter.suggest(
@@ -156,6 +230,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 2
 
 
+def seed_demo_memories(adapter: InputMethodAdapter, memories: list[CoreMemory]) -> list[str]:
+    event_ids: list[str] = []
+    created_at = now_ms()
+    for index, memory in enumerate(memories):
+        event_ids.append(
+            adapter.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=created_at + index,
+                    source="demo_seed",
+                    committed_text=memory.text,
+                    recent_context=memory.evidence_preview,
+                    preedit="",
+                    schema_id="demo",
+                    app="cli",
+                    project=memory.project or adapter.project,
+                    provider_name="demo-fixture",
+                    tags=memory.tags,
+                )
+            )
+        )
+    return event_ids
+
+
 def run_acceptance(adapter: InputMethodAdapter) -> dict[str, object]:
     scenario_results = []
     for scenario in SCENARIOS:
@@ -215,10 +313,14 @@ def run_acceptance(adapter: InputMethodAdapter) -> dict[str, object]:
     }
 
 
-def _build_core(core_command: str):
-    if not core_command:
+def _build_core(args):
+    if args.core_mode == "fixture":
         return FixtureCoreClient()
-    return JsonCommandCoreClient(shlex.split(core_command))
+    if args.core_mode == "json":
+        if not args.core_command:
+            raise SystemExit("--core-command is required when --core-mode json")
+        return JsonCommandCoreClient(shlex.split(args.core_command))
+    return LocalSqliteCoreClient(args.db_path)
 
 
 if __name__ == "__main__":
