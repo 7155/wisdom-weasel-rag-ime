@@ -293,6 +293,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 project=args.project,
                 static_dir=Path(args.static_dir),
                 seed_if_empty=not args.no_seed,
+                core=core,
             )
         )
         return 0

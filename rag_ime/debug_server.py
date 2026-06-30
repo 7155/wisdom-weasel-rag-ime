@@ -11,7 +11,7 @@ from urllib.parse import unquote, urlparse
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .cli import seed_demo_memories
-from .core_client import default_fixture_memories
+from .core_client import CoreClient, default_fixture_memories
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
@@ -26,6 +26,7 @@ class DebugServerConfig:
     project: str = "wisdom-weasel-rag-ime"
     static_dir: Path = Path("debug")
     seed_if_empty: bool = True
+    core: CoreClient | None = None
 
 
 class DebugImeService:
@@ -33,19 +34,21 @@ class DebugImeService:
 
     def __init__(self, config: DebugServerConfig):
         self.config = config
-        self.core = LocalSqliteCoreClient(config.db_path)
+        self.core = config.core or LocalSqliteCoreClient(config.db_path)
         self.adapter = InputMethodAdapter(self.core, project=config.project)
-        self.core.initialize()
-        if config.seed_if_empty and self.core.event_count() == 0:
+        if isinstance(self.core, LocalSqliteCoreClient):
+            self.core.initialize()
+        if config.seed_if_empty and self._event_count() == 0:
             seed_demo_memories(self.adapter, default_fixture_memories())
 
     def health(self) -> dict[str, object]:
         return {
             "ok": True,
             "project": self.config.project,
+            "coreMode": "local" if isinstance(self.core, LocalSqliteCoreClient) else "json",
             "dbPath": str(self.config.db_path),
-            "eventCount": self.core.event_count(),
-            "actionCount": self.core.action_count(),
+            "eventCount": self._event_count(),
+            "actionCount": self._action_count(),
         }
 
     def seed(self) -> dict[str, object]:
@@ -53,7 +56,7 @@ class DebugImeService:
         return {
             "ok": True,
             "seeded": len(event_ids),
-            "eventCount": self.core.event_count(),
+            "eventCount": self._event_count(),
         }
 
     def suggest(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -90,7 +93,7 @@ class DebugImeService:
             tags=tuple(_string_list(payload.get("tags"))),
             source="debug_page_commit",
         )
-        return {"ok": True, "eventId": event_id, "eventCount": self.core.event_count()}
+        return {"ok": True, "eventId": event_id, "eventCount": self._event_count()}
 
     def action(self, payload: dict[str, Any]) -> dict[str, object]:
         action_type = _canonical_action(_string(payload.get("actionType")))
@@ -110,6 +113,14 @@ class DebugImeService:
             )
         )
         return action_response_payload(action)
+
+    def _event_count(self) -> int | None:
+        count = getattr(self.core, "event_count", None)
+        return int(count()) if callable(count) else None
+
+    def _action_count(self) -> int | None:
+        count = getattr(self.core, "action_count", None)
+        return int(count()) if callable(count) else None
 
 
 class DebugRequestHandler(BaseHTTPRequestHandler):

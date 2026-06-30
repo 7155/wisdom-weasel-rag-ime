@@ -68,11 +68,14 @@ shared core search/suggest
 
 The compiler decides whether a memory becomes `phrase`, `sentence`, `structure`, `style_hint`, `paragraph`, `quote`, `rewrite`, `continue`, or `template`.
 
-## Current MVP Backend
+## Current Backend Options
 
-Until the shared core exposes stable write/action APIs, this product repo uses `LocalSqliteCoreClient` as the Mac MVP backend.
+The product repo has two backend paths:
 
-It implements the same adapter-facing contract:
+- `LocalSqliteCoreClient`: standalone Mac MVP backend for development and packaging tests.
+- `JsonCommandCoreClient`: production-facing bridge into the shared RAG/memory core.
+
+Both implement the same adapter-facing contract:
 
 ```text
 record_event
@@ -81,14 +84,25 @@ apply_action
 build_agent_context
 ```
 
-This keeps the UI/adapter code stable while still proving the full local loop:
+The shared-core command lives in `pi-rag-memory-extension`:
+
+```bash
+node --experimental-strip-types scripts/ime-json-core.mjs \
+  --cwd /path/to/workspace \
+  --namespace wisdom-weasel-ime \
+  --db-path /path/to/session-history.sqlite
+```
+
+The command reads one JSON request from stdin and returns one JSON response to stdout. This is intentionally process-based for the first integration so the macOS input method does not need a long-running daemon or port allocation while the adapter contract is still settling.
+
+This keeps the UI/adapter code stable while proving the full local loop:
 
 ```text
 committed text
-  -> SQLite input_events
-  -> FTS5 memory_fts
+  -> shared core input_events
+  -> FTS/vector/rerank retrieval
   -> SuggestionCompiler
   -> InputSuggestion
   -> apply_action
-  -> later ranking change
+  -> shared memory_actions governance
 ```

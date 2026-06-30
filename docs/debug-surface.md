@@ -20,6 +20,16 @@ python3 -m rag_ime.cli seed-demo --reset
 python3 -m rag_ime.cli debug-server
 ```
 
+Run it against the shared RAG/memory core instead of the local MVP database:
+
+```bash
+python3 -m rag_ime.cli --core-mode json \
+  --core-command "node --experimental-strip-types /path/to/pi-rag-memory-extension/scripts/ime-json-core.mjs --cwd /path/to/workspace --namespace wisdom-weasel-ime --db-path /path/to/session-history.sqlite" \
+  debug-server --no-seed
+```
+
+Use `--no-seed` for shared-core debugging when you want to inspect an existing memory database without adding demo events.
+
 Open:
 
 ```text
