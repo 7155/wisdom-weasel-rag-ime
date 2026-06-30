@@ -177,6 +177,7 @@ function render() {
         : null,
       rimeSuggestCache: state.health?.rimeSuggestCache || null,
       suggestionCache: state.health?.suggestionCache || null,
+      vectorStats: state.health?.vectorStats || null,
     },
     null,
     2,

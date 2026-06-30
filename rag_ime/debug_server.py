@@ -85,6 +85,7 @@ class DebugImeService:
                 "misses": self._rime_cache_misses,
             },
             "suggestionCache": self._suggestion_cache_stats(),
+            "vectorStats": self._vector_index_stats(),
         }
 
     def seed(self) -> dict[str, object]:
@@ -204,6 +205,10 @@ class DebugImeService:
         stats = getattr(self.core, "suggestion_cache_stats", None)
         return stats() if callable(stats) else None
 
+    def _vector_index_stats(self) -> dict[str, object] | None:
+        stats = getattr(self.core, "vector_index_stats", None)
+        return stats() if callable(stats) else None
+
     def _cache_ttl_ms(self) -> int:
         return max(0, int(self.config.rime_cache_ttl_ms))
 
@@ -248,6 +253,7 @@ class DebugImeService:
             "project": self.config.project,
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
+            "vectorStats": self._vector_index_stats(),
             "predictor": self._predictor_fingerprint(),
         }
         raw = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
