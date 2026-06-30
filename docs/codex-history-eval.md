@@ -69,6 +69,7 @@ Create a JSONL case file:
 ```jsonl
 {"id":"squirrel-rag","query":"Squirrel RAG 输入法候选","expectedTerms":["Squirrel","本地记忆"]}
 {"id":"agent-hook","query":"首次运行自动注入背景记忆","expectedTerms":["PROJECT_MEMORY_BLOCK"]}
+{"id":"dirty-pinyin-boundary","query":"为什么不能让大模型直接预测脏拼音","expectedTerms":["Rime","拼音解析"],"forbiddenTerms":["让大模型直接解析脏拼音"]}
 ```
 
 Run:
@@ -81,7 +82,29 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --match any
 ```
 
-Use `--match all` for stricter cases where every expected term must appear in the top-K suggestion surface/evidence.
+Use `--match all` for stricter cases where every expected term must appear in the same top-K suggestion surface/evidence. Terms split across several suggestions no longer count as an all-match hit, because the input method user chooses one candidate at a time.
+
+The report keeps the original `passed` / `passRate` fields and adds ranking metrics:
+
+```json
+{
+  "metrics": {
+    "hitRate": 0.8,
+    "top1Accuracy": 0.5,
+    "meanReciprocalRank": 0.65,
+    "meanFirstMatchRank": 1.75,
+    "noiseRate": 0.1
+  }
+}
+```
+
+Per-case fields include:
+
+- `firstMatchRank`: first candidate rank that satisfies `--match`;
+- `reciprocalRank`: `1 / firstMatchRank`, or `0` when no candidate hit;
+- `top1Passed`: whether the first visible suggestion already matched;
+- `termFirstRanks`: where each expected term first appeared;
+- `forbiddenMatchedTerms`: noise terms found in returned suggestions. If any forbidden term appears, the case fails even if expected terms matched.
 
 ## Why This Matters
 
@@ -93,6 +116,8 @@ decision, constraint, or project memory that the user would actually choose?
 ```
 
 This is why the evaluation checks the final suggestions rather than only raw FTS rows.
+
+Candidate-level ranking matters more than raw recall. A memory that appears at rank 5 is technically retrieved, but the user is unlikely to select it during typing. `meanReciprocalRank` and `top1Accuracy` make that visible while keeping the evaluation local and deterministic.
 
 ## Next Improvements
 

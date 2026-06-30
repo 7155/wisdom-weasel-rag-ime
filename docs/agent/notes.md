@@ -262,6 +262,28 @@ Commands:
 Next:
 - With Xcode installed, build the prepared `/tmp/rag-ime-squirrel` checkout and verify number-key side candidate insertion plus `/rime-select` feedback in a real text field.
 
+### 2026-07-01 01:30 CST
+Problem:
+- `eval-codex-history` only reported pass/fail recall over the combined top-K haystack.
+- That could overstate quality because `--match all` could be satisfied by expected terms split across different candidates, while an input method user chooses one candidate at a time.
+- It also did not expose rank quality or noise, both of which matter for a small IME panel.
+
+Changes:
+- Made Codex-history evaluation candidate-level.
+- Added per-case `firstMatchRank`, `reciprocalRank`, `top1Passed`, `termFirstRanks`, `forbiddenMatchedTerms`.
+- Added report-level `metrics.hitRate`, `top1Accuracy`, `meanReciprocalRank`, `meanFirstMatchRank`, `noiseRate`, and `noiseCount`.
+- Added `forbiddenTerms` support in JSONL cases so obvious noisy suggestions can fail the case even when expected terms match.
+- Updated docs and example cases.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `scripts/build_macos_frontend.sh`
+- CLI eval smoke with a temporary DB/cases file, confirming `top1Accuracy`, `meanReciprocalRank`, and `noiseRate` output.
+
+Next:
+- Use these ranking metrics on a larger imported Codex-history slice and compare FTS-only, embedding recall, rerank, and VCP-style cache variants.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.

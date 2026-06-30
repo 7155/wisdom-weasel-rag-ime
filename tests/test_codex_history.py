@@ -16,6 +16,7 @@ from rag_ime.codex_history import (
     load_eval_cases,
 )
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.models import InputSuggestion
 
 
 class CodexHistoryTests(unittest.TestCase):
@@ -172,6 +173,11 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(report["schemaVersion"], "rag-ime.codex-history-eval.v1")
         self.assertEqual(report["passed"], 1)
         self.assertEqual(report["passRate"], 1.0)
+        self.assertEqual(report["metrics"]["hitRate"], 1.0)
+        self.assertEqual(report["metrics"]["top1Accuracy"], 1.0)
+        self.assertEqual(report["metrics"]["meanReciprocalRank"], 1.0)
+        self.assertEqual(report["cases"][0]["firstMatchRank"], 1)
+        self.assertTrue(report["cases"][0]["top1Passed"])
 
     def test_load_eval_cases_and_match_results(self) -> None:
         cases_file = self.root / "manual-cases.jsonl"
@@ -191,6 +197,72 @@ class CodexHistoryTests(unittest.TestCase):
         suggestions = core.suggest_for_input(current_input="FTS5", project="wisdom-weasel-rag-ime")
         result = evaluate_suggestions(cases[0], suggestions, match="any")
         self.assertTrue(result.passed)
+        self.assertEqual(result.first_match_rank, 1)
+
+    def test_candidate_level_all_match_does_not_merge_terms_across_suggestions(self) -> None:
+        case = load_eval_cases(
+            self._write_cases(
+                [
+                    {
+                        "id": "split-all",
+                        "query": "Squirrel 本地记忆",
+                        "expectedTerms": ["Squirrel", "本地记忆"],
+                    }
+                ]
+            )
+        )[0]
+        suggestions = [
+            self._suggestion("Squirrel 候选面板", "只提到了 Squirrel"),
+            self._suggestion("本地记忆写回", "只提到了本地记忆"),
+            self._suggestion("Squirrel 和本地记忆", "同一候选命中两个词"),
+        ]
+        result = evaluate_suggestions(case, suggestions, match="all")
+        self.assertTrue(result.passed)
+        self.assertEqual(result.first_match_rank, 3)
+        self.assertAlmostEqual(result.reciprocal_rank, 1 / 3)
+        self.assertFalse(result.top1_passed)
+        self.assertEqual(dict(result.term_first_ranks), {"Squirrel": 1, "本地记忆": 2})
+
+    def test_forbidden_terms_mark_noise_even_when_expected_terms_match(self) -> None:
+        case = load_eval_cases(
+            self._write_cases(
+                [
+                    {
+                        "id": "noise",
+                        "query": "脏拼音",
+                        "expectedTerms": ["Rime"],
+                        "forbiddenTerms": ["让大模型直接解析脏拼音"],
+                    }
+                ]
+            )
+        )[0]
+        suggestions = [
+            self._suggestion("Rime 候选", "不要让大模型直接解析脏拼音"),
+        ]
+        result = evaluate_suggestions(case, suggestions, match="any")
+        self.assertFalse(result.passed)
+        self.assertEqual(result.first_match_rank, 1)
+        self.assertEqual(result.forbidden_matched_terms, ("让大模型直接解析脏拼音",))
+
+    def _write_cases(self, items: list[dict[str, object]]) -> Path:
+        path = self.root / f"cases-{len(items)}-{id(items)}.jsonl"
+        path.write_text(
+            "\n".join(json.dumps(item, ensure_ascii=False) for item in items) + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def _suggestion(self, surface: str, evidence: str = "") -> InputSuggestion:
+        return InputSuggestion(
+            suggestion_id=f"sug-{surface}",
+            surface_text=surface,
+            suggestion_type="phrase",
+            source_event_id=1,
+            evidence_preview=evidence,
+            confidence=1.0,
+            expanded_evidence=evidence,
+            metadata={"insert_text": surface},
+        )
 
 
 if __name__ == "__main__":

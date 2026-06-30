@@ -242,3 +242,18 @@ Verification:
 - Acceptance passed.
 - macOS prototype build passed.
 - Patched Squirrel checkout prepared and sidecar Swift files typechecked.
+
+### 2026-07-01
+Topic:
+- Improve Codex-history RAG evaluation quality metrics.
+
+Changes:
+- `eval-codex-history` now evaluates expected terms at candidate level instead of merging all top-K suggestions into one haystack.
+- Added `firstMatchRank`, `reciprocalRank`, `top1Passed`, `termFirstRanks`, and forbidden-term noise checks.
+- Report-level metrics now include `top1Accuracy`, `meanReciprocalRank`, `meanFirstMatchRank`, `noiseRate`, and `noiseCount`.
+
+Verification:
+- 56 Python tests passed.
+- Acceptance passed.
+- macOS prototype build passed.
+- Temporary CLI eval smoke printed the new ranking/noise metrics.

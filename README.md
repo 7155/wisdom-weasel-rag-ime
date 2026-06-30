@@ -197,6 +197,8 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
 
 See `docs/codex-history-eval.md`.
 
+The report includes candidate-level ranking metrics such as `top1Accuracy`, `meanReciprocalRank`, and `noiseRate`, not just pass/fail recall.
+
 Inspect trigger policy:
 
 ```bash
