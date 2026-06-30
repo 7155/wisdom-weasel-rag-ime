@@ -63,25 +63,25 @@ The bridge uses the same local backend as the CLI MVP. It does not call GPT, Cla
 
 ## UI Shape
 
-Default view:
+Default native view:
 
 ```text
-RAG IME                         5 local
-1 先用 FTS5 证明召回收益             phrase
-2 第一步先验证 FTS5...              structure
-3 默认本地完成, 不上传个人输入历史      phrase
+RAG      SQLite 和 FTS5 第一版          3
+1 先用 FTS5 证明召回收益
+2 第一步先验证 FTS5...
+3 默认本地完成, 不上传个人输入历史
 
+RAG · input_event:4
 先用 FTS5 证明召回收益 | context: ...
-confidence 1.00  memory event:4
-[pin] [downrank] [delete] [expand]
 ```
 
 Design rules:
 
 - short candidate rows stay fast and number-selectable;
-- evidence stays in the lower card, not the candidate row;
-- governance actions are always visible in the expanded area;
-- `expand` copies full evidence to clipboard in this MVP, avoiding a focus-stealing modal in the input method process;
+- the native IME panel stays small: at most three rows plus one evidence hint;
+- do not show pipeline status, model names, debug JSON, confidence scores, or governance buttons in the IME panel;
+- governance actions and full pipeline detail belong in `debug/` or a future preferences/debug window;
+- full evidence expansion should avoid focus-stealing modal behavior inside the input method process;
 - the panel is a translucent AppKit `NSPanel`, so it can later be replaced by WebView without changing the backend contract.
 
 ## Build And Preview

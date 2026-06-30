@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RAG IME Debug</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="debug-shell">
+      <section class="editor-surface" aria-label="RAG IME debug editor">
+        <header class="titlebar">
+          <div>
+            <span class="status-dot"></span>
+            <span class="product-name">RAG IME Debug</span>
+          </div>
+          <div class="runtime-meta">
+            <span id="modeMeta">focus short</span>
+            <span id="latencyMeta">local</span>
+            <span>cloud off</span>
+          </div>
+        </header>
+
+        <article class="document-card" id="documentCard">
+          <div class="doc-head">
+            <span>Implementation notes</span>
+            <span>local-first draft</span>
+          </div>
+          <div class="doc-body" id="docBody">
+            <span id="committedText">本节记录订单服务重构的设计决策。需要解决的主要问题是写入路径上的双写不一致，同事建议把订单服务的写入路径改成 outbox 模式。</span>
+            <span class="preedit" id="preeditText"></span><span class="caret"></span>
+            <section class="ime-overlay" id="imeOverlay" aria-live="polite">
+              <div class="overlay-head">
+                <span class="query-pill" id="queryPill">输入中</span>
+                <span class="head-chips">
+                  <span>LLM</span>
+                  <span>RAG</span>
+                  <span>记忆</span>
+                  <span class="privacy">本机</span>
+                </span>
+              </div>
+
+              <div class="tier short-tier is-active" id="shortTier">
+                <div class="tier-label">
+                  <span>短候选</span>
+                  <span>1-0</span>
+                </div>
+                <div class="short-row" id="shortRow"></div>
+              </div>
+
+              <div class="focus-rule" id="focusRule">Tab 接受首选 · ↓ 切 RAG · ⌥1-⌥0 直选记忆</div>
+
+              <div class="tier rag-tier" id="ragTier">
+                <div class="tier-label">
+                  <span>RAG / 记忆</span>
+                  <span id="ragKeyHint">⌥1</span>
+                </div>
+                <div class="rag-list" id="ragList"></div>
+              </div>
+            </section>
+          </div>
+          <input id="hiddenInput" class="hidden-input" autocomplete="off" />
+        </article>
+      </section>
+
+      <aside class="side-panel">
+        <section class="panel-card">
+          <h2>Pipeline</h2>
+          <ol class="pipeline" id="pipeline">
+            <li data-step="capture"><span>1</span>捕获输入 <b>~5ms</b></li>
+            <li data-step="embed"><span>2</span>本地检索 <b>~80ms</b></li>
+            <li data-step="rank"><span>3</span>召回 + 排序 <b>~120ms</b></li>
+            <li data-step="compile"><span>4</span>候选压缩 <b>~180ms</b></li>
+          </ol>
+        </section>
+
+        <section class="panel-card">
+          <h2>Keys</h2>
+          <dl class="kv">
+            <div><dt>1-0</dt><dd>当前层</dd></div>
+            <div><dt>Tab</dt><dd>接受首选</dd></div>
+            <div><dt>↓ / ↑</dt><dd>切换层</dd></div>
+            <div><dt>⌥1-⌥0</dt><dd>直选记忆</dd></div>
+          </dl>
+        </section>
+
+        <section class="panel-card">
+          <h2>Debug</h2>
+          <div class="controls">
+            <button id="seedButton" type="button">seed</button>
+            <button id="compactButton" type="button">compact</button>
+            <button id="evidenceButton" type="button">evidence</button>
+          </div>
+          <pre id="debugJson">{}</pre>
+        </section>
+      </aside>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
