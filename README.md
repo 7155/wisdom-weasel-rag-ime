@@ -93,6 +93,19 @@ Run deterministic adapter acceptance:
 python3 scripts/acceptance.py
 ```
 
+Run the browser debug surface:
+
+```bash
+python3 -m rag_ime.cli seed-demo --reset
+python3 -m rag_ime.cli debug-server
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765/
+```
+
 Show memory action effects:
 
 ```bash
@@ -162,6 +175,7 @@ Implemented in this repo:
 - macOS InputMethodKit shell;
 - AppKit `NSPanel` candidate/evidence overlay;
 - Swift-to-Python JSON bridge;
+- browser debug page with the same local backend contract;
 - three realistic UI scenarios;
 - unittest and acceptance script.
 
@@ -190,6 +204,7 @@ Next route:
 
 1. Package the Python backend or replace it with a local daemon.
 2. Anchor the panel to the target app caret instead of mouse-position fallback.
-3. Keep Rime/Squirrel/Wisdom-Weasel integration as the next bridge after the adapter contract is stable.
+3. Port the compact debug overlay behavior into `RagCandidatePanel`.
+4. Keep Rime/Squirrel/Wisdom-Weasel integration as the next bridge after the adapter contract is stable.
 
 See `docs/macos-frontend-adapter.md` for the macOS frontend research and implementation notes.

@@ -141,9 +141,10 @@ final class RagInputController: IMKInputController {
                     guard self.composition == inputSnapshot else {
                         return
                     }
-                    self.latestSuggestions = response.suggestions
+                    let visibleSuggestions = Array(response.suggestions.prefix(3))
+                    self.latestSuggestions = visibleSuggestions
                     RagCandidatePanel.shared.show(
-                        suggestions: response.suggestions,
+                        suggestions: visibleSuggestions,
                         currentInput: inputSnapshot,
                         onSelect: { [weak self] suggestion, index in
                             guard let self, let client = self.client() else {

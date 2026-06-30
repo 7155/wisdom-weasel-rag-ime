@@ -95,6 +95,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     hook.add_argument("--query", default="当前项目背景 用户偏好 最近决策 禁止事项 推荐下一步")
     hook.add_argument("--top-k", type=int, default=5)
 
+    debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
+    debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
+    debug_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_DEBUG_PORT", "8765")))
+    debug_server.add_argument("--project", default="wisdom-weasel-rag-ime")
+    debug_server.add_argument("--static-dir", default=os.environ.get("RAG_IME_DEBUG_STATIC_DIR", "debug"))
+    debug_server.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
+
     subparsers.add_parser("acceptance", help="Run deterministic adapter acceptance scenarios")
 
     args = parser.parse_args(argv)
@@ -273,6 +280,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "agent-hook":
         injection = build_first_run_injection(adapter, project=args.project, query=args.query, top_k=args.top_k)
         print(render_agent_injection(injection))
+        return 0
+
+    if args.command == "debug-server":
+        from .debug_server import DebugServerConfig, run_debug_server
+
+        run_debug_server(
+            DebugServerConfig(
+                host=args.host,
+                port=args.port,
+                db_path=Path(args.db_path),
+                project=args.project,
+                static_dir=Path(args.static_dir),
+                seed_if_empty=not args.no_seed,
+            )
+        )
         return 0
 
     if args.command == "acceptance":
