@@ -8,6 +8,7 @@ const state = {
   expanded: false,
   suggestions: [],
   modelPredictions: [],
+  historyContext: "",
   lastPayload: null,
   timer: 0,
   apiOnline: true,
@@ -159,6 +160,7 @@ function render() {
         confidence: item.confidence,
       })),
       modelPredictions: state.modelPredictions,
+      historyContext: state.historyContext,
     },
     null,
     2,
@@ -177,6 +179,7 @@ async function suggestNow() {
   const query = state.query.trim();
   if (!query) {
     state.modelPredictions = [];
+    state.historyContext = "";
     state.suggestions = fallbackSuggestions;
     render();
     return;
@@ -201,12 +204,14 @@ async function suggestNow() {
     setPipeline("compile");
     state.lastPayload = payload;
     state.modelPredictions = Array.isArray(payload.modelPredictions) ? payload.modelPredictions : [];
+    state.historyContext = payload.historyContext || "";
     state.suggestions = payload.suggestions?.length ? payload.suggestions : fallbackSuggestions;
     state.apiOnline = true;
     elements.latencyMeta.textContent = `${Math.round(performance.now() - started)}ms`;
   } catch (error) {
     state.apiOnline = false;
     state.modelPredictions = [];
+    state.historyContext = "";
     state.suggestions = fallbackSuggestions;
     elements.latencyMeta.textContent = "mock";
   } finally {

@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlparse
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .cli import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
+from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
@@ -67,15 +68,20 @@ class DebugImeService:
         recent_context = _string(payload.get("recentContext"))
         project = _string(payload.get("project")) or self.config.project
         top_k = _bounded_int(payload.get("topK"), default=5, minimum=1, maximum=10)
+        prediction_context = build_prediction_context(
+            self.core,
+            explicit_recent_context=recent_context,
+            project=project,
+        )
         model_predictions = self.predictor.predict(
             current_input=current_input,
-            recent_context=recent_context,
+            recent_context=prediction_context,
             max_candidates=5,
         )
         suggestions = self.adapter.suggest(
             SuggestionRequest(
                 current_input=current_input,
-                recent_context=recent_context,
+                recent_context=prediction_context,
                 project=project,
                 top_k=top_k,
             )
@@ -84,6 +90,7 @@ class DebugImeService:
             current_input=current_input,
             recent_context=recent_context,
             project=project,
+            history_context=prediction_context,
             model_predictions=model_predictions,
             suggestions=suggestions,
         )

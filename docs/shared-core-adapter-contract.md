@@ -19,6 +19,7 @@ recordMemoryEvent(event)
 searchMemories(query)
 applyMemoryAction(action)
 buildContextBlock(request)
+recentInputContext(request)
 ```
 
 Neutral environment variables should be preferred:
@@ -82,6 +83,7 @@ record_event
 suggest_for_input
 apply_action
 build_agent_context
+recent_input_context
 ```
 
 The shared-core command lives in `pi-rag-memory-extension`:
@@ -100,9 +102,35 @@ This keeps the UI/adapter code stable while proving the full local loop:
 ```text
 committed text
   -> shared core input_events
+  -> recent_input_context for history-aware local prediction
   -> FTS/vector/rerank retrieval
   -> SuggestionCompiler
   -> InputSuggestion
   -> apply_action
   -> shared memory_actions governance
+```
+
+`recent_input_context` should return a bounded, privacy-local text block built from the user's recent committed input events. It is consumed by the IME model prediction lane and may also improve RAG recall for continuation-style typing.
+
+Expected JSON request:
+
+```json
+{
+  "method": "recent_input_context",
+  "params": {
+    "project": "wisdom-weasel-rag-ime",
+    "limit": 6,
+    "max_chars": 420
+  }
+}
+```
+
+Expected JSON response:
+
+```json
+{
+  "result": {
+    "context": "最近输入历史..."
+  }
+}
 ```

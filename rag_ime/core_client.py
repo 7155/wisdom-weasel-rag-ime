@@ -52,6 +52,9 @@ class CoreClient(Protocol):
     def build_agent_context(self, *, project: str, query: str, top_k: int = 5) -> AgentContextInjection:
         ...
 
+    def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
+        ...
+
 
 class JsonCommandCoreClient:
     """Adapter for a future shared-core JSON command.
@@ -98,6 +101,16 @@ class JsonCommandCoreClient:
     def build_agent_context(self, *, project: str, query: str, top_k: int = 5) -> AgentContextInjection:
         payload = self._request("build_agent_context", {"project": project, "query": query, "top_k": top_k})
         return _agent_context_from_json(payload["injection"])
+
+    def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
+        try:
+            payload = self._request(
+                "recent_input_context",
+                {"project": project, "limit": limit, "max_chars": max_chars},
+            )
+        except RuntimeError:
+            return ""
+        return str(payload.get("context") or payload.get("history_context") or "")
 
     def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         request = {"method": method, "params": params}
@@ -240,6 +253,29 @@ class FixtureCoreClient:
             source_event_ids=tuple(int(item.source_event_id or 0) for item in suggestions),
             query=query,
         )
+
+    def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
+        if limit <= 0 or max_chars <= 0:
+            return ""
+        rows = [
+            event
+            for event in self.events
+            if not project or event.project in (project, "")
+        ][-limit:]
+        snippets: list[str] = []
+        for event in rows:
+            text = compact_whitespace(event.committed_text)
+            if not text:
+                continue
+            context = compact_whitespace(event.recent_context)
+            preedit = compact_whitespace(event.preedit)
+            parts = [text]
+            if context and context != text:
+                parts.append(f"context: {context}")
+            if preedit and preedit != text:
+                parts.append(f"preedit: {preedit}")
+            snippets.append(" | ".join(parts))
+        return _tail_chars(compact_whitespace(" / ".join(snippets)), max_chars)
 
     def _score_memory(self, memory: CoreMemory, query: str, project: str) -> tuple[float, CoreMemory]:
         terms = overlap_terms(query, f"{memory.text} {memory.evidence_preview} {' '.join(memory.tags)}")
@@ -391,3 +427,9 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _tail_chars(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]

@@ -241,6 +241,52 @@ class LocalSqliteCoreClient:
             query=query,
         )
 
+    def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
+        self.initialize()
+        if limit <= 0 or max_chars <= 0:
+            return ""
+        params: list[Any] = []
+        where = ["s.deleted = 0"]
+        if project:
+            where.append("(e.project = ? OR e.project = '')")
+            params.append(project)
+        sql = f"""
+            SELECT e.committed_text, e.recent_context, e.preedit, e.created_at_ms
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE {' AND '.join(where)}
+            ORDER BY e.id DESC
+            LIMIT ?
+        """
+        params.append(max(1, min(20, limit)))
+        with self._connect() as conn:
+            rows = list(conn.execute(sql, params).fetchall())
+
+        selected: list[str] = []
+        used_chars = 0
+        separator_len = len(" / ")
+        for row in rows:
+            text = compact_whitespace(str(row["committed_text"]))
+            if not text:
+                continue
+            context = compact_whitespace(str(row["recent_context"]))
+            preedit = compact_whitespace(str(row["preedit"]))
+            parts = [truncate_text(text, 90)]
+            if context and context != text:
+                parts.append(f"context: {truncate_text(context, 90)}")
+            if preedit and preedit != text:
+                parts.append(f"preedit: {truncate_text(preedit, 48)}")
+            snippet = " | ".join(parts)
+            next_len = len(snippet) + (separator_len if selected else 0)
+            if selected and used_chars + next_len > max_chars:
+                break
+            if not selected and len(snippet) > max_chars:
+                snippet = _tail_chars(snippet, max_chars)
+                next_len = len(snippet)
+            selected.append(snippet)
+            used_chars += next_len
+        return compact_whitespace(" / ".join(reversed(selected)))
+
     def event_count(self) -> int:
         self.initialize()
         with self._connect() as conn:
@@ -399,3 +445,9 @@ class LocalSqliteCoreClient:
             conn.execute("UPDATE memory_state SET deleted = 0, updated_at_ms = ? WHERE event_id = ?", (updated_at, event_id))
         else:
             raise ValueError(f"unsupported action_type: {action_type}")
+
+
+def _tail_chars(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
