@@ -52,6 +52,56 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(suggestions[0].surface_text, "把本地记忆注入 Agent 首次运行上下文")
         self.assertIn("fts5:", suggestions[0].metadata["reason"])
 
+    def test_query_expansion_recalls_agent_context_injection_memory(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text(
+            "生成 PROJECT_MEMORY_BLOCK",
+            recent_context="Agent 首次运行自动注入背景记忆",
+            tags=("agent-hook", "context"),
+        )
+        self.adapter.commit_text(
+            "普通 debug page 背景材料",
+            recent_context="浏览器调试页面展示 pipeline",
+            tags=("debug",),
+        )
+
+        suggestions = self.adapter.suggest(
+            SuggestionRequest(
+                current_input="首次运行自动注入背景记忆",
+                top_k=2,
+            )
+        )
+
+        self.assertEqual(suggestions[0].surface_text, "生成 PROJECT_MEMORY_BLOCK")
+        self.assertIn("context:", suggestions[0].metadata["reason"])
+
+    def test_squirrel_rime_tags_and_source_boost_side_candidate_memory(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text(
+            "输入法候选需要保持短小",
+            recent_context="debug page",
+            tags=("debug",),
+        )
+        self.adapter.commit_text(
+            "Squirrel side candidates 使用本地记忆作为候选",
+            recent_context="Rime sidecar 合并候选 本地记忆",
+            source="squirrel_rime_sidecar",
+            app="squirrel",
+            tags=("squirrel", "rime", "memory"),
+        )
+
+        suggestions = self.adapter.suggest(
+            SuggestionRequest(
+                current_input="Squirrel RAG 输入法候选",
+                recent_context="本地记忆",
+                top_k=2,
+            )
+        )
+
+        self.assertEqual(suggestions[0].surface_text, "Squirrel side candidates 使用本地记忆作为候选")
+        self.assertIn("tag:", suggestions[0].metadata["reason"])
+        self.assertIn("raw:", suggestions[0].metadata["reason"])
+
     def test_suggestion_cache_hits_and_invalidates_on_write(self) -> None:
         request = SuggestionRequest(
             current_input="SQLite 和 FTS5 第一版",
