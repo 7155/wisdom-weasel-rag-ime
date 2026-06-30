@@ -7,6 +7,24 @@
 
 ## Log
 
+### 2026-07-01 06:24 CST
+Problem:
+- The user asked to complete Xcode configuration for the Squirrel/Rime frontend.
+
+Findings:
+- `bash scripts/setup_xcode_for_squirrel.sh` still finds no full `Xcode.app` under `/Applications` or `/Volumes/undo 4t/Applications`.
+- A real external-disk install attempt with `RAG_IME_INSTALL_XCODE=xcodes RAG_IME_XCODE_VERSION="27.0 Beta 2"` failed at Apple Developer authentication: `Apple ID: Missing username or a password`.
+- Strict doctor now has exactly one failure: active developer directory is `/Library/Developer/CommandLineTools`; Squirrel patch, generated config, Swift availability, LaunchAgent, and HTTP `/rime-suggest` all pass.
+
+Commands:
+- `bash scripts/setup_xcode_for_squirrel.sh`
+- `RAG_IME_INSTALL_XCODE=xcodes RAG_IME_XCODE_VERSION="27.0 Beta 2" bash scripts/setup_xcode_for_squirrel.sh`
+- `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh`
+
+Next:
+- Run `xcodes download "27.0 Beta 2" --directory "/Volumes/undo 4t/XcodeDownloads"` once Apple Developer auth is available, or provide `FASTLANE_SESSION` and rerun the setup script.
+- After Xcode is installed, rerun strict doctor and build the prepared Squirrel checkout.
+
 ### 2026-07-01 00:55 CST
 Problem:
 - Squirrel debounce reduces frontend request spam, but repeated equivalent `/rime-suggest` requests can still reach the HTTP sidecar and repeat model/RAG work.

@@ -2,6 +2,18 @@
 
 ### 2026-07-01
 Topic:
+- Recheck full Xcode setup for the Squirrel/Rime frontend.
+
+Findings:
+- No full `Xcode.app` is installed under `/Applications` or `/Volumes/undo 4t/Applications`.
+- The external-disk `xcodes` install path has enough space but fails before download because Apple Developer credentials are unavailable in this non-interactive session.
+- Strict Squirrel doctor has one failure only: `xcode-select` still points at Command Line Tools; sidecar, LaunchAgent, patch, generated config, and Swift checks pass.
+
+Next steps:
+- Authenticate Apple Developer for `xcodes` or provide `FASTLANE_SESSION`, then rerun the setup script and strict doctor.
+
+### 2026-07-01
+Topic:
 - Add server-side cache for repeated Rime sidecar suggestions.
 
 Decisions:
