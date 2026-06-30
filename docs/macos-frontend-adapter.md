@@ -147,6 +147,14 @@ build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-json
 
 This initializes the local DB, seeds deterministic demo memories, calls `suggest-json`, and prints the native frontend JSON payload.
 
+Run the Swift-to-Python Rime/Squirrel side-candidate preview:
+
+```bash
+build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-sidecar-json
+```
+
+This initializes the local DB, seeds deterministic demo memories, calls `rime-suggest-json`, and verifies that Swift can decode the merged `displayCandidates` payload. The preview intentionally includes dirty raw pinyin plus Rime candidates; the response should use `queryBasis: "rimeCandidates"` instead of asking the model to decode raw input.
+
 Open the native panel preview:
 
 ```bash

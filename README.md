@@ -173,6 +173,12 @@ Verify the Swift frontend can call the Python RAG backend:
 build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-json
 ```
 
+Verify the Swift frontend can call and decode the Squirrel/Rime side-candidate contract:
+
+```bash
+build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-sidecar-json
+```
+
 Preview the Squirrel/Rime side-candidate contract:
 
 ```bash
@@ -255,6 +261,7 @@ Implemented in this repo:
 - browser debug page with the same local backend contract;
 - shared-core JSON command integration for CLI/debug-server;
 - Squirrel/Rime-aware side-candidate JSON contract;
+- Swift bridge models and preview command for the Rime side-candidate contract;
 - optional local OpenAI-compatible model prediction lane;
 - bounded history-input context for model/RAG prediction;
 - shared number-key selection for top model predictions and lower RAG/memory candidates;

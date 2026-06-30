@@ -30,6 +30,10 @@ enum RagImeMacMain {
             runPreviewJSON()
             return
         }
+        if arguments.contains("--preview-rime-sidecar-json") {
+            runPreviewRimeSidecarJSON()
+            return
+        }
         if arguments.contains("--preview-panel") {
             runPreviewPanel()
             return
@@ -68,6 +72,39 @@ enum RagImeMacMain {
             FileHandle.standardOutput.write(Data("\n".utf8))
         } catch {
             FileHandle.standardError.write(Data("RagImeMac preview failed: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+    }
+
+    private static func runPreviewRimeSidecarJSON() {
+        do {
+            let bridge = RagBridgeClient()
+            try bridge.initializeDatabase()
+            try bridge.seedDemo(reset: true)
+            let request = RimeSidecarRequest(
+                sessionId: "squirrel-preview",
+                requestSeq: 1,
+                rawInput: "jiubiruwopinshishur",
+                preedit: "jiubiruwopinshishur",
+                committedContext: "用户正在写 RAG 输入法设计",
+                maxVisibleCandidates: 5,
+                maxSideCandidates: 2,
+                rimeContext: RimeContextPayload(
+                    candidates: [
+                        RimeCandidatePayload(label: "1", text: "就比如", comment: "rime", index: 0),
+                        RimeCandidatePayload(label: "2", text: "我平时输入", comment: "rime", index: 1),
+                    ],
+                    highlightedIndex: 0,
+                    page: 0,
+                    isLastPage: true
+                )
+            )
+            let response = try bridge.rimeSuggest(request: request)
+            let data = try JSONEncoder.pretty.encode(response)
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        } catch {
+            FileHandle.standardError.write(Data("RagImeMac Rime sidecar preview failed: \(error.localizedDescription)\n".utf8))
             exit(1)
         }
     }

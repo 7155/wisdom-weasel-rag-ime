@@ -162,6 +162,24 @@ final class RagBridgeClient {
         return try decoder.decode(SuggestionResponse.self, from: data)
     }
 
+    func rimeSuggest(request: RimeSidecarRequest) throws -> RimeSidecarResponse {
+        let payloadURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rag-ime-rime-sidecar-\(UUID().uuidString).json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let payload = try encoder.encode(request)
+        try payload.write(to: payloadURL, options: .atomic)
+        defer {
+            try? FileManager.default.removeItem(at: payloadURL)
+        }
+        let data = try runCli([
+            "rime-suggest-json",
+            "--payload-file",
+            payloadURL.path,
+        ])
+        return try decoder.decode(RimeSidecarResponse.self, from: data)
+    }
+
     func recordCommit(text: String, recentContext: String = "", preedit: String = "", source: String = "macos_inputmethod") throws {
         _ = try runCli([
             "commit",
