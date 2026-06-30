@@ -210,3 +210,19 @@ Changes:
 
 Next steps:
 - Install Xcode from an Apple-authenticated terminal or provide `FASTLANE_SESSION`, then rerun the setup script and Squirrel doctor.
+
+### 2026-07-01
+Topic:
+- Add backend trigger gating for Squirrel `/rime-suggest`.
+
+Changes:
+- `/rime-suggest` now returns `triggerDecision`.
+- Rime candidates are still returned on every response, but model/RAG side candidates are skipped for raw pinyin fallback, unstable composing updates, full visible Rime pages, or too-short candidate signals.
+- Debug page JSON now shows the Rime sidecar decision and cache metadata.
+- Swift prototype models and the Squirrel patch pack preserve the new trigger/merge fields.
+
+Verification:
+- 51 Python tests passed.
+- Acceptance passed.
+- macOS prototype build passed.
+- Swift Rime sidecar preview prints `triggerDecision.shouldRefresh`.

@@ -122,6 +122,28 @@ Only the latest debounced fingerprint is sent. Responses are dropped if request 
 
 The Python sidecar also keeps a short TTL cache for equivalent `/rime-suggest` payloads. The cache is process-local, excludes `requestSeq` and `sessionId`, and is invalidated by memory event/action counts plus commit/action/seed calls. This catches repeated Squirrel refreshes that survive frontend debounce.
 
+The Python sidecar now has a second guard before model/RAG work:
+
+```text
+Rime context -> semantic query -> triggerDecision
+```
+
+It returns Rime candidates on every response, but skips model/RAG side lanes when the request is still raw pinyin fallback, has no stable Rime candidate, has no visible side slot, or has only a one-character candidate before idle. The response exposes:
+
+```json
+{
+  "triggerDecision": {
+    "shouldRefresh": false,
+    "reason": "skip: composing without stable Rime candidate"
+  },
+  "mergePolicy": {
+    "sideCandidatesEnabled": false
+  }
+}
+```
+
+This keeps the real Squirrel key path cheap even when Rime fires many panel refreshes. Frontend debounce and the server TTL cache still matter, but they are no longer the only protection against calling retrieval/model code on every composing update.
+
 ### 5. Candidate Display Merge
 
 Short-term path:

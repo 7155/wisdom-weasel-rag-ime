@@ -216,6 +216,28 @@ Next:
 - Finish Xcode installation from an interactive Apple-authenticated terminal, or provide `FASTLANE_SESSION`, then rerun `scripts/setup_xcode_for_squirrel.sh`.
 - After full Xcode is installed, run `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh` before building patched Squirrel.
 
+### 2026-07-01 00:45 CST
+Problem:
+- Squirrel can refresh candidates on nearly every composing event, so relying only on frontend debounce and short TTL cache still risks running model/RAG work for raw pinyin noise.
+
+Changes:
+- Added a Rime-specific side candidate trigger decision in `rag_ime/rime_sidecar.py`.
+- `/rime-suggest` now always preserves Rime candidates but skips model/RAG side lanes when the request has raw-pinyin fallback, no stable Rime candidate, no visible side slot, disabled side candidates, or a too-short candidate before idle.
+- Response JSON now includes `triggerDecision` and `mergePolicy.sideCandidatesEnabled`.
+- The browser debug page probes `/api/rime-suggest` and shows trigger/cache/display metadata in the JSON panel.
+- Swift prototype models and the Squirrel patch pack now preserve the new trigger/merge fields.
+
+Commands:
+- `node --check debug/app.js`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `scripts/build_macos_frontend.sh`
+- `RAG_IME_SQUIRREL_DRY_RUN=1 scripts/prepare_squirrel_workspace.sh`
+- `build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-sidecar-json`
+
+Next:
+- When Xcode is available, validate the same trigger behavior inside patched Squirrel's real update loop.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.

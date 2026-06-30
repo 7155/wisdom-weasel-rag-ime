@@ -115,6 +115,15 @@ python3 -m rag_ime.cli suggest-json ...
 
 The response includes `displayCandidates` where Rime candidates keep `selectionAction: select_rime_candidate`, while model/RAG side candidates use `selectionAction: commit_side_candidate`. The semantic query is built from commit preview or Rime candidates before falling back to raw input.
 
+The response also includes `triggerDecision`. This is the backend guard that keeps the input method small and responsive:
+
+- Rime candidates are always returned.
+- Model/RAG side lanes are skipped for raw pinyin fallback, empty input, no side slot, or composing updates without stable Rime candidates.
+- `forceSideCandidates: true` can be used by debug tooling to force a refresh.
+- Skipped refreshes return empty `modelPredictions` / `ragCandidates` and `mergePolicy.sideCandidatesEnabled: false`.
+
+The debug page probes `/api/rime-suggest` alongside `/api/suggest` and shows `queryBasis`, `triggerDecision`, `displayCandidates`, and cache metadata in the JSON panel. This is only for backend inspection; it does not change the browser prototype's visible candidate layout.
+
 The local HTTP server keeps a short TTL cache for repeated equivalent `/rime-suggest` payloads. The cache key excludes `requestSeq` and `sessionId`, but includes payload content, memory event/action counts, project, and predictor configuration. Cached responses rewrite `requestSeq` and `sessionId` to the current request and include:
 
 ```json

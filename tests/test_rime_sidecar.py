@@ -13,6 +13,7 @@ from rag_ime.models import ModelPrediction
 from rag_ime.rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
+    decide_side_candidate_refresh,
     parse_rime_context_payload,
 )
 
@@ -154,6 +155,8 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(side_items[1]["sourceType"], "rag")
         self.assertEqual(response["mergePolicy"]["maxModelSideCandidates"], 1)
         self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: stable Rime candidates")
 
     def test_model_predictions_cannot_consume_all_side_slots(self) -> None:
         response = build_rime_sidecar_response(
@@ -175,6 +178,71 @@ class RimeSidecarTests(unittest.TestCase):
         side_items = [item for item in response["displayCandidates"] if item["sourceType"] != "rime"]
         self.assertEqual([item["sourceType"] for item in side_items], ["model", "rag", "rag"])
         self.assertEqual(len(response["modelPredictions"]), 3)
+
+    def test_dirty_raw_pinyin_without_rime_candidates_skips_side_lanes(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-dirty-pinyin",
+                "requestSeq": 11,
+                "rawInput": "jiubiruwopinshishur",
+                "preedit": "jiubiruwopinshishur",
+                "committedContext": "用户正在讨论 RAG 输入法如何复用 Rime",
+                "maxVisibleCandidates": 6,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+        )
+        self.assertEqual(self.predictor.last_current_input, "")
+        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: composing without stable Rime candidate")
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertEqual(response["ragCandidates"], [])
+        self.assertEqual(response["displayCandidates"], [])
+        self.assertFalse(response["mergePolicy"]["sideCandidatesEnabled"])
+
+    def test_short_rime_candidate_skips_until_idle(self) -> None:
+        snapshot = parse_rime_context_payload(
+            {
+                "sessionId": "squirrel-short",
+                "requestSeq": 12,
+                "rawInput": "s",
+                "preedit": "s",
+                "rimeContext": {"candidates": [{"label": "1", "text": "是", "comment": "rime"}]},
+            },
+            default_project="wisdom-weasel-rag-ime",
+        )
+        semantic_query, query_basis = choose_semantic_query(snapshot)
+        decision = decide_side_candidate_refresh(
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            query_basis=query_basis,
+        )
+        self.assertFalse(decision.should_refresh)
+        self.assertEqual(decision.reason, "skip: Rime candidate signal too short")
+
+    def test_force_side_candidates_refreshes_even_for_raw_fallback(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-force",
+                "requestSeq": 13,
+                "rawInput": "rag",
+                "preedit": "rag",
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 1,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+        )
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["triggerDecision"]["reason"], "force: explicit side candidate refresh")
+        self.assertEqual(self.predictor.last_current_input, "rag")
+        self.assertEqual(response["displayCandidates"][0]["sourceType"], "model")
 
     def test_cli_rime_suggest_json_reads_payload_file(self) -> None:
         payload = {
