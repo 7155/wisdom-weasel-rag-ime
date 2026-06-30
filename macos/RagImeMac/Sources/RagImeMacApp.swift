@@ -22,6 +22,10 @@ final class RagImeAppDelegate: NSObject, NSApplicationDelegate {
 enum RagImeMacMain {
     static func main() {
         let arguments = Set(CommandLine.arguments.dropFirst())
+        if arguments.contains("--print-config") {
+            runPrintConfig()
+            return
+        }
         if arguments.contains("--preview-json") {
             runPreviewJSON()
             return
@@ -36,6 +40,21 @@ enum RagImeMacMain {
         app.delegate = delegate
         app.run()
         _ = delegate
+    }
+
+    private static func runPrintConfig() {
+        let config = RagBridgeConfig.load()
+        do {
+            let data = try JSONSerialization.data(
+                withJSONObject: config.dictionary(),
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            )
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        } catch {
+            FileHandle.standardError.write(Data("RagImeMac config print failed: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
     }
 
     private static func runPreviewJSON() {

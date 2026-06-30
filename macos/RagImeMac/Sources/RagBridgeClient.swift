@@ -6,27 +6,111 @@ struct RagBridgeConfig {
     let pythonExecutable: String
     let project: String
     let topK: Int
+    let configSource: String
 
     static func load() -> RagBridgeConfig {
         let env = ProcessInfo.processInfo.environment
         let bundle = Bundle.main
+        let userConfig = RagBridgeConfigFile.userConfig()
+        let bundledConfig = RagBridgeConfigFile.bundledConfig(in: bundle)
         let repoRoot = env["RAG_IME_REPO_ROOT"]
+            ?? userConfig.string("repoRoot")
+            ?? bundledConfig.string("repoRoot")
             ?? bundle.object(forInfoDictionaryKey: "RagImeRepoRoot") as? String
             ?? FileManager.default.currentDirectoryPath
         let dbPath = env["RAG_IME_DB_PATH"]
+            ?? userConfig.string("dbPath")
+            ?? bundledConfig.string("dbPath")
             ?? bundle.object(forInfoDictionaryKey: "RagImeDBPath") as? String
             ?? "\(repoRoot)/.rag-ime-data/rag-ime.sqlite"
         let python = env["RAG_IME_PYTHON"]
+            ?? userConfig.string("pythonExecutable")
+            ?? bundledConfig.string("pythonExecutable")
             ?? bundle.object(forInfoDictionaryKey: "RagImePythonExecutable") as? String
             ?? "/usr/bin/python3"
         let project = env["RAG_IME_PROJECT"]
+            ?? userConfig.string("project")
+            ?? bundledConfig.string("project")
             ?? bundle.object(forInfoDictionaryKey: "RagImeProject") as? String
             ?? "wisdom-weasel-rag-ime"
         let topKText = env["RAG_IME_TOP_K"]
         let topK = topKText.flatMap(Int.init)
+            ?? userConfig.int("topK")
+            ?? bundledConfig.int("topK")
             ?? bundle.object(forInfoDictionaryKey: "RagImeTopK") as? Int
             ?? 5
-        return RagBridgeConfig(repoRoot: repoRoot, dbPath: dbPath, pythonExecutable: python, project: project, topK: topK)
+        return RagBridgeConfig(
+            repoRoot: repoRoot,
+            dbPath: dbPath,
+            pythonExecutable: python,
+            project: project,
+            topK: topK,
+            configSource: userConfig.source ?? bundledConfig.source ?? "environment/plist/default"
+        )
+    }
+
+    func dictionary() -> [String: Any] {
+        [
+            "repoRoot": repoRoot,
+            "dbPath": dbPath,
+            "pythonExecutable": pythonExecutable,
+            "project": project,
+            "topK": topK,
+            "configSource": configSource,
+        ]
+    }
+}
+
+private struct RagBridgeConfigFile {
+    let values: [String: Any]
+    let source: String?
+
+    static func userConfig() -> RagBridgeConfigFile {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let url = home
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("RagImeMac", isDirectory: true)
+            .appendingPathComponent("bridge-config.json", isDirectory: false)
+        return load(url: url)
+    }
+
+    static func bundledConfig(in bundle: Bundle) -> RagBridgeConfigFile {
+        guard let url = bundle.url(forResource: "bridge-config", withExtension: "json") else {
+            return RagBridgeConfigFile(values: [:], source: nil)
+        }
+        return load(url: url)
+    }
+
+    static func load(url: URL) -> RagBridgeConfigFile {
+        guard
+            let data = try? Data(contentsOf: url),
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let values = object as? [String: Any]
+        else {
+            return RagBridgeConfigFile(values: [:], source: nil)
+        }
+        return RagBridgeConfigFile(values: values, source: url.path)
+    }
+
+    func string(_ key: String) -> String? {
+        guard let value = values[key] as? String, !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    func int(_ key: String) -> Int? {
+        if let value = values[key] as? Int {
+            return value
+        }
+        if let value = values[key] as? NSNumber {
+            return value.intValue
+        }
+        if let value = values[key] as? String {
+            return Int(value)
+        }
+        return nil
     }
 }
 

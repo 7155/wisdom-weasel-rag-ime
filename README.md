@@ -148,6 +148,12 @@ Build the macOS frontend adapter:
 scripts/build_macos_frontend.sh
 ```
 
+Inspect the runtime bridge config:
+
+```bash
+build/RagImeMac.app/Contents/MacOS/RagImeMac --print-config
+```
+
 Verify the Swift frontend can call the Python RAG backend:
 
 ```bash
@@ -165,6 +171,8 @@ Install the local input method app:
 ```bash
 scripts/install_macos_frontend.sh
 ```
+
+The installer writes a user-level bridge config at `~/Library/Application Support/RagImeMac/bridge-config.json` so the installed input method can find this checkout, the local SQLite DB, and the Python executable.
 
 Use the shared-core JSON command from `pi-rag-memory-extension`:
 
