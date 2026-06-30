@@ -2,6 +2,25 @@
 
 ### 2026-07-01
 Topic:
+- Add instant local-model prediction profiles.
+
+Changes:
+- Added `RAG_IME_PREDICTOR_PROFILE=instant` for small instruct models: chat mode, 350 ms timeout, 8 output tokens, low sampling, and thinking disabled.
+- Added `RAG_IME_PREDICTOR_PROFILE=completion-instant` for base-model or llama.cpp-style completion servers.
+- Added `RAG_IME_PREDICTOR_DISABLE_THINKING=1`.
+- The setting injects `chat_template_kwargs.enable_thinking=false` while preserving extra request-body fields.
+- Prediction benchmark and eval reports now expose `providerProfile`.
+- Updated local model docs and Wisdom-Weasel issue mapping.
+
+Verification:
+- Predictor tests passed: 8 tests.
+- Predictor + Codex-history tests passed: 17 tests.
+- Full suite passed: 67 tests.
+- Fixture eval, fixture acceptance, instant-profile fail-open benchmark, `py_compile`, and `git diff --check` passed.
+- Real local-model speed testing is still pending because no model endpoint was listening on 127.0.0.1 ports 8000, 8080, 1234, or 11434.
+
+### 2026-07-01
+Topic:
 - Improve `/rime-suggest` cache hits for real IME composing refreshes.
 
 Changes:

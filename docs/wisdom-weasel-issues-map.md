@@ -35,7 +35,7 @@ Rime commit
 
 | Issue | Wisdom-Weasel 诉求 | RAG-IME 对应策略 | 当前状态 |
 | --- | --- | --- | --- |
-| [#16](https://github.com/scukeqi/Wisdom-Weasel/issues/16) | 云端模型 thinking/base 模型配置不透明 | 默认不依赖云端；本地 OpenAI-compatible provider 只要求短候选，失败返回空候选；支持 `RAG_IME_PREDICTOR_EXTRA_BODY_JSON` / `RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON`；新增 `RAG_IME_PREDICTOR_PROMPT_MODE=chat|completion` | 已覆盖 chat/base 两种 OpenAI-compatible 入口 |
+| [#16](https://github.com/scukeqi/Wisdom-Weasel/issues/16) | 云端模型 thinking/base 模型配置不透明 | 默认不依赖云端；本地 OpenAI-compatible provider 只要求短候选，失败返回空候选；支持 `RAG_IME_PREDICTOR_PROFILE=instant|completion-instant`、`RAG_IME_PREDICTOR_DISABLE_THINKING=1`、`RAG_IME_PREDICTOR_EXTRA_BODY_JSON` / `RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON` | 已覆盖 chat/base 两种 OpenAI-compatible 入口 |
 | [#15](https://github.com/scukeqi/Wisdom-Weasel/issues/15) | 小白配置教程不足 | 保留 `README.md`、`docs/macos-frontend-adapter.md`、debug page 和 preview-json 验证命令 | 继续完善安装/配置文档 |
 | [#13](https://github.com/scukeqi/Wisdom-Weasel/issues/13) | 将用户输入作为模型已有输出，然后继续生成 | 将最近 committed input 历史和显式 recentContext 合并，传给本地小模型预测 | 本轮已实现历史上下文预测 |
 | [#12](https://github.com/scukeqi/Wisdom-Weasel/issues/12) | 4B 模型实时解码、rerank 延迟约 200ms | 用 `predict-benchmark` / `eval-prediction` 固定延迟和质量门槛；Squirrel patch 已加 debounce；completion mode 可测试 base 模型前缀补全 | 已有 benchmark/eval 和 completion mode，待真模型评测 |
@@ -72,16 +72,16 @@ commit text
 ```text
 RAG_IME_HISTORY_CONTEXT_EVENTS=6
 RAG_IME_HISTORY_CONTEXT_CHARS=420
-RAG_IME_PREDICTOR_PROMPT_MODE=chat
+RAG_IME_PREDICTOR_PROFILE=instant
 ```
 
 把 `RAG_IME_HISTORY_CONTEXT_EVENTS=0` 即可关闭历史输入上下文进入预测。
-把 `RAG_IME_PREDICTOR_PROMPT_MODE=completion` 即可让 OpenAI-compatible provider 调 `/v1/completions`，用 `history + current_input` 前缀补全并通过 `n` 请求多个候选。
+把 `RAG_IME_PREDICTOR_PROFILE=completion-instant` 即可让 OpenAI-compatible provider 调 `/v1/completions`，用 `history + current_input` 前缀补全并通过 `n` 请求多个候选。
 
 ## 下一批可做
 
 1. 把 `PredictionProvider` 继续升级：可选 streaming 首候选、原生 llama.cpp/MLX KV cache/batch sampling。
 2. 用 `predict-benchmark` 对 Qwen/llama.cpp/MLX endpoint 跑真模型，记录 p50/max latency 和候选命中。
-3. 针对 Qwen 等模型继续压制 verbose 输出；当前已清理 `<think>`/JSON/list 格式，但最好仍在模型端禁用 thinking。
+3. 针对 Qwen 等模型继续压制 verbose 输出；当前支持 `RAG_IME_PREDICTOR_PROFILE=instant` / `RAG_IME_PREDICTOR_DISABLE_THINKING=1`，并在解析层继续清理 `<think>`/JSON/list 格式。
 4. 将 history context 拆成 `typed_history`、`accepted_memory`、`active_document_tail` 三类，减少上下文噪声。
 5. 做 Rime candidate reranker，而不是端到端拼音生成：输入 Rime candidates + RAG hits + active context，输出 side score/reorder 建议。

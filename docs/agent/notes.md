@@ -7,6 +7,42 @@
 
 ## Log
 
+### 2026-07-01 06:58 CST
+Problem:
+- Local Qwen-style prediction servers can emit thinking text, which wastes latency and can leak into IME candidates.
+- The project needed a concrete low-latency model test profile instead of hand-writing every timeout/token/thinking option.
+
+Changes:
+- Added `RAG_IME_PREDICTOR_PROFILE=instant` for small instruct models: chat mode, 350 ms timeout, 8 output tokens, low temperature/top_p, and thinking disabled.
+- Added `RAG_IME_PREDICTOR_PROFILE=completion-instant` for base-model or llama.cpp-style `/v1/completions` servers.
+- Added `RAG_IME_PREDICTOR_DISABLE_THINKING=1`.
+- The env flag injects `chat_template_kwargs.enable_thinking=false` while preserving any other `RAG_IME_PREDICTOR_EXTRA_BODY_JSON` fields.
+- Prediction benchmark and eval reports now expose `providerProfile`.
+- Updated local model docs and Wisdom-Weasel issue mapping.
+
+Commands:
+- `git status -sb`
+- `git diff --stat`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+- `python3 -m py_compile rag_ime/predictor.py rag_ime/cli.py tests/test_predictor.py`
+- `python3 -m rag_ime.cli --core-mode fixture eval-prediction --cases-file docs/eval/codex-history-cases.example.jsonl --max-candidates 3 --latency-budget-ms 150`
+- `RAG_IME_PREDICTOR_PROVIDER=openai-compatible RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:9 RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B RAG_IME_PREDICTOR_PROFILE=instant python3 -m rag_ime.cli --core-mode fixture predict-benchmark --case 'RAG 输入法' --recent-context '用户正在写本地记忆输入法' --max-candidates 3 --latency-budget-ms 150`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `git diff --check`
+
+Git snapshot:
+- Branch: `codex/wisdom-weasel-rag-ime-mvp`.
+- Diff before commit: 8 files changed, 233 insertions, 22 deletions.
+
+Verification:
+- Predictor tests passed: 8 tests.
+- Predictor + Codex-history tests passed: 17 tests.
+- Full suite passed: 67 tests.
+- Fixture eval and instant-profile fail-open benchmark passed.
+- Fixture acceptance and `git diff --check` passed.
+- No local OpenAI-compatible or Ollama model endpoint was listening on 127.0.0.1 ports 8000, 8080, 1234, or 11434, so real Qwen/MLX/llama.cpp speed testing is still pending.
+
 ### 2026-07-01 06:51 CST
 Problem:
 - `/rime-suggest` cache ignored only `requestSeq` and `sessionId`, so stable Rime candidates with changing raw pinyin/preedit still missed the cache.

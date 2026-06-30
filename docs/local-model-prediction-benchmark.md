@@ -10,13 +10,23 @@ Example for a local Qwen-compatible server:
 export RAG_IME_PREDICTOR_PROVIDER=openai-compatible
 export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000
 export RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B
-export RAG_IME_PREDICTOR_PROMPT_MODE=chat
-export RAG_IME_PREDICTOR_TIMEOUT_MS=800
-export RAG_IME_PREDICTOR_MAX_TOKENS=12
-export RAG_IME_PREDICTOR_EXTRA_BODY_JSON='{"seed":7,"chat_template_kwargs":{"enable_thinking":false}}'
+export RAG_IME_PREDICTOR_PROFILE=instant
+export RAG_IME_PREDICTOR_EXTRA_BODY_JSON='{"seed":7}'
 ```
 
 The prompt asks for short candidates only and the provider fails open on timeout. This carries forward the Wisdom-Weasel lesson we are using as a design constraint: typing must not block on model output.
+
+For Qwen-style local servers, `RAG_IME_PREDICTOR_PROFILE=instant` is the recommended first test. It sets:
+
+```text
+prompt mode: chat
+timeout: 350 ms
+max output: 8 tokens
+temperature/top_p: 0.15 / 0.85
+thinking: disabled through chat_template_kwargs.enable_thinking=false
+```
+
+`RAG_IME_PREDICTOR_DISABLE_THINKING=1` can be used separately when you want custom profile settings. The parser still strips `<think>` output as a fallback, but disabling thinking at the server is faster and cleaner.
 
 Some OpenAI-compatible servers need custom request fields or headers. Use:
 
@@ -27,10 +37,10 @@ export RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON='{"X-Custom-Header":"value"}'
 
 Invalid JSON is ignored so a bad optional setting does not break typing.
 
-For a base model or a llama.cpp-compatible server that exposes `/v1/completions`, switch to prefix-completion mode:
+For a base model or a llama.cpp-compatible server that exposes `/v1/completions`, switch to the completion instant profile:
 
 ```bash
-export RAG_IME_PREDICTOR_PROMPT_MODE=completion
+export RAG_IME_PREDICTOR_PROFILE=completion-instant
 ```
 
 In this mode the provider sends `recent_context + current_input` as the prompt and requests `n=max_candidates` completions. That is closer to Wisdom-Weasel's fast base-model path than chat prompting because it avoids a repeated system instruction. It is not the same as a native llama.cpp provider with KV cache reuse; it is the portable OpenAI-compatible step before that provider exists.
@@ -53,6 +63,7 @@ Output shape:
 {
   "schemaVersion": "rag-ime.predict-benchmark.v1",
   "providerName": "local-openai-compatible",
+  "providerProfile": "instant",
   "providerConfigured": true,
   "summary": {
     "caseCount": 3,
@@ -103,6 +114,7 @@ Report shape:
   },
   "prediction": {
     "providerName": "local-openai-compatible",
+    "providerProfile": "instant",
     "providerConfigured": true,
     "maxCandidates": 3,
     "latencyBudgetMs": 150,
@@ -122,6 +134,6 @@ For the Squirrel/Rime sidecar path:
 - no UI blocking when a request times out;
 - stale responses must be discarded by request sequence on the frontend;
 - Rime candidates remain first, model predictions only fill spare side-candidate slots.
-- Qwen-style thinking output and JSON/list output are cleaned before candidate ranking, but the preferred config should still disable thinking at the model server.
+- Qwen-style thinking output and JSON/list output are cleaned before candidate ranking, but the preferred config should still use `RAG_IME_PREDICTOR_PROFILE=instant` or set `RAG_IME_PREDICTOR_DISABLE_THINKING=1`.
 
 The exact model can change later. The benchmark command is the stable gate.

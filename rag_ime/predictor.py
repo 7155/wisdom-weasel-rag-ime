@@ -29,6 +29,7 @@ class OpenAICompatiblePredictionConfig:
     base_url: str
     model: str
     api_key: str = ""
+    profile: str = "custom"
     prompt_mode: str = "chat"
     timeout_s: float = 0.8
     max_tokens: int = 12
@@ -43,6 +44,16 @@ class OpenAICompatiblePredictionConfig:
 class PredictionBenchmarkCase:
     current_input: str
     recent_context: str = ""
+
+
+@dataclass(frozen=True)
+class PredictionProfileDefaults:
+    prompt_mode: str = "chat"
+    timeout_ms: float = 800
+    max_tokens: int = 12
+    temperature: float = 0.2
+    top_p: float = 0.9
+    disable_thinking: bool = False
 
 
 class NullPredictionProvider:
@@ -93,6 +104,7 @@ class OpenAICompatiblePredictionProvider:
                 metadata={
                     "model": self.config.model,
                     "base_url": self.config.base_url,
+                    "profile": self.config.profile,
                     "prompt_mode": _normalized_prompt_mode(self.config.prompt_mode),
                     "raw_text": raw_text,
                 },
@@ -189,18 +201,21 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
     model = source.get("RAG_IME_PREDICTOR_MODEL", "").strip()
     if provider not in ("openai", "openai-compatible") or not base_url or not model:
         return NullPredictionProvider()
+    profile = _normalized_predictor_profile(source.get("RAG_IME_PREDICTOR_PROFILE", "custom"))
+    defaults = _prediction_profile_defaults(profile)
     return OpenAICompatiblePredictionProvider(
         OpenAICompatiblePredictionConfig(
             base_url=base_url,
             model=model,
             api_key=source.get("RAG_IME_PREDICTOR_API_KEY", "").strip(),
-            prompt_mode=source.get("RAG_IME_PREDICTOR_PROMPT_MODE", "chat").strip(),
-            timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", 800) / 1000,
-            max_tokens=int(_float_env(source, "RAG_IME_PREDICTOR_MAX_TOKENS", 12)),
-            temperature=_float_env(source, "RAG_IME_PREDICTOR_TEMPERATURE", 0.2),
-            top_p=_float_env(source, "RAG_IME_PREDICTOR_TOP_P", 0.9),
+            profile=profile,
+            prompt_mode=source.get("RAG_IME_PREDICTOR_PROMPT_MODE", defaults.prompt_mode).strip(),
+            timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", defaults.timeout_ms) / 1000,
+            max_tokens=int(_float_env(source, "RAG_IME_PREDICTOR_MAX_TOKENS", defaults.max_tokens)),
+            temperature=_float_env(source, "RAG_IME_PREDICTOR_TEMPERATURE", defaults.temperature),
+            top_p=_float_env(source, "RAG_IME_PREDICTOR_TOP_P", defaults.top_p),
             provider_name="local-openai-compatible",
-            extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
+            extra_body=_prediction_extra_body_from_env(source, disable_thinking_default=defaults.disable_thinking),
             extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
         )
     )
@@ -244,6 +259,7 @@ def benchmark_prediction_provider(
     return {
         "schemaVersion": "rag-ime.predict-benchmark.v1",
         "providerName": provider_name,
+        "providerProfile": _prediction_provider_profile(provider),
         "providerConfigured": provider_name != "NullPredictionProvider",
         "maxCandidates": max_candidates,
         "latencyBudgetMs": latency_budget_ms,
@@ -378,6 +394,69 @@ def _json_object_env(env: dict[str, str], name: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _prediction_extra_body_from_env(env: dict[str, str], *, disable_thinking_default: bool = False) -> dict[str, Any]:
+    extra_body = _json_object_env(env, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON")
+    if _bool_env(env, "RAG_IME_PREDICTOR_DISABLE_THINKING", default=disable_thinking_default):
+        chat_template_kwargs = extra_body.get("chat_template_kwargs")
+        if not isinstance(chat_template_kwargs, dict):
+            chat_template_kwargs = {}
+        extra_body = {
+            **extra_body,
+            "chat_template_kwargs": {
+                **chat_template_kwargs,
+                "enable_thinking": False,
+            },
+        }
+    return extra_body
+
+
+def _normalized_predictor_profile(profile: str) -> str:
+    normalized = (profile or "custom").strip().lower()
+    aliases = {
+        "fast": "instant",
+        "qwen-instant": "instant",
+        "no-thinking": "instant",
+        "nothinking": "instant",
+        "base": "completion-instant",
+        "prefix": "completion-instant",
+        "completion": "completion-instant",
+        "base-instant": "completion-instant",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized in {"custom", "instant", "completion-instant"}:
+        return normalized
+    return "custom"
+
+
+def _prediction_profile_defaults(profile: str) -> PredictionProfileDefaults:
+    normalized = _normalized_predictor_profile(profile)
+    if normalized == "instant":
+        return PredictionProfileDefaults(
+            prompt_mode="chat",
+            timeout_ms=350,
+            max_tokens=8,
+            temperature=0.15,
+            top_p=0.85,
+            disable_thinking=True,
+        )
+    if normalized == "completion-instant":
+        return PredictionProfileDefaults(
+            prompt_mode="completion",
+            timeout_ms=350,
+            max_tokens=8,
+            temperature=0.15,
+            top_p=0.9,
+            disable_thinking=False,
+        )
+    return PredictionProfileDefaults()
+
+
+def _prediction_provider_profile(provider: PredictionProvider) -> str:
+    config = getattr(provider, "config", None)
+    profile = getattr(config, "profile", "")
+    return profile if isinstance(profile, str) and profile else "none"
+
+
 def _json_string_map_env(env: dict[str, str], name: str) -> dict[str, str]:
     raw = _json_object_env(env, name)
     result: dict[str, str] = {}
@@ -385,3 +464,12 @@ def _json_string_map_env(env: dict[str, str], name: str) -> dict[str, str]:
         if isinstance(key, str) and isinstance(value, str):
             result[key] = value
     return result
+
+
+def _bool_env(env: dict[str, str], name: str, *, default: bool) -> bool:
+    raw = env.get(name, "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
