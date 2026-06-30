@@ -141,7 +141,15 @@ Target source boundaries:
 
 ### Phase 2: Side Candidate Contract
 
-Reuse the current JSON backend contract, but make it Rime-aware:
+Reuse the current JSON backend contract, but make it Rime-aware. The current command is:
+
+```bash
+python3 -m rag_ime.cli rime-suggest-json --payload-file request.json
+```
+
+The debug API exposes the same contract at `POST /api/rime-suggest`.
+
+Request shape:
 
 ```json
 {
@@ -173,6 +181,8 @@ Return:
 ```
 
 The sidecar must be optional and fail-closed: when it times out or errors, normal Rime typing continues.
+
+The response also includes `displayCandidates`, a merged display list where Rime rows keep `selectionAction: select_rime_candidate` and model/RAG rows use `selectionAction: commit_side_candidate`.
 
 ### Phase 3: Candidate Merge
 

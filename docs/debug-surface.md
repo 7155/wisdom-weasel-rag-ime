@@ -77,6 +77,7 @@ Endpoints:
 GET  /api/health
 POST /api/seed
 POST /api/suggest
+POST /api/rime-suggest
 POST /api/action
 POST /api/commit
 ```
@@ -86,6 +87,26 @@ POST /api/commit
 ```bash
 python3 -m rag_ime.cli suggest-json ...
 ```
+
+`/api/rime-suggest` returns the Squirrel/Rime side-candidate payload. It accepts structured Rime context:
+
+```json
+{
+  "sessionId": "squirrel-debug",
+  "requestSeq": 1,
+  "rawInput": "ragshurufa",
+  "preedit": "ragshurufa",
+  "committedContext": "正在设计 RAG 输入法",
+  "rimeContext": {
+    "candidates": [
+      {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+      {"label": "2", "text": "RAG 是", "comment": "rime"}
+    ]
+  }
+}
+```
+
+The response includes `displayCandidates` where Rime candidates keep `selectionAction: select_rime_candidate`, while model/RAG side candidates use `selectionAction: commit_side_candidate`. The semantic query is built from commit preview or Rime candidates before falling back to raw input.
 
 The page falls back to local mock suggestions if the API is unavailable, so visual iteration can continue while backend work is in progress.
 
