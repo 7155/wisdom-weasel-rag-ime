@@ -2,6 +2,29 @@
 
 ### 2026-06-30
 Topic:
+- Add a local Codex-history benchmark path for RAG/memory quality.
+
+Decisions:
+- Treat Codex history as local committed-text evidence and route it through the same shared core boundary as IME commits.
+- Evaluate final suggestions, not only raw retrieval rows, because input-method quality is candidate quality.
+
+Changes:
+- Added `rag_ime.codex_history`.
+- Added `import-codex-history` and `eval-codex-history` CLI commands.
+- Added stable `record:<hash>` duplicate skipping for repeated imports.
+- Added tests and `docs/codex-history-eval.md`.
+
+Verification:
+- Codex JSONL parser skips invalid lines and extracts `content[].text` / message fields.
+- Dry-run import does not write a DB.
+- Imported records are retrievable and pass explicit JSONL eval cases.
+
+Next steps:
+- Run this against real Codex history after selecting a bounded path.
+- Add session split evaluation and VCP/cache-hit comparisons.
+
+### 2026-06-30
+Topic:
 - Make full Xcode setup explicit for patched Squirrel validation.
 
 Decisions:

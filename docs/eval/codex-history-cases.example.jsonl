@@ -1,0 +1,3 @@
+{"id":"squirrel-rag","query":"Squirrel RAG 输入法候选","expectedTerms":["Squirrel","本地记忆"]}
+{"id":"agent-hook","query":"首次运行自动注入背景记忆","expectedTerms":["PROJECT_MEMORY_BLOCK"]}
+{"id":"wisdom-weasel-boundary","query":"为什么不能让大模型直接预测脏拼音","expectedTerms":["Rime","拼音解析"]}

@@ -7,6 +7,28 @@
 
 ## Log
 
+### 2026-06-30 23:58 CST
+Problem:
+- The RAG/memory system needed a real local benchmark source, not only deterministic demo memories.
+
+Changes:
+- Added `rag_ime.codex_history` for local Codex JSONL parsing.
+- Added `import-codex-history` CLI with dry-run and bounded import.
+- Added default duplicate skipping using stable `record:<hash>` tags.
+- Added `eval-codex-history` CLI for explicit query/expectedTerms retrieval evaluation.
+- Documented the workflow in `docs/codex-history-eval.md`.
+
+Findings:
+- The import path reuses the same `InputEvent` -> SQLite/FTS5 -> suggestion pipeline as normal IME input, so the evaluation checks product candidates instead of raw chunks.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+
+Next:
+- Add leave-one-session-out evaluation after importing real Codex logs.
+- Compare FTS5-only against embedding/rerank and VCP-style cache behavior on the same cases.
+
 ### 2026-06-30 23:40 CST
 Problem:
 - Full patched Squirrel validation is blocked by missing full Xcode on this Mac.

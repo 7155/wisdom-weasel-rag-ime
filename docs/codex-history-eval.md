@@ -1,0 +1,101 @@
+# Codex History Import And Retrieval Evaluation
+
+RAG-IME needs a real personal-memory benchmark, not only toy demo memories. The first local benchmark source is Codex history because it contains dense project decisions, repeated wording, user preferences, and long-running implementation context.
+
+This workflow is local-only. It never uploads Codex logs. The user must pass an explicit path before anything is parsed.
+
+## Import Shape
+
+Codex history is treated as committed text evidence:
+
+```text
+Codex JSONL
+  -> text fragments from message/content/text/summary/objective fields
+  -> InputEvent(source="codex_history", schema_id="codex_history", app="codex")
+  -> local SQLite + FTS5 memory store
+  -> same suggestion/action/agent-hook path as normal IME input
+```
+
+This keeps the benchmark aligned with the product: the input method and PI extension can share the same core API instead of building separate memory databases.
+
+## Dry Run
+
+Preview parsed records without writing the database:
+
+```bash
+python3 -m rag_ime.cli import-codex-history \
+  --path "$HOME/.codex/session_index.jsonl" \
+  --dry-run \
+  --limit 20
+```
+
+For a directory of JSONL files:
+
+```bash
+python3 -m rag_ime.cli import-codex-history \
+  --path "$HOME/.codex" \
+  --dry-run \
+  --limit 50
+```
+
+The output includes only short samples so private logs are not dumped into the terminal.
+
+## Real Import
+
+Import a bounded slice into the local RAG-IME DB:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  import-codex-history \
+  --path "$HOME/.codex/session_index.jsonl" \
+  --project wisdom-weasel-rag-ime \
+  --limit 500
+```
+
+Each imported record receives tags:
+
+```text
+codex-history
+role:<role when available>
+record:<stable hash prefix>
+```
+
+The import command uses `record:<stable hash prefix>` to skip duplicate records by default. Use `--allow-duplicates` only when intentionally replaying a corpus.
+
+## Evaluation Cases
+
+Create a JSONL case file:
+
+```jsonl
+{"id":"squirrel-rag","query":"Squirrel RAG 输入法候选","expectedTerms":["Squirrel","本地记忆"]}
+{"id":"agent-hook","query":"首次运行自动注入背景记忆","expectedTerms":["PROJECT_MEMORY_BLOCK"]}
+```
+
+Run:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-codex-history \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --top-k 5 \
+  --match any
+```
+
+Use `--match all` for stricter cases where every expected term must appear in the top-K suggestion surface/evidence.
+
+## Why This Matters
+
+Traditional RAG evaluation often asks whether a document chunk was retrieved. For an input method, the better question is:
+
+```text
+When the user is typing a short intent, does the candidate panel surface the prior wording,
+decision, constraint, or project memory that the user would actually choose?
+```
+
+This is why the evaluation checks the final suggestions rather than only raw FTS rows.
+
+## Next Improvements
+
+- Add leave-one-session-out evaluation from Codex logs.
+- Add latency buckets so retrieval quality and input-method responsiveness are measured together.
+- Compare local FTS5, embedding recall, rerank, and VCP-style context cache hit behavior on the same cases.

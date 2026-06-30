@@ -299,6 +299,22 @@ class LocalSqliteCoreClient:
             row = conn.execute("SELECT COUNT(*) AS count FROM memory_actions").fetchone()
         return int(row["count"])
 
+    def has_event_tag(self, tag: str) -> bool:
+        self.initialize()
+        needle = compact_whitespace(tag)
+        if not needle:
+            return False
+        with self._connect() as conn:
+            rows = conn.execute("SELECT tags_json FROM input_events WHERE tags_json LIKE ?", (f'%"{needle}"%',)).fetchall()
+        for row in rows:
+            try:
+                tags = json.loads(row["tags_json"] or "[]")
+            except json.JSONDecodeError:
+                continue
+            if needle in tags:
+                return True
+        return False
+
     def _connect(self) -> sqlite3.Connection:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path)

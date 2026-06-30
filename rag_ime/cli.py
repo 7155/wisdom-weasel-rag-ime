@@ -10,6 +10,13 @@ from typing import Sequence
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .agent_hook import build_first_run_injection
+from .codex_history import (
+    eval_report,
+    evaluate_suggestions,
+    input_event_from_codex_record,
+    load_codex_history_records,
+    load_eval_cases,
+)
 from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, default_fixture_memories
 from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
@@ -108,6 +115,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     hook.add_argument("--project", default="wisdom-weasel-rag-ime")
     hook.add_argument("--query", default="当前项目背景 用户偏好 最近决策 禁止事项 推荐下一步")
     hook.add_argument("--top-k", type=int, default=5)
+
+    import_codex = subparsers.add_parser("import-codex-history", help="Import Codex JSONL history into local memory")
+    import_codex.add_argument("--path", required=True, help="Codex JSONL file or directory containing *.jsonl files")
+    import_codex.add_argument("--project", default="wisdom-weasel-rag-ime")
+    import_codex.add_argument("--limit", type=int, default=200)
+    import_codex.add_argument("--min-chars", type=int, default=12)
+    import_codex.add_argument("--max-chars", type=int, default=1600)
+    import_codex.add_argument("--sample-size", type=int, default=3)
+    import_codex.add_argument("--dry-run", action="store_true", help="Parse and summarize without writing memory")
+    import_codex.add_argument("--allow-duplicates", action="store_true", help="Import records even if their stable record tag already exists")
+
+    eval_codex = subparsers.add_parser("eval-codex-history", help="Evaluate retrieval against explicit JSONL cases")
+    eval_codex.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
+    eval_codex.add_argument("--project", default="wisdom-weasel-rag-ime")
+    eval_codex.add_argument("--top-k", type=int, default=5)
+    eval_codex.add_argument("--match", choices=("any", "all"), default="any")
 
     debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
     debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
@@ -333,6 +356,66 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(render_agent_injection(injection))
         return 0
 
+    if args.command == "import-codex-history":
+        records = load_codex_history_records(
+            Path(args.path),
+            limit=max(0, args.limit),
+            min_chars=max(1, args.min_chars),
+            max_chars=max(16, args.max_chars),
+        )
+        event_ids: list[str] = []
+        duplicate_skipped = 0
+        if not args.dry_run:
+            for record in records:
+                record_tag = f"record:{record.record_id[:12]}"
+                if not args.allow_duplicates and _core_has_event_tag(core, record_tag):
+                    duplicate_skipped += 1
+                    continue
+                event_ids.append(core.record_event(input_event_from_codex_record(record, project=args.project)))
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.codex-history-import.v1",
+                    "path": str(Path(args.path)),
+                    "project": args.project,
+                    "dryRun": args.dry_run,
+                    "records": len(records),
+                    "imported": 0 if args.dry_run else len(event_ids),
+                    "duplicateSkipped": duplicate_skipped,
+                    "eventIds": [] if args.dry_run else event_ids[:10],
+                    "samples": [
+                        {
+                            "recordId": record.record_id,
+                            "sourcePath": record.source_path,
+                            "lineNumber": record.line_number,
+                            "role": record.role,
+                            "text": record.text[:160],
+                        }
+                        for record in records[: max(0, args.sample_size)]
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "eval-codex-history":
+        cases = load_eval_cases(Path(args.cases_file))
+        results = []
+        for case in cases:
+            suggestions = adapter.suggest(
+                SuggestionRequest(
+                    current_input=case.query,
+                    recent_context=case.recent_context,
+                    project=case.project or args.project,
+                    top_k=args.top_k,
+                )
+            )
+            results.append(evaluate_suggestions(case, suggestions, match=args.match))
+        print(json.dumps(eval_report(results), ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "debug-server":
         from .debug_server import DebugServerConfig, run_debug_server
 
@@ -476,6 +559,13 @@ def _read_json_payload(payload_file: str) -> dict[str, object]:
     if not isinstance(data, dict):
         raise SystemExit("JSON payload must be an object")
     return data
+
+
+def _core_has_event_tag(core, tag: str) -> bool:
+    checker = getattr(core, "has_event_tag", None)
+    if not callable(checker):
+        return False
+    return bool(checker(tag))
 
 
 if __name__ == "__main__":

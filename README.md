@@ -165,6 +165,26 @@ Build the Agent first-run memory block:
 python3 -m rag_ime.cli agent-hook --top-k 3
 ```
 
+Preview and import local Codex history for memory/RAG evaluation:
+
+```bash
+python3 -m rag_ime.cli import-codex-history \
+  --path "$HOME/.codex/session_index.jsonl" \
+  --dry-run \
+  --limit 20
+```
+
+Evaluate retrieval quality against explicit cases:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-codex-history \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --top-k 5
+```
+
+See `docs/codex-history-eval.md`.
+
 Inspect trigger policy:
 
 ```bash
