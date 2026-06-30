@@ -193,3 +193,20 @@ Verification:
 
 Next steps:
 - Run doctor on the Xcode machine before building/installing patched Squirrel.
+
+### 2026-07-01
+Topic:
+- Complete the Xcode setup path for Squirrel validation.
+
+Findings:
+- The Mac is still using Command Line Tools at `/Library/Developer/CommandLineTools`.
+- No full Xcode exists under `/Applications` or `/Volumes/undo 4t/Applications`.
+- `xcodes` and `mas` are installed, and `xcodes` lists both `27.0 Beta 2` and `26.6`.
+- A real `RAG_IME_INSTALL_XCODE=xcodes` attempt failed because this non-interactive Codex session has no Apple Developer credentials: `Apple ID: Missing username or a password`.
+
+Changes:
+- `scripts/setup_xcode_for_squirrel.sh` now reports disk space, installed Xcodes, `FASTLANE_SESSION`, and clearer authentication recovery commands.
+- The setup doc now records the current host state and the external-disk install route.
+
+Next steps:
+- Install Xcode from an Apple-authenticated terminal or provide `FASTLANE_SESSION`, then rerun the setup script and Squirrel doctor.

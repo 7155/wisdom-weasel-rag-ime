@@ -194,6 +194,28 @@ Commands:
 Next:
 - Use doctor output as the preflight gate before the full Xcode Squirrel build/install.
 
+### 2026-07-01 00:20 CST
+Problem:
+- The user asked to make the Xcode setup complete for the Squirrel/Rime production route.
+- This host still has only Command Line Tools selected, no full Xcode under `/Applications` or `/Volumes/undo 4t/Applications`.
+- A real `xcodes` install attempt for `27.0 Beta 2` failed in Codex with `Apple ID: Missing username or a password`.
+
+Changes:
+- Hardened `scripts/setup_xcode_for_squirrel.sh` into a fuller preflight and install entrypoint.
+- The script now reports disk space, installed Xcode directories, `FASTLANE_SESSION` state, `xcodes` data source, and a clear Apple Developer authentication recovery path.
+- Added free-space guards for external `xcodes` installation and system `/Applications` App Store installation.
+- Updated Xcode setup docs with the current machine findings and non-interactive authentication options.
+
+Commands:
+- `bash scripts/setup_xcode_for_squirrel.sh`
+- `RAG_IME_INSTALL_XCODE=xcodes RAG_IME_XCODE_VERSION="27.0 Beta 2" bash scripts/setup_xcode_for_squirrel.sh`
+- `RAG_IME_INSTALL_XCODE=mas bash scripts/setup_xcode_for_squirrel.sh`
+- `xcodes list --data-source xcodeReleases --no-color | rg '^(27\\.0 Beta 2|26\\.6)'`
+
+Next:
+- Finish Xcode installation from an interactive Apple-authenticated terminal, or provide `FASTLANE_SESSION`, then rerun `scripts/setup_xcode_for_squirrel.sh`.
+- After full Xcode is installed, run `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh` before building patched Squirrel.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.
