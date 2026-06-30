@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 from collections import OrderedDict
 from dataclasses import replace
@@ -20,6 +21,9 @@ from .text_utils import (
     overlap_terms,
     truncate_text,
 )
+
+
+_IMPORTANT_ASCII_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+#.\-]{2,}")
 
 
 class LocalSqliteCoreClient:
@@ -174,7 +178,7 @@ class LocalSqliteCoreClient:
             current_input=current_input,
             recent_context=recent_context,
             project=project,
-            top_k=max(top_k, 10),
+            top_k=max(top_k * 4, 20),
         )
         ranked = [RankedMemory(memory=memory, score=memory.score, rank=index) for index, memory in enumerate(memories, start=1)]
         suggestions = self.compiler.compile(ranked)[:top_k]
@@ -190,18 +194,19 @@ class LocalSqliteCoreClient:
         top_k: int = 5,
     ) -> list[CoreMemory]:
         self.initialize()
-        query = compact_whitespace(f"{recent_context} {current_input}")
+        raw_query = compact_whitespace(f"{recent_context} {current_input}")
+        query = _expand_query_for_local_rerank(raw_query)
         fts_query = build_fts_query(query)
         if not fts_query:
             rows = self._recent_rows(project=project, limit=top_k)
         else:
-            rows = self._search_rows(fts_query=fts_query, project=project, limit=max(top_k * 4, 20))
+            rows = self._search_rows(fts_query=fts_query, project=project, limit=max(top_k * 8, 50))
             if not rows:
                 rows = self._recent_rows(project=project, limit=top_k)
             elif len(rows) < top_k:
                 rows = self._append_recent_fill(rows, project=project, limit=top_k)
 
-        memories = [self._row_to_memory(row, query=query, project=project) for row in rows]
+        memories = [self._row_to_memory(row, query=query, project=project, raw_query=raw_query) for row in rows]
         memories.sort(key=lambda item: item.score, reverse=True)
         return memories[:top_k]
 
@@ -456,12 +461,25 @@ class LocalSqliteCoreClient:
                 break
         return filled
 
-    def _row_to_memory(self, row: sqlite3.Row, *, query: str, project: str) -> CoreMemory:
+    def _row_to_memory(self, row: sqlite3.Row, *, query: str, project: str, raw_query: str = "") -> CoreMemory:
         event_id = int(row["id"])
         bm25 = float(row["bm25_score"] if row["bm25_score"] is not None else 99.0)
         lexical = _bm25_relevance(bm25)
-        overlap = overlap_terms(query, f"{row['committed_text']} {row['recent_context']} {row['tags_json']}")
+        tags = tuple(json.loads(row["tags_json"] or "[]"))
+        tags_text = " ".join(tags)
+        committed_text = str(row["committed_text"])
+        recent_context = str(row["recent_context"])
+        source_fields = f"{row['source']} {row['app']} {row['schema_id']} {row['provider_name']}"
+        overlap = overlap_terms(query, f"{committed_text} {recent_context} {tags_text}")
         overlap_score = min(1.5, len(overlap) * 0.3)
+        field_boosts = _field_rerank_boosts(
+            query=query,
+            raw_query=raw_query,
+            committed_text=committed_text,
+            recent_context=recent_context,
+            tags_text=tags_text,
+            source_fields=source_fields,
+        )
         accepted = int(row["accepted_count"])
         skipped = int(row["skipped_count"])
         downranked = int(row["downranked"])
@@ -470,8 +488,9 @@ class LocalSqliteCoreClient:
         score = (
             lexical
             + overlap_score
+            + sum(boost for _, boost in field_boosts)
             + project_boost
-            + (2.0 if pinned else 0.0)
+            + (8.0 if pinned else 0.0)
             + accepted * 0.6
             - skipped * 0.3
             - downranked * 0.85
@@ -479,13 +498,15 @@ class LocalSqliteCoreClient:
         reason = [f"fts5:{lexical:.3f}"]
         if overlap:
             reason.append("overlap:" + ",".join(overlap[:4]))
+        for label, boost in field_boosts:
+            if boost > 0:
+                reason.append(f"{label}:{boost:.2f}")
         if pinned:
             reason.append("pinned")
         if accepted:
             reason.append(f"accepted:{accepted}")
         if downranked:
             reason.append(f"downranked:{downranked}")
-        tags = tuple(json.loads(row["tags_json"] or "[]"))
         evidence = truncate_text(
             f"{row['committed_text']} | context: {row['recent_context']} | source: {row['source']}",
             260,
@@ -551,6 +572,77 @@ def _tail_chars(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[-max_chars:]
+
+
+def _expand_query_for_local_rerank(query: str) -> str:
+    """Add cheap local synonyms before FTS, without calling an embedding model."""
+
+    text = compact_whitespace(query)
+    lowered = text.lower()
+    extras: list[str] = []
+
+    def add(*terms: str) -> None:
+        for term in terms:
+            if term and term not in extras:
+                extras.append(term)
+
+    if "project_memory_block" in lowered or ("注入" in text and ("首次" in text or "背景" in text or "agent" in lowered)):
+        add("PROJECT_MEMORY_BLOCK", "agent-hook", "agent_hook", "first-run", "context injection", "背景注入")
+    if "squirrel" in lowered or "rime" in lowered or ("输入法" in text and ("候选" in text or "拼音" in text)):
+        add("Squirrel", "Rime", "librime", "sidecar", "候选面板", "拼音解析", "词库")
+    if "脏拼音" in text or "便拼音" in text or "raw pinyin" in lowered:
+        add("Rime", "librime", "拼音解析", "词库", "raw input")
+    if "本地记忆" in text or "个人记忆" in text or "rag" in lowered:
+        add("local-first", "SQLite", "FTS5", "memory", "personal memory", "本地记忆")
+
+    return compact_whitespace(" ".join([text, *extras]))
+
+
+def _field_rerank_boosts(
+    *,
+    query: str,
+    raw_query: str,
+    committed_text: str,
+    recent_context: str,
+    tags_text: str,
+    source_fields: str,
+) -> list[tuple[str, float]]:
+    text_hits = overlap_terms(query, committed_text)
+    raw_text_hits = overlap_terms(raw_query, committed_text)
+    context_hits = overlap_terms(query, recent_context)
+    tag_hits = overlap_terms(query, tags_text)
+    source_hits = overlap_terms(query, source_fields)
+    raw_ascii_hits = _important_ascii_hits(raw_query, f"{committed_text} {recent_context} {tags_text} {source_fields}")
+
+    exact_phrase = 0.0
+    raw = compact_whitespace(raw_query).lower()
+    if raw and len(raw) >= 4:
+        combined = f"{committed_text} {recent_context}".lower()
+        if raw in combined:
+            exact_phrase = 0.8
+
+    boosts = [
+        ("text", min(1.2, len(text_hits) * 0.12 + len(raw_text_hits) * 0.08 + exact_phrase)),
+        ("context", min(1.1, len(context_hits) * 0.18)),
+        ("tag", min(1.6, len(tag_hits) * 0.45)),
+        ("source", min(0.8, len(source_hits) * 0.25)),
+        ("raw", min(2.4, len(raw_ascii_hits) * 0.8)),
+    ]
+    return [(label, boost) for label, boost in boosts if boost > 0]
+
+
+def _important_ascii_hits(query: str, text: str) -> list[str]:
+    haystack = (text or "").lower()
+    hits: list[str] = []
+    seen: set[str] = set()
+    for match in _IMPORTANT_ASCII_RE.finditer(query or ""):
+        term = match.group(0).lower()
+        if term in seen:
+            continue
+        seen.add(term)
+        if term in haystack:
+            hits.append(term)
+    return hits
 
 
 def _bm25_relevance(bm25_score: float) -> float:

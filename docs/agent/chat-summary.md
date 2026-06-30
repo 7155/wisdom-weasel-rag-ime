@@ -2,6 +2,26 @@
 
 ### 2026-07-01
 Topic:
+- Add lightweight local rerank for real Codex-history RAG quality.
+
+Changes:
+- Boyle subagent returned no patch, so main thread implemented the rerank.
+- Added query expansion for agent first-run injection, Squirrel/Rime, dirty pinyin, and local RAG memory concepts.
+- Added field-aware boosts for committed text, recent context, tags, source/app/schema/provider, and raw ASCII project terms.
+- Increased internal candidate pool before compiling visible top-K suggestions.
+- Preserved explicit user governance by raising pinned-memory priority.
+
+Verification:
+- Local SQLite core tests passed: 13 tests.
+- Full suite passed: 70 tests; fixture acceptance and `git diff --check` passed.
+- Real 2000-record Codex-history eval reached `passRate=1.0`, `top1Accuracy=1.0`, `MRR=1.0`.
+- Real 500-record eval reached `passRate=0.67`; Squirrel/RAG and Agent-hook became top1.
+
+Next:
+- Continue toward hybrid/vector recall and compare against VCP-style memory/cache behavior on the same benchmark.
+
+### 2026-07-01
+Topic:
 - Make real Codex-history import usable as a RAG-IME benchmark.
 
 Changes:

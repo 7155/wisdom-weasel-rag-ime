@@ -7,6 +7,37 @@
 
 ## Log
 
+### 2026-07-01 07:34 CST
+Problem:
+- Boyle subagent returned no patch for the planned lightweight tag/app/context rerank.
+- Real Codex-history eval showed FTS-only retrieval was too weak: 500-record pass rate was `0.33`; 2000-record pass rate was `0.67`, with `PROJECT_MEMORY_BLOCK` missing and `Squirrel RAG` ranking too low.
+
+Changes:
+- Implemented local query expansion before FTS for high-value IME concepts: `PROJECT_MEMORY_BLOCK` / agent first-run injection, Squirrel/Rime/librime/sidecar, dirty/raw pinyin, and local RAG memory.
+- Added field-aware rerank boosts over committed text, recent context, tags, source/app/schema/provider fields, and raw ASCII project terms such as `Squirrel`, `RAG`, and `PROJECT_MEMORY_BLOCK`.
+- Expanded the internal memory candidate pool before compiling the visible top-K suggestions.
+- Raised pinned-memory boost so explicit user governance remains stronger than automatic rerank.
+- Added local-core regression tests for agent context injection recall and Squirrel/Rime side-candidate memory ranking.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_local_sqlite_core`
+- `python3 -m py_compile rag_ime/local_sqlite_core.py tests/test_local_sqlite_core.py`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-rerank-eval-20260701.sqlite import-codex-history --path "$HOME/.codex/sessions" --project wisdom-weasel-rag-ime --limit 2000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-rerank-eval-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 2`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-rerank-eval-20260701-500.sqlite import-codex-history --path "$HOME/.codex/sessions" --project wisdom-weasel-rag-ime --limit 500 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-rerank-eval-20260701-500.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 3`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `git diff --check`
+
+Verification:
+- Local SQLite core tests passed: 13 tests.
+- Full suite passed: 70 tests.
+- Fixture acceptance and `git diff --check` passed.
+- Real 2000-record Codex-history eval improved to `passRate=1.0`, `top1Accuracy=1.0`, `MRR=1.0` on the current 3-case benchmark.
+- Real 500-record eval improved to `passRate=0.67`, `top1Accuracy=0.67`, `MRR=0.67`; Squirrel/RAG and Agent-hook cases are top1, dirty-pinyin needs more imported history.
+- This is still rule-based rerank, not a substitute for later embedding/vector hybrid recall.
+
 ### 2026-07-01 07:20 CST
 Problem:
 - Real Codex history import was still too noisy for RAG-IME evaluation: directory import could start from old sessions, and raw runtime context such as `AGENTS.md`, sandbox/environment blocks, developer messages, and tool output could become memories.
