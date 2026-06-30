@@ -49,3 +49,22 @@ Commands:
 
 Next:
 - Full Xcode build/install of patched Squirrel remains the next hard gate.
+
+### 2026-06-30 23:08 CST
+Problem:
+- A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.
+
+Changes:
+- Added user LaunchAgent install/uninstall scripts for the sidecar server.
+- Added dry-run support so plist generation can be tested without loading launchd.
+- Documented LaunchAgent setup in README, macOS frontend notes, and Squirrel patch pack notes.
+
+Commands:
+- `bash -n scripts/install_sidecar_launch_agent.sh`
+- `RAG_IME_LAUNCH_AGENT_DRY_RUN=1 scripts/install_sidecar_launch_agent.sh`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `scripts/build_macos_frontend.sh`
+
+Next:
+- Full Xcode build/install of patched Squirrel remains the next hard gate.

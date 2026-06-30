@@ -185,6 +185,53 @@ System Settings -> Keyboard -> Input Sources
 
 Add `RAG IME` manually. If macOS does not refresh input methods immediately, kill the old `RagImeMac` process or log out/in.
 
+## Sidecar LaunchAgent
+
+Patched Squirrel should call the long-running HTTP sidecar through `rag_ime/sidecar_url` instead of spawning Python for every candidate refresh. Start it manually while debugging:
+
+```bash
+python3 -m rag_ime.cli sidecar-server --host 127.0.0.1 --port 8766
+```
+
+For normal local use, install the user LaunchAgent:
+
+```bash
+scripts/install_sidecar_launch_agent.sh
+```
+
+This writes:
+
+```text
+~/Library/LaunchAgents/com.rag-ime.sidecar.plist
+~/Library/Logs/RagIme/sidecar.out.log
+~/Library/Logs/RagIme/sidecar.err.log
+```
+
+The installer is configurable with:
+
+```text
+RAG_IME_PYTHON
+RAG_IME_DB_PATH
+RAG_IME_PROJECT
+RAG_IME_SIDECAR_HOST
+RAG_IME_SIDECAR_PORT
+RAG_IME_CORE_MODE
+RAG_MEMORY_CORE_COMMAND
+RAG_IME_SIDECAR_NO_SEED
+```
+
+Dry-run without loading launchd:
+
+```bash
+RAG_IME_LAUNCH_AGENT_DRY_RUN=1 scripts/install_sidecar_launch_agent.sh
+```
+
+Uninstall:
+
+```bash
+scripts/uninstall_sidecar_launch_agent.sh
+```
+
 ## Environment
 
 The app reads these optional environment variables:

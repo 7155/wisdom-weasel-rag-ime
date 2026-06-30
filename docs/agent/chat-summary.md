@@ -45,3 +45,22 @@ Verification:
 
 Next steps:
 - Build/install patched Squirrel with Xcode and test real typing.
+
+### 2026-06-30
+Topic:
+- Make the HTTP sidecar usable as a persistent local service.
+
+Changes:
+- Added `scripts/install_sidecar_launch_agent.sh`.
+- Added `scripts/uninstall_sidecar_launch_agent.sh`.
+- Added dry-run plist generation and a unit test for the LaunchAgent script.
+- Documented sidecar launchd setup in README, Squirrel patch notes, and macOS frontend notes.
+
+Verification:
+- 36 Python unit tests passed.
+- LaunchAgent dry-run generated a valid plist.
+- Fixture acceptance passed.
+- macOS prototype app still builds.
+
+Next steps:
+- Build/install patched Squirrel with Xcode and test real typing against `http://127.0.0.1:8766/api`.

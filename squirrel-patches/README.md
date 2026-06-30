@@ -37,6 +37,18 @@ cd /Volumes/undo\ 4t/git/learnA/wisdom-weasel-rag-ime
 python3 -m rag_ime.cli sidecar-server --host 127.0.0.1 --port 8766
 ```
 
+For normal local use, install it as a user LaunchAgent:
+
+```bash
+scripts/install_sidecar_launch_agent.sh
+```
+
+Remove it with:
+
+```bash
+scripts/uninstall_sidecar_launch_agent.sh
+```
+
 Add this to Squirrel's `squirrel.yaml` while testing:
 
 ```yaml
