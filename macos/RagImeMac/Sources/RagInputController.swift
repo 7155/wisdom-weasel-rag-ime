@@ -31,7 +31,7 @@ final class RagInputController: IMKInputController {
         if isPrintableInput(string) {
             composition += string
             updateMarkedText(client: client)
-            scheduleSuggestionRefresh()
+            scheduleSuggestionRefresh(client: client)
             return true
         }
 
@@ -131,7 +131,7 @@ final class RagInputController: IMKInputController {
         RagCandidatePanel.shared.hide()
     }
 
-    private func scheduleSuggestionRefresh() {
+    private func scheduleSuggestionRefresh(client providedClient: IMKTextInput? = nil) {
         pendingRefresh?.cancel()
         let inputSnapshot = composition
         guard inputSnapshot.count >= 2 else {
@@ -162,10 +162,12 @@ final class RagInputController: IMKInputController {
                         RagCandidatePanel.shared.hide()
                         return
                     }
+                    let anchor = self.panelAnchor(client: providedClient ?? self.client())
                     RagCandidatePanel.shared.show(
                         modelPredictions: visiblePredictions,
                         suggestions: visibleSuggestions,
                         currentInput: inputSnapshot,
+                        anchor: anchor,
                         onSelectModel: { [weak self] prediction, index in
                             guard let self, let client = self.client() else {
                                 return
@@ -209,5 +211,28 @@ final class RagInputController: IMKInputController {
                 self?.scheduleSuggestionRefresh()
             }
         }
+    }
+
+    private func panelAnchor(client: IMKTextInput?) -> NSPoint? {
+        guard let client else {
+            return nil
+        }
+        var actualRange = NSRange(location: NSNotFound, length: 0)
+        let selectedRange = client.selectedRange()
+        let fallbackRange = NSRange(location: max(0, composition.utf16.count), length: 0)
+        let range = selectedRange.location == NSNotFound ? fallbackRange : selectedRange
+        let rect = client.firstRect(forCharacterRange: range, actualRange: &actualRange)
+        guard
+            rect.origin.x.isFinite,
+            rect.origin.y.isFinite,
+            rect.size.width.isFinite,
+            rect.size.height.isFinite
+        else {
+            return nil
+        }
+        guard rect != .zero else {
+            return nil
+        }
+        return NSPoint(x: rect.minX, y: rect.minY)
     }
 }

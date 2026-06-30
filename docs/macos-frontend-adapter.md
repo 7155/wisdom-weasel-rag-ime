@@ -226,15 +226,14 @@ The history context variables control how many committed input events are merged
 - It handles simple printable composition, number-key candidate selection, return-to-commit, and escape-to-cancel.
 - It does not embed Rime/Squirrel yet.
 - It does not ship a packaged Python runtime yet; installed development builds read `bridge-config.json` to find the repo checkout and Python executable.
-- Candidate panel positioning currently uses mouse location as a practical fallback; the next version should anchor to the client caret rectangle when available.
+- Candidate panel positioning now prefers the active `IMKTextInput` caret rectangle and falls back to mouse location when the target app does not expose a valid text rect.
 - `expand` copies full evidence to clipboard instead of opening a rich source browser.
 - The optional local model provider asks for several candidates in one non-streaming response; llama.cpp-style batch sampling and KV cache reuse are still future optimization work.
 
 ## Next Engineering Steps
 
-1. Add caret-anchored panel positioning from the active `IMKTextInput` client when the target app supports document access.
-2. Package the Python backend or replace it with a small local daemon so installed input methods do not depend on a mutable repo checkout.
-3. Add a preferences window for DB path, recording toggle, app blacklist, and panel theme.
-4. Integrate with Squirrel/Rime for mature Chinese composition while keeping RAG suggestions as a side candidate source.
-5. Add a WebView evidence browser for paragraph-level source inspection.
-6. Optimize Wisdom-Weasel-style local prediction beyond the current OpenAI-compatible provider: llama.cpp batch sampling with KV reuse if latency requires it.
+1. Package the Python backend or replace it with a small local daemon so installed input methods do not depend on a mutable repo checkout.
+2. Add a preferences window for DB path, recording toggle, app blacklist, and panel theme.
+3. Integrate with Squirrel/Rime for mature Chinese composition while keeping RAG suggestions as a side candidate source.
+4. Add a WebView evidence browser for paragraph-level source inspection.
+5. Optimize Wisdom-Weasel-style local prediction beyond the current OpenAI-compatible provider: llama.cpp batch sampling with KV reuse if latency requires it.
