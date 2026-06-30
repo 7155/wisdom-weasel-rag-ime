@@ -50,10 +50,45 @@ class _MockOpenAIHandler(BaseHTTPRequestHandler):
         return
 
 
+class _MockCompletionHandler(BaseHTTPRequestHandler):
+    captured_path = ""
+    captured_payload: dict[str, object] = {}
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        _MockCompletionHandler.captured_path = self.path
+        _MockCompletionHandler.captured_payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        body = json.dumps(
+            {
+                "choices": [
+                    {"text": "<think>分析过程不应该进入候选</think>\n本地记忆"},
+                    {"text": "输入法候选"},
+                    {"text": "RAG上下文"},
+                ]
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
 class PredictionProviderTests(unittest.TestCase):
     def test_parse_prediction_candidates_deduplicates_and_limits(self) -> None:
         parsed = parse_prediction_candidates("1. 本地记忆  本地记忆，RAG候选 / 输出法; 这是一个非常非常非常长的候选短语", max_candidates=3)
         self.assertEqual(parsed, ["本地记忆", "RAG候选", "输出法"])
+
+    def test_parse_prediction_candidates_strips_thinking_and_json(self) -> None:
+        parsed = parse_prediction_candidates(
+            '<think>先分析一下</think> ["本地记忆", "RAG候选", "输入法候选"]',
+            max_candidates=3,
+        )
+        self.assertEqual(parsed, ["本地记忆", "RAG候选", "输入法候选"])
 
     def test_openai_compatible_provider_returns_short_ranked_predictions(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
@@ -91,6 +126,38 @@ class PredictionProviderTests(unittest.TestCase):
         messages = _MockOpenAIHandler.captured_payload["messages"]
         self.assertIn("只输出候选词", messages[0]["content"])
         self.assertLessEqual(_MockOpenAIHandler.captured_payload["max_tokens"], 8)
+
+    def test_completion_prompt_mode_uses_prefix_completion_endpoint(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockCompletionHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatiblePredictionProvider(
+                OpenAICompatiblePredictionConfig(
+                    base_url=f"http://127.0.0.1:{server.server_port}",
+                    model="qwen-base",
+                    prompt_mode="completion",
+                    timeout_s=1.0,
+                    max_tokens=4,
+                    provider_name="mock-completion",
+                )
+            )
+            predictions = provider.predict(
+                current_input="输入法",
+                recent_context="本地记忆",
+                max_candidates=3,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+        self.assertEqual([item.text for item in predictions], ["本地记忆", "输入法候选", "RAG上下文"])
+        self.assertEqual(_MockCompletionHandler.captured_path, "/v1/completions")
+        self.assertEqual(_MockCompletionHandler.captured_payload["model"], "qwen-base")
+        self.assertEqual(_MockCompletionHandler.captured_payload["prompt"], "本地记忆输入法")
+        self.assertEqual(_MockCompletionHandler.captured_payload["n"], 3)
+        self.assertNotIn("messages", _MockCompletionHandler.captured_payload)
+        self.assertEqual(predictions[0].metadata["prompt_mode"], "completion")
 
     def test_prediction_benchmark_reports_latency_budget(self) -> None:
         class FakeProvider:

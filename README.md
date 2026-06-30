@@ -223,6 +223,7 @@ Use a local OpenAI-compatible small model for the short prediction lane:
 export RAG_IME_PREDICTOR_PROVIDER=openai-compatible
 export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000
 export RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B
+export RAG_IME_PREDICTOR_PROMPT_MODE=chat
 export RAG_IME_PREDICTOR_TIMEOUT_MS=800
 export RAG_IME_PREDICTOR_MAX_TOKENS=12
 export RAG_IME_PREDICTOR_EXTRA_BODY_JSON='{"seed":7,"chat_template_kwargs":{"enable_thinking":false}}'
@@ -233,6 +234,8 @@ python3 -m rag_ime.cli suggest-json "输入法 个人记忆" --recent-context "l
 ```
 
 `suggest-json` merges the explicit `--recent-context` with recent committed input history before calling the local model. Set `RAG_IME_HISTORY_CONTEXT_EVENTS=0` to disable this history lane.
+
+Use `RAG_IME_PREDICTOR_PROMPT_MODE=completion` for base-model or llama.cpp-style `/v1/completions` servers. That mode sends `history + current_input` as a prefix and requests multiple candidates with `n`, matching Wisdom-Weasel's faster base-completion direction more closely than chat prompting. It is still an OpenAI-compatible baseline; native llama.cpp KV-cache/batch sampling remains a later provider.
 
 Benchmark local model prediction latency before using it in the input-method lane:
 

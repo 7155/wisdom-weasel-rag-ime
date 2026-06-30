@@ -29,6 +29,7 @@ class OpenAICompatiblePredictionConfig:
     base_url: str
     model: str
     api_key: str = ""
+    prompt_mode: str = "chat"
     timeout_s: float = 0.8
     max_tokens: int = 12
     temperature: float = 0.2
@@ -78,9 +79,10 @@ class OpenAICompatiblePredictionProvider:
             return []
         max_items = max(1, min(10, int(max_candidates)))
         started = time.perf_counter()
-        raw_text = self._complete(context=context, query=query, max_candidates=max_items)
+        raw_texts = self._complete(context=context, query=query, max_candidates=max_items)
         latency_ms = int((time.perf_counter() - started) * 1000)
-        candidates = parse_prediction_candidates(raw_text, max_candidates=max_items)
+        raw_text = "\n".join(raw_texts)
+        candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
         return [
             ModelPrediction(
                 text=item,
@@ -91,13 +93,19 @@ class OpenAICompatiblePredictionProvider:
                 metadata={
                     "model": self.config.model,
                     "base_url": self.config.base_url,
+                    "prompt_mode": _normalized_prompt_mode(self.config.prompt_mode),
                     "raw_text": raw_text,
                 },
             )
             for index, item in enumerate(candidates, start=1)
         ]
 
-    def _complete(self, *, context: str, query: str, max_candidates: int) -> str:
+    def _complete(self, *, context: str, query: str, max_candidates: int) -> list[str]:
+        if _normalized_prompt_mode(self.config.prompt_mode) == "completion":
+            return self._complete_with_prefix(context=context, query=query, max_candidates=max_candidates)
+        return self._complete_with_chat(context=context, query=query, max_candidates=max_candidates)
+
+    def _complete_with_chat(self, *, context: str, query: str, max_candidates: int) -> list[str]:
         body = {
             "model": self.config.model,
             "messages": [
@@ -134,8 +142,36 @@ class OpenAICompatiblePredictionProvider:
             with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError):
-            return ""
-        return extract_openai_content(payload)
+            return []
+        return extract_openai_contents(payload)
+
+    def _complete_with_prefix(self, *, context: str, query: str, max_candidates: int) -> list[str]:
+        prefix = compact_whitespace(f"{context}{query}")
+        if not prefix:
+            return []
+        body = {
+            "model": self.config.model,
+            "prompt": prefix,
+            "max_tokens": max(1, min(64, int(self.config.max_tokens))),
+            "temperature": self.config.temperature,
+            "top_p": self.config.top_p,
+            "stream": False,
+            "n": max(1, min(10, int(max_candidates))),
+        }
+        if self.config.extra_body:
+            body.update(self.config.extra_body)
+        request = urllib.request.Request(
+            f"{self.config.base_url.rstrip('/')}/v1/completions",
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers=self._headers(),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError):
+            return []
+        return extract_openai_contents(payload)
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -158,6 +194,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
             base_url=base_url,
             model=model,
             api_key=source.get("RAG_IME_PREDICTOR_API_KEY", "").strip(),
+            prompt_mode=source.get("RAG_IME_PREDICTOR_PROMPT_MODE", "chat").strip(),
             timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", 800) / 1000,
             max_tokens=int(_float_env(source, "RAG_IME_PREDICTOR_MAX_TOKENS", 12)),
             temperature=_float_env(source, "RAG_IME_PREDICTOR_TEMPERATURE", 0.2),
@@ -223,41 +260,103 @@ def benchmark_prediction_provider(
 
 
 def extract_openai_content(payload: dict[str, Any]) -> str:
+    return "\n".join(extract_openai_contents(payload))
+
+
+def extract_openai_contents(payload: dict[str, Any]) -> list[str]:
+    results: list[str] = []
     choices = payload.get("choices")
     if isinstance(choices, list) and choices:
-        first = choices[0]
-        if isinstance(first, dict):
-            message = first.get("message")
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message")
             if isinstance(message, dict) and isinstance(message.get("content"), str):
-                return message["content"]
-            if isinstance(first.get("text"), str):
-                return first["text"]
+                results.append(message["content"])
+            elif isinstance(choice.get("text"), str):
+                results.append(choice["text"])
+        return results
     if isinstance(payload.get("content"), str):
-        return payload["content"]
+        return [payload["content"]]
     if isinstance(payload.get("text"), str):
-        return payload["text"]
-    return ""
+        return [payload["text"]]
+    return []
 
 
 def parse_prediction_candidates(text: str, *, max_candidates: int = 5) -> list[str]:
-    cleaned = compact_whitespace(text)
+    return _parse_prediction_candidate_texts([text], max_candidates=max_candidates)
+
+
+def _parse_prediction_candidate_texts(texts: list[str], *, max_candidates: int = 5) -> list[str]:
+    max_items = max(1, int(max_candidates))
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for text in texts:
+        for item in _candidate_parts_from_text(text):
+            if not item or item in seen:
+                continue
+            if len(item) > 24:
+                item = item[:24]
+            seen.add(item)
+            candidates.append(item)
+            if len(candidates) >= max_items:
+                return candidates
+    return candidates
+
+
+def _candidate_parts_from_text(text: str) -> list[str]:
+    cleaned = _clean_prediction_output(text)
     if not cleaned:
         return []
+    json_candidates = _candidate_parts_from_json_text(cleaned)
+    if json_candidates:
+        return json_candidates
     parts = re.split(r"[\s,，、;；|/]+", cleaned)
-    seen: set[str] = set()
     candidates: list[str] = []
     for part in parts:
         item = re.sub(r"^\d+[.)、．]?", "", part)
         item = item.strip("。.!！?？:\"'“”‘’[]()（）")
-        if not item or item in seen:
+        if not item:
             continue
-        if len(item) > 24:
-            item = item[:24]
-        seen.add(item)
         candidates.append(item)
-        if len(candidates) >= max_candidates:
-            break
     return candidates
+
+
+def _clean_prediction_output(text: str) -> str:
+    cleaned = re.sub(r"(?is)<think>.*?</think>", " ", text)
+    cleaned = re.sub(r"(?is)<think>.*", " ", cleaned)
+    cleaned = re.sub(r"(?is)<analysis>.*?</analysis>", " ", cleaned)
+    cleaned = re.sub(r"(?is)<reasoning>.*?</reasoning>", " ", cleaned)
+    cleaned = cleaned.replace("```json", " ").replace("```", " ")
+    return compact_whitespace(cleaned)
+
+
+def _candidate_parts_from_json_text(text: str) -> list[str]:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    return _candidate_parts_from_json_value(parsed)
+
+
+def _candidate_parts_from_json_value(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(_candidate_parts_from_json_value(item))
+        return result
+    if isinstance(value, dict):
+        for key in ("candidates", "候选", "items", "predictions"):
+            if key in value:
+                return _candidate_parts_from_json_value(value[key])
+    return []
+
+
+def _normalized_prompt_mode(mode: str) -> str:
+    normalized = mode.strip().lower()
+    return "completion" if normalized in {"completion", "base", "prefix"} else "chat"
 
 
 def _float_env(env: dict[str, str], name: str, fallback: float) -> float:
