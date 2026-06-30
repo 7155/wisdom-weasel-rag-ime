@@ -232,6 +232,12 @@ Uninstall:
 scripts/uninstall_sidecar_launch_agent.sh
 ```
 
+Check the current Squirrel/sidecar state:
+
+```bash
+scripts/doctor_squirrel_integration.sh
+```
+
 ## Prepare Patched Squirrel
 
 Prepare a disposable Squirrel checkout with the RAG-IME patch applied:

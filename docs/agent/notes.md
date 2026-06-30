@@ -70,6 +70,26 @@ Commands:
 Next:
 - Run the prepared checkout through full Xcode build/install and real typing.
 
+### 2026-06-30 23:22 CST
+Problem:
+- After adding sidecar launchd and Squirrel prep scripts, there was no single preflight command to diagnose missing sidecar, missing patch, unprepared Squirrel checkout, or missing Xcode.
+
+Changes:
+- Added `scripts/doctor_squirrel_integration.sh`.
+- Doctor reports OK/WARN/FAIL for Python, patch file, `rag_ime.cli`, Squirrel workdir, Xcode, Swift, LaunchAgent, and sidecar HTTP health.
+- Docs now point users to the doctor after sidecar/Squirrel preparation.
+
+Commands:
+- `bash -n scripts/doctor_squirrel_integration.sh`
+- `scripts/doctor_squirrel_integration.sh` with sidecar absent in WARN mode
+- `scripts/doctor_squirrel_integration.sh` with a temporary sidecar in strict sidecar mode
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `scripts/build_macos_frontend.sh`
+
+Next:
+- Use doctor output as the preflight gate before the full Xcode Squirrel build/install.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.

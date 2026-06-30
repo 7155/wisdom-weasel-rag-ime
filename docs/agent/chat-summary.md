@@ -82,3 +82,21 @@ Verification:
 
 Next steps:
 - Use `/tmp/rag-ime-squirrel` on an Xcode machine to build/install patched Squirrel and test real typing.
+
+### 2026-06-30
+Topic:
+- Add a preflight check for patched Squirrel integration.
+
+Changes:
+- Added `scripts/doctor_squirrel_integration.sh`.
+- Added a unit test for default WARN-mode doctor behavior.
+- Documented the doctor in README, macOS frontend notes, and Squirrel patch notes.
+
+Verification:
+- Doctor WARN-mode works without a running sidecar.
+- Doctor strict sidecar mode passed against a temporary `sidecar-server`.
+- 38 Python unit tests passed.
+- Fixture acceptance and macOS prototype build passed.
+
+Next steps:
+- Run doctor on the Xcode machine before building/installing patched Squirrel.

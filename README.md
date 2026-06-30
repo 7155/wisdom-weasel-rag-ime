@@ -139,6 +139,12 @@ Remove the LaunchAgent:
 scripts/uninstall_sidecar_launch_agent.sh
 ```
 
+Check the Squirrel/sidecar integration state:
+
+```bash
+scripts/doctor_squirrel_integration.sh
+```
+
 Show memory action effects:
 
 ```bash
