@@ -1,0 +1,14 @@
+.rag-ime-data/
+reports/
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+**/.DS_Store
