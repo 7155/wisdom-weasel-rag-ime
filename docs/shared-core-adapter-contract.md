@@ -46,3 +46,24 @@ RAG_MEMORY_TRACE_PATH
 ```
 
 The traditional candidate list should show short candidates. Full RAG evidence belongs in preview or expanded panels.
+
+## Suggestion Compiler Boundary
+
+`SuggestionCompiler` belongs to the input-method adapter, not the shared memory core.
+
+Reason:
+
+- PI/Agent adapters need retrieved evidence and context blocks, not input-method candidate bars.
+- IME adapters need short surface text, insert text, preview text, source cards, and keyboard actions.
+- Keeping this layer outside the shared DB core avoids coupling every RAG consumer to IME-specific UX.
+
+Expected flow:
+
+```text
+shared core search/suggest
+  -> RetrievedMemory[]
+  -> IME SuggestionCompiler
+  -> InputSuggestion[]
+```
+
+The compiler decides whether a memory becomes `phrase`, `sentence`, `structure`, `style_hint`, `paragraph`, `quote`, `rewrite`, `continue`, or `template`.

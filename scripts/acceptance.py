@@ -34,6 +34,13 @@ def main() -> int:
         failures.append("delete action did not remove candidate from later ranking")
     if not report["agent_hook"]["has_project_memory_block"]:
         failures.append("agent hook missing PROJECT_MEMORY_BLOCK")
+    trigger = report["trigger_policy"]
+    if trigger["single_char"]:
+        failures.append("trigger policy should not refresh on a single character")
+    if not trigger["idle_semantic"]:
+        failures.append("trigger policy should refresh after semantic idle threshold")
+    if trigger["sensitive"]:
+        failures.append("trigger policy should not refresh in sensitive fields")
     if failures:
         for failure in failures:
             print(f"FAIL: {failure}", file=sys.stderr)

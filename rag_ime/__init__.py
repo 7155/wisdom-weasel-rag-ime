@@ -7,4 +7,6 @@ __all__ = [
     "models",
     "renderer",
     "scenarios",
+    "suggestion_compiler",
+    "trigger_policy",
 ]

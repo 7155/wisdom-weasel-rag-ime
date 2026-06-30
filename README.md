@@ -81,6 +81,12 @@ Build the Agent first-run memory block:
 python3 -m rag_ime.cli agent-hook --top-k 3
 ```
 
+Inspect trigger policy:
+
+```bash
+python3 -m rag_ime.cli trigger-demo "这个项目" --idle-ms 300
+```
+
 Use a future shared-core JSON command:
 
 ```bash
@@ -93,6 +99,8 @@ Implemented in this repo:
 
 - adapter data models;
 - shared-core client boundary;
+- SuggestionCompiler for `RetrievedMemory -> InputSuggestion`;
+- conservative RAG refresh trigger policy;
 - fixture core for adapter/UI acceptance only;
 - short candidate rendering;
 - evidence preview and expanded evidence panel text;

@@ -7,8 +7,10 @@ This repo now has an input-method adapter layer that can run without cloud model
 It proves:
 
 - RAG results can be candidateized into short input suggestions.
+- `SuggestionCompiler` is an explicit IME adapter layer between retrieved memory and candidate UI.
 - Evidence preview and expanded evidence can be shown separately.
 - Candidate actions can be wired back to a core client.
+- Background RAG refresh can be gated by idle time, punctuation, explicit request, and privacy blockers.
 - Agent first-run memory injection can be built from the same core client.
 - Three realistic UI scenarios can be rendered and checked by scripts.
 
