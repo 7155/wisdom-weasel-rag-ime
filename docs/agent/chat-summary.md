@@ -2,6 +2,22 @@
 
 ### 2026-07-01
 Topic:
+- Improve `/rime-suggest` cache hits for real IME composing refreshes.
+
+Changes:
+- Replaced raw-payload hashing with a semantic Rime snapshot cache key.
+- The key now ignores raw pinyin/preedit changes when the semantic query is already commit preview or stable Rime candidates.
+- Cached responses rewrite current request metadata before returning so debug output stays accurate.
+- Added a debug-server regression test.
+
+Verification:
+- Debug server tests passed: 13 tests.
+- `py_compile` passed.
+- Full suite passed: 65 tests.
+- Fixture acceptance and `git diff --check` passed.
+
+### 2026-07-01
+Topic:
 - Confirm VCP BM25 usage and fix RAG-IME SQLite FTS5 ranking.
 
 Decisions:

@@ -7,6 +7,35 @@
 
 ## Log
 
+### 2026-07-01 06:51 CST
+Problem:
+- `/rime-suggest` cache ignored only `requestSeq` and `sessionId`, so stable Rime candidates with changing raw pinyin/preedit still missed the cache.
+- Input methods refresh on nearly every composing update; model/RAG should not rerun when the semantic query and visible candidates are unchanged.
+
+Changes:
+- Rebuilt the `/rime-suggest` cache key from the parsed Rime snapshot: semantic query, query basis, trigger decision, Rime candidates, committed context, side-candidate limits, memory event/action counts, project, and predictor fingerprint.
+- Raw pinyin/preedit are included only when they are the semantic input (`preedit` / `rawInputFallback`) or when side candidates are explicitly forced.
+- Cache hits now refresh `sessionId`, `requestSeq`, `rawInput`, `preedit`, Rime metadata, and trigger metadata before returning the cached model/RAG/display candidates.
+- Added a regression test for raw-pinyin changes with stable Rime candidates.
+- Updated README, debug docs, and Squirrel integration notes.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_debug_server`
+- `python3 -m py_compile rag_ime/debug_server.py tests/test_debug_server.py`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `git diff --check`
+
+Verification:
+- Debug server tests passed: 13 tests.
+- `py_compile` passed.
+- Full suite passed: 65 tests.
+- Fixture acceptance and `git diff --check` passed.
+
+Follow-up:
+- Subagent read VCP/RAG-IME and recommended the next implementation order: lightweight tag/app/context rerank first, optional local vector side-index second, stale/prefix cache third.
+- This change completes the first cache-side step for real IME composing refreshes; next code slice should be the lightweight tag/app/context rerank in `LocalSqliteCoreClient`.
+
 ### 2026-07-01 06:44 CST
 Problem:
 - Need to confirm whether VCP uses BM25 before copying retrieval assumptions into RAG-IME.

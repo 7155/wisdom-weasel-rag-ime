@@ -132,7 +132,7 @@ The response also includes `triggerDecision`. This is the backend guard that kee
 
 The debug page probes `/api/rime-suggest` alongside `/api/suggest` and shows `queryBasis`, `triggerDecision`, `displayCandidates`, and cache metadata in the JSON panel. This is only for backend inspection; it does not change the browser prototype's visible candidate layout.
 
-The local HTTP server keeps a short TTL cache for repeated equivalent `/rime-suggest` payloads. The cache key excludes `requestSeq` and `sessionId`, but includes payload content, memory event/action counts, project, and predictor configuration. Cached responses rewrite `requestSeq` and `sessionId` to the current request and include:
+The local HTTP server keeps a short TTL cache for repeated equivalent `/rime-suggest` payloads. The cache key is built from the parsed Rime snapshot, semantic query, trigger decision, memory event/action counts, project, and predictor configuration. It excludes `requestSeq` and `sessionId`, and it also ignores raw pinyin/preedit changes when the semantic query already comes from commit preview or stable Rime candidates. Cached responses rewrite `requestSeq`, `sessionId`, `rawInput`, `preedit`, and current Rime metadata before returning:
 
 ```json
 {
