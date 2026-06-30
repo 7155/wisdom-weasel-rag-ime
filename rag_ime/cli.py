@@ -12,7 +12,8 @@ from .adapter import InputMethodAdapter, SuggestionRequest
 from .agent_hook import build_first_run_injection
 from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, default_fixture_memories
 from .local_sqlite_core import LocalSqliteCoreClient
-from .models import InputEvent
+from .models import InputEvent, MemoryAction
+from .payloads import action_response_payload, suggestions_response_payload
 from .renderer import render_agent_injection, render_terminal_panel
 from .scenarios import SCENARIOS, get_scenario
 from .text_utils import now_ms
@@ -61,6 +62,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     suggest.add_argument("--recent-context", default="")
     suggest.add_argument("--project", default="wisdom-weasel-rag-ime")
     suggest.add_argument("--top-k", type=int, default=5)
+
+    suggest_json = subparsers.add_parser("suggest-json", help="Return structured suggestions for native frontends")
+    suggest_json.add_argument("current_input")
+    suggest_json.add_argument("--recent-context", default="")
+    suggest_json.add_argument("--project", default="wisdom-weasel-rag-ime")
+    suggest_json.add_argument("--top-k", type=int, default=5)
+
+    action_json = subparsers.add_parser("action-json", help="Apply one memory action and return structured JSON")
+    action_json.add_argument("action_type", choices=("accepted", "accept", "skipped", "skip", "pin", "unpin", "downrank", "delete", "hide", "restore"))
+    action_json.add_argument("--memory-id", required=True)
+    action_json.add_argument("--suggestion-id", default="")
+    action_json.add_argument("--source-event-id", type=int, default=0)
+    action_json.add_argument("--query", default="")
+    action_json.add_argument("--surface-text", default="")
 
     demo = subparsers.add_parser("demo", help="Render one or all UI scenarios")
     demo.add_argument("--scenario", choices=[item.scenario_id for item in SCENARIOS], default="")
@@ -144,6 +159,45 @@ def main(argv: Sequence[str] | None = None) -> int:
                 suggestions=suggestions,
             )
         )
+        return 0
+
+    if args.command == "suggest-json":
+        suggestions = adapter.suggest(
+            SuggestionRequest(
+                current_input=args.current_input,
+                recent_context=args.recent_context,
+                project=args.project,
+                top_k=args.top_k,
+            )
+        )
+        print(
+            json.dumps(
+                suggestions_response_payload(
+                    current_input=args.current_input,
+                    recent_context=args.recent_context,
+                    project=args.project,
+                    suggestions=suggestions,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "action-json":
+        action = core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=now_ms(),
+                memory_id=args.memory_id,
+                action_type=args.action_type,
+                query=args.query,
+                suggestion_id=args.suggestion_id,
+                source_event_id=args.source_event_id or None,
+                metadata={"surface_text": args.surface_text} if args.surface_text else {},
+            )
+        )
+        print(json.dumps(action_response_payload(action), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "demo":

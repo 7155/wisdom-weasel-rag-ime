@@ -6,6 +6,7 @@ __all__ = [
     "core_client",
     "local_sqlite_core",
     "models",
+    "payloads",
     "renderer",
     "scenarios",
     "suggestion_compiler",

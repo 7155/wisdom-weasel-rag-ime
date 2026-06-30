@@ -1,4 +1,5 @@
 .rag-ime-data/
+build/
 reports/
 *.sqlite
 *.sqlite3

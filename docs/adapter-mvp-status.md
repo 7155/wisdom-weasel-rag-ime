@@ -16,6 +16,8 @@ It proves:
 - Background RAG refresh can be gated by idle time, punctuation, explicit request, and privacy blockers.
 - Agent first-run memory injection can be built from the same core client.
 - Three realistic UI scenarios can be rendered and checked by scripts.
+- A macOS InputMethodKit shell can compile into `RagImeMac.app`.
+- The Swift frontend can call the Python local backend through `suggest-json`.
 
 ## What It Does Not Prove Yet
 
@@ -37,6 +39,8 @@ python3 -m rag_ime.cli demo --top-k 3
 python3 scripts/acceptance.py
 python3 -m rag_ime.cli action-demo
 python3 -m rag_ime.cli agent-hook --top-k 3
+scripts/build_macos_frontend.sh
+build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-json
 ```
 
 ## Three UI Scenarios
