@@ -7,6 +7,10 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 SRC_DIR="$ROOT/macos/RagImeMac/Sources"
+PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
+RAG_IME_DB_PATH_VALUE="${RAG_IME_DB_PATH:-$ROOT/.rag-ime-data/rag-ime.sqlite}"
+RAG_IME_PROJECT_VALUE="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
+RAG_IME_TOP_K_VALUE="${RAG_IME_TOP_K:-5}"
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
@@ -61,13 +65,28 @@ swiftc \
   "$SRC_DIR/RagImeMacApp.swift" \
   -o "$MACOS_DIR/RagImeMac"
 
-cat > "$RESOURCES_DIR/bridge-config.example.json" <<JSON
-{
-  "repoRoot": "$ROOT",
-  "dbPath": "$ROOT/.rag-ime-data/rag-ime.sqlite",
-  "pythonExecutable": "/usr/bin/python3"
+ROOT="$ROOT" \
+RAG_IME_DB_PATH_VALUE="$RAG_IME_DB_PATH_VALUE" \
+PYTHON_EXECUTABLE="$PYTHON_EXECUTABLE" \
+RAG_IME_PROJECT_VALUE="$RAG_IME_PROJECT_VALUE" \
+RAG_IME_TOP_K_VALUE="$RAG_IME_TOP_K_VALUE" \
+python3 - "$RESOURCES_DIR/bridge-config.json" "$RESOURCES_DIR/bridge-config.example.json" <<'PY'
+import json
+import os
+import sys
+
+payload = {
+    "repoRoot": os.environ["ROOT"],
+    "dbPath": os.environ["RAG_IME_DB_PATH_VALUE"],
+    "pythonExecutable": os.environ["PYTHON_EXECUTABLE"],
+    "project": os.environ["RAG_IME_PROJECT_VALUE"],
+    "topK": int(os.environ["RAG_IME_TOP_K_VALUE"]),
 }
-JSON
+for path in sys.argv[1:]:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+PY
 
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$APP_DIR" >/dev/null

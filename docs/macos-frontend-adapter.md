@@ -112,6 +112,18 @@ Build the `.app` bundle with Command Line Tools:
 scripts/build_macos_frontend.sh
 ```
 
+This writes a real runtime config into:
+
+```text
+build/RagImeMac.app/Contents/Resources/bridge-config.json
+```
+
+Inspect the runtime config used by the app:
+
+```bash
+build/RagImeMac.app/Contents/MacOS/RagImeMac --print-config
+```
+
 Run the Swift-to-Python preview contract:
 
 ```bash
@@ -133,6 +145,14 @@ Install locally:
 ```bash
 scripts/install_macos_frontend.sh
 ```
+
+The installer copies the app to `~/Library/Input Methods/RagImeMac.app` and syncs the bridge config to:
+
+```text
+~/Library/Application Support/RagImeMac/bridge-config.json
+```
+
+If an older user config exists, the installer saves `bridge-config.json.bak` before replacing it. The user config lets the installed input method find this repository, the SQLite DB, and the Python executable without relying on shell working directory or interactive environment variables.
 
 Then open:
 
@@ -164,6 +184,16 @@ RAG_IME_HISTORY_CONTEXT_EVENTS
 RAG_IME_HISTORY_CONTEXT_CHARS
 ```
 
+Runtime config precedence:
+
+```text
+environment variables
+  -> ~/Library/Application Support/RagImeMac/bridge-config.json
+  -> app bundle Resources/bridge-config.json
+  -> Info.plist defaults
+  -> process current working directory fallback
+```
+
 Default development values:
 
 ```text
@@ -174,7 +204,7 @@ project: wisdom-weasel-rag-ime
 topK: 5
 ```
 
-For a real installed input method, `RAG_IME_REPO_ROOT` should point to this repository checkout until the Python backend is packaged into a standalone daemon or bundle resource.
+For a real installed input method, `bridge-config.json` should point to this repository checkout until the Python backend is packaged into a standalone daemon or bundle resource.
 
 Model prediction is disabled unless all required provider variables are set. A local small model server can be tested with:
 
@@ -195,7 +225,7 @@ The history context variables control how many committed input events are merged
 - This is a frontend adapter MVP, not a full Chinese input engine.
 - It handles simple printable composition, number-key candidate selection, return-to-commit, and escape-to-cancel.
 - It does not embed Rime/Squirrel yet.
-- It does not ship a packaged Python runtime yet.
+- It does not ship a packaged Python runtime yet; installed development builds read `bridge-config.json` to find the repo checkout and Python executable.
 - Candidate panel positioning currently uses mouse location as a practical fallback; the next version should anchor to the client caret rectangle when available.
 - `expand` copies full evidence to clipboard instead of opening a rich source browser.
 - The optional local model provider asks for several candidates in one non-streaming response; llama.cpp-style batch sampling and KV cache reuse are still future optimization work.
@@ -203,7 +233,7 @@ The history context variables control how many committed input events are merged
 ## Next Engineering Steps
 
 1. Add caret-anchored panel positioning from the active `IMKTextInput` client when the target app supports document access.
-2. Package the Python backend or replace it with a small local daemon so installed input methods do not depend on shell working directory.
+2. Package the Python backend or replace it with a small local daemon so installed input methods do not depend on a mutable repo checkout.
 3. Add a preferences window for DB path, recording toggle, app blacklist, and panel theme.
 4. Integrate with Squirrel/Rime for mature Chinese composition while keeping RAG suggestions as a side candidate source.
 5. Add a WebView evidence browser for paragraph-level source inspection.
