@@ -34,6 +34,8 @@ class OpenAICompatiblePredictionConfig:
     temperature: float = 0.2
     top_p: float = 0.9
     provider_name: str = "local-openai-compatible"
+    extra_body: dict[str, Any] | None = None
+    extra_headers: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,8 @@ class OpenAICompatiblePredictionProvider:
             "top_p": self.config.top_p,
             "stream": False,
         }
+        if self.config.extra_body:
+            body.update(self.config.extra_body)
         request = urllib.request.Request(
             f"{self.config.base_url.rstrip('/')}/v1/chat/completions",
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -137,6 +141,8 @@ class OpenAICompatiblePredictionProvider:
         headers = {"Content-Type": "application/json"}
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
+        if self.config.extra_headers:
+            headers.update(self.config.extra_headers)
         return headers
 
 
@@ -157,6 +163,8 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
             temperature=_float_env(source, "RAG_IME_PREDICTOR_TEMPERATURE", 0.2),
             top_p=_float_env(source, "RAG_IME_PREDICTOR_TOP_P", 0.9),
             provider_name="local-openai-compatible",
+            extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
+            extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
         )
     )
 
@@ -258,3 +266,23 @@ def _float_env(env: dict[str, str], name: str, fallback: float) -> float:
     except ValueError:
         return fallback
     return value if value > 0 else fallback
+
+
+def _json_object_env(env: dict[str, str], name: str) -> dict[str, Any]:
+    raw = env.get(name, "").strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _json_string_map_env(env: dict[str, str], name: str) -> dict[str, str]:
+    raw = _json_object_env(env, name)
+    result: dict[str, str] = {}
+    for key, value in raw.items():
+        if isinstance(key, str) and isinstance(value, str):
+            result[key] = value
+    return result

@@ -82,6 +82,8 @@ def build_rime_sidecar_response(
             "rimeFirst": True,
             "maxVisibleCandidates": snapshot.max_visible_candidates,
             "maxSideCandidates": snapshot.max_side_candidates,
+            "maxModelSideCandidates": max_model_side_candidates(snapshot.max_side_candidates),
+            "ragKeepsRemainingSideSlots": True,
             "rawPinyinFallback": query_basis == "rawInputFallback",
         },
     }
@@ -165,7 +167,11 @@ def merge_display_candidates(
             )
         )
     side_budget = min(snapshot.max_side_candidates, max(0, max_visible - len(display)))
-    side_limit = min(side_budget, max(0, max_visible - len(display)), len(model_predictions))
+    side_limit = min(
+        max_model_side_candidates(side_budget),
+        max(0, max_visible - len(display)),
+        len(model_predictions),
+    )
     for prediction in model_predictions[:side_limit]:
         display.append(
             SideCandidateDisplayItem(
@@ -205,6 +211,12 @@ def merge_display_candidates(
             )
         )
     return display
+
+
+def max_model_side_candidates(side_budget: int) -> int:
+    if side_budget <= 0:
+        return 0
+    return 1
 
 
 def rime_context_to_payload(snapshot: RimeContextSnapshot) -> dict[str, object]:
