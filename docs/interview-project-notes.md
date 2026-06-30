@@ -215,15 +215,16 @@ The transferable architecture is:
 For our macOS route, the equivalent should be:
 
 ```text
-InputMethodKit controller
-  -> composition adapter
-  -> Rime/Squirrel-compatible candidate source later
-  -> RAG candidate source
-  -> unified InputSuggestion payload
-  -> compact AppKit panel
+Squirrel InputMethodKit controller
+  -> librime composition engine
+  -> RimeContext candidates / labels / comments
+  -> async RAG/model side candidate source
+  -> compact native panel
 ```
 
 This avoids the main pitfall: building a one-off input box that cannot later support real Chinese composition, paging, labels, comments, inline preedit, focus changes, or app-specific quirks.
+
+The current custom InputMethodKit app remains the prototype/debug harness. It should not become a replacement for Rime's pinyin parser or dictionary system.
 
 ## Local Small Model Route
 

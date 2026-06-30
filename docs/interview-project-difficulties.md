@@ -56,7 +56,7 @@ RetrievedMemory
 
 ```text
 Mac:
-  InputMethodKit 前端
+  InputMethodKit 原型 / Squirrel-Rime 正式前端
   SQLite 本地事件库
   FTS/BM25 基线召回
   可选 0.6B/1.7B 小模型预测
@@ -114,6 +114,22 @@ adapters:
 
 输入法只做 adapter 和候选展示，不拥有底层记忆治理。这是长期可维护的关键。
 
+### 8. 不能让大模型替代词库和拼音解析
+
+大模型擅长续写和重排，但不适合直接解析用户的原始拼音按键流。真实输入里会有简拼、错拼、分词不确定和数字混入，如果直接交给模型猜，延迟和稳定性都会变差。
+
+所以正式框架选择 Rime/Squirrel：
+
+```text
+raw key input
+  -> Rime 方案 / 词库 / 拼写纠错
+  -> preedit + candidates + labels + comments
+  -> LLM rerank / continuation
+  -> RAG / memory side candidates
+```
+
+这里的工程判断是：不要重新造一个拼音输入法，也不要让模型替代确定性的输入引擎。创新点应该放在候选增强、记忆召回、证据反馈和本地模型延迟控制上。
+
 ## 我已经落地的工程点
 
 - macOS `InputMethodKit` 前端壳；
@@ -126,7 +142,8 @@ adapters:
 - OpenAI-compatible 本地小模型预测 provider；
 - 数字键统一选择模型候选和 RAG 候选；
 - accept / commit / action 本地记录链路；
-- 单测和 macOS app 构建验证。
+- 单测和 macOS app 构建验证；
+- Rime/Squirrel 正式前端路线 ADR。
 
 ## 面试讲法
 
@@ -136,9 +153,10 @@ adapters:
 2. 我的切入点是输入法，因为输入法是用户最高频的上下文生产入口。
 3. 难点不是简单检索，而是把检索结果变成用户愿意在输入过程中选择的候选。
 4. 我把系统拆成 shared memory core 和输入法 adapter，避免和 PI 插件重复造库。
-5. 我用本地 SQLite/FTS5 先保证闭环，再把本地小模型预测作为可选候选源。
-6. 输入法 UI 和 debug UI 分离，真实面板只保留小面积候选，调试页负责 pipeline 可观测性。
-7. 整个系统默认本地完成，适合隐私敏感的个人知识库和 Agent 上下文对齐。
+5. 正式前端复用 Rime/Squirrel 的成熟拼音解析和词库，不让大模型直接猜 raw pinyin。
+6. 我用本地 SQLite/FTS5 先保证闭环，再把本地小模型预测作为可选候选源。
+7. 输入法 UI 和 debug UI 分离，真实面板只保留小面积候选，调试页负责 pipeline 可观测性。
+8. 整个系统默认本地完成，适合个人知识库和 Agent 上下文对齐。
 
 ## 一句话亮点
 

@@ -2,7 +2,7 @@
 
 ## Research Conclusion
 
-The macOS MVP should use a two-layer frontend:
+The current macOS MVP uses a two-layer prototype frontend:
 
 ```text
 InputMethodKit shell
@@ -11,7 +11,7 @@ InputMethodKit shell
   -> custom NSPanel candidate/evidence UI
 ```
 
-This is more suitable than using only `IMKCandidates`.
+This is more suitable than using only `IMKCandidates` for early RAG/debug work.
 
 - Apple `InputMethodKit` provides the system input method process, `IMKServer`, `IMKInputController`, marked text, committed text, and basic candidate windows.
 - `IMKCandidates` supports simple candidates and annotations, but RAG needs action-rich evidence cards: pin, downrank, delete, expand, confidence, memory id, and source preview.
@@ -19,6 +19,10 @@ This is more suitable than using only `IMKCandidates`.
 - fcitx5-style candidate abstractions are useful because they separate candidate text, comments, actions, and expanded panels.
 
 Therefore the first Mac frontend keeps the system IME shell minimal and puts the RAG-specific experience in `RagCandidatePanel`.
+
+The production macOS frontend should move to Squirrel/Rime instead of growing this prototype into a full Chinese input engine. Rime should own raw pinyin parsing, schemes, dictionaries, spelling correction, candidate paging, labels, and comments. The local LLM and RAG/memory layer should only add side candidates after Rime has produced structured context.
+
+See `docs/rime-squirrel-framework-decision.md` for the accepted framework route.
 
 Official `rime/weasel` should remain the composition-engine reference, while Wisdom-Weasel is the LLM-prediction reference:
 
@@ -35,6 +39,17 @@ RAG-IME:
 ```
 
 The macOS implementation should keep this separation. RAG suggestions should not be hard-wired into the key event loop or panel drawing code; they should be one candidate source behind the same adapter contract.
+
+After the framework decision, the hard rule is:
+
+```text
+raw key stream / noisy pinyin
+  -> Rime/Squirrel composition first
+  -> structured Rime candidates and constraints
+  -> LLM rerank / continuation and RAG/memory side candidates
+```
+
+The LLM must not be asked to freely decode dirty raw pinyin. It can use committed context, Rime candidates, and explicit pinyin constraints, but it is not the spelling engine.
 
 References used for this adapter:
 
@@ -224,7 +239,7 @@ The history context variables control how many committed input events are merged
 
 - This is a frontend adapter MVP, not a full Chinese input engine.
 - It handles simple printable composition, number-key candidate selection, return-to-commit, and escape-to-cancel.
-- It does not embed Rime/Squirrel yet.
+- It does not embed Rime/Squirrel yet; this is acceptable only for the prototype/debug phase.
 - It does not ship a packaged Python runtime yet; installed development builds read `bridge-config.json` to find the repo checkout and Python executable.
 - Candidate panel positioning now prefers the active `IMKTextInput` caret rectangle and falls back to mouse location when the target app does not expose a valid text rect.
 - `expand` copies full evidence to clipboard instead of opening a rich source browser.
@@ -232,8 +247,9 @@ The history context variables control how many committed input events are merged
 
 ## Next Engineering Steps
 
-1. Package the Python backend or replace it with a small local daemon so installed input methods do not depend on a mutable repo checkout.
-2. Add a preferences window for DB path, recording toggle, app blacklist, and panel theme.
-3. Integrate with Squirrel/Rime for mature Chinese composition while keeping RAG suggestions as a side candidate source.
-4. Add a WebView evidence browser for paragraph-level source inspection.
-5. Optimize Wisdom-Weasel-style local prediction beyond the current OpenAI-compatible provider: llama.cpp batch sampling with KV reuse if latency requires it.
+1. Keep the current InputMethodKit adapter as the JSON contract and debug harness.
+2. Start a Squirrel/Rime integration branch and verify a clean local Squirrel build/install.
+3. Insert the side candidate request after `rimeAPI.get_context()` has produced preedit, candidates, labels, comments, and page state.
+4. Merge RAG/model candidates into the panel as side candidates without blocking normal Rime key handling.
+5. Preserve Wisdom-Weasel's production lessons: async prediction, stale-result guard, local provider, side-candidate selection branch, context history, and pinyin constraints only when explicit.
+6. Optimize Wisdom-Weasel-style local prediction beyond the current OpenAI-compatible provider: llama.cpp batch sampling with KV reuse if latency requires it.

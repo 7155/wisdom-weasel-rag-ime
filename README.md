@@ -18,7 +18,8 @@ This repo should focus on:
 - evidence preview / expanded evidence UI prototype;
 - pin / downrank / delete action wiring;
 - Agent first-run context hook;
-- macOS InputMethodKit frontend adapter;
+- macOS InputMethodKit frontend adapter prototype;
+- Rime/Squirrel production frontend integration plan;
 - optional local OpenAI-compatible model prediction lane;
 - history-input context for local model prediction;
 - Mac-local acceptance scenarios.
@@ -54,6 +55,18 @@ macOS InputMethodKit adapter / CLI prototype
   -> user action
   -> shared core governance action
 ```
+
+The production macOS frontend should not remain a custom pinyin engine. The accepted framework route is Rime/Squirrel:
+
+```text
+Squirrel / InputMethodKit
+  -> librime handles raw key input, schemes, dictionaries, spelling, paging
+  -> Rime candidates + labels + comments
+  -> RAG-IME side candidates from local model and local memory
+  -> compact shared candidate panel
+```
+
+The current InputMethodKit app is kept as the fast prototype and debug harness. See `docs/rime-squirrel-framework-decision.md` for the framework decision.
 
 ## Current Commands
 
@@ -226,7 +239,7 @@ The local SQLite client is still the easiest Mac MVP backend. The shared RAG/mem
 
 ## macOS Frontend Route
 
-Implemented route:
+Implemented prototype route:
 
 1. Keep this CLI adapter as the product contract and test harness.
 2. Add `suggest-json` and `action-json` as the native frontend protocol.
@@ -238,14 +251,18 @@ Implemented route:
 5. Render compact model predictions above RAG/memory candidates, using one shared number-key sequence.
 6. Render evidence preview in an expanded panel or WebView-style overlay.
 
-Next route:
+Production route:
 
-1. Package the Python backend or replace it with a local daemon.
-2. Port the compact debug overlay behavior into `RagCandidatePanel`.
-3. Keep Rime/Squirrel/Wisdom-Weasel integration as the next bridge after the adapter contract is stable.
+1. Base the real macOS IME on Squirrel/Rime rather than extending the prototype into a full pinyin engine.
+2. Preserve Rime schemes, dictionaries, spelling correction, paging, labels, and comments.
+3. Add RAG/model candidates after librime has produced structured composition state.
+4. Follow Wisdom-Weasel's proven constraints: async prediction, stale-result guard, side-candidate merge, local provider, and pinyin constraints only when supplied by the engine.
+5. Keep the current InputMethodKit prototype as the debug/contract harness while the Squirrel integration is developed.
 
 See `docs/interview-project-difficulties.md` for the Chinese interview material that records the project difficulties and engineering choices.
 
 See `docs/macos-frontend-adapter.md` for the macOS frontend research and implementation notes.
+
+See `docs/rime-squirrel-framework-decision.md` for the accepted Rime/Squirrel framework route.
 
 See `docs/wisdom-weasel-issues-map.md` for the Wisdom-Weasel open-issues compatibility map.
