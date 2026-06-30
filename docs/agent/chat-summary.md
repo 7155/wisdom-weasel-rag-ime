@@ -487,3 +487,23 @@ Verification:
 
 Next:
 - Test a real local/WSL embedding provider and use the subagent VCP/Wisdom-Weasel research to choose the next ranking/cache optimization.
+
+### 2026-07-01
+Topic:
+- Expose vector index state to debug/sidecar cache.
+
+Changes:
+- Debug/sidecar health now includes `vectorStats`.
+- `/rime-suggest` short TTL cache key now includes vector index/provider stats, so vector backfill/provider changes do not reuse stale side-candidate responses.
+- Debug JSON panel shows `vectorStats`.
+
+Verification:
+- Debug-server tests passed.
+- Full suite now has 73 tests and passed.
+- Acceptance passed.
+
+Research:
+- Subagent confirmed VCP's hot memory path is vector-first with strong caching/dedup/rerank failover, while Wisdom-Weasel's speed comes from Rime-first integration, stale request guards, native llama.cpp KV cache, and batch candidate sampling.
+
+Next:
+- Build a larger 30-50 case gold set, then add real embedding/provider cache and in-flight dedupe.

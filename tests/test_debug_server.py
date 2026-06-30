@@ -35,6 +35,22 @@ class FakePredictionProvider:
         ][:max_candidates]
 
 
+class VectorAwareFixtureCore(FixtureCoreClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.vector_revision = 1
+
+    def vector_index_stats(self) -> dict[str, object]:
+        return {
+            "enabled": True,
+            "providerFingerprint": "test-vector:v1",
+            "totalVectors": self.vector_revision,
+            "activeProviderVectors": self.vector_revision,
+            "candidateLimit": 8,
+            "weight": 1.0,
+        }
+
+
 class DebugImeServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-debug-test-")
@@ -57,6 +73,7 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(health["rimeSuggestCache"]["hits"], 0)
         self.assertTrue(health["suggestionCache"]["enabled"])
         self.assertEqual(health["suggestionCache"]["hits"], 0)
+        self.assertFalse(health["vectorStats"]["enabled"])
         seeded = self.service.seed()
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)
@@ -156,6 +173,43 @@ class DebugImeServiceTests(unittest.TestCase):
         third = self.service.rime_suggest(third_payload)
         self.assertFalse(third["cache"]["hit"])
         self.assertEqual(predictor.calls, 2)
+
+    def test_rime_suggest_cache_key_includes_vector_index_state(self) -> None:
+        predictor = FakePredictionProvider()
+        core = VectorAwareFixtureCore()
+        service = DebugImeService(
+            DebugServerConfig(
+                core=core,
+                predictor=predictor,
+                seed_if_empty=False,
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        payload = {
+            "sessionId": "cache-vector-a",
+            "requestSeq": 51,
+            "rawInput": "ragshurufa",
+            "preedit": "ragshurufa",
+            "committedContext": "用户正在写 RAG 输入法",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 2,
+            "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
+        }
+
+        first = service.rime_suggest(payload)
+        second_payload = dict(payload)
+        second_payload["requestSeq"] = 52
+        second = service.rime_suggest(second_payload)
+        core.vector_revision += 1
+        third_payload = dict(payload)
+        third_payload["requestSeq"] = 53
+        third = service.rime_suggest(third_payload)
+
+        self.assertEqual(predictor.calls, 2)
+        self.assertFalse(first["cache"]["hit"])
+        self.assertTrue(second["cache"]["hit"])
+        self.assertFalse(third["cache"]["hit"])
+        self.assertEqual(service.health()["vectorStats"]["activeProviderVectors"], 2)
 
     def test_rime_suggest_cache_ignores_raw_pinyin_when_semantic_query_is_stable(self) -> None:
         predictor = FakePredictionProvider()

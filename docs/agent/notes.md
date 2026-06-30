@@ -407,6 +407,32 @@ Next:
 - Replace local-hash with a real local/WSL embedding endpoint and compare quality/latency on the same case file.
 - Use subagent research output to decide whether VCP-style hybrid/cache behavior should change the vector merge or context-cache layer.
 
+### 2026-07-01 07:46 CST
+Problem:
+- After adding optional vector recall, debug health and `/rime-suggest` cache did not expose or depend on vector index state.
+- If a running sidecar served a cached response after vector backfill/provider changes, the IME could briefly show stale RAG candidates without a visible reason.
+
+Changes:
+- Added `vectorStats` to debug/sidecar health.
+- Included `vectorStats` in the semantic `/rime-suggest` cache key so vector provider/index changes invalidate the short TTL cache.
+- Added `vectorStats` to the debug page JSON panel.
+- Added a test core whose vector revision changes to prove cache invalidation follows vector index state.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_debug_server`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `git diff --check`
+
+Findings:
+- Full suite passed with 73 tests.
+- Acceptance still passes.
+- Subagent read-only research confirmed the next high-value directions: VCP-style embedding/query caches and pending request dedupe, richer 30-50 case gold set, typed context lanes, and Wisdom-Weasel-style native llama.cpp/MLX prediction path with KV cache and batch candidates.
+
+Next:
+- Expand Codex-history gold cases before further rerank tuning.
+- Add embedding exact cache / in-flight dedupe once a real embedding endpoint is selected.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.
