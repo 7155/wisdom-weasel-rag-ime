@@ -12,6 +12,7 @@ from .agent_hook import build_first_run_injection
 from .core_client import FixtureCoreClient, JsonCommandCoreClient
 from .renderer import render_agent_injection, render_terminal_panel
 from .scenarios import SCENARIOS, get_scenario
+from .trigger_policy import TypingState, should_refresh_rag
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -34,6 +35,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     demo.add_argument("--top-k", type=int, default=5)
 
     subparsers.add_parser("action-demo", help="Show pin/downrank/delete effects against fixture core")
+
+    trigger = subparsers.add_parser("trigger-demo", help="Show RAG refresh trigger decisions")
+    trigger.add_argument("current_input")
+    trigger.add_argument("--idle-ms", type=int, default=0)
+    trigger.add_argument("--app-kind", default="editor")
+    trigger.add_argument("--explicit", action="store_true")
+    trigger.add_argument("--sensitive", action="store_true")
 
     hook = subparsers.add_parser("agent-hook", help="Build PROJECT_MEMORY_BLOCK")
     hook.add_argument("--project", default="wisdom-weasel-rag-ime")
@@ -115,6 +123,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "trigger-demo":
+        decision = should_refresh_rag(
+            TypingState(
+                current_input=args.current_input,
+                idle_ms=args.idle_ms,
+                app_kind=args.app_kind,
+                explicit_request=args.explicit,
+                field_is_sensitive=args.sensitive,
+            )
+        )
+        print(
+            json.dumps(
+                {"should_refresh": decision.should_refresh, "reason": decision.reason},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
     if args.command == "agent-hook":
         injection = build_first_run_injection(adapter, project=args.project, query=args.query, top_k=args.top_k)
         print(render_agent_injection(injection))
@@ -163,6 +190,13 @@ def run_acceptance(adapter: InputMethodAdapter) -> dict[str, object]:
     adapter.delete(before[0], query=action_scenario.current_input)
     after = adapter.suggest(request)
     injection = build_first_run_injection(adapter, project="wisdom-weasel-rag-ime", top_k=3)
+    trigger_cases = {
+        "single_char": should_refresh_rag(TypingState(current_input="项", idle_ms=500)).should_refresh,
+        "idle_semantic": should_refresh_rag(TypingState(current_input="这个项目", idle_ms=300)).should_refresh,
+        "sensitive": should_refresh_rag(
+            TypingState(current_input="银行卡密码", idle_ms=800, field_is_sensitive=True)
+        ).should_refresh,
+    }
     return {
         "local_first": True,
         "cloud_default": False,
@@ -177,6 +211,7 @@ def run_acceptance(adapter: InputMethodAdapter) -> dict[str, object]:
             "has_project_memory_block": "PROJECT_MEMORY_BLOCK" in injection.block,
             "source_count": len(injection.source_event_ids),
         },
+        "trigger_policy": trigger_cases,
     }
 
 

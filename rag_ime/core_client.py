@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
-from .text_utils import compact_whitespace, now_ms, overlap_terms, truncate_text
+from .suggestion_compiler import RankedMemory, SuggestionCompiler
+from .text_utils import compact_whitespace, now_ms, overlap_terms
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,7 @@ class FixtureCoreClient:
 
     def __init__(self, memories: list[CoreMemory] | None = None):
         self.memories = list(memories or default_fixture_memories())
+        self.compiler = SuggestionCompiler()
         self.actions: list[MemoryAction] = []
         self.events: list[InputEvent] = []
         self._state: dict[str, dict[str, Any]] = {
@@ -179,10 +181,11 @@ class FixtureCoreClient:
             key=lambda item: item[0],
             reverse=True,
         )
-        return [
-            _memory_to_suggestion(memory, score=score, rank=rank)
+        ranked_memories = [
+            RankedMemory(memory=memory, score=score, rank=rank)
             for rank, (score, memory) in enumerate(ranked[:top_k], start=1)
         ]
+        return self.compiler.compile(ranked_memories)
 
     def apply_action(self, action: MemoryAction) -> MemoryAction:
         memory_id = action.memory_id
@@ -310,6 +313,17 @@ def default_fixture_memories() -> list[CoreMemory]:
             tags=("ranking", "reranker"),
         ),
         CoreMemory(
+            memory_id="mem-structure-plan",
+            source_event_id="203",
+            text="第一步先验证 FTS5, 第二步接本地 embedding, 第三步再做 reranker。",
+            source_ref="memory:203#structure",
+            score=0.78,
+            reason="fixture:structure",
+            evidence_preview="输入法默认候选必须快, 段落生成和小模型能力应放到用户主动展开后。",
+            project="wisdom-weasel-rag-ime",
+            tags=("structure", "technical-plan"),
+        ),
+        CoreMemory(
             memory_id="mem-agent-block",
             source_event_id="301",
             text="生成 PROJECT_MEMORY_BLOCK",
@@ -332,28 +346,6 @@ def default_fixture_memories() -> list[CoreMemory]:
             tags=("agent-hook", "vibe-coding"),
         ),
     ]
-
-
-def _memory_to_suggestion(memory: CoreMemory, *, score: float, rank: int) -> InputSuggestion:
-    surface = truncate_text(memory.text, 42)
-    suggestion_type = "phrase" if len(surface) <= 24 else "sentence"
-    return InputSuggestion(
-        suggestion_id=f"sug-{memory.memory_id}",
-        surface_text=surface,
-        suggestion_type=suggestion_type,
-        source_event_id=int(memory.source_event_id or rank),
-        evidence_preview=truncate_text(memory.evidence_preview, 140),
-        confidence=max(0.0, min(1.0, score)),
-        actions=("commit", "expand", "pin", "downrank", "delete"),
-        expanded_evidence=f"{memory.source_ref}\n{memory.evidence_preview}",
-        metadata={
-            "memory_id": memory.memory_id,
-            "source_ref": memory.source_ref,
-            "reason": memory.reason,
-            "rank": rank,
-            "tags": list(memory.tags),
-        },
-    )
 
 
 def _suggestion_from_json(payload: dict[str, Any]) -> InputSuggestion:
