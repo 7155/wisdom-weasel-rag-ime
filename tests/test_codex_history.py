@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stdout
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.cli import main
 from rag_ime.codex_history import (
@@ -17,6 +21,32 @@ from rag_ime.codex_history import (
 )
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputSuggestion
+
+
+class _MockComparisonPredictionHandler(BaseHTTPRequestHandler):
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        self.rfile.read(length)
+        body = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Squirrel本地记忆",
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
 
 
 class CodexHistoryTests(unittest.TestCase):
@@ -243,6 +273,85 @@ class CodexHistoryTests(unittest.TestCase):
         )
         self.assertGreaterEqual(report["cacheStats"]["hits"], 2)
         self.assertIn("elapsedMs", report["cases"][2])
+
+    def test_cli_eval_comparison_runs_rag_and_model_on_same_cases(self) -> None:
+        db_path = self.root / "comparison.sqlite"
+        with redirect_stdout(io.StringIO()):
+            import_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "import-codex-history",
+                    "--path",
+                    str(self.history),
+                    "--project",
+                    "wisdom-weasel-rag-ime",
+                ]
+            )
+        self.assertEqual(import_code, 0)
+
+        cases_file = self.root / "comparison-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "squirrel-rag",
+                    "query": "Squirrel RAG 输入法候选",
+                    "expectedTerms": ["Squirrel", "本地记忆"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockComparisonPredictionHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            eval_stdout = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "openai-compatible",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mock-qwen",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(eval_stdout):
+                    eval_code = main(
+                        [
+                            "--db-path",
+                            str(db_path),
+                            "eval-comparison",
+                            "--cases-file",
+                            str(cases_file),
+                            "--match",
+                            "all",
+                            "--repeat",
+                            "2",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(eval_code, 0)
+        report = json.loads(eval_stdout.getvalue())
+        self.assertEqual(report["schemaVersion"], "rag-ime.eval-comparison.v1")
+        self.assertEqual(report["repeat"]["effectiveCaseCount"], 2)
+        self.assertEqual(report["rag"]["passed"], 2)
+        self.assertEqual(report["model"]["passed"], 2)
+        self.assertTrue(report["model"]["prediction"]["providerConfigured"])
+        self.assertEqual(report["model"]["prediction"]["providerName"], "local-openai-compatible")
+        self.assertEqual(report["comparison"]["bothPassed"], 2)
+        self.assertEqual(report["comparison"]["neitherPassed"], 0)
+        self.assertEqual(report["comparison"]["winnerByPassRate"], "tie")
+        self.assertEqual(report["comparison"]["cases"][0]["ragPassed"], True)
+        self.assertEqual(report["comparison"]["cases"][0]["modelPassed"], True)
+        self.assertGreaterEqual(report["rag"]["cacheStats"]["hits"], 1)
 
     def test_load_eval_cases_and_match_results(self) -> None:
         cases_file = self.root / "manual-cases.jsonl"

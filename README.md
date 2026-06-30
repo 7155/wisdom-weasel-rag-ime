@@ -259,6 +259,19 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
 
 Use this before switching between Qwen, MLX, llama.cpp, or other local OpenAI-compatible servers. It reports the same `top1Accuracy`, `meanReciprocalRank`, forbidden-term noise checks, and per-case `elapsedMs` as the RAG eval, plus a `prediction` block for provider and latency-budget status.
 
+Compare local RAG suggestions and model predictions on the same cases:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-comparison \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --top-k 5 \
+  --max-candidates 3 \
+  --repeat 2
+```
+
+This emits a `rag` report, a `model` report, and a `comparison` block with `ragOnlyPassed`, `modelOnlyPassed`, `bothPassed`, `winnerByPassRate`, `winnerByTop1Accuracy`, and per-case surfaces. Use it when deciding whether a local Qwen/MLX/llama.cpp endpoint is good enough to enable in the IME lane.
+
 Build the macOS frontend adapter:
 
 ```bash

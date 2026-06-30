@@ -174,6 +174,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_prediction.add_argument("--repeat", type=int, default=1)
     eval_prediction.add_argument("--latency-budget-ms", type=int, default=150)
 
+    eval_comparison = subparsers.add_parser(
+        "eval-comparison",
+        help="Evaluate RAG suggestions and local model predictions on the same JSONL cases",
+    )
+    eval_comparison.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
+    eval_comparison.add_argument("--project", default="wisdom-weasel-rag-ime")
+    eval_comparison.add_argument("--top-k", type=int, default=5)
+    eval_comparison.add_argument("--max-candidates", type=int, default=3)
+    eval_comparison.add_argument("--match", choices=("any", "all"), default="any")
+    eval_comparison.add_argument("--repeat", type=int, default=1)
+    eval_comparison.add_argument("--latency-budget-ms", type=int, default=150)
+
     debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
     debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
     debug_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_DEBUG_PORT", "8765")))
@@ -585,6 +597,103 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
+    if args.command == "eval-comparison":
+        cases = load_eval_cases(Path(args.cases_file))
+        repeat_count = max(1, args.repeat)
+        max_candidates = max(1, min(10, args.max_candidates))
+        rag_results = []
+        model_results = []
+        rag_elapsed_ms_by_case: dict[str, int] = {}
+        model_elapsed_ms_by_case: dict[str, int] = {}
+        candidate_counts: list[int] = []
+        over_budget_count = 0
+        provider_name = _prediction_provider_name(predictor)
+        provider_configured = not _is_null_prediction_provider(predictor)
+
+        for repeat_index in range(1, repeat_count + 1):
+            for case in cases:
+                eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat_count)
+                project = eval_case.project or args.project
+
+                rag_started = time.perf_counter()
+                suggestions = adapter.suggest(
+                    SuggestionRequest(
+                        current_input=eval_case.query,
+                        recent_context=eval_case.recent_context,
+                        project=project,
+                        top_k=args.top_k,
+                    )
+                )
+                rag_elapsed_ms_by_case[eval_case.case_id] = int((time.perf_counter() - rag_started) * 1000)
+                rag_results.append(evaluate_suggestions(eval_case, suggestions, match=args.match))
+
+                prediction_context = build_prediction_context(
+                    core,
+                    explicit_recent_context=eval_case.recent_context,
+                    project=project,
+                )
+                model_started = time.perf_counter()
+                predictions = predictor.predict(
+                    current_input=eval_case.query,
+                    recent_context=prediction_context,
+                    max_candidates=max_candidates,
+                )
+                model_elapsed_ms = int((time.perf_counter() - model_started) * 1000)
+                model_elapsed_ms_by_case[eval_case.case_id] = model_elapsed_ms
+                if predictions:
+                    provider_name = predictions[0].provider_name
+                candidate_counts.append(len(predictions))
+                if model_elapsed_ms > args.latency_budget_ms:
+                    over_budget_count += 1
+                model_results.append(
+                    evaluate_suggestions(
+                        eval_case,
+                        _predictions_as_eval_suggestions(predictions),
+                        match=args.match,
+                    )
+                )
+
+        rag_report = eval_report(rag_results)
+        model_report = eval_report(model_results)
+        repeat_payload = {
+            "requested": repeat_count,
+            "baseCaseCount": len(cases),
+            "effectiveCaseCount": len(rag_results),
+        }
+        rag_report["repeat"] = repeat_payload
+        model_report["repeat"] = dict(repeat_payload)
+        _attach_eval_latency(rag_report, rag_elapsed_ms_by_case)
+        _attach_eval_latency(model_report, model_elapsed_ms_by_case)
+        cache_stats = getattr(core, "suggestion_cache_stats", None)
+        if callable(cache_stats):
+            rag_report["cacheStats"] = cache_stats()
+        model_report["prediction"] = {
+            "providerName": provider_name,
+            "providerConfigured": provider_configured,
+            "maxCandidates": max_candidates,
+            "latencyBudgetMs": args.latency_budget_ms,
+            "overBudgetCount": over_budget_count,
+            "totalCandidates": sum(candidate_counts),
+            "hasCandidates": any(count > 0 for count in candidate_counts),
+        }
+        report = {
+            "schemaVersion": "rag-ime.eval-comparison.v1",
+            "casesFile": str(Path(args.cases_file)),
+            "project": args.project,
+            "match": args.match,
+            "repeat": repeat_payload,
+            "rag": rag_report,
+            "model": model_report,
+            "comparison": _comparison_summary(
+                rag_results=rag_results,
+                model_results=model_results,
+                rag_elapsed_ms_by_case=rag_elapsed_ms_by_case,
+                model_elapsed_ms_by_case=model_elapsed_ms_by_case,
+            ),
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "debug-server":
         from .debug_server import DebugServerConfig, run_debug_server
 
@@ -755,6 +864,79 @@ def _prediction_provider_name(predictor) -> str:
 
 def _is_null_prediction_provider(predictor) -> bool:
     return predictor.__class__.__name__ == "NullPredictionProvider"
+
+
+def _comparison_summary(
+    *,
+    rag_results,
+    model_results,
+    rag_elapsed_ms_by_case: dict[str, int],
+    model_elapsed_ms_by_case: dict[str, int],
+) -> dict[str, object]:
+    total = min(len(rag_results), len(model_results))
+    rag_passed = sum(1 for item in rag_results if item.passed)
+    model_passed = sum(1 for item in model_results if item.passed)
+    rag_top1 = sum(1 for item in rag_results if item.top1_passed)
+    model_top1 = sum(1 for item in model_results if item.top1_passed)
+    rag_mrr = (sum(item.reciprocal_rank for item in rag_results) / len(rag_results)) if rag_results else 0.0
+    model_mrr = (sum(item.reciprocal_rank for item in model_results) / len(model_results)) if model_results else 0.0
+
+    both = 0
+    rag_only = 0
+    model_only = 0
+    neither = 0
+    cases = []
+    for rag_item, model_item in zip(rag_results, model_results):
+        if rag_item.passed and model_item.passed:
+            both += 1
+        elif rag_item.passed:
+            rag_only += 1
+        elif model_item.passed:
+            model_only += 1
+        else:
+            neither += 1
+        cases.append(
+            {
+                "caseId": rag_item.case_id,
+                "query": rag_item.query,
+                "ragPassed": rag_item.passed,
+                "modelPassed": model_item.passed,
+                "ragFirstMatchRank": rag_item.first_match_rank,
+                "modelFirstMatchRank": model_item.first_match_rank,
+                "ragTop1Passed": rag_item.top1_passed,
+                "modelTop1Passed": model_item.top1_passed,
+                "ragElapsedMs": rag_elapsed_ms_by_case.get(rag_item.case_id, 0),
+                "modelElapsedMs": model_elapsed_ms_by_case.get(model_item.case_id, 0),
+                "ragTopSurfaces": list(rag_item.top_surfaces),
+                "modelTopSurfaces": list(model_item.top_surfaces),
+            }
+        )
+
+    return {
+        "total": total,
+        "bothPassed": both,
+        "ragOnlyPassed": rag_only,
+        "modelOnlyPassed": model_only,
+        "neitherPassed": neither,
+        "winnerByPassRate": _metric_winner(rag_passed, model_passed),
+        "winnerByTop1Accuracy": _metric_winner(rag_top1, model_top1),
+        "winnerByMeanReciprocalRank": _metric_winner(rag_mrr, model_mrr),
+        "ragPassRate": (rag_passed / len(rag_results)) if rag_results else 0.0,
+        "modelPassRate": (model_passed / len(model_results)) if model_results else 0.0,
+        "ragTop1Accuracy": (rag_top1 / len(rag_results)) if rag_results else 0.0,
+        "modelTop1Accuracy": (model_top1 / len(model_results)) if model_results else 0.0,
+        "ragMeanReciprocalRank": rag_mrr,
+        "modelMeanReciprocalRank": model_mrr,
+        "cases": cases,
+    }
+
+
+def _metric_winner(rag_value: float | int, model_value: float | int) -> str:
+    if rag_value > model_value:
+        return "rag"
+    if model_value > rag_value:
+        return "model"
+    return "tie"
 
 
 def _read_json_payload(payload_file: str) -> dict[str, object]:
