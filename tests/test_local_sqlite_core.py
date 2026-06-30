@@ -41,6 +41,17 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertTrue(all(item.evidence_preview for item in suggestions))
         self.assertTrue(all(item.metadata.get("memory_id", "").startswith("event:") for item in suggestions))
 
+    def test_negative_fts5_bm25_score_affects_ranking(self) -> None:
+        suggestions = self.adapter.suggest(
+            SuggestionRequest(
+                current_input="Squirrel RAG 输入法候选",
+                recent_context="本地记忆",
+                top_k=3,
+            )
+        )
+        self.assertEqual(suggestions[0].surface_text, "把本地记忆注入 Agent 首次运行上下文")
+        self.assertIn("fts5:", suggestions[0].metadata["reason"])
+
     def test_suggestion_cache_hits_and_invalidates_on_write(self) -> None:
         request = SuggestionRequest(
             current_input="SQLite 和 FTS5 第一版",
