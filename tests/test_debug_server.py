@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 import tempfile
 import unittest
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
+from urllib.request import Request, urlopen
 
 from rag_ime.core_client import FixtureCoreClient
-from rag_ime.debug_server import DebugImeService, DebugServerConfig
+from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.models import ModelPrediction
 
 
@@ -139,6 +144,56 @@ class DebugImeServiceTests(unittest.TestCase):
         )
         self.assertTrue(committed["ok"])
         self.assertTrue(str(committed["eventId"]).startswith("event:"))
+
+    def test_commit_endpoint_accepts_squirrel_source(self) -> None:
+        committed = self.service.commit(
+            {
+                "text": "Squirrel HTTP sidecar commit",
+                "source": "squirrel_rime_sidecar",
+                "tags": ["squirrel"],
+            }
+        )
+        self.assertTrue(committed["ok"])
+        with sqlite3.connect(self.service.config.db_path) as conn:
+            source = conn.execute(
+                "SELECT source FROM input_events WHERE committed_text = ?",
+                ("Squirrel HTTP sidecar commit",),
+            ).fetchone()[0]
+        self.assertEqual(source, "squirrel_rime_sidecar")
+
+    def test_http_sidecar_accepts_root_paths(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/rime-suggest"
+            request = Request(
+                url,
+                data=json.dumps(
+                    {
+                        "sessionId": "http-root",
+                        "requestSeq": 1,
+                        "maxVisibleCandidates": 3,
+                        "maxSideCandidates": 1,
+                        "rimeContext": {"candidates": [{"label": "1", "text": "本地记忆"}]},
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(payload["schemaVersion"], "rag-ime.rime-sidecar.v1")
+        self.assertEqual(payload["sessionId"], "http-root")
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):

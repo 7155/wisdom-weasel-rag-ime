@@ -23,3 +23,25 @@ Verification:
 Next steps:
 - Run full Squirrel Xcode build/install/signing on a machine with Xcode.
 - Convert the Python CLI sidecar into a long-lived daemon to avoid spawning a process per key update.
+
+### 2026-06-30
+Topic:
+- Reduce Squirrel sidecar latency by avoiding per-request Python process startup.
+
+Decisions:
+- Reuse the existing local HTTP facade instead of creating a separate protocol.
+- Squirrel should prefer `rag_ime/sidecar_url` and keep CLI fallback for fail-closed behavior.
+
+Changes:
+- Added `sidecar-server` CLI command on port `8766` by default.
+- Added `/health`, `/rime-suggest`, `/commit`, `/action` root aliases in addition to `/api/...`.
+- Updated the Squirrel patch pack to POST JSON to the long-running sidecar when configured.
+
+Verification:
+- 35 Python unit tests passed.
+- CLI sidecar server smoke returned a valid `rag-ime.rime-sidecar.v1` response.
+- Squirrel sidecar Swift files typechecked with a temporary config stub.
+- Patch still applies cleanly to Squirrel `2158538`.
+
+Next steps:
+- Build/install patched Squirrel with Xcode and test real typing.

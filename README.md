@@ -121,6 +121,12 @@ Then open:
 http://127.0.0.1:8765/
 ```
 
+Run the lightweight HTTP sidecar for patched Squirrel:
+
+```bash
+python3 -m rag_ime.cli sidecar-server --host 127.0.0.1 --port 8766
+```
+
 Show memory action effects:
 
 ```bash
@@ -272,7 +278,7 @@ Implemented in this repo:
 - shared-core JSON command integration for CLI/debug-server;
 - Squirrel/Rime-aware side-candidate JSON contract;
 - Swift bridge models and preview command for the Rime side-candidate contract;
-- Squirrel patch pack for a fail-closed Rime sidecar frontend integration with side-candidate commit/action recording;
+- Squirrel patch pack for a fail-closed Rime sidecar frontend integration with HTTP sidecar and side-candidate commit/action recording;
 - optional local OpenAI-compatible model prediction lane;
 - bounded history-input context for model/RAG prediction;
 - shared number-key selection for top model predictions and lower RAG/memory candidates;

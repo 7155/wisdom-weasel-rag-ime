@@ -31,6 +31,7 @@ class DebugServerConfig:
     seed_if_empty: bool = True
     core: CoreClient | None = None
     predictor: PredictionProvider | None = None
+    server_name: str = "debug server"
 
 
 class DebugImeService:
@@ -117,7 +118,7 @@ class DebugImeService:
             candidate_rank=_optional_int(payload.get("candidateRank")),
             provider_name=_string(payload.get("providerName")) or "debug-page",
             tags=tuple(_string_list(payload.get("tags"))),
-            source="debug_page_commit",
+            source=_string(payload.get("source")) or "debug_page_commit",
         )
         return {"ok": True, "eventId": event_id, "eventCount": self._event_count()}
 
@@ -155,7 +156,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         parsed = urlparse(self.path)
-        if parsed.path == "/api/health":
+        if parsed.path in ("/api/health", "/health"):
             self._write_json(HTTPStatus.OK, self.service.health())
             return
         self._serve_static(parsed.path)
@@ -163,15 +164,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
         try:
             payload = self._read_json()
-            if self.path == "/api/suggest":
+            path = urlparse(self.path).path
+            if path in ("/api/suggest", "/suggest"):
                 self._write_json(HTTPStatus.OK, self.service.suggest(payload))
-            elif self.path == "/api/rime-suggest":
+            elif path in ("/api/rime-suggest", "/rime-suggest"):
                 self._write_json(HTTPStatus.OK, self.service.rime_suggest(payload))
-            elif self.path == "/api/commit":
+            elif path in ("/api/commit", "/commit"):
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
-            elif self.path == "/api/action":
+            elif path in ("/api/action", "/action"):
                 self._write_json(HTTPStatus.OK, self.service.action(payload))
-            elif self.path == "/api/seed":
+            elif path in ("/api/seed", "/seed"):
                 self._write_json(HTTPStatus.OK, self.service.seed())
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
@@ -231,7 +233,7 @@ def run_debug_server(config: DebugServerConfig) -> None:
     Handler.static_dir = static_dir
     server = ThreadingHTTPServer((config.host, config.port), Handler)
     url = f"http://{config.host}:{config.port}/"
-    print(f"RAG IME debug server: {url}")
+    print(f"RAG IME {config.server_name}: {url}")
     print(f"DB: {config.db_path}")
     server.serve_forever()
 

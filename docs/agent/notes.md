@@ -31,3 +31,21 @@ Commands:
 Next:
 - Build and install a patched Squirrel app in a full Xcode environment.
 - Replace per-request Python process spawning with a long-lived daemon or local socket.
+
+### 2026-06-30 23:10 CST
+Problem:
+- Squirrel patch still spawned `python -m rag_ime.cli` on each sidecar request, which is too expensive for high-frequency typing.
+
+Changes:
+- Added `python3 -m rag_ime.cli sidecar-server` as a lightweight local HTTP sidecar.
+- Added root-path HTTP aliases such as `/rime-suggest`, `/commit`, and `/action` in addition to `/api/...`.
+- Updated Squirrel patch to prefer `rag_ime/sidecar_url` and fall back to CLI if the daemon is unavailable.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture sidecar-server --host 127.0.0.1 --port 18766 --no-seed`
+- `swiftc -typecheck ... RagImeSidecarModels.swift RagImeSidecarClient.swift`
+- `git apply --check squirrel-patches/0001-add-rag-ime-sidecar.patch`
+
+Next:
+- Full Xcode build/install of patched Squirrel remains the next hard gate.

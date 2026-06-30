@@ -116,6 +116,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     debug_server.add_argument("--static-dir", default=os.environ.get("RAG_IME_DEBUG_STATIC_DIR", "debug"))
     debug_server.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
 
+    sidecar_server = subparsers.add_parser("sidecar-server", help="Run the local HTTP sidecar for Squirrel/Rime")
+    sidecar_server.add_argument("--host", default=os.environ.get("RAG_IME_SIDECAR_HOST", "127.0.0.1"))
+    sidecar_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_SIDECAR_PORT", "8766")))
+    sidecar_server.add_argument("--project", default="wisdom-weasel-rag-ime")
+    sidecar_server.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
+
     subparsers.add_parser("acceptance", help="Run deterministic adapter acceptance scenarios")
 
     args = parser.parse_args(argv)
@@ -339,6 +345,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 static_dir=Path(args.static_dir),
                 seed_if_empty=not args.no_seed,
                 core=core,
+            )
+        )
+        return 0
+
+    if args.command == "sidecar-server":
+        from .debug_server import DebugServerConfig, run_debug_server
+
+        run_debug_server(
+            DebugServerConfig(
+                host=args.host,
+                port=args.port,
+                db_path=Path(args.db_path),
+                project=args.project,
+                static_dir=Path("debug"),
+                seed_if_empty=not args.no_seed,
+                core=core,
+                server_name="sidecar server",
             )
         )
         return 0

@@ -58,6 +58,7 @@ sources/RagImeSidecarClient.swift
 Minimum behavior:
 
 - read `rag_ime/enabled`, `rag_ime/python`, `rag_ime/repo_root`, `rag_ime/db_path`, `rag_ime/max_side_candidates`, and `rag_ime/max_visible_candidates` from Squirrel config;
+- prefer `rag_ime/sidecar_url` for long-running HTTP sidecar calls;
 - write one `RimeSidecarRequest` to a temporary JSON file;
 - call:
 
@@ -122,8 +123,8 @@ display item action == select_rime_candidate
 
 display item action == commit_side_candidate
   -> client.insertText(insertText, replacementRange: .empty)
-  -> background CLI commit
-  -> background action-json accepted when memory metadata exists
+  -> background HTTP/CLI commit
+  -> background HTTP/CLI accepted action when memory metadata exists
   -> clear composition if needed
 ```
 
