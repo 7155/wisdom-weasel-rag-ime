@@ -87,6 +87,25 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertIn("local SQLite/FTS5", injection.block)
         self.assertGreaterEqual(len(injection.source_event_ids), 1)
 
+    def test_recent_input_context_uses_recent_committed_history(self) -> None:
+        self.adapter.commit_text(
+            "第一条历史输入",
+            recent_context="设计 outbox 方案",
+            preedit="diyi",
+            tags=("history",),
+        )
+        self.adapter.commit_text(
+            "第二条历史输入",
+            recent_context="继续写 RAG 输入法",
+            preedit="dier",
+            tags=("history",),
+        )
+        context = self.core.recent_input_context(project="wisdom-weasel-rag-ime", limit=2, max_chars=220)
+        self.assertIn("第一条历史输入", context)
+        self.assertIn("第二条历史输入", context)
+        self.assertLess(context.index("第一条历史输入"), context.index("第二条历史输入"))
+        self.assertIn("继续写 RAG 输入法", context)
+
     def test_acceptance_can_run_against_local_sqlite_core(self) -> None:
         report = run_acceptance(self.adapter)
         self.assertTrue(report["local_first"])

@@ -20,6 +20,7 @@ This repo should focus on:
 - Agent first-run context hook;
 - macOS InputMethodKit frontend adapter;
 - optional local OpenAI-compatible model prediction lane;
+- history-input context for local model prediction;
 - Mac-local acceptance scenarios.
 
 This repo should not duplicate:
@@ -133,9 +134,13 @@ export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000
 export RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B
 export RAG_IME_PREDICTOR_TIMEOUT_MS=800
 export RAG_IME_PREDICTOR_MAX_TOKENS=12
+export RAG_IME_HISTORY_CONTEXT_EVENTS=6
+export RAG_IME_HISTORY_CONTEXT_CHARS=420
 
 python3 -m rag_ime.cli suggest-json "输入法 个人记忆" --recent-context "local-first RAG" --top-k 3
 ```
+
+`suggest-json` merges the explicit `--recent-context` with recent committed input history before calling the local model. Set `RAG_IME_HISTORY_CONTEXT_EVENTS=0` to disable this history lane.
 
 Build the macOS frontend adapter:
 
@@ -199,6 +204,7 @@ Implemented in this repo:
 - browser debug page with the same local backend contract;
 - shared-core JSON command integration for CLI/debug-server;
 - optional local OpenAI-compatible model prediction lane;
+- bounded history-input context for model/RAG prediction;
 - shared number-key selection for top model predictions and lower RAG/memory candidates;
 - three realistic UI scenarios;
 - unittest and acceptance script.
@@ -234,3 +240,5 @@ Next route:
 See `docs/interview-project-difficulties.md` for the Chinese interview material that records the project difficulties and engineering choices.
 
 See `docs/macos-frontend-adapter.md` for the macOS frontend research and implementation notes.
+
+See `docs/wisdom-weasel-issues-map.md` for the Wisdom-Weasel open-issues compatibility map.

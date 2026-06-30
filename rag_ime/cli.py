@@ -11,6 +11,7 @@ from typing import Sequence
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .agent_hook import build_first_run_injection
 from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, default_fixture_memories
+from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import InputEvent, MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
@@ -171,15 +172,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "suggest-json":
+        prediction_context = build_prediction_context(
+            core,
+            explicit_recent_context=args.recent_context,
+            project=args.project,
+        )
         model_predictions = predictor.predict(
             current_input=args.current_input,
-            recent_context=args.recent_context,
+            recent_context=prediction_context,
             max_candidates=5,
         )
         suggestions = adapter.suggest(
             SuggestionRequest(
                 current_input=args.current_input,
-                recent_context=args.recent_context,
+                recent_context=prediction_context,
                 project=args.project,
                 top_k=args.top_k,
             )
@@ -190,6 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     current_input=args.current_input,
                     recent_context=args.recent_context,
                     project=args.project,
+                    history_context=prediction_context,
                     model_predictions=model_predictions,
                     suggestions=suggestions,
                 ),

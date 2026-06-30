@@ -32,12 +32,14 @@ def suggestions_response_payload(
     recent_context: str,
     project: str,
     suggestions: list[InputSuggestion],
+    history_context: str = "",
     model_predictions: list[ModelPrediction] | None = None,
 ) -> dict[str, object]:
     return {
         "schemaVersion": SCHEMA_VERSION,
         "currentInput": current_input,
         "recentContext": recent_context,
+        "historyContext": history_context,
         "project": project,
         "modelPredictions": [model_prediction_to_payload(item) for item in (model_predictions or [])],
         "suggestions": [suggestion_to_payload(item) for item in suggestions],
