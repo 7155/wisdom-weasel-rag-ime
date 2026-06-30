@@ -167,6 +167,49 @@ Per-case fields include:
 - `forbiddenMatchedTerms`: noise terms found in returned suggestions. If any forbidden term appears, the case fails even if expected terms matched.
 - `elapsedMs`: end-to-end adapter suggestion time for that case.
 
+## Compare RAG Against Model Prediction
+
+After configuring a local model with `RAG_IME_PREDICTOR_*`, run the same case file through both the RAG lane and the model prediction lane:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-comparison \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --top-k 5 \
+  --max-candidates 3 \
+  --match any \
+  --repeat 2
+```
+
+The report shape is:
+
+```json
+{
+  "schemaVersion": "rag-ime.eval-comparison.v1",
+  "rag": {
+    "metrics": {"top1Accuracy": 0.7},
+    "cacheStats": {"hitRate": 0.5}
+  },
+  "model": {
+    "metrics": {"top1Accuracy": 0.4},
+    "prediction": {
+      "providerConfigured": true,
+      "overBudgetCount": 1
+    }
+  },
+  "comparison": {
+    "bothPassed": 6,
+    "ragOnlyPassed": 3,
+    "modelOnlyPassed": 1,
+    "neitherPassed": 2,
+    "winnerByPassRate": "rag",
+    "winnerByTop1Accuracy": "rag"
+  }
+}
+```
+
+This is the main full-flow gate for deciding whether a local Qwen/MLX/llama.cpp endpoint is actually useful in the IME. A model that is fast but only passes cases already covered by RAG is not enough reason to enable the model lane by default. A model that wins `modelOnlyPassed` cases but exceeds the sidecar latency budget should stay debug-only until the provider gets faster.
+
 ## Why This Matters
 
 Traditional RAG evaluation often asks whether a document chunk was retrieved. For an input method, the better question is:

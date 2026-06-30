@@ -7,6 +7,30 @@
 
 ## Log
 
+### 2026-07-01 06:37 CST
+Problem:
+- RAG evaluation and model prediction evaluation were separate commands, so model selection still required manually comparing two reports.
+- The project needs a full-flow gate that answers whether local RAG, local model prediction, or both are useful for the same input-method cases.
+
+Changes:
+- Added `eval-comparison` CLI.
+- It runs RAG suggestions and local model predictions over the same JSONL cases, repeat count, and match mode.
+- The report includes separate `rag` and `model` eval reports plus a `comparison` block with `bothPassed`, `ragOnlyPassed`, `modelOnlyPassed`, `neitherPassed`, `winnerByPassRate`, `winnerByTop1Accuracy`, and per-case surfaces/latency.
+- Updated README and Codex-history evaluation docs.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture eval-comparison --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 3 --max-candidates 3 --repeat 2`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+
+Findings:
+- Full suite now has 63 tests.
+- Fixture comparison shows RAG can pass cases while the model lane cleanly reports `providerConfigured=false` and zero candidates when no local model is configured.
+
+Next:
+- Run `eval-comparison` with real Codex-history imports and real local Qwen/MLX/llama.cpp endpoints in both chat and completion mode.
+
 ### 2026-07-01 06:32 CST
 Problem:
 - The next useful goal progress was not blocked by missing Xcode: model prediction and Wisdom-Weasel source lessons still needed to be tightened.

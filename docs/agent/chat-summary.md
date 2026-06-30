@@ -2,6 +2,24 @@
 
 ### 2026-07-01
 Topic:
+- Add full-flow RAG vs model evaluation.
+
+Changes:
+- Added `eval-comparison`.
+- The command runs local RAG suggestions and local model predictions on the same JSONL cases and emits `rag`, `model`, and `comparison` blocks.
+- `comparison` reports `bothPassed`, `ragOnlyPassed`, `modelOnlyPassed`, `neitherPassed`, metric winners, per-case surfaces, and latency.
+- README and Codex-history eval docs now describe when to use it for local model selection.
+
+Verification:
+- Codex-history tests passed.
+- Full suite now has 63 tests and passed.
+- Fixture CLI comparison works with no model configured, showing RAG results and model fail-open state.
+
+Next:
+- Use `eval-comparison` against real imported Codex history and real local model endpoints.
+
+### 2026-07-01
+Topic:
 - Add a Wisdom-Weasel-inspired completion-mode local predictor baseline.
 
 Findings:
