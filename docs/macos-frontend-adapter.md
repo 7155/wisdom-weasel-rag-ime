@@ -287,6 +287,7 @@ RAG_IME_PREDICTOR_PROVIDER
 RAG_IME_PREDICTOR_BASE_URL
 RAG_IME_PREDICTOR_MODEL
 RAG_IME_PREDICTOR_API_KEY
+RAG_IME_PREDICTOR_PROMPT_MODE
 RAG_IME_PREDICTOR_TIMEOUT_MS
 RAG_IME_PREDICTOR_MAX_TOKENS
 RAG_IME_PREDICTOR_TEMPERATURE
@@ -323,6 +324,7 @@ Model prediction is disabled unless all required provider variables are set. A l
 RAG_IME_PREDICTOR_PROVIDER=openai-compatible
 RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000
 RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B
+RAG_IME_PREDICTOR_PROMPT_MODE=chat
 RAG_IME_PREDICTOR_TIMEOUT_MS=800
 RAG_IME_PREDICTOR_MAX_TOKENS=12
 RAG_IME_HISTORY_CONTEXT_EVENTS=6
@@ -330,6 +332,8 @@ RAG_IME_HISTORY_CONTEXT_CHARS=420
 ```
 
 The history context variables control how many committed input events are merged into prediction context. Set `RAG_IME_HISTORY_CONTEXT_EVENTS=0` when debugging current-input-only model behavior.
+
+Set `RAG_IME_PREDICTOR_PROMPT_MODE=completion` when testing a local base model or llama.cpp-compatible `/v1/completions` endpoint. That path is closer to Wisdom-Weasel's base-model prefix completion route than chat prompting, while the production IME still keeps Rime responsible for raw pinyin parsing.
 
 ## Current Limitations
 

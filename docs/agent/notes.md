@@ -7,6 +7,31 @@
 
 ## Log
 
+### 2026-07-01 06:32 CST
+Problem:
+- The next useful goal progress was not blocked by missing Xcode: model prediction and Wisdom-Weasel source lessons still needed to be tightened.
+
+Findings:
+- Wisdom-Weasel `RimeWithWeasel.cpp` enters prediction after meaningful commit, stores committed text in `ContextHistory`, runs `PredictCandidates` on a background thread, drops stale results with `m_llm_request_seq`, appends LLM candidates after Rime candidates, and branches number-key selection by Rime count vs LLM count.
+- Wisdom-Weasel `LlamaCppProvider.cpp` gets fast multi-candidate output by caching system prompt state and using parallel llama sequences/batch sampling; this is stronger than merely using a smaller model.
+- rime/weasel candidate handling confirms the production adapter should stay inside Squirrel/Rime candidate state instead of using an external overlay as the real IME frontend.
+
+Changes:
+- Added `RAG_IME_PREDICTOR_PROMPT_MODE=chat|completion`.
+- `completion` mode calls `/v1/completions` with `recent_context + current_input` as prefix and `n=max_candidates`, giving a portable base-model/llama.cpp-server baseline.
+- Prediction parsing now strips `<think>`, analysis/reasoning tags, markdown fences, and JSON/list candidate output before ranking.
+- Updated README, local model benchmark docs, macOS adapter docs, Rime/Squirrel framework decision, and Wisdom-Weasel issue map.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture eval-prediction --cases-file docs/eval/codex-history-cases.example.jsonl --max-candidates 3 --repeat 2`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+
+Next:
+- Run `eval-prediction` against a real local Qwen/MLX/llama.cpp endpoint in both `chat` and `completion` modes.
+- If completion mode is still too slow, implement a native llama.cpp/MLX provider with KV cache reuse and batch sampling.
+
 ### 2026-07-01 06:24 CST
 Problem:
 - The user asked to complete Xcode configuration for the Squirrel/Rime frontend.

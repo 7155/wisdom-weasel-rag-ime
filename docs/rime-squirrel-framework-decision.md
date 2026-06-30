@@ -201,7 +201,12 @@ This mirrors Wisdom-Weasel's append-and-branch selection idea, but the RAG side 
 
 ### Phase 4: Model Provider Upgrade
 
-The current OpenAI-compatible provider is only a simple baseline.
+The current OpenAI-compatible provider now has two portable prompt modes:
+
+- `chat`: Qwen/Instruct-style `/v1/chat/completions`, with optional `extra_body` to disable thinking.
+- `completion`: base-model `/v1/completions`, using `recent_context + current_input` as a prefix and `n=max_candidates` for multiple alternatives.
+
+This is enough to benchmark local Qwen, MLX, llama.cpp server, or other OpenAI-compatible endpoints without changing the IME frontend.
 
 The better local model route should copy Wisdom-Weasel's stronger ideas:
 
@@ -212,6 +217,8 @@ The better local model route should copy Wisdom-Weasel's stronger ideas:
 - base-model completion mode when it is faster and cleaner;
 - pinyin constraints only when provided by Rime or a real constraint decoder;
 - p50/p95 first-candidate latency benchmark.
+
+The part not covered yet is native llama.cpp/MLX provider ownership of KV cache and batch sampling. Wisdom-Weasel's `LlamaCppProvider` caches the system-prompt state and uses parallel llama sequences for multi-candidate sampling. RAG-IME's completion mode is the portable stepping stone; the native provider is still required for the same latency ceiling.
 
 ## Rejected Routes
 

@@ -2,6 +2,27 @@
 
 ### 2026-07-01
 Topic:
+- Add a Wisdom-Weasel-inspired completion-mode local predictor baseline.
+
+Findings:
+- Wisdom-Weasel's fast path is not just a small model: it combines committed-text context, async prediction, stale request dropping, side-candidate selection routing, system-prompt state cache, and batched multi-candidate sampling.
+- rime/weasel candidate handling reinforces the Squirrel/Rime patch route over a detached overlay for real IME selection.
+
+Changes:
+- Added `RAG_IME_PREDICTOR_PROMPT_MODE=chat|completion`.
+- Completion mode uses `/v1/completions` with `recent_context + current_input` prefix and `n=max_candidates`.
+- Prediction parsing now strips thinking/reasoning tags and accepts JSON/list candidate output.
+- Updated local model benchmark and Wisdom-Weasel issue docs.
+
+Verification:
+- Predictor tests now cover chat mode, completion mode, thinking cleanup, and eval-prediction.
+- Full suite has 62 tests and passed.
+
+Next:
+- Compare real Qwen/MLX/llama.cpp endpoints in chat vs completion mode, then decide whether to build a native KV-cache/batch provider.
+
+### 2026-07-01
+Topic:
 - Recheck full Xcode setup for the Squirrel/Rime frontend.
 
 Findings:
