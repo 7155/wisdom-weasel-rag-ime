@@ -36,6 +36,12 @@ class OpenAICompatiblePredictionConfig:
     provider_name: str = "local-openai-compatible"
 
 
+@dataclass(frozen=True)
+class PredictionBenchmarkCase:
+    current_input: str
+    recent_context: str = ""
+
+
 class NullPredictionProvider:
     def predict(
         self,
@@ -153,6 +159,59 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
             provider_name="local-openai-compatible",
         )
     )
+
+
+def benchmark_prediction_provider(
+    provider: PredictionProvider,
+    cases: list[PredictionBenchmarkCase],
+    *,
+    max_candidates: int = 3,
+    latency_budget_ms: int = 150,
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    latencies: list[int] = []
+    provider_name = provider.__class__.__name__
+    for case in cases:
+        started = time.perf_counter()
+        predictions = provider.predict(
+            current_input=case.current_input,
+            recent_context=case.recent_context,
+            max_candidates=max_candidates,
+        )
+        wall_ms = int((time.perf_counter() - started) * 1000)
+        prediction_latency = max((item.latency_ms for item in predictions), default=wall_ms)
+        if predictions:
+            provider_name = predictions[0].provider_name
+        latency_ms = max(wall_ms, prediction_latency)
+        latencies.append(latency_ms)
+        results.append(
+            {
+                "currentInput": case.current_input,
+                "candidateCount": len(predictions),
+                "latencyMs": latency_ms,
+                "wallMs": wall_ms,
+                "overBudget": latency_ms > latency_budget_ms,
+                "candidates": [item.text for item in predictions],
+            }
+        )
+    sorted_latencies = sorted(latencies)
+    p50 = sorted_latencies[len(sorted_latencies) // 2] if sorted_latencies else 0
+    return {
+        "schemaVersion": "rag-ime.predict-benchmark.v1",
+        "providerName": provider_name,
+        "providerConfigured": provider_name != "NullPredictionProvider",
+        "maxCandidates": max_candidates,
+        "latencyBudgetMs": latency_budget_ms,
+        "summary": {
+            "caseCount": len(results),
+            "p50LatencyMs": p50,
+            "maxLatencyMs": max(latencies) if latencies else 0,
+            "allWithinBudget": all(not item["overBudget"] for item in results),
+            "totalCandidates": sum(int(item["candidateCount"]) for item in results),
+            "hasCandidates": any(int(item["candidateCount"]) > 0 for item in results),
+        },
+        "cases": results,
+    }
 
 
 def extract_openai_content(payload: dict[str, Any]) -> str:

@@ -7,6 +7,24 @@
 
 ## Log
 
+### 2026-07-01 00:12 CST
+Problem:
+- The project needs a concrete way to compare small local model choices for the short prediction lane.
+
+Changes:
+- Added `predict-benchmark` CLI.
+- Added `benchmark_prediction_provider` and a latency-budget report schema.
+- Documented the benchmark in `docs/local-model-prediction-benchmark.md`.
+
+Findings:
+- The benchmark uses the same predictor provider and history-context merge as `suggest-json`, so model latency is measured in the product path rather than through a separate toy prompt.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+
+Next:
+- Run the benchmark against real local Qwen/llama.cpp/MLX endpoints after selecting the local inference server.
+
 ### 2026-06-30 23:58 CST
 Problem:
 - The RAG/memory system needed a real local benchmark source, not only deterministic demo memories.

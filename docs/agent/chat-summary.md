@@ -1,5 +1,20 @@
 # Chat Summary
 
+### 2026-07-01
+Topic:
+- Add a repeatable local model prediction latency benchmark.
+
+Decisions:
+- Model choice should be gated by the same provider/history-context path used by the input method, not by an isolated demo call.
+
+Changes:
+- Added `predict-benchmark` CLI.
+- Added predictor benchmark schema and tests.
+- Added `docs/local-model-prediction-benchmark.md`.
+
+Next steps:
+- Run against a real local Qwen/llama.cpp/MLX endpoint and compare p50/max latency under the 150 ms sidecar budget.
+
 ### 2026-06-30
 Topic:
 - Add a local Codex-history benchmark path for RAG/memory quality.
