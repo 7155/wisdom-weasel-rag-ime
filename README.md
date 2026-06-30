@@ -244,6 +244,18 @@ python3 -m rag_ime.cli predict-benchmark \
   --latency-budget-ms 150
 ```
 
+Evaluate local model prediction quality against the same JSONL case format used by RAG evaluation:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-prediction \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --max-candidates 3 \
+  --latency-budget-ms 150
+```
+
+Use this before switching between Qwen, MLX, llama.cpp, or other local OpenAI-compatible servers. It reports the same `top1Accuracy`, `meanReciprocalRank`, forbidden-term noise checks, and per-case `elapsedMs` as the RAG eval, plus a `prediction` block for provider and latency-budget status.
+
 Build the macOS frontend adapter:
 
 ```bash

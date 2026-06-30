@@ -22,7 +22,7 @@ from .codex_history import (
 from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, default_fixture_memories
 from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
-from .models import InputEvent, MemoryAction
+from .models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
 from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import PredictionBenchmarkCase, benchmark_prediction_provider, prediction_provider_from_env
 from .renderer import render_agent_injection, render_terminal_panel
@@ -162,6 +162,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     predict_benchmark.add_argument("--project", default="wisdom-weasel-rag-ime")
     predict_benchmark.add_argument("--max-candidates", type=int, default=3)
     predict_benchmark.add_argument("--latency-budget-ms", type=int, default=150)
+
+    eval_prediction = subparsers.add_parser(
+        "eval-prediction",
+        help="Evaluate the local model prediction lane against explicit JSONL cases",
+    )
+    eval_prediction.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
+    eval_prediction.add_argument("--project", default="wisdom-weasel-rag-ime")
+    eval_prediction.add_argument("--max-candidates", type=int, default=3)
+    eval_prediction.add_argument("--match", choices=("any", "all"), default="any")
+    eval_prediction.add_argument("--repeat", type=int, default=1)
+    eval_prediction.add_argument("--latency-budget-ms", type=int, default=150)
 
     debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
     debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
@@ -517,6 +528,63 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "eval-prediction":
+        cases = load_eval_cases(Path(args.cases_file))
+        repeat_count = max(1, args.repeat)
+        max_candidates = max(1, min(10, args.max_candidates))
+        results = []
+        elapsed_ms_by_case: dict[str, int] = {}
+        candidate_counts: list[int] = []
+        over_budget_count = 0
+        provider_name = _prediction_provider_name(predictor)
+        provider_configured = not _is_null_prediction_provider(predictor)
+        for repeat_index in range(1, repeat_count + 1):
+            for case in cases:
+                eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat_count)
+                prediction_context = build_prediction_context(
+                    core,
+                    explicit_recent_context=eval_case.recent_context,
+                    project=eval_case.project or args.project,
+                )
+                started = time.perf_counter()
+                predictions = predictor.predict(
+                    current_input=eval_case.query,
+                    recent_context=prediction_context,
+                    max_candidates=max_candidates,
+                )
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                elapsed_ms_by_case[eval_case.case_id] = elapsed_ms
+                if predictions:
+                    provider_name = predictions[0].provider_name
+                candidate_counts.append(len(predictions))
+                if elapsed_ms > args.latency_budget_ms:
+                    over_budget_count += 1
+                results.append(
+                    evaluate_suggestions(
+                        eval_case,
+                        _predictions_as_eval_suggestions(predictions),
+                        match=args.match,
+                    )
+                )
+        report = eval_report(results)
+        report["repeat"] = {
+            "requested": repeat_count,
+            "baseCaseCount": len(cases),
+            "effectiveCaseCount": len(results),
+        }
+        _attach_eval_latency(report, elapsed_ms_by_case)
+        report["prediction"] = {
+            "providerName": provider_name,
+            "providerConfigured": provider_configured,
+            "maxCandidates": max_candidates,
+            "latencyBudgetMs": args.latency_budget_ms,
+            "overBudgetCount": over_budget_count,
+            "totalCandidates": sum(candidate_counts),
+            "hasCandidates": any(count > 0 for count in candidate_counts),
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "debug-server":
         from .debug_server import DebugServerConfig, run_debug_server
 
@@ -658,6 +726,35 @@ def _case_for_eval_repeat(case, *, repeat_index: int, repeat_count: int):
     if repeat_count <= 1:
         return case
     return replace(case, case_id=f"{case.case_id}#r{repeat_index}")
+
+
+def _predictions_as_eval_suggestions(predictions: list[ModelPrediction]) -> list[InputSuggestion]:
+    return [
+        InputSuggestion(
+            suggestion_id=f"prediction:{prediction.rank}",
+            surface_text=prediction.text,
+            suggestion_type="model_prediction",
+            source_event_id=0,
+            evidence_preview=prediction.provider_name,
+            confidence=prediction.confidence,
+            metadata={
+                "provider_name": prediction.provider_name,
+                "latency_ms": prediction.latency_ms,
+                **dict(prediction.metadata),
+            },
+        )
+        for prediction in predictions
+    ]
+
+
+def _prediction_provider_name(predictor) -> str:
+    config = getattr(predictor, "config", None)
+    provider_name = getattr(config, "provider_name", "")
+    return provider_name if isinstance(provider_name, str) and provider_name else predictor.__class__.__name__
+
+
+def _is_null_prediction_provider(predictor) -> bool:
+    return predictor.__class__.__name__ == "NullPredictionProvider"
 
 
 def _read_json_payload(payload_file: str) -> dict[str, object]:
