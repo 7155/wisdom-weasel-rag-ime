@@ -289,3 +289,22 @@ Verification:
 - Acceptance passed.
 - macOS prototype build passed.
 - Repeated-case eval smoke printed `elapsedMs`, `latency`, and `cacheStats`.
+
+### 2026-07-01
+Topic:
+- Add repeat-mode eval and make the sidecar LaunchAgent actually usable.
+
+Changes:
+- `eval-codex-history` now supports `--repeat N`, suffixing repeated case ids as `#r1`, `#r2`, etc. and reporting `repeat.requested/baseCaseCount/effectiveCaseCount`.
+- LaunchAgent installation now copies the runtime into `~/Library/Application Support/RagIme/app`, defaults the sidecar DB to `~/Library/Application Support/RagIme/rag-ime.sqlite`, removes plist `PYTHONPATH`, and health-checks after bootstrap.
+- Added `scripts/sidecar_launch.py` for launchd-safe startup.
+
+Verification:
+- 59 Python tests passed.
+- macOS prototype build passed.
+- Repeat eval smoke showed `misses=1`, `hits=2`, `hitRate=0.67` for 3 repeats.
+- `scripts/install_sidecar_launch_agent.sh` installed and health-checked OK.
+- `scripts/doctor_squirrel_integration.sh` now reports LaunchAgent and HTTP sidecar OK; only full Xcode remains a warning.
+
+Open:
+- `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh` still fails because full `Xcode.app` is not installed; Apple Developer/App Store authentication is required outside this non-interactive Codex session.

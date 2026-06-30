@@ -326,6 +326,34 @@ Commands:
 Next:
 - Use this combined report to compare local FTS-only, cache on/off, embedding recall, rerank, and future shared-core/VCP-style strategies.
 
+### 2026-07-01 01:18 CST
+Problem:
+- `eval-codex-history` could show cache stats and latency, but repeated equivalent cases still had to be duplicated manually in JSONL.
+- The sidecar LaunchAgent appeared loaded but did not listen on port 8766 when Python imported code directly from the external-volume checkout.
+- Full Xcode configuration is still blocked because no full `Xcode.app` is installed and Apple Developer/App Store authentication is not available in this Codex session.
+
+Changes:
+- Added `eval-codex-history --repeat N`; repeated cases get `#r1`, `#r2`, etc. case ids and a top-level `repeat` summary.
+- Added repeat-mode tests showing warm-cache behavior (`misses=1`, `hits=2` for a 3-repeat smoke).
+- Added `scripts/sidecar_launch.py`.
+- Changed LaunchAgent installation to copy the runtime package into `~/Library/Application Support/RagIme/app`, default the sidecar DB to `~/Library/Application Support/RagIme/rag-ime.sqlite`, and avoid `PYTHONPATH` in the plist.
+- Added installer health polling so a loaded-but-dead sidecar fails immediately instead of silently passing.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `scripts/build_macos_frontend.sh`
+- `scripts/install_sidecar_launch_agent.sh`
+- `scripts/doctor_squirrel_integration.sh`
+- `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh`
+- `bash scripts/setup_xcode_for_squirrel.sh`
+
+Findings:
+- Normal doctor now reports LaunchAgent and HTTP `/rime-suggest` OK, with only the full Xcode warning remaining.
+- Xcode preflight reports `active_developer_dir: /Library/Developer/CommandLineTools`, no full Xcode under `/Applications` or `/Volumes/undo 4t/Applications`, and enough external disk space for Xcode.
+
+Next:
+- Finish full Xcode install from an interactive Apple-authenticated terminal or provide `FASTLANE_SESSION`, then rerun `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh`.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.

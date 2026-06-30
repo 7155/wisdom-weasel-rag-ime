@@ -6,6 +6,7 @@ import os
 import shlex
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
@@ -148,6 +149,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_codex.add_argument("--project", default="wisdom-weasel-rag-ime")
     eval_codex.add_argument("--top-k", type=int, default=5)
     eval_codex.add_argument("--match", choices=("any", "all"), default="any")
+    eval_codex.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="Repeat all cases to measure warm-cache latency and hit behavior.",
+    )
 
     predict_benchmark = subparsers.add_parser("predict-benchmark", help="Measure local model prediction latency")
     predict_benchmark.add_argument("--case", action="append", default=[], help="Input case to predict. Can be repeated.")
@@ -454,21 +461,29 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "eval-codex-history":
         cases = load_eval_cases(Path(args.cases_file))
+        repeat_count = max(1, args.repeat)
         results = []
         elapsed_ms_by_case: dict[str, int] = {}
-        for case in cases:
-            started = time.perf_counter()
-            suggestions = adapter.suggest(
-                SuggestionRequest(
-                    current_input=case.query,
-                    recent_context=case.recent_context,
-                    project=case.project or args.project,
-                    top_k=args.top_k,
+        for repeat_index in range(1, repeat_count + 1):
+            for case in cases:
+                eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat_count)
+                started = time.perf_counter()
+                suggestions = adapter.suggest(
+                    SuggestionRequest(
+                        current_input=eval_case.query,
+                        recent_context=eval_case.recent_context,
+                        project=eval_case.project or args.project,
+                        top_k=args.top_k,
+                    )
                 )
-            )
-            elapsed_ms_by_case[case.case_id] = int((time.perf_counter() - started) * 1000)
-            results.append(evaluate_suggestions(case, suggestions, match=args.match))
+                elapsed_ms_by_case[eval_case.case_id] = int((time.perf_counter() - started) * 1000)
+                results.append(evaluate_suggestions(eval_case, suggestions, match=args.match))
         report = eval_report(results)
+        report["repeat"] = {
+            "requested": repeat_count,
+            "baseCaseCount": len(cases),
+            "effectiveCaseCount": len(results),
+        }
         _attach_eval_latency(report, elapsed_ms_by_case)
         cache_stats = getattr(core, "suggestion_cache_stats", None)
         if callable(cache_stats):
@@ -637,6 +652,12 @@ def _build_core(args):
             raise SystemExit("--core-command is required when --core-mode json")
         return JsonCommandCoreClient(shlex.split(args.core_command))
     return LocalSqliteCoreClient(args.db_path, suggestion_cache_size=args.suggestion_cache_size)
+
+
+def _case_for_eval_repeat(case, *, repeat_index: int, repeat_count: int):
+    if repeat_count <= 1:
+        return case
+    return replace(case, case_id=f"{case.case_id}#r{repeat_index}")
 
 
 def _read_json_payload(payload_file: str) -> dict[str, object]:

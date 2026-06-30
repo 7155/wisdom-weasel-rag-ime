@@ -84,6 +84,30 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
 
 Use `--match all` for stricter cases where every expected term must appear in the same top-K suggestion surface/evidence. Terms split across several suggestions no longer count as an all-match hit, because the input method user chooses one candidate at a time.
 
+Use `--repeat N` to replay the same cases in one process and measure cold/warm cache behavior:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-codex-history \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --top-k 5 \
+  --repeat 3
+```
+
+When `--repeat` is greater than 1, per-case ids are suffixed as `#r1`, `#r2`, and so on. This avoids latency/result overwrites while keeping the original query, context, project, and expected terms identical. The report adds:
+
+```json
+{
+  "repeat": {
+    "requested": 3,
+    "baseCaseCount": 20,
+    "effectiveCaseCount": 60
+  }
+}
+```
+
+Compare `latency` and `cacheStats` between `--suggestion-cache-size 0` and the default cache to check whether repeated short IME queries actually benefit from the local cache.
+
 The report keeps the original `passed` / `passRate` fields and adds ranking metrics:
 
 ```json

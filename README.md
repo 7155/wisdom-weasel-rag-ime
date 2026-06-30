@@ -153,6 +153,8 @@ Install it as a user LaunchAgent so it starts at login:
 scripts/install_sidecar_launch_agent.sh
 ```
 
+The installer copies the runtime Python package into `~/Library/Application Support/RagIme/app` and stores the default sidecar database at `~/Library/Application Support/RagIme/rag-ime.sqlite`. This keeps the login service independent of the repository path and avoids launchd startup issues on external volumes.
+
 Remove the LaunchAgent:
 
 ```bash
@@ -200,12 +202,13 @@ Evaluate retrieval quality against explicit cases:
 python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   eval-codex-history \
   --cases-file docs/eval/codex-history-cases.example.jsonl \
-  --top-k 5
+  --top-k 5 \
+  --repeat 3
 ```
 
 See `docs/codex-history-eval.md`.
 
-The report includes candidate-level ranking metrics such as `top1Accuracy`, `meanReciprocalRank`, `noiseRate`, and end-to-end suggestion latency, not just pass/fail recall.
+The report includes candidate-level ranking metrics such as `top1Accuracy`, `meanReciprocalRank`, `noiseRate`, end-to-end suggestion latency, and repeat/cache statistics, not just pass/fail recall.
 When running against the local core, it also includes `cacheStats` so repeated-case evaluations can measure suggestion-cache hits.
 
 Inspect trigger policy:

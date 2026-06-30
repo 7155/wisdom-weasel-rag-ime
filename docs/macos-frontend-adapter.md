@@ -207,12 +207,17 @@ This writes:
 ~/Library/LaunchAgents/com.rag-ime.sidecar.plist
 ~/Library/Logs/RagIme/sidecar.out.log
 ~/Library/Logs/RagIme/sidecar.err.log
+~/Library/Application Support/RagIme/app/
+~/Library/Application Support/RagIme/rag-ime.sqlite
 ```
+
+The installer copies the sidecar runtime package into the user Application Support directory and points launchd at that local copy. This avoids a macOS beta launchd/Python startup failure observed when the service tried to import code directly from an external-volume repository path. Override `RAG_IME_DB_PATH` if you intentionally want the sidecar to use another database.
 
 The installer is configurable with:
 
 ```text
 RAG_IME_PYTHON
+RAG_IME_APP_SUPPORT_DIR
 RAG_IME_DB_PATH
 RAG_IME_PROJECT
 RAG_IME_SIDECAR_HOST
