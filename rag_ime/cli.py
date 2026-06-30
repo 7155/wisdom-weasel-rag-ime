@@ -140,6 +140,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     import_codex.add_argument("--limit", type=int, default=200)
     import_codex.add_argument("--min-chars", type=int, default=12)
     import_codex.add_argument("--max-chars", type=int, default=1600)
+    import_codex.add_argument(
+        "--path-order",
+        choices=("mtime-desc", "mtime-asc", "path"),
+        default="mtime-desc",
+        help="Order JSONL files when --path is a directory. Defaults to newest modified sessions first.",
+    )
     import_codex.add_argument("--sample-size", type=int, default=3)
     import_codex.add_argument("--dry-run", action="store_true", help="Parse and summarize without writing memory")
     import_codex.add_argument("--allow-duplicates", action="store_true", help="Import records even if their stable record tag already exists")
@@ -444,6 +450,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             limit=max(0, args.limit),
             min_chars=max(1, args.min_chars),
             max_chars=max(16, args.max_chars),
+            path_order=args.path_order,
         )
         event_ids: list[str] = []
         duplicate_skipped = 0

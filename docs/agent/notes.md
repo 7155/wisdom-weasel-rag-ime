@@ -7,6 +7,32 @@
 
 ## Log
 
+### 2026-07-01 07:20 CST
+Problem:
+- Real Codex history import was still too noisy for RAG-IME evaluation: directory import could start from old sessions, and raw runtime context such as `AGENTS.md`, sandbox/environment blocks, developer messages, and tool output could become memories.
+- This weakens the personal-memory benchmark and hides the real retrieval/rerank problem.
+
+Changes:
+- Added path ordering for Codex JSONL directory import: CLI default is now `--path-order mtime-desc`, with `mtime-asc` and `path` available for replay.
+- Filtered common Codex runtime noise before converting JSONL text into `InputEvent` records.
+- Kept legacy JSONL compatibility for older `response_item` and nested `event_msg` shapes.
+- Documented newest-first import and runtime-noise filtering in `docs/codex-history-eval.md`.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history`
+- `python3 -m py_compile rag_ime/codex_history.py rag_ime/cli.py tests/test_codex_history.py`
+- `python3 -m rag_ime.cli import-codex-history --path "$HOME/.codex/sessions" --dry-run --limit 20 --sample-size 8`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-real-eval-20260701.sqlite import-codex-history --path "$HOME/.codex/sessions" --project wisdom-weasel-rag-ime --limit 500 --sample-size 3`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-real-eval-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 3`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-real-eval-20260701-2000.sqlite import-codex-history --path "$HOME/.codex/sessions" --project wisdom-weasel-rag-ime --limit 2000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-real-eval-20260701-2000.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 2`
+
+Findings:
+- Real dry-run now starts from the active RAG-IME session and samples user/project decisions instead of January AGENTS/environment noise.
+- With 500 recent records, default cache repeat hit rate was `0.67`, pass rate was `0.33`, and disabled cache roughly doubled total eval latency on the same repeated cases.
+- With 2000 recent records, pass rate improved to `0.67`; the dirty-pinyin/Rime boundary case reached top1, but `PROJECT_MEMORY_BLOCK` still missed and Squirrel/RAG ranked only at 5.
+- Conclusion: cache works, but FTS-only retrieval is not enough. The next core slice should still be lightweight tag/app/context rerank and then hybrid/vector recall.
+
 ### 2026-07-01 06:58 CST
 Problem:
 - Local Qwen-style prediction servers can emit thinking text, which wastes latency and can leak into IME candidates.

@@ -2,6 +2,23 @@
 
 ### 2026-07-01
 Topic:
+- Make real Codex-history import usable as a RAG-IME benchmark.
+
+Changes:
+- Added newest-first directory import for Codex JSONL sessions via `--path-order mtime-desc`.
+- Filtered common runtime noise before importing records: developer/system prompts, `AGENTS.md`, environment/sandbox blocks, tool output, and token-count style events.
+- Preserved legacy Codex JSONL parsing compatibility and updated evaluation docs.
+
+Verification:
+- Codex-history tests passed: 10 tests.
+- Real dry-run now samples the active RAG-IME session instead of old environment context.
+- Real 2000-record eval passed 2 of 3 base cases; cache hit rate reached 0.5 on repeat, and the dirty-pinyin/Rime case was top1.
+
+Next:
+- Use this benchmark to verify the lightweight tag/app/context rerank and later hybrid/vector recall.
+
+### 2026-07-01
+Topic:
 - Add instant local-model prediction profiles.
 
 Changes:
