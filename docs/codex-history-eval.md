@@ -98,6 +98,22 @@ The report keeps the original `passed` / `passRate` fields and adds ranking metr
 }
 ```
 
+When `--core-mode local` is used, the report also includes process-local cache stats:
+
+```json
+{
+  "cacheStats": {
+    "enabled": true,
+    "hits": 4,
+    "misses": 8,
+    "hitRate": 0.3333333333333333,
+    "invalidations": 0
+  }
+}
+```
+
+Use `RAG_IME_SUGGESTION_CACHE_SIZE=0` or `--suggestion-cache-size 0` to benchmark uncached retrieval.
+
 Per-case fields include:
 
 - `firstMatchRank`: first candidate rank that satisfies `--match`;

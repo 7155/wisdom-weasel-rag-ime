@@ -27,6 +27,13 @@ RAG_IME_RIME_CACHE_TTL_MS=400 python3 -m rag_ime.cli debug-server
 RAG_IME_RIME_CACHE_TTL_MS=0 python3 -m rag_ime.cli debug-server
 ```
 
+Tune or disable the local-core suggestion cache:
+
+```bash
+RAG_IME_SUGGESTION_CACHE_SIZE=128 python3 -m rag_ime.cli debug-server
+RAG_IME_SUGGESTION_CACHE_SIZE=0 python3 -m rag_ime.cli debug-server
+```
+
 Run it against the shared RAG/memory core instead of the local MVP database:
 
 ```bash
@@ -137,6 +144,8 @@ The local HTTP server keeps a short TTL cache for repeated equivalent `/rime-sug
 ```
 
 `POST /api/commit`, `POST /api/action`, and `POST /api/seed` clear this cache.
+
+The local SQLite core also exposes a process-local `suggestionCache` in `/api/health`. That cache stores final `InputSuggestion` lists for repeated equivalent `/api/suggest` or eval requests and is invalidated on commit/action/reset. It is separate from the short `/rime-suggest` TTL cache.
 
 `/api/rime-select` records a side-candidate acceptance with one stable payload:
 

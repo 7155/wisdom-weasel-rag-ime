@@ -257,3 +257,20 @@ Verification:
 - Acceptance passed.
 - macOS prototype build passed.
 - Temporary CLI eval smoke printed the new ranking/noise metrics.
+
+### 2026-07-01
+Topic:
+- Add observable local-core suggestion cache.
+
+Changes:
+- `LocalSqliteCoreClient` now has a process-local LRU suggestion cache keyed by normalized input/context/project/top_k.
+- Commit, action, and reset invalidate the cache.
+- `suggestion_cache_stats()` exposes size, hits, misses, hit rate, evictions, and invalidations.
+- CLI accepts `--suggestion-cache-size` / `RAG_IME_SUGGESTION_CACHE_SIZE`.
+- Debug health and `eval-codex-history` now include cache stats.
+
+Verification:
+- 58 Python tests passed.
+- Acceptance passed.
+- macOS prototype build passed.
+- Repeated-case eval smoke showed one cache hit and one miss.

@@ -284,6 +284,29 @@ Commands:
 Next:
 - Use these ranking metrics on a larger imported Codex-history slice and compare FTS-only, embedding recall, rerank, and VCP-style cache variants.
 
+### 2026-07-01 01:50 CST
+Problem:
+- The local SQLite core reran FTS retrieval and suggestion compilation for repeated equivalent queries.
+- Input methods and PI-style adapters commonly repeat the same context while the candidate panel refreshes, so cache hit visibility is needed before comparing FTS, embedding, rerank, and VCP-style cache variants.
+
+Changes:
+- Added an invalidation-safe process-local LRU suggestion cache to `LocalSqliteCoreClient`.
+- Cache key uses normalized `current_input`, `recent_context`, `project`, and `top_k`.
+- `record_event`, `apply_action`, and `reset` clear the cache so commit/action governance cannot return stale suggestions.
+- Added `suggestion_cache_stats()` with hit/miss/hitRate/eviction/invalidation counters.
+- Exposed `RAG_IME_SUGGESTION_CACHE_SIZE` / `--suggestion-cache-size`, debug health `suggestionCache`, and `eval-codex-history` `cacheStats`.
+- Debug JSON now shows both `rimeSuggestCache` and local-core `suggestionCache`.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `scripts/build_macos_frontend.sh`
+- `python3 -m rag_ime.cli --help | rg 'suggestion-cache-size|core-mode|eval-codex-history'`
+- Repeated-case CLI eval smoke confirmed `cacheStats.hits=1`, `misses=1`, `hitRate=0.5`.
+
+Next:
+- Use `cacheStats` with ranked Codex-history metrics to compare no-cache, cache, embedding recall, rerank, and VCP-style context-cache strategies on the same cases.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.

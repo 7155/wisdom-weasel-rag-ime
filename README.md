@@ -139,6 +139,14 @@ Set it to `0` while debugging cache behavior.
 
 `/rime-suggest` also returns a `triggerDecision`. Rime candidates are always preserved, but model/RAG side candidates are skipped for raw pinyin fallback, unstable composing updates, or full visible Rime candidate pages. This is the backend safety valve that prevents the local model and retrieval stack from running on every key event.
 
+The local SQLite core also keeps a small process-local suggestion cache for repeated equivalent RAG requests:
+
+```bash
+export RAG_IME_SUGGESTION_CACHE_SIZE=128
+```
+
+Set it to `0` to measure uncached retrieval in evaluations.
+
 Install it as a user LaunchAgent so it starts at login:
 
 ```bash
@@ -198,6 +206,7 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
 See `docs/codex-history-eval.md`.
 
 The report includes candidate-level ranking metrics such as `top1Accuracy`, `meanReciprocalRank`, and `noiseRate`, not just pass/fail recall.
+When running against the local core, it also includes `cacheStats` so repeated-case evaluations can measure suggestion-cache hits.
 
 Inspect trigger policy:
 

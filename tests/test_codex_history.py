@@ -143,14 +143,16 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(second_payload["duplicateSkipped"], 2)
 
         cases_file = self.root / "cases.jsonl"
+        repeated_case = {
+            "query": "Squirrel RAG 输入法候选",
+            "expectedTerms": ["Squirrel", "本地记忆"],
+        }
         cases_file.write_text(
-            json.dumps(
-                {
-                    "id": "squirrel-rag",
-                    "query": "Squirrel RAG 输入法候选",
-                    "expectedTerms": ["Squirrel", "本地记忆"],
-                },
-                ensure_ascii=False,
+            "\n".join(
+                [
+                    json.dumps({"id": "squirrel-rag", **repeated_case}, ensure_ascii=False),
+                    json.dumps({"id": "squirrel-rag-repeat", **repeated_case}, ensure_ascii=False),
+                ]
             )
             + "\n",
             encoding="utf-8",
@@ -171,13 +173,14 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(eval_code, 0)
         report = json.loads(eval_stdout.getvalue())
         self.assertEqual(report["schemaVersion"], "rag-ime.codex-history-eval.v1")
-        self.assertEqual(report["passed"], 1)
+        self.assertEqual(report["passed"], 2)
         self.assertEqual(report["passRate"], 1.0)
         self.assertEqual(report["metrics"]["hitRate"], 1.0)
         self.assertEqual(report["metrics"]["top1Accuracy"], 1.0)
         self.assertEqual(report["metrics"]["meanReciprocalRank"], 1.0)
         self.assertEqual(report["cases"][0]["firstMatchRank"], 1)
         self.assertTrue(report["cases"][0]["top1Passed"])
+        self.assertGreaterEqual(report["cacheStats"]["hits"], 1)
 
     def test_load_eval_cases_and_match_results(self) -> None:
         cases_file = self.root / "manual-cases.jsonl"
