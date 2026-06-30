@@ -185,6 +185,65 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertGreaterEqual(report["latency"]["totalMs"], 0)
         self.assertIn("elapsedMs", report["cases"][0])
 
+    def test_cli_eval_repeat_measures_warm_cache(self) -> None:
+        db_path = self.root / "repeat-eval.sqlite"
+        with redirect_stdout(io.StringIO()):
+            import_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "import-codex-history",
+                    "--path",
+                    str(self.history),
+                    "--project",
+                    "wisdom-weasel-rag-ime",
+                ]
+            )
+        self.assertEqual(import_code, 0)
+
+        cases_file = self.root / "repeat-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "squirrel-rag",
+                    "query": "Squirrel RAG 输入法候选",
+                    "expectedTerms": ["Squirrel", "本地记忆"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        eval_stdout = io.StringIO()
+        with redirect_stdout(eval_stdout):
+            eval_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "eval-codex-history",
+                    "--cases-file",
+                    str(cases_file),
+                    "--repeat",
+                    "3",
+                    "--match",
+                    "all",
+                ]
+            )
+        self.assertEqual(eval_code, 0)
+        report = json.loads(eval_stdout.getvalue())
+        self.assertEqual(report["total"], 3)
+        self.assertEqual(report["repeat"]["requested"], 3)
+        self.assertEqual(report["repeat"]["baseCaseCount"], 1)
+        self.assertEqual(report["repeat"]["effectiveCaseCount"], 3)
+        self.assertEqual(report["latency"]["caseCount"], 3)
+        self.assertEqual(
+            [item["caseId"] for item in report["cases"]],
+            ["squirrel-rag#r1", "squirrel-rag#r2", "squirrel-rag#r3"],
+        )
+        self.assertGreaterEqual(report["cacheStats"]["hits"], 2)
+        self.assertIn("elapsedMs", report["cases"][2])
+
     def test_load_eval_cases_and_match_results(self) -> None:
         cases_file = self.root / "manual-cases.jsonl"
         cases_file.write_text(
