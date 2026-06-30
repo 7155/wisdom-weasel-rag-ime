@@ -108,6 +108,89 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(event.app, "codex")
         self.assertIn("codex_history:codex.jsonl:1", event.recent_context)
 
+    def test_directory_import_prefers_recent_sessions_and_skips_runtime_noise(self) -> None:
+        history_dir = self.root / "history-dir"
+        history_dir.mkdir()
+        old_file = history_dir / "old.jsonl"
+        old_file.write_text(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "旧会话里的普通记忆可以作为回退"}],
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        new_file = history_dir / "new.jsonl"
+        new_file.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "developer",
+                                "content": [{"type": "input_text", "text": "You are Codex, system text"}],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": "# AGENTS.md instructions for /Volumes/undo 4t/git/learnA",
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "function_call_output",
+                                "output": "Chunk ID: noisy tool output",
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "最新 RAG-IME 记忆应该先导入"}],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.utime(old_file, (1000, 1000))
+        os.utime(new_file, (2000, 2000))
+
+        records = load_codex_history_records(history_dir, limit=2, path_order="mtime-desc")
+
+        self.assertEqual([item.text for item in records], ["最新 RAG-IME 记忆应该先导入", "旧会话里的普通记忆可以作为回退"])
+
     def test_cli_import_dry_run_does_not_write_database(self) -> None:
         db_path = self.root / "dry-run.sqlite"
         stdout = io.StringIO()

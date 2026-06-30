@@ -64,6 +64,10 @@ class CodexEvalResult:
 
 
 def iter_codex_jsonl_paths(path: Path) -> Iterable[Path]:
+    yield from iter_codex_jsonl_paths_ordered(path, order="path")
+
+
+def iter_codex_jsonl_paths_ordered(path: Path, *, order: str = "path") -> Iterable[Path]:
     if path.is_file():
         yield path
         return
@@ -71,7 +75,15 @@ def iter_codex_jsonl_paths(path: Path) -> Iterable[Path]:
         raise FileNotFoundError(path)
     if not path.is_dir():
         raise ValueError(f"expected file or directory: {path}")
-    yield from sorted(item for item in path.rglob("*.jsonl") if item.is_file())
+    paths = [item for item in path.rglob("*.jsonl") if item.is_file()]
+    if order == "path":
+        yield from sorted(paths)
+    elif order == "mtime-desc":
+        yield from sorted(paths, key=_path_mtime, reverse=True)
+    elif order == "mtime-asc":
+        yield from sorted(paths, key=_path_mtime)
+    else:
+        raise ValueError("order must be 'path', 'mtime-desc', or 'mtime-asc'")
 
 
 def iter_jsonl_objects(path: Path) -> Iterable[tuple[int, Any]]:
@@ -92,16 +104,17 @@ def load_codex_history_records(
     limit: int | None = None,
     min_chars: int = 12,
     max_chars: int = 1600,
+    path_order: str = "path",
 ) -> list[CodexHistoryRecord]:
     if limit is not None and limit <= 0:
         return []
     records: list[CodexHistoryRecord] = []
-    for jsonl_path in iter_codex_jsonl_paths(path):
+    seen_texts: set[str] = set()
+    for jsonl_path in iter_codex_jsonl_paths_ordered(path, order=path_order):
         for line_number, obj in iter_jsonl_objects(jsonl_path):
             role = truncate_text(_find_first_string(obj, ROLE_KEYS) or _find_first_string(obj, FALLBACK_ROLE_KEYS), 40)
             created_at_ms = _find_timestamp_ms(obj)
-            seen_texts: set[str] = set()
-            for text in _extract_text_fragments(obj):
+            for text in _extract_codex_memory_fragments(obj):
                 normalized = truncate_text(text, max_chars)
                 if len(normalized) < min_chars or normalized in seen_texts:
                     continue
@@ -333,6 +346,33 @@ def _extract_text_fragments(value: Any, *, parent_key: str = "") -> Iterable[str
             yield from _extract_text_fragments(item, parent_key=normalized_key)
 
 
+def _extract_codex_memory_fragments(obj: Any) -> Iterable[str]:
+    if not isinstance(obj, dict):
+        return
+    top_type = obj.get("type")
+    payload = obj.get("payload")
+    if top_type == "response_item" and isinstance(payload, dict):
+        payload_type = payload.get("type")
+        role = str(payload.get("role") or "")
+        if (payload_type in {None, "", "message"}) and role in {"user", "assistant"}:
+            yield from _extract_clean_text_fragments(payload)
+        return
+    if top_type == "event_msg" and isinstance(payload, dict):
+        if payload.get("type") in {"user_message", "agent_message"}:
+            yield from _extract_clean_text_fragments(payload)
+        return
+    if "event_msg" in obj and isinstance(obj["event_msg"], dict):
+        yield from _extract_clean_text_fragments(obj["event_msg"])
+        return
+    yield from _extract_clean_text_fragments(obj)
+
+
+def _extract_clean_text_fragments(value: Any) -> Iterable[str]:
+    for text in _extract_text_fragments(value):
+        if not _looks_like_runtime_context(text):
+            yield text
+
+
 def _find_first_string(value: Any, keys: Iterable[str]) -> str:
     key_set = set(keys)
     if isinstance(value, dict):
@@ -401,9 +441,49 @@ def _record_id(path: Path, line_number: int, text: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _path_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _looks_like_metadata(text: str) -> bool:
     if len(text) > 3 and text[0] in "[{" and text[-1] in "]}":
         return True
     if text.startswith(("/", "~/")) and len(text.split()) <= 2:
         return True
     return False
+
+
+def _looks_like_runtime_context(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    prefixes = (
+        "# AGENTS.md instructions",
+        "<INSTRUCTIONS>",
+        "<environment_context>",
+        "<permissions instructions>",
+        "<codex_internal_context",
+        "Knowledge cutoff:",
+        "You are Codex,",
+        "You are an AI assistant",
+        "## Tools",
+        "Chunk ID:",
+        "Exit code:",
+        "Wall time:",
+        "Original token count:",
+        "(eval):",
+    )
+    if stripped.startswith(prefixes):
+        return True
+    markers = (
+        "sandbox_mode",
+        "approval_policy",
+        "model_context_window",
+        "encrypted_content",
+        "call_id",
+        "function_call_output",
+    )
+    return any(marker in stripped for marker in markers)
