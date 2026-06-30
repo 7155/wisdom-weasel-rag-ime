@@ -63,10 +63,11 @@ class MemoryAction:
 
     action_id: int | None
     created_at_ms: int
-    source_event_id: int
+    memory_id: str
     action_type: str
     query: str = ""
     suggestion_id: str = ""
+    source_event_id: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

@@ -1,8 +1,10 @@
 """Local-first RAG IME MVP package."""
 
 __all__ = [
+    "adapter",
     "agent_hook",
+    "core_client",
     "models",
-    "store",
-    "suggestions",
+    "renderer",
+    "scenarios",
 ]
