@@ -148,12 +148,20 @@ Install the local input method app:
 scripts/install_macos_frontend.sh
 ```
 
-Use a future shared-core JSON command:
+Use the shared-core JSON command from `pi-rag-memory-extension`:
 
 ```bash
 python3 -m rag_ime.cli --core-mode json \
-  --core-command "node /path/to/shared-core-cli.mjs" \
-  demo
+  --core-command "node --experimental-strip-types /path/to/pi-rag-memory-extension/scripts/ime-json-core.mjs --cwd /path/to/workspace --namespace wisdom-weasel-ime --db-path /path/to/session-history.sqlite" \
+  suggest-json "输入法 个人记忆" --recent-context "local-first RAG" --top-k 3
+```
+
+Run the browser debug surface against the same shared core:
+
+```bash
+python3 -m rag_ime.cli --core-mode json \
+  --core-command "node --experimental-strip-types /path/to/pi-rag-memory-extension/scripts/ime-json-core.mjs --cwd /path/to/workspace --namespace wisdom-weasel-ime --db-path /path/to/session-history.sqlite" \
+  debug-server --no-seed
 ```
 
 ## Current Status
@@ -176,16 +184,16 @@ Implemented in this repo:
 - AppKit `NSPanel` candidate/evidence overlay;
 - Swift-to-Python JSON bridge;
 - browser debug page with the same local backend contract;
+- shared-core JSON command integration for CLI/debug-server;
 - three realistic UI scenarios;
 - unittest and acceptance script.
 
 Not implemented in this repo by design:
 
 - vector recall;
-- shared-core replacement for the local SQLite client;
 - PI runtime integration.
 
-The local SQLite client is the Mac MVP backend. It can be replaced by the shared RAG/memory core once that core exposes stable record/action APIs.
+The local SQLite client is still the easiest Mac MVP backend. The shared RAG/memory core can now be selected through `--core-mode json` when the PI memory extension checkout is available.
 
 ## macOS Frontend Route
 

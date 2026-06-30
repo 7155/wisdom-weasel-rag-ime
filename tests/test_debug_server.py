@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rag_ime.core_client import FixtureCoreClient
 from rag_ime.debug_server import DebugImeService, DebugServerConfig
 
 
@@ -76,6 +77,21 @@ class DebugImeServiceTests(unittest.TestCase):
             self.service.commit({"text": " "})
         with self.assertRaises(ValueError):
             self.service.action({"actionType": "unknown", "memoryId": "event:1"})
+
+    def test_debug_service_can_use_injected_shared_core_adapter(self) -> None:
+        service = DebugImeService(
+            DebugServerConfig(
+                core=FixtureCoreClient(),
+                seed_if_empty=False,
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        health = service.health()
+        self.assertEqual(health["coreMode"], "json")
+        self.assertIsNone(health["eventCount"])
+        payload = service.suggest({"currentInput": "local-first 记忆", "topK": 2})
+        self.assertEqual(payload["schemaVersion"], "rag-ime.suggestions.v1")
+        self.assertGreaterEqual(len(payload["suggestions"]), 1)
 
 
 if __name__ == "__main__":
