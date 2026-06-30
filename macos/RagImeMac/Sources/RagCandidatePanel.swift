@@ -48,15 +48,24 @@ final class RagCandidatePanel {
     }
 
     func show(
+        modelPredictions: [ModelPrediction] = [],
         suggestions: [RagSuggestion],
         currentInput: String,
         anchor: NSPoint? = nil,
+        onSelectModel: @escaping (ModelPrediction, Int) -> Void = { _, _ in },
         onSelect: @escaping (RagSuggestion, Int) -> Void,
         onAction: @escaping (String, RagSuggestion) -> Void
     ) {
         sleeves.removeAll()
-        rebuild(suggestions: suggestions, currentInput: currentInput, onSelect: onSelect, onAction: onAction)
-        let size = fittingSize(suggestionCount: suggestions.count)
+        rebuild(
+            modelPredictions: modelPredictions,
+            suggestions: suggestions,
+            currentInput: currentInput,
+            onSelectModel: onSelectModel,
+            onSelect: onSelect,
+            onAction: onAction
+        )
+        let size = fittingSize(predictionCount: modelPredictions.count, suggestionCount: suggestions.count)
         panel.setContentSize(size)
         positionPanel(anchor: anchor)
         panel.orderFrontRegardless()
@@ -68,8 +77,10 @@ final class RagCandidatePanel {
     }
 
     private func rebuild(
+        modelPredictions: [ModelPrediction],
         suggestions: [RagSuggestion],
         currentInput: String,
+        onSelectModel: @escaping (ModelPrediction, Int) -> Void,
         onSelect: @escaping (RagSuggestion, Int) -> Void,
         onAction: @escaping (String, RagSuggestion) -> Void
     ) {
@@ -78,18 +89,31 @@ final class RagCandidatePanel {
             view.removeFromSuperview()
         }
 
-        contentStack.addArrangedSubview(header(currentInput: currentInput, count: suggestions.count))
-        if suggestions.isEmpty {
-            contentStack.addArrangedSubview(emptyState())
+        let visiblePredictions = Array(modelPredictions.prefix(3))
+        let visibleSuggestions = Array(suggestions.prefix(3))
+        let totalCount = visiblePredictions.count + visibleSuggestions.count
+
+        contentStack.addArrangedSubview(header(currentInput: currentInput, count: totalCount))
+        if !visiblePredictions.isEmpty {
+            contentStack.addArrangedSubview(modelPredictionRow(predictions: visiblePredictions) { prediction, index in
+                onSelectModel(prediction, index)
+            })
+        }
+
+        if visibleSuggestions.isEmpty {
+            if visiblePredictions.isEmpty {
+                contentStack.addArrangedSubview(emptyState())
+            }
             return
         }
 
-        for (index, suggestion) in suggestions.prefix(3).enumerated() {
-            contentStack.addArrangedSubview(candidateRow(suggestion: suggestion, number: index + 1) {
+        let numberOffset = visiblePredictions.count
+        for (index, suggestion) in visibleSuggestions.enumerated() {
+            contentStack.addArrangedSubview(candidateRow(suggestion: suggestion, number: numberOffset + index + 1) {
                 onSelect(suggestion, index)
             })
         }
-        contentStack.addArrangedSubview(evidenceCard(suggestion: suggestions[0], onAction: onAction))
+        contentStack.addArrangedSubview(evidenceCard(suggestion: visibleSuggestions[0], onAction: onAction))
     }
 
     private func header(currentInput: String, count: Int) -> NSView {
@@ -109,7 +133,7 @@ final class RagCandidatePanel {
         query.lineBreakMode = .byTruncatingTail
         query.maximumNumberOfLines = 1
 
-        let badge = NSTextField(labelWithString: "\(min(count, 3))")
+        let badge = NSTextField(labelWithString: "\(min(count, 6))")
         badge.font = .systemFont(ofSize: 10, weight: .semibold)
         badge.textColor = .white
         badge.alignment = .center
@@ -122,6 +146,52 @@ final class RagCandidatePanel {
         stack.addArrangedSubview(NSView())
         stack.addArrangedSubview(badge)
         badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 24).isActive = true
+        return stack
+    }
+
+    private func modelPredictionRow(
+        predictions: [ModelPrediction],
+        onSelect: @escaping (ModelPrediction, Int) -> Void
+    ) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let visible = Array(predictions.prefix(3))
+        let width = (438 - CGFloat(max(0, visible.count - 1)) * 6) / CGFloat(max(1, visible.count))
+        for (index, prediction) in visible.enumerated() {
+            let button = NSButton()
+            button.isBordered = false
+            button.alignment = .left
+            button.setButtonType(.momentaryChange)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 6
+            button.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(index == 0 ? 0.22 : 0.14).cgColor
+            button.cell?.lineBreakMode = .byTruncatingTail
+
+            let sleeve = ClosureSleeve { onSelect(prediction, index) }
+            sleeves.append(sleeve)
+            button.target = sleeve
+            button.action = #selector(ClosureSleeve.invoke)
+
+            let label = NSMutableAttributedString()
+            label.append(NSAttributedString(
+                string: "\(index + 1) ",
+                attributes: [.foregroundColor: NSColor.systemBlue, .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)]
+            ))
+            label.append(NSAttributedString(
+                string: prediction.text,
+                attributes: [.foregroundColor: NSColor.labelColor, .font: NSFont.systemFont(ofSize: 12, weight: .medium)]
+            ))
+            button.attributedTitle = label
+            button.heightAnchor.constraint(equalToConstant: 26).isActive = true
+            button.widthAnchor.constraint(equalToConstant: width).isActive = true
+            stack.addArrangedSubview(button)
+        }
+        stack.widthAnchor.constraint(equalToConstant: 438).isActive = true
         return stack
     }
 
@@ -212,11 +282,13 @@ final class RagCandidatePanel {
         return label
     }
 
-    private func fittingSize(suggestionCount: Int) -> NSSize {
-        let visibleRows = max(1, min(3, suggestionCount))
+    private func fittingSize(predictionCount: Int, suggestionCount: Int) -> NSSize {
+        let predictionHeight = predictionCount > 0 ? 32 : 0
+        let visibleRows = suggestionCount > 0 ? min(3, suggestionCount) : 0
         let rowHeight = visibleRows * 34
+        let emptyHeight = predictionCount == 0 && suggestionCount == 0 ? 34 : 0
         let previewHeight = suggestionCount > 0 ? 45 : 0
-        return NSSize(width: 460, height: CGFloat(42 + rowHeight + previewHeight))
+        return NSSize(width: 460, height: CGFloat(42 + predictionHeight + rowHeight + emptyHeight + previewHeight))
     }
 
     private func positionPanel(anchor: NSPoint?) {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import InputSuggestion, MemoryAction
+from .models import InputSuggestion, MemoryAction, ModelPrediction
 
 
 SCHEMA_VERSION = "rag-ime.suggestions.v1"
@@ -32,12 +32,14 @@ def suggestions_response_payload(
     recent_context: str,
     project: str,
     suggestions: list[InputSuggestion],
+    model_predictions: list[ModelPrediction] | None = None,
 ) -> dict[str, object]:
     return {
         "schemaVersion": SCHEMA_VERSION,
         "currentInput": current_input,
         "recentContext": recent_context,
         "project": project,
+        "modelPredictions": [model_prediction_to_payload(item) for item in (model_predictions or [])],
         "suggestions": [suggestion_to_payload(item) for item in suggestions],
     }
 
@@ -53,4 +55,15 @@ def action_response_payload(action: MemoryAction) -> dict[str, object]:
         "suggestionId": action.suggestion_id,
         "sourceEventId": action.source_event_id,
         "metadata": action.metadata,
+    }
+
+
+def model_prediction_to_payload(prediction: ModelPrediction) -> dict[str, object]:
+    return {
+        "text": prediction.text,
+        "rank": prediction.rank,
+        "providerName": prediction.provider_name,
+        "latencyMs": prediction.latency_ms,
+        "confidence": prediction.confidence,
+        "metadata": dict(prediction.metadata),
     }

@@ -19,6 +19,7 @@ This repo should focus on:
 - pin / downrank / delete action wiring;
 - Agent first-run context hook;
 - macOS InputMethodKit frontend adapter;
+- optional local OpenAI-compatible model prediction lane;
 - Mac-local acceptance scenarios.
 
 This repo should not duplicate:
@@ -124,6 +125,18 @@ Inspect trigger policy:
 python3 -m rag_ime.cli trigger-demo "这个项目" --idle-ms 300
 ```
 
+Use a local OpenAI-compatible small model for the short prediction lane:
+
+```bash
+export RAG_IME_PREDICTOR_PROVIDER=openai-compatible
+export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000
+export RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B
+export RAG_IME_PREDICTOR_TIMEOUT_MS=800
+export RAG_IME_PREDICTOR_MAX_TOKENS=12
+
+python3 -m rag_ime.cli suggest-json "输入法 个人记忆" --recent-context "local-first RAG" --top-k 3
+```
+
 Build the macOS frontend adapter:
 
 ```bash
@@ -185,6 +198,8 @@ Implemented in this repo:
 - Swift-to-Python JSON bridge;
 - browser debug page with the same local backend contract;
 - shared-core JSON command integration for CLI/debug-server;
+- optional local OpenAI-compatible model prediction lane;
+- shared number-key selection for top model predictions and lower RAG/memory candidates;
 - three realistic UI scenarios;
 - unittest and acceptance script.
 
@@ -206,7 +221,8 @@ Implemented route:
    - `suggest_for_input` while preedit/current context changes;
    - `apply_action` when the user accepts, pins, downranks, or deletes a suggestion.
 4. Render a normal candidate bar for short suggestions.
-5. Render evidence preview in an expanded panel or WebView-style overlay.
+5. Render compact model predictions above RAG/memory candidates, using one shared number-key sequence.
+6. Render evidence preview in an expanded panel or WebView-style overlay.
 
 Next route:
 
@@ -214,5 +230,7 @@ Next route:
 2. Anchor the panel to the target app caret instead of mouse-position fallback.
 3. Port the compact debug overlay behavior into `RagCandidatePanel`.
 4. Keep Rime/Squirrel/Wisdom-Weasel integration as the next bridge after the adapter contract is stable.
+
+See `docs/interview-project-difficulties.md` for the Chinese interview material that records the project difficulties and engineering choices.
 
 See `docs/macos-frontend-adapter.md` for the macOS frontend research and implementation notes.

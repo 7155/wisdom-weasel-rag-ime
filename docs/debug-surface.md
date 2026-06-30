@@ -41,26 +41,18 @@ http://127.0.0.1:8765/
 The native input method uses one shared number-key set instead of splitting numbers between word candidates and paragraph candidates.
 
 ```text
-default focus: short candidates
-  1-0   choose top-layer short candidate
-  Tab   accept selected short candidate
-  ↓     move focus to RAG/memory layer
-
-RAG focus:
-  1-0   choose RAG/memory paragraph candidate
-  ↑     return to short candidate layer
-  Esc   collapse back to short layer
-
-direct access:
-  Opt+1..0 choose RAG/memory candidate without switching focus
+1-3   choose top-layer model prediction
+4-6   choose lower RAG/memory candidate
+Esc   cancel current composition
+Enter commit the current composition
 ```
 
 Reason:
 
 - traditional number-key muscle memory stays stable;
-- paragraph candidates do not steal half the number row;
-- the same model can scale from compact overlay to expanded evidence mode;
-- experienced users still get a direct memory shortcut through `Opt+number`.
+- paragraph candidates do not need a separate key mode;
+- the same payload can drive the debug page and native AppKit panel;
+- the IME panel stays small because it only shows one prediction row and up to three memory rows.
 
 ## Small-Area Constraint
 
@@ -73,7 +65,7 @@ Current browser prototype constraints:
 - compact state shows one short-candidate row and at most two memory summaries;
 - evidence text is hidden until the user switches to the RAG layer or presses the evidence debug control.
 
-The native `RagCandidatePanel` should keep the strict version of this behavior: compact by default, no pipeline text, no model labels, no debug JSON, and evidence only as a one-line hint unless the user explicitly expands elsewhere.
+The native `RagCandidatePanel` keeps the strict version of this behavior: compact by default, no pipeline text, no model labels, no debug JSON, and evidence only as a one-line hint unless the user explicitly expands elsewhere.
 
 ## Local API
 
@@ -101,8 +93,7 @@ The page falls back to local mock suggestions if the API is unavailable, so visu
 
 Port in this order:
 
-1. Copy the focus-layer state machine into `RagCandidatePanel`.
-2. Keep `RagBridgeClient` unchanged unless the JSON contract changes.
-3. Render compact evidence summaries first.
-4. Add expanded evidence after number-key selection is stable.
-5. Keep `Opt+number` as the direct paragraph shortcut.
+1. Keep `RagBridgeClient` unchanged unless the JSON contract changes.
+2. Render compact evidence summaries first.
+3. Add expanded evidence after number-key selection is stable.
+4. Add richer action controls in a non-IME debug/preferences surface, not in the default candidate panel.

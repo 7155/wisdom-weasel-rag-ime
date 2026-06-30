@@ -1,5 +1,7 @@
 # RAG-IME Interview Notes
 
+For the Chinese interview-ready difficulty summary, see `docs/interview-project-difficulties.md`.
+
 ## 30-Second Pitch
 
 I am building a local-first RAG input method.
@@ -36,20 +38,14 @@ The input method needs both:
 
 Splitting `1-5` for words and `6-0` for memory looks simple, but it breaks muscle memory and does not scale.
 
-The current design uses a focus-layer model:
+The current native panel uses one shared number row:
 
 ```text
-default focus: short candidates
-  1-0 choose short candidate
-
-RAG focus:
-  1-0 choose memory candidate
-
-shortcut:
-  Option+1..0 directly choose memory candidate
+1-3: short model predictions
+4-6: RAG / memory suggestions
 ```
 
-This keeps number-key semantics stable while still supporting paragraph memory.
+This keeps number-key semantics stable while still supporting paragraph memory. The IME panel stays compact by limiting the top layer to three short model predictions and the lower layer to three RAG/memory suggestions.
 
 ### 3. Latency And GPU Memory Are Product Constraints
 
