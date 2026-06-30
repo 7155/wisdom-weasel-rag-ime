@@ -1,0 +1,616 @@
+diff --git a/Squirrel.xcodeproj/project.pbxproj b/Squirrel.xcodeproj/project.pbxproj
+index 813deae..1bec8e3 100644
+--- a/Squirrel.xcodeproj/project.pbxproj
++++ b/Squirrel.xcodeproj/project.pbxproj
+@@ -86,6 +86,8 @@
+ 		B3216E5C2BF438F800E292D2 /* rime.pdf in Resources */ = {isa = PBXBuildFile; fileRef = B3216E5B2BF438F800E292D2 /* rime.pdf */; };
+ 		B35D2FE82BF00839009D156B /* BridgingFunctions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B35D2FE72BF00839009D156B /* BridgingFunctions.swift */; };
+ 		B3A001022F260100009D156B /* ReservedProperty.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A001012F260100009D156B /* ReservedProperty.swift */; };
++		B3A777022F330001009D156B /* RagImeSidecarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A777012F330001009D156B /* RagImeSidecarModels.swift */; };
++		B3A777042F330001009D156B /* RagImeSidecarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A777032F330001009D156B /* RagImeSidecarClient.swift */; };
+ 		B38E9B912BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38E9B902BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift */; };
+ 		B38E9B952BEAFEFD0036ABEF /* SquirrelInputController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38E9B942BEAFEFD0036ABEF /* SquirrelInputController.swift */; };
+ 		B39771232BECEA150093A49B /* MacOSKeyCodes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39771222BECEA150093A49B /* MacOSKeyCodes.swift */; };
+@@ -307,6 +309,8 @@
+ 		B32B80772BE7FAA200FCF3BC /* Squirrel.entitlements */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.entitlements; name = Squirrel.entitlements; path = resources/Squirrel.entitlements; sourceTree = "<group>"; };
+ 		B35D2FE72BF00839009D156B /* BridgingFunctions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BridgingFunctions.swift; path = sources/BridgingFunctions.swift; sourceTree = "<group>"; };
+ 		B3A001012F260100009D156B /* ReservedProperty.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReservedProperty.swift; path = sources/ReservedProperty.swift; sourceTree = "<group>"; };
++		B3A777012F330001009D156B /* RagImeSidecarModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeSidecarModels.swift; path = sources/RagImeSidecarModels.swift; sourceTree = "<group>"; };
++		B3A777032F330001009D156B /* RagImeSidecarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeSidecarClient.swift; path = sources/RagImeSidecarClient.swift; sourceTree = "<group>"; };
+ 		B38E9B8F2BE9AE1E0036ABEF /* Squirrel-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "Squirrel-Bridging-Header.h"; path = "sources/Squirrel-Bridging-Header.h"; sourceTree = "<group>"; };
+ 		B38E9B902BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SquirrelApplicationDelegate.swift; path = sources/SquirrelApplicationDelegate.swift; sourceTree = "<group>"; };
+ 		B38E9B942BEAFEFD0036ABEF /* SquirrelInputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SquirrelInputController.swift; path = sources/SquirrelInputController.swift; sourceTree = "<group>"; };
+@@ -352,6 +356,8 @@
+ 				B397712A2BEE4C160093A49B /* SquirrelPanel.swift */,
+ 				B39771282BEDAF4A0093A49B /* SquirrelView.swift */,
+ 				B39771242BED899F0093A49B /* SquirrelConfig.swift */,
++				B3A777012F330001009D156B /* RagImeSidecarModels.swift */,
++				B3A777032F330001009D156B /* RagImeSidecarClient.swift */,
+ 				B35D2FE72BF00839009D156B /* BridgingFunctions.swift */,
+ 				B3A001012F260100009D156B /* ReservedProperty.swift */,
+ 				B38E9B8F2BE9AE1E0036ABEF /* Squirrel-Bridging-Header.h */,
+@@ -625,6 +631,8 @@
+ 				B397712B2BEE4C160093A49B /* SquirrelPanel.swift in Sources */,
+ 				B38E9B912BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift in Sources */,
+ 				B39771272BED9B250093A49B /* SquirrelTheme.swift in Sources */,
++				B3A777022F330001009D156B /* RagImeSidecarModels.swift in Sources */,
++				B3A777042F330001009D156B /* RagImeSidecarClient.swift in Sources */,
+ 				B35D2FE82BF00839009D156B /* BridgingFunctions.swift in Sources */,
+ 				B3A001022F260100009D156B /* ReservedProperty.swift in Sources */,
+ 			);
+diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
+new file mode 100644
+index 0000000..32b59e7
+--- /dev/null
++++ b/sources/RagImeSidecarClient.swift
+@@ -0,0 +1,119 @@
++//
++//  RagImeSidecarClient.swift
++//  Squirrel
++//
++
++import Foundation
++
++struct RagImeSidecarClient {
++  let pythonExecutable: String
++  let repoRoot: String
++  let dbPath: String
++  let project: String
++  let maxVisibleCandidates: Int
++  let maxSideCandidates: Int
++  let latencyBudgetMs: Int
++  let timeoutSeconds: TimeInterval
++
++  init?(config: SquirrelConfig?) {
++    guard config?.getBool("rag_ime/enabled") == true else { return nil }
++    let repoRoot = Self.trimmed(config?.getString("rag_ime/repo_root"))
++    guard !repoRoot.isEmpty else {
++      print("RAG IME sidecar disabled: rag_ime/repo_root is empty")
++      return nil
++    }
++    let configuredPython = Self.trimmed(config?.getString("rag_ime/python"))
++    let configuredDbPath = Self.trimmed(config?.getString("rag_ime/db_path"))
++    let configuredProject = Self.trimmed(config?.getString("rag_ime/project"))
++
++    self.pythonExecutable = configuredPython.isEmpty ? "/usr/bin/python3" : configuredPython
++    self.repoRoot = repoRoot
++    self.dbPath = configuredDbPath.isEmpty ? "\(repoRoot)/.rag-ime-data/rag-ime.sqlite" : configuredDbPath
++    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
++    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
++    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 2, range: 0...6)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 180, range: 30...2000)
++    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 100...5000)) / 1000
++  }
++
++  func request(_ request: RagImeSidecarRequest) throws -> RagImeSidecarResponse {
++    let requestFile = FileManager.default.temporaryDirectory
++      .appendingPathComponent("rag-ime-\(request.sessionId)-\(request.requestSeq).json")
++    let requestData = try JSONEncoder().encode(request)
++    try requestData.write(to: requestFile, options: .atomic)
++    defer { try? FileManager.default.removeItem(at: requestFile) }
++
++    let process = Process()
++    process.executableURL = URL(fileURLWithPath: pythonExecutable)
++    process.currentDirectoryURL = URL(fileURLWithPath: repoRoot)
++    process.arguments = [
++      "-m",
++      "rag_ime.cli",
++      "--db-path",
++      dbPath,
++      "rime-suggest-json",
++      "--payload-file",
++      requestFile.path,
++    ]
++    process.environment = sidecarEnvironment()
++
++    let stdout = Pipe()
++    let stderr = Pipe()
++    process.standardOutput = stdout
++    process.standardError = stderr
++
++    try process.run()
++    let deadline = Date().addingTimeInterval(timeoutSeconds)
++    while process.isRunning && Date() < deadline {
++      Thread.sleep(forTimeInterval: 0.01)
++    }
++    if process.isRunning {
++      process.terminate()
++      throw RagImeSidecarError.timeout
++    }
++    let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
++    let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
++    guard process.terminationStatus == 0 else {
++      let stderrText = String(data: errorData, encoding: .utf8) ?? ""
++      throw RagImeSidecarError.failedExit(Int(process.terminationStatus), stderrText)
++    }
++    return try JSONDecoder().decode(RagImeSidecarResponse.self, from: outputData)
++  }
++}
++
++enum RagImeSidecarError: Error, CustomStringConvertible {
++  case timeout
++  case failedExit(Int, String)
++
++  var description: String {
++    switch self {
++    case .timeout:
++      return "sidecar timed out"
++    case .failedExit(let status, let stderr):
++      return "sidecar exited with \(status): \(stderr)"
++    }
++  }
++}
++
++private extension RagImeSidecarClient {
++  static func trimmed(_ value: String?) -> String {
++    return value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++  }
++
++  static func intConfig(_ config: SquirrelConfig?, _ key: String, fallback: Int, range: ClosedRange<Int>) -> Int {
++    guard let configuredValue = config?.getDouble(key) else { return fallback }
++    return min(max(Int(configuredValue), range.lowerBound), range.upperBound)
++  }
++
++  func sidecarEnvironment() -> [String: String] {
++    var environment = ProcessInfo.processInfo.environment
++    if let existingPythonPath = environment["PYTHONPATH"], !existingPythonPath.isEmpty {
++      environment["PYTHONPATH"] = "\(repoRoot):\(existingPythonPath)"
++    } else {
++      environment["PYTHONPATH"] = repoRoot
++    }
++    environment["RAG_IME_CORE_MODE"] = environment["RAG_IME_CORE_MODE"] ?? "local"
++    environment["RAG_IME_DB_PATH"] = dbPath
++    return environment
++  }
++}
+diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
+new file mode 100644
+index 0000000..2a90c24
+--- /dev/null
++++ b/sources/RagImeSidecarModels.swift
+@@ -0,0 +1,148 @@
++//
++//  RagImeSidecarModels.swift
++//  Squirrel
++//
++
++import Foundation
++
++struct RagImeSidecarRequest: Codable {
++  let sessionId: String
++  let requestSeq: Int
++  let rawInput: String
++  let preedit: String
++  let commitTextPreview: String
++  let committedContext: String
++  let project: String
++  let latencyBudgetMs: Int
++  let maxVisibleCandidates: Int
++  let maxSideCandidates: Int
++  let rimeContext: RagImeRimeContextPayload
++}
++
++struct RagImeRimeContextPayload: Codable {
++  let candidates: [RagImeRimeCandidatePayload]
++  let highlightedIndex: Int
++  let page: Int
++  let isLastPage: Bool
++}
++
++struct RagImeRimeCandidatePayload: Codable {
++  let label: String
++  let text: String
++  let comment: String
++  let index: Int?
++}
++
++struct RagImeSidecarResponse: Codable {
++  let schemaVersion: String
++  let sessionId: String
++  let requestSeq: Int
++  let project: String
++  let rawInput: String
++  let preedit: String
++  let committedContext: String
++  let semanticQuery: String
++  let queryBasis: String
++  let historyContext: String
++  let latencyBudgetMs: Int
++  let rimeContext: RagImeRimeContextPayload
++  let modelPredictions: [RagImeModelPrediction]
++  let ragCandidates: [RagImeSuggestion]
++  let displayCandidates: [RagImeDisplayCandidate]
++  let selectionActions: RagImeSelectionActions
++  let mergePolicy: RagImeMergePolicy
++}
++
++struct RagImeModelPrediction: Codable, Hashable {
++  let text: String
++  let rank: Int
++  let providerName: String
++  let latencyMs: Int
++  let confidence: Double
++  let metadata: [String: RagImeJSONValue]
++}
++
++struct RagImeSuggestion: Codable, Hashable {
++  let suggestionId: String
++  let surfaceText: String
++  let insertText: String
++  let suggestionType: String
++  let sourceEventId: Int
++  let memoryId: String
++  let evidencePreview: String
++  let expandedEvidence: String
++  let confidence: Double
++  let actions: [String]
++  let metadata: [String: RagImeJSONValue]
++}
++
++struct RagImeDisplayCandidate: Codable, Hashable {
++  let label: String
++  let text: String
++  let insertText: String
++  let sourceType: String
++  let selectionAction: String
++  let sourceIndex: Int
++  let comment: String
++  let evidencePreview: String
++  let suggestionId: String
++  let memoryId: String
++  let rimeIndex: Int?
++  let metadata: [String: RagImeJSONValue]
++}
++
++struct RagImeSelectionActions: Codable {
++  let rime: String
++  let side: String
++}
++
++struct RagImeMergePolicy: Codable {
++  let rimeFirst: Bool
++  let maxVisibleCandidates: Int
++  let maxSideCandidates: Int
++  let rawPinyinFallback: Bool
++}
++
++enum RagImeJSONValue: Codable, Hashable {
++  case string(String)
++  case number(Double)
++  case bool(Bool)
++  case array([RagImeJSONValue])
++  case object([String: RagImeJSONValue])
++  case null
++
++  init(from decoder: Decoder) throws {
++    let container = try decoder.singleValueContainer()
++    if container.decodeNil() {
++      self = .null
++    } else if let value = try? container.decode(Bool.self) {
++      self = .bool(value)
++    } else if let value = try? container.decode(Double.self) {
++      self = .number(value)
++    } else if let value = try? container.decode(String.self) {
++      self = .string(value)
++    } else if let value = try? container.decode([RagImeJSONValue].self) {
++      self = .array(value)
++    } else {
++      self = .object(try container.decode([String: RagImeJSONValue].self))
++    }
++  }
++
++  func encode(to encoder: Encoder) throws {
++    var container = encoder.singleValueContainer()
++    switch self {
++    case .string(let value):
++      try container.encode(value)
++    case .number(let value):
++      try container.encode(value)
++    case .bool(let value):
++      try container.encode(value)
++    case .array(let value):
++      try container.encode(value)
++    case .object(let value):
++      try container.encode(value)
++    case .null:
++      try container.encodeNil()
++    }
++  }
++}
+diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
+index c2adf74..01cb00d 100644
+--- a/sources/SquirrelInputController.swift
++++ b/sources/SquirrelInputController.swift
+@@ -27,6 +27,12 @@ final class SquirrelInputController: IMKInputController {
+   private var chordTimer: Timer?
+   private var chordDuration: TimeInterval = 0
+   private var currentApp: String = ""
++  private var ragImeSidecarClient: RagImeSidecarClient?
++  private var ragImeRequestSeq: Int = 0
++  private var ragImeDisplayCandidates: [RagImeDisplayCandidate] = []
++  private var ragImeDisplayRawInput: String = ""
++  private var ragImeDisplayPreedit: String = ""
++  private var ragImeCommittedContext: String = ""
+ 
+   // swiftlint:disable:next cyclomatic_complexity
+   override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+@@ -106,6 +112,9 @@ final class SquirrelInputController: IMKInputController {
+         keyChars = event.characters
+       }
+       if let char = keyChars?.first {
++        if !modifiers.contains(.control) && !modifiers.contains(.option) && selectRagImeSideCandidate(forKey: String(char)) {
++          return true
++        }
+         let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
+                                                            shift: modifiers.contains(.shift),
+                                                            caps: modifiers.contains(.capsLock))
+@@ -124,6 +133,24 @@ final class SquirrelInputController: IMKInputController {
+   }
+ 
+   func selectCandidate(_ index: Int) -> Bool {
++    if index >= 0 && index < ragImeDisplayCandidates.count {
++      let candidate = ragImeDisplayCandidates[index]
++      if candidate.selectionAction == "commit_side_candidate" {
++        let insertText = candidate.insertText.isEmpty ? candidate.text : candidate.insertText
++        guard !insertText.isEmpty else { return false }
++        commit(string: insertText)
++        rimeAPI.clear_composition(session)
++        clearRagImeDisplayCandidates()
++        rimeUpdate(clearReservedComments: false, requestSidecar: false)
++        return true
++      }
++      let rimeIndex = candidate.rimeIndex ?? candidate.sourceIndex
++      let success = rimeAPI.select_candidate_on_current_page(session, rimeIndex)
++      if success {
++        rimeUpdate()
++      }
++      return success
++    }
+     let success = rimeAPI.select_candidate_on_current_page(session, index)
+     if success {
+       rimeUpdate()
+@@ -301,6 +328,158 @@ final class SquirrelInputController: IMKInputController {
+ 
+ private extension SquirrelInputController {
+ 
++  func configureRagImeSidecar() {
++    ragImeSidecarClient = RagImeSidecarClient(config: NSApp.squirrelAppDelegate.config)
++    clearRagImeDisplayCandidates()
++  }
++
++  func selectRagImeSideCandidate(forKey key: String) -> Bool {
++    guard let index = ragImeDisplayCandidates.firstIndex(where: { $0.label == key }) else {
++      return false
++    }
++    guard ragImeDisplayCandidates[index].selectionAction == "commit_side_candidate" else {
++      return false
++    }
++    return selectCandidate(index)
++  }
++
++  func refreshRagImeSidecar(
++    rawInput: String,
++    preedit: String,
++    commitTextPreview: String,
++    candidates: [String],
++    comments: [String],
++    labels: [String],
++    highlighted: Int,
++    page: Int,
++    lastPage: Bool,
++    requestSidecar: Bool
++  ) {
++    guard requestSidecar else { return }
++    guard let sidecarClient = ragImeSidecarClient else {
++      clearRagImeDisplayCandidates()
++      return
++    }
++    guard !rawInput.isEmpty || !preedit.isEmpty || !candidates.isEmpty else {
++      clearRagImeDisplayCandidates()
++      return
++    }
++
++    ragImeRequestSeq += 1
++    let requestSeq = ragImeRequestSeq
++    let rimeCandidates = candidates.enumerated().map { index, text in
++      RagImeRimeCandidatePayload(
++        label: index < labels.count ? labels[index] : "",
++        text: text,
++        comment: index < comments.count ? comments[index] : "",
++        index: index
++      )
++    }
++    let request = RagImeSidecarRequest(
++      sessionId: String(session),
++      requestSeq: requestSeq,
++      rawInput: rawInput,
++      preedit: preedit,
++      commitTextPreview: commitTextPreview,
++      committedContext: ragImeCommittedContext,
++      project: sidecarClient.project,
++      latencyBudgetMs: sidecarClient.latencyBudgetMs,
++      maxVisibleCandidates: sidecarClient.maxVisibleCandidates,
++      maxSideCandidates: sidecarClient.maxSideCandidates,
++      rimeContext: RagImeRimeContextPayload(
++        candidates: rimeCandidates,
++        highlightedIndex: highlighted,
++        page: page,
++        isLastPage: lastPage
++      )
++    )
++
++    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++      do {
++        let response = try sidecarClient.request(request)
++        DispatchQueue.main.async {
++          self?.applyRagImeSidecarResponse(response, for: request)
++        }
++      } catch {
++        print("RAG IME sidecar request failed: \(error)")
++      }
++    }
++  }
++
++  func applyRagImeSidecarResponse(_ response: RagImeSidecarResponse, for request: RagImeSidecarRequest) {
++    guard response.requestSeq == ragImeRequestSeq, response.requestSeq == request.requestSeq else { return }
++    guard response.sessionId == request.sessionId else { return }
++    guard session != 0 && rimeAPI.find_session(session) else { return }
++    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
++    guard currentRawInput == request.rawInput else { return }
++
++    ragImeDisplayCandidates = response.displayCandidates
++    ragImeDisplayRawInput = response.rawInput
++    ragImeDisplayPreedit = response.preedit
++    rimeUpdate(clearReservedComments: false, requestSidecar: false)
++  }
++
++  func mergedRagImePanelCandidates(
++    rawInput: String,
++    preedit: String,
++    fallbackCandidates: [String],
++    fallbackComments: [String],
++    fallbackLabels: [String]
++  ) -> (candidates: [String], comments: [String], labels: [String]) {
++    guard ragImeDisplayRawInput == rawInput,
++          ragImeDisplayPreedit == preedit,
++          !ragImeDisplayCandidates.isEmpty else {
++      return (fallbackCandidates, fallbackComments, fallbackLabels)
++    }
++    let candidates = ragImeDisplayCandidates.map { $0.text }
++    let comments = ragImeDisplayCandidates.map { ragImeDisplayComment(for: $0) }
++    let labels = ragImeDisplayCandidates.enumerated().map { index, candidate in
++      candidate.label.isEmpty ? ragImeFallbackLabel(index: index, fallbackLabels: fallbackLabels) : candidate.label
++    }
++    return (candidates, comments, labels)
++  }
++
++  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {
++    if !candidate.comment.isEmpty {
++      return candidate.comment
++    }
++    switch candidate.sourceType {
++    case "rag":
++      return "RAG"
++    case "model":
++      return "LLM"
++    default:
++      return ""
++    }
++  }
++
++  func ragImeFallbackLabel(index: Int, fallbackLabels: [String]) -> String {
++    if index < fallbackLabels.count && !fallbackLabels[index].isEmpty {
++      return fallbackLabels[index]
++    }
++    if index == 9 {
++      return "0"
++    }
++    return "\(index + 1)"
++  }
++
++  func clearRagImeDisplayCandidates() {
++    ragImeDisplayCandidates = []
++    ragImeDisplayRawInput = ""
++    ragImeDisplayPreedit = ""
++  }
++
++  func rememberRagImeCommittedContext(_ text: String) {
++    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
++    guard !normalized.isEmpty else { return }
++    let combined = [ragImeCommittedContext, normalized].filter { !$0.isEmpty }.joined(separator: " ")
++    if combined.count > 800 {
++      ragImeCommittedContext = String(combined.suffix(800))
++    } else {
++      ragImeCommittedContext = combined
++    }
++  }
++
+   func onChordTimer(_: Timer) {
+     var processedKeys = false
+     if chordKeyCount > 0 && session != 0 {
+@@ -360,6 +539,7 @@ private extension SquirrelInputController {
+ 
+     if session != 0 {
+       updateAppOptions()
++      configureRagImeSidecar()
+     }
+   }
+ 
+@@ -434,7 +614,7 @@ private extension SquirrelInputController {
+   }
+ 
+   // Preserve reserved comment marks when librime requests a UI-only refresh.
+-  func rimeUpdate(clearReservedComments: Bool = true) {
++  func rimeUpdate(clearReservedComments: Bool = true, requestSidecar: Bool = true) {
+     if clearReservedComments {
+       specialCommentIndices = [:]
+     }
+@@ -446,6 +626,7 @@ private extension SquirrelInputController {
+       if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
+         schemaId = String(cString: schema_id)
+         NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
++        configureRagImeSidecar()
+         if let panel = NSApp.squirrelAppDelegate.panel {
+           inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
+           inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
+@@ -458,13 +639,14 @@ private extension SquirrelInputController {
+     var ctx = RimeContext_stdbool.rimeStructInit()
+     if rimeAPI.get_context(session, &ctx) {
+       let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
++      let commitTextPreview = ctx.commit_text_preview.map { String(cString: $0) } ?? ""
+ 
+       let start = String.Index(preedit.utf8.index(preedit.utf8.startIndex, offsetBy: Int(ctx.composition.sel_start)), within: preedit) ?? preedit.startIndex
+       let end = String.Index(preedit.utf8.index(preedit.utf8.startIndex, offsetBy: Int(ctx.composition.sel_end)), within: preedit) ?? preedit.startIndex
+       let caretPos = String.Index(preedit.utf8.index(preedit.utf8.startIndex, offsetBy: Int(ctx.composition.cursor_pos)), within: preedit) ?? preedit.startIndex
+ 
+       if inlineCandidate {
+-        var candidatePreview = ctx.commit_text_preview.map { String(cString: $0) } ?? ""
++        var candidatePreview = commitTextPreview
+         let endOfCandidatePreview = candidatePreview.endIndex
+         if inlinePreedit {
+           // 左移光標後的情形：
+@@ -537,13 +719,35 @@ private extension SquirrelInputController {
+       // swiftlint:enable identifier_name
+       let page = Int(ctx.menu.page_no)
+       let lastPage = ctx.menu.is_last_page
++      let rawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
++
++      refreshRagImeSidecar(
++        rawInput: rawInput,
++        preedit: preedit,
++        commitTextPreview: commitTextPreview,
++        candidates: candidates,
++        comments: comments,
++        labels: labels,
++        highlighted: Int(ctx.menu.highlighted_candidate_index),
++        page: page,
++        lastPage: lastPage,
++        requestSidecar: requestSidecar
++      )
++      let panelCandidates = mergedRagImePanelCandidates(
++        rawInput: rawInput,
++        preedit: preedit,
++        fallbackCandidates: candidates,
++        fallbackComments: comments,
++        fallbackLabels: labels
++      )
+ 
+       let selRange = NSRange(location: start.utf16Offset(in: preedit), length: preedit.utf16.distance(from: start, to: end))
+       showPanel(preedit: inlinePreedit ? "" : preedit, selRange: selRange, caretPos: caretPos.utf16Offset(in: preedit),
+-                candidates: candidates, comments: comments, labels: labels, highlighted: Int(ctx.menu.highlighted_candidate_index),
++                candidates: panelCandidates.candidates, comments: panelCandidates.comments, labels: panelCandidates.labels, highlighted: Int(ctx.menu.highlighted_candidate_index),
+                 page: page, lastPage: lastPage)
+       _ = rimeAPI.free_context(&ctx)
+     } else {
++      clearRagImeDisplayCandidates()
+       hidePalettes()
+     }
+   }
+@@ -551,6 +755,7 @@ private extension SquirrelInputController {
+   func commit(string: String) {
+     guard let client = client else { return }
+     client.insertText(string, replacementRange: .empty)
++    rememberRagImeCommittedContext(string)
+     preedit = ""
+     hidePalettes()
+   }

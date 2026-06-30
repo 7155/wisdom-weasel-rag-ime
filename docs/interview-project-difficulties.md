@@ -25,14 +25,14 @@ RetrievedMemory
 
 ### 2. 候选字和候选段落共用 1-9 数字键
 
-输入法的数字键是高频肌肉记忆，不能简单拆成“1-5 选字、6-0 选段落”。当前实现采用统一编号：
+输入法的数字键是高频肌肉记忆，不能简单拆成“1-5 选字、6-0 选段落”，也不能让 RAG 候选抢走用户对传统候选的预期。当前正式前端策略是统一显示列表，但 Rime 候选优先：
 
 ```text
-1-3: 上方本地小模型短预测
-4-6: 下方 RAG / 记忆候选
+1-5: Rime / 词库 / 拼音方案生成的主候选
+6-8: 本地小模型 / RAG / 记忆生成的 side candidate
 ```
 
-模型候选和 RAG 候选共享同一套数字键，UI 只显示少量信息。这样既保留传统输入法速度，又能让用户看到更长记忆候选的证据摘要。
+模型候选和 RAG 候选共享同一套数字键，但选择路由不同：Rime 候选继续调用 librime 的 `select_candidate_on_current_page`，side candidate 才由前端直接插入 `insertText`。这样既保留传统输入法速度，又能让用户用同一套键位选择记忆候选。
 
 ### 3. 输入法是实时系统，RAG 不能阻塞打字
 
@@ -143,7 +143,8 @@ raw key input
 - 数字键统一选择模型候选和 RAG 候选；
 - accept / commit / action 本地记录链路；
 - 单测和 macOS app 构建验证；
-- Rime/Squirrel 正式前端路线 ADR。
+- Rime/Squirrel 正式前端路线 ADR；
+- Squirrel patch pack：在 Rime 候选生成后调用本地 sidecar，异步合并 side candidates，并按显示候选路由数字键。
 
 ## 面试讲法
 

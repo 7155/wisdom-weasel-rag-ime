@@ -1,8 +1,16 @@
 # Squirrel Integration Spike
 
 - Date: 2026-06-30
-- Status: ready for first Squirrel branch
+- Status: first patch pack generated
 - Goal: move the proven `rime-suggest-json` contract into a Squirrel/Rime frontend without replacing librime composition.
+
+Patch pack:
+
+```text
+squirrel-patches/0001-add-rag-ime-sidecar.patch
+```
+
+It applies to Squirrel `2158538` and keeps the integration fail-closed behind `rag_ime/enabled`.
 
 ## Source Boundary
 
@@ -120,6 +128,8 @@ display item action == commit_side_candidate
 
 Do not mutate librime's internal candidate menu for the first integration. Build a frontend display list and route selection by display metadata.
 
+Keyboard routing needs one extra guard because normal number-key selection goes through librime before the panel's click handler. The first patch only intercepts labels that currently point to side candidates; all normal Rime candidate keys continue through `process_key(...)`.
+
 ## Current Prototype Evidence
 
 The prototype now proves the backend and Swift contract:
@@ -145,4 +155,3 @@ Expected properties:
 - No model/RAG result blocking on the main key event path.
 - No large evidence UI inside the default candidate panel.
 - No direct raw-pinyin decoding by LLM.
-

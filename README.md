@@ -179,6 +179,16 @@ Verify the Swift frontend can call and decode the Squirrel/Rime side-candidate c
 build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-sidecar-json
 ```
 
+Apply the first Squirrel frontend patch pack:
+
+```bash
+git clone https://github.com/rime/squirrel /tmp/squirrel-rag-ime
+cd /tmp/squirrel-rag-ime
+git checkout 2158538
+git apply /Volumes/undo\ 4t/git/learnA/wisdom-weasel-rag-ime/squirrel-patches/0001-add-rag-ime-sidecar.patch
+git diff --check
+```
+
 Preview the Squirrel/Rime side-candidate contract:
 
 ```bash
@@ -262,6 +272,7 @@ Implemented in this repo:
 - shared-core JSON command integration for CLI/debug-server;
 - Squirrel/Rime-aware side-candidate JSON contract;
 - Swift bridge models and preview command for the Rime side-candidate contract;
+- Squirrel patch pack for a fail-closed Rime sidecar frontend integration;
 - optional local OpenAI-compatible model prediction lane;
 - bounded history-input context for model/RAG prediction;
 - shared number-key selection for top model predictions and lower RAG/memory candidates;
@@ -302,5 +313,7 @@ See `docs/interview-project-difficulties.md` for the Chinese interview material 
 See `docs/macos-frontend-adapter.md` for the macOS frontend research and implementation notes.
 
 See `docs/rime-squirrel-framework-decision.md` for the accepted Rime/Squirrel framework route.
+
+See `squirrel-patches/README.md` for the patch-pack base commit, config keys, and validation commands.
 
 See `docs/wisdom-weasel-issues-map.md` for the Wisdom-Weasel open-issues compatibility map.
