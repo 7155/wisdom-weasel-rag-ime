@@ -14,6 +14,7 @@ from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, d
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import InputEvent, MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
+from .predictor import prediction_provider_from_env
 from .renderer import render_agent_injection, render_terminal_panel
 from .scenarios import SCENARIOS, get_scenario
 from .text_utils import now_ms
@@ -107,6 +108,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     core = _build_core(args)
     adapter = InputMethodAdapter(core, project="wisdom-weasel-rag-ime")
+    predictor = prediction_provider_from_env()
 
     if args.command == "init-db":
         if not isinstance(core, LocalSqliteCoreClient):
@@ -169,6 +171,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "suggest-json":
+        model_predictions = predictor.predict(
+            current_input=args.current_input,
+            recent_context=args.recent_context,
+            max_candidates=5,
+        )
         suggestions = adapter.suggest(
             SuggestionRequest(
                 current_input=args.current_input,
@@ -183,6 +190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     current_input=args.current_input,
                     recent_context=args.recent_context,
                     project=args.project,
+                    model_predictions=model_predictions,
                     suggestions=suggestions,
                 ),
                 ensure_ascii=False,

@@ -7,6 +7,7 @@ const state = {
   selectedRag: 0,
   expanded: false,
   suggestions: [],
+  modelPredictions: [],
   lastPayload: null,
   timer: 0,
   apiOnline: true,
@@ -86,6 +87,9 @@ function keyNumber(event) {
 }
 
 function shortCandidates(query) {
+  if (state.modelPredictions.length) {
+    return state.modelPredictions.map((item) => item.text).filter(Boolean).slice(0, 6);
+  }
   const q = query.trim().toLowerCase();
   const ranked = shortLexicon.filter((item) => item.toLowerCase().includes(q) || q.includes(item.toLowerCase()));
   const merged = [...ranked, ...shortLexicon.filter((item) => !ranked.includes(item))];
@@ -154,6 +158,7 @@ function render() {
         memoryId: item.memoryId,
         confidence: item.confidence,
       })),
+      modelPredictions: state.modelPredictions,
     },
     null,
     2,
@@ -171,6 +176,7 @@ function escapeHtml(value) {
 async function suggestNow() {
   const query = state.query.trim();
   if (!query) {
+    state.modelPredictions = [];
     state.suggestions = fallbackSuggestions;
     render();
     return;
@@ -194,11 +200,13 @@ async function suggestNow() {
     const payload = await response.json();
     setPipeline("compile");
     state.lastPayload = payload;
+    state.modelPredictions = Array.isArray(payload.modelPredictions) ? payload.modelPredictions : [];
     state.suggestions = payload.suggestions?.length ? payload.suggestions : fallbackSuggestions;
     state.apiOnline = true;
     elements.latencyMeta.textContent = `${Math.round(performance.now() - started)}ms`;
   } catch (error) {
     state.apiOnline = false;
+    state.modelPredictions = [];
     state.suggestions = fallbackSuggestions;
     elements.latencyMeta.textContent = "mock";
   } finally {

@@ -5,7 +5,17 @@ struct SuggestionResponse: Codable {
     let currentInput: String
     let recentContext: String
     let project: String
+    let modelPredictions: [ModelPrediction]?
     let suggestions: [RagSuggestion]
+}
+
+struct ModelPrediction: Codable, Hashable {
+    let text: String
+    let rank: Int
+    let providerName: String
+    let latencyMs: Int
+    let confidence: Double
+    let metadata: [String: JSONValue]
 }
 
 struct RagSuggestion: Codable, Hashable {

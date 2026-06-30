@@ -6,6 +6,7 @@ from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.agent_hook import build_first_run_injection
 from rag_ime.cli import run_acceptance
 from rag_ime.core_client import FixtureCoreClient
+from rag_ime.models import ModelPrediction
 from rag_ime.payloads import suggestions_response_payload
 from rag_ime.renderer import render_candidate_bar, render_expanded_evidence, render_terminal_panel
 from rag_ime.scenarios import SCENARIOS, get_scenario
@@ -138,9 +139,13 @@ class InputMethodAdapterTests(unittest.TestCase):
             current_input=scenario.current_input,
             recent_context=scenario.recent_context,
             project=scenario.project,
+            model_predictions=[
+                ModelPrediction(text="本地候选", rank=1, provider_name="test-model", latency_ms=12, confidence=0.9)
+            ],
             suggestions=suggestions,
         )
         self.assertEqual(payload["schemaVersion"], "rag-ime.suggestions.v1")
+        self.assertEqual(payload["modelPredictions"][0]["text"], "本地候选")
         first = payload["suggestions"][0]
         self.assertIn("suggestionId", first)
         self.assertIn("surfaceText", first)

@@ -15,6 +15,7 @@ from .core_client import CoreClient, default_fixture_memories
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
+from .predictor import PredictionProvider, prediction_provider_from_env
 from .text_utils import now_ms
 
 
@@ -27,6 +28,7 @@ class DebugServerConfig:
     static_dir: Path = Path("debug")
     seed_if_empty: bool = True
     core: CoreClient | None = None
+    predictor: PredictionProvider | None = None
 
 
 class DebugImeService:
@@ -35,6 +37,7 @@ class DebugImeService:
     def __init__(self, config: DebugServerConfig):
         self.config = config
         self.core = config.core or LocalSqliteCoreClient(config.db_path)
+        self.predictor = config.predictor or prediction_provider_from_env()
         self.adapter = InputMethodAdapter(self.core, project=config.project)
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
@@ -64,6 +67,11 @@ class DebugImeService:
         recent_context = _string(payload.get("recentContext"))
         project = _string(payload.get("project")) or self.config.project
         top_k = _bounded_int(payload.get("topK"), default=5, minimum=1, maximum=10)
+        model_predictions = self.predictor.predict(
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidates=5,
+        )
         suggestions = self.adapter.suggest(
             SuggestionRequest(
                 current_input=current_input,
@@ -76,6 +84,7 @@ class DebugImeService:
             current_input=current_input,
             recent_context=recent_context,
             project=project,
+            model_predictions=model_predictions,
             suggestions=suggestions,
         )
 

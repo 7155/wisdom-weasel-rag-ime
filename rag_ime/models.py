@@ -58,6 +58,18 @@ class InputSuggestion:
 
 
 @dataclass(frozen=True)
+class ModelPrediction:
+    """A short language-model candidate shown above RAG/memory candidates."""
+
+    text: str
+    rank: int
+    provider_name: str
+    latency_ms: int
+    confidence: float = 0.0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class MemoryAction:
     """A durable action that changes how a memory is ranked or governed."""
 

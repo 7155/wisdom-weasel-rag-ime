@@ -4,6 +4,7 @@ import InputMethodKit
 @objc(RagInputController)
 final class RagInputController: IMKInputController {
     private var composition = ""
+    private var latestModelPredictions: [ModelPrediction] = []
     private var latestSuggestions: [RagSuggestion] = []
     private let bridge = RagBridgeClient()
     private var pendingRefresh: DispatchWorkItem?
@@ -53,7 +54,7 @@ final class RagInputController: IMKInputController {
     }
 
     override func candidates(_ sender: Any!) -> [Any]! {
-        latestSuggestions.map(\.surfaceText)
+        latestModelPredictions.map(\.text) + latestSuggestions.map(\.surfaceText)
     }
 
     override func hidePalettes() {
@@ -77,10 +78,18 @@ final class RagInputController: IMKInputController {
     }
 
     private func selectCandidateIfNeeded(_ string: String, client: IMKTextInput) -> Bool {
-        guard let number = Int(string), number >= 1, number <= latestSuggestions.count else {
+        let totalCount = latestModelPredictions.count + latestSuggestions.count
+        guard let number = Int(string), number >= 1, number <= totalCount else {
             return false
         }
-        let suggestion = latestSuggestions[number - 1]
+        let predictionIndex = number - 1
+        if predictionIndex < latestModelPredictions.count {
+            let prediction = latestModelPredictions[predictionIndex]
+            commit(text: prediction.text, client: client, selectedSuggestion: nil, rank: number)
+            return true
+        }
+        let suggestionIndex = predictionIndex - latestModelPredictions.count
+        let suggestion = latestSuggestions[suggestionIndex]
         commit(text: suggestion.insertText, client: client, selectedSuggestion: suggestion, rank: number)
         return true
     }
@@ -95,6 +104,7 @@ final class RagInputController: IMKInputController {
         client.insertText(finalText, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
         let query = composition
         composition = ""
+        latestModelPredictions = []
         latestSuggestions = []
         pendingRefresh?.cancel()
         RagCandidatePanel.shared.hide()
@@ -110,6 +120,7 @@ final class RagInputController: IMKInputController {
 
     private func cancelCurrentComposition(client: IMKTextInput) {
         composition = ""
+        latestModelPredictions = []
         latestSuggestions = []
         pendingRefresh?.cancel()
         client.setMarkedText(
@@ -124,6 +135,8 @@ final class RagInputController: IMKInputController {
         pendingRefresh?.cancel()
         let inputSnapshot = composition
         guard inputSnapshot.count >= 2 else {
+            latestModelPredictions = []
+            latestSuggestions = []
             RagCandidatePanel.shared.hide()
             return
         }
@@ -141,16 +154,29 @@ final class RagInputController: IMKInputController {
                     guard self.composition == inputSnapshot else {
                         return
                     }
+                    let visiblePredictions = Array((response.modelPredictions ?? []).prefix(3))
                     let visibleSuggestions = Array(response.suggestions.prefix(3))
+                    self.latestModelPredictions = visiblePredictions
                     self.latestSuggestions = visibleSuggestions
+                    if visiblePredictions.isEmpty && visibleSuggestions.isEmpty {
+                        RagCandidatePanel.shared.hide()
+                        return
+                    }
                     RagCandidatePanel.shared.show(
+                        modelPredictions: visiblePredictions,
                         suggestions: visibleSuggestions,
                         currentInput: inputSnapshot,
+                        onSelectModel: { [weak self] prediction, index in
+                            guard let self, let client = self.client() else {
+                                return
+                            }
+                            self.commit(text: prediction.text, client: client, selectedSuggestion: nil, rank: index + 1)
+                        },
                         onSelect: { [weak self] suggestion, index in
                             guard let self, let client = self.client() else {
                                 return
                             }
-                            self.commit(text: suggestion.insertText, client: client, selectedSuggestion: suggestion, rank: index + 1)
+                            self.commit(text: suggestion.insertText, client: client, selectedSuggestion: suggestion, rank: visiblePredictions.count + index + 1)
                         },
                         onAction: { [weak self] action, suggestion in
                             self?.handlePanelAction(action, suggestion: suggestion, query: inputSnapshot)
@@ -158,6 +184,11 @@ final class RagInputController: IMKInputController {
                     )
                 }
             } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.latestModelPredictions = []
+                    self?.latestSuggestions = []
+                    RagCandidatePanel.shared.hide()
+                }
                 NSLog("RAG IME suggest failed: \(error.localizedDescription)")
             }
         }

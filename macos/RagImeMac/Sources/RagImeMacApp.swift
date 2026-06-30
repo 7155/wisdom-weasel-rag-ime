@@ -67,9 +67,11 @@ enum RagImeMacMain {
                 NSPoint(x: screen.visibleFrame.midX - 320, y: screen.visibleFrame.midY + 140)
             }
             RagCandidatePanel.shared.show(
+                modelPredictions: response.modelPredictions ?? [],
                 suggestions: response.suggestions,
                 currentInput: response.currentInput,
                 anchor: anchor,
+                onSelectModel: { _, _ in },
                 onSelect: { _, _ in },
                 onAction: { _, _ in }
             )
