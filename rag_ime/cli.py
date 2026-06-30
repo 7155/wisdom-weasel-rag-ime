@@ -587,6 +587,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _attach_eval_latency(report, elapsed_ms_by_case)
         report["prediction"] = {
             "providerName": provider_name,
+            "providerProfile": _prediction_provider_profile(predictor),
             "providerConfigured": provider_configured,
             "maxCandidates": max_candidates,
             "latencyBudgetMs": args.latency_budget_ms,
@@ -669,6 +670,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rag_report["cacheStats"] = cache_stats()
         model_report["prediction"] = {
             "providerName": provider_name,
+            "providerProfile": _prediction_provider_profile(predictor),
             "providerConfigured": provider_configured,
             "maxCandidates": max_candidates,
             "latencyBudgetMs": args.latency_budget_ms,
@@ -860,6 +862,12 @@ def _prediction_provider_name(predictor) -> str:
     config = getattr(predictor, "config", None)
     provider_name = getattr(config, "provider_name", "")
     return provider_name if isinstance(provider_name, str) and provider_name else predictor.__class__.__name__
+
+
+def _prediction_provider_profile(predictor) -> str:
+    config = getattr(predictor, "config", None)
+    profile = getattr(config, "profile", "")
+    return profile if isinstance(profile, str) and profile else "none"
 
 
 def _is_null_prediction_provider(predictor) -> bool:

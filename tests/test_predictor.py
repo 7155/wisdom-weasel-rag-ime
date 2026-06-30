@@ -17,6 +17,7 @@ from rag_ime.predictor import (
     PredictionBenchmarkCase,
     benchmark_prediction_provider,
     parse_prediction_candidates,
+    prediction_provider_from_env,
 )
 
 
@@ -126,6 +127,7 @@ class PredictionProviderTests(unittest.TestCase):
         messages = _MockOpenAIHandler.captured_payload["messages"]
         self.assertIn("只输出候选词", messages[0]["content"])
         self.assertLessEqual(_MockOpenAIHandler.captured_payload["max_tokens"], 8)
+        self.assertEqual(predictions[0].metadata["profile"], "custom")
 
     def test_completion_prompt_mode_uses_prefix_completion_endpoint(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockCompletionHandler)
@@ -159,6 +161,57 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertNotIn("messages", _MockCompletionHandler.captured_payload)
         self.assertEqual(predictions[0].metadata["prompt_mode"], "completion")
 
+    def test_env_can_disable_qwen_thinking_without_hand_written_json(self) -> None:
+        provider = prediction_provider_from_env(
+            {
+                "RAG_IME_PREDICTOR_PROVIDER": "openai-compatible",
+                "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:8000",
+                "RAG_IME_PREDICTOR_MODEL": "Qwen3-0.6B",
+                "RAG_IME_PREDICTOR_DISABLE_THINKING": "1",
+                "RAG_IME_PREDICTOR_EXTRA_BODY_JSON": '{"seed":7,"chat_template_kwargs":{"foo":"bar"}}',
+            }
+        )
+
+        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
+        assert isinstance(provider, OpenAICompatiblePredictionProvider)
+        self.assertEqual(
+            provider.config.extra_body,
+            {
+                "seed": 7,
+                "chat_template_kwargs": {
+                    "foo": "bar",
+                    "enable_thinking": False,
+                },
+            },
+        )
+
+    def test_instant_profile_sets_fast_no_thinking_defaults(self) -> None:
+        provider = prediction_provider_from_env(
+            {
+                "RAG_IME_PREDICTOR_PROVIDER": "openai-compatible",
+                "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:8000",
+                "RAG_IME_PREDICTOR_MODEL": "Qwen3-0.6B",
+                "RAG_IME_PREDICTOR_PROFILE": "instant",
+                "RAG_IME_PREDICTOR_EXTRA_BODY_JSON": '{"seed":7}',
+            }
+        )
+
+        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
+        assert isinstance(provider, OpenAICompatiblePredictionProvider)
+        self.assertEqual(provider.config.profile, "instant")
+        self.assertEqual(provider.config.prompt_mode, "chat")
+        self.assertEqual(provider.config.timeout_s, 0.35)
+        self.assertEqual(provider.config.max_tokens, 8)
+        self.assertEqual(provider.config.temperature, 0.15)
+        self.assertEqual(provider.config.top_p, 0.85)
+        self.assertEqual(
+            provider.config.extra_body,
+            {
+                "seed": 7,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
+
     def test_prediction_benchmark_reports_latency_budget(self) -> None:
         class FakeProvider:
             def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
@@ -182,6 +235,7 @@ class PredictionProviderTests(unittest.TestCase):
         )
         self.assertEqual(report["schemaVersion"], "rag-ime.predict-benchmark.v1")
         self.assertEqual(report["providerName"], "fake-fast")
+        self.assertEqual(report["providerProfile"], "none")
         self.assertTrue(report["providerConfigured"])
         self.assertEqual(report["summary"]["caseCount"], 1)
         self.assertTrue(report["summary"]["allWithinBudget"])
