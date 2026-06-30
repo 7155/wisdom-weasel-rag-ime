@@ -17,6 +17,7 @@ from .models import InputEvent, MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import prediction_provider_from_env
 from .renderer import render_agent_injection, render_terminal_panel
+from .rime_sidecar import build_rime_sidecar_response
 from .scenarios import SCENARIOS, get_scenario
 from .text_utils import now_ms
 from .trigger_policy import TypingState, should_refresh_rag
@@ -70,6 +71,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     suggest_json.add_argument("--recent-context", default="")
     suggest_json.add_argument("--project", default="wisdom-weasel-rag-ime")
     suggest_json.add_argument("--top-k", type=int, default=5)
+
+    rime_suggest_json = subparsers.add_parser(
+        "rime-suggest-json",
+        help="Return merged Rime + RAG/model side candidates for Squirrel/Rime frontends",
+    )
+    rime_suggest_json.add_argument(
+        "--payload-file",
+        default="-",
+        help="JSON request file. Use '-' to read stdin.",
+    )
 
     action_json = subparsers.add_parser("action-json", help="Apply one memory action and return structured JSON")
     action_json.add_argument("action_type", choices=("accepted", "accept", "skipped", "skip", "pin", "unpin", "downrank", "delete", "hide", "restore"))
@@ -199,6 +210,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                     history_context=prediction_context,
                     model_predictions=model_predictions,
                     suggestions=suggestions,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "rime-suggest-json":
+        payload = _read_json_payload(args.payload_file)
+        print(
+            json.dumps(
+                build_rime_sidecar_response(
+                    payload=payload,
+                    adapter=adapter,
+                    core=core,
+                    predictor=predictor,
+                    default_project="wisdom-weasel-rag-ime",
                 ),
                 ensure_ascii=False,
                 indent=2,
@@ -413,6 +441,16 @@ def _build_core(args):
             raise SystemExit("--core-command is required when --core-mode json")
         return JsonCommandCoreClient(shlex.split(args.core_command))
     return LocalSqliteCoreClient(args.db_path)
+
+
+def _read_json_payload(payload_file: str) -> dict[str, object]:
+    raw = sys.stdin.read() if payload_file == "-" else Path(payload_file).read_text(encoding="utf-8")
+    if not raw.strip():
+        return {}
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise SystemExit("JSON payload must be an object")
+    return data
 
 
 if __name__ == "__main__":

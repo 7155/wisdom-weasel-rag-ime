@@ -70,6 +70,54 @@ class ModelPrediction:
 
 
 @dataclass(frozen=True)
+class RimeCandidate:
+    """A candidate already produced by librime/Squirrel."""
+
+    text: str
+    label: str = ""
+    comment: str = ""
+    index: int = 0
+
+
+@dataclass(frozen=True)
+class RimeContextSnapshot:
+    """The structured Rime context a Squirrel integration can send to RAG-IME."""
+
+    session_id: str
+    request_seq: int
+    raw_input: str = ""
+    preedit: str = ""
+    commit_text_preview: str = ""
+    committed_context: str = ""
+    project: str = ""
+    candidates: tuple[RimeCandidate, ...] = ()
+    highlighted_index: int = 0
+    page: int = 0
+    is_last_page: bool = True
+    latency_budget_ms: int = 150
+    max_visible_candidates: int = 8
+    max_side_candidates: int = 3
+
+
+@dataclass(frozen=True)
+class SideCandidateDisplayItem:
+    """A frontend display item after merging Rime and RAG/model side candidates."""
+
+    label: str
+    text: str
+    insert_text: str
+    source_type: str
+    selection_action: str
+    source_index: int
+    comment: str = ""
+    evidence_preview: str = ""
+    suggestion_id: str = ""
+    memory_id: str = ""
+    rime_index: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class MemoryAction:
     """A durable action that changes how a memory is ranked or governed."""
 

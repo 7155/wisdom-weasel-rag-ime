@@ -11,9 +11,11 @@ from rag_ime.models import ModelPrediction
 
 class FakePredictionProvider:
     def __init__(self) -> None:
+        self.last_current_input = ""
         self.last_recent_context = ""
 
     def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.last_current_input = current_input
         self.last_recent_context = recent_context
         return [
             ModelPrediction(
@@ -84,6 +86,33 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertIn("当前正在续写", predictor.last_recent_context)
         self.assertIn("historyContext", payload)
         self.assertIn("历史输入会进入模型预测", payload["historyContext"])
+
+    def test_rime_suggest_endpoint_uses_rime_candidates_for_side_query(self) -> None:
+        predictor = FakePredictionProvider()
+        self.service.predictor = predictor
+        payload = self.service.rime_suggest(
+            {
+                "sessionId": "debug-rime",
+                "requestSeq": 11,
+                "rawInput": "jiubiruwopinshishur",
+                "preedit": "jiubiruwopinshishur",
+                "committedContext": "用户正在写输入法设计",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "就比如", "comment": "rime"},
+                        {"label": "2", "text": "我平时输入", "comment": "rime"},
+                    ]
+                },
+            }
+        )
+        self.assertEqual(payload["schemaVersion"], "rag-ime.rime-sidecar.v1")
+        self.assertEqual(payload["queryBasis"], "rimeCandidates")
+        self.assertIn("就比如", predictor.last_current_input)
+        self.assertNotIn("jiubiruwopinshishur", predictor.last_current_input)
+        self.assertEqual(payload["displayCandidates"][0]["selectionAction"], "select_rime_candidate")
+        self.assertEqual(payload["displayCandidates"][2]["selectionAction"], "commit_side_candidate")
 
     def test_commit_and_action_are_wired_for_debug_page(self) -> None:
         suggestion = self.service.suggest({"currentInput": "FTS5", "topK": 1})["suggestions"][0]

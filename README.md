@@ -173,6 +173,36 @@ Verify the Swift frontend can call the Python RAG backend:
 build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-json
 ```
 
+Preview the Squirrel/Rime side-candidate contract:
+
+```bash
+cat > /tmp/rime-sidecar-request.json <<'JSON'
+{
+  "sessionId": "squirrel-demo",
+  "requestSeq": 1,
+  "rawInput": "ragshurufa",
+  "preedit": "ragshurufa",
+  "committedContext": "正在设计 RAG 输入法",
+  "maxVisibleCandidates": 6,
+  "maxSideCandidates": 3,
+  "rimeContext": {
+    "candidates": [
+      {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+      {"label": "2", "text": "RAG 是", "comment": "rime"}
+    ],
+    "highlightedIndex": 0,
+    "page": 0,
+    "isLastPage": true
+  }
+}
+JSON
+
+python3 -m rag_ime.cli --core-mode fixture rime-suggest-json \
+  --payload-file /tmp/rime-sidecar-request.json
+```
+
+This command keeps Rime candidates first, appends model/RAG side candidates only if visible slots remain, and uses Rime candidates or commit preview as the semantic query instead of asking the model to decode raw pinyin.
+
 Open the native AppKit candidate panel preview:
 
 ```bash
@@ -224,6 +254,7 @@ Implemented in this repo:
 - Swift-to-Python JSON bridge;
 - browser debug page with the same local backend contract;
 - shared-core JSON command integration for CLI/debug-server;
+- Squirrel/Rime-aware side-candidate JSON contract;
 - optional local OpenAI-compatible model prediction lane;
 - bounded history-input context for model/RAG prediction;
 - shared number-key selection for top model predictions and lower RAG/memory candidates;

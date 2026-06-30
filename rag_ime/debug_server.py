@@ -17,6 +17,7 @@ from .local_sqlite_core import LocalSqliteCoreClient
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import PredictionProvider, prediction_provider_from_env
+from .rime_sidecar import build_rime_sidecar_response
 from .text_utils import now_ms
 
 
@@ -95,6 +96,15 @@ class DebugImeService:
             suggestions=suggestions,
         )
 
+    def rime_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
+        return build_rime_sidecar_response(
+            payload=payload,
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+            default_project=self.config.project,
+        )
+
     def commit(self, payload: dict[str, Any]) -> dict[str, object]:
         text = _string(payload.get("text")).strip()
         if not text:
@@ -155,6 +165,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             if self.path == "/api/suggest":
                 self._write_json(HTTPStatus.OK, self.service.suggest(payload))
+            elif self.path == "/api/rime-suggest":
+                self._write_json(HTTPStatus.OK, self.service.rime_suggest(payload))
             elif self.path == "/api/commit":
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
             elif self.path == "/api/action":
