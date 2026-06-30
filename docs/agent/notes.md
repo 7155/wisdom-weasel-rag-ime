@@ -238,6 +238,30 @@ Commands:
 Next:
 - When Xcode is available, validate the same trigger behavior inside patched Squirrel's real update loop.
 
+### 2026-07-01 01:10 CST
+Problem:
+- The Squirrel patch could insert side candidates, but feedback writeback was split between commit and accepted-action calls in Swift.
+- That duplicated memory governance details in the frontend and made the side-candidate acceptance flow harder to test end to end.
+- A real `scripts/prepare_squirrel_workspace.sh` run also exposed an older patch hunk-size bug that dry-run did not catch: `RagImeSidecarModels.swift` was truncated during apply.
+
+Changes:
+- Added `record_rime_side_candidate_selection()` as the shared Python writeback contract.
+- Added `POST /rime-select` and CLI `rime-select-json`.
+- `/rime-select` records committed side-candidate text and records an `accepted` memory action when the selected candidate is a RAG candidate with memory metadata.
+- Updated the Squirrel patch to prefer `/rime-select` / `rime-select-json`, with legacy commit/action calls only as fallback.
+- Fixed Squirrel patch new-file hunk lengths so real patch apply produces complete Swift files.
+- Updated README, debug, macOS adapter, Squirrel integration, and patch-pack docs.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `scripts/build_macos_frontend.sh`
+- `RAG_IME_SQUIRREL_RESET=1 scripts/prepare_squirrel_workspace.sh`
+- `python3 -m rag_ime.cli --help | rg 'rime-select-json|rime-suggest-json|sidecar-server'`
+
+Next:
+- With Xcode installed, build the prepared `/tmp/rag-ime-squirrel` checkout and verify number-key side candidate insertion plus `/rime-select` feedback in a real text field.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.

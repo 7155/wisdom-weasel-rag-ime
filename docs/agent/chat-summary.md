@@ -226,3 +226,19 @@ Verification:
 - Acceptance passed.
 - macOS prototype build passed.
 - Swift Rime sidecar preview prints `triggerDecision.shouldRefresh`.
+
+### 2026-07-01
+Topic:
+- Unify side-candidate selection feedback.
+
+Changes:
+- Added `POST /rime-select` and CLI `rime-select-json`.
+- The endpoint records accepted side-candidate text and, for RAG candidates, records the accepted memory action in the same local call.
+- Squirrel patch now prefers `/rime-select` / `rime-select-json`; the old commit/action split remains only as fallback.
+- Real `scripts/prepare_squirrel_workspace.sh` was run and now passes after fixing patch hunk lengths that previously truncated `RagImeSidecarModels.swift`.
+
+Verification:
+- 54 Python tests passed.
+- Acceptance passed.
+- macOS prototype build passed.
+- Patched Squirrel checkout prepared and sidecar Swift files typechecked.

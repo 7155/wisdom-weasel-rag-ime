@@ -160,8 +160,8 @@ display item action == select_rime_candidate
 
 display item action == commit_side_candidate
   -> client.insertText(insertText, replacementRange: .empty)
-  -> background HTTP/CLI commit
-  -> background HTTP/CLI accepted action when memory metadata exists
+  -> background HTTP/CLI /rime-select
+  -> /rime-select records commit and accepted action when memory metadata exists
   -> clear composition if needed
 ```
 
@@ -170,6 +170,18 @@ Do not mutate librime's internal candidate menu for the first integration. Build
 Keyboard routing needs one extra guard because normal number-key selection goes through librime before the panel's click handler. The first patch only intercepts labels that currently point to side candidates; all normal Rime candidate keys continue through `process_key(...)`.
 
 The patch also records accepted side candidates after insertion. This is required for the input method to become a memory feedback surface instead of a one-way suggestion renderer.
+
+The preferred writeback path is now one request:
+
+```text
+POST /rime-select
+  candidate: displayCandidates[n]
+  query / recentContext / preedit
+  -> commit input event
+  -> accepted action if sourceType == rag and memory metadata exists
+```
+
+The Squirrel client keeps the older `commit` + `action-json accepted` flow only as a compatibility fallback.
 
 ## Current Prototype Evidence
 

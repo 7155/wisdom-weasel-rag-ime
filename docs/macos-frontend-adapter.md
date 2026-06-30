@@ -88,11 +88,13 @@ key input
   -> RagCandidatePanel NSPanel
   -> number key or click candidate
   -> insertText
-  -> action-json accepted
-  -> commit event recorded locally
+  -> side selection feedback
+  -> commit event and optional accepted action recorded locally
 ```
 
 The bridge uses the same local backend as the CLI MVP. It does not call GPT, Claude, or any cloud service by default. The optional model lane only runs when `RAG_IME_PREDICTOR_*` points at a local or user-owned OpenAI-compatible endpoint.
+
+For the Squirrel/Rime path, side selection feedback should use the unified `/rime-select` contract. It records the inserted side candidate and, for RAG candidates, the accepted memory action in one local request. The prototype AppKit harness may still issue separate action/commit calls while it remains a debug surface.
 
 ## UI Shape
 
@@ -336,6 +338,7 @@ The history context variables control how many committed input events are merged
 - The Squirrel patch debounces sidecar refreshes and fingerprints request state so stale model/RAG results cannot overwrite a newer Rime page.
 - The sidecar merge policy allows at most one model side candidate; remaining side slots are reserved for RAG/memory candidates.
 - The local HTTP sidecar caches repeated equivalent `/rime-suggest` payloads for a short TTL and reports `cache.hit` in debug payloads.
+- Accepted side candidates write back through `/rime-select`, so Swift does not need to duplicate commit/action governance rules.
 
 ## Next Engineering Steps
 

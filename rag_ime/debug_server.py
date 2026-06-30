@@ -21,7 +21,7 @@ from .local_sqlite_core import LocalSqliteCoreClient
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import PredictionProvider, prediction_provider_from_env
-from .rime_sidecar import build_rime_sidecar_response
+from .rime_sidecar import build_rime_sidecar_response, record_rime_side_candidate_selection
 from .text_utils import now_ms
 
 
@@ -134,6 +134,16 @@ class DebugImeService:
         self._store_rime_response(cache_key, response)
         response = copy.deepcopy(response)
         response["cache"] = self._cache_payload(hit=False, cache_key=cache_key)
+        return response
+
+    def rime_select(self, payload: dict[str, Any]) -> dict[str, object]:
+        response = record_rime_side_candidate_selection(
+            payload=payload,
+            adapter=self.adapter,
+            core=self.core,
+            default_project=self.config.project,
+        )
+        self._clear_rime_cache()
         return response
 
     def commit(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -278,6 +288,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.suggest(payload))
             elif path in ("/api/rime-suggest", "/rime-suggest"):
                 self._write_json(HTTPStatus.OK, self.service.rime_suggest(payload))
+            elif path in ("/api/rime-select", "/rime-select"):
+                self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
             elif path in ("/api/commit", "/commit"):
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
             elif path in ("/api/action", "/action"):

@@ -85,6 +85,7 @@ GET  /api/health
 POST /api/seed
 POST /api/suggest
 POST /api/rime-suggest
+POST /api/rime-select
 POST /api/action
 POST /api/commit
 ```
@@ -136,6 +137,28 @@ The local HTTP server keeps a short TTL cache for repeated equivalent `/rime-sug
 ```
 
 `POST /api/commit`, `POST /api/action`, and `POST /api/seed` clear this cache.
+
+`/api/rime-select` records a side-candidate acceptance with one stable payload:
+
+```json
+{
+  "candidate": {
+    "label": "4",
+    "text": "先用 FTS5 证明召回收益",
+    "insertText": "先用 FTS5 证明召回收益",
+    "sourceType": "rag",
+    "selectionAction": "commit_side_candidate",
+    "memoryId": "event:4",
+    "suggestionId": "sug-event:4",
+    "sourceEventId": 4
+  },
+  "query": "RAG 输入法",
+  "recentContext": "用户正在写输入法设计",
+  "preedit": "ragshurufa"
+}
+```
+
+It returns `rag-ime.rime-selection.v1`, records the committed text, and also records an `accepted` action when the selected candidate came from RAG memory. Model side candidates only record the committed text.
 
 The page falls back to local mock suggestions if the API is unavailable, so visual iteration can continue while backend work is in progress.
 

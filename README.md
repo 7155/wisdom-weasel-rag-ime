@@ -127,6 +127,8 @@ Run the lightweight HTTP sidecar for patched Squirrel:
 python3 -m rag_ime.cli sidecar-server --host 127.0.0.1 --port 8766
 ```
 
+The sidecar exposes `/rime-suggest` for merged Rime/RAG/model candidates and `/rime-select` for accepted side-candidate feedback. `/rime-select` records the committed text and, for RAG candidates, the accepted memory action in one request.
+
 The sidecar uses a short `/rime-suggest` cache to absorb repeated equivalent Squirrel refreshes:
 
 ```bash
