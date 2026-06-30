@@ -22,7 +22,7 @@ from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import InputEvent, MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
-from .predictor import prediction_provider_from_env
+from .predictor import PredictionBenchmarkCase, benchmark_prediction_provider, prediction_provider_from_env
 from .renderer import render_agent_injection, render_terminal_panel
 from .rime_sidecar import build_rime_sidecar_response
 from .scenarios import SCENARIOS, get_scenario
@@ -131,6 +131,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_codex.add_argument("--project", default="wisdom-weasel-rag-ime")
     eval_codex.add_argument("--top-k", type=int, default=5)
     eval_codex.add_argument("--match", choices=("any", "all"), default="any")
+
+    predict_benchmark = subparsers.add_parser("predict-benchmark", help="Measure local model prediction latency")
+    predict_benchmark.add_argument("--case", action="append", default=[], help="Input case to predict. Can be repeated.")
+    predict_benchmark.add_argument("--recent-context", default="")
+    predict_benchmark.add_argument("--project", default="wisdom-weasel-rag-ime")
+    predict_benchmark.add_argument("--max-candidates", type=int, default=3)
+    predict_benchmark.add_argument("--latency-budget-ms", type=int, default=150)
 
     debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
     debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
@@ -414,6 +421,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             results.append(evaluate_suggestions(case, suggestions, match=args.match))
         print(json.dumps(eval_report(results), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "predict-benchmark":
+        prediction_context = build_prediction_context(
+            core,
+            explicit_recent_context=args.recent_context,
+            project=args.project,
+        )
+        raw_cases = args.case or [
+            "RAG 输入法",
+            "Squirrel 候选",
+            "PROJECT_MEMORY_BLOCK",
+        ]
+        cases = [PredictionBenchmarkCase(current_input=item, recent_context=prediction_context) for item in raw_cases]
+        print(
+            json.dumps(
+                benchmark_prediction_provider(
+                    predictor,
+                    cases,
+                    max_candidates=max(1, args.max_candidates),
+                    latency_budget_ms=max(1, args.latency_budget_ms),
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
     if args.command == "debug-server":

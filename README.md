@@ -207,6 +207,16 @@ python3 -m rag_ime.cli suggest-json "输入法 个人记忆" --recent-context "l
 
 `suggest-json` merges the explicit `--recent-context` with recent committed input history before calling the local model. Set `RAG_IME_HISTORY_CONTEXT_EVENTS=0` to disable this history lane.
 
+Benchmark local model prediction latency before using it in the input-method lane:
+
+```bash
+python3 -m rag_ime.cli predict-benchmark \
+  --case "RAG 输入法" \
+  --case "Squirrel 候选" \
+  --recent-context "用户正在写本地记忆和候选预测" \
+  --latency-budget-ms 150
+```
+
 Build the macOS frontend adapter:
 
 ```bash

@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from rag_ime.predictor import (
     OpenAICompatiblePredictionConfig,
     OpenAICompatiblePredictionProvider,
+    PredictionBenchmarkCase,
+    benchmark_prediction_provider,
     parse_prediction_candidates,
 )
 
@@ -75,6 +77,35 @@ class PredictionProviderTests(unittest.TestCase):
         messages = _MockOpenAIHandler.captured_payload["messages"]
         self.assertIn("只输出候选词", messages[0]["content"])
         self.assertLessEqual(_MockOpenAIHandler.captured_payload["max_tokens"], 8)
+
+    def test_prediction_benchmark_reports_latency_budget(self) -> None:
+        class FakeProvider:
+            def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+                return [
+                    type(
+                        "Prediction",
+                        (),
+                        {
+                            "text": f"{current_input}候选",
+                            "latency_ms": 12,
+                            "provider_name": "fake-fast",
+                        },
+                    )()
+                ][:max_candidates]
+
+        report = benchmark_prediction_provider(
+            FakeProvider(),
+            [PredictionBenchmarkCase(current_input="RAG 输入法")],
+            max_candidates=2,
+            latency_budget_ms=50,
+        )
+        self.assertEqual(report["schemaVersion"], "rag-ime.predict-benchmark.v1")
+        self.assertEqual(report["providerName"], "fake-fast")
+        self.assertTrue(report["providerConfigured"])
+        self.assertEqual(report["summary"]["caseCount"], 1)
+        self.assertTrue(report["summary"]["allWithinBudget"])
+        self.assertTrue(report["summary"]["hasCandidates"])
+        self.assertEqual(report["cases"][0]["candidates"], ["RAG 输入法候选"])
 
 
 if __name__ == "__main__":
