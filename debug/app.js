@@ -9,6 +9,7 @@ const state = {
   suggestions: [],
   modelPredictions: [],
   historyContext: "",
+  health: null,
   lastPayload: null,
   timer: 0,
   apiOnline: true,
@@ -161,6 +162,7 @@ function render() {
       })),
       modelPredictions: state.modelPredictions,
       historyContext: state.historyContext,
+      rimeSuggestCache: state.health?.rimeSuggestCache || null,
     },
     null,
     2,
@@ -356,10 +358,23 @@ async function seedDemo() {
     const payload = await response.json();
     state.lastPayload = payload;
     state.apiOnline = true;
+    await refreshHealth();
   } catch (_) {
     state.apiOnline = false;
   }
   suggestNow();
+}
+
+async function refreshHealth() {
+  try {
+    const response = await fetch("/api/health");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    state.health = await response.json();
+    state.apiOnline = true;
+  } catch (_) {
+    state.health = null;
+    state.apiOnline = false;
+  }
 }
 
 elements.documentCard.addEventListener("click", () => elements.hiddenInput.focus());
@@ -380,4 +395,5 @@ elements.evidenceButton.addEventListener("click", () => {
 });
 
 render();
+refreshHealth().then(render);
 suggestNow();

@@ -120,6 +120,8 @@ rawInput + preedit + commitTextPreview + page + highlighted + first Rime candida
 
 Only the latest debounced fingerprint is sent. Responses are dropped if request sequence, session, raw input, preedit, page, or first candidate fingerprint no longer match. This is stricter than Wisdom-Weasel's request sequence alone and matters because Squirrel can refresh the same raw input across pages/candidate lists.
 
+The Python sidecar also keeps a short TTL cache for equivalent `/rime-suggest` payloads. The cache is process-local, excludes `requestSeq` and `sessionId`, and is invalidated by memory event/action counts plus commit/action/seed calls. This catches repeated Squirrel refreshes that survive frontend debounce.
+
 ### 5. Candidate Display Merge
 
 Short-term path:

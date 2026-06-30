@@ -145,12 +145,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     debug_server.add_argument("--project", default="wisdom-weasel-rag-ime")
     debug_server.add_argument("--static-dir", default=os.environ.get("RAG_IME_DEBUG_STATIC_DIR", "debug"))
     debug_server.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
+    debug_server.add_argument(
+        "--rime-cache-ttl-ms",
+        type=int,
+        default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")),
+        help="Short TTL cache for repeated /rime-suggest payloads. Use 0 to disable.",
+    )
 
     sidecar_server = subparsers.add_parser("sidecar-server", help="Run the local HTTP sidecar for Squirrel/Rime")
     sidecar_server.add_argument("--host", default=os.environ.get("RAG_IME_SIDECAR_HOST", "127.0.0.1"))
     sidecar_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_SIDECAR_PORT", "8766")))
     sidecar_server.add_argument("--project", default="wisdom-weasel-rag-ime")
     sidecar_server.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
+    sidecar_server.add_argument(
+        "--rime-cache-ttl-ms",
+        type=int,
+        default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")),
+        help="Short TTL cache for repeated /rime-suggest payloads. Use 0 to disable.",
+    )
 
     subparsers.add_parser("acceptance", help="Run deterministic adapter acceptance scenarios")
 
@@ -461,6 +473,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 static_dir=Path(args.static_dir),
                 seed_if_empty=not args.no_seed,
                 core=core,
+                rime_cache_ttl_ms=args.rime_cache_ttl_ms,
             )
         )
         return 0
@@ -478,6 +491,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 seed_if_empty=not args.no_seed,
                 core=core,
                 server_name="sidecar server",
+                rime_cache_ttl_ms=args.rime_cache_ttl_ms,
             )
         )
         return 0

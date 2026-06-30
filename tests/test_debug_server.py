@@ -18,8 +18,10 @@ class FakePredictionProvider:
     def __init__(self) -> None:
         self.last_current_input = ""
         self.last_recent_context = ""
+        self.calls = 0
 
     def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.calls += 1
         self.last_current_input = current_input
         self.last_recent_context = recent_context
         return [
@@ -51,6 +53,8 @@ class DebugImeServiceTests(unittest.TestCase):
         health = self.service.health()
         self.assertTrue(health["ok"])
         self.assertGreaterEqual(health["eventCount"], 1)
+        self.assertEqual(health["rimeSuggestCache"]["ttlMs"], 400)
+        self.assertEqual(health["rimeSuggestCache"]["hits"], 0)
         seeded = self.service.seed()
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)
@@ -118,6 +122,38 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertNotIn("jiubiruwopinshishur", predictor.last_current_input)
         self.assertEqual(payload["displayCandidates"][0]["selectionAction"], "select_rime_candidate")
         self.assertEqual(payload["displayCandidates"][2]["selectionAction"], "commit_side_candidate")
+        self.assertFalse(payload["cache"]["hit"])
+
+    def test_rime_suggest_cache_hits_repeated_equivalent_payloads(self) -> None:
+        predictor = FakePredictionProvider()
+        self.service.predictor = predictor
+        payload = {
+            "sessionId": "cache-a",
+            "requestSeq": 21,
+            "rawInput": "ragshurufa",
+            "preedit": "ragshurufa",
+            "committedContext": "用户正在写 RAG 输入法",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 2,
+            "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
+        }
+        first = self.service.rime_suggest(payload)
+        second_payload = dict(payload)
+        second_payload["requestSeq"] = 22
+        second_payload["sessionId"] = "cache-b"
+        second = self.service.rime_suggest(second_payload)
+        self.assertEqual(predictor.calls, 1)
+        self.assertFalse(first["cache"]["hit"])
+        self.assertTrue(second["cache"]["hit"])
+        self.assertEqual(second["requestSeq"], 22)
+        self.assertEqual(second["sessionId"], "cache-b")
+
+        self.service.commit({"text": "cache invalidation commit"})
+        third_payload = dict(payload)
+        third_payload["requestSeq"] = 23
+        third = self.service.rime_suggest(third_payload)
+        self.assertFalse(third["cache"]["hit"])
+        self.assertEqual(predictor.calls, 2)
 
     def test_commit_and_action_are_wired_for_debug_page(self) -> None:
         suggestion = self.service.suggest({"currentInput": "FTS5", "topK": 1})["suggestions"][0]

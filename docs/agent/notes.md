@@ -7,6 +7,23 @@
 
 ## Log
 
+### 2026-07-01 00:55 CST
+Problem:
+- Squirrel debounce reduces frontend request spam, but repeated equivalent `/rime-suggest` requests can still reach the HTTP sidecar and repeat model/RAG work.
+
+Changes:
+- Added process-local short TTL cache for `DebugImeService.rime_suggest`.
+- Cache key excludes `requestSeq` and `sessionId`, but includes payload content, memory event/action counts, project, and predictor configuration.
+- Cached responses rewrite `requestSeq`/`sessionId` for the current request and include `cache.hit`.
+- Commit/action/seed clear the cache.
+- Browser debug JSON now includes `rimeSuggestCache` from `/api/health`.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_debug_server`
+
+Next:
+- Add cache hit-rate assertions to Codex-history/RAG evaluation runs and compare them with VCP-style cache targets.
+
 ### 2026-07-01 00:35 CST
 Problem:
 - Wisdom-Weasel avoids UI overwrite with request sequence, but Squirrel can call `rimeUpdate` very frequently and page/candidate state can change under the same raw input.

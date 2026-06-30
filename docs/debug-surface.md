@@ -20,6 +20,13 @@ python3 -m rag_ime.cli seed-demo --reset
 python3 -m rag_ime.cli debug-server
 ```
 
+Tune or disable the short `/rime-suggest` cache:
+
+```bash
+RAG_IME_RIME_CACHE_TTL_MS=400 python3 -m rag_ime.cli debug-server
+RAG_IME_RIME_CACHE_TTL_MS=0 python3 -m rag_ime.cli debug-server
+```
+
 Run it against the shared RAG/memory core instead of the local MVP database:
 
 ```bash
@@ -107,6 +114,19 @@ python3 -m rag_ime.cli suggest-json ...
 ```
 
 The response includes `displayCandidates` where Rime candidates keep `selectionAction: select_rime_candidate`, while model/RAG side candidates use `selectionAction: commit_side_candidate`. The semantic query is built from commit preview or Rime candidates before falling back to raw input.
+
+The local HTTP server keeps a short TTL cache for repeated equivalent `/rime-suggest` payloads. The cache key excludes `requestSeq` and `sessionId`, but includes payload content, memory event/action counts, project, and predictor configuration. Cached responses rewrite `requestSeq` and `sessionId` to the current request and include:
+
+```json
+{
+  "cache": {
+    "hit": true,
+    "ttlMs": 400
+  }
+}
+```
+
+`POST /api/commit`, `POST /api/action`, and `POST /api/seed` clear this cache.
 
 The page falls back to local mock suggestions if the API is unavailable, so visual iteration can continue while backend work is in progress.
 

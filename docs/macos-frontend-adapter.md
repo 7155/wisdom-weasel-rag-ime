@@ -335,6 +335,7 @@ The history context variables control how many committed input events are merged
 - The optional local model provider asks for several candidates in one non-streaming response; llama.cpp-style batch sampling and KV cache reuse are still future optimization work.
 - The Squirrel patch debounces sidecar refreshes and fingerprints request state so stale model/RAG results cannot overwrite a newer Rime page.
 - The sidecar merge policy allows at most one model side candidate; remaining side slots are reserved for RAG/memory candidates.
+- The local HTTP sidecar caches repeated equivalent `/rime-suggest` payloads for a short TTL and reports `cache.hit` in debug payloads.
 
 ## Next Engineering Steps
 

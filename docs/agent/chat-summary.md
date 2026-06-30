@@ -2,6 +2,23 @@
 
 ### 2026-07-01
 Topic:
+- Add server-side cache for repeated Rime sidecar suggestions.
+
+Decisions:
+- Cache only `/rime-suggest`, not commit/action writes.
+- Exclude request sequence and session from the cache key, then rewrite them on cache hit.
+- Invalidate cache on commit/action/seed and by event/action counts.
+
+Changes:
+- Added short TTL cache and cache metrics in `DebugImeService`.
+- Added CLI/env TTL configuration via `RAG_IME_RIME_CACHE_TTL_MS`.
+- Documented cache behavior in debug and Squirrel integration docs.
+
+Next steps:
+- Surface cache hit rate in the browser debug page and later compare against VCP-style cache targets.
+
+### 2026-07-01
+Topic:
 - Convert Wisdom-Weasel/Squirrel research into stricter sidecar behavior.
 
 Decisions:
