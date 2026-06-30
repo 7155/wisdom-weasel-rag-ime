@@ -14,6 +14,7 @@ The patch is intentionally small and frontend-only:
 - adds a fail-closed Python sidecar client;
 - adds a display-list merge after Squirrel has already read Rime candidates;
 - routes selection by display metadata, so Rime candidates still call `select_candidate_on_current_page` and side candidates insert `insertText` directly;
+- records side-candidate commits and accepted RAG actions back to the local memory core;
 - drops stale sidecar responses by request sequence and current raw input.
 
 ## Apply
@@ -81,3 +82,10 @@ Keyboard selection is intentionally narrow:
 - otherwise the key continues through normal Rime processing.
 
 The candidate panel only shows short candidate text and short comments. Evidence previews and pipeline timing belong in the debug surface, not in the small input-method panel.
+
+When the user accepts a side candidate, the patch records:
+
+- a `commit` event tagged with `squirrel` and `rime-sidecar`;
+- an `action-json accepted` event when the candidate came from RAG memory and has `memoryId`, `suggestionId`, and `sourceEventId`.
+
+These calls run in the background after insertion and fail closed so they do not block typing.

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import io
+import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.agent_hook import build_first_run_injection
-from rag_ime.cli import run_acceptance, seed_demo_memories
+from rag_ime.cli import main, run_acceptance, seed_demo_memories
 from rag_ime.core_client import default_fixture_memories
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import MemoryAction
@@ -75,6 +78,29 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         result = self.adapter.commit_text("银行卡密码", field_is_sensitive=True)
         self.assertEqual(result, "skipped:sensitive_field")
         self.assertEqual(self.core.event_count(), before)
+
+    def test_cli_commit_accepts_source_for_squirrel_events(self) -> None:
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(
+                [
+                    "--db-path",
+                    str(self.db_path),
+                    "commit",
+                    "Squirrel side candidate",
+                    "--source",
+                    "squirrel_rime_sidecar",
+                    "--tag",
+                    "squirrel",
+                ]
+            )
+        self.assertEqual(code, 0)
+        with sqlite3.connect(self.db_path) as conn:
+            source = conn.execute(
+                "SELECT source FROM input_events WHERE committed_text = ?",
+                ("Squirrel side candidate",),
+            ).fetchone()[0]
+        self.assertEqual(source, "squirrel_rime_sidecar")
 
     def test_agent_hook_reads_from_local_memory_db(self) -> None:
         injection = build_first_run_injection(
