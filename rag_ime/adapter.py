@@ -30,11 +30,18 @@ class InputMethodAdapter:
         preedit: str = "",
         schema_id: str = "luna_pinyin",
         app: str = "manual",
+        project: str | None = None,
+        recording_enabled: bool = True,
+        field_is_sensitive: bool = False,
         source: str = "manual_commit",
         candidate_rank: int | None = None,
         provider_name: str = "ime-adapter",
         tags: tuple[str, ...] = (),
     ) -> str:
+        if not recording_enabled:
+            return "skipped:recording_disabled"
+        if field_is_sensitive:
+            return "skipped:sensitive_field"
         event = InputEvent(
             event_id=None,
             created_at_ms=now_ms(),
@@ -44,7 +51,7 @@ class InputMethodAdapter:
             preedit=preedit,
             schema_id=schema_id,
             app=app,
-            project=self.project,
+            project=project or self.project,
             candidate_rank=candidate_rank,
             provider_name=provider_name,
             tags=tags,

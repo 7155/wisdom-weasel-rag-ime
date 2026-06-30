@@ -74,6 +74,13 @@ class InputMethodAdapterTests(unittest.TestCase):
         self.assertEqual(self.core.events[0].committed_text, "默认本地完成, 不上传个人输入历史")
         self.assertEqual(self.core.events[0].preedit, "moren bendi")
 
+    def test_sensitive_or_disabled_commit_is_not_recorded(self) -> None:
+        sensitive = self.adapter.commit_text("银行卡密码", field_is_sensitive=True)
+        disabled = self.adapter.commit_text("暂停记录", recording_enabled=False)
+        self.assertEqual(sensitive, "skipped:sensitive_field")
+        self.assertEqual(disabled, "skipped:recording_disabled")
+        self.assertEqual(self.core.events, [])
+
     def test_renderer_keeps_full_evidence_out_of_candidate_bar(self) -> None:
         scenario = get_scenario("project-term-agent-hook")
         suggestions = self.adapter.suggest(

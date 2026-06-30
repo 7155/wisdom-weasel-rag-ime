@@ -13,6 +13,7 @@ This repo should focus on:
 
 - input-method adapter contracts;
 - committed input event capture;
+- local SQLite/FTS5 MVP backend until the shared core exposes stable write/action APIs;
 - short candidate generation from shared-core retrieval results;
 - evidence preview / expanded evidence UI prototype;
 - pin / downrank / delete action wiring;
@@ -41,7 +42,8 @@ See `docs/shared-core-adapter-contract.md` for the shared-core requirements.
 
 ```text
 macOS input adapter / CLI prototype
-  -> shared rag-memory core API or JSON CLI
+  -> LocalSqliteCoreClient or shared rag-memory core API/JSON CLI
+  -> SQLite/FTS5 personal memory
   -> RetrievedMemory[]
   -> InputSuggestion[]
   -> short candidate list + evidence preview
@@ -50,6 +52,26 @@ macOS input adapter / CLI prototype
 ```
 
 ## Current Commands
+
+Initialize the local SQLite/FTS5 database:
+
+```bash
+python3 -m rag_ime.cli init-db
+```
+
+Seed deterministic demo memories:
+
+```bash
+python3 -m rag_ime.cli seed-demo --reset
+```
+
+Record a committed input event:
+
+```bash
+python3 -m rag_ime.cli commit "默认本地完成, 不上传个人输入历史" \
+  --recent-context "隐私边界" \
+  --tag privacy
+```
 
 Run the adapter tests:
 
@@ -90,7 +112,9 @@ python3 -m rag_ime.cli trigger-demo "这个项目" --idle-ms 300
 Use a future shared-core JSON command:
 
 ```bash
-RAG_MEMORY_CORE_COMMAND="node /path/to/shared-core-cli.mjs" python3 -m rag_ime.cli demo
+python3 -m rag_ime.cli --core-mode json \
+  --core-command "node /path/to/shared-core-cli.mjs" \
+  demo
 ```
 
 ## Current Status
@@ -99,9 +123,12 @@ Implemented in this repo:
 
 - adapter data models;
 - shared-core client boundary;
+- local SQLite/FTS5 CoreClient;
+- committed input event recording;
+- durable memory actions for accepted/skipped/pin/downrank/delete/restore;
 - SuggestionCompiler for `RetrievedMemory -> InputSuggestion`;
 - conservative RAG refresh trigger policy;
-- fixture core for adapter/UI acceptance only;
+- fixture core for adapter/UI unit tests only;
 - short candidate rendering;
 - evidence preview and expanded evidence panel text;
 - pin/downrank/delete action wiring;
@@ -111,12 +138,11 @@ Implemented in this repo:
 
 Not implemented in this repo by design:
 
-- SQLite/FTS5 memory store;
 - vector recall;
-- shared ranking/governance persistence;
+- shared-core replacement for the local SQLite client;
 - PI runtime integration.
 
-Those belong to the shared RAG/memory core. This repo should call that core once it exposes a stable CLI or importable adapter API.
+The local SQLite client is the Mac MVP backend. It can be replaced by the shared RAG/memory core once that core exposes stable record/action APIs.
 
 ## macOS Frontend Route
 
