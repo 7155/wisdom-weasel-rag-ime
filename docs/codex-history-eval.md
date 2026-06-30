@@ -146,6 +146,74 @@ When `--core-mode local` is used, the report also includes process-local cache s
 
 Use `RAG_IME_SUGGESTION_CACHE_SIZE=0` or `--suggestion-cache-size 0` to benchmark uncached retrieval.
 
+## Optional Vector Side Index
+
+The local SQLite core can maintain a side table of vectors next to the FTS5 index. This is disabled by default so the real input-method path stays fast and dependency-free until an embedding provider is explicitly configured.
+
+Backfill existing memories with the deterministic local baseline:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  --embedding-provider local-hash \
+  rebuild-vector-index \
+  --project wisdom-weasel-rag-ime
+```
+
+`local-hash` is not a semantic embedding model. It is a local term-vector baseline used to test the storage, merge, scoring, and evaluation contract before connecting a real embedding service.
+
+For a real semantic model running on the Mac or a user-owned WSL notebook:
+
+```bash
+export RAG_IME_EMBEDDING_PROVIDER=openai-compatible
+export RAG_IME_EMBEDDING_BASE_URL=http://127.0.0.1:8000
+export RAG_IME_EMBEDDING_MODEL=bge-small-zh
+
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  rebuild-vector-index \
+  --project wisdom-weasel-rag-ime
+```
+
+Relevant knobs:
+
+- `RAG_IME_EMBEDDING_TIMEOUT_MS`: per-request embedding timeout, default `800`.
+- `RAG_IME_EMBEDDING_DIMENSIONS`: optional dimensions field for providers that support it.
+- `RAG_IME_VECTOR_CANDIDATES` / `--embedding-vector-candidates`: vector rows merged into retrieval, default `80`.
+- `RAG_IME_VECTOR_WEIGHT` / `--embedding-vector-weight`: similarity score multiplier, default `1.4`.
+
+When vector recall is enabled, eval reports include:
+
+```json
+{
+  "vectorStats": {
+    "enabled": true,
+    "providerFingerprint": "openai-compatible:bge-small-zh",
+    "totalVectors": 500,
+    "activeProviderVectors": 500,
+    "candidateLimit": 80,
+    "weight": 1.4
+  }
+}
+```
+
+Use the same case file to compare FTS-only and vector-hybrid behavior:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-codex-history \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --top-k 5 \
+  --repeat 3
+
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  --embedding-provider openai-compatible \
+  eval-codex-history \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --top-k 5 \
+  --repeat 3
+```
+
+The goal is not only higher hit rate. For an input method, vector recall must improve `top1Accuracy` / `meanReciprocalRank` without making `latency.p95Ms` too high for candidate refresh.
+
 The eval command also records end-to-end per-case latency for the actual adapter call:
 
 ```json
@@ -235,4 +303,4 @@ Candidate-level ranking matters more than raw recall. A memory that appears at r
 
 - Add leave-one-session-out evaluation from Codex logs.
 - Add latency buckets so retrieval quality and input-method responsiveness are measured together.
-- Compare local FTS5, embedding recall, rerank, and VCP-style context cache hit behavior on the same cases.
+- Compare local FTS5, real embedding recall, rerank, and VCP-style context cache hit behavior on the same cases.

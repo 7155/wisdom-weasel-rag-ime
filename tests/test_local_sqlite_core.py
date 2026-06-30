@@ -15,6 +15,15 @@ from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import MemoryAction
 
 
+class SemanticTestEmbeddingProvider:
+    fingerprint = "test-semantic:v1"
+
+    def embed(self, text: str) -> list[float]:
+        if "火星任务" in text or "赤色星球" in text:
+            return [1.0, 0.0]
+        return [0.0, 1.0]
+
+
 class LocalSqliteCoreClientTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-core-test-")
@@ -233,6 +242,43 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertFalse(report["cloud_default"])
         self.assertTrue(report["action_result"]["deleted_removed"])
         self.assertTrue(report["agent_hook"]["has_project_memory_block"])
+
+    def test_vector_side_index_can_recall_semantic_memory_without_fts_overlap(self) -> None:
+        db_path = Path(self.tmp.name) / "vector.sqlite"
+        core = LocalSqliteCoreClient(
+            db_path,
+            embedding_provider=SemanticTestEmbeddingProvider(),
+            vector_weight=2.0,
+        )
+        adapter = InputMethodAdapter(core)
+        adapter.commit_text("赤色星球探索计划", recent_context="航天项目背景")
+        adapter.commit_text("输入法候选调试", recent_context="普通工程记录")
+
+        suggestions = adapter.suggest(SuggestionRequest(current_input="火星任务", top_k=1))
+
+        self.assertEqual(suggestions[0].surface_text, "赤色星球探索计划")
+        self.assertIn("vector:", suggestions[0].metadata["reason"])
+        stats = core.vector_index_stats()
+        self.assertTrue(stats["enabled"])
+        self.assertEqual(stats["activeProviderVectors"], 2)
+
+    def test_rebuild_vector_index_backfills_existing_events(self) -> None:
+        db_path = Path(self.tmp.name) / "vector-backfill.sqlite"
+        plain_core = LocalSqliteCoreClient(db_path)
+        plain_adapter = InputMethodAdapter(plain_core)
+        plain_adapter.commit_text("赤色星球探索计划", recent_context="航天项目背景")
+
+        vector_core = LocalSqliteCoreClient(
+            db_path,
+            embedding_provider=SemanticTestEmbeddingProvider(),
+            vector_weight=2.0,
+        )
+        report = vector_core.rebuild_vector_index()
+        suggestions = InputMethodAdapter(vector_core).suggest(SuggestionRequest(current_input="火星任务", top_k=1))
+
+        self.assertEqual(report["indexed"], 1)
+        self.assertEqual(suggestions[0].surface_text, "赤色星球探索计划")
+        self.assertIn("vector:", suggestions[0].metadata["reason"])
 
 
 if __name__ == "__main__":

@@ -376,6 +376,37 @@ Commands:
 Next:
 - Full Xcode build/install of patched Squirrel remains the next hard gate.
 
+### 2026-07-01 07:39 CST
+Problem:
+- FTS5/rerank can handle many exact project-history cases, but the core did not yet have a pluggable vector side-index for true semantic recall experiments.
+- Existing Codex-history eval could compare cache and latency, but not whether a vector provider was active or indexed.
+
+Changes:
+- Added optional embedding providers behind the local core boundary: disabled by default, deterministic `local-hash` baseline, and OpenAI-compatible embedding endpoint support.
+- Added `memory_vectors`, vector upsert on writes, vector/FTS row merge, score contribution, `vector_index_stats()`, and `rebuild_vector_index()`.
+- Added CLI flags `--embedding-provider`, `--embedding-vector-candidates`, `--embedding-vector-weight`, plus `rebuild-vector-index`.
+- Added vector stats to RAG eval reports and documented the Mac/WSL embedding path.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_local_sqlite_core`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-vector-eval-20260701.sqlite import-codex-history --path /Users/undo/.codex/sessions --project wisdom-weasel-rag-ime --limit 2000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-vector-eval-20260701.sqlite --embedding-provider local-hash rebuild-vector-index --project wisdom-weasel-rag-ime --limit 2000`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-vector-eval-20260701.sqlite --embedding-provider local-hash eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 2`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-vector-eval-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 2`
+- `git diff --check`
+
+Findings:
+- Full test suite passed with 72 tests.
+- local-hash vector backfill indexed 2000/2000 imported Codex-history records.
+- Both default FTS/rerank and local-hash hybrid passed the 3-case eval repeated twice with top1Accuracy=1.0 and MRR=1.0.
+- Default path p95 was 21ms; local-hash hybrid p95 was 80ms on the 2000-record temp DB, so vector recall must stay optional and be benchmarked before enabling in the IME sidecar.
+
+Next:
+- Replace local-hash with a real local/WSL embedding endpoint and compare quality/latency on the same case file.
+- Use subagent research output to decide whether VCP-style hybrid/cache behavior should change the vector merge or context-cache layer.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.

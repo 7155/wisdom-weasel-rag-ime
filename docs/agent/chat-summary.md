@@ -467,3 +467,23 @@ Verification:
 
 Next:
 - Run `eval-prediction` and `eval-codex-history` on the same cases against a real local model endpoint, then compare model/RAG quality and latency.
+
+### 2026-07-01
+Topic:
+- Add optional vector side-index for local RAG memory.
+
+Changes:
+- Added local-core embedding provider boundary with disabled default, deterministic `local-hash` baseline, and OpenAI-compatible embedding endpoint support.
+- Added `memory_vectors`, write-time vector upsert, vector backfill, vector/FTS merge, vector score reason, and `vectorStats` in eval reports.
+- CLI now supports `--embedding-provider`, `--embedding-vector-candidates`, `--embedding-vector-weight`, and `rebuild-vector-index`.
+- README and Codex-history eval docs explain local-hash vs real semantic embedding and the Mac/WSL endpoint path.
+
+Verification:
+- Full suite now has 72 tests and passed.
+- Acceptance passed.
+- Imported 2000 Codex-history records into a temp DB, backfilled 2000 local-hash vectors, and ran repeated eval.
+- Default FTS/rerank and local-hash hybrid both passed 6/6 repeated cases with top1Accuracy=1.0 and MRR=1.0.
+- Default p95 was 21ms; local-hash hybrid p95 was 80ms, so vector recall remains opt-in.
+
+Next:
+- Test a real local/WSL embedding provider and use the subagent VCP/Wisdom-Weasel research to choose the next ranking/cache optimization.
