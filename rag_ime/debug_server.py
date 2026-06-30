@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import mimetypes
+import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from urllib.parse import unquote, urlparse
 
@@ -32,6 +36,13 @@ class DebugServerConfig:
     core: CoreClient | None = None
     predictor: PredictionProvider | None = None
     server_name: str = "debug server"
+    rime_cache_ttl_ms: int = 400
+
+
+@dataclass
+class _RimeSuggestCacheEntry:
+    expires_at: float
+    response: dict[str, object]
 
 
 class DebugImeService:
@@ -42,6 +53,10 @@ class DebugImeService:
         self.core = config.core or LocalSqliteCoreClient(config.db_path)
         self.predictor = config.predictor or prediction_provider_from_env()
         self.adapter = InputMethodAdapter(self.core, project=config.project)
+        self._rime_cache: dict[str, _RimeSuggestCacheEntry] = {}
+        self._rime_cache_lock = RLock()
+        self._rime_cache_hits = 0
+        self._rime_cache_misses = 0
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
         if config.seed_if_empty and self._event_count() == 0:
@@ -55,10 +70,17 @@ class DebugImeService:
             "dbPath": str(self.config.db_path),
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
+            "rimeSuggestCache": {
+                "ttlMs": self._cache_ttl_ms(),
+                "size": self._rime_cache_size(),
+                "hits": self._rime_cache_hits,
+                "misses": self._rime_cache_misses,
+            },
         }
 
     def seed(self) -> dict[str, object]:
         event_ids = seed_demo_memories(self.adapter, default_fixture_memories())
+        self._clear_rime_cache()
         return {
             "ok": True,
             "seeded": len(event_ids),
@@ -98,13 +120,21 @@ class DebugImeService:
         )
 
     def rime_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
-        return build_rime_sidecar_response(
+        cache_key = self._rime_suggest_cache_key(payload)
+        cached = self._get_cached_rime_response(cache_key, payload)
+        if cached is not None:
+            return cached
+        response = build_rime_sidecar_response(
             payload=payload,
             adapter=self.adapter,
             core=self.core,
             predictor=self.predictor,
             default_project=self.config.project,
         )
+        self._store_rime_response(cache_key, response)
+        response = copy.deepcopy(response)
+        response["cache"] = self._cache_payload(hit=False, cache_key=cache_key)
+        return response
 
     def commit(self, payload: dict[str, Any]) -> dict[str, object]:
         text = _string(payload.get("text")).strip()
@@ -120,6 +150,7 @@ class DebugImeService:
             tags=tuple(_string_list(payload.get("tags"))),
             source=_string(payload.get("source")) or "debug_page_commit",
         )
+        self._clear_rime_cache()
         return {"ok": True, "eventId": event_id, "eventCount": self._event_count()}
 
     def action(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -139,6 +170,7 @@ class DebugImeService:
                 metadata={"surface_text": _string(payload.get("surfaceText"))},
             )
         )
+        self._clear_rime_cache()
         return action_response_payload(action)
 
     def _event_count(self) -> int | None:
@@ -148,6 +180,83 @@ class DebugImeService:
     def _action_count(self) -> int | None:
         count = getattr(self.core, "action_count", None)
         return int(count()) if callable(count) else None
+
+    def _cache_ttl_ms(self) -> int:
+        return max(0, int(self.config.rime_cache_ttl_ms))
+
+    def _rime_cache_size(self) -> int:
+        with self._rime_cache_lock:
+            self._prune_rime_cache()
+            return len(self._rime_cache)
+
+    def _rime_suggest_cache_key(self, payload: dict[str, Any]) -> str:
+        normalized_payload = _without_keys(payload, {"requestSeq", "sessionId"})
+        material = {
+            "payload": normalized_payload,
+            "project": self.config.project,
+            "eventCount": self._event_count(),
+            "actionCount": self._action_count(),
+            "predictor": self._predictor_fingerprint(),
+        }
+        raw = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _predictor_fingerprint(self) -> str:
+        config = getattr(self.predictor, "config", None)
+        if config is None:
+            return self.predictor.__class__.__name__
+        return f"{self.predictor.__class__.__name__}:{config!r}"
+
+    def _get_cached_rime_response(self, cache_key: str, payload: dict[str, Any]) -> dict[str, object] | None:
+        ttl_ms = self._cache_ttl_ms()
+        if ttl_ms <= 0:
+            return None
+        now = time.monotonic()
+        with self._rime_cache_lock:
+            self._prune_rime_cache(now=now)
+            entry = self._rime_cache.get(cache_key)
+            if entry is None or entry.expires_at <= now:
+                if entry is not None:
+                    self._rime_cache.pop(cache_key, None)
+                return None
+            self._rime_cache_hits += 1
+            response = copy.deepcopy(entry.response)
+        response["sessionId"] = _string(payload.get("sessionId")) or str(response.get("sessionId") or "default")
+        response["requestSeq"] = _bounded_int(payload.get("requestSeq"), default=0, minimum=0, maximum=2**63 - 1)
+        response["cache"] = self._cache_payload(hit=True, cache_key=cache_key)
+        return response
+
+    def _store_rime_response(self, cache_key: str, response: dict[str, object]) -> None:
+        ttl_ms = self._cache_ttl_ms()
+        if ttl_ms <= 0:
+            return
+        with self._rime_cache_lock:
+            self._rime_cache_misses += 1
+            self._rime_cache[cache_key] = _RimeSuggestCacheEntry(
+                expires_at=time.monotonic() + ttl_ms / 1000,
+                response=copy.deepcopy(response),
+            )
+            self._prune_rime_cache()
+
+    def _clear_rime_cache(self) -> None:
+        with self._rime_cache_lock:
+            self._rime_cache.clear()
+
+    def _prune_rime_cache(self, *, now: float | None = None) -> None:
+        current = time.monotonic() if now is None else now
+        expired = [key for key, entry in self._rime_cache.items() if entry.expires_at <= current]
+        for key in expired:
+            self._rime_cache.pop(key, None)
+
+    def _cache_payload(self, *, hit: bool, cache_key: str) -> dict[str, object]:
+        return {
+            "hit": hit,
+            "key": cache_key[:16],
+            "ttlMs": self._cache_ttl_ms(),
+            "size": self._rime_cache_size(),
+            "hits": self._rime_cache_hits,
+            "misses": self._rime_cache_misses,
+        }
 
 
 class DebugRequestHandler(BaseHTTPRequestHandler):
@@ -272,3 +381,11 @@ def _canonical_action(value: str) -> str:
     if action not in allowed:
         raise ValueError(f"unsupported actionType: {value}")
     return action
+
+
+def _without_keys(value: Any, keys: set[str]) -> Any:
+    if isinstance(value, dict):
+        return {key: _without_keys(item, keys) for key, item in value.items() if key not in keys}
+    if isinstance(value, list):
+        return [_without_keys(item, keys) for item in value]
+    return value

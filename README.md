@@ -127,6 +127,14 @@ Run the lightweight HTTP sidecar for patched Squirrel:
 python3 -m rag_ime.cli sidecar-server --host 127.0.0.1 --port 8766
 ```
 
+The sidecar uses a short `/rime-suggest` cache to absorb repeated equivalent Squirrel refreshes:
+
+```bash
+export RAG_IME_RIME_CACHE_TTL_MS=400
+```
+
+Set it to `0` while debugging cache behavior.
+
 Install it as a user LaunchAgent so it starts at login:
 
 ```bash
