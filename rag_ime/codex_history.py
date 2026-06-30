@@ -42,6 +42,7 @@ class CodexEvalCase:
     case_id: str
     query: str
     expected_terms: tuple[str, ...]
+    forbidden_terms: tuple[str, ...] = ()
     recent_context: str = ""
     project: str = ""
 
@@ -53,6 +54,12 @@ class CodexEvalResult:
     passed: bool
     matched_terms: tuple[str, ...]
     expected_terms: tuple[str, ...]
+    forbidden_terms: tuple[str, ...]
+    forbidden_matched_terms: tuple[str, ...]
+    first_match_rank: int | None
+    reciprocal_rank: float
+    top1_passed: bool
+    term_first_ranks: tuple[tuple[str, int], ...]
     top_surfaces: tuple[str, ...]
 
 
@@ -149,6 +156,16 @@ def load_eval_cases(path: Path) -> list[CodexEvalCase]:
         else:
             terms = []
         expected_terms = tuple(compact_whitespace(item) for item in terms if compact_whitespace(item))
+        raw_forbidden_terms = obj.get("forbiddenTerms", obj.get("forbidden_terms", []))
+        if isinstance(raw_forbidden_terms, str):
+            forbidden_term_items = [raw_forbidden_terms]
+        elif isinstance(raw_forbidden_terms, list):
+            forbidden_term_items = [str(item) for item in raw_forbidden_terms]
+        else:
+            forbidden_term_items = []
+        forbidden_terms = tuple(
+            compact_whitespace(item) for item in forbidden_term_items if compact_whitespace(item)
+        )
         if not query or not expected_terms:
             continue
         case_id = compact_whitespace(str(obj.get("id") or obj.get("caseId") or f"case-{line_number}"))
@@ -157,6 +174,7 @@ def load_eval_cases(path: Path) -> list[CodexEvalCase]:
                 case_id=case_id,
                 query=query,
                 expected_terms=expected_terms,
+                forbidden_terms=forbidden_terms,
                 recent_context=compact_whitespace(str(obj.get("recentContext") or obj.get("recent_context") or "")),
                 project=compact_whitespace(str(obj.get("project") or "")),
             )
@@ -170,32 +188,39 @@ def evaluate_suggestions(
     *,
     match: str = "any",
 ) -> CodexEvalResult:
-    haystack = "\n".join(
-        compact_whitespace(
-            " ".join(
-                [
-                    item.surface_text,
-                    item.evidence_preview,
-                    item.expanded_evidence,
-                    str(item.metadata.get("insert_text") or ""),
-                ]
-            )
-        )
-        for item in suggestions
-    ).lower()
-    matched = tuple(term for term in case.expected_terms if term.lower() in haystack)
+    suggestion_texts = [_suggestion_match_text(item) for item in suggestions]
+    corpus_haystack = "\n".join(suggestion_texts).lower()
+    matched = tuple(term for term in case.expected_terms if term.lower() in corpus_haystack)
+    forbidden_matched = tuple(term for term in case.forbidden_terms if term.lower() in corpus_haystack)
+    term_first_ranks = tuple(
+        (term, rank)
+        for term in case.expected_terms
+        if (rank := _first_term_rank(term, suggestion_texts)) is not None
+    )
+    first_match_rank = _first_candidate_match_rank(
+        case.expected_terms,
+        suggestion_texts,
+        match=match,
+    )
     if match == "all":
-        passed = len(matched) == len(case.expected_terms)
+        has_expected_match = first_match_rank is not None
     elif match == "any":
-        passed = bool(matched)
+        has_expected_match = first_match_rank is not None
     else:
         raise ValueError("match must be 'any' or 'all'")
+    passed = has_expected_match and not forbidden_matched
     return CodexEvalResult(
         case_id=case.case_id,
         query=case.query,
         passed=passed,
         matched_terms=matched,
         expected_terms=case.expected_terms,
+        forbidden_terms=case.forbidden_terms,
+        forbidden_matched_terms=forbidden_matched,
+        first_match_rank=first_match_rank,
+        reciprocal_rank=(1.0 / first_match_rank) if first_match_rank else 0.0,
+        top1_passed=first_match_rank == 1,
+        term_first_ranks=term_first_ranks,
         top_surfaces=tuple(item.surface_text for item in suggestions[:5]),
     )
 
@@ -203,12 +228,26 @@ def evaluate_suggestions(
 def eval_report(results: list[CodexEvalResult]) -> dict[str, Any]:
     passed = sum(1 for item in results if item.passed)
     total = len(results)
+    ranked_results = [item for item in results if item.first_match_rank is not None]
+    noise_count = sum(1 for item in results if item.forbidden_matched_terms)
     return {
         "schemaVersion": "rag-ime.codex-history-eval.v1",
         "total": total,
         "passed": passed,
         "failed": total - passed,
         "passRate": (passed / total) if total else 0.0,
+        "metrics": {
+            "hitRate": (passed / total) if total else 0.0,
+            "top1Accuracy": (sum(1 for item in results if item.top1_passed) / total) if total else 0.0,
+            "meanReciprocalRank": (sum(item.reciprocal_rank for item in results) / total) if total else 0.0,
+            "meanFirstMatchRank": (
+                sum(int(item.first_match_rank) for item in ranked_results) / len(ranked_results)
+            )
+            if ranked_results
+            else 0.0,
+            "noiseRate": (noise_count / total) if total else 0.0,
+            "noiseCount": noise_count,
+        },
         "cases": [
             {
                 "caseId": item.case_id,
@@ -216,11 +255,61 @@ def eval_report(results: list[CodexEvalResult]) -> dict[str, Any]:
                 "passed": item.passed,
                 "matchedTerms": list(item.matched_terms),
                 "expectedTerms": list(item.expected_terms),
+                "forbiddenTerms": list(item.forbidden_terms),
+                "forbiddenMatchedTerms": list(item.forbidden_matched_terms),
+                "firstMatchRank": item.first_match_rank,
+                "reciprocalRank": item.reciprocal_rank,
+                "top1Passed": item.top1_passed,
+                "termFirstRanks": [
+                    {"term": term, "rank": rank}
+                    for term, rank in item.term_first_ranks
+                ],
                 "topSurfaces": list(item.top_surfaces),
             }
             for item in results
         ],
     }
+
+
+def _suggestion_match_text(suggestion: InputSuggestion) -> str:
+    return compact_whitespace(
+        " ".join(
+            [
+                suggestion.surface_text,
+                suggestion.evidence_preview,
+                suggestion.expanded_evidence,
+                str(suggestion.metadata.get("insert_text") or ""),
+            ]
+        )
+    )
+
+
+def _first_term_rank(term: str, suggestion_texts: list[str]) -> int | None:
+    needle = term.lower()
+    for index, text in enumerate(suggestion_texts, start=1):
+        if needle in text.lower():
+            return index
+    return None
+
+
+def _first_candidate_match_rank(
+    expected_terms: tuple[str, ...],
+    suggestion_texts: list[str],
+    *,
+    match: str,
+) -> int | None:
+    needles = [term.lower() for term in expected_terms]
+    for index, text in enumerate(suggestion_texts, start=1):
+        haystack = text.lower()
+        if match == "all":
+            matched = all(term in haystack for term in needles)
+        elif match == "any":
+            matched = any(term in haystack for term in needles)
+        else:
+            raise ValueError("match must be 'any' or 'all'")
+        if matched:
+            return index
+    return None
 
 
 def _extract_text_fragments(value: Any, *, parent_key: str = "") -> Iterable[str]:
