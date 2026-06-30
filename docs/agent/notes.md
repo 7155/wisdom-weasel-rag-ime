@@ -354,6 +354,34 @@ Findings:
 Next:
 - Finish full Xcode install from an interactive Apple-authenticated terminal or provide `FASTLANE_SESSION`, then rerun `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh`.
 
+### 2026-07-01 06:17 CST
+Problem:
+- `predict-benchmark` measured latency only, so it could not decide whether Qwen/MLX/llama.cpp model candidates were actually useful for historical-context prediction.
+- RAG eval and model eval used different gates, making it hard to compare RAG recall vs. local model prediction on the same Codex-history cases.
+
+Changes:
+- Added `eval-prediction` CLI.
+- It reuses the Codex-history JSONL case format (`query`, `recentContext`, `expectedTerms`, `forbiddenTerms`).
+- The command calls the configured prediction provider through the product path, evaluates model candidates with the same candidate-level ranking/noise metrics as RAG eval, and reports latency plus a `prediction` provider block.
+- Added mocked OpenAI-compatible CLI test for the Qwen-style provider path.
+- Updated README and local-model benchmark docs.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture eval-prediction --cases-file docs/eval/codex-history-cases.example.jsonl --max-candidates 3 --repeat 2`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `scripts/build_macos_frontend.sh`
+- `scripts/doctor_squirrel_integration.sh`
+
+Findings:
+- Full test suite now has 60 tests.
+- Without a configured local model, `eval-prediction` reports `providerConfigured=false` and zero candidates instead of pretending the model lane is usable.
+- Doctor still passes sidecar/Squirrel checks with only the full Xcode warning remaining.
+
+Next:
+- Run `eval-prediction` against a real local Qwen/MLX/llama.cpp endpoint and compare it with `eval-codex-history` on the same case file.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.

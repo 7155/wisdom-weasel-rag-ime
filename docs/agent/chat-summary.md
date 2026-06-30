@@ -308,3 +308,22 @@ Verification:
 
 Open:
 - `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh` still fails because full `Xcode.app` is not installed; Apple Developer/App Store authentication is required outside this non-interactive Codex session.
+
+### 2026-07-01
+Topic:
+- Add model prediction quality evaluation for local Qwen/MLX/llama.cpp selection.
+
+Changes:
+- Added `eval-prediction` CLI.
+- It uses the same JSONL case format and candidate-level metrics as `eval-codex-history`, but evaluates configured local model predictions.
+- Reports include `repeat`, `latency`, and a `prediction` block with provider status, max candidates, latency budget, over-budget count, and total candidates.
+- README and `docs/local-model-prediction-benchmark.md` now describe the quality gate, not only latency benchmarking.
+
+Verification:
+- Predictor tests passed.
+- Full suite now has 60 tests and passed.
+- Fixture `eval-prediction` smoke showed `providerConfigured=false` when no local model is configured.
+- Acceptance, macOS prototype build, and Squirrel doctor still pass; doctor only warns about missing full Xcode.
+
+Next:
+- Run `eval-prediction` and `eval-codex-history` on the same cases against a real local model endpoint, then compare model/RAG quality and latency.

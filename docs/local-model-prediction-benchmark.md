@@ -55,11 +55,61 @@ Output shape:
 }
 ```
 
+## Evaluate Prediction Quality
+
+Latency alone is not enough. The model lane must also prove that it can use the current input plus bounded local history context to produce useful candidates.
+
+Use the same JSONL case format as Codex-history RAG evaluation:
+
+```jsonl
+{"id":"local-memory-term","query":"RAG 输入法","recentContext":"用户正在写本地记忆输入法","expectedTerms":["本地记忆"]}
+{"id":"agent-hook-term","query":"首次运行注入背景","expectedTerms":["PROJECT_MEMORY_BLOCK"]}
+```
+
+Run:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-prediction \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --max-candidates 3 \
+  --latency-budget-ms 150
+```
+
+The command calls the configured prediction provider through the same product path as `suggest-json`: `query` becomes `current_input`, `recentContext` is merged with recent committed input history, and the returned model candidates are evaluated candidate by candidate.
+
+Report shape:
+
+```json
+{
+  "schemaVersion": "rag-ime.codex-history-eval.v1",
+  "metrics": {
+    "top1Accuracy": 0.5,
+    "meanReciprocalRank": 0.75,
+    "noiseRate": 0.0
+  },
+  "latency": {
+    "p50Ms": 82,
+    "maxMs": 140
+  },
+  "prediction": {
+    "providerName": "local-openai-compatible",
+    "providerConfigured": true,
+    "maxCandidates": 3,
+    "latencyBudgetMs": 150,
+    "overBudgetCount": 0
+  }
+}
+```
+
+Use `--repeat N` to measure stability and warm-server behavior. Unlike the RAG core, the prediction provider is not cached here; repeated model calls are intentional so latency variance is visible.
+
 ## Acceptance Rule
 
 For the Squirrel/Rime sidecar path:
 
 - target p50 under 150 ms for cached or warm local inference;
+- target useful top-1 candidates on project-specific terms before enabling the lane by default;
 - no UI blocking when a request times out;
 - stale responses must be discarded by request sequence on the frontend;
 - Rime candidates remain first, model predictions only fill spare side-candidate slots.

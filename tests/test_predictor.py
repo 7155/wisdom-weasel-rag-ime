@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import io
 import json
+import os
+import tempfile
 import threading
 import unittest
+from contextlib import redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import patch
 
+from rag_ime.cli import main
 from rag_ime.predictor import (
     OpenAICompatiblePredictionConfig,
     OpenAICompatiblePredictionProvider,
@@ -114,6 +120,69 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(report["summary"]["allWithinBudget"])
         self.assertTrue(report["summary"]["hasCandidates"])
         self.assertEqual(report["cases"][0]["candidates"], ["RAG 输入法候选"])
+
+    def test_cli_eval_prediction_reports_quality_and_latency(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-prediction-eval-") as tmp:
+                cases_file = f"{tmp}/cases.jsonl"
+                with open(cases_file, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "local-memory-prediction",
+                                "query": "RAG 输入法",
+                                "recentContext": "用户正在写本地记忆输入法",
+                                "expectedTerms": ["本地记忆"],
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                stdout = io.StringIO()
+                with patch.dict(
+                    os.environ,
+                    {
+                        "RAG_IME_PREDICTOR_PROVIDER": "openai-compatible",
+                        "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                        "RAG_IME_PREDICTOR_MODEL": "Qwen3-0.6B",
+                        "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    },
+                    clear=False,
+                ):
+                    with redirect_stdout(stdout):
+                        code = main(
+                            [
+                                "--db-path",
+                                f"{tmp}/prediction.sqlite",
+                                "eval-prediction",
+                                "--cases-file",
+                                cases_file,
+                                "--max-candidates",
+                                "3",
+                                "--latency-budget-ms",
+                                "1000",
+                            ]
+                        )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["schemaVersion"], "rag-ime.codex-history-eval.v1")
+        self.assertEqual(report["passed"], 1)
+        self.assertEqual(report["metrics"]["top1Accuracy"], 1.0)
+        self.assertEqual(report["prediction"]["providerName"], "local-openai-compatible")
+        self.assertTrue(report["prediction"]["providerConfigured"])
+        self.assertEqual(report["prediction"]["maxCandidates"], 3)
+        self.assertEqual(report["prediction"]["overBudgetCount"], 0)
+        self.assertEqual(report["prediction"]["totalCandidates"], 3)
+        self.assertEqual(report["latency"]["caseCount"], 1)
+        self.assertEqual(report["cases"][0]["topSurfaces"][0], "本地记忆")
 
 
 if __name__ == "__main__":
