@@ -20,6 +20,7 @@ from .codex_history import (
     load_eval_cases,
 )
 from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, default_fixture_memories
+from .embeddings import embedding_provider_from_env
 from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
@@ -59,9 +60,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=int(os.environ.get("RAG_IME_SUGGESTION_CACHE_SIZE", "128")),
         help="Process-local local-core suggestion cache size. Use 0 to disable.",
     )
+    parser.add_argument(
+        "--embedding-provider",
+        choices=("none", "local-hash", "openai-compatible", "openai"),
+        default=os.environ.get("RAG_IME_EMBEDDING_PROVIDER", "none"),
+        help="Optional local-core vector provider. Defaults to none.",
+    )
+    parser.add_argument(
+        "--embedding-vector-candidates",
+        type=int,
+        default=int(os.environ.get("RAG_IME_VECTOR_CANDIDATES", "80")),
+        help="Maximum vector side-index candidates merged into retrieval.",
+    )
+    parser.add_argument(
+        "--embedding-vector-weight",
+        type=float,
+        default=float(os.environ.get("RAG_IME_VECTOR_WEIGHT", "1.4")),
+        help="Score multiplier for vector side-index similarity.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init-db", help="Initialize the local SQLite/FTS5 database")
+
+    rebuild_vector = subparsers.add_parser("rebuild-vector-index", help="Backfill optional local-core vector side index")
+    rebuild_vector.add_argument("--project", default="")
+    rebuild_vector.add_argument("--limit", type=int, default=0)
 
     seed = subparsers.add_parser("seed-demo", help="Seed local DB with deterministic demo memories")
     seed.add_argument("--reset", action="store_true", help="Reset local DB before seeding")
@@ -240,6 +263,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             json.dumps(
                 {"db_path": str(core.db_path), "event_count": core.event_count(), "seeded": True},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "rebuild-vector-index":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("rebuild-vector-index requires --core-mode local")
+        print(
+            json.dumps(
+                core.rebuild_vector_index(project=args.project, limit=max(0, args.limit)),
                 ensure_ascii=False,
                 indent=2,
             )
@@ -518,6 +553,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         cache_stats = getattr(core, "suggestion_cache_stats", None)
         if callable(cache_stats):
             report["cacheStats"] = cache_stats()
+        _attach_vector_stats(report, core)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
@@ -675,6 +711,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         cache_stats = getattr(core, "suggestion_cache_stats", None)
         if callable(cache_stats):
             rag_report["cacheStats"] = cache_stats()
+        _attach_vector_stats(rag_report, core)
         model_report["prediction"] = {
             "providerName": provider_name,
             "providerProfile": _prediction_provider_profile(predictor),
@@ -837,7 +874,19 @@ def _build_core(args):
         if not args.core_command:
             raise SystemExit("--core-command is required when --core-mode json")
         return JsonCommandCoreClient(shlex.split(args.core_command))
-    return LocalSqliteCoreClient(args.db_path, suggestion_cache_size=args.suggestion_cache_size)
+    return LocalSqliteCoreClient(
+        args.db_path,
+        suggestion_cache_size=args.suggestion_cache_size,
+        embedding_provider=_embedding_provider_from_args(args),
+        vector_candidate_limit=args.embedding_vector_candidates,
+        vector_weight=args.embedding_vector_weight,
+    )
+
+
+def _embedding_provider_from_args(args):
+    env = dict(os.environ)
+    env["RAG_IME_EMBEDDING_PROVIDER"] = args.embedding_provider
+    return embedding_provider_from_env(env)
 
 
 def _case_for_eval_repeat(case, *, repeat_index: int, repeat_count: int):
@@ -986,6 +1035,12 @@ def _attach_eval_latency(report: dict[str, object], elapsed_ms_by_case: dict[str
         "p95Ms": p95,
         "maxMs": max(elapsed_values) if elapsed_values else 0,
     }
+
+
+def _attach_vector_stats(report: dict[str, object], core) -> None:
+    vector_stats = getattr(core, "vector_index_stats", None)
+    if callable(vector_stats):
+        report["vectorStats"] = vector_stats()
 
 
 def _core_has_event_tag(core, tag: str) -> bool:

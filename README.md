@@ -209,7 +209,17 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
 See `docs/codex-history-eval.md`.
 
 The report includes candidate-level ranking metrics such as `top1Accuracy`, `meanReciprocalRank`, `noiseRate`, end-to-end suggestion latency, and repeat/cache statistics, not just pass/fail recall.
-When running against the local core, it also includes `cacheStats` so repeated-case evaluations can measure suggestion-cache hits.
+When running against the local core, it also includes `cacheStats` so repeated-case evaluations can measure suggestion-cache hits. If optional vector recall is enabled, the same report includes `vectorStats`.
+
+Optional vector recall can be enabled without changing the input-method adapter. `local-hash` is a deterministic local baseline for testing the side-index contract, not a semantic model:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  --embedding-provider local-hash \
+  rebuild-vector-index --project wisdom-weasel-rag-ime
+```
+
+For real semantic recall, point `--embedding-provider openai-compatible` at a local or user-owned WSL embedding endpoint with `RAG_IME_EMBEDDING_BASE_URL` and `RAG_IME_EMBEDDING_MODEL`.
 
 Inspect trigger policy:
 

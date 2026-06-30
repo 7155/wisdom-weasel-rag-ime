@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Any
 
 from .core_client import CoreMemory
+from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
 from .suggestion_compiler import RankedMemory, SuggestionCompiler
 from .text_utils import (
@@ -34,10 +35,21 @@ class LocalSqliteCoreClient:
     rewritten when the shared core exposes stable record/action APIs.
     """
 
-    def __init__(self, db_path: str | Path, *, suggestion_cache_size: int = 128):
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        suggestion_cache_size: int = 128,
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_candidate_limit: int = 80,
+        vector_weight: float = 1.4,
+    ):
         self.db_path = Path(db_path)
         self.compiler = SuggestionCompiler()
         self.suggestion_cache_size = max(0, int(suggestion_cache_size))
+        self.embedding_provider = embedding_provider or NullEmbeddingProvider()
+        self.vector_candidate_limit = max(0, int(vector_candidate_limit))
+        self.vector_weight = max(0.0, float(vector_weight))
         self._suggestion_cache: OrderedDict[tuple[str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
         self._suggestion_cache_lock = RLock()
         self._suggestion_cache_hits = 0
@@ -95,6 +107,17 @@ class LocalSqliteCoreClient:
                     tags,
                     tokenize = 'unicode61'
                 );
+
+                CREATE TABLE IF NOT EXISTS memory_vectors (
+                    event_id INTEGER PRIMARY KEY,
+                    provider_fingerprint TEXT NOT NULL,
+                    vector_json TEXT NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    FOREIGN KEY(event_id) REFERENCES input_events(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_vectors_provider
+                ON memory_vectors(provider_fingerprint);
                 """
             )
 
@@ -102,6 +125,7 @@ class LocalSqliteCoreClient:
         with self._connect() as conn:
             conn.executescript(
                 """
+                DROP TABLE IF EXISTS memory_vectors;
                 DROP TABLE IF EXISTS memory_actions;
                 DROP TABLE IF EXISTS memory_state;
                 DROP TABLE IF EXISTS input_events;
@@ -154,6 +178,7 @@ class LocalSqliteCoreClient:
                 """,
                 (event_id, document, text, event.recent_context, event.project, " ".join(event.tags)),
             )
+            self._upsert_event_vector(conn, event_id=event_id, document=document, updated_at_ms=created_at)
         self._clear_suggestion_cache()
         return f"event:{event_id}"
 
@@ -197,16 +222,32 @@ class LocalSqliteCoreClient:
         raw_query = compact_whitespace(f"{recent_context} {current_input}")
         query = _expand_query_for_local_rerank(raw_query)
         fts_query = build_fts_query(query)
+        rows: list[sqlite3.Row] = []
         if not fts_query:
-            rows = self._recent_rows(project=project, limit=top_k)
+            rows = []
         else:
             rows = self._search_rows(fts_query=fts_query, project=project, limit=max(top_k * 8, 50))
-            if not rows:
-                rows = self._recent_rows(project=project, limit=top_k)
-            elif len(rows) < top_k:
-                rows = self._append_recent_fill(rows, project=project, limit=top_k)
+        vector_rows, vector_scores = self._vector_rows(
+            query=query,
+            project=project,
+            limit=max(top_k * 8, self.vector_candidate_limit),
+        )
+        rows = _merge_rows(rows, vector_rows)
+        if not rows:
+            rows = self._recent_rows(project=project, limit=top_k)
+        elif len(rows) < top_k:
+            rows = self._append_recent_fill(rows, project=project, limit=top_k)
 
-        memories = [self._row_to_memory(row, query=query, project=project, raw_query=raw_query) for row in rows]
+        memories = [
+            self._row_to_memory(
+                row,
+                query=query,
+                project=project,
+                raw_query=raw_query,
+                vector_score=vector_scores.get(int(row["id"]), 0.0),
+            )
+            for row in rows
+        ]
         memories.sort(key=lambda item: item.score, reverse=True)
         return memories[:top_k]
 
@@ -343,6 +384,78 @@ class LocalSqliteCoreClient:
                 "invalidations": self._suggestion_cache_invalidations,
             }
 
+    def vector_index_stats(self) -> dict[str, object]:
+        self.initialize()
+        fingerprint = self.embedding_provider.fingerprint
+        with self._connect() as conn:
+            total = int(conn.execute("SELECT COUNT(*) AS count FROM memory_vectors").fetchone()["count"])
+            active = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS count FROM memory_vectors WHERE provider_fingerprint = ?",
+                    (fingerprint,),
+                ).fetchone()["count"]
+            )
+        return {
+            "enabled": self._embedding_enabled(),
+            "providerFingerprint": fingerprint,
+            "totalVectors": total,
+            "activeProviderVectors": active,
+            "candidateLimit": self.vector_candidate_limit,
+            "weight": self.vector_weight,
+        }
+
+    def rebuild_vector_index(self, *, project: str = "", limit: int = 0) -> dict[str, object]:
+        self.initialize()
+        if not self._embedding_enabled():
+            return {
+                "enabled": False,
+                "providerFingerprint": self.embedding_provider.fingerprint,
+                "scanned": 0,
+                "indexed": 0,
+            }
+        params: list[Any] = []
+        where = ["s.deleted = 0"]
+        if project:
+            where.append("(e.project = ? OR e.project = '')")
+            params.append(project)
+        sql = f"""
+            SELECT e.*
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE {' AND '.join(where)}
+            ORDER BY e.id DESC
+        """
+        if limit > 0:
+            sql += " LIMIT ?"
+            params.append(limit)
+        scanned = 0
+        indexed = 0
+        with self._connect() as conn:
+            rows = list(conn.execute(sql, params).fetchall())
+            for row in rows:
+                scanned += 1
+                document = build_fts_document(
+                    str(row["committed_text"]),
+                    str(row["recent_context"]),
+                    str(row["project"]),
+                    " ".join(json.loads(row["tags_json"] or "[]")),
+                    str(row["preedit"]),
+                )
+                if self._upsert_event_vector(
+                    conn,
+                    event_id=int(row["id"]),
+                    document=document,
+                    updated_at_ms=now_ms(),
+                ):
+                    indexed += 1
+        self._clear_suggestion_cache()
+        return {
+            "enabled": True,
+            "providerFingerprint": self.embedding_provider.fingerprint,
+            "scanned": scanned,
+            "indexed": indexed,
+        }
+
     def has_event_tag(self, tag: str) -> bool:
         self.initialize()
         needle = compact_whitespace(tag)
@@ -366,6 +479,40 @@ class LocalSqliteCoreClient:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
         return conn
+
+    def _embedding_enabled(self) -> bool:
+        return self.embedding_provider.fingerprint != "none"
+
+    def _upsert_event_vector(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        event_id: int,
+        document: str,
+        updated_at_ms: int,
+    ) -> bool:
+        if not self._embedding_enabled():
+            return False
+        vector = self.embedding_provider.embed(document)
+        if not vector:
+            return False
+        conn.execute(
+            """
+            INSERT INTO memory_vectors(event_id, provider_fingerprint, vector_json, updated_at_ms)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                provider_fingerprint = excluded.provider_fingerprint,
+                vector_json = excluded.vector_json,
+                updated_at_ms = excluded.updated_at_ms
+            """,
+            (
+                event_id,
+                self.embedding_provider.fingerprint,
+                json.dumps(vector, separators=(",", ":")),
+                updated_at_ms,
+            ),
+        )
+        return True
 
     def _suggestion_cache_key(
         self,
@@ -431,6 +578,42 @@ class LocalSqliteCoreClient:
         with self._connect() as conn:
             return list(conn.execute(sql, params).fetchall())
 
+    def _vector_rows(self, *, query: str, project: str, limit: int) -> tuple[list[sqlite3.Row], dict[int, float]]:
+        if not self._embedding_enabled() or self.vector_candidate_limit <= 0 or self.vector_weight <= 0:
+            return [], {}
+        query_vector = self.embedding_provider.embed(query)
+        if not query_vector:
+            return [], {}
+        params: list[Any] = [self.embedding_provider.fingerprint]
+        where = ["v.provider_fingerprint = ?", "s.deleted = 0"]
+        if project:
+            where.append("(e.project = ? OR e.project = '')")
+            params.append(project)
+        sql = f"""
+            SELECT e.*, s.*, 99.0 AS bm25_score, v.vector_json
+            FROM memory_vectors v
+            JOIN input_events e ON e.id = v.event_id
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE {' AND '.join(where)}
+        """
+        candidates: list[tuple[float, sqlite3.Row]] = []
+        with self._connect() as conn:
+            rows = list(conn.execute(sql, params).fetchall())
+        for row in rows:
+            try:
+                vector = json.loads(row["vector_json"] or "[]")
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(vector, list):
+                continue
+            score = cosine_similarity(query_vector, [float(value) for value in vector if isinstance(value, (int, float))])
+            if score <= 0:
+                continue
+            candidates.append((score, row))
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        selected = candidates[: max(1, limit)]
+        return [row for _, row in selected], {int(row["id"]): score for score, row in selected}
+
     def _recent_rows(self, *, project: str, limit: int) -> list[sqlite3.Row]:
         params: list[Any] = []
         where = ["s.deleted = 0"]
@@ -461,7 +644,15 @@ class LocalSqliteCoreClient:
                 break
         return filled
 
-    def _row_to_memory(self, row: sqlite3.Row, *, query: str, project: str, raw_query: str = "") -> CoreMemory:
+    def _row_to_memory(
+        self,
+        row: sqlite3.Row,
+        *,
+        query: str,
+        project: str,
+        raw_query: str = "",
+        vector_score: float = 0.0,
+    ) -> CoreMemory:
         event_id = int(row["id"])
         bm25 = float(row["bm25_score"] if row["bm25_score"] is not None else 99.0)
         lexical = _bm25_relevance(bm25)
@@ -489,6 +680,7 @@ class LocalSqliteCoreClient:
             lexical
             + overlap_score
             + sum(boost for _, boost in field_boosts)
+            + max(0.0, vector_score) * self.vector_weight
             + project_boost
             + (8.0 if pinned else 0.0)
             + accepted * 0.6
@@ -498,6 +690,8 @@ class LocalSqliteCoreClient:
         reason = [f"fts5:{lexical:.3f}"]
         if overlap:
             reason.append("overlap:" + ",".join(overlap[:4]))
+        if vector_score > 0:
+            reason.append(f"vector:{vector_score:.3f}")
         for label, boost in field_boosts:
             if boost > 0:
                 reason.append(f"{label}:{boost:.2f}")
@@ -655,3 +849,15 @@ def _bm25_relevance(bm25_score: float) -> float:
 
 def _copy_suggestions(suggestions: list[InputSuggestion] | tuple[InputSuggestion, ...]) -> list[InputSuggestion]:
     return [replace(item, metadata=dict(item.metadata)) for item in suggestions]
+
+
+def _merge_rows(primary: list[sqlite3.Row], secondary: list[sqlite3.Row]) -> list[sqlite3.Row]:
+    merged: list[sqlite3.Row] = []
+    seen: set[int] = set()
+    for row in [*primary, *secondary]:
+        event_id = int(row["id"])
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        merged.append(row)
+    return merged
