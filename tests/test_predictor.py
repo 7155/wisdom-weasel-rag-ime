@@ -16,10 +16,12 @@ from rag_ime.predictor import (
 
 class _MockOpenAIHandler(BaseHTTPRequestHandler):
     captured_payload: dict[str, object] = {}
+    captured_headers: dict[str, str] = {}
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
         length = int(self.headers.get("Content-Length") or "0")
         _MockOpenAIHandler.captured_payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        _MockOpenAIHandler.captured_headers = {key: value for key, value in self.headers.items()}
         body = json.dumps(
             {
                 "choices": [
@@ -59,6 +61,8 @@ class PredictionProviderTests(unittest.TestCase):
                     timeout_s=1.0,
                     max_tokens=8,
                     provider_name="mock-qwen",
+                    extra_body={"seed": 7, "chat_template_kwargs": {"enable_thinking": False}},
+                    extra_headers={"X-RAG-IME-Test": "extra-header"},
                 )
             )
             predictions = provider.predict(
@@ -74,6 +78,10 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(predictions[0].provider_name, "mock-qwen")
         self.assertGreaterEqual(predictions[0].latency_ms, 0)
         self.assertEqual(_MockOpenAIHandler.captured_payload["model"], "Qwen3-0.6B")
+        self.assertEqual(_MockOpenAIHandler.captured_payload["seed"], 7)
+        self.assertEqual(_MockOpenAIHandler.captured_payload["chat_template_kwargs"], {"enable_thinking": False})
+        captured_headers = {key.lower(): value for key, value in _MockOpenAIHandler.captured_headers.items()}
+        self.assertEqual(captured_headers["x-rag-ime-test"], "extra-header")
         messages = _MockOpenAIHandler.captured_payload["messages"]
         self.assertIn("只输出候选词", messages[0]["content"])
         self.assertLessEqual(_MockOpenAIHandler.captured_payload["max_tokens"], 8)

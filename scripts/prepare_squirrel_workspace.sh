@@ -81,6 +81,7 @@ rag_ime:
   max_visible_candidates: 8
   max_side_candidates: 2
   latency_budget_ms: 180
+  debounce_ms: 40
   timeout_ms: 1200
 """
 Path(os.environ["CONFIG_PATH"]).write_text(payload, encoding="utf-8")

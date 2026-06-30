@@ -333,6 +333,8 @@ The history context variables control how many committed input events are merged
 - Candidate panel positioning now prefers the active `IMKTextInput` caret rectangle and falls back to mouse location when the target app does not expose a valid text rect.
 - `expand` copies full evidence to clipboard instead of opening a rich source browser.
 - The optional local model provider asks for several candidates in one non-streaming response; llama.cpp-style batch sampling and KV cache reuse are still future optimization work.
+- The Squirrel patch debounces sidecar refreshes and fingerprints request state so stale model/RAG results cannot overwrite a newer Rime page.
+- The sidecar merge policy allows at most one model side candidate; remaining side slots are reserved for RAG/memory candidates.
 
 ## Next Engineering Steps
 

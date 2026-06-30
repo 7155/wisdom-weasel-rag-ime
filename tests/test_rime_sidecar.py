@@ -36,6 +36,14 @@ class FakePredictionProvider:
         ][:max_candidates]
 
 
+class MultiPredictionProvider:
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        return [
+            ModelPrediction(text=f"{current_input}模型{i}", rank=i, provider_name="multi-model", latency_ms=8)
+            for i in range(1, max_candidates + 1)
+        ]
+
+
 class RimeSidecarTests(unittest.TestCase):
     def setUp(self) -> None:
         self.core = FixtureCoreClient()
@@ -144,6 +152,29 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(len(side_items), 2)
         self.assertEqual(side_items[0]["sourceType"], "model")
         self.assertEqual(side_items[1]["sourceType"], "rag")
+        self.assertEqual(response["mergePolicy"]["maxModelSideCandidates"], 1)
+        self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
+
+    def test_model_predictions_cannot_consume_all_side_slots(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-side-balance",
+                "requestSeq": 10,
+                "maxVisibleCandidates": 6,
+                "maxSideCandidates": 3,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+        side_items = [item for item in response["displayCandidates"] if item["sourceType"] != "rime"]
+        self.assertEqual([item["sourceType"] for item in side_items], ["model", "rag", "rag"])
+        self.assertEqual(len(response["modelPredictions"]), 3)
 
     def test_cli_rime_suggest_json_reads_payload_file(self) -> None:
         payload = {

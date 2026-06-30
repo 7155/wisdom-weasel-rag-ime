@@ -199,6 +199,7 @@ export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000
 export RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B
 export RAG_IME_PREDICTOR_TIMEOUT_MS=800
 export RAG_IME_PREDICTOR_MAX_TOKENS=12
+export RAG_IME_PREDICTOR_EXTRA_BODY_JSON='{"seed":7,"chat_template_kwargs":{"enable_thinking":false}}'
 export RAG_IME_HISTORY_CONTEXT_EVENTS=6
 export RAG_IME_HISTORY_CONTEXT_CHARS=420
 
@@ -277,7 +278,7 @@ python3 -m rag_ime.cli --core-mode fixture rime-suggest-json \
   --payload-file /tmp/rime-sidecar-request.json
 ```
 
-This command keeps Rime candidates first, appends model/RAG side candidates only if visible slots remain, and uses Rime candidates or commit preview as the semantic query instead of asking the model to decode raw pinyin.
+This command keeps Rime candidates first, appends model/RAG side candidates only if visible slots remain, reserves side slots for RAG/memory after at most one model prediction, and uses Rime candidates or commit preview as the semantic query instead of asking the model to decode raw pinyin.
 
 Open the native AppKit candidate panel preview:
 

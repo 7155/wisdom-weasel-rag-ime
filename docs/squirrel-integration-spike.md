@@ -63,6 +63,7 @@ Minimum behavior:
 
 - read `rag_ime/enabled`, `rag_ime/python`, `rag_ime/repo_root`, `rag_ime/db_path`, `rag_ime/max_side_candidates`, and `rag_ime/max_visible_candidates` from Squirrel config;
 - prefer `rag_ime/sidecar_url` for long-running HTTP sidecar calls;
+- debounce high-frequency `rimeUpdate` refreshes with `rag_ime/debounce_ms`;
 - write one `RimeSidecarRequest` to a temporary JSON file;
 - call:
 
@@ -111,6 +112,14 @@ dispatch main: update side candidates and redraw panel
 
 This prevents old retrieval/model results from overwriting the current Rime page.
 
+The patch also adds a request fingerprint:
+
+```text
+rawInput + preedit + commitTextPreview + page + highlighted + first Rime candidates
+```
+
+Only the latest debounced fingerprint is sent. Responses are dropped if request sequence, session, raw input, preedit, page, or first candidate fingerprint no longer match. This is stricter than Wisdom-Weasel's request sequence alone and matters because Squirrel can refresh the same raw input across pages/candidate lists.
+
 ### 5. Candidate Display Merge
 
 Short-term path:
@@ -155,6 +164,7 @@ Expected properties:
 - `displayCandidates[0]` keeps `selectionAction: select_rime_candidate`;
 - model/RAG side candidates use `selectionAction: commit_side_candidate`;
 - `mergePolicy.rawPinyinFallback` is `false` for dirty-pinyin requests with Rime candidates.
+- `mergePolicy.maxModelSideCandidates` is `1`, so model predictions do not consume every side slot before RAG/memory candidates.
 
 ## Not In First Spike
 

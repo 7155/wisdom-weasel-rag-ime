@@ -12,9 +12,19 @@ export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000
 export RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B
 export RAG_IME_PREDICTOR_TIMEOUT_MS=800
 export RAG_IME_PREDICTOR_MAX_TOKENS=12
+export RAG_IME_PREDICTOR_EXTRA_BODY_JSON='{"seed":7,"chat_template_kwargs":{"enable_thinking":false}}'
 ```
 
 The prompt asks for short candidates only and the provider fails open on timeout. This carries forward the Wisdom-Weasel lesson we are using as a design constraint: typing must not block on model output.
+
+Some OpenAI-compatible servers need custom request fields or headers. Use:
+
+```bash
+export RAG_IME_PREDICTOR_EXTRA_BODY_JSON='{"extra_body_key":"value"}'
+export RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON='{"X-Custom-Header":"value"}'
+```
+
+Invalid JSON is ignored so a bad optional setting does not break typing.
 
 ## Run The Benchmark
 

@@ -7,6 +7,28 @@
 
 ## Log
 
+### 2026-07-01 00:35 CST
+Problem:
+- Wisdom-Weasel avoids UI overwrite with request sequence, but Squirrel can call `rimeUpdate` very frequently and page/candidate state can change under the same raw input.
+
+Changes:
+- Updated Squirrel patch to read `rag_ime/debounce_ms`, debounce pending sidecar requests, and fingerprint request state.
+- Stale guard now checks request sequence, session, raw input, preedit, page, and first Rime candidate fingerprint.
+- Updated Rime sidecar merge policy so at most one model side candidate can be shown before RAG/memory side candidates.
+- Added OpenAI-compatible predictor extra body/header JSON knobs for Qwen/reasoning-compatible servers.
+- Updated Wisdom-Weasel issue map and Squirrel integration notes.
+
+Findings:
+- Wisdom-Weasel's useful pattern is async request sequence invalidation, but RAG-IME needs stricter frontend fingerprinting because RAG evidence and model results should not overwrite a changed Rime page.
+
+Commands:
+- `git apply --check squirrel-patches/0001-add-rag-ime-sidecar.patch` against Squirrel `2158538`
+- `swiftc -typecheck` for `RagImeSidecarModels.swift` and `RagImeSidecarClient.swift`
+- `scripts/prepare_squirrel_workspace.sh` using a local Squirrel clone
+
+Next:
+- Run `predict-benchmark` against a real local model; then evaluate base-prefix completion or llama.cpp KV/batch if latency is still high.
+
 ### 2026-07-01 00:12 CST
 Problem:
 - The project needs a concrete way to compare small local model choices for the short prediction lane.

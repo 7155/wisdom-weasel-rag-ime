@@ -2,6 +2,24 @@
 
 ### 2026-07-01
 Topic:
+- Convert Wisdom-Weasel/Squirrel research into stricter sidecar behavior.
+
+Decisions:
+- Keep Rime candidates first and do not mutate librime candidate internals.
+- Use debounce + request fingerprints in Squirrel because request sequence alone does not cover page/candidate changes.
+- Reserve side slots for RAG/memory by limiting model side candidates to one.
+
+Changes:
+- Updated Squirrel patch with `rag_ime/debounce_ms`, pending request cancellation, and stronger stale response guards.
+- Updated Python Rime sidecar merge policy and tests.
+- Added predictor extra body/header JSON knobs for OpenAI-compatible servers.
+- Updated Wisdom-Weasel issue map and Squirrel integration docs.
+
+Next steps:
+- Run benchmark against real local Qwen/llama.cpp/MLX endpoint and compare p50/max latency under the sidecar budget.
+
+### 2026-07-01
+Topic:
 - Add a repeatable local model prediction latency benchmark.
 
 Decisions:
