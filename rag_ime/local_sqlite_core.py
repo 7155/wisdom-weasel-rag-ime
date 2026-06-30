@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import OrderedDict
+from dataclasses import replace
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from .core_client import CoreMemory
@@ -26,9 +29,16 @@ class LocalSqliteCoreClient:
     rewritten when the shared core exposes stable record/action APIs.
     """
 
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, *, suggestion_cache_size: int = 128):
         self.db_path = Path(db_path)
         self.compiler = SuggestionCompiler()
+        self.suggestion_cache_size = max(0, int(suggestion_cache_size))
+        self._suggestion_cache: OrderedDict[tuple[str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
+        self._suggestion_cache_lock = RLock()
+        self._suggestion_cache_hits = 0
+        self._suggestion_cache_misses = 0
+        self._suggestion_cache_evictions = 0
+        self._suggestion_cache_invalidations = 0
 
     def initialize(self) -> None:
         with self._connect() as conn:
@@ -94,6 +104,7 @@ class LocalSqliteCoreClient:
                 """
             )
         self.initialize()
+        self._clear_suggestion_cache()
 
     def record_event(self, event: InputEvent) -> str:
         self.initialize()
@@ -138,6 +149,7 @@ class LocalSqliteCoreClient:
                 """,
                 (event_id, document, text, event.recent_context, event.project, " ".join(event.tags)),
             )
+        self._clear_suggestion_cache()
         return f"event:{event_id}"
 
     def suggest_for_input(
@@ -148,6 +160,15 @@ class LocalSqliteCoreClient:
         project: str = "",
         top_k: int = 5,
     ) -> list[InputSuggestion]:
+        cache_key = self._suggestion_cache_key(
+            current_input=current_input,
+            recent_context=recent_context,
+            project=project,
+            top_k=top_k,
+        )
+        cached = self._get_cached_suggestions(cache_key)
+        if cached is not None:
+            return cached
         memories = self.retrieve_memories(
             current_input=current_input,
             recent_context=recent_context,
@@ -155,7 +176,9 @@ class LocalSqliteCoreClient:
             top_k=max(top_k, 10),
         )
         ranked = [RankedMemory(memory=memory, score=memory.score, rank=index) for index, memory in enumerate(memories, start=1)]
-        return self.compiler.compile(ranked)[:top_k]
+        suggestions = self.compiler.compile(ranked)[:top_k]
+        self._store_cached_suggestions(cache_key, suggestions)
+        return _copy_suggestions(suggestions)
 
     def retrieve_memories(
         self,
@@ -209,6 +232,7 @@ class LocalSqliteCoreClient:
             )
             self._apply_state_update(conn, event_id, action.action_type, created_at)
             action_id = int(cur.lastrowid)
+        self._clear_suggestion_cache()
         return MemoryAction(
             action_id=action_id,
             created_at_ms=created_at,
@@ -299,6 +323,20 @@ class LocalSqliteCoreClient:
             row = conn.execute("SELECT COUNT(*) AS count FROM memory_actions").fetchone()
         return int(row["count"])
 
+    def suggestion_cache_stats(self) -> dict[str, object]:
+        with self._suggestion_cache_lock:
+            total = self._suggestion_cache_hits + self._suggestion_cache_misses
+            return {
+                "enabled": self.suggestion_cache_size > 0,
+                "size": len(self._suggestion_cache),
+                "maxSize": self.suggestion_cache_size,
+                "hits": self._suggestion_cache_hits,
+                "misses": self._suggestion_cache_misses,
+                "hitRate": (self._suggestion_cache_hits / total) if total else 0.0,
+                "evictions": self._suggestion_cache_evictions,
+                "invalidations": self._suggestion_cache_invalidations,
+            }
+
     def has_event_tag(self, tag: str) -> bool:
         self.initialize()
         needle = compact_whitespace(tag)
@@ -322,6 +360,51 @@ class LocalSqliteCoreClient:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
         return conn
+
+    def _suggestion_cache_key(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        project: str,
+        top_k: int,
+    ) -> tuple[str, str, str, int]:
+        return (
+            compact_whitespace(current_input),
+            compact_whitespace(recent_context),
+            compact_whitespace(project),
+            int(top_k),
+        )
+
+    def _get_cached_suggestions(self, key: tuple[str, str, str, int]) -> list[InputSuggestion] | None:
+        if self.suggestion_cache_size <= 0:
+            return None
+        with self._suggestion_cache_lock:
+            cached = self._suggestion_cache.get(key)
+            if cached is None:
+                self._suggestion_cache_misses += 1
+                return None
+            self._suggestion_cache.move_to_end(key)
+            self._suggestion_cache_hits += 1
+            return _copy_suggestions(cached)
+
+    def _store_cached_suggestions(self, key: tuple[str, str, str, int], suggestions: list[InputSuggestion]) -> None:
+        if self.suggestion_cache_size <= 0:
+            return
+        with self._suggestion_cache_lock:
+            self._suggestion_cache[key] = tuple(_copy_suggestions(suggestions))
+            self._suggestion_cache.move_to_end(key)
+            while len(self._suggestion_cache) > self.suggestion_cache_size:
+                self._suggestion_cache.popitem(last=False)
+                self._suggestion_cache_evictions += 1
+
+    def _clear_suggestion_cache(self) -> None:
+        if self.suggestion_cache_size <= 0:
+            return
+        with self._suggestion_cache_lock:
+            if self._suggestion_cache:
+                self._suggestion_cache_invalidations += 1
+            self._suggestion_cache.clear()
 
     def _search_rows(self, *, fts_query: str, project: str, limit: int) -> list[sqlite3.Row]:
         params: list[Any] = [fts_query]
@@ -467,3 +550,7 @@ def _tail_chars(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[-max_chars:]
+
+
+def _copy_suggestions(suggestions: list[InputSuggestion] | tuple[InputSuggestion, ...]) -> list[InputSuggestion]:
+    return [replace(item, metadata=dict(item.metadata)) for item in suggestions]

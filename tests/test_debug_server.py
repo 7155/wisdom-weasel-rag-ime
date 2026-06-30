@@ -55,6 +55,8 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertGreaterEqual(health["eventCount"], 1)
         self.assertEqual(health["rimeSuggestCache"]["ttlMs"], 400)
         self.assertEqual(health["rimeSuggestCache"]["hits"], 0)
+        self.assertTrue(health["suggestionCache"]["enabled"])
+        self.assertEqual(health["suggestionCache"]["hits"], 0)
         seeded = self.service.seed()
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)

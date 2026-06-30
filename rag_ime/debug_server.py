@@ -76,6 +76,7 @@ class DebugImeService:
                 "hits": self._rime_cache_hits,
                 "misses": self._rime_cache_misses,
             },
+            "suggestionCache": self._suggestion_cache_stats(),
         }
 
     def seed(self) -> dict[str, object]:
@@ -190,6 +191,10 @@ class DebugImeService:
     def _action_count(self) -> int | None:
         count = getattr(self.core, "action_count", None)
         return int(count()) if callable(count) else None
+
+    def _suggestion_cache_stats(self) -> dict[str, object] | None:
+        stats = getattr(self.core, "suggestion_cache_stats", None)
+        return stats() if callable(stats) else None
 
     def _cache_ttl_ms(self) -> int:
         return max(0, int(self.config.rime_cache_ttl_ms))

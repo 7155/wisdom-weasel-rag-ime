@@ -51,6 +51,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=os.environ.get("RAG_MEMORY_CORE_COMMAND", ""),
         help="JSON core command when --core-mode json.",
     )
+    parser.add_argument(
+        "--suggestion-cache-size",
+        type=int,
+        default=int(os.environ.get("RAG_IME_SUGGESTION_CACHE_SIZE", "128")),
+        help="Process-local local-core suggestion cache size. Use 0 to disable.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init-db", help="Initialize the local SQLite/FTS5 database")
@@ -458,7 +464,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
             results.append(evaluate_suggestions(case, suggestions, match=args.match))
-        print(json.dumps(eval_report(results), ensure_ascii=False, indent=2))
+        report = eval_report(results)
+        cache_stats = getattr(core, "suggestion_cache_stats", None)
+        if callable(cache_stats):
+            report["cacheStats"] = cache_stats()
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "predict-benchmark":
@@ -621,7 +631,7 @@ def _build_core(args):
         if not args.core_command:
             raise SystemExit("--core-command is required when --core-mode json")
         return JsonCommandCoreClient(shlex.split(args.core_command))
-    return LocalSqliteCoreClient(args.db_path)
+    return LocalSqliteCoreClient(args.db_path, suggestion_cache_size=args.suggestion_cache_size)
 
 
 def _read_json_payload(payload_file: str) -> dict[str, object]:

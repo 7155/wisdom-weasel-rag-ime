@@ -41,6 +41,40 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertTrue(all(item.evidence_preview for item in suggestions))
         self.assertTrue(all(item.metadata.get("memory_id", "").startswith("event:") for item in suggestions))
 
+    def test_suggestion_cache_hits_and_invalidates_on_write(self) -> None:
+        request = SuggestionRequest(
+            current_input="SQLite 和 FTS5 第一版",
+            recent_context="MVP 先 local-first, 先验证检索和排序",
+            top_k=5,
+        )
+        first = self.adapter.suggest(request)
+        after_first = self.core.suggestion_cache_stats()
+        second = self.adapter.suggest(request)
+        after_second = self.core.suggestion_cache_stats()
+        self.assertEqual([item.suggestion_id for item in first], [item.suggestion_id for item in second])
+        self.assertEqual(after_first["misses"], 1)
+        self.assertEqual(after_second["hits"], 1)
+        self.assertEqual(after_second["size"], 1)
+
+        self.adapter.commit_text("新的缓存失效事件", recent_context="cache invalidation")
+        after_commit = self.core.suggestion_cache_stats()
+        self.assertEqual(after_commit["size"], 0)
+        self.assertEqual(after_commit["invalidations"], 1)
+
+        self.adapter.suggest(request)
+        after_refill = self.core.suggestion_cache_stats()
+        self.assertEqual(after_refill["misses"], 2)
+        self.assertEqual(after_refill["size"], 1)
+
+    def test_suggestion_cache_eviction_uses_lru_bound(self) -> None:
+        core = LocalSqliteCoreClient(self.db_path, suggestion_cache_size=1)
+        adapter = InputMethodAdapter(core)
+        adapter.suggest(SuggestionRequest(current_input="FTS5", top_k=2))
+        adapter.suggest(SuggestionRequest(current_input="PROJECT_MEMORY_BLOCK", top_k=2))
+        stats = core.suggestion_cache_stats()
+        self.assertEqual(stats["size"], 1)
+        self.assertEqual(stats["evictions"], 1)
+
     def test_delete_pin_and_downrank_are_durable_actions(self) -> None:
         request = SuggestionRequest(
             current_input="SQLite 和 FTS5 第一版",
