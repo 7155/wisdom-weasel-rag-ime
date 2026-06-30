@@ -110,6 +110,26 @@ That increases cache hit rate and makes later evaluation easier.
 
 Wisdom-Weasel already proves that an IME can call an LLM for prediction.
 
+The verified source paths are:
+
+- `Wisdom-Weasel/RimeWithWeasel/RimeWithWeasel.cpp`: records committed text, enters LLM prediction mode, starts async prediction, drops stale results, and merges LLM candidates back into the candidate list.
+- `Wisdom-Weasel/WeaselServer/LLMProvider.cpp`: OpenAI-compatible provider that asks the model to output multiple candidates in one response.
+- `Wisdom-Weasel/WeaselServer/HFConstraintProvider.cpp`: local HTTP provider with `pinyin_constraints`.
+- `Wisdom-Weasel/WeaselServer/LlamaCppProvider.cpp`: local llama.cpp provider with system prompt KV cache reuse and batched multi-candidate sampling.
+
+I also checked official `rime/weasel` at `93eec2d` as the mature input-method baseline. The key separation there is:
+
+```text
+TSF / IME frontend
+  -> WeaselIPC client
+  -> RimeWithWeasel handler
+  -> librime session
+  -> serialized Context / CandidateInfo
+  -> WeaselUI candidate window
+```
+
+That boundary is important for RAG-IME: RAG should be an additional candidate/evidence source, not a replacement for the mature composition engine boundary.
+
 The relevant code path has three forms:
 
 ### OpenAI-Compatible Provider
@@ -153,6 +173,108 @@ It does not simply ask the model to print five words. It:
 6. limits each candidate to a small number of new tokens.
 
 This is the stronger path for local IME prediction because it reduces repeated prefill cost and can produce several alternatives without serially running the model five times.
+
+### Minimum Parity With Wisdom-Weasel
+
+RAG-IME should at least preserve the useful Wisdom-Weasel behavior:
+
+```text
+commit text
+  -> store recent context
+  -> async prediction request
+  -> stale request guard
+  -> merge model candidates into IME panel
+  -> number/click selection
+  -> selected candidate becomes new context
+```
+
+The next step is not to copy its memory design. Wisdom-Weasel keeps a short in-memory recent context and compresses old history into a tiny summary. RAG-IME should go further:
+
+```text
+Wisdom-Weasel:
+  recent text history + short compression
+
+RAG-IME:
+  local SQLite events
+  FTS / embedding retrieval
+  evidence-backed candidates
+  query-aware action feedback
+  stable Agent context blocks
+```
+
+The implementation lesson is that prediction must be asynchronous and cancellable. An input method cannot block keystrokes while retrieval, embedding, reranking, or model decoding is running.
+
+### What Official Weasel Teaches
+
+Official Weasel is useful even though it is Windows-specific.
+
+The transferable architecture is:
+
+- keep key event handling thin: key input is sent into the input engine, then UI is updated from a serialized context;
+- keep candidate data structured: candidate text, labels, comments, current page, highlight index, and status are separate fields;
+- keep UI layout separate from engine behavior: vertical, horizontal, and fullscreen candidate layouts read the same candidate structure;
+- keep IPC explicit: frontend processes send commands such as process key, commit, clear, select candidate, highlight candidate, change page;
+- update the candidate window from context snapshots, not from ad hoc UI state.
+
+For our macOS route, the equivalent should be:
+
+```text
+InputMethodKit controller
+  -> composition adapter
+  -> Rime/Squirrel-compatible candidate source later
+  -> RAG candidate source
+  -> unified InputSuggestion payload
+  -> compact AppKit panel
+```
+
+This avoids the main pitfall: building a one-off input box that cannot later support real Chinese composition, paging, labels, comments, inline preedit, focus changes, or app-specific quirks.
+
+## Local Small Model Route
+
+The first model lane should optimize for keystroke latency, not general chat quality.
+
+Current model candidates:
+
+```text
+confirmed speed baseline:
+  Qwen3-0.6B, text-generation, max_new_tokens 4-12
+
+confirmed balanced baseline:
+  Qwen3-1.7B, text-generation, max_new_tokens 4-16
+
+confirmed quality baseline:
+  Qwen3-4B, text-generation, only if latency and memory are acceptable
+
+Qwen3.5 candidates to verify:
+  Qwen3.5-0.8B / 2B / 4B
+
+The 2026-06-30 Hugging Face model API shows Qwen3.5 small repositories under the Qwen account, but the exact accessible text-only serving path still needs a local pull and benchmark.
+```
+
+The important settings for an IME are:
+
+- disable long reasoning or verbose chat behavior;
+- use text-only serving when the model card supports it;
+- cap `max_new_tokens` aggressively;
+- request multiple short candidates through one structured call or llama.cpp-style batch sampling;
+- keep the system prompt stable to preserve KV/cache reuse;
+- benchmark with p50/p95 latency, not only average speed.
+
+The first production-friendly route should be an OpenAI-compatible local server wrapper. That lets the macOS adapter call the same provider interface whether the backend is `llama.cpp`, vLLM, SGLang, Ollama, or a later custom batch sampler.
+
+If both embedding and a small LLM exceed Mac resources, the fallback architecture is:
+
+```text
+Mac:
+  IME UI
+  SQLite event store
+  FTS/BM25 fallback
+  optional 0.8B/2B predictor
+
+user-owned WSL machine:
+  embedding or rerank service
+  optional heavier model experiments
+```
 
 ## Our Architecture
 

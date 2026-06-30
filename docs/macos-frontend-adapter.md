@@ -20,10 +20,27 @@ This is more suitable than using only `IMKCandidates`.
 
 Therefore the first Mac frontend keeps the system IME shell minimal and puts the RAG-specific experience in `RagCandidatePanel`.
 
+Official `rime/weasel` should remain the composition-engine reference, while Wisdom-Weasel is the LLM-prediction reference:
+
+```text
+rime/weasel:
+  key event -> librime session -> Context / CandidateInfo -> candidate UI
+
+Wisdom-Weasel:
+  commit/recent context -> async LLM provider -> extra candidates -> candidate UI
+
+RAG-IME:
+  composition event -> RAG/memory candidate source -> model candidate source
+  -> unified InputSuggestion payload -> compact native panel
+```
+
+The macOS implementation should keep this separation. RAG suggestions should not be hard-wired into the key event loop or panel drawing code; they should be one candidate source behind the same adapter contract.
+
 References used for this adapter:
 
 - Apple InputMethodKit: <https://developer.apple.com/documentation/inputmethodkit>
 - macOS IMKit Swift sample: <https://github.com/ensan-hcl/macOS_IMKitSample_2021>
+- Rime Weasel: <https://github.com/rime/weasel>
 - Rime Squirrel: <https://github.com/rime/squirrel>
 - McBopomofo CandidateUI: <https://github.com/openvanilla/McBopomofo>
 - fcitx5-macos: <https://github.com/fcitx-contrib/fcitx5-macos>
@@ -162,3 +179,4 @@ For a real installed input method, `RAG_IME_REPO_ROOT` should point to this repo
 3. Add a preferences window for DB path, recording toggle, app blacklist, and panel theme.
 4. Integrate with Squirrel/Rime for mature Chinese composition while keeping RAG suggestions as a side candidate source.
 5. Add a WebView evidence browser for paragraph-level source inspection.
+6. Add an explicit provider interface for Wisdom-Weasel-style local prediction: OpenAI-compatible HTTP first, then llama.cpp batch sampling with KV reuse if latency requires it.
