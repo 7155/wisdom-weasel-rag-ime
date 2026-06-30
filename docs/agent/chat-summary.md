@@ -2,6 +2,23 @@
 
 ### 2026-07-01
 Topic:
+- Confirm VCP BM25 usage and fix RAG-IME SQLite FTS5 ranking.
+
+Decisions:
+- VCP should be treated as hybrid/vector-first inspiration, not a pure BM25 reference: main memory uses vector search plus TagMemo/rerank/cache; cold TDB knowledge can use hybrid search with BM25 sparse input and vector fallback.
+- RAG-IME keeps local FTS5/BM25 as a fast lexical baseline, then evolves toward hybrid retrieval and VCP-style memory governance.
+
+Changes:
+- Added `_bm25_relevance()` so negative SQLite FTS5 BM25 scores increase lexical ranking instead of being flattened.
+- Exposed the lexical contribution in suggestion reasons and added a regression test.
+
+Verification:
+- Local SQLite core regression passed: 11 tests.
+- Full suite passed: 64 tests.
+- `py_compile`, `git diff --check`, and fixture acceptance passed.
+
+### 2026-07-01
+Topic:
 - Add full-flow RAG vs model evaluation.
 
 Changes:

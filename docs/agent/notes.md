@@ -7,6 +7,39 @@
 
 ## Log
 
+### 2026-07-01 06:44 CST
+Problem:
+- Need to confirm whether VCP uses BM25 before copying retrieval assumptions into RAG-IME.
+- Local SQLite FTS5 `bm25()` returns lower-is-better scores, often negative; the old relevance conversion flattened all negative scores to the same boost.
+
+Findings:
+- `learnA/VCPToolBox/KnowledgeBaseManager.js` main diary/memory search is vector-first (`idx.search(searchVecFloat, k)`) with TagMemo boost, geodesic rerank, and vector cache reuse.
+- `learnA/VCPToolBox/TDBKnowledge.js` cold knowledge search computes query embedding first, then prefers `searchHybrid(queryVector, queryText, ..., hybridAlpha)` where `queryText` is documented as the BM25 sparse-retrieval input; it falls back to pure vector search if hybrid is unavailable.
+- RAG-IME should keep FTS5/BM25 as a fast lexical local baseline, but its long-term direction should be hybrid retrieval plus cache, rerank, evidence, and memory governance.
+
+Changes:
+- Converted SQLite FTS5 BM25 scores with `_bm25_relevance()`: negative scores now become positive lexical boosts using `log1p(-score)`, capped at `4.0`; non-negative scores keep reciprocal fallback.
+- Added the lexical value into suggestion metadata reason as `fts5:<score>` for debugging.
+- Added a regression test that verifies negative FTS5 BM25 affects ranking.
+
+Commands:
+- `git status -sb`
+- `git diff --stat`
+- `rg -n "BM25|bm25|embedding|Embedding|vector|Vector|TDB|cosine|keyword|关键词|tfidf|tf-idf|rank|score|检索|召回" VCPToolBox/TDBKnowledge.js VCPToolBox/KnowledgeBaseManager.js VCPToolBox/EmbeddingUtils.js VCPToolBox/TextChunker.js VCPToolBox/routes/admin/rag.js VCPToolBox/modules/contextManager.js`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_local_sqlite_core`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m py_compile rag_ime/local_sqlite_core.py tests/test_local_sqlite_core.py`
+- `git diff --check`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+
+Verification:
+- Local SQLite core regression passed: 11 tests.
+- Full suite passed: 64 tests.
+- `py_compile`, `git diff --check`, and fixture acceptance passed.
+
+Pitfalls:
+- SQLite FTS5 BM25 polarity is easy to invert: lower is better, and good matches can be negative. Treating negative values as `0` removes the signal.
+
 ### 2026-07-01 06:37 CST
 Problem:
 - RAG evaluation and model prediction evaluation were separate commands, so model selection still required manually comparing two reports.

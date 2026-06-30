@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from collections import OrderedDict
 from dataclasses import replace
@@ -458,7 +459,7 @@ class LocalSqliteCoreClient:
     def _row_to_memory(self, row: sqlite3.Row, *, query: str, project: str) -> CoreMemory:
         event_id = int(row["id"])
         bm25 = float(row["bm25_score"] if row["bm25_score"] is not None else 99.0)
-        lexical = 1.0 / (1.0 + max(0.0, bm25))
+        lexical = _bm25_relevance(bm25)
         overlap = overlap_terms(query, f"{row['committed_text']} {row['recent_context']} {row['tags_json']}")
         overlap_score = min(1.5, len(overlap) * 0.3)
         accepted = int(row["accepted_count"])
@@ -475,7 +476,7 @@ class LocalSqliteCoreClient:
             - skipped * 0.3
             - downranked * 0.85
         )
-        reason = ["fts5"]
+        reason = [f"fts5:{lexical:.3f}"]
         if overlap:
             reason.append("overlap:" + ",".join(overlap[:4]))
         if pinned:
@@ -550,6 +551,14 @@ def _tail_chars(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[-max_chars:]
+
+
+def _bm25_relevance(bm25_score: float) -> float:
+    """Convert SQLite FTS5 bm25, where lower and often negative is better, to a positive boost."""
+
+    if bm25_score < 0:
+        return min(4.0, math.log1p(-bm25_score))
+    return 1.0 / (1.0 + bm25_score)
 
 
 def _copy_suggestions(suggestions: list[InputSuggestion] | tuple[InputSuggestion, ...]) -> list[InputSuggestion]:
