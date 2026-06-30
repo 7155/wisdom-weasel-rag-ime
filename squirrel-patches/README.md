@@ -18,7 +18,24 @@ The patch is intentionally small and frontend-only:
 - records side-candidate commits and accepted RAG actions back to the local memory core;
 - drops stale sidecar responses by request sequence and current raw input.
 
-## Apply
+## Prepare A Patched Checkout
+
+Recommended:
+
+```bash
+cd /Volumes/undo\ 4t/git/learnA/wisdom-weasel-rag-ime
+scripts/prepare_squirrel_workspace.sh
+```
+
+This clones Squirrel into `/tmp/rag-ime-squirrel`, checks out `2158538`, applies the patch, runs `git diff --check`, typechecks the sidecar Swift files when `swiftc` is available, and writes:
+
+```text
+/tmp/rag-ime-squirrel/rag-ime.squirrel.custom.yaml
+```
+
+Copy that `rag_ime` block into Squirrel's `squirrel.yaml` while testing.
+
+Manual apply:
 
 ```bash
 git clone https://github.com/rime/squirrel /tmp/squirrel-rag-ime
