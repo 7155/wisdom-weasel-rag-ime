@@ -6,6 +6,7 @@ from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.agent_hook import build_first_run_injection
 from rag_ime.cli import run_acceptance
 from rag_ime.core_client import FixtureCoreClient
+from rag_ime.payloads import suggestions_response_payload
 from rag_ime.renderer import render_candidate_bar, render_expanded_evidence, render_terminal_panel
 from rag_ime.scenarios import SCENARIOS, get_scenario
 from rag_ime.suggestion_compiler import classify_suggestion
@@ -122,6 +123,31 @@ class InputMethodAdapterTests(unittest.TestCase):
         self.assertIn("insert_text", structure.metadata)
         self.assertIn("sources", structure.metadata)
         self.assertLessEqual(len(structure.surface_text), 42)
+
+    def test_native_frontend_payload_is_stable_json_shape(self) -> None:
+        scenario = get_scenario("technical-plan")
+        suggestions = self.adapter.suggest(
+            SuggestionRequest(
+                current_input=scenario.current_input,
+                recent_context=scenario.recent_context,
+                project=scenario.project,
+                top_k=2,
+            )
+        )
+        payload = suggestions_response_payload(
+            current_input=scenario.current_input,
+            recent_context=scenario.recent_context,
+            project=scenario.project,
+            suggestions=suggestions,
+        )
+        self.assertEqual(payload["schemaVersion"], "rag-ime.suggestions.v1")
+        first = payload["suggestions"][0]
+        self.assertIn("suggestionId", first)
+        self.assertIn("surfaceText", first)
+        self.assertIn("insertText", first)
+        self.assertIn("memoryId", first)
+        self.assertIn("evidencePreview", first)
+        self.assertIn("actions", first)
 
     def test_suggestion_type_classification(self) -> None:
         self.assertEqual(classify_suggestion("固定短语"), "phrase")

@@ -18,6 +18,7 @@ This repo should focus on:
 - evidence preview / expanded evidence UI prototype;
 - pin / downrank / delete action wiring;
 - Agent first-run context hook;
+- macOS InputMethodKit frontend adapter;
 - Mac-local acceptance scenarios.
 
 This repo should not duplicate:
@@ -41,7 +42,8 @@ See `docs/shared-core-adapter-contract.md` for the shared-core requirements.
 ## Planned Runtime Shape
 
 ```text
-macOS input adapter / CLI prototype
+macOS InputMethodKit adapter / CLI prototype
+  -> Swift RagBridgeClient JSON command
   -> LocalSqliteCoreClient or shared rag-memory core API/JSON CLI
   -> SQLite/FTS5 personal memory
   -> RetrievedMemory[]
@@ -109,6 +111,30 @@ Inspect trigger policy:
 python3 -m rag_ime.cli trigger-demo "这个项目" --idle-ms 300
 ```
 
+Build the macOS frontend adapter:
+
+```bash
+scripts/build_macos_frontend.sh
+```
+
+Verify the Swift frontend can call the Python RAG backend:
+
+```bash
+build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-json
+```
+
+Open the native AppKit candidate panel preview:
+
+```bash
+build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-panel
+```
+
+Install the local input method app:
+
+```bash
+scripts/install_macos_frontend.sh
+```
+
 Use a future shared-core JSON command:
 
 ```bash
@@ -133,6 +159,9 @@ Implemented in this repo:
 - evidence preview and expanded evidence panel text;
 - pin/downrank/delete action wiring;
 - Agent first-run hook wrapper;
+- macOS InputMethodKit shell;
+- AppKit `NSPanel` candidate/evidence overlay;
+- Swift-to-Python JSON bridge;
 - three realistic UI scenarios;
 - unittest and acceptance script.
 
@@ -146,12 +175,21 @@ The local SQLite client is the Mac MVP backend. It can be replaced by the shared
 
 ## macOS Frontend Route
 
+Implemented route:
+
 1. Keep this CLI adapter as the product contract and test harness.
-2. Add a small local daemon or JSON command that wraps the shared RAG/memory core.
+2. Add `suggest-json` and `action-json` as the native frontend protocol.
 3. Build a macOS InputMethodKit prototype that captures committed text and calls:
    - `record_event` after commit;
    - `suggest_for_input` while preedit/current context changes;
    - `apply_action` when the user accepts, pins, downranks, or deletes a suggestion.
 4. Render a normal candidate bar for short suggestions.
 5. Render evidence preview in an expanded panel or WebView-style overlay.
-6. Keep Rime/Squirrel/Wisdom-Weasel integration as the next bridge after the adapter contract is stable.
+
+Next route:
+
+1. Package the Python backend or replace it with a local daemon.
+2. Anchor the panel to the target app caret instead of mouse-position fallback.
+3. Keep Rime/Squirrel/Wisdom-Weasel integration as the next bridge after the adapter contract is stable.
+
+See `docs/macos-frontend-adapter.md` for the macOS frontend research and implementation notes.
