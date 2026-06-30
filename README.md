@@ -135,6 +135,8 @@ export RAG_IME_RIME_CACHE_TTL_MS=400
 
 Set it to `0` while debugging cache behavior.
 
+`/rime-suggest` also returns a `triggerDecision`. Rime candidates are always preserved, but model/RAG side candidates are skipped for raw pinyin fallback, unstable composing updates, or full visible Rime candidate pages. This is the backend safety valve that prevents the local model and retrieval stack from running on every key event.
+
 Install it as a user LaunchAgent so it starts at login:
 
 ```bash

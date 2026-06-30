@@ -9,6 +9,7 @@ const state = {
   suggestions: [],
   modelPredictions: [],
   historyContext: "",
+  rimeSidecar: null,
   health: null,
   lastPayload: null,
   timer: 0,
@@ -162,6 +163,18 @@ function render() {
       })),
       modelPredictions: state.modelPredictions,
       historyContext: state.historyContext,
+      rimeSidecar: state.rimeSidecar
+        ? {
+            queryBasis: state.rimeSidecar.queryBasis,
+            triggerDecision: state.rimeSidecar.triggerDecision,
+            cache: state.rimeSidecar.cache || null,
+            displayCandidates: (state.rimeSidecar.displayCandidates || []).map((item) => ({
+              label: item.label,
+              text: item.text,
+              sourceType: item.sourceType,
+            })),
+          }
+        : null,
       rimeSuggestCache: state.health?.rimeSuggestCache || null,
     },
     null,
@@ -182,6 +195,7 @@ async function suggestNow() {
   if (!query) {
     state.modelPredictions = [];
     state.historyContext = "";
+    state.rimeSidecar = null;
     state.suggestions = fallbackSuggestions;
     render();
     return;
@@ -208,18 +222,53 @@ async function suggestNow() {
     state.modelPredictions = Array.isArray(payload.modelPredictions) ? payload.modelPredictions : [];
     state.historyContext = payload.historyContext || "";
     state.suggestions = payload.suggestions?.length ? payload.suggestions : fallbackSuggestions;
+    state.rimeSidecar = await probeRimeSidecar(query);
     state.apiOnline = true;
     elements.latencyMeta.textContent = `${Math.round(performance.now() - started)}ms`;
   } catch (error) {
     state.apiOnline = false;
     state.modelPredictions = [];
     state.historyContext = "";
+    state.rimeSidecar = null;
     state.suggestions = fallbackSuggestions;
     elements.latencyMeta.textContent = "mock";
   } finally {
     window.setTimeout(() => setPipeline(""), 180);
     render();
   }
+}
+
+async function probeRimeSidecar(query) {
+  const candidates = shortCandidates(query)
+    .slice(0, 2)
+    .map((item, index) => ({
+      label: String(index + 1),
+      text: item,
+      comment: "debug-rime",
+      index,
+    }));
+  const response = await fetch("/api/rime-suggest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionId: "debug-page",
+      requestSeq: Date.now(),
+      rawInput: query,
+      preedit: query,
+      committedContext: state.committed.slice(-220),
+      idleMs: 0,
+      maxVisibleCandidates: 6,
+      maxSideCandidates: 2,
+      rimeContext: {
+        candidates,
+        highlightedIndex: 0,
+        page: 0,
+        isLastPage: true,
+      },
+    }),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
 }
 
 function debounceSuggest() {

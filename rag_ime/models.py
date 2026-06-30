@@ -97,6 +97,8 @@ class RimeContextSnapshot:
     latency_budget_ms: int = 150
     max_visible_candidates: int = 8
     max_side_candidates: int = 3
+    idle_ms: int = 0
+    force_side_candidates: bool = False
 
 
 @dataclass(frozen=True)

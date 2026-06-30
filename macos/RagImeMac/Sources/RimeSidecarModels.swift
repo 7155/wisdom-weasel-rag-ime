@@ -35,6 +35,7 @@ struct RimeSidecarResponse: Codable {
     let committedContext: String
     let semanticQuery: String
     let queryBasis: String
+    let triggerDecision: RimeTriggerDecision?
     let historyContext: String
     let latencyBudgetMs: Int
     let rimeContext: RimeContextPayload
@@ -43,6 +44,14 @@ struct RimeSidecarResponse: Codable {
     let displayCandidates: [RimeDisplayCandidate]
     let selectionActions: RimeSelectionActions
     let mergePolicy: RimeMergePolicy
+}
+
+struct RimeTriggerDecision: Codable {
+    let shouldRefresh: Bool
+    let reason: String
+    let idleMs: Int
+    let semanticSignalLength: Int
+    let forceSideCandidates: Bool
 }
 
 struct RimeDisplayCandidate: Codable, Hashable {
@@ -70,5 +79,8 @@ struct RimeMergePolicy: Codable {
     let rimeFirst: Bool
     let maxVisibleCandidates: Int
     let maxSideCandidates: Int
+    let maxModelSideCandidates: Int?
+    let ragKeepsRemainingSideSlots: Bool?
     let rawPinyinFallback: Bool
+    let sideCandidatesEnabled: Bool?
 }

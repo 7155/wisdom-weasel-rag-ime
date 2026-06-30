@@ -360,6 +360,7 @@ index 0000000..483264c
 +  let committedContext: String
 +  let semanticQuery: String
 +  let queryBasis: String
++  let triggerDecision: RagImeTriggerDecision?
 +  let historyContext: String
 +  let latencyBudgetMs: Int
 +  let rimeContext: RagImeRimeContextPayload
@@ -368,6 +369,14 @@ index 0000000..483264c
 +  let displayCandidates: [RagImeDisplayCandidate]
 +  let selectionActions: RagImeSelectionActions
 +  let mergePolicy: RagImeMergePolicy
++}
++
++struct RagImeTriggerDecision: Codable {
++  let shouldRefresh: Bool
++  let reason: String
++  let idleMs: Int
++  let semanticSignalLength: Int
++  let forceSideCandidates: Bool
 +}
 +
 +struct RagImeModelPrediction: Codable, Hashable {
@@ -418,7 +427,10 @@ index 0000000..483264c
 +  let rimeFirst: Bool
 +  let maxVisibleCandidates: Int
 +  let maxSideCandidates: Int
++  let maxModelSideCandidates: Int?
++  let ragKeepsRemainingSideSlots: Bool?
 +  let rawPinyinFallback: Bool
++  let sideCandidatesEnabled: Bool?
 +}
 +
 +enum RagImeJSONValue: Codable, Hashable {

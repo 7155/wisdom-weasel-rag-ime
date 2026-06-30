@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from .adapter import InputMethodAdapter, SuggestionRequest
@@ -20,6 +21,12 @@ from .text_utils import compact_whitespace
 RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
 
 
+@dataclass(frozen=True)
+class RimeSideCandidateTriggerDecision:
+    should_refresh: bool
+    reason: str
+
+
 def build_rime_sidecar_response(
     *,
     payload: dict[str, Any],
@@ -30,12 +37,17 @@ def build_rime_sidecar_response(
 ) -> dict[str, object]:
     snapshot = parse_rime_context_payload(payload, default_project=default_project)
     semantic_query, query_basis = choose_semantic_query(snapshot)
-    prediction_context = build_prediction_context(
-        core,
-        explicit_recent_context=snapshot.committed_context,
-        project=snapshot.project or default_project,
+    trigger_decision = decide_side_candidate_refresh(
+        snapshot=snapshot,
+        semantic_query=semantic_query,
+        query_basis=query_basis,
     )
-    if snapshot.max_side_candidates > 0:
+    if trigger_decision.should_refresh:
+        prediction_context = build_prediction_context(
+            core,
+            explicit_recent_context=snapshot.committed_context,
+            project=snapshot.project or default_project,
+        )
         model_predictions = predictor.predict(
             current_input=semantic_query,
             recent_context=prediction_context,
@@ -50,6 +62,7 @@ def build_rime_sidecar_response(
             )
         )
     else:
+        prediction_context = ""
         model_predictions = []
         suggestions = []
     display_candidates = merge_display_candidates(
@@ -68,6 +81,13 @@ def build_rime_sidecar_response(
         "committedContext": snapshot.committed_context,
         "semanticQuery": semantic_query,
         "queryBasis": query_basis,
+        "triggerDecision": {
+            "shouldRefresh": trigger_decision.should_refresh,
+            "reason": trigger_decision.reason,
+            "idleMs": snapshot.idle_ms,
+            "semanticSignalLength": semantic_signal_length(semantic_query),
+            "forceSideCandidates": snapshot.force_side_candidates,
+        },
         "historyContext": prediction_context,
         "latencyBudgetMs": snapshot.latency_budget_ms,
         "rimeContext": rime_context_to_payload(snapshot),
@@ -85,6 +105,7 @@ def build_rime_sidecar_response(
             "maxModelSideCandidates": max_model_side_candidates(snapshot.max_side_candidates),
             "ragKeepsRemainingSideSlots": True,
             "rawPinyinFallback": query_basis == "rawInputFallback",
+            "sideCandidatesEnabled": trigger_decision.should_refresh,
         },
     }
 
@@ -125,6 +146,11 @@ def parse_rime_context_payload(payload: dict[str, Any], *, default_project: str)
         latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=150, minimum=30, maximum=2000),
         max_visible_candidates=_bounded_int(payload.get("maxVisibleCandidates"), default=8, minimum=1, maximum=10),
         max_side_candidates=_bounded_int(payload.get("maxSideCandidates"), default=3, minimum=0, maximum=6),
+        idle_ms=_bounded_int(_first_present(payload, rime_context, "idleMs"), default=0, minimum=0, maximum=10000),
+        force_side_candidates=_bool(
+            _first_present(payload, rime_context, "forceSideCandidates"),
+            default=False,
+        ),
     )
 
 
@@ -143,6 +169,67 @@ def choose_semantic_query(snapshot: RimeContextSnapshot) -> tuple[str, str]:
     if context:
         return context[-240:], "committedContext"
     return raw_input, "rawInputFallback"
+
+
+def decide_side_candidate_refresh(
+    *,
+    snapshot: RimeContextSnapshot,
+    semantic_query: str,
+    query_basis: str,
+) -> RimeSideCandidateTriggerDecision:
+    """Decide whether this Rime refresh should call model/RAG side lanes.
+
+    Squirrel can refresh the candidate panel on nearly every composing event.
+    Rime candidates should always render, but local model and RAG work should
+    wait until there is a stable semantic signal instead of raw pinyin noise.
+    """
+
+    if snapshot.max_side_candidates <= 0:
+        return RimeSideCandidateTriggerDecision(False, "skip: side candidates disabled")
+
+    visible_side_slots = max(0, snapshot.max_visible_candidates - min(len(snapshot.candidates), snapshot.max_visible_candidates))
+    if visible_side_slots <= 0:
+        return RimeSideCandidateTriggerDecision(False, "skip: no visible side slot")
+
+    if snapshot.force_side_candidates:
+        return RimeSideCandidateTriggerDecision(True, "force: explicit side candidate refresh")
+
+    signal_len = semantic_signal_length(semantic_query)
+    if signal_len <= 0:
+        return RimeSideCandidateTriggerDecision(False, "skip: empty semantic signal")
+
+    if query_basis == "rawInputFallback":
+        return RimeSideCandidateTriggerDecision(False, "skip: raw pinyin fallback")
+
+    composing_without_rime_candidate = bool(compact_whitespace(snapshot.raw_input)) and not snapshot.candidates
+    if composing_without_rime_candidate and query_basis == "committedContext":
+        return RimeSideCandidateTriggerDecision(False, "skip: composing without stable Rime candidate")
+
+    if query_basis == "commitTextPreview" and signal_len >= 2:
+        return RimeSideCandidateTriggerDecision(True, "refresh: commit preview")
+
+    if query_basis == "rimeCandidates":
+        if signal_len >= 3:
+            return RimeSideCandidateTriggerDecision(True, "refresh: stable Rime candidates")
+        if snapshot.idle_ms >= 300 and signal_len >= 2:
+            return RimeSideCandidateTriggerDecision(True, "refresh: idle short Rime candidate")
+        return RimeSideCandidateTriggerDecision(False, "skip: Rime candidate signal too short")
+
+    if query_basis == "preedit":
+        if snapshot.idle_ms >= 300 and signal_len >= 4:
+            return RimeSideCandidateTriggerDecision(True, "refresh: idle semantic preedit")
+        return RimeSideCandidateTriggerDecision(False, "skip: preedit not stable enough")
+
+    if query_basis == "committedContext":
+        if snapshot.idle_ms >= 300 and signal_len >= 4:
+            return RimeSideCandidateTriggerDecision(True, "refresh: idle committed context")
+        return RimeSideCandidateTriggerDecision(False, "skip: waiting for active composition signal")
+
+    return RimeSideCandidateTriggerDecision(False, "skip: unsupported query basis")
+
+
+def semantic_signal_length(text: str) -> int:
+    return sum(1 for char in compact_whitespace(text) if not char.isspace())
 
 
 def merge_display_candidates(
@@ -310,3 +397,9 @@ def _bool(value: object, *, default: bool) -> bool:
         if lowered in ("false", "0", "no"):
             return False
     return default
+
+
+def _first_present(primary: dict[str, Any], fallback: dict[str, Any], key: str) -> object:
+    if key in primary:
+        return primary.get(key)
+    return fallback.get(key)
