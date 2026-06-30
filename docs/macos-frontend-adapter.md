@@ -232,6 +232,26 @@ Uninstall:
 scripts/uninstall_sidecar_launch_agent.sh
 ```
 
+## Prepare Patched Squirrel
+
+Prepare a disposable Squirrel checkout with the RAG-IME patch applied:
+
+```bash
+scripts/prepare_squirrel_workspace.sh
+```
+
+The script checks out Squirrel `2158538`, applies `squirrel-patches/0001-add-rag-ime-sidecar.patch`, runs lightweight checks, and writes:
+
+```text
+/tmp/rag-ime-squirrel/rag-ime.squirrel.custom.yaml
+```
+
+Copy the `rag_ime` block from that file into Squirrel's `squirrel.yaml`, then build/install Squirrel with Xcode. The generated config points `rag_ime/sidecar_url` at the default LaunchAgent URL:
+
+```text
+http://127.0.0.1:8766/api
+```
+
 ## Environment
 
 The app reads these optional environment variables:

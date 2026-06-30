@@ -197,15 +197,13 @@ Verify the Swift frontend can call and decode the Squirrel/Rime side-candidate c
 build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-sidecar-json
 ```
 
-Apply the first Squirrel frontend patch pack:
+Prepare a patched Squirrel checkout:
 
 ```bash
-git clone https://github.com/rime/squirrel /tmp/squirrel-rag-ime
-cd /tmp/squirrel-rag-ime
-git checkout 2158538
-git apply /Volumes/undo\ 4t/git/learnA/wisdom-weasel-rag-ime/squirrel-patches/0001-add-rag-ime-sidecar.patch
-git diff --check
+scripts/prepare_squirrel_workspace.sh
 ```
+
+This creates `/tmp/rag-ime-squirrel`, applies the Squirrel patch, runs local checks, and writes `rag-ime.squirrel.custom.yaml` with the `rag_ime` config block to copy into Squirrel's `squirrel.yaml`.
 
 Preview the Squirrel/Rime side-candidate contract:
 

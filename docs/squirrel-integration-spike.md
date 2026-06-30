@@ -10,7 +10,11 @@ Patch pack:
 squirrel-patches/0001-add-rag-ime-sidecar.patch
 ```
 
-It applies to Squirrel `2158538` and keeps the integration fail-closed behind `rag_ime/enabled`.
+It applies to Squirrel `2158538` and keeps the integration fail-closed behind `rag_ime/enabled`. Use the helper script to prepare a disposable patched checkout:
+
+```bash
+scripts/prepare_squirrel_workspace.sh
+```
 
 ## Source Boundary
 

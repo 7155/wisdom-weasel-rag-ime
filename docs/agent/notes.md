@@ -50,6 +50,26 @@ Commands:
 Next:
 - Full Xcode build/install of patched Squirrel remains the next hard gate.
 
+### 2026-06-30 23:15 CST
+Problem:
+- Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.
+
+Changes:
+- Added `scripts/prepare_squirrel_workspace.sh`.
+- The script clones/checks out Squirrel `2158538`, applies the patch, runs lightweight checks, and writes `rag-ime.squirrel.custom.yaml`.
+- README, Squirrel patch notes, and macOS frontend notes now point to this script.
+
+Commands:
+- `bash -n scripts/prepare_squirrel_workspace.sh`
+- `RAG_IME_SQUIRREL_DRY_RUN=1 scripts/prepare_squirrel_workspace.sh`
+- `RAG_IME_SQUIRREL_REPO_URL=/tmp/rag-ime-research/squirrel scripts/prepare_squirrel_workspace.sh`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `scripts/build_macos_frontend.sh`
+
+Next:
+- Run the prepared checkout through full Xcode build/install and real typing.
+
 ### 2026-06-30 23:08 CST
 Problem:
 - A usable Squirrel integration needs the HTTP sidecar to survive login/restart, not a manually started terminal process.

@@ -64,3 +64,21 @@ Verification:
 
 Next steps:
 - Build/install patched Squirrel with Xcode and test real typing against `http://127.0.0.1:8766/api`.
+
+### 2026-06-30
+Topic:
+- Make patched Squirrel checkout preparation repeatable.
+
+Changes:
+- Added `scripts/prepare_squirrel_workspace.sh`.
+- Added a dry-run unit test for the prepare script.
+- Updated README, Squirrel patch notes, and macOS frontend notes to use the prepare script.
+
+Verification:
+- 37 Python unit tests passed.
+- Prepare script dry-run passed.
+- Real prepare was tested against local Squirrel source and generated `rag-ime.squirrel.custom.yaml`.
+- Fixture acceptance and macOS prototype build passed.
+
+Next steps:
+- Use `/tmp/rag-ime-squirrel` on an Xcode machine to build/install patched Squirrel and test real typing.
