@@ -43,7 +43,7 @@ new file mode 100644
 index 0000000..96828e6
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,326 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -119,6 +119,56 @@ index 0000000..96828e6
 +  ) throws {
 +    let insertText = candidate.insertText.isEmpty ? candidate.text : candidate.insertText
 +    guard !Self.trimmed(insertText).isEmpty else { return }
++    let selectionPayload = RagImeSelectionPayload(
++      candidate: candidate,
++      query: query,
++      recentContext: recentContext,
++      committedContext: recentContext,
++      preedit: preedit,
++      project: project,
++      source: "squirrel_rime_sidecar",
++      app: "squirrel"
++    )
++    if let sidecarURL {
++      do {
++        _ = try postJSON(selectionPayload, to: endpoint("rime-select", base: sidecarURL))
++        return
++      } catch {
++        print("RAG IME rime-select failed, falling back to legacy commit/action: \(error)")
++      }
++    } else {
++      do {
++        let requestFile = FileManager.default.temporaryDirectory
++          .appendingPathComponent("rag-ime-selection-\(UUID().uuidString).json")
++        let requestData = try JSONEncoder().encode(selectionPayload)
++        try requestData.write(to: requestFile, options: .atomic)
++        defer { try? FileManager.default.removeItem(at: requestFile) }
++        _ = try runCli([
++          "rime-select-json",
++          "--payload-file",
++          requestFile.path,
++        ])
++        return
++      } catch {
++        print("RAG IME rime-select CLI failed, falling back to legacy commit/action: \(error)")
++      }
++    }
++    try recordSideCandidateCommitLegacy(
++      candidate,
++      insertText: insertText,
++      query: query,
++      recentContext: recentContext,
++      preedit: preedit
++    )
++  }
++
++  func recordSideCandidateCommitLegacy(
++    _ candidate: RagImeDisplayCandidate,
++    insertText: String,
++    query: String,
++    recentContext: String,
++    preedit: String
++  ) throws {
 +    let commitPayload = RagImeCommitPayload(
 +      text: insertText,
 +      recentContext: recentContext,
@@ -181,6 +231,17 @@ index 0000000..96828e6
 +      ])
 +    }
 +  }
++}
++
++struct RagImeSelectionPayload: Encodable {
++  let candidate: RagImeDisplayCandidate
++  let query: String
++  let recentContext: String
++  let committedContext: String
++  let preedit: String
++  let project: String
++  let source: String
++  let app: String
 +}
 +
 +struct RagImeCommitPayload: Encodable {
@@ -314,7 +375,7 @@ new file mode 100644
 index 0000000..483264c
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,161 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel

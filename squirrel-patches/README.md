@@ -15,7 +15,7 @@ The patch is intentionally small and frontend-only:
 - uses a long-running HTTP sidecar when `rag_ime/sidecar_url` is configured, with CLI fallback;
 - adds a display-list merge after Squirrel has already read Rime candidates;
 - routes selection by display metadata, so Rime candidates still call `select_candidate_on_current_page` and side candidates insert `insertText` directly;
-- records side-candidate commits and accepted RAG actions back to the local memory core;
+- records side-candidate commits and accepted RAG actions back to the local memory core through `/rime-select`;
 - drops stale sidecar responses by request sequence and current raw input.
 
 ## Prepare A Patched Checkout
@@ -132,4 +132,4 @@ When the user accepts a side candidate, the patch records:
 - a `commit` event tagged with `squirrel` and `rime-sidecar`;
 - an `action-json accepted` event when the candidate came from RAG memory and has `memoryId`, `suggestionId`, and `sourceEventId`.
 
-These calls run in the background after insertion and fail closed so they do not block typing. With `sidecar_url`, they are HTTP POSTs to the long-running sidecar; without it, they use CLI fallback.
+These writes run in the background after insertion and fail closed so they do not block typing. With `sidecar_url`, the preferred path is one HTTP `POST /rime-select` call. Without HTTP, the patch uses `python -m rag_ime.cli rime-select-json`. The older `commit` plus `action-json accepted` path remains as a compatibility fallback if `/rime-select` fails.

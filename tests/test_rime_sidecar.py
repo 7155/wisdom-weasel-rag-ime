@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 
@@ -267,6 +269,43 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["schemaVersion"], "rag-ime.rime-sidecar.v1")
         self.assertEqual(response["sessionId"], "cli-s1")
         self.assertEqual(response["displayCandidates"][0]["sourceType"], "rime")
+
+    def test_cli_rime_select_json_records_side_candidate_commit(self) -> None:
+        payload = {
+            "candidate": {
+                "label": "3",
+                "text": "统一选择写回",
+                "insertText": "统一选择写回接口",
+                "sourceType": "model",
+                "selectionAction": "commit_side_candidate",
+                "sourceIndex": 0,
+            },
+            "query": "选择写回",
+            "recentContext": "Squirrel fallback",
+            "preedit": "xuanze",
+        }
+        with tempfile.TemporaryDirectory(prefix="rag-ime-rime-select-") as tmp:
+            db_path = f"{tmp}/select.sqlite"
+            stdin = io.StringIO(json.dumps(payload, ensure_ascii=False))
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                old_stdin = sys.stdin
+                try:
+                    sys.stdin = stdin
+                    code = main(["--db-path", db_path, "rime-select-json"])
+                finally:
+                    sys.stdin = old_stdin
+            self.assertEqual(code, 0)
+            response = json.loads(stdout.getvalue())
+            self.assertEqual(response["schemaVersion"], "rag-ime.rime-selection.v1")
+            self.assertEqual(response["insertText"], "统一选择写回接口")
+            self.assertFalse(response["recordedAction"])
+            with sqlite3.connect(db_path) as conn:
+                row = conn.execute(
+                    "SELECT committed_text, candidate_rank, source FROM input_events WHERE committed_text = ?",
+                    ("统一选择写回接口",),
+                ).fetchone()
+            self.assertEqual(row, ("统一选择写回接口", 3, "squirrel_rime_sidecar"))
 
 
 if __name__ == "__main__":

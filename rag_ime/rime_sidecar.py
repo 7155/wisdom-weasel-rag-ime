@@ -8,14 +8,15 @@ from .core_client import CoreClient
 from .history_context import build_prediction_context
 from .models import (
     InputSuggestion,
+    MemoryAction,
     ModelPrediction,
     RimeCandidate,
     RimeContextSnapshot,
     SideCandidateDisplayItem,
 )
-from .payloads import model_prediction_to_payload, suggestion_to_payload
+from .payloads import action_response_payload, model_prediction_to_payload, suggestion_to_payload
 from .predictor import PredictionProvider
-from .text_utils import compact_whitespace
+from .text_utils import compact_whitespace, now_ms
 
 
 RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
@@ -107,6 +108,87 @@ def build_rime_sidecar_response(
             "rawPinyinFallback": query_basis == "rawInputFallback",
             "sideCandidatesEnabled": trigger_decision.should_refresh,
         },
+    }
+
+
+def record_rime_side_candidate_selection(
+    *,
+    payload: dict[str, Any],
+    adapter: InputMethodAdapter,
+    core: CoreClient,
+    default_project: str = "wisdom-weasel-rag-ime",
+) -> dict[str, object]:
+    candidate = _candidate_payload(payload)
+    insert_text = (
+        _string(candidate.get("insertText"))
+        or _string(candidate.get("insert_text"))
+        or _string(candidate.get("text"))
+        or _string(payload.get("insertText"))
+    ).strip()
+    if not insert_text:
+        raise ValueError("candidate insertText/text must not be empty")
+
+    source_type = _string(candidate.get("sourceType") or candidate.get("source_type")) or "side"
+    project = _string(payload.get("project")) or default_project
+    query = _string(payload.get("query") or payload.get("semanticQuery"))
+    recent_context = _string(payload.get("recentContext") or payload.get("committedContext"))
+    preedit = _string(payload.get("preedit"))
+    label = _string(candidate.get("label"))
+    candidate_rank = _candidate_rank(label)
+    tags = tuple(
+        item
+        for item in (
+            "squirrel",
+            "rime-sidecar",
+            f"source:{source_type}" if source_type else "",
+        )
+        if item
+    )
+    event_id = adapter.commit_text(
+        insert_text,
+        recent_context=recent_context,
+        preedit=preedit,
+        schema_id="rime_sidecar",
+        app=_string(payload.get("app")) or "squirrel",
+        project=project,
+        source=_string(payload.get("source")) or "squirrel_rime_sidecar",
+        candidate_rank=candidate_rank,
+        provider_name=_string(payload.get("providerName")) or f"rime-sidecar:{source_type}",
+        tags=tags,
+    )
+
+    action_payload: dict[str, object] | None = None
+    memory_id = _string(candidate.get("memoryId") or candidate.get("memory_id"))
+    suggestion_id = _string(candidate.get("suggestionId") or candidate.get("suggestion_id"))
+    source_event_id = _optional_int(candidate.get("sourceEventId") or candidate.get("source_event_id"))
+    if source_type == "rag" and memory_id and suggestion_id and source_event_id is not None:
+        action = core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=now_ms(),
+                memory_id=memory_id,
+                action_type="accepted",
+                query=query,
+                suggestion_id=suggestion_id,
+                source_event_id=source_event_id,
+                metadata={
+                    "surface_text": _string(candidate.get("text")) or insert_text,
+                    "insert_text": insert_text,
+                    "source": "rime-sidecar-select",
+                },
+            )
+        )
+        action_payload = action_response_payload(action)
+
+    return {
+        "schemaVersion": "rag-ime.rime-selection.v1",
+        "ok": True,
+        "eventId": event_id,
+        "project": project,
+        "sourceType": source_type,
+        "insertText": insert_text,
+        "recordedAction": action_payload is not None,
+        "action": action_payload,
     }
 
 
@@ -387,6 +469,16 @@ def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> 
     return max(minimum, min(maximum, parsed))
 
 
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
 def _bool(value: object, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -403,3 +495,20 @@ def _first_present(primary: dict[str, Any], fallback: dict[str, Any], key: str) 
     if key in primary:
         return primary.get(key)
     return fallback.get(key)
+
+
+def _candidate_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    candidate = payload.get("candidate") or payload.get("displayCandidate")
+    if not isinstance(candidate, dict):
+        raise ValueError("candidate must be a JSON object")
+    return candidate
+
+
+def _candidate_rank(label: str) -> int | None:
+    if not label:
+        return None
+    if label == "0":
+        return 10
+    if label.isdigit():
+        return int(label)
+    return None

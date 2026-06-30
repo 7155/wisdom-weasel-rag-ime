@@ -181,6 +181,60 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(committed["ok"])
         self.assertTrue(str(committed["eventId"]).startswith("event:"))
 
+    def test_rime_select_records_commit_and_rag_action(self) -> None:
+        before_actions = self.service.core.action_count()
+        response = self.service.rime_suggest(
+            {
+                "sessionId": "select-rag",
+                "requestSeq": 31,
+                "rawInput": "ragshurufa",
+                "preedit": "ragshurufa",
+                "committedContext": "用户正在写 RAG 输入法",
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 2,
+                "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
+            }
+        )
+        rag_candidate = next(item for item in response["displayCandidates"] if item["sourceType"] == "rag")
+        selection = self.service.rime_select(
+            {
+                "candidate": rag_candidate,
+                "query": response["semanticQuery"],
+                "recentContext": response["committedContext"],
+                "preedit": response["preedit"],
+                "project": response["project"],
+            }
+        )
+        self.assertEqual(selection["schemaVersion"], "rag-ime.rime-selection.v1")
+        self.assertTrue(selection["ok"])
+        self.assertTrue(str(selection["eventId"]).startswith("event:"))
+        self.assertTrue(selection["recordedAction"])
+        self.assertEqual(selection["action"]["schemaVersion"], "rag-ime.action.v1")
+        self.assertEqual(selection["action"]["actionType"], "accepted")
+        self.assertEqual(self.service.core.action_count(), before_actions + 1)
+
+    def test_rime_select_records_model_candidate_without_memory_action(self) -> None:
+        before_actions = self.service.core.action_count()
+        selection = self.service.rime_select(
+            {
+                "candidate": {
+                    "label": "2",
+                    "text": "模型短候选",
+                    "insertText": "模型短候选",
+                    "sourceType": "model",
+                    "selectionAction": "commit_side_candidate",
+                    "sourceIndex": 0,
+                },
+                "query": "模型",
+                "recentContext": "用户正在测试 side candidate",
+                "preedit": "moxing",
+            }
+        )
+        self.assertTrue(str(selection["eventId"]).startswith("event:"))
+        self.assertFalse(selection["recordedAction"])
+        self.assertIsNone(selection["action"])
+        self.assertEqual(self.service.core.action_count(), before_actions)
+
     def test_commit_endpoint_accepts_squirrel_source(self) -> None:
         committed = self.service.commit(
             {
@@ -225,11 +279,37 @@ class DebugImeServiceTests(unittest.TestCase):
             )
             with urlopen(request, timeout=5) as response:
                 payload = json.loads(response.read().decode("utf-8"))
+            select_url = f"http://127.0.0.1:{server.server_port}/rime-select"
+            select_request = Request(
+                select_url,
+                data=json.dumps(
+                    {
+                        "candidate": {
+                            "label": "2",
+                            "text": "HTTP side candidate",
+                            "insertText": "HTTP side candidate",
+                            "sourceType": "model",
+                            "selectionAction": "commit_side_candidate",
+                            "sourceIndex": 0,
+                        },
+                        "query": "HTTP",
+                        "recentContext": "root path",
+                        "preedit": "http",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(select_request, timeout=5) as response:
+                selection = json.loads(response.read().decode("utf-8"))
         finally:
             server.shutdown()
             server.server_close()
         self.assertEqual(payload["schemaVersion"], "rag-ime.rime-sidecar.v1")
         self.assertEqual(payload["sessionId"], "http-root")
+        self.assertEqual(selection["schemaVersion"], "rag-ime.rime-selection.v1")
+        self.assertTrue(str(selection["eventId"]).startswith("event:"))
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):

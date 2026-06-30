@@ -24,7 +24,7 @@ from .models import InputEvent, MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import PredictionBenchmarkCase, benchmark_prediction_provider, prediction_provider_from_env
 from .renderer import render_agent_injection, render_terminal_panel
-from .rime_sidecar import build_rime_sidecar_response
+from .rime_sidecar import build_rime_sidecar_response, record_rime_side_candidate_selection
 from .scenarios import SCENARIOS, get_scenario
 from .text_utils import now_ms
 from .trigger_policy import TypingState, should_refresh_rag
@@ -85,6 +85,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Return merged Rime + RAG/model side candidates for Squirrel/Rime frontends",
     )
     rime_suggest_json.add_argument(
+        "--payload-file",
+        default="-",
+        help="JSON request file. Use '-' to read stdin.",
+    )
+
+    rime_select_json = subparsers.add_parser(
+        "rime-select-json",
+        help="Record an accepted Rime side candidate selection and return structured JSON",
+    )
+    rime_select_json.add_argument(
         "--payload-file",
         default="-",
         help="JSON request file. Use '-' to read stdin.",
@@ -276,6 +286,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                     adapter=adapter,
                     core=core,
                     predictor=predictor,
+                    default_project="wisdom-weasel-rag-ime",
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "rime-select-json":
+        payload = _read_json_payload(args.payload_file)
+        print(
+            json.dumps(
+                record_rime_side_candidate_selection(
+                    payload=payload,
+                    adapter=adapter,
+                    core=core,
                     default_project="wisdom-weasel-rag-ime",
                 ),
                 ensure_ascii=False,
