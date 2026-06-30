@@ -80,6 +80,8 @@ Create a JSONL case file:
 {"id":"dirty-pinyin-boundary","query":"为什么不能让大模型直接预测脏拼音","expectedTerms":["Rime","拼音解析"],"forbiddenTerms":["让大模型直接解析脏拼音"]}
 ```
 
+The checked-in `docs/eval/codex-history-cases.example.jsonl` is the current project gold set. It intentionally contains both currently passing cases and known gaps across Squirrel/Rime integration, vector recall, model prediction, cache behavior, local-first privacy, Wisdom-Weasel research, and debug/doctor workflows. Do not shrink it just to improve the headline pass rate.
+
 Run:
 
 ```bash
@@ -285,6 +287,26 @@ The report shape is:
 ```
 
 This is the main full-flow gate for deciding whether a local Qwen/MLX/llama.cpp endpoint is actually useful in the IME. A model that is fast but only passes cases already covered by RAG is not enough reason to enable the model lane by default. A model that wins `modelOnlyPassed` cases but exceeds the sidecar latency budget should stay debug-only until the provider gets faster.
+
+## Current Baseline
+
+On 2026-07-01, a 5000-record newest-first Codex-history import was evaluated against the 34-case gold set:
+
+```text
+Default FTS5 + local rule rerank:
+  passRate 24/34 = 0.706
+  top1Accuracy = 0.500
+  meanReciprocalRank = 0.566
+  latency.p95Ms = 29
+
+local-hash vector hybrid:
+  passRate 23/34 = 0.676
+  top1Accuracy = 0.441
+  meanReciprocalRank = 0.528
+  latency.p95Ms = 160
+```
+
+This confirms that `local-hash` is useful only as a deterministic side-index contract test. It should not be enabled as a product default. The next meaningful comparison needs a real local/WSL semantic embedding provider and the same 34-case report.
 
 ## Why This Matters
 

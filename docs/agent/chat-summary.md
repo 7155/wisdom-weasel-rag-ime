@@ -507,3 +507,21 @@ Research:
 
 Next:
 - Build a larger 30-50 case gold set, then add real embedding/provider cache and in-flight dedupe.
+
+### 2026-07-01
+Topic:
+- Expand Codex-history retrieval gold set.
+
+Changes:
+- `docs/eval/codex-history-cases.example.jsonl` now has 34 cases instead of 3.
+- Cases cover Squirrel/Rime side candidates, RAG/model comparison, vector backfill, embedding config, local-first privacy, Qwen prediction eval, Wisdom-Weasel fast prediction, cache/doctor/debug workflows, and known weak spots.
+- `docs/codex-history-eval.md` records the current baseline and warns not to shrink the file for a prettier pass rate.
+
+Verification:
+- Imported 5000 newest Codex-history records into a temp DB.
+- Default FTS5 + local rerank: 24/34 pass, top1Accuracy=0.50, MRR=0.566, p95 about 29ms.
+- local-hash hybrid: 23/34 pass, top1Accuracy=0.441, MRR=0.528, p95 about 160ms.
+- Full test suite passed with 73 tests.
+
+Next:
+- Use the failing 10 cases as the next retrieval/rerank target; do not enable local-hash by default.

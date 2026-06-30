@@ -433,6 +433,34 @@ Next:
 - Expand Codex-history gold cases before further rerank tuning.
 - Add embedding exact cache / in-flight dedupe once a real embedding endpoint is selected.
 
+### 2026-07-01 07:53 CST
+Problem:
+- The Codex-history evaluation file had only 3 cases, so recent retrieval improvements could overfit and still look perfect.
+- We needed a broader, realistic gold set before tuning vector recall, rerank, or model prediction.
+
+Changes:
+- Expanded `docs/eval/codex-history-cases.example.jsonl` from 3 to 34 cases.
+- Covered Squirrel/Rime integration, side candidate selection, sidecar cache, vector backfill, embedding config, Qwen/prediction eval, LaunchAgent/Xcode, InputMethodKit boundary, typed history context, VCP cache lessons, Wisdom-Weasel fast prediction, and debug/doctor workflows.
+- Documented the current 34-case baseline in `docs/codex-history-eval.md`.
+
+Commands:
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-expanded-eval-20260701.sqlite import-codex-history --path /Users/undo/.codex/sessions --project wisdom-weasel-rag-ime --limit 5000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-expanded-eval-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 1`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-expanded-eval-20260701.sqlite --embedding-provider local-hash rebuild-vector-index --project wisdom-weasel-rag-ime --limit 5000`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-expanded-eval-20260701.sqlite --embedding-provider local-hash eval-codex-history --cases-file /private/tmp/rag-ime-expanded-cases.jsonl --top-k 5 --match any --repeat 1`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history tests.test_predictor`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `git diff --check`
+
+Findings:
+- Default FTS5 + local rule rerank on 5000 imported records: 24/34 pass, top1Accuracy=0.50, MRR=0.566, p95 about 29ms.
+- `local-hash` hybrid on the same DB: 23/34 pass, top1Accuracy=0.441, MRR=0.528, p95 about 160ms.
+- This confirms `local-hash` should remain a deterministic side-index contract test, not a product default.
+- Known gaps now captured as failing cases include candidate number policy, raw pinyin gate, model side budget, history-context prediction, Wisdom-Weasel fast prediction, local-first privacy recall, OpenAI-compatible predictor env recall, stale response guard, trigger decision, and Codex-history noise filter.
+
+Next:
+- Improve recall against the failing cases with field-aware boosts or a real semantic embedding provider, then rerun the same 34-case report.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.

@@ -1,3 +1,34 @@
 {"id":"squirrel-rag","query":"Squirrel RAG 输入法候选","expectedTerms":["Squirrel","本地记忆"]}
 {"id":"agent-hook","query":"首次运行自动注入背景记忆","expectedTerms":["PROJECT_MEMORY_BLOCK"]}
 {"id":"wisdom-weasel-boundary","query":"为什么不能让大模型直接预测脏拼音","expectedTerms":["Rime","拼音解析"],"forbiddenTerms":["让大模型直接解析脏拼音"]}
+{"id":"rime-select-feedback","query":"Squirrel side candidate 选择后如何记录 accepted action","expectedTerms":["rime-select","accepted"]}
+{"id":"rime-suggest-cache","query":"Rime sidecar 重复刷新如何缓存命中","expectedTerms":["rimeSuggestCache","cacheStats"]}
+{"id":"vector-backfill","query":"vector side index 如何回填本地记忆","expectedTerms":["rebuild-vector-index","local-hash"]}
+{"id":"vector-stats-health","query":"debug health 如何显示 vector 索引状态","expectedTerms":["vectorStats"]}
+{"id":"local-hash-boundary","query":"local-hash 是真正的语义 embedding 吗","expectedTerms":["local-hash","semantic"]}
+{"id":"wsl-embedding-endpoint","query":"WSL embedding endpoint 需要哪些环境变量","expectedTerms":["RAG_IME_EMBEDDING_BASE_URL","RAG_IME_EMBEDDING_MODEL"]}
+{"id":"qwen-instant-eval","query":"如何评估 Qwen instant 预测质量","expectedTerms":["eval-prediction","overBudgetCount"]}
+{"id":"rag-model-comparison","query":"RAG 和模型预测如何用同一 case 比较","expectedTerms":["eval-comparison"]}
+{"id":"launchagent-sidecar","query":"sidecar 如何开机常驻运行","expectedTerms":["LaunchAgent"]}
+{"id":"xcode-squirrel-blocker","query":"Squirrel Xcode 配置还缺什么","expectedTerms":["Xcode.app","Apple Developer"]}
+{"id":"inputmethodkit-boundary","query":"为什么 InputMethodKit 不是最终中文输入法框架","expectedTerms":["Squirrel","Rime"]}
+{"id":"candidate-number-policy","query":"候选字和候选段如何共用数字键","expectedTerms":["Rime candidates","side candidates"]}
+{"id":"raw-pinyin-gate","query":"raw pinyin fallback 什么时候跳过 RAG side lane","expectedTerms":["raw pinyin fallback","sideCandidatesEnabled"]}
+{"id":"model-side-budget","query":"为什么模型候选不能占满 side slots","expectedTerms":["maxModelSideCandidates"]}
+{"id":"history-context-prediction","query":"模型预测如何使用历史输入上下文","expectedTerms":["historyContext","recent_input_context"]}
+{"id":"vcp-cache-research","query":"VCP 值得迁移的缓存机制是什么","expectedTerms":["pending request","embedding"]}
+{"id":"wisdom-weasel-fast-prediction","query":"Wisdom-Weasel 快速预测靠什么","expectedTerms":["KV cache","batch"]}
+{"id":"rime-first-policy","query":"为什么 RAG 候选不能抢 Rime 第一候选","expectedTerms":["Rime first"]}
+{"id":"compact-evidence-panel","query":"输入法真实面板为什么不显示太多 RAG 信息","expectedTerms":["evidence preview","debug surface"]}
+{"id":"local-first-privacy","query":"本地隐私输入法为什么不默认上传云端","expectedTerms":["local-first"]}
+{"id":"openai-compatible-predictor","query":"本地小模型 predictor 怎么接 OpenAI compatible","expectedTerms":["RAG_IME_PREDICTOR_BASE_URL"]}
+{"id":"stale-response-guard","query":"sidecar 异步结果如何避免旧候选覆盖新输入","expectedTerms":["requestSeq","stale"]}
+{"id":"selection-routing","query":"Squirrel 如何区分 Rime 候选和 side candidate 选择","expectedTerms":["select_candidate_on_current_page","commit_side_candidate"]}
+{"id":"snapshot-fingerprint","query":"Rime snapshot cache fingerprint 包含哪些内容","expectedTerms":["fingerprint"]}
+{"id":"trigger-decision","query":"sidecar 什么时候跳过模型和 RAG 刷新","expectedTerms":["triggerDecision"]}
+{"id":"suggestion-cache-lru","query":"本地 suggestion cache 如何统计命中和失效","expectedTerms":["suggestionCache","LRU"]}
+{"id":"memory-actions","query":"本地记忆 action 如何支持 pin downrank delete","expectedTerms":["pin","downrank","delete"]}
+{"id":"codex-history-noise-filter","query":"Codex history import 会过滤哪些 runtime 噪声","expectedTerms":["runtime noise","tool call output"]}
+{"id":"eval-ranking-metrics","query":"Codex history eval 用哪些 ranking metrics","expectedTerms":["top1Accuracy","meanReciprocalRank"]}
+{"id":"squirrel-doctor","query":"Squirrel 集成 doctor 检查哪些本地状态","expectedTerms":["doctor_squirrel_integration"]}
+{"id":"macos-prototype-build","query":"macOS InputMethodKit 原型怎么构建验证","expectedTerms":["build_macos_frontend.sh"]}
