@@ -241,9 +241,8 @@ Implemented route:
 Next route:
 
 1. Package the Python backend or replace it with a local daemon.
-2. Anchor the panel to the target app caret instead of mouse-position fallback.
-3. Port the compact debug overlay behavior into `RagCandidatePanel`.
-4. Keep Rime/Squirrel/Wisdom-Weasel integration as the next bridge after the adapter contract is stable.
+2. Port the compact debug overlay behavior into `RagCandidatePanel`.
+3. Keep Rime/Squirrel/Wisdom-Weasel integration as the next bridge after the adapter contract is stable.
 
 See `docs/interview-project-difficulties.md` for the Chinese interview material that records the project difficulties and engineering choices.
 
