@@ -31,6 +31,10 @@ class SetupXcodeForSquirrelScriptTests(unittest.TestCase):
             capture_output=True,
         )
         self.assertIn("== Host State ==", result.stdout)
+        self.assertIn("fastlane_session:", result.stdout)
+        self.assertIn("== Disk Space ==", result.stdout)
+        self.assertIn("minimum_free_gib:", result.stdout)
+        self.assertIn("== Installed Xcodes ==", result.stdout)
         self.assertIn("== Install Help ==", result.stdout)
         self.assertIn("RAG_IME_INSTALL_XCODE", result.stdout)
 
