@@ -102,6 +102,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[2]["selectionAction"], "commit_side_candidate")
         self.assertEqual(display[3]["sourceType"], "rag")
         self.assertEqual(display[3]["selectionAction"], "commit_side_candidate")
+        self.assertIsInstance(display[3]["sourceEventId"], int)
         self.assertEqual([item["label"] for item in display[:4]], ["1", "2", "3", "4"])
 
     def test_zero_side_candidates_does_not_call_model(self) -> None:
@@ -121,6 +122,28 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["ragCandidates"], [])
         self.assertEqual(len(response["displayCandidates"]), 1)
         self.assertEqual(response["displayCandidates"][0]["sourceType"], "rime")
+
+    def test_max_side_candidates_is_global_across_model_and_rag(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-side-cap",
+                "requestSeq": 9,
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 2,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+        )
+        side_items = [item for item in response["displayCandidates"] if item["sourceType"] != "rime"]
+        self.assertEqual(len(side_items), 2)
+        self.assertEqual(side_items[0]["sourceType"], "model")
+        self.assertEqual(side_items[1]["sourceType"], "rag")
 
     def test_cli_rime_suggest_json_reads_payload_file(self) -> None:
         payload = {

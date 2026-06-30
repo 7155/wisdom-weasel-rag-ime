@@ -122,13 +122,16 @@ display item action == select_rime_candidate
 
 display item action == commit_side_candidate
   -> client.insertText(insertText, replacementRange: .empty)
-  -> record action/commit through sidecar or follow-up CLI call
+  -> background CLI commit
+  -> background action-json accepted when memory metadata exists
   -> clear composition if needed
 ```
 
 Do not mutate librime's internal candidate menu for the first integration. Build a frontend display list and route selection by display metadata.
 
 Keyboard routing needs one extra guard because normal number-key selection goes through librime before the panel's click handler. The first patch only intercepts labels that currently point to side candidates; all normal Rime candidate keys continue through `process_key(...)`.
+
+The patch also records accepted side candidates after insertion. This is required for the input method to become a memory feedback surface instead of a one-way suggestion renderer.
 
 ## Current Prototype Evidence
 

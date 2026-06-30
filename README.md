@@ -272,7 +272,7 @@ Implemented in this repo:
 - shared-core JSON command integration for CLI/debug-server;
 - Squirrel/Rime-aware side-candidate JSON contract;
 - Swift bridge models and preview command for the Rime side-candidate contract;
-- Squirrel patch pack for a fail-closed Rime sidecar frontend integration;
+- Squirrel patch pack for a fail-closed Rime sidecar frontend integration with side-candidate commit/action recording;
 - optional local OpenAI-compatible model prediction lane;
 - bounded history-input context for model/RAG prediction;
 - shared number-key selection for top model predictions and lower RAG/memory candidates;

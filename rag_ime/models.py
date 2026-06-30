@@ -113,6 +113,7 @@ class SideCandidateDisplayItem:
     evidence_preview: str = ""
     suggestion_id: str = ""
     memory_id: str = ""
+    source_event_id: int | None = None
     rime_index: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

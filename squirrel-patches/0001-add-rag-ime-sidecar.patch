@@ -40,10 +40,10 @@ index 813deae..1bec8e3 100644
  			);
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000..32b59e7
+index 0000000..b97cfaa
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,167 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -89,41 +89,59 @@ index 0000000..32b59e7
 +    try requestData.write(to: requestFile, options: .atomic)
 +    defer { try? FileManager.default.removeItem(at: requestFile) }
 +
-+    let process = Process()
-+    process.executableURL = URL(fileURLWithPath: pythonExecutable)
-+    process.currentDirectoryURL = URL(fileURLWithPath: repoRoot)
-+    process.arguments = [
-+      "-m",
-+      "rag_ime.cli",
-+      "--db-path",
-+      dbPath,
++    let outputData = try runCli([
 +      "rime-suggest-json",
 +      "--payload-file",
 +      requestFile.path,
-+    ]
-+    process.environment = sidecarEnvironment()
-+
-+    let stdout = Pipe()
-+    let stderr = Pipe()
-+    process.standardOutput = stdout
-+    process.standardError = stderr
-+
-+    try process.run()
-+    let deadline = Date().addingTimeInterval(timeoutSeconds)
-+    while process.isRunning && Date() < deadline {
-+      Thread.sleep(forTimeInterval: 0.01)
-+    }
-+    if process.isRunning {
-+      process.terminate()
-+      throw RagImeSidecarError.timeout
-+    }
-+    let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
-+    let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
-+    guard process.terminationStatus == 0 else {
-+      let stderrText = String(data: errorData, encoding: .utf8) ?? ""
-+      throw RagImeSidecarError.failedExit(Int(process.terminationStatus), stderrText)
-+    }
++    ])
 +    return try JSONDecoder().decode(RagImeSidecarResponse.self, from: outputData)
++  }
++
++  func recordSideCandidateCommit(
++    _ candidate: RagImeDisplayCandidate,
++    query: String,
++    recentContext: String,
++    preedit: String
++  ) throws {
++    let insertText = candidate.insertText.isEmpty ? candidate.text : candidate.insertText
++    guard !Self.trimmed(insertText).isEmpty else { return }
++    _ = try runCli([
++      "commit",
++      insertText,
++      "--recent-context",
++      recentContext,
++      "--preedit",
++      preedit,
++      "--source",
++      "squirrel_rime_sidecar",
++      "--project",
++      project,
++      "--tag",
++      "squirrel",
++      "--tag",
++      "rime-sidecar",
++    ])
++
++    guard candidate.sourceType == "rag",
++          !candidate.memoryId.isEmpty,
++          !candidate.suggestionId.isEmpty,
++          let sourceEventId = candidate.sourceEventId else {
++      return
++    }
++    _ = try runCli([
++      "action-json",
++      "accepted",
++      "--memory-id",
++      candidate.memoryId,
++      "--suggestion-id",
++      candidate.suggestionId,
++      "--source-event-id",
++      String(sourceEventId),
++      "--query",
++      query,
++      "--surface-text",
++      candidate.text,
++    ])
 +  }
 +}
 +
@@ -151,6 +169,36 @@ index 0000000..32b59e7
 +    return min(max(Int(configuredValue), range.lowerBound), range.upperBound)
 +  }
 +
++  func runCli(_ cliArguments: [String]) throws -> Data {
++    let process = Process()
++    process.executableURL = URL(fileURLWithPath: pythonExecutable)
++    process.currentDirectoryURL = URL(fileURLWithPath: repoRoot)
++    process.arguments = ["-m", "rag_ime.cli", "--db-path", dbPath] + cliArguments
++    process.environment = sidecarEnvironment()
++
++    let stdout = Pipe()
++    let stderr = Pipe()
++    process.standardOutput = stdout
++    process.standardError = stderr
++
++    try process.run()
++    let deadline = Date().addingTimeInterval(timeoutSeconds)
++    while process.isRunning && Date() < deadline {
++      Thread.sleep(forTimeInterval: 0.01)
++    }
++    if process.isRunning {
++      process.terminate()
++      throw RagImeSidecarError.timeout
++    }
++    let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
++    let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
++    guard process.terminationStatus == 0 else {
++      let stderrText = String(data: errorData, encoding: .utf8) ?? ""
++      throw RagImeSidecarError.failedExit(Int(process.terminationStatus), stderrText)
++    }
++    return outputData
++  }
++
 +  func sidecarEnvironment() -> [String: String] {
 +    var environment = ProcessInfo.processInfo.environment
 +    if let existingPythonPath = environment["PYTHONPATH"], !existingPythonPath.isEmpty {
@@ -165,10 +213,10 @@ index 0000000..32b59e7
 +}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
-index 0000000..2a90c24
+index 0000000..483264c
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,149 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
@@ -258,6 +306,7 @@ index 0000000..2a90c24
 +  let evidencePreview: String
 +  let suggestionId: String
 +  let memoryId: String
++  let sourceEventId: Int?
 +  let rimeIndex: Int?
 +  let metadata: [String: RagImeJSONValue]
 +}
@@ -318,10 +367,10 @@ index 0000000..2a90c24
 +  }
 +}
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..01cb00d 100644
+index c2adf74..e8202c2 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
-@@ -27,6 +27,12 @@ final class SquirrelInputController: IMKInputController {
+@@ -27,6 +27,13 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
@@ -330,11 +379,12 @@ index c2adf74..01cb00d 100644
 +  private var ragImeDisplayCandidates: [RagImeDisplayCandidate] = []
 +  private var ragImeDisplayRawInput: String = ""
 +  private var ragImeDisplayPreedit: String = ""
++  private var ragImeDisplaySemanticQuery: String = ""
 +  private var ragImeCommittedContext: String = ""
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -106,6 +112,9 @@ final class SquirrelInputController: IMKInputController {
+@@ -106,6 +113,9 @@ final class SquirrelInputController: IMKInputController {
          keyChars = event.characters
        }
        if let char = keyChars?.first {
@@ -344,7 +394,7 @@ index c2adf74..01cb00d 100644
          let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
                                                             shift: modifiers.contains(.shift),
                                                             caps: modifiers.contains(.capsLock))
-@@ -124,6 +133,24 @@ final class SquirrelInputController: IMKInputController {
+@@ -124,6 +134,33 @@ final class SquirrelInputController: IMKInputController {
    }
  
    func selectCandidate(_ index: Int) -> Bool {
@@ -353,8 +403,17 @@ index c2adf74..01cb00d 100644
 +      if candidate.selectionAction == "commit_side_candidate" {
 +        let insertText = candidate.insertText.isEmpty ? candidate.text : candidate.insertText
 +        guard !insertText.isEmpty else { return false }
++        let query = ragImeDisplaySemanticQuery.isEmpty ? ragImeDisplayRawInput : ragImeDisplaySemanticQuery
++        let recentContext = ragImeCommittedContext
++        let sourcePreedit = ragImeDisplayPreedit
 +        commit(string: insertText)
 +        rimeAPI.clear_composition(session)
++        recordRagImeSideCandidateCommit(
++          candidate,
++          query: query,
++          recentContext: recentContext,
++          preedit: sourcePreedit
++        )
 +        clearRagImeDisplayCandidates()
 +        rimeUpdate(clearReservedComments: false, requestSidecar: false)
 +        return true
@@ -369,7 +428,7 @@ index c2adf74..01cb00d 100644
      let success = rimeAPI.select_candidate_on_current_page(session, index)
      if success {
        rimeUpdate()
-@@ -301,6 +328,158 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,6 +338,181 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
@@ -461,6 +520,7 @@ index c2adf74..01cb00d 100644
 +    ragImeDisplayCandidates = response.displayCandidates
 +    ragImeDisplayRawInput = response.rawInput
 +    ragImeDisplayPreedit = response.preedit
++    ragImeDisplaySemanticQuery = response.semanticQuery
 +    rimeUpdate(clearReservedComments: false, requestSidecar: false)
 +  }
 +
@@ -512,6 +572,28 @@ index c2adf74..01cb00d 100644
 +    ragImeDisplayCandidates = []
 +    ragImeDisplayRawInput = ""
 +    ragImeDisplayPreedit = ""
++    ragImeDisplaySemanticQuery = ""
++  }
++
++  func recordRagImeSideCandidateCommit(
++    _ candidate: RagImeDisplayCandidate,
++    query: String,
++    recentContext: String,
++    preedit: String
++  ) {
++    guard let sidecarClient = ragImeSidecarClient else { return }
++    DispatchQueue.global(qos: .utility).async {
++      do {
++        try sidecarClient.recordSideCandidateCommit(
++          candidate,
++          query: query,
++          recentContext: recentContext,
++          preedit: preedit
++        )
++      } catch {
++        print("RAG IME side candidate commit record failed: \(error)")
++      }
++    }
 +  }
 +
 +  func rememberRagImeCommittedContext(_ text: String) {
@@ -528,7 +610,7 @@ index c2adf74..01cb00d 100644
    func onChordTimer(_: Timer) {
      var processedKeys = false
      if chordKeyCount > 0 && session != 0 {
-@@ -360,6 +539,7 @@ private extension SquirrelInputController {
+@@ -360,6 +572,7 @@ private extension SquirrelInputController {
  
      if session != 0 {
        updateAppOptions()
@@ -536,7 +618,7 @@ index c2adf74..01cb00d 100644
      }
    }
  
-@@ -434,7 +614,7 @@ private extension SquirrelInputController {
+@@ -434,7 +647,7 @@ private extension SquirrelInputController {
    }
  
    // Preserve reserved comment marks when librime requests a UI-only refresh.
@@ -545,7 +627,7 @@ index c2adf74..01cb00d 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +626,7 @@ private extension SquirrelInputController {
+@@ -446,6 +659,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -553,7 +635,7 @@ index c2adf74..01cb00d 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +639,14 @@ private extension SquirrelInputController {
+@@ -458,13 +672,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -569,7 +651,7 @@ index c2adf74..01cb00d 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -537,13 +719,35 @@ private extension SquirrelInputController {
+@@ -537,13 +752,35 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -606,7 +688,7 @@ index c2adf74..01cb00d 100644
        hidePalettes()
      }
    }
-@@ -551,6 +755,7 @@ private extension SquirrelInputController {
+@@ -551,6 +788,7 @@ private extension SquirrelInputController {
    func commit(string: String) {
      guard let client = client else { return }
      client.insertText(string, replacementRange: .empty)

@@ -56,6 +56,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commit.add_argument("--recent-context", default="")
     commit.add_argument("--project", default="wisdom-weasel-rag-ime")
     commit.add_argument("--preedit", default="")
+    commit.add_argument("--source", default="manual_commit")
     commit.add_argument("--tag", action="append", default=[])
     commit.add_argument("--sensitive", action="store_true", help="Do not record this input")
     commit.add_argument("--recording-disabled", action="store_true", help="Skip recording for this commit")
@@ -150,6 +151,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             recent_context=args.recent_context,
             preedit=args.preedit,
             project=args.project,
+            source=args.source,
             tags=tuple(args.tag),
             recording_enabled=not args.recording_disabled,
             field_is_sensitive=args.sensitive,

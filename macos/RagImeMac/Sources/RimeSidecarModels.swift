@@ -56,6 +56,7 @@ struct RimeDisplayCandidate: Codable, Hashable {
     let evidencePreview: String
     let suggestionId: String
     let memoryId: String
+    let sourceEventId: Int?
     let rimeIndex: Int?
     let metadata: [String: JSONValue]
 }

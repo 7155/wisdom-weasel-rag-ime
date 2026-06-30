@@ -78,7 +78,7 @@ Mac:
 - 不相关查询只受弱影响；
 - delete/hide 才是全局可见性控制。
 
-这个点比普通 RAG 更像输入法学习：它学的是“在这个输入意图下什么有用”，不是全局点赞。
+这个点比普通 RAG 更像输入法学习：它学的是“在这个输入意图下什么有用”，不是全局点赞。Squirrel patch 已经把 side candidate 的选择回写成 `commit` 和 `accepted` action，让用户每次选中记忆候选都能反过来改善排序。
 
 ### 6. Debug UI 和真实输入法 UI 必须分离
 
@@ -144,7 +144,7 @@ raw key input
 - accept / commit / action 本地记录链路；
 - 单测和 macOS app 构建验证；
 - Rime/Squirrel 正式前端路线 ADR；
-- Squirrel patch pack：在 Rime 候选生成后调用本地 sidecar，异步合并 side candidates，并按显示候选路由数字键。
+- Squirrel patch pack：在 Rime 候选生成后调用本地 sidecar，异步合并 side candidates，按显示候选路由数字键，并在用户接受 RAG 候选后回写 commit/action。
 
 ## 面试讲法
 

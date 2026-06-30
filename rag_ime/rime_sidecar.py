@@ -164,7 +164,8 @@ def merge_display_candidates(
                 rime_index=candidate.index,
             )
         )
-    side_limit = min(snapshot.max_side_candidates, max(0, max_visible - len(display)))
+    side_budget = min(snapshot.max_side_candidates, max(0, max_visible - len(display)))
+    side_limit = min(side_budget, max(0, max_visible - len(display)), len(model_predictions))
     for prediction in model_predictions[:side_limit]:
         display.append(
             SideCandidateDisplayItem(
@@ -183,7 +184,8 @@ def merge_display_candidates(
                 },
             )
         )
-    remaining = min(snapshot.max_side_candidates, max(0, max_visible - len(display)))
+    remaining_side_budget = max(0, side_budget - side_limit)
+    remaining = min(remaining_side_budget, max(0, max_visible - len(display)))
     for index, suggestion in enumerate(suggestions[:remaining]):
         metadata = dict(suggestion.metadata)
         display.append(
@@ -198,6 +200,7 @@ def merge_display_candidates(
                 evidence_preview=suggestion.evidence_preview,
                 suggestion_id=suggestion.suggestion_id,
                 memory_id=str(metadata.get("memory_id") or suggestion.suggestion_id),
+                source_event_id=suggestion.source_event_id,
                 metadata=metadata,
             )
         )
@@ -233,6 +236,7 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "evidencePreview": item.evidence_preview,
         "suggestionId": item.suggestion_id,
         "memoryId": item.memory_id,
+        "sourceEventId": item.source_event_id,
         "rimeIndex": item.rime_index,
         "metadata": dict(item.metadata),
     }
