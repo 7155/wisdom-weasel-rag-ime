@@ -157,6 +157,35 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertFalse(third["cache"]["hit"])
         self.assertEqual(predictor.calls, 2)
 
+    def test_rime_suggest_cache_ignores_raw_pinyin_when_semantic_query_is_stable(self) -> None:
+        predictor = FakePredictionProvider()
+        self.service.predictor = predictor
+        payload = {
+            "sessionId": "cache-raw-a",
+            "requestSeq": 41,
+            "rawInput": "ragshuru",
+            "preedit": "ragshuru",
+            "committedContext": "用户正在写 RAG 输入法",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 2,
+            "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
+        }
+        first = self.service.rime_suggest(payload)
+        second_payload = dict(payload)
+        second_payload["sessionId"] = "cache-raw-b"
+        second_payload["requestSeq"] = 42
+        second_payload["rawInput"] = "ragshurufa"
+        second_payload["preedit"] = "ragshurufa"
+        second = self.service.rime_suggest(second_payload)
+
+        self.assertEqual(predictor.calls, 1)
+        self.assertFalse(first["cache"]["hit"])
+        self.assertTrue(second["cache"]["hit"])
+        self.assertEqual(second["rawInput"], "ragshurufa")
+        self.assertEqual(second["preedit"], "ragshurufa")
+        self.assertEqual(second["semanticQuery"], "RAG 输入法")
+        self.assertEqual(second["queryBasis"], "rimeCandidates")
+
     def test_commit_and_action_are_wired_for_debug_page(self) -> None:
         suggestion = self.service.suggest({"currentInput": "FTS5", "topK": 1})["suggestions"][0]
         action = self.service.action(

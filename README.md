@@ -135,7 +135,7 @@ The sidecar uses a short `/rime-suggest` cache to absorb repeated equivalent Squ
 export RAG_IME_RIME_CACHE_TTL_MS=400
 ```
 
-Set it to `0` while debugging cache behavior.
+The cache key is based on the parsed Rime snapshot and semantic query, not the raw request sequence. When Rime candidates or commit preview already provide the semantic query, raw pinyin/preedit changes do not force another model/RAG call; cached responses still rewrite `sessionId`, `requestSeq`, `rawInput`, and `preedit` to the current request. Set it to `0` while debugging cache behavior.
 
 `/rime-suggest` also returns a `triggerDecision`. Rime candidates are always preserved, but model/RAG side candidates are skipped for raw pinyin fallback, unstable composing updates, or full visible Rime candidate pages. This is the backend safety valve that prevents the local model and retrieval stack from running on every key event.
 

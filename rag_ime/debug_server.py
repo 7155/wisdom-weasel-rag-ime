@@ -21,7 +21,15 @@ from .local_sqlite_core import LocalSqliteCoreClient
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import PredictionProvider, prediction_provider_from_env
-from .rime_sidecar import build_rime_sidecar_response, record_rime_side_candidate_selection
+from .rime_sidecar import (
+    build_rime_sidecar_response,
+    choose_semantic_query,
+    decide_side_candidate_refresh,
+    parse_rime_context_payload,
+    record_rime_side_candidate_selection,
+    rime_context_to_payload,
+    semantic_signal_length,
+)
 from .text_utils import now_ms
 
 
@@ -205,9 +213,38 @@ class DebugImeService:
             return len(self._rime_cache)
 
     def _rime_suggest_cache_key(self, payload: dict[str, Any]) -> str:
-        normalized_payload = _without_keys(payload, {"requestSeq", "sessionId"})
+        snapshot = parse_rime_context_payload(payload, default_project=self.config.project)
+        semantic_query, query_basis = choose_semantic_query(snapshot)
+        trigger_decision = decide_side_candidate_refresh(
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            query_basis=query_basis,
+        )
+        raw_sensitive_input = {}
+        if query_basis in ("preedit", "rawInputFallback") or snapshot.force_side_candidates:
+            raw_sensitive_input = {
+                "rawInput": snapshot.raw_input,
+                "preedit": snapshot.preedit,
+            }
+        normalized_snapshot = {
+            "project": snapshot.project or self.config.project,
+            "semanticQuery": semantic_query,
+            "queryBasis": query_basis,
+            "triggerDecision": {
+                "shouldRefresh": trigger_decision.should_refresh,
+                "reason": trigger_decision.reason,
+                "forceSideCandidates": snapshot.force_side_candidates,
+            },
+            "committedContext": snapshot.committed_context,
+            "commitTextPreview": snapshot.commit_text_preview,
+            "rimeContext": rime_context_to_payload(snapshot),
+            "latencyBudgetMs": snapshot.latency_budget_ms,
+            "maxVisibleCandidates": snapshot.max_visible_candidates,
+            "maxSideCandidates": snapshot.max_side_candidates,
+            **raw_sensitive_input,
+        }
         material = {
-            "payload": normalized_payload,
+            "snapshot": normalized_snapshot,
             "project": self.config.project,
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
@@ -236,10 +273,40 @@ class DebugImeService:
                 return None
             self._rime_cache_hits += 1
             response = copy.deepcopy(entry.response)
+        self._refresh_cached_rime_response(response, payload)
         response["sessionId"] = _string(payload.get("sessionId")) or str(response.get("sessionId") or "default")
         response["requestSeq"] = _bounded_int(payload.get("requestSeq"), default=0, minimum=0, maximum=2**63 - 1)
         response["cache"] = self._cache_payload(hit=True, cache_key=cache_key)
         return response
+
+    def _refresh_cached_rime_response(self, response: dict[str, object], payload: dict[str, Any]) -> None:
+        snapshot = parse_rime_context_payload(payload, default_project=self.config.project)
+        semantic_query, query_basis = choose_semantic_query(snapshot)
+        trigger_decision = decide_side_candidate_refresh(
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            query_basis=query_basis,
+        )
+        response.update(
+            {
+                "project": snapshot.project or self.config.project,
+                "rawInput": snapshot.raw_input,
+                "preedit": snapshot.preedit,
+                "commitTextPreview": snapshot.commit_text_preview,
+                "committedContext": snapshot.committed_context,
+                "semanticQuery": semantic_query,
+                "queryBasis": query_basis,
+                "latencyBudgetMs": snapshot.latency_budget_ms,
+                "rimeContext": rime_context_to_payload(snapshot),
+                "triggerDecision": {
+                    "shouldRefresh": trigger_decision.should_refresh,
+                    "reason": trigger_decision.reason,
+                    "idleMs": snapshot.idle_ms,
+                    "semanticSignalLength": semantic_signal_length(semantic_query),
+                    "forceSideCandidates": snapshot.force_side_candidates,
+                },
+            }
+        )
 
     def _store_rime_response(self, cache_key: str, response: dict[str, object]) -> None:
         ttl_ms = self._cache_ttl_ms()
@@ -398,11 +465,3 @@ def _canonical_action(value: str) -> str:
     if action not in allowed:
         raise ValueError(f"unsupported actionType: {value}")
     return action
-
-
-def _without_keys(value: Any, keys: set[str]) -> Any:
-    if isinstance(value, dict):
-        return {key: _without_keys(item, keys) for key, item in value.items() if key not in keys}
-    if isinstance(value, list):
-        return [_without_keys(item, keys) for item in value]
-    return value
