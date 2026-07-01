@@ -231,7 +231,14 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
     (workdir / "sources").mkdir()
     (workdir / "sources" / "RagImeSidecarModels.swift").write_text("// models\n", encoding="utf-8")
     (workdir / "sources" / "RagImeSidecarClient.swift").write_text("// client\n", encoding="utf-8")
-    (workdir / "sources" / "SquirrelInputController.swift").write_text("// controller\n", encoding="utf-8")
+    (workdir / "sources" / "SquirrelInputController.swift").write_text(
+        "final class SquirrelInputController { func ragImePanelForcesHorizontalLayout() -> Bool { false } }\n",
+        encoding="utf-8",
+    )
+    (workdir / "sources" / "SquirrelPanel.swift").write_text(
+        "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \" \" } }\n",
+        encoding="utf-8",
+    )
     (workdir / "Squirrel.xcodeproj").mkdir()
     (workdir / "Squirrel.xcodeproj" / "project.pbxproj").write_text("// pbxproj\n", encoding="utf-8")
     (workdir / "rag-ime.squirrel.custom.yaml").write_text(

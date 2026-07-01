@@ -551,6 +551,7 @@ class MlxPredictionServiceProvider:
                 "providerName": self.config.provider_name,
             }
         prompt_cache = payload.get("promptCache") if isinstance(payload.get("promptCache"), dict) else {}
+        model_info = payload.get("modelInfo") if isinstance(payload.get("modelInfo"), dict) else {}
         health_capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {}
         capabilities = _prediction_provider_capabilities(self.config.provider_name)
         capabilities.update(
@@ -558,6 +559,7 @@ class MlxPredictionServiceProvider:
                 "streaming": bool(health_capabilities.get("streaming", capabilities["streaming"])),
                 "residentModel": bool(payload.get("modelLoaded")),
                 "promptCache": _prompt_cache_used_for_generation(prompt_cache),
+                "textOnlyModel": bool(health_capabilities.get("textOnlyModel", model_info.get("textOnly", False))),
                 "sequenceFork": bool(health_capabilities.get("sequenceFork")),
                 "batchCandidates": bool(health_capabilities.get("batchCandidates")),
                 "serverTiming": bool(health_capabilities.get("serverTiming", capabilities["serverTiming"])),
@@ -569,6 +571,7 @@ class MlxPredictionServiceProvider:
             "provider": payload.get("provider"),
             "model": payload.get("model"),
             "modelLoaded": bool(payload.get("modelLoaded")),
+            "modelInfo": model_info,
             "promptCache": prompt_cache,
             "capabilities": capabilities,
         }
@@ -779,6 +782,9 @@ def prediction_provider_status(provider: PredictionProvider, *, probe_capabiliti
                     if key in merged:
                         merged[key] = bool(value)
                 status["capabilities"] = merged
+                model_info = probe.get("modelInfo") if isinstance(probe.get("modelInfo"), dict) else None
+                if model_info is not None:
+                    status["modelInfo"] = model_info
             elif isinstance(status["capabilities"], dict):
                 status["capabilities"] = {str(key): False for key in status["capabilities"]}
     cooldown_status = getattr(provider, "cooldown_status", None)
@@ -1664,6 +1670,7 @@ def _prediction_provider_capabilities(provider_name: str) -> dict[str, bool]:
             "streaming": True,
             "residentModel": True,
             "promptCache": False,
+            "textOnlyModel": False,
             "sequenceFork": False,
             "batchCandidates": True,
             "logitsTopK": True,
@@ -1674,6 +1681,7 @@ def _prediction_provider_capabilities(provider_name: str) -> dict[str, bool]:
             "streaming": True,
             "residentModel": True,
             "promptCache": False,
+            "textOnlyModel": False,
             "sequenceFork": False,
             "batchCandidates": False,
             "logitsTopK": False,
@@ -1693,6 +1701,7 @@ def _prediction_provider_capabilities(provider_name: str) -> dict[str, bool]:
         "streaming": False,
         "residentModel": False,
         "promptCache": False,
+        "textOnlyModel": False,
         "sequenceFork": False,
         "batchCandidates": False,
         "logitsTopK": False,

@@ -757,6 +757,57 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertFalse(status["capabilities"]["batchCandidates"])
         self.assertEqual(status["capabilityProbe"]["promptCache"]["hits"], 3)
 
+    def test_mlx_provider_status_exposes_text_only_model_info(self) -> None:
+        _MockMlxHandler.captured_path = ""
+        _MockMlxHandler.captured_payload = {}
+        _MockMlxHandler.health_payload = {
+            "ok": True,
+            "provider": "mlx-lm",
+            "model": "mlx-qwen3-0.6b-4bit",
+            "modelLoaded": True,
+            "modelInfo": {
+                "modelId": "/models/qwen3-0.6b-4bit",
+                "localPath": True,
+                "textOnly": True,
+                "hasVisionConfig": False,
+                "architecture": "Qwen3ForCausalLM",
+                "vocabSize": 151936,
+            },
+            "capabilities": {
+                "streaming": True,
+                "residentModel": True,
+                "textOnlyModel": True,
+                "batchCandidates": True,
+                "logitsTopK": True,
+            },
+        }
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3-0.6b-4bit",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+            status = prediction_provider_status(provider, probe_capabilities=True)
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+            _MockMlxHandler.health_payload = {}
+
+        self.assertTrue(status["capabilityProbe"]["ok"])
+        self.assertTrue(status["capabilities"]["textOnlyModel"])
+        self.assertTrue(status["capabilities"]["logitsTopK"])
+        self.assertEqual(status["modelInfo"]["architecture"], "Qwen3ForCausalLM")
+        self.assertTrue(status["modelInfo"]["textOnly"])
+
     def test_cli_predictor_status_can_probe_mlx_runtime_capabilities(self) -> None:
         _MockMlxHandler.captured_path = ""
         _MockMlxHandler.captured_payload = {}
