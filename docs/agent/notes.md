@@ -1127,3 +1127,27 @@ Findings:
 Commands:
 - `python3 -W ignore::ResourceWarning -m unittest tests.test_mlx_predictor_server tests.test_predictor`
 - `python3 -m py_compile rag_ime/mlx_predictor_server.py tests/test_mlx_predictor_server.py`
+
+### 2026-07-01 12:18 CST
+Problem:
+- Need a current, non-duplicated answer for the fastest Mac local inference path before continuing input-method implementation.
+- Direct MLX-LM validation needs `mlx-lm`; the environment had `mlx` but not `mlx_lm`.
+
+Attempts:
+- Created a Python 3.12 temp venv at `/private/tmp/rag-ime-mlx-venv-312`.
+- Tried no-proxy `pip install mlx-lm`; dependency metadata resolved, but `mlx_metal` downloaded at about 69 kB/s, so the install was cancelled before wasting more time.
+- Started Ollama 0.30.11 with proxy variables unset and `OLLAMA_MODELS="/Volumes/undo 4t/ollama-models"`.
+- Re-ran `predictor-ttft` against already downloaded `qwen3.5:0.8b-mlx` and `qwen3.5:0.8b`.
+
+Findings:
+- Local models present: `qwen3.5:0.8b-mlx` (1.2 GB, MLX runner) and `qwen3.5:0.8b` (1.0 GB, GGUF/Q8 llama-server).
+- `qwen3.5:0.8b-mlx` with 2000 ms benchmark timeout: p50 first chunk 124 ms, first cold/preload sample 1264 ms, warm samples after load 76-133 ms, p50 total 888 ms.
+- `qwen3.5:0.8b` with 5000 ms timeout: p50 first chunk 296 ms, p50 total 1646 ms, all samples over the 200 ms first-chunk budget.
+- Ollama logs showed MLX cache hits after the first request and peak MLX memory around 1.1 GB. The GGUF route loaded llama-server plus vision/multimodal components.
+- Current fastest practical Mac path is Ollama `qwen3.5:0.8b-mlx` for TTFT smoke. Direct MLX-LM and native llama.cpp/Metal remain the implementation paths for real prompt/KV control.
+
+Commands:
+- `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy /private/tmp/rag-ime-mlx-venv-312/bin/python -m pip install mlx-lm`
+- `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy OLLAMA_MODELS="/Volumes/undo 4t/ollama-models" OLLAMA_KEEP_ALIVE=-1 OLLAMA_FLASH_ATTENTION=1 ollama serve`
+- `env RAG_IME_PREDICTOR_PROVIDER=ollama RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434 RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b-mlx RAG_IME_PREDICTOR_PROFILE=instant RAG_IME_PREDICTOR_TIMEOUT_MS=2000 RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=0 python3 -m rag_ime.cli predictor-ttft --case "本地 RAG 输入法需要根据历史输入预测候选" --recent-context "用户正在讨论 Mac 本地推理、Qwen3.5 0.8B、MLX、KV cache 和输入法首 token 延迟" --repeat 8 --latency-budget-ms 200`
+- `env RAG_IME_PREDICTOR_PROVIDER=ollama RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434 RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b RAG_IME_PREDICTOR_PROFILE=instant RAG_IME_PREDICTOR_TIMEOUT_MS=5000 RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=0 python3 -m rag_ime.cli predictor-ttft --case "本地 RAG 输入法需要根据历史输入预测候选" --recent-context "用户正在讨论 Mac 本地推理、Qwen3.5 0.8B、MLX、KV cache 和输入法首 token 延迟" --repeat 4 --latency-budget-ms 200`

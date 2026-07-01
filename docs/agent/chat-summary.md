@@ -783,3 +783,21 @@ Boundary:
 
 Next:
 - Install/verify `mlx-lm`, run cached vs uncached MLX TTFT on a concrete Qwen-compatible model, then decide whether `capabilities.promptCache` can be set true.
+
+### 2026-07-01
+Topic:
+- Mac fastest local inference validation rerun.
+
+Changes:
+- Reconfirmed local Ollama model inventory under `/Volumes/undo 4t/ollama-models`.
+- Attempted direct `mlx-lm` install in a temporary Python 3.12 venv with proxy variables unset; cancelled because `mlx_metal` downloaded at about 69 kB/s.
+- Re-ran `predictor-ttft` for Ollama `qwen3.5:0.8b-mlx` and `qwen3.5:0.8b`.
+- Updated local model benchmark and TTFT/KV-cache docs with the current Mac ranking.
+
+Findings:
+- `qwen3.5:0.8b-mlx` remains the fastest usable Mac smoke path: p50 first chunk 124 ms in the rerun, with warm post-load samples at 76-133 ms.
+- `qwen3.5:0.8b` GGUF/Q8 was slower: p50 first chunk 296 ms, all samples over the 200 ms budget.
+- Full completion still costs roughly 800-900 ms on the MLX tag, so the UI should stream the first parsed useful candidate and let RAG remain the factual memory source.
+
+Next:
+- Keep Ollama MLX as the current TTFT baseline; continue toward direct MLX-LM or native llama.cpp/Metal only when we can control prompt/KV cache and multi-candidate generation directly.

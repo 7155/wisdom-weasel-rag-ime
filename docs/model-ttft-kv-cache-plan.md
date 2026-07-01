@@ -410,3 +410,33 @@ project-memory quality still failed the gate. That makes the next problem more
 interesting than "install a smaller model": preserve fast first-token behavior
 while moving candidate generation to a resident cached provider and using RAG
 for factual/local-memory grounding.
+
+## 2026-07-01 Mac Validation Update
+
+The latest local rerun keeps the same conclusion but adds a clearer operating
+boundary:
+
+- `qwen3.5:0.8b-mlx` is already present under `/Volumes/undo 4t/ollama-models`
+  and runs through Ollama's MLX runner.
+- With `RAG_IME_PREDICTOR_TIMEOUT_MS=2000`, the first sample paid runner load
+  cost at 1264 ms, then warm first chunks landed at 76-133 ms. The eight-sample
+  p50 first chunk was 124 ms.
+- The ordinary `qwen3.5:0.8b` GGUF/Q8 path, even with a 5000 ms benchmark
+  timeout, produced p50 first chunk 296 ms and p50 total 1646 ms.
+- Direct `mlx-lm` installation was attempted in a Python 3.12 venv with proxy
+  variables unset. It reached the `mlx_metal` wheel download but only advanced
+  at roughly 69 kB/s, so real direct-MLX validation is still pending a better
+  download path or preseeded wheel/model cache.
+
+This makes the immediate Mac ranking:
+
+1. **Ollama `qwen3.5:0.8b-mlx`** for current TTFT smoke and UI iteration.
+2. **Direct MLX-LM resident service** once `mlx-lm` and
+   `mlx-community/Qwen3.5-0.8B-4bit` can be downloaded or cached locally.
+3. **Native llama.cpp/Metal provider** for the eventual Wisdom-Weasel parity
+   path: prompt KV reuse plus sequence-fork multi-candidate sampling.
+
+The remaining product problem is not "can the Mac show a token under 200 ms".
+It can, on the MLX tag. The problem is to turn that into a parsed, useful
+candidate without waiting 800-900 ms for full JSON and without letting the small
+model replace RAG as the factual memory source.

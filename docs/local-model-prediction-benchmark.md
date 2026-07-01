@@ -133,6 +133,52 @@ Interpretation:
   provider with explicit prompt/KV reuse. More prompt wording will not fix the
   main latency and quality gap by itself.
 
+### 2026-07-01 Follow-up: Warm MLX Tag Beats GGUF/Q8
+
+The current no-proxy local state has both models in
+`/Volumes/undo 4t/ollama-models`:
+
+| Model | Ollama id | Local size | Runner path |
+| --- | --- | ---: | --- |
+| `qwen3.5:0.8b-mlx` | `6a48dd9c06e3` | 1.2 GB | Ollama MLX runner |
+| `qwen3.5:0.8b` | `f3817196d142` | 1.0 GB | llama-server / GGUF Q8 |
+
+Rerun command shape:
+
+```bash
+env RAG_IME_PREDICTOR_PROVIDER=ollama \
+  RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434 \
+  RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b-mlx \
+  RAG_IME_PREDICTOR_PROFILE=instant \
+  RAG_IME_PREDICTOR_TIMEOUT_MS=2000 \
+  RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=0 \
+  python3 -m rag_ime.cli predictor-ttft \
+    --case "本地 RAG 输入法需要根据历史输入预测候选" \
+    --recent-context "用户正在讨论 Mac 本地推理、Qwen3.5 0.8B、MLX、KV cache 和输入法首 token 延迟" \
+    --repeat 8 \
+    --latency-budget-ms 200
+```
+
+Observed on the 2026-07-01 noon rerun:
+
+| Model | Timeout | p50 first chunk | p95 / max first chunk | p50 total | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `qwen3.5:0.8b-mlx` | 2000 ms | 124 ms | 1264 ms cold/preload sample | 888 ms | Warm samples after runner load are 76-133 ms, so this is the current fastest Mac smoke path. |
+| `qwen3.5:0.8b` | 5000 ms | 296 ms | 360 ms | 1646 ms | All samples exceeded the 200 ms first-chunk budget. |
+
+Operational notes:
+
+- The default `instant` timeout is 350 ms. That is correct for product
+  fail-open behavior, but too short for loading a cold runner; use
+  `RAG_IME_PREDICTOR_TIMEOUT_MS=2000` or higher for benchmark runs.
+- Ollama logs showed MLX runner cache hits after the first request, with peak
+  memory around 1.1 GB for the MLX tag.
+- The GGUF/Q8 route used llama-server and loaded vision/multimodal components,
+  which makes it a poorer first-token path on this machine.
+- The first streaming text is still often JSON syntax such as `["`, so the
+  product UI should stream the first parsed useful candidate, not merely the
+  first raw token.
+
 The stable rule for this project is: configure any candidate through one explicit provider lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
 ## Mac Runtime Order
