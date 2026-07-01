@@ -344,7 +344,8 @@ class DebugImeService:
             core=self.core,
             default_project=self.config.project,
         )
-        self._clear_rime_cache()
+        if not response.get("dryRun"):
+            self._clear_rime_cache()
         return response
 
     def commit(self, payload: dict[str, Any]) -> dict[str, object]:

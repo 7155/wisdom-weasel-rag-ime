@@ -22,6 +22,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func ragImePanelForcesHorizontalLayout() -> Bool", patch_text)
         self.assertIn("var ragImePanelLinear: Bool", patch_text)
         self.assertIn("view.textView.setLayoutOrientation(ragImePanelVertical ? .vertical : .horizontal)", patch_text)
+        self.assertIn("var candidateSeparators = [String]()", patch_text)
+        self.assertIn('traceRagImeFrontendEvent("panel_text_layout"', patch_text)
+        self.assertIn("traceRagImePanelTextLayout(", patch_text)
+        self.assertIn('if candidate.sourceType == "model" && layout == "inline" && lane == "model"', patch_text)
         self.assertIn("let maxTextHeight = ragImePanelVertical", patch_text)
         self.assertIn("let maxWidth = if ragImePanelVertical", patch_text)
         self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 1.2", patch_text)
@@ -34,6 +38,11 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("guard response.committedContext == request.committedContext else {", patch_text)
         self.assertIn("guard ragImeCommittedContext == request.committedContext else {", patch_text)
         self.assertIn("func completeRagImeSidecarRequest(fingerprint: String, keepLastFingerprint: Bool)", patch_text)
+        self.assertIn("let frontendTrace: Bool", patch_text)
+        self.assertIn("rag_ime/frontend_trace", patch_text)
+        self.assertIn("func traceRagImeFrontendEvent(_ event: String, fields: [String: Any])", patch_text)
+        self.assertIn('traceRagImeFrontendEvent("panel_display_candidates"', patch_text)
+        self.assertIn('traceRagImeFrontendEvent("side_candidate_commit"', patch_text)
         self.assertIn(
             "+    committedContext: String,\n"
             "+    page: Int,\n"
@@ -53,12 +62,11 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             "+      return false\n"
             "+    }\n"
             "+    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {\n"
-            "+      return false\n"
-            "+    }\n"
-            "+    return selectCandidate(index)\n"
-            "+  }",
+            "+      return false",
             patch_text,
         )
+        self.assertIn('traceRagImeFrontendEvent("number_key_route"', patch_text)
+        self.assertIn("+    return selectCandidate(index)", patch_text)
 
     def test_build_script_dry_run_reports_resolved_commands(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -225,6 +233,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             config = (rime_dir / "squirrel.custom.yaml").read_text(encoding="utf-8")
             self.assertIn('"rag_ime/enabled": true', config)
             self.assertIn('"rag_ime/sidecar_url": "http://127.0.0.1:19866/api"', config)
+            self.assertIn('"rag_ime/frontend_trace": true', config)
             self.assertTrue((rime_dir / "build" / "luna_pinyin.table.bin").is_file())
 
     def test_build_script_fails_clearly_when_workdir_is_missing(self) -> None:
@@ -254,11 +263,11 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
     (workdir / "sources" / "RagImeSidecarModels.swift").write_text("// models\n", encoding="utf-8")
     (workdir / "sources" / "RagImeSidecarClient.swift").write_text("// client\n", encoding="utf-8")
     (workdir / "sources" / "SquirrelInputController.swift").write_text(
-        "final class SquirrelInputController { func ragImePanelForcesHorizontalLayout() -> Bool { false } }\n",
+        'final class SquirrelInputController { func ragImePanelForcesHorizontalLayout() -> Bool { false }; func traceRagImeFrontendEvent() {}; func traceRagImePanelTextLayout() { _ = "panel_text_layout" }; func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" } }\n',
         encoding="utf-8",
     )
     (workdir / "sources" / "SquirrelPanel.swift").write_text(
-        "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \" \" } }\n",
+        "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \" \" }; func traceRagImePanelTextLayout() {} }\n",
         encoding="utf-8",
     )
     (workdir / "Squirrel.xcodeproj").mkdir()
@@ -278,6 +287,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  latency_budget_ms: 180",
                 "  debounce_ms: 40",
                 "  timeout_ms: 1200",
+                "  frontend_trace: true",
             ]
         )
         + "\n",

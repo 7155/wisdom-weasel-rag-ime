@@ -12,6 +12,8 @@ from threading import Thread
 
 
 class _DoctorSidecarHandler(BaseHTTPRequestHandler):
+    select_payloads: list[dict[str, object]] = []
+
     def log_message(self, format: str, *args: object) -> None:
         return
 
@@ -35,12 +37,13 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path == "/rime-select":
             length = int(self.headers.get("Content-Length", "0"))
-            if length:
-                self.rfile.read(length)
+            payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            self.__class__.select_payloads.append(payload if isinstance(payload, dict) else {})
             self._send_json(
                 {
                     "schemaVersion": "rag-ime.rime-selection.v1",
                     "ok": True,
+                    "dryRun": bool(isinstance(payload, dict) and payload.get("dryRun")),
                     "eventId": "event:doctor",
                     "recordedAction": False,
                     "action": None,
@@ -130,6 +133,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
 
     def test_doctor_can_require_matching_predictor_configuration(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        _DoctorSidecarHandler.select_payloads = []
         server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -160,6 +164,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
         self.assertIn("[OK] HTTP sidecar health, rime-suggest, and rime-select passed", result.stdout)
+        self.assertTrue(_DoctorSidecarHandler.select_payloads)
+        self.assertTrue(_DoctorSidecarHandler.select_payloads[-1].get("dryRun"))
         self.assertIn(
             "[OK] sidecar predictor: local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true",
             result.stdout,
@@ -168,6 +174,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
 
     def test_doctor_tryout_mode_requires_prepared_squirrel_xcode_and_sidecar(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        _DoctorSidecarHandler.select_payloads = []
         server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -233,6 +240,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             thread.join(timeout=2)
 
         self.assertIn("tryout_readiness: 1", result.stdout)
+        self.assertTrue(_DoctorSidecarHandler.select_payloads)
+        self.assertTrue(_DoctorSidecarHandler.select_payloads[-1].get("dryRun"))
         self.assertIn("[OK] Squirrel workdir is a git checkout", result.stdout)
         self.assertIn("[OK] xcodebuild can inspect patched Squirrel project", result.stdout)
         self.assertIn("[OK] HTTP sidecar health, rime-suggest, and rime-select passed", result.stdout)

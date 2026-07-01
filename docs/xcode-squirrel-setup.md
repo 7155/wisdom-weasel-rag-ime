@@ -292,10 +292,37 @@ Manual continuous-use verification:
 2. In System Settings, add Squirrel from Chinese, Simplified if it is not present.
 3. Select Squirrel from the macOS input menu and wait for `scripts/wait_squirrel_typing_ready.sh` to pass.
 4. Run `squirrel-tryout-gate` and keep `/tmp/rag-ime-squirrel-tryout-report.json`.
-5. Open a normal editor and type at least 20 mixed Chinese/English prompts.
-6. Confirm normal Rime candidates still occupy the primary candidate slots.
-7. Confirm RAG/model side candidates appear only after stable Rime candidates or idle semantic input.
-8. Select at least one side candidate by number key and confirm `/rime-select` records the commit in the sidecar logs.
+5. Clear the frontend trace before manual foreground typing:
+
+```bash
+python3 scripts/check_squirrel_frontend_trace.py --clear
+```
+
+6. Open a normal editor and type at least 20 mixed Chinese/English prompts.
+7. Confirm normal Rime candidates remain available as fallback when side candidates do not fill the panel.
+8. Confirm side candidates are side-first when available: short LLM/model
+   candidates fill the first horizontal row, RAG/memory sentence candidates start
+   below as vertical rows, and native Rime candidates appear only after remaining
+   side slots are exhausted.
+9. Select at least one side candidate by number key.
+10. Check the real Squirrel frontend trace:
+
+```bash
+python3 scripts/check_squirrel_frontend_trace.py \
+  --require-mixed-panel \
+  --require-side-commit \
+  --print-last 8
+```
+
+The trace file is local-only at `~/Library/Logs/RagIme/squirrel-frontend.jsonl`
+and is enabled by `rag_ime/frontend_trace: true` in the managed Squirrel config.
+It is the repeatable evidence that the installed AppKit frontend actually used
+the sidecar display candidates: `panel_display_candidates` must show
+`modelInline > 0`, `ragBlock > 0`, and `forcesHorizontalLayout=true`, while
+`panel_text_layout` must show space separators between model candidates and a
+newline before the first sentence candidate. After a number-key accept,
+`side_candidate_commit` proves the visible key routed through RAG-IME rather
+than native Rime selection.
 
 If the project opens in Xcode but the script fails, inspect the exact
 `xcodebuild` output first; the wrapper checks the patched files and config before

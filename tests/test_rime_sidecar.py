@@ -693,6 +693,52 @@ class RimeSidecarTests(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(row, ("统一选择写回接口", 3, "squirrel_rime_sidecar"))
 
+    def test_cli_rime_select_json_dry_run_does_not_write_database(self) -> None:
+        payload = {
+            "dryRun": True,
+            "candidate": {
+                "label": "2",
+                "text": "doctor side candidate",
+                "insertText": "doctor side candidate",
+                "sourceType": "model",
+                "selectionAction": "commit_side_candidate",
+                "sourceIndex": 0,
+            },
+            "query": "doctor",
+            "recentContext": "Squirrel tryout readiness probe",
+            "preedit": "doctor",
+        }
+        with tempfile.TemporaryDirectory(prefix="rag-ime-rime-select-dry-run-") as tmp:
+            db_path = f"{tmp}/select.sqlite"
+            stdin = io.StringIO(json.dumps(payload, ensure_ascii=False))
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                old_stdin = sys.stdin
+                try:
+                    sys.stdin = stdin
+                    code = main(["--db-path", db_path, "rime-select-json"])
+                finally:
+                    sys.stdin = old_stdin
+            self.assertEqual(code, 0)
+            response = json.loads(stdout.getvalue())
+            self.assertEqual(response["schemaVersion"], "rag-ime.rime-selection.v1")
+            self.assertTrue(response["dryRun"])
+            self.assertEqual(response["eventId"], "")
+            self.assertFalse(response["recordedAction"])
+            with sqlite3.connect(db_path) as conn:
+                has_events_table = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'input_events'"
+                ).fetchone()
+                row = (
+                    conn.execute(
+                        "SELECT committed_text FROM input_events WHERE committed_text = ?",
+                        ("doctor side candidate",),
+                    ).fetchone()
+                    if has_events_table
+                    else None
+                )
+            self.assertIsNone(row)
+
     def test_cli_rime_select_json_maps_zero_label_to_rank_ten(self) -> None:
         payload = {
             "candidate": {

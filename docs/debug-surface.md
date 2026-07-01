@@ -211,6 +211,26 @@ ranks to match the visible labels, and the merge policy to stay side-first with
 `["model", "rag", "rime"]` fallback order. This catches backend/native-payload
 regressions before the foreground AppKit panel test.
 
+For the foreground AppKit panel test, use the installed Squirrel frontend trace:
+
+```bash
+python3 scripts/check_squirrel_frontend_trace.py --clear
+# type with Squirrel in a normal editor, then accept one side candidate by number
+python3 scripts/check_squirrel_frontend_trace.py \
+  --require-mixed-panel \
+  --require-side-commit \
+  --print-last 8
+```
+
+The trace is written by the patched Squirrel app itself, not by the sidecar. A
+passing `latestMixedPanel` proves the actual frontend used sidecar display
+candidates and forced horizontal layout for the mixed panel. A passing
+`latestMixedTextLayout` proves the rendered text separators are mixed correctly:
+LLM/model inline candidates stay on one horizontal row, then the first
+RAG/memory sentence starts a newline and later sentence candidates remain
+vertical rows. A passing `latestSideCommit` proves number-key selection
+committed a side candidate and triggered feedback recording.
+
 The semantic query is built from commit preview or Rime candidates before
 falling back to raw input.
 

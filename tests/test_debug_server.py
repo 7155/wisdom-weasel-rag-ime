@@ -475,6 +475,32 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertIsNone(selection["action"])
         self.assertEqual(self.service.core.action_count(), before_actions)
 
+    def test_rime_select_dry_run_does_not_record_model_candidate(self) -> None:
+        before_events = self.service.core.event_count()
+        before_actions = self.service.core.action_count()
+        selection = self.service.rime_select(
+            {
+                "dryRun": True,
+                "candidate": {
+                    "label": "2",
+                    "text": "doctor side candidate",
+                    "insertText": "doctor side candidate",
+                    "sourceType": "model",
+                    "selectionAction": "commit_side_candidate",
+                    "sourceIndex": 0,
+                },
+                "query": "doctor",
+                "recentContext": "Squirrel tryout readiness probe",
+                "preedit": "doctor",
+            }
+        )
+        self.assertEqual(selection["schemaVersion"], "rag-ime.rime-selection.v1")
+        self.assertTrue(selection["dryRun"])
+        self.assertEqual(selection["eventId"], "")
+        self.assertFalse(selection["recordedAction"])
+        self.assertEqual(self.service.core.event_count(), before_events)
+        self.assertEqual(self.service.core.action_count(), before_actions)
+
     def test_commit_endpoint_accepts_squirrel_source(self) -> None:
         committed = self.service.commit(
             {
