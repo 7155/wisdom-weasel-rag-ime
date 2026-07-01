@@ -365,6 +365,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--min-sidecar-mrr", type=float, default=0.0)
     quality_gate.add_argument("--max-rag-noise-rate", type=float, default=1.0)
     quality_gate.add_argument("--max-sidecar-noise-rate", type=float, default=1.0)
+    quality_gate.add_argument("--max-sidecar-rag-timeout-rate", type=float, default=1.0)
+    quality_gate.add_argument("--max-sidecar-model-timeout-rate", type=float, default=1.0)
     quality_gate.add_argument("--cache-repeat", type=int, default=3)
     quality_gate.add_argument("--cache-current-input", default="RAG 输入法")
     quality_gate.add_argument("--cache-recent-context", default="quality gate cache probe")
@@ -1118,6 +1120,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_sidecar_mrr=max(0.0, min(1.0, args.min_sidecar_mrr)),
             max_rag_noise_rate=max(0.0, min(1.0, args.max_rag_noise_rate)),
             max_sidecar_noise_rate=max(0.0, min(1.0, args.max_sidecar_noise_rate)),
+            max_sidecar_rag_timeout_rate=max(0.0, min(1.0, args.max_sidecar_rag_timeout_rate)),
+            max_sidecar_model_timeout_rate=max(0.0, min(1.0, args.max_sidecar_model_timeout_rate)),
             cache_current_input=args.cache_current_input,
             cache_recent_context=args.cache_recent_context,
             cache_repeat=max(1, args.cache_repeat),
@@ -1277,6 +1281,10 @@ def run_rime_sidecar_eval(
     model_counts: list[int] = []
     rag_counts: list[int] = []
     trigger_refresh_count = 0
+    rag_lane_called_count = 0
+    rag_lane_timeout_count = 0
+    model_lane_called_count = 0
+    model_lane_timeout_count = 0
     for repeat_index in range(1, repeat_count + 1):
         for case_index, case in enumerate(cases, start=1):
             eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat_count)
@@ -1299,6 +1307,18 @@ def run_rime_sidecar_eval(
             trigger = response.get("triggerDecision") if isinstance(response, dict) else {}
             if isinstance(trigger, dict) and trigger.get("shouldRefresh"):
                 trigger_refresh_count += 1
+            rag_lane = response.get("ragLane") if isinstance(response, dict) else {}
+            if isinstance(rag_lane, dict):
+                if bool(rag_lane.get("called")):
+                    rag_lane_called_count += 1
+                if bool(rag_lane.get("timedOut")):
+                    rag_lane_timeout_count += 1
+            model_lane = response.get("modelLane") if isinstance(response, dict) else {}
+            if isinstance(model_lane, dict):
+                if bool(model_lane.get("called")):
+                    model_lane_called_count += 1
+                if bool(model_lane.get("timedOut")):
+                    model_lane_timeout_count += 1
             results.append(evaluate_suggestions(eval_case, side_suggestions, match=match))
     report = eval_report(results)
     report["schemaVersion"] = "rag-ime.rime-sidecar-eval.v1"
@@ -1321,6 +1341,12 @@ def run_rime_sidecar_eval(
         "totalModelCandidates": sum(model_counts),
         "totalRagCandidates": sum(rag_counts),
         "hasSideCandidates": any(count > 0 for count in side_counts),
+        "ragLaneCalledCount": rag_lane_called_count,
+        "ragLaneTimeoutCount": rag_lane_timeout_count,
+        "ragLaneTimeoutRate": _rate(rag_lane_timeout_count, len(results)),
+        "modelLaneCalledCount": model_lane_called_count,
+        "modelLaneTimeoutCount": model_lane_timeout_count,
+        "modelLaneTimeoutRate": _rate(model_lane_timeout_count, len(results)),
         "rimeSuggestCache": health.get("rimeSuggestCache"),
         "suggestionCache": health.get("suggestionCache"),
         "predictor": health.get("predictor"),
@@ -1387,6 +1413,8 @@ def run_quality_gate(
     min_sidecar_mrr: float,
     max_rag_noise_rate: float,
     max_sidecar_noise_rate: float,
+    max_sidecar_rag_timeout_rate: float,
+    max_sidecar_model_timeout_rate: float,
     cache_current_input: str,
     cache_recent_context: str,
     cache_repeat: int,
@@ -1453,6 +1481,8 @@ def run_quality_gate(
         min_sidecar_mrr=min_sidecar_mrr,
         max_rag_noise_rate=max_rag_noise_rate,
         max_sidecar_noise_rate=max_sidecar_noise_rate,
+        max_sidecar_rag_timeout_rate=max_sidecar_rag_timeout_rate,
+        max_sidecar_model_timeout_rate=max_sidecar_model_timeout_rate,
         require_suggestion_cache=require_suggestion_cache,
         required_predictor_capabilities=required_predictor_capabilities,
     )
@@ -1472,6 +1502,8 @@ def run_quality_gate(
             "minSidecarMeanReciprocalRank": min_sidecar_mrr,
             "maxRagNoiseRate": max_rag_noise_rate,
             "maxSidecarNoiseRate": max_sidecar_noise_rate,
+            "maxSidecarRagTimeoutRate": max_sidecar_rag_timeout_rate,
+            "maxSidecarModelTimeoutRate": max_sidecar_model_timeout_rate,
             "requireSuggestionCache": require_suggestion_cache,
             "requiredPredictorCapabilities": list(required_predictor_capabilities),
             "probePredictorCapabilities": bool(required_predictor_capabilities),
@@ -1533,6 +1565,8 @@ def _quality_gate_checks(
     min_sidecar_mrr: float,
     max_rag_noise_rate: float,
     max_sidecar_noise_rate: float,
+    max_sidecar_rag_timeout_rate: float,
+    max_sidecar_model_timeout_rate: float,
     require_suggestion_cache: bool,
     required_predictor_capabilities: tuple[str, ...],
 ) -> list[dict[str, object]]:
@@ -1570,6 +1604,11 @@ def _quality_gate_checks(
             min_top1_accuracy=min_sidecar_top1_accuracy,
             min_mrr=min_sidecar_mrr,
             max_noise_rate=max_sidecar_noise_rate,
+        ),
+        *_sidecar_lane_timeout_checks(
+            rime_report,
+            max_rag_timeout_rate=max_sidecar_rag_timeout_rate,
+            max_model_timeout_rate=max_sidecar_model_timeout_rate,
         ),
         {
             "name": "rime-sidecar-has-side-candidates",
@@ -1623,6 +1662,39 @@ def _quality_metric_checks(
             "expectedAtMost": max_noise_rate,
         },
     ]
+
+
+def _sidecar_lane_timeout_checks(
+    report: dict[str, object],
+    *,
+    max_rag_timeout_rate: float,
+    max_model_timeout_rate: float,
+) -> list[dict[str, object]]:
+    sidecar = report.get("sidecar") if isinstance(report.get("sidecar"), dict) else {}
+    rag_timeout_rate = float(sidecar.get("ragLaneTimeoutRate") or 0.0)
+    model_timeout_rate = float(sidecar.get("modelLaneTimeoutRate") or 0.0)
+    return [
+        {
+            "name": "rime-sidecar-rag-timeout-rate",
+            "passed": rag_timeout_rate <= max_rag_timeout_rate,
+            "actual": rag_timeout_rate,
+            "expectedAtMost": max_rag_timeout_rate,
+            "timeoutCount": int(sidecar.get("ragLaneTimeoutCount") or 0),
+            "calledCount": int(sidecar.get("ragLaneCalledCount") or 0),
+        },
+        {
+            "name": "rime-sidecar-model-timeout-rate",
+            "passed": model_timeout_rate <= max_model_timeout_rate,
+            "actual": model_timeout_rate,
+            "expectedAtMost": max_model_timeout_rate,
+            "timeoutCount": int(sidecar.get("modelLaneTimeoutCount") or 0),
+            "calledCount": int(sidecar.get("modelLaneCalledCount") or 0),
+        },
+    ]
+
+
+def _rate(count: int, total: int) -> float:
+    return float(count) / total if total > 0 else 0.0
 
 
 def _predictor_capability_checks(

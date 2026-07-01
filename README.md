@@ -305,11 +305,15 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --min-sidecar-pass-rate 0.9 \
   --min-sidecar-top1-accuracy 0.75 \
   --min-sidecar-mrr 0.8 \
-  --max-sidecar-noise-rate 0.05
+  --max-sidecar-noise-rate 0.05 \
+  --max-sidecar-rag-timeout-rate 0 \
+  --max-sidecar-model-timeout-rate 0
 ```
 
 This matters for an IME because a hit at rank 5 still slows typing, and a
-forbidden/noisy candidate is worse than a missed side candidate.
+forbidden/noisy candidate is worse than a missed side candidate. The sidecar
+timeout gates make the display-path contract stricter: RAG/model side lanes must
+fit the IME budget instead of silently falling back on most requests.
 
 For the final Wisdom-Weasel-style local model provider, add explicit capability
 requirements. This should fail for Ollama/MLX smoke providers until a native

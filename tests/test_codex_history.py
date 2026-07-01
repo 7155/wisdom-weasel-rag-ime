@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime.cli import main
+from rag_ime.cli import _sidecar_lane_timeout_checks, main
 from rag_ime.codex_history import (
     evaluate_suggestions,
     input_event_from_codex_record,
@@ -498,6 +498,11 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertGreaterEqual(report["sidecar"]["totalRagCandidates"], 1)
         self.assertGreaterEqual(report["sidecar"]["totalSideCandidates"], 1)
         self.assertEqual(report["sidecar"]["totalModelCandidates"], 0)
+        self.assertEqual(report["sidecar"]["ragLaneCalledCount"], 2)
+        self.assertEqual(report["sidecar"]["ragLaneTimeoutCount"], 0)
+        self.assertEqual(report["sidecar"]["ragLaneTimeoutRate"], 0.0)
+        self.assertEqual(report["sidecar"]["modelLaneTimeoutCount"], 0)
+        self.assertEqual(report["sidecar"]["modelLaneTimeoutRate"], 0.0)
         self.assertGreaterEqual(report["sidecar"]["rimeSuggestCache"]["hits"], 1)
         self.assertEqual(report["sidecar"]["rimeSuggestCache"]["misses"], 1)
         self.assertIn("elapsedMs", report["cases"][0])
@@ -548,6 +553,10 @@ class CodexHistoryTests(unittest.TestCase):
                     "1",
                     "--min-sidecar-pass-rate",
                     "1",
+                    "--max-sidecar-rag-timeout-rate",
+                    "0",
+                    "--max-sidecar-model-timeout-rate",
+                    "1",
                     "--force-side-candidates",
                     "--require-suggestion-cache",
                 ]
@@ -568,6 +577,8 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(report["thresholds"]["minRagTop1Accuracy"], 0.0)
         self.assertEqual(report["thresholds"]["minSidecarMeanReciprocalRank"], 0.0)
         self.assertEqual(report["thresholds"]["maxRagNoiseRate"], 1.0)
+        self.assertEqual(report["thresholds"]["maxSidecarRagTimeoutRate"], 0.0)
+        self.assertEqual(report["thresholds"]["maxSidecarModelTimeoutRate"], 1.0)
         check_names = {item["name"] for item in report["checks"]}
         self.assertIn("rag-top1-accuracy", check_names)
         self.assertIn("rag-mean-reciprocal-rank", check_names)
@@ -575,6 +586,29 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertIn("rime-sidecar-top1-accuracy", check_names)
         self.assertIn("rime-sidecar-mean-reciprocal-rank", check_names)
         self.assertIn("rime-sidecar-noise-rate", check_names)
+        self.assertIn("rime-sidecar-rag-timeout-rate", check_names)
+        self.assertIn("rime-sidecar-model-timeout-rate", check_names)
+
+    def test_sidecar_lane_timeout_checks_fail_when_rates_exceed_threshold(self) -> None:
+        checks = _sidecar_lane_timeout_checks(
+            {
+                "sidecar": {
+                    "ragLaneCalledCount": 3,
+                    "ragLaneTimeoutCount": 1,
+                    "ragLaneTimeoutRate": 1 / 3,
+                    "modelLaneCalledCount": 3,
+                    "modelLaneTimeoutCount": 0,
+                    "modelLaneTimeoutRate": 0.0,
+                }
+            },
+            max_rag_timeout_rate=0.0,
+            max_model_timeout_rate=0.0,
+        )
+        by_name = {item["name"]: item for item in checks}
+        self.assertFalse(by_name["rime-sidecar-rag-timeout-rate"]["passed"])
+        self.assertTrue(by_name["rime-sidecar-model-timeout-rate"]["passed"])
+        self.assertEqual(by_name["rime-sidecar-rag-timeout-rate"]["timeoutCount"], 1)
+        self.assertEqual(by_name["rime-sidecar-rag-timeout-rate"]["calledCount"], 3)
 
     def test_cli_quality_gate_can_enforce_noise_thresholds(self) -> None:
         db_path = self.root / "quality-gate-noise.sqlite"
