@@ -2143,3 +2143,31 @@ Commands:
 Status:
 - Runtime layout contract is correct: short LLM predictions are inline/horizontal metadata, RAG/memory sentences are block rows.
 - Current model is usable for the path but not ideal: it is a Qwen3.5 vision-language MLX package, so the next model task is to replace it with a complete pure-text MLX directory.
+
+### 2026-07-02 00:55 CST
+Problem:
+- The active MLX model still used the Qwen3.5 VLM package, which made doctor warn about `vision_config` and wasted disk/memory for an input method.
+- Direct Hugging Face shell downloads were unreliable from this environment: official HF timed out without proxy, while proxy/mirror attempts failed with SSL errors.
+
+Changes:
+- Added `scripts/derive_text_mlx_model.py` to derive a text-only MLX-LM directory from a Qwen3.5 MLX-VLM source by keeping only `language_model.*` weights and removing `vision_config`.
+- Created `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local` from the existing VLM directory; safetensors size dropped from about 625 MB to about 424 MB.
+- Reinstalled the MLX predictor LaunchAgent and sidecar LaunchAgent to use the derived text-only model.
+- Updated README and macOS frontend docs with the repeatable derivation and install commands.
+
+Verification:
+- Direct `MlxLmEngine` load of the derived directory succeeded.
+- Direct predict returned `candidateMode=next-token-logits` with 5 candidates in 135 ms in the manual smoke.
+- Runtime `/health` now reports `textOnly=true`, `hasVisionConfig=false`, and `textOnlyModel=true` for both the MLX service and sidecar predictor.
+- Installed `/rime-suggest` returned 1-5 `model/inline` and 6-8 `rag/block`; model lane elapsed 125 ms.
+- Doctor passed with `failures=0 warnings=0`.
+
+Commands:
+- `.venv-mlx314sys/bin/python scripts/derive_text_mlx_model.py --source-dir "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit" --target-dir "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local" --overwrite`
+- `RAG_IME_MLX_PYTHON="$PWD/.venv-mlx314sys/bin/python" RAG_IME_MLX_MODEL="/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local" scripts/install_mlx_predictor_launch_agent.sh`
+- `RAG_IME_PREDICTOR_PROVIDER=mlx RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767 RAG_IME_PREDICTOR_MODEL="/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local" RAG_IME_PREDICTOR_PROFILE=instant RAG_IME_PREDICTOR_TIMEOUT_MS=350 scripts/install_sidecar_launch_agent.sh`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/doctor_squirrel_integration.sh`
+
+Status:
+- Current active model path is `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local`.
+- Remaining goal work is real foreground typing validation, digit-key selection validation in the live panel, and further quality/latency optimization beyond logits top-k.

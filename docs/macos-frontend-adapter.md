@@ -249,9 +249,11 @@ Whitelisted variables include `RAG_IME_PREDICTOR_*`,
 ### Text-Only MLX Model Lane
 
 For the active input-method model lane, prefer text-only MLX-LM models over
-Qwen3.5 VLM models. The current default local model target is
-`mlx-community/Qwen3-0.6B-4bit`; move to `mlx-community/Qwen3-1.7B-4bit` only
-if the 0.6B model is too weak.
+Qwen3.5 VLM models. If Hugging Face is reachable, a direct text-generation MLX
+folder such as `mlx-community/Qwen3.5-0.8B-OptiQ-4bit` is the cleanest route.
+On this Mac, HF download was blocked from the shell, so the current verified
+route derives a text-only local directory from the already downloaded
+Qwen3.5 MLX-VLM package by keeping only `language_model.*` weights.
 
 Install the Python runtime with proxy variables unset and a repo-local pip
 cache:
@@ -260,12 +262,20 @@ cache:
 scripts/setup_mlx_predictor_env.sh
 ```
 
+Derive the local text-only Qwen3.5 directory:
+
+```bash
+.venv-mlx314sys/bin/python scripts/derive_text_mlx_model.py \
+  --source-dir "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit" \
+  --target-dir "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local" \
+  --overwrite
+```
+
 Then install the resident MLX predictor LaunchAgent:
 
 ```bash
 RAG_IME_MLX_PYTHON="$PWD/.venv-mlx314sys/bin/python" \
-RAG_IME_MLX_MODEL=mlx-community/Qwen3-0.6B-4bit \
-RAG_IME_HF_HOME="/Volumes/undo 4t/huggingface-cache" \
+RAG_IME_MLX_MODEL="/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local" \
 scripts/install_mlx_predictor_launch_agent.sh
 ```
 
@@ -274,9 +284,9 @@ Finally point the RAG/Rime sidecar at the MLX service:
 ```bash
 RAG_IME_PREDICTOR_PROVIDER=mlx \
 RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767 \
-RAG_IME_PREDICTOR_MODEL=mlx-community/Qwen3-0.6B-4bit \
+RAG_IME_PREDICTOR_MODEL="/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local" \
 RAG_IME_PREDICTOR_PROFILE=instant \
-RAG_IME_PREDICTOR_STREAM_FIRST=1 \
+RAG_IME_PREDICTOR_STREAM_FIRST=0 \
 RAG_IME_PREDICTOR_TIMEOUT_MS=350 \
 RAG_IME_HISTORY_CONTEXT_EVENTS=6 \
 scripts/install_sidecar_launch_agent.sh
@@ -286,6 +296,8 @@ The MLX predictor LaunchAgent clears common proxy environment variables so the
 first Hugging Face model download does not accidentally use a shell proxy.
 Set `RAG_IME_HF_HOME` to an external-drive cache path if you do not want model
 weights under the default Hugging Face cache.
+The current local derived directory reports `textOnly=true`, `hasVisionConfig=false`,
+and about 424 MB of safetensors weights through `/health`.
 
 Dry-run without loading launchd:
 

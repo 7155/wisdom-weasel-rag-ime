@@ -1526,3 +1526,22 @@ Verification:
 
 Next:
 - Foreground typing should be tested again. The next model task is replacing the active Qwen3.5 VLM directory with a complete pure-text MLX model directory.
+
+### 2026-07-02
+Topic:
+- Replace the active Qwen3.5 VLM runtime with a text-only local MLX model directory.
+
+Changes:
+- Added `scripts/derive_text_mlx_model.py`.
+- Derived `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local` from the existing Qwen3.5 MLX-VLM directory by keeping only `language_model.*` weights.
+- Reinstalled MLX predictor and sidecar LaunchAgents to use the derived text-only directory.
+- Updated docs with repeatable derivation/install commands.
+
+Verification:
+- Direct `MlxLmEngine` load/predict succeeded; next-token logits returned 5 candidates in about 135 ms.
+- Runtime `/health` now reports `textOnly=true`, `hasVisionConfig=false`, and `textOnlyModel=true`.
+- `/rime-suggest` still returns `model/inline` first and `rag/block` rows after it.
+- Doctor now passes with `failures=0 warnings=0`.
+
+Next:
+- Test live foreground typing and number-key commit behavior in the actual macOS panel.
