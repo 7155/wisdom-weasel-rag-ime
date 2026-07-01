@@ -1699,3 +1699,20 @@ Verification:
 
 Next:
 - User should visually test in a normal editor. If a first native Rime frame appears, wait for the sidecar refresh and check whether it updates to one horizontal LLM row plus vertical RAG rows.
+
+### 2026-07-02
+Topic:
+- Add restart-drift validation for sidecar and MLX LaunchAgents.
+
+Changes:
+- Strict Squirrel doctor now reads sidecar and MLX predictor LaunchAgent plists.
+- It verifies launchd will restart the same source root, MLX provider/model/base URL, stream-first setting, empty proxy vars, and prompt-cache-backed `mlx-predictor-server`.
+- Added tests for matching plist configuration and stale model-path drift.
+
+Verification:
+- Focused doctor tests passed: 12 tests.
+- Full suite passed: 192 tests.
+- Real strict doctor shows LaunchAgent plist checks are OK; only stale `/Library/Input Methods/Squirrel.app` still fails.
+
+Next:
+- User must run `scripts/replace_system_squirrel_app.sh` with admin password, then rerun foreground trace validation for horizontal LLM row plus vertical RAG rows.

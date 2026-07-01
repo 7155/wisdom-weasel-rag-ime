@@ -280,6 +280,14 @@ This is the preferred final gate for a local run because it checks sidecar
 health, model/RAG merge contract, raw-pinyin guard, input-source readiness, and
 the real Squirrel AppKit trace in one command.
 
+In strict tryout mode, doctor also reads the sidecar and MLX predictor
+LaunchAgent plists. This catches restart drift: the current HTTP sidecar may be
+healthy, but launchd could still be configured to restart with an older provider,
+model path, base URL, or prompt-cache setting. For the current MLX path, the
+strict check expects the sidecar plist to point at the active `local-mlx`
+text-only model, and the MLX predictor plist to start `mlx-predictor-server`
+with `--prompt-cache` and empty proxy variables.
+
 The trace is written by the patched Squirrel app itself, not by the sidecar. A
 passing `latestMixedPanel` proves the actual frontend used sidecar display
 candidates and forced horizontal layout for the mixed panel. A passing

@@ -304,6 +304,13 @@ use `displayLayout=inline` and RAG/memory sentence candidates use
 manual foreground typing; it still does not prove that the visible AppKit panel
 looked correct in a real editor.
 
+The same strict mode also validates LaunchAgent plist drift. It reads
+`~/Library/LaunchAgents/com.rag-ime.sidecar.plist` and
+`~/Library/LaunchAgents/com.rag-ime.mlx-predictor.plist`, then compares their
+provider/model/prompt-cache settings with the current sidecar health response.
+This matters after restarts: a green HTTP sidecar is not enough if launchd would
+relaunch with an older model path or without the MLX prompt cache.
+
 Manual continuous-use verification:
 
 1. Run `scripts/open_squirrel_input_source_settings.sh --wait`.

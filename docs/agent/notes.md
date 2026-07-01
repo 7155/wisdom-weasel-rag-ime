@@ -2404,3 +2404,23 @@ Commands:
 Status:
 - Installed input method now has the frontend patch for horizontal LLM lane plus vertical RAG sentence rows.
 - Remaining validation is visual foreground typing in a normal editor and real number-key commit confirmation.
+
+### 2026-07-02 03:27 CST
+Problem:
+- The real system can pass current HTTP sidecar/model checks while launchd remains configured to restart an older sidecar or MLX predictor.
+- User-visible layout debugging also showed the backend contract is correct but the system can still load stale same-bundle Squirrel.app from `/Library/Input Methods`.
+
+Changes:
+- Extended strict `scripts/doctor_squirrel_integration.sh` with LaunchAgent plist drift checks.
+- Doctor now reads sidecar and MLX predictor plists, compares source root/provider/model/base URL/stream-first settings with current sidecar health, and verifies the MLX predictor starts with matching text-only model, empty proxy vars, and `--prompt-cache`.
+- Added tests for strict tryout passing with matching plists and failing when plist model paths drift.
+- Updated debug/Xcode docs to explain the restart-drift gate.
+
+Verification:
+- `bash -n scripts/doctor_squirrel_integration.sh` passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_doctor_squirrel_integration` passed: 12 tests.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests` passed: 192 tests.
+- Real strict doctor confirms sidecar LaunchAgent and MLX predictor LaunchAgent both match current `local-mlx` text-only model and prompt-cache config.
+
+Status:
+- Remaining blocker is still the stale root-owned `/Library/Input Methods/Squirrel.app`, which requires the user to run `scripts/replace_system_squirrel_app.sh` and enter the Mac admin password.
