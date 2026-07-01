@@ -1229,3 +1229,20 @@ Verification:
 
 Next:
 - User must switch from the menu bar input menu to `鼠须管` / Squirrel, then rerun `scripts/wait_squirrel_typing_ready.sh` and type in a normal editor.
+
+### 2026-07-01
+Topic:
+- Add macOS input-source status to the browser debug page.
+
+Changes:
+- Added `/api/input-source` to the debug server.
+- Added an Input Source card to the debug UI showing installed-list state, selected state, and compact current source.
+- README now documents that the debug page separates System Settings visibility from active Squirrel typing.
+
+Verification:
+- Browser page rendered the new card with `list=ok`, `selected=no`, `current=Doubao`, matching the current machine state.
+- Browser console had no warnings/errors.
+- Full 144-test suite passed.
+
+Next:
+- Switch active input source to `鼠须管`, rerun `scripts/wait_squirrel_typing_ready.sh`, and then perform continuous editor typing validation.

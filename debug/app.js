@@ -12,6 +12,7 @@ const state = {
   rimeSidecar: null,
   predictorTtfc: null,
   cacheProbe: null,
+  inputSource: null,
   health: null,
   lastPayload: null,
   timer: 0,
@@ -92,6 +93,10 @@ const elements = {
   cacheCore: document.getElementById("cacheCore"),
   cacheRime: document.getElementById("cacheRime"),
   cacheRepeat: document.getElementById("cacheRepeat"),
+  inputSourceButton: document.getElementById("inputSourceButton"),
+  inputInstalled: document.getElementById("inputInstalled"),
+  inputSelected: document.getElementById("inputSelected"),
+  inputCurrent: document.getElementById("inputCurrent"),
 };
 
 function keyNumber(event) {
@@ -203,6 +208,18 @@ function render() {
             samples: state.cacheProbe.samples,
           }
         : null,
+      inputSource: state.inputSource
+        ? {
+            ok: state.inputSource.ok,
+            typingReady: state.inputSource.typingReady,
+            id: state.inputSource.id,
+            current: state.inputSource.current,
+            enabled: state.inputSource.enabled,
+            selectable: state.inputSource.selectable,
+            selected: state.inputSource.selected,
+            hitoolboxEnabled: state.inputSource.hitoolboxEnabled,
+          }
+        : null,
     },
     null,
     2,
@@ -210,6 +227,7 @@ function render() {
 
   renderTtfc();
   renderCacheProbe();
+  renderInputSource();
 }
 
 function escapeHtml(value) {
@@ -481,6 +499,47 @@ function renderCacheProbe() {
   elements.cacheButton.classList.toggle("is-warn", corePassed === false || rimePassed === false);
 }
 
+function compactInputSourceId(value) {
+  const text = String(value || "");
+  if (!text) return "--";
+  if (text.includes("Squirrel")) return "Squirrel";
+  if (text.includes("doubaoime")) return "Doubao";
+  if (text.includes("SCIM")) return "Pinyin";
+  if (text.includes("ABC")) return "ABC";
+  return text.split(".").at(-1) || text;
+}
+
+function renderInputSource() {
+  const status = state.inputSource || {};
+  elements.inputInstalled.textContent = status.ok ? "ok" : status.available === false ? "off" : "--";
+  elements.inputSelected.textContent = status.typingReady ? "yes" : status.selected === false ? "no" : "--";
+  elements.inputCurrent.textContent = compactInputSourceId(status.current);
+  elements.inputSourceButton.classList.toggle("is-warn", status.ok === false || status.typingReady === false);
+}
+
+async function refreshInputSource() {
+  elements.inputSourceButton.disabled = true;
+  elements.inputSourceButton.textContent = "checking";
+  try {
+    const response = await fetch("/api/input-source");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    state.inputSource = await response.json();
+    state.apiOnline = true;
+  } catch (error) {
+    state.inputSource = {
+      available: false,
+      ok: false,
+      typingReady: false,
+      error: String(error),
+    };
+    state.apiOnline = false;
+  } finally {
+    elements.inputSourceButton.disabled = false;
+    elements.inputSourceButton.textContent = "check";
+    render();
+  }
+}
+
 async function probePredictorTtfc() {
   elements.ttfcButton.disabled = true;
   elements.ttfcButton.textContent = "probing";
@@ -567,7 +626,9 @@ elements.evidenceButton.addEventListener("click", () => {
 });
 elements.ttfcButton.addEventListener("click", probePredictorTtfc);
 elements.cacheButton.addEventListener("click", probeCache);
+elements.inputSourceButton.addEventListener("click", refreshInputSource);
 
 render();
 refreshHealth().then(render);
+refreshInputSource();
 suggestNow();

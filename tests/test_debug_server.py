@@ -681,6 +681,83 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(payload["summary"]["suggestionCachePassed"])
         self.assertTrue(payload["summary"]["rimeCachePassed"])
 
+    def test_input_source_status_parses_check_script_output(self) -> None:
+        script = Path(self.tmp.name) / "check-input-source.sh"
+        script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=false current=com.apple.keylayout.ABC hitoolboxEnabled=true'",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "input-source.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                input_source_check_script=script,
+            )
+        )
+
+        status = service.input_source_status()
+
+        self.assertEqual(status["schemaVersion"], "rag-ime.debug-input-source.v1")
+        self.assertTrue(status["ok"])
+        self.assertFalse(status["typingReady"])
+        self.assertEqual(status["id"], "im.rime.inputmethod.Squirrel.Hans")
+        self.assertEqual(status["name"], "Squirrel - Simplified")
+        self.assertTrue(status["enabled"])
+        self.assertTrue(status["selectable"])
+        self.assertTrue(status["hitoolboxEnabled"])
+        self.assertEqual(status["current"], "com.apple.keylayout.ABC")
+
+    def test_http_debug_server_exposes_input_source_status(self) -> None:
+        script = Path(self.tmp.name) / "check-input-source.sh"
+        script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=true current=im.rime.inputmethod.Squirrel.Hans hitoolboxEnabled=true'",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "input-source-http.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                input_source_check_script=script,
+            )
+        )
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = service
+        Handler.static_dir = Path("debug")
+        debug_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        debug_thread = Thread(target=debug_server.serve_forever, daemon=True)
+        debug_thread.start()
+        try:
+            with urlopen(f"http://127.0.0.1:{debug_server.server_port}/api/input-source", timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            debug_server.shutdown()
+            debug_thread.join(timeout=2)
+            debug_server.server_close()
+
+        self.assertEqual(payload["schemaVersion"], "rag-ime.debug-input-source.v1")
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["typingReady"])
+        self.assertTrue(payload["selected"])
+
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):
             self.service.commit({"text": " "})

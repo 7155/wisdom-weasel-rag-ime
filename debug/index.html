@@ -65,6 +65,16 @@
 
       <aside class="side-panel">
         <section class="panel-card">
+          <h2>Input Source</h2>
+          <div class="ttfc-readout" id="inputSourceReadout">
+            <span class="metric"><b id="inputInstalled">--</b><small>list</small></span>
+            <span class="metric"><b id="inputSelected">--</b><small>selected</small></span>
+            <span class="metric"><b id="inputCurrent">--</b><small>current</small></span>
+          </div>
+          <button id="inputSourceButton" class="wide-button" type="button">check</button>
+        </section>
+
+        <section class="panel-card">
           <h2>Pipeline</h2>
           <ol class="pipeline" id="pipeline">
             <li data-step="capture"><span>1</span>捕获输入 <b>~5ms</b></li>

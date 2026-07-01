@@ -1767,3 +1767,27 @@ Verification:
 Status:
 - Installed and enabled state is verified.
 - Active source selection is still manual: current input source was ABC after timeout, so continuous real typing validation still requires switching from the macOS input menu to Squirrel.
+
+### 2026-07-01 19:05 CST
+Problem:
+- After Squirrel became visible in System Settings, the remaining real-use blocker was active input-source selection: terminal checks showed `hitoolboxEnabled=true` but `selected=false`.
+- The browser debug page showed candidate, TTFC, cache, and JSON state, but did not show whether the macOS input menu was actually on Squirrel.
+
+Changes:
+- Added `DebugImeService.input_source_status()` and `GET /api/input-source`.
+- The endpoint reuses `scripts/check_macos_input_source.sh --require-hitoolbox-enabled`, parses `enabled/selectable/selected/current/hitoolboxEnabled`, and returns a structured debug payload.
+- Added an Input Source card to `debug/index.html` / `debug/app.js` showing installed-list state, selected state, and compact current input-source ID.
+- Added debug-server tests for direct service parsing and HTTP `/api/input-source`.
+- Documented the debug page input-source check in README.
+
+Verification:
+- `GET /api/input-source` returned `ok=true`, `typingReady=false`, `current=com.bytedance.inputmethod.doubaoime.pinyin` on the current machine, matching the observed menu state.
+- Browser screenshot showed the new Input Source card without enlarging the IME overlay.
+- Browser console had no warnings/errors.
+- `python3 -m py_compile rag_ime/debug_server.py tests/test_debug_server.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_debug_server` passed in non-sandbox mode.
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests` passed with 144 tests.
+
+Status:
+- Debug page can now diagnose the exact install-vs-selected gap.
+- Continuous typing verification is still pending until the active input source is switched to Squirrel.
