@@ -303,7 +303,8 @@ Run the resident MLX-LM service when testing the next Mac fast lane:
 python3 -m rag_ime.cli mlx-predictor-server \
   --model <mlx-compatible-qwen-model-id> \
   --host 127.0.0.1 \
-  --port 8767
+  --port 8767 \
+  --prompt-cache
 
 export RAG_IME_PREDICTOR_PROVIDER=mlx
 export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767
@@ -314,8 +315,10 @@ export RAG_IME_PREDICTOR_PROFILE=instant
 The MLX service exposes `/predict`, `/predict-stream`, `/health`, and
 `/v1/models`. It loads the model once and lets `predictor-ttft` measure the
 first streamed candidate without going through an OpenAI-compatible chat layer.
-The protocol already reports prompt-cache metadata, but true MLX prompt-cache
-reuse is still the next optimization step.
+With `--prompt-cache`, it prepares the stable system-prompt cache at startup and
+reports `promptCache.prepared`. Current streaming generation still reports
+`usedForGeneration=false`; using that cached prefix inside generation is the
+next optimization step, not a completed claim.
 
 The model lane also has a default failure cooldown. If the configured endpoint times out or returns a slow empty result, subsequent prediction calls are skipped for a short window so composing refreshes do not pay one model timeout per key event:
 
