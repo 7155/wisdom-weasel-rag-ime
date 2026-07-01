@@ -97,11 +97,13 @@ def is_mixed_panel_event(event: dict[str, Any]) -> bool:
     if event.get("event") != "panel_display_candidates":
         return False
     counts = event.get("candidateCounts")
+    candidates = event.get("candidates")
     return (
         isinstance(counts, dict)
         and int(counts.get("modelInline") or 0) > 0
         and int(counts.get("ragBlock") or 0) > 0
         and bool(event.get("forcesHorizontalLayout"))
+        and visible_candidates_are_side_first(candidates)
     )
 
 
@@ -116,7 +118,10 @@ def is_mixed_text_layout_event(event: dict[str, Any]) -> bool:
     model_inline = int(counts.get("modelInline") or 0)
     rag_block = int(counts.get("ragBlock") or 0)
     separators = event.get("separators")
+    candidates = event.get("candidates")
     if model_inline <= 0 or rag_block <= 0 or not isinstance(separators, list):
+        return False
+    if not visible_candidates_are_side_first(candidates):
         return False
     if len(separators) <= model_inline:
         return False
@@ -124,6 +129,52 @@ def is_mixed_text_layout_event(event: dict[str, Any]) -> bool:
         if str(separators[index]) == "\n":
             return False
     return str(separators[model_inline]) == "\n"
+
+
+def visible_candidates_are_side_first(candidates: Any) -> bool:
+    if not isinstance(candidates, list) or not candidates:
+        return True
+    model_indices: list[int] = []
+    rag_indices: list[int] = []
+    rime_indices: list[int] = []
+    for index, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict):
+            return False
+        label = str(candidate.get("label") or "")
+        selection_key = str(candidate.get("selectionKey") or label)
+        expected_label = "0" if index == 9 else str(index + 1)
+        if label and label != expected_label:
+            return False
+        if selection_key and label and selection_key != label:
+            return False
+
+        source_type = str(candidate.get("sourceType") or "")
+        display_layout = str(candidate.get("displayLayout") or "")
+        display_lane = str(candidate.get("displayLane") or "")
+        selection_action = str(candidate.get("selectionAction") or "")
+        if source_type == "model":
+            model_indices.append(index)
+            if display_layout != "inline" or display_lane != "model" or selection_action != "commit_side_candidate":
+                return False
+        elif source_type == "rag":
+            rag_indices.append(index)
+            if display_layout != "block" or display_lane != "memory" or selection_action != "commit_side_candidate":
+                return False
+        elif source_type == "rime":
+            rime_indices.append(index)
+            if selection_action and selection_action != "select_rime_candidate":
+                return False
+        else:
+            return False
+
+    if not model_indices or not rag_indices:
+        return False
+    side_indices = model_indices + rag_indices
+    if max(model_indices) > min(rag_indices):
+        return False
+    if rime_indices and min(rime_indices) < max(side_indices):
+        return False
+    return True
 
 
 def is_valid_side_commit_event(event: dict[str, Any]) -> bool:

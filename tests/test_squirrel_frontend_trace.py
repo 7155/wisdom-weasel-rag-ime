@@ -51,10 +51,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "timestampMs": 1,
                         "forcesHorizontalLayout": True,
                         "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
-                        "candidates": [
-                            {"label": "1", "sourceType": "model", "displayLayout": "inline", "displayLane": "model"},
-                            {"label": "6", "sourceType": "rag", "displayLayout": "block", "displayLane": "memory"},
-                        ],
+                        "candidates": _mixed_side_first_candidates(),
                     },
                     ensure_ascii=False,
                 )
@@ -68,10 +65,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "vertical": False,
                         "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
                         "separators": ["", "  ", "  ", "  ", "  ", "\n", "\n", "\n"],
-                        "candidates": [
-                            {"label": "1", "sourceType": "model", "displayLayout": "inline", "displayLane": "model"},
-                            {"label": "6", "sourceType": "rag", "displayLayout": "block", "displayLane": "memory"},
-                        ],
+                        "candidates": _mixed_side_first_candidates(),
                     },
                     ensure_ascii=False,
                 )
@@ -220,6 +214,66 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         report = json.loads(result.stdout)
         self.assertTrue(report["latestMixedPanel"])
+        self.assertIsNone(report["latestMixedTextLayout"])
+
+    def test_trace_check_fails_when_rime_candidate_precedes_side_candidates(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        candidates = _mixed_side_first_candidates()
+        candidates[1] = {
+            "label": "2",
+            "selectionKey": "2",
+            "selectionRank": 2,
+            "sourceType": "rime",
+            "selectionAction": "select_rime_candidate",
+            "displayLayout": "fallback",
+            "displayLane": "rime",
+        }
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": True,
+                        "candidateCounts": {"total": 8, "modelInline": 4, "ragBlock": 3, "rime": 1},
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "panel_text_layout",
+                        "timestampMs": 2,
+                        "forcesHorizontalLayout": True,
+                        "vertical": False,
+                        "candidateCounts": {"total": 8, "modelInline": 4, "ragBlock": 3, "rime": 1},
+                        "separators": ["", "  ", "  ", "  ", "\n", "\n", "\n", "\n"],
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-mixed-panel",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertIsNone(report["latestMixedPanel"])
         self.assertIsNone(report["latestMixedTextLayout"])
 
     def test_trace_check_fails_side_commit_without_number_key_route(self) -> None:
@@ -388,6 +442,37 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertTrue(report["passed"])
         self.assertEqual(report["eventCount"], 0)
+
+
+def _mixed_side_first_candidates() -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    for index in range(5):
+        label = str(index + 1)
+        candidates.append(
+            {
+                "label": label,
+                "selectionKey": label,
+                "selectionRank": index + 1,
+                "sourceType": "model",
+                "selectionAction": "commit_side_candidate",
+                "displayLayout": "inline",
+                "displayLane": "model",
+            }
+        )
+    for index in range(3):
+        label = str(index + 6)
+        candidates.append(
+            {
+                "label": label,
+                "selectionKey": label,
+                "selectionRank": index + 6,
+                "sourceType": "rag",
+                "selectionAction": "commit_side_candidate",
+                "displayLayout": "block",
+                "displayLane": "memory",
+            }
+        )
+    return candidates
 
 
 if __name__ == "__main__":
