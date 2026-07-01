@@ -39,9 +39,13 @@ Rules:
 
 - show short phrases or one-sentence candidates;
 - keep long evidence out of the candidate bar;
+- treat `surface_text` as a compressed display label, not necessarily the full text that will be inserted;
+- preserve the full candidate material in `insert_text` for commit/expand actions;
 - keep top candidates small, normally 3 to 5 items;
 - preserve normal input-method number-key selection;
 - do not require the user to understand RAG before typing.
+
+Candidate compression should prefer readable bullets, concise conclusion lines, or short semantic sentences. Runtime wrappers, tool-call prefixes, patch headers, local paths, token counters, and debug transcript markers should not appear in the default candidate bar. They may remain in evidence/debug surfaces when they are useful for diagnosis.
 
 ### 2. Evidence Preview
 

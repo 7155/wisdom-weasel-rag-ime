@@ -494,6 +494,38 @@ Next:
 - Use the subagent review to implement candidate-surface compression next; keep full `insert_text` but make `surface_text` smaller and cleaner for the real IME panel.
 - Add exact embedding cache / provider fingerprint cache before testing a real WSL embedding endpoint.
 
+### 2026-07-01 08:17 CST
+Problem:
+- Real IME panel space is small, but `SuggestionCompiler` mostly used the first sentence of retrieved memory as `surface_text`.
+- Long RAG chunks, bullets, and Codex transcript/tool traces could therefore produce candidate text that looked like logs instead of input-method candidates.
+
+Changes:
+- Added candidate-surface compression in `SuggestionCompiler`.
+- The compiler now prefers useful bullets/short semantic lines, strips transcript/tool/path/debug wrappers from display text, and still preserves the full committed material in `metadata.insert_text`.
+- Added regression tests for bullet extraction and tool-trace prefix cleanup.
+- Added a `/rime-suggest` sidecar smoke proving RAG `displayCandidates[].text` stays compact while `insertText` keeps the full paragraph.
+- Updated UX notes to make `surface_text` vs. `insert_text` an explicit contract.
+- Integrated Ptolemy's non-overlapping exact embedding cache patch for the OpenAI-compatible embedding provider.
+- Embedding cache keys include provider fingerprint plus normalized text; provider fingerprint now includes endpoint hash, model, dimensions, and `extra_body` hash.
+- Empty vectors are not cached, and `RAG_IME_EMBEDDING_CACHE_SIZE` controls the bounded in-process cache.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_adapter tests.test_rime_sidecar`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-expanded-eval-final-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 1`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_embeddings`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+
+Findings:
+- Adapter/sidecar tests pass.
+- Embedding cache tests pass: repeated normalized text hits once, endpoint/fingerprint change misses, empty vectors are not cached, and cache size is bounded.
+- Full suite now has 82 tests and passed.
+- 34-case Codex-history eval still passes 34/34 with unchanged ranking quality: top1Accuracy=0.824, meanReciprocalRank=0.880.
+
+Next:
+- Use the sidecar display/insert split when implementing the native candidate panel.
+- Test a real WSL/local embedding endpoint with `RAG_IME_EMBEDDING_CACHE_SIZE` enabled and compare repeated-case latency.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.

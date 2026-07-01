@@ -179,6 +179,7 @@ Relevant knobs:
 
 - `RAG_IME_EMBEDDING_TIMEOUT_MS`: per-request embedding timeout, default `800`.
 - `RAG_IME_EMBEDDING_DIMENSIONS`: optional dimensions field for providers that support it.
+- `RAG_IME_EMBEDDING_CACHE_SIZE`: in-process exact text embedding cache size, default `256`; set `0` to disable.
 - `RAG_IME_VECTOR_CANDIDATES` / `--embedding-vector-candidates`: vector rows merged into retrieval, default `80`.
 - `RAG_IME_VECTOR_WEIGHT` / `--embedding-vector-weight`: similarity score multiplier, default `1.4`.
 

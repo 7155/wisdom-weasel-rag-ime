@@ -11,6 +11,7 @@ from contextlib import redirect_stdout
 from rag_ime.adapter import InputMethodAdapter
 from rag_ime.cli import main
 from rag_ime.core_client import FixtureCoreClient
+from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import ModelPrediction
 from rag_ime.rime_sidecar import (
     build_rime_sidecar_response,
@@ -180,6 +181,43 @@ class RimeSidecarTests(unittest.TestCase):
         side_items = [item for item in response["displayCandidates"] if item["sourceType"] != "rime"]
         self.assertEqual([item["sourceType"] for item in side_items], ["model", "rag", "rag"])
         self.assertEqual(len(response["modelPredictions"]), 3)
+
+    def test_rag_display_text_is_compressed_but_insert_text_is_full(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-sidecar-surface-") as tmp:
+            core = LocalSqliteCoreClient(f"{tmp}/rag-ime.sqlite")
+            core.initialize()
+            adapter = InputMethodAdapter(core)
+            adapter.commit_text(
+                "背景说明这一句不是候选重点。\n"
+                "- 候选面板只显示压缩标题，完整段落放 insert_text。\n"
+                "- evidence preview 放到展开面板。",
+                recent_context="RAG candidate surface compression",
+                project="wisdom-weasel-rag-ime",
+                tags=("structure",),
+            )
+
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "squirrel-surface",
+                    "requestSeq": 101,
+                    "maxVisibleCandidates": 4,
+                    "maxSideCandidates": 2,
+                    "forceSideCandidates": True,
+                    "rimeContext": {
+                        "candidates": [
+                            {"label": "1", "text": "候选面板", "comment": "rime"},
+                        ]
+                    },
+                },
+                adapter=adapter,
+                core=core,
+                predictor=self.predictor,
+            )
+
+        rag_item = next(item for item in response["displayCandidates"] if item["sourceType"] == "rag")
+        self.assertEqual(rag_item["text"], "候选面板只显示压缩标题，完整段落放 insert_text。")
+        self.assertIn("背景说明这一句不是候选重点", rag_item["insertText"])
+        self.assertIn("evidence preview 放到展开面板", rag_item["insertText"])
 
     def test_dirty_raw_pinyin_without_rime_candidates_skips_side_lanes(self) -> None:
         response = build_rime_sidecar_response(

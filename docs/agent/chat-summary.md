@@ -545,3 +545,27 @@ Verification:
 
 Decision:
 - Do not delete all tool transcript memories yet. A trial hard filter dropped recall to 28/34 because several implementation identifiers currently exist only in tool traces. Keep them as downranked fallback until project docs/summaries cover those identifiers.
+
+### 2026-07-01
+Topic:
+- Make RAG candidates fit the real IME panel.
+
+Changes:
+- `SuggestionCompiler` now compresses candidate-bar `surface_text` separately from full `insert_text`.
+- It prefers useful bullets and short semantic lines, strips Codex transcript/tool/debug/path wrappers from display text, and keeps full source material for commit/expand.
+- Rime sidecar tests now prove RAG `displayCandidates[].text` can be compact while `insertText` keeps the full source paragraph.
+- UX docs now state the `surface_text` vs. `insert_text` contract explicitly.
+- Ptolemy's exact embedding cache patch was integrated for the OpenAI-compatible embedding provider.
+- Embedding cache keys use provider fingerprint plus normalized text; fingerprint now includes endpoint hash, model, dimensions, and `extra_body` hash.
+- `RAG_IME_EMBEDDING_CACHE_SIZE` controls the bounded cache and empty vectors are not cached.
+
+Verification:
+- Adapter and Rime sidecar tests passed.
+- Embedding cache tests passed.
+- Full suite now has 82 tests and passed.
+- Acceptance passed.
+- 34-case Codex-history eval stayed at 34/34 with top1Accuracy=0.824 and MRR=0.880.
+
+Next:
+- Use the sidecar display/insert split when implementing the native candidate panel.
+- Test a real WSL/local embedding endpoint with cache enabled and compare repeated-case latency.
