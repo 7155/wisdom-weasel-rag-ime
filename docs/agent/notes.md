@@ -2171,3 +2171,31 @@ Commands:
 Status:
 - Current active model path is `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local`.
 - Remaining goal work is real foreground typing validation, digit-key selection validation in the live panel, and further quality/latency optimization beyond logits top-k.
+
+### 2026-07-02 00:56 CST
+Problem:
+- The native Squirrel sidecar request fingerprint did not include `committedContext`.
+- This could let an older sidecar request/panel survive after the user committed new Chinese text, weakening history-context prediction and making live candidates stale.
+
+Changes:
+- Added `committedContext` to `ragImeRequestFingerprint` in the Squirrel patch.
+- Added stale-response guards so a sidecar response is dropped if either the response context or current `ragImeCommittedContext` no longer matches the request.
+- Updated patch tests to lock the committed-context fingerprint and guard contract.
+- Rebuilt and reinstalled patched Squirrel.app from `/tmp/rag-ime-squirrel-verify`.
+
+Verification:
+- Real patch apply passed after fixing unified-diff hunk counts.
+- `scripts/build_patched_squirrel.sh install` built the Release app and installed it into `~/Library/Input Methods/Squirrel.app`.
+- Focused tests passed: `tests.test_build_patched_squirrel`, `tests.test_prepare_squirrel_workspace`, `tests.test_rime_sidecar`, `tests.test_debug_server`, `tests.test_mlx_predictor_server`, `tests.test_predictor` (95 tests).
+- Re-registration required `RAG_IME_SQUIRREL_APP="$HOME/Library/Input Methods/Squirrel.app" scripts/enable_squirrel_hitoolbox_input_source.sh`; after that `im.rime.inputmethod.Squirrel.Hans` was enabled, selectable, selected, and `thirdPartyEnabled=true`.
+- Doctor passed with `failures=0 warnings=0`; sidecar still reports text-only MLX model `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local`.
+
+Commands:
+- `RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify RAG_IME_SQUIRREL_RESET=1 scripts/prepare_squirrel_workspace.sh`
+- `RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/build_patched_squirrel.sh install`
+- `RAG_IME_SQUIRREL_APP="$HOME/Library/Input Methods/Squirrel.app" scripts/enable_squirrel_hitoolbox_input_source.sh`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/doctor_squirrel_integration.sh`
+
+Status:
+- Installed runtime is back to `Squirrel - Simplified`, selected and ready.
+- Remaining unproven part is still foreground live typing: user-visible panel behavior and number-key commit in real apps.

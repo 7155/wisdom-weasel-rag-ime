@@ -673,7 +673,7 @@ index c2adf74..e63b851 100644
    // swiftlint:disable:next identifier_name
    func page(up: Bool) -> Bool {
      var handled = false
-@@ -301,6 +367,302 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,6 +367,307 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
@@ -748,6 +748,7 @@ index c2adf74..e63b851 100644
 +      rawInput: rawInput,
 +      preedit: preedit,
 +      commitTextPreview: commitTextPreview,
++      committedContext: ragImeCommittedContext,
 +      page: page,
 +      highlighted: highlighted,
 +      candidates: rimeCandidates
@@ -794,6 +795,8 @@ index c2adf74..e63b851 100644
 +    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
 +    guard currentRawInput == request.rawInput else { return }
 +    guard response.preedit == request.preedit else { return }
++    guard response.committedContext == request.committedContext else { return }
++    guard ragImeCommittedContext == request.committedContext else { return }
 +    guard response.rimeContext.page == request.rimeContext.page else { return }
 +    guard ragImeCandidateFingerprint(response.rimeContext.candidates) == ragImeCandidateFingerprint(request.rimeContext.candidates) else { return }
 +    guard currentRagImeContextMatches(request) else { return }
@@ -822,6 +825,7 @@ index c2adf74..e63b851 100644
 +    rawInput: String,
 +    preedit: String,
 +    commitTextPreview: String,
++    committedContext: String,
 +    page: Int,
 +    highlighted: Int,
 +    candidates: [RagImeRimeCandidatePayload]
@@ -830,6 +834,7 @@ index c2adf74..e63b851 100644
 +      rawInput,
 +      preedit,
 +      commitTextPreview,
++      committedContext,
 +      String(page),
 +      String(highlighted),
 +      ragImeCandidateFingerprint(candidates)
@@ -976,7 +981,7 @@ index c2adf74..e63b851 100644
    func onChordTimer(_: Timer) {
      var processedKeys = false
      if chordKeyCount > 0 && session != 0 {
-@@ -360,6 +722,7 @@ private extension SquirrelInputController {
+@@ -360,6 +727,7 @@ private extension SquirrelInputController {
  
      if session != 0 {
        updateAppOptions()
@@ -984,7 +989,7 @@ index c2adf74..e63b851 100644
      }
    }
  
-@@ -434,7 +797,7 @@ private extension SquirrelInputController {
+@@ -434,7 +802,7 @@ private extension SquirrelInputController {
    }
  
    // Preserve reserved comment marks when librime requests a UI-only refresh.
@@ -993,7 +998,7 @@ index c2adf74..e63b851 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +809,7 @@ private extension SquirrelInputController {
+@@ -446,6 +814,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -1001,7 +1006,7 @@ index c2adf74..e63b851 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +822,14 @@ private extension SquirrelInputController {
+@@ -458,13 +827,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -1017,7 +1022,7 @@ index c2adf74..e63b851 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -537,13 +902,35 @@ private extension SquirrelInputController {
+@@ -537,13 +907,35 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -1054,7 +1059,7 @@ index c2adf74..e63b851 100644
        hidePalettes()
      }
    }
-@@ -551,6 +938,7 @@ private extension SquirrelInputController {
+@@ -551,6 +943,7 @@ private extension SquirrelInputController {
    func commit(string: String) {
      guard let client = client else { return }
      client.insertText(string, replacementRange: .empty)

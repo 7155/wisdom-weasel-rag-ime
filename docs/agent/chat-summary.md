@@ -1545,3 +1545,20 @@ Verification:
 
 Next:
 - Test live foreground typing and number-key commit behavior in the actual macOS panel.
+
+### 2026-07-02
+Topic:
+- Keep native Squirrel sidecar requests aligned with recent committed input context.
+
+Changes:
+- Added `committedContext` to the native Squirrel sidecar request fingerprint.
+- Added stale-response guards so old sidecar responses cannot overwrite the panel after the user commits new text.
+- Rebuilt and reinstalled patched Squirrel.app with the updated patch.
+
+Verification:
+- Real patch apply, Xcode Release build/install, focused tests, input-source re-registration, and doctor all passed.
+- Current selected source is `im.rime.inputmethod.Squirrel.Hans`.
+- Sidecar still uses the text-only MLX model at `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local`.
+
+Next:
+- Foreground typing and number-key commit validation are still required before marking the whole goal complete.

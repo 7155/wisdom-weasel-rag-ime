@@ -25,6 +25,22 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 1.2", patch_text)
         self.assertIn("func canUseRagImeDisplayHoldover(", patch_text)
         self.assertIn('ragImeDisplayQueryBasis == "committedContext"', patch_text)
+        self.assertIn("committedContext: ragImeCommittedContext", patch_text)
+        self.assertIn("guard response.committedContext == request.committedContext else { return }", patch_text)
+        self.assertIn("guard ragImeCommittedContext == request.committedContext else { return }", patch_text)
+        self.assertIn(
+            "+    committedContext: String,\n"
+            "+    page: Int,\n"
+            "+    highlighted: Int,\n"
+            "+    candidates: [RagImeRimeCandidatePayload]\n"
+            "+  ) -> String {\n"
+            "+    return [\n"
+            "+      rawInput,\n"
+            "+      preedit,\n"
+            "+      commitTextPreview,\n"
+            "+      committedContext,",
+            patch_text,
+        )
         self.assertIn(
             "+  func selectRagImeSideCandidate(forKey key: String) -> Bool {\n"
             "+    guard ragImePanelUsesDisplayCandidates else {\n"
