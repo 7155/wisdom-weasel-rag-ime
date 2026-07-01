@@ -2481,3 +2481,29 @@ Verification:
 Status:
 - `RAG-IME - Simplified` is installed and visible to macOS TIS as enabled/selectable.
 - Codex cannot persist `com.apple.inputsources` ThirdParty preferences from this process; macOS denied both `defaults write` and direct plist write. The remaining foreground step is adding/selecting `RAG-IME - Simplified` once in System Settings, or letting Codex do that via GUI after user confirmation.
+
+### 2026-07-02 04:18 CST
+Problem:
+- User clarified the layout again: LLM candidates should be horizontal, while sentence/RAG candidates should be vertical.
+- The screenshot showing `而且 / 而去 / 二期` was Rime pinyin fallback, not the LLM lane. Rime fallback can still appear vertically when side candidates are absent or not yet applied.
+- The real risk was high-frequency composing: a previous MLX request could keep the model semaphore busy, so a new `/rime-suggest` response might contain only RAG/Rime and visually lose the horizontal model row.
+
+Changes:
+- Added a sub-second model holdover cache in `rag_ime/rime_sidecar.py`.
+- If the model lane is already running and the committed context matches, `/rime-suggest` reuses the most recent successful model predictions and reports `modelLane.holdoverHit=true`.
+- If MLX obtains the model lane but exceeds the IME latency budget, `/rime-suggest` can also reuse the same-context model holdover; the lane reports both `timedOut=true` and `holdoverHit=true`.
+- Kept the layout contract strict: `sourceType=model + displayLayout=inline` is the horizontal LLM row; `sourceType=rag + displayLayout=block` is the vertical sentence/RAG row; Rime fallback is not counted as LLM.
+- Added tests for the layout contract, busy-model holdover behavior, and timeout-holdover behavior.
+- Reinstalled the sidecar LaunchAgent so `/Users/undo/Library/Application Support/RagIme/app` uses the updated runtime.
+
+Verification:
+- `python3 -m unittest tests.test_rime_sidecar` passed.
+- `python3 -m py_compile rag_ime/rime_sidecar.py` passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests` passed: 201 tests.
+- `scripts/doctor_squirrel_integration.sh` passed with `display=8 model=5 rag=3 rime=0`, logits/top-k MLX model path, prompt cache, and LaunchAgent config.
+- Sidecar reinstall passed health check.
+- Live `/api/rime-suggest` probe returned `modelInline=5`, `ragBlock=3`, `rime=0`; labels 1-5 are MLX inline model candidates and labels 6-8 are RAG block candidates.
+
+Status:
+- Backend and installed sidecar now satisfy the requested layout contract.
+- Remaining user-visible validation is foreground Squirrel/RAG-IME panel trace and real number-key commit in an editor.

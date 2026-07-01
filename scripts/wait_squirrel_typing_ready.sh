@@ -3,16 +3,34 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
+INPUT_SOURCE_NAME="${RAG_IME_SQUIRREL_INPUT_SOURCE_NAME:-}"
 CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/check_macos_input_source.sh}"
 SIDECAR_URL="${RAG_IME_SIDECAR_URL:-http://127.0.0.1:8766}"
 TIMEOUT_SECONDS="${RAG_IME_TYPING_READY_TIMEOUT_SECONDS:-60}"
 POLL_SECONDS="${RAG_IME_TYPING_READY_POLL_SECONDS:-1}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
 
+infer_input_source_name() {
+  if [[ -n "$INPUT_SOURCE_NAME" ]]; then
+    printf '%s\n' "$INPUT_SOURCE_NAME"
+    return
+  fi
+  case "$INPUT_SOURCE_ID" in
+    *RagIme.Hans) printf 'RAG-IME - Simplified\n' ;;
+    *RagIme.Hant) printf 'RAG-IME - Traditional\n' ;;
+    *Squirrel.Hant) printf 'Squirrel - Traditional\n' ;;
+    *) printf 'Squirrel - Simplified\n' ;;
+  esac
+}
+
+display_name="$(infer_input_source_name)"
+product_name="${display_name% - Simplified}"
+product_name="${product_name% - Traditional}"
+
 if ! added_output="$("$CHECK_INPUT_SOURCE_SCRIPT" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
-  echo "Squirrel is not fully added to the current user's macOS input-source lists." >&2
+  echo "$product_name is not fully added to the current user's macOS input-source lists." >&2
   echo "$added_output" >&2
-  echo "Use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel." >&2
+  echo "Use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> $display_name." >&2
   echo "Recommended helper: scripts/open_squirrel_input_source_settings.sh --wait" >&2
   echo "Then run scripts/wait_squirrel_input_source_added.sh before switching input sources." >&2
   exit 2
@@ -21,7 +39,7 @@ fi
 deadline=$((SECONDS + TIMEOUT_SECONDS))
 
 echo "Waiting for selected input source: $INPUT_SOURCE_ID"
-echo "Use the macOS input menu to switch to Squirrel - Simplified."
+echo "Use the macOS input menu to switch to $display_name."
 
 last_output=""
 while [[ "$SECONDS" -le "$deadline" ]]; do
@@ -60,4 +78,4 @@ print(
 )
 PY
 
-echo "Ready: type in a normal macOS text field and verify the Squirrel candidate panel."
+echo "Ready: type in a normal macOS text field and verify the $product_name candidate panel."

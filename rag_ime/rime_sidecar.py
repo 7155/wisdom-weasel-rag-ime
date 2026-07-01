@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from threading import BoundedSemaphore, Event, Thread
+from threading import BoundedSemaphore, Event, RLock, Thread
 from typing import Any
 
 from .adapter import InputMethodAdapter, SuggestionRequest
@@ -24,12 +24,23 @@ from .text_utils import compact_whitespace, now_ms
 RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
 _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
+_MODEL_HOLDOVER_TTL_MS = 900
+_MODEL_HOLDOVER_LOCK = RLock()
+_MODEL_HOLDOVER: "_ModelPredictionHoldover | None" = None
 
 
 @dataclass(frozen=True)
 class RimeSideCandidateTriggerDecision:
     should_refresh: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class _ModelPredictionHoldover:
+    project: str
+    explicit_context_fingerprint: str
+    predictions: tuple[ModelPrediction, ...]
+    created_at: float
 
 
 def build_rime_sidecar_response(
@@ -334,6 +345,20 @@ def predict_model_with_latency_budget(
             budget_ms=budget_ms,
         )
     if not _MODEL_LANE_SEMAPHORE.acquire(blocking=False):
+        cached_predictions = _get_model_holdover_predictions(
+            project=project,
+            explicit_recent_context=explicit_recent_context,
+            max_candidates=max_candidates,
+        )
+        if cached_predictions:
+            return cached_predictions, _model_lane_status(
+                called=False,
+                timed_out=False,
+                skipped_reason="model lane already running; reused recent model holdover",
+                budget_ms=budget_ms,
+                prediction_count=len(cached_predictions),
+                holdover_hit=True,
+            )
         return [], _model_lane_status(
             called=False,
             timed_out=False,
@@ -361,6 +386,12 @@ def predict_model_with_latency_budget(
                 recent_context=recent_context,
                 max_candidates=max_candidates,
             )
+            if isinstance(result["predictions"], list) and result["predictions"]:
+                _store_model_holdover_predictions(
+                    project=project,
+                    explicit_recent_context=explicit_recent_context,
+                    predictions=result["predictions"],
+                )
         except Exception as exc:  # pragma: no cover - defensive fail-open guard
             result["error"] = exc.__class__.__name__
         finally:
@@ -370,6 +401,20 @@ def predict_model_with_latency_budget(
 
     Thread(target=run_prediction, name="rag-ime-model-lane", daemon=True).start()
     if not done.wait(timeout=budget_ms / 1000):
+        cached_predictions = _get_model_holdover_predictions(
+            project=project,
+            explicit_recent_context=explicit_recent_context,
+            max_candidates=max_candidates,
+        )
+        if cached_predictions:
+            return cached_predictions, _model_lane_status(
+                called=True,
+                timed_out=True,
+                skipped_reason="model lane exceeded latency budget; reused recent model holdover",
+                budget_ms=budget_ms,
+                prediction_count=len(cached_predictions),
+                holdover_hit=True,
+            )
         return [], _model_lane_status(
             called=True,
             timed_out=True,
@@ -421,6 +466,7 @@ def _model_lane_status(
     elapsed_ms: int = 0,
     prediction_count: int = 0,
     history_context: str = "",
+    holdover_hit: bool = False,
 ) -> dict[str, object]:
     return {
         "called": called,
@@ -430,7 +476,60 @@ def _model_lane_status(
         "latencyBudgetMs": budget_ms,
         "elapsedMs": elapsed_ms,
         "historyContext": history_context,
+        "holdoverHit": holdover_hit,
     }
+
+
+def clear_model_prediction_holdover_cache() -> None:
+    global _MODEL_HOLDOVER
+    with _MODEL_HOLDOVER_LOCK:
+        _MODEL_HOLDOVER = None
+
+
+def _store_model_holdover_predictions(
+    *,
+    project: str,
+    explicit_recent_context: str,
+    predictions: list[ModelPrediction],
+) -> None:
+    global _MODEL_HOLDOVER
+    if not compact_whitespace(explicit_recent_context):
+        return
+    visible = tuple(predictions[:10])
+    if not visible:
+        return
+    with _MODEL_HOLDOVER_LOCK:
+        _MODEL_HOLDOVER = _ModelPredictionHoldover(
+            project=project,
+            explicit_context_fingerprint=_holdover_context_fingerprint(explicit_recent_context),
+            predictions=visible,
+            created_at=time.monotonic(),
+        )
+
+
+def _get_model_holdover_predictions(
+    *,
+    project: str,
+    explicit_recent_context: str,
+    max_candidates: int,
+) -> list[ModelPrediction]:
+    if not compact_whitespace(explicit_recent_context):
+        return []
+    with _MODEL_HOLDOVER_LOCK:
+        cached = _MODEL_HOLDOVER
+        if cached is None:
+            return []
+        if time.monotonic() - cached.created_at > _MODEL_HOLDOVER_TTL_MS / 1000:
+            return []
+        if cached.project != project:
+            return []
+        if cached.explicit_context_fingerprint != _holdover_context_fingerprint(explicit_recent_context):
+            return []
+        return list(cached.predictions[: max(1, min(10, int(max_candidates)))])
+
+
+def _holdover_context_fingerprint(text: str) -> str:
+    return compact_whitespace(text)[-420:]
 
 
 def record_rime_side_candidate_selection(

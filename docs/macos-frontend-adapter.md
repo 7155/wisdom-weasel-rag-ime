@@ -397,6 +397,22 @@ It also runs strict doctor without the foreground trace gate by default. That
 post-check proves the system copy has the mixed-layout patch, the stale duplicate
 is gone, and launchd will restart the same sidecar/MLX model configuration.
 
+For product testing, prefer the independent branded install so the original
+Squirrel can stay installed without sharing a bundle id:
+
+```bash
+RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel \
+RAG_IME_SQUIRREL_INSTALL_APP_NAME=RAG-IME \
+RAG_IME_SQUIRREL_BUNDLE_ID=im.rag-ime.inputmethod.RagIme \
+RAG_IME_SQUIRREL_INPUT_SOURCE_ID=im.rag-ime.inputmethod.RagIme.Hans \
+RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID=im.rag-ime.inputmethod.RagIme.Hant \
+RAG_IME_SQUIRREL_DISPLAY_NAME=RAG-IME \
+  scripts/build_patched_squirrel.sh install
+```
+
+That creates `/Users/undo/Library/Input Methods/RAG-IME.app`; the manual System
+Settings source to add is `RAG-IME - Simplified`.
+
 The strict doctor verifies that the installed macOS input source
 `im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. That
 is the TIS registration check. For the state visible in System Settings, require
@@ -416,11 +432,12 @@ scripts/enable_squirrel_hitoolbox_input_source.sh
 ```
 
 The helper creates Desktop backups of `com.apple.HIToolbox` and
-`com.apple.inputsources`, tries to add Squirrel's bundle/mode entries to both,
-restarts `cfprefsd`, and re-registers the source. Prefer the normal System
-Settings "+" flow for a distributable product; on macOS 27 the
+`com.apple.inputsources`, tries to add the configured bundle/mode entries to
+both, restarts `cfprefsd`, and re-registers the source. Prefer the normal System
+Settings "+" flow for a distributable product; on newer macOS versions the
 `com.apple.inputsources` third-party list may still require that UI route. If
-the check prints `thirdPartyEnabled=false`, add Squirrel from System Settings.
+the check prints `thirdPartyEnabled=false`, add `Squirrel - Simplified` or
+`RAG-IME - Simplified` from System Settings.
 
 The active selected source still needs to be changed from the macOS input menu
 before the real continuous typing test. Use the settings helper or add gate
@@ -506,6 +523,14 @@ Set `RAG_IME_PREDICTOR_PROMPT_MODE=completion` when testing a local base model o
 - The optional local model provider can either ask for several candidates in one complete response or, with `RAG_IME_PREDICTOR_STREAM_FIRST=1`, return the first parsed streaming candidate for the side lane. llama.cpp-style batch sampling and KV cache reuse are still future optimization work.
 - The Squirrel patch debounces sidecar refreshes and fingerprints request state so stale model/RAG results cannot overwrite a newer Rime page.
 - The sidecar merge policy lets model/RAG lanes fill the visible 1-8 slots first; Rime candidates remain deterministic fallback rows.
+- Display layout is source-aware: `sourceType=model` + `displayLayout=inline`
+  is the horizontal LLM short-candidate row; `sourceType=rag` +
+  `displayLayout=block` is the vertical sentence/RAG row; `sourceType=rime`
+  is fallback and must not be interpreted as LLM output.
+- The model lane keeps a sub-second holdover for the same committed context, so
+  high-frequency composing events do not make the horizontal LLM row disappear
+  just because the previous MLX request is still running or has exceeded the
+  current IME latency budget.
 - The local HTTP sidecar caches repeated equivalent `/rime-suggest` payloads for a short TTL and reports `cache.hit` in debug payloads.
 - Accepted side candidates write back through `/rime-select`, so Swift does not need to duplicate commit/action governance rules.
 

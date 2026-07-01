@@ -240,7 +240,8 @@ RAG_IME_SQUIRREL_APP="/Library/Input Methods/Squirrel.app" \
 If the output says `hitoolboxEnabled=false`, Squirrel is registered but not
 present in every current-user input-source list macOS uses. The normal route is:
 System Settings -> Keyboard -> Input Sources -> "+" -> Chinese, Simplified ->
-Squirrel - Simplified. For local debug only, the repo includes a helper:
+Squirrel - Simplified. For the independent product build, add
+`RAG-IME - Simplified` instead. For local debug only, the repo includes a helper:
 
 ```bash
 scripts/enable_squirrel_hitoolbox_input_source.sh
@@ -257,8 +258,8 @@ reports Squirrel as registered/selectable.
 Terminal-based selection can still fail if macOS refuses to switch the active
 foreground input source from a background command; use the input menu for the
 continuous typing test. To open the Keyboard settings pane, use the System
-Settings Add flow, and wait until macOS has accepted Squirrel into the current
-user's third-party input-source list, use:
+Settings Add flow, and wait until macOS has accepted the configured source into
+the current user's third-party input-source list, use:
 
 ```bash
 scripts/open_squirrel_input_source_settings.sh --wait
@@ -321,8 +322,8 @@ relaunch with an older model path or without the MLX prompt cache.
 Manual continuous-use verification:
 
 1. Run `scripts/open_squirrel_input_source_settings.sh --wait`.
-2. In System Settings, add Squirrel from Chinese, Simplified if it is not present.
-3. Select Squirrel from the macOS input menu and wait for `scripts/wait_squirrel_typing_ready.sh` to pass.
+2. In System Settings, add `Squirrel - Simplified` or `RAG-IME - Simplified` from Chinese, Simplified if it is not present.
+3. Select that input source from the macOS input menu and wait for `scripts/wait_squirrel_typing_ready.sh` to pass.
 4. Run `squirrel-tryout-gate` and keep `/tmp/rag-ime-squirrel-tryout-report.json`.
 5. Run the foreground AppKit trace gate:
 

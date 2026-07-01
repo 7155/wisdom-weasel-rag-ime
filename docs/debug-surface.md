@@ -139,15 +139,15 @@ The debug page polls this endpoint every few seconds. The visible card keeps the
 state compact but explicit:
 
 ```text
-TIS      Squirrel is visible to macOS Text Input Source APIs
-3rd      Squirrel is present in the third-party input-source list managed by System Settings
-selected Squirrel is the active menu-bar input source
+TIS      configured source is visible to macOS Text Input Source APIs
+3rd      configured source is present in the third-party input-source list managed by System Settings
+selected configured source is the active menu-bar input source
 current  the active input-source id, shortened for scanning
 ```
 
 The same payload also includes `manualAction`, `helperCommand`,
 `verificationCommand`, and `readinessChecks`, so the page can say "run
-`scripts/open_squirrel_input_source_settings.sh --wait` and add Squirrel in
+`scripts/open_squirrel_input_source_settings.sh --wait` and add the configured source in
 System Settings" when `thirdPartyEnabled=false` instead of incorrectly telling
 the user to switch to an input source that macOS has not fully enabled yet. This
 keeps the browser surface aligned with the manual System Settings and menu-bar
