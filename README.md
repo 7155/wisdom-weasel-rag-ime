@@ -285,6 +285,21 @@ summary; add `--include-cases` when debugging individual failed cases. For a
 real Codex-history DB, raise `--min-rag-pass-rate` and
 `--min-sidecar-pass-rate` as the benchmark improves.
 
+For the final Wisdom-Weasel-style local model provider, add explicit capability
+requirements. This should fail for Ollama/MLX smoke providers until a native
+provider can prove stable prompt-cache reuse, sequence fork, and batch
+candidate generation:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  quality-gate \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --force-side-candidates \
+  --require-predictor-capability promptCache \
+  --require-predictor-capability sequenceFork \
+  --require-predictor-capability batchCandidates
+```
+
 See `docs/codex-history-eval.md`.
 
 The report includes candidate-level ranking metrics such as `top1Accuracy`, `meanReciprocalRank`, `noiseRate`, end-to-end suggestion latency, and repeat/cache statistics, not just pass/fail recall.
