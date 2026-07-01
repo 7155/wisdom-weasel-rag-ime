@@ -148,14 +148,52 @@ scripts/prepare_squirrel_workspace.sh
 RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
 scripts/build_patched_squirrel.sh list
 scripts/build_patched_squirrel.sh
+scripts/build_patched_squirrel.sh install
 ```
 
 `scripts/build_patched_squirrel.sh list` is the non-destructive project
-inspection gate. The default `build` action runs:
+inspection gate. The default `build` action checks the patched files, prepares
+Squirrel binary dependencies with `action-install.sh` when needed, refreshes
+bundled data files, then runs:
 
 ```text
 xcodebuild -project <patched>/Squirrel.xcodeproj -scheme Squirrel -configuration Release -derivedDataPath /tmp/rag-ime-squirrel-derived-data CODE_SIGNING_ALLOWED=NO build
 ```
+
+The `install` action then:
+
+- copies the built `Squirrel.app` to `~/Library/Input Methods` by default;
+- writes a managed `rag_ime/*` patch block into `~/Library/Rime/squirrel.custom.yaml`;
+- runs Squirrel `scripts/postinstall` so the input source is registered, built, enabled, and selected.
+
+Useful switches:
+
+```bash
+# Install machine-wide instead of user-local.
+RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods" scripts/build_patched_squirrel.sh install
+
+# Reuse already downloaded Squirrel dependency archives.
+RAG_IME_SQUIRREL_NO_DOWNLOAD=1 scripts/build_patched_squirrel.sh
+
+# Copy/install without running Squirrel postinstall.
+RAG_IME_SQUIRREL_SKIP_POSTINSTALL=1 scripts/build_patched_squirrel.sh install
+```
+
+After install, keep the sidecar running and run the strict gate again:
+
+```bash
+scripts/install_sidecar_launch_agent.sh
+RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
+```
+
+Manual continuous-use verification:
+
+1. Open System Settings -> Keyboard -> Input Sources and confirm Squirrel is present.
+2. Select Squirrel, open a normal editor, and type at least 20 mixed Chinese/English prompts.
+3. Confirm normal Rime candidates still occupy the primary candidate slots.
+4. Confirm RAG/model side candidates appear only after stable Rime candidates or idle semantic input.
+5. Select at least one side candidate by number key and confirm `/rime-select` records the commit in the sidecar logs.
+6. Rerun `python3 -m rag_ime.cli --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" quality-gate --force-side-candidates --require-suggestion-cache`.
 
 If the project opens in Xcode but the script fails, inspect the exact
 `xcodebuild` output first; the wrapper checks the patched files and config before

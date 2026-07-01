@@ -1408,3 +1408,31 @@ Commands:
 - `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history tests.test_debug_server`
 - `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
 - `git diff --check`
+
+### 2026-07-01 14:35 CST
+Problem:
+- User asked to finish the full-Xcode real build/install/system-input-method verification path before joint manual testing.
+- Current host still has no full `Xcode.app`; `xcode-select` points to `/Library/Developer/CommandLineTools`, so `xcodebuild -version` fails before Squirrel can be built.
+- The previous build script could inspect/build with `xcodebuild`, but did not automate Squirrel dependency prep, RAG config installation, or the final input-method install action.
+
+Changes:
+- Extended `scripts/build_patched_squirrel.sh` with an `install` action.
+- Build/install now prepares Squirrel binary dependencies with `action-install.sh` when needed, refreshes bundled data files, locates the built `Squirrel.app`, installs it into `~/Library/Input Methods` by default, and can run Squirrel postinstall.
+- Added `scripts/install_squirrel_rag_config.sh` to write a managed `rag_ime/*` patch block into `~/Library/Rime/squirrel.custom.yaml` from the generated patched-workdir snippet.
+- Updated README, Xcode setup docs, and macOS frontend docs with the full tryout sequence and continuous-use verification checklist.
+
+Current machine result:
+- `scripts/prepare_squirrel_workspace.sh` succeeds.
+- LaunchAgent sidecar is loaded and `/health`, `/rime-suggest`, `/rime-select` pass.
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh` still fails only at full Xcode availability.
+- `scripts/build_patched_squirrel.sh list` and `scripts/build_patched_squirrel.sh install` fail cleanly at `xcodebuild -version` because the active developer directory is CommandLineTools.
+
+Commands:
+- `RAG_IME_SQUIRREL_RESET=1 scripts/prepare_squirrel_workspace.sh`
+- `scripts/doctor_squirrel_integration.sh`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_DOCTOR_CHECK_LAUNCHD=1 scripts/doctor_squirrel_integration.sh`
+- `scripts/build_patched_squirrel.sh list`
+- `scripts/build_patched_squirrel.sh install`
+- `bash -n scripts/build_patched_squirrel.sh scripts/install_squirrel_rag_config.sh`
+- `python3 -m unittest tests.test_build_patched_squirrel tests.test_install_squirrel_rag_config`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`

@@ -988,3 +988,16 @@ Changes:
 
 Status:
 - The overall RAG-IME project is not done. Remaining acceptance requires real full-Xcode Squirrel build/install, system input-method use, RAG/memory quality tuning, local model latency work, and interview material updates.
+
+### 2026-07-01
+Topic:
+- Finish the automated full-Xcode Squirrel tryout path as far as this host allows.
+
+Changes:
+- `scripts/build_patched_squirrel.sh` now supports `install`, dependency preinstall, bundled-data refresh, user-local `Squirrel.app` install, and managed RAG-IME config installation.
+- Added `scripts/install_squirrel_rag_config.sh` to write the `rag_ime/*` patch block into `squirrel.custom.yaml` without requiring manual YAML copying.
+- README and Xcode/macOS frontend docs now include the full prepare -> doctor -> list -> build -> install -> continuous-use verification path.
+
+Status:
+- Patched Squirrel workspace, LaunchAgent sidecar, `/rime-suggest`, and `/rime-select` are ready.
+- Real build/install/system input-method verification is still blocked on the host because no full `Xcode.app` is installed and `xcode-select` points to CommandLineTools.

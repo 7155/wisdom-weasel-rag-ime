@@ -297,19 +297,29 @@ The script checks out Squirrel `2158538`, applies `squirrel-patches/0001-add-rag
 /tmp/rag-ime-squirrel/rag-ime.squirrel.custom.yaml
 ```
 
-Copy the `rag_ime` block from that file into Squirrel's `squirrel.yaml`, then
-inspect and build the patched checkout with full Xcode:
-
-```bash
-scripts/build_patched_squirrel.sh list
-scripts/build_patched_squirrel.sh
-```
-
 The generated config points `rag_ime/sidecar_url` at the default LaunchAgent URL:
 
 ```text
 http://127.0.0.1:8766/api
 ```
+
+Inspect, build, and install the patched checkout with full Xcode:
+
+```bash
+scripts/build_patched_squirrel.sh list
+scripts/build_patched_squirrel.sh
+scripts/build_patched_squirrel.sh install
+```
+
+The install action copies `Squirrel.app` into `~/Library/Input Methods` by
+default and writes the managed RAG-IME patch block into:
+
+```text
+~/Library/Rime/squirrel.custom.yaml
+```
+
+Use `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"` only when a
+machine-wide install is required.
 
 ## Environment
 
