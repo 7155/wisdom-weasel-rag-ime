@@ -325,6 +325,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_comparison.add_argument("--repeat", type=int, default=1)
     eval_comparison.add_argument("--latency-budget-ms", type=int, default=150)
 
+    cache_probe = subparsers.add_parser(
+        "cache-probe",
+        help="Probe warm cache hits for repeated suggest and Rime sidecar requests",
+    )
+    cache_probe.add_argument("current_input", nargs="?", default="RAG 输入法")
+    cache_probe.add_argument("--recent-context", default="")
+    cache_probe.add_argument("--project", default="wisdom-weasel-rag-ime")
+    cache_probe.add_argument("--top-k", type=int, default=5)
+    cache_probe.add_argument("--repeat", type=int, default=3)
+    cache_probe.add_argument(
+        "--rime-candidate",
+        action="append",
+        default=[],
+        help="Structured Rime candidate text used for semantic cache probing. Can be repeated.",
+    )
+    cache_probe.add_argument("--force-side-candidates", action="store_true")
+    cache_probe.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
+
     debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
     debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
     debug_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_DEBUG_PORT", "8765")))
@@ -1093,6 +1111,33 @@ def main(argv: Sequence[str] | None = None) -> int:
                 model_elapsed_ms_by_case=model_elapsed_ms_by_case,
             ),
         }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "cache-probe":
+        from .debug_server import DebugImeService, DebugServerConfig
+
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(args.db_path),
+                project=args.project,
+                seed_if_empty=False,
+                core=core,
+                predictor=predictor,
+                rime_cache_ttl_ms=args.rime_cache_ttl_ms,
+            )
+        )
+        report = service.cache_probe(
+            {
+                "currentInput": args.current_input,
+                "recentContext": args.recent_context,
+                "project": args.project,
+                "topK": args.top_k,
+                "repeat": args.repeat,
+                "rimeCandidates": args.rime_candidate,
+                "forceSideCandidates": args.force_side_candidates,
+            }
+        )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
