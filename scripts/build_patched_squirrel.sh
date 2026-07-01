@@ -227,7 +227,7 @@ ensure_squirrel_input_source_enabled() {
     sleep 0.5
   done
   printf '[WARN] macOS input source not confirmed for real use after install: %s\n' "$output" >&2
-  printf '[WARN] If thirdPartyEnabled=false, add Squirrel from System Settings -> Keyboard -> Input Sources.\n' >&2
+  printf '[WARN] If thirdPartyEnabled=false, add %s from System Settings -> Keyboard -> Input Sources.\n' "$DISPLAY_NAME" >&2
 }
 
 should_brand_app() {

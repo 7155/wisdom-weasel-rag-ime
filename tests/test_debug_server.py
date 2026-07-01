@@ -831,7 +831,7 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(status["nextAction"], "add Squirrel in System Settings, then wait for the add gate")
         self.assertEqual(
             status["manualAction"],
-            "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel",
+            "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel - Simplified",
         )
         self.assertEqual(status["helperCommand"], "scripts/open_squirrel_input_source_settings.sh --wait")
         self.assertEqual(status["verificationCommand"], "scripts/wait_squirrel_input_source_added.sh")
@@ -874,6 +874,41 @@ class DebugImeServiceTests(unittest.TestCase):
         third_party_check = next(item for item in status["readinessChecks"] if item["name"] == "third-party-list")
         self.assertFalse(third_party_check["passed"])
         self.assertFalse(third_party_check["thirdPartyEnabled"])
+
+    def test_input_source_status_uses_branded_rag_ime_manual_action(self) -> None:
+        script = Path(self.tmp.name) / "check-input-source-rag-ime-third-party-missing.sh"
+        script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rag-ime.inputmethod.RagIme.Hans name=RAG-IME - Simplified enabled=true selectable=true selected=false current=im.rime.inputmethod.Squirrel.Hans hitoolboxEnabled=false thirdPartyEnabled=false'",
+                    "exit 1",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "input-source-rag-ime-missing.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                input_source_id="im.rag-ime.inputmethod.RagIme.Hans",
+                input_source_check_script=script,
+            )
+        )
+
+        status = service.input_source_status()
+
+        self.assertFalse(status["ok"])
+        self.assertEqual(status["readinessState"], "install")
+        self.assertEqual(status["nextAction"], "add RAG-IME in System Settings, then wait for the add gate")
+        self.assertEqual(
+            status["manualAction"],
+            "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> RAG-IME - Simplified",
+        )
+        self.assertEqual(status["expectedInputSourceId"], "im.rag-ime.inputmethod.RagIme.Hans")
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):

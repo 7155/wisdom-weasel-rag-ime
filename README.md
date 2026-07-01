@@ -149,6 +149,14 @@ The cache key is based on the parsed Rime snapshot and semantic query, not the r
 
 The sidecar also deduplicates equivalent `/rime-suggest` requests that are already in flight. This is the VCP-style pending-request cache for the IME path: concurrent refreshes wait for the first request and reuse its response instead of calling the model/RAG pipeline twice. Health and response cache payloads expose `inFlightHits` / `inFlightHit` separately from TTL cache `hits`.
 
+For non-equivalent high-frequency refreshes, the model lane also keeps a very
+short holdover of the most recent successful model predictions for the same
+committed context. If the next composing event arrives while MLX is still
+serving the previous request, or if MLX exceeds the IME latency budget,
+`/rime-suggest` can reuse that short model row and returns
+`modelLane.holdoverHit=true`. This keeps the horizontal LLM row stable without
+letting Rime fallback or RAG sentences masquerade as model candidates.
+
 `/rime-suggest` also returns a `triggerDecision`. Rime candidates are preserved as deterministic parsing/fallback, while model/RAG side candidates get first display priority when a stable semantic signal exists. Raw key sequences such as `asdioj` are not decoded by an unconstrained LLM: if Rime has candidates, those candidates become the semantic input; if there are no Rime candidates but the user has just committed Chinese text, the sidecar can use recent `committedContext` for continuation and the patched Squirrel frontend briefly holds those side candidates while the raw composition changes; if neither signal exists, side lanes fail closed until a future pinyin-constrained logits path exists.
 
 `latencyBudgetMs` is enforced on the RAG and model side lanes. RAG retrieval is
@@ -251,6 +259,27 @@ RAG_IME_REQUIRE_HITOOLBOX_ENABLED=1 \
   scripts/check_macos_input_source.sh im.rime.inputmethod.Squirrel.Hans
 ```
 
+For local product testing, prefer the independent RAG-IME input source so a
+system `/Library/Input Methods/Squirrel.app` cannot steal the same bundle id:
+
+```bash
+RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel \
+RAG_IME_SQUIRREL_INSTALL_APP_NAME=RAG-IME \
+RAG_IME_SQUIRREL_BUNDLE_ID=im.rag-ime.inputmethod.RagIme \
+RAG_IME_SQUIRREL_INPUT_SOURCE_ID=im.rag-ime.inputmethod.RagIme.Hans \
+RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID=im.rag-ime.inputmethod.RagIme.Hant \
+RAG_IME_SQUIRREL_DISPLAY_NAME=RAG-IME \
+  scripts/build_patched_squirrel.sh install
+```
+
+This installs `/Users/undo/Library/Input Methods/RAG-IME.app` and registers
+`RAG-IME - Simplified`. Verify the independent input source with:
+
+```bash
+RAG_IME_INPUT_SOURCE_BUNDLE_ID=im.rag-ime.inputmethod.RagIme \
+  scripts/check_macos_input_source.sh im.rag-ime.inputmethod.RagIme.Hans
+```
+
 For a machine-wide install, set `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"`.
 If the strict doctor reports
 `stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace`,
@@ -276,10 +305,11 @@ list, restarts `cfprefsd`, and re-runs the strict source check:
 scripts/enable_squirrel_hitoolbox_input_source.sh
 ```
 
-On macOS 27, System Settings may still require the UI route for the third-party
-input-source list: Keyboard -> Input Sources -> Add -> Chinese, Simplified ->
-Squirrel. If the check prints `thirdPartyEnabled=false`, command-line writes
-were not accepted by macOS and the UI Add path is required.
+On newer macOS releases, System Settings may still require the UI route for the
+third-party input-source list: Keyboard -> Input Sources -> Add -> Chinese,
+Simplified -> `Squirrel - Simplified` or `RAG-IME - Simplified`. If the check
+prints `thirdPartyEnabled=false`, command-line writes were not accepted by
+macOS and the UI Add path is required.
 
 To open the Keyboard settings pane and wait for the strict source-list check,
 use:
@@ -297,8 +327,9 @@ already open, the wait gate can still be run directly:
 scripts/wait_squirrel_input_source_added.sh
 ```
 
-Before a real typing test, switch to `Squirrel - Simplified` from the macOS input
-menu and wait for the selected-source plus sidecar check:
+Before a real typing test, switch to `Squirrel - Simplified` or
+`RAG-IME - Simplified` from the macOS input menu and wait for the selected-source
+plus sidecar check:
 
 ```bash
 scripts/wait_squirrel_typing_ready.sh
@@ -792,7 +823,7 @@ python3 -m rag_ime.cli --core-mode fixture rime-suggest-json \
   --payload-file /tmp/rime-sidecar-request.json
 ```
 
-This command prefers model/RAG side candidates in the visible slots, then fills remaining rows with Rime fallback candidates. Model candidates are marked `displayLayout: inline` for horizontal rendering, RAG/memory candidates are marked `displayLayout: block`, and Rime fallback candidates are marked `displayLayout: fallback`. When both model and RAG lanes return results, the sidecar keeps a small block-row reserve for RAG snippets so the panel does not become eight model tokens with no memory context.
+This command prefers model/RAG side candidates in the visible slots, then fills remaining rows with Rime fallback candidates. Short model candidates are marked `sourceType: model` plus `displayLayout: inline` for the horizontal LLM row. RAG/memory sentence candidates are marked `sourceType: rag` plus `displayLayout: block` for vertical rows. Rime fallback candidates are marked `displayLayout: fallback` and must not be counted as LLM. When both model and RAG lanes return results, the sidecar keeps a small block-row reserve for RAG snippets so the panel does not become eight model tokens with no memory context.
 
 The resident MLX service now tries `candidateMode: next-token-logits` before JSON generation. That path reads the first generation step's logprobs, filters top-k Chinese token candidates, and can fill multiple inline LLM slots without asking the model to write a JSON array. It is not the same as Wisdom-Weasel's llama.cpp sequence-fork path yet: `logitsTopK=true` and `batchCandidates=true`, while `sequenceFork=false`.
 

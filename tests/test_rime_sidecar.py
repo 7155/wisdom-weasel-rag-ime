@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from contextlib import redirect_stdout
+from threading import Event, Thread
 
 from rag_ime.adapter import InputMethodAdapter
 from rag_ime.cli import main
@@ -18,6 +19,7 @@ from rag_ime.predictor import CooldownPredictionProvider, OpenAICompatiblePredic
 from rag_ime.rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
+    clear_model_prediction_holdover_cache,
     decide_side_candidate_refresh,
     parse_rime_context_payload,
 )
@@ -86,6 +88,28 @@ class SlowPredictionProvider:
         ]
 
 
+class BlockingPredictionProvider:
+    def __init__(self) -> None:
+        self.entered = Event()
+        self.release = Event()
+        self.calls = 0
+
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.calls += 1
+        self.entered.set()
+        if not self.release.wait(timeout=5):
+            raise TimeoutError("blocking predictor was not released")
+        return [
+            ModelPrediction(
+                text="阻塞后候选",
+                rank=1,
+                provider_name="blocking-model",
+                latency_ms=250,
+                confidence=0.9,
+            )
+        ][:max_candidates]
+
+
 class CapturingCore:
     def __init__(self) -> None:
         self.last_suggest_recent_context = ""
@@ -136,6 +160,7 @@ class SlowHistoryCore(CapturingCore):
 
 class RimeSidecarTests(unittest.TestCase):
     def setUp(self) -> None:
+        clear_model_prediction_holdover_cache()
         self.core = FixtureCoreClient()
         self.adapter = InputMethodAdapter(self.core)
         self.predictor = FakePredictionProvider()
@@ -218,6 +243,39 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertFalse(response["modelLane"]["timedOut"])
         self.assertEqual(response["modelLane"]["predictionCount"], 1)
         self.assertEqual(response["modelLane"]["totalLatencyBudgetMs"], 150)
+
+    def test_layout_contract_keeps_model_inline_and_sentence_candidates_block(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-layout-contract",
+                "requestSeq": 45,
+                "committedContext": "正在验证 LLM 横向短候选和 RAG 句子纵向候选",
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "forceSideCandidates": True,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "而且", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+
+        display = response["displayCandidates"]
+        model_items = [item for item in display if item["sourceType"] == "model"]
+        rag_items = [item for item in display if item["sourceType"] == "rag"]
+        rime_items = [item for item in display if item["sourceType"] == "rime"]
+        self.assertEqual(len(model_items), 5)
+        self.assertEqual(len(rag_items), 3)
+        self.assertEqual(rime_items, [])
+        self.assertTrue(all(item["displayLayout"] == "inline" for item in model_items))
+        self.assertTrue(all(item["displayLane"] == "model" for item in model_items))
+        self.assertTrue(all(item["displayLayout"] == "block" for item in rag_items))
+        self.assertTrue(all(item["displayLane"] == "memory" for item in rag_items))
+        self.assertEqual(response["mergePolicy"]["fallbackOrder"], ["model", "rag", "rime"])
 
     def test_tenth_shared_candidate_uses_zero_key_with_rank_ten(self) -> None:
         response = build_rime_sidecar_response(
@@ -402,6 +460,110 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(second["modelPredictions"], [])
         self.assertTrue(any(item["sourceType"] == "rag" for item in first["displayCandidates"]))
         self.assertTrue(any(item["sourceType"] == "rag" for item in second["displayCandidates"]))
+
+    def test_busy_model_lane_reuses_short_model_holdover_for_horizontal_row(self) -> None:
+        payload = {
+            "sessionId": "squirrel-model-holdover-prime",
+            "requestSeq": 1,
+            "committedContext": "用户刚刚写完一段关于 RAG 输入法布局的中文上下文",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "forceSideCandidates": True,
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                ]
+            },
+        }
+        primed = build_rime_sidecar_response(
+            payload=payload,
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+        self.assertTrue(primed["modelPredictions"])
+
+        blocking_predictor = BlockingPredictionProvider()
+        blocking_payload = {**payload, "sessionId": "squirrel-model-holdover-block", "requestSeq": 2}
+        worker = Thread(
+            target=build_rime_sidecar_response,
+            kwargs={
+                "payload": blocking_payload,
+                "adapter": self.adapter,
+                "core": self.core,
+                "predictor": blocking_predictor,
+            },
+            daemon=True,
+        )
+        worker.start()
+        self.assertTrue(blocking_predictor.entered.wait(timeout=2))
+        try:
+            busy_response = build_rime_sidecar_response(
+                payload={**payload, "sessionId": "squirrel-model-holdover-busy", "requestSeq": 3},
+                adapter=self.adapter,
+                core=self.core,
+                predictor=MultiPredictionProvider(),
+            )
+        finally:
+            blocking_predictor.release.set()
+            worker.join(timeout=2)
+
+        self.assertTrue(busy_response["modelPredictions"])
+        self.assertFalse(busy_response["modelLane"]["called"])
+        self.assertTrue(busy_response["modelLane"]["holdoverHit"])
+        self.assertIn("reused recent model holdover", busy_response["modelLane"]["skippedReason"])
+        self.assertEqual(busy_response["displayCandidates"][0]["sourceType"], "model")
+        self.assertEqual(busy_response["displayCandidates"][0]["displayLayout"], "inline")
+
+    def test_model_lane_timeout_reuses_holdover_for_horizontal_row(self) -> None:
+        payload = {
+            "sessionId": "squirrel-model-timeout-holdover-prime",
+            "requestSeq": 1,
+            "committedContext": "用户刚刚写完一段关于 RAG 输入法布局的中文上下文",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "forceSideCandidates": True,
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                ]
+            },
+        }
+        primed = build_rime_sidecar_response(
+            payload=payload,
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+        self.assertTrue(primed["modelPredictions"])
+
+        slow_predictor = SlowPredictionProvider(sleep_s=0.12)
+        started = time.perf_counter()
+        try:
+            timeout_response = build_rime_sidecar_response(
+                payload={
+                    **payload,
+                    "sessionId": "squirrel-model-timeout-holdover",
+                    "requestSeq": 2,
+                    "latencyBudgetMs": 30,
+                },
+                adapter=self.adapter,
+                core=self.core,
+                predictor=slow_predictor,
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+        finally:
+            time.sleep(0.14)
+
+        self.assertLess(elapsed_ms, 100)
+        self.assertEqual(slow_predictor.calls, 1)
+        self.assertTrue(timeout_response["modelPredictions"])
+        self.assertTrue(timeout_response["modelLane"]["called"])
+        self.assertTrue(timeout_response["modelLane"]["timedOut"])
+        self.assertTrue(timeout_response["modelLane"]["holdoverHit"])
+        self.assertIn("reused recent model holdover", timeout_response["modelLane"]["skippedReason"])
+        self.assertEqual(timeout_response["displayCandidates"][0]["sourceType"], "model")
+        self.assertEqual(timeout_response["displayCandidates"][0]["displayLayout"], "inline")
 
     def test_model_lane_timeout_keeps_rag_candidates_responsive(self) -> None:
         slow_predictor = SlowPredictionProvider(sleep_s=0.12)

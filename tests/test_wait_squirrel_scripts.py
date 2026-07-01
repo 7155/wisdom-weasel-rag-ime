@@ -105,6 +105,44 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         self.assertIn("scripts/wait_squirrel_input_source_added.sh", result.stdout)
         self.assertEqual(opened_url, "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
 
+    def test_open_settings_helper_uses_branded_input_source_name(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-open-branded-source-") as tmp:
+            tmp_path = Path(tmp)
+            check_script = tmp_path / "check-input-source.sh"
+            check_script.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        "echo 'id=im.rag-ime.inputmethod.RagIme.Hans name=RAG-IME - Simplified enabled=true selectable=true selected=false current=com.apple.keylayout.ABC hitoolboxEnabled=false thirdPartyEnabled=false'",
+                        "exit 1",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            check_script.chmod(0o755)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "open_squirrel_input_source_settings.sh"),
+                    "--no-open",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_CHECK_INPUT_SOURCE_SCRIPT": str(check_script),
+                    "RAG_IME_SQUIRREL_INPUT_SOURCE_ID": "im.rag-ime.inputmethod.RagIme.Hans",
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertIn("RAG-IME is not fully added", result.stdout)
+        self.assertIn("Chinese, Simplified -> RAG-IME - Simplified", result.stdout)
+
     def test_wait_input_source_added_succeeds_when_strict_check_passes(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-wait-source-") as tmp:

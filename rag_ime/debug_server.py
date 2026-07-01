@@ -845,6 +845,8 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
     third_party_enabled = parsed.get("thirdPartyEnabled") is not False
     current = _string(parsed.get("current"))
     target = _string(parsed.get("id")) or "Squirrel"
+    target_name = _string(parsed.get("name")) or _input_source_display_name(target)
+    product_name = _input_source_product_name(target_name)
     readiness_checks = [
         {
             "name": "tis-visible",
@@ -868,8 +870,8 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
     if ok and typing_ready:
         return {
             "readinessState": "ready",
-            "readinessMessage": "Squirrel is the active input source",
-            "nextAction": "start typing with Squirrel",
+            "readinessMessage": f"{product_name} is the active input source",
+            "nextAction": f"start typing with {product_name}",
             "manualAction": "type in a foreground macOS text field",
             "verificationCommand": "scripts/wait_squirrel_typing_ready.sh",
             "readinessChecks": readiness_checks,
@@ -877,9 +879,9 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
     if enabled and selectable and hitoolbox_enabled and third_party_enabled:
         return {
             "readinessState": "switch",
-            "readinessMessage": "Squirrel is installed; switch the menu bar input source",
-            "nextAction": "select Squirrel from the macOS input menu",
-            "manualAction": "macOS input menu -> Squirrel - Simplified",
+            "readinessMessage": f"{product_name} is installed; switch the menu bar input source",
+            "nextAction": f"select {product_name} from the macOS input menu",
+            "manualAction": f"macOS input menu -> {target_name}",
             "verificationCommand": "scripts/wait_squirrel_typing_ready.sh",
             "readinessChecks": readiness_checks,
             "expectedInputSourceId": target,
@@ -888,9 +890,9 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
     if not enabled or not selectable or not hitoolbox_enabled or not third_party_enabled:
         return {
             "readinessState": "install",
-            "readinessMessage": "Squirrel is not enabled in every macOS input-source list",
-            "nextAction": "add Squirrel in System Settings, then wait for the add gate",
-            "manualAction": "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel",
+            "readinessMessage": f"{product_name} is not enabled in every macOS input-source list",
+            "nextAction": f"add {product_name} in System Settings, then wait for the add gate",
+            "manualAction": f"System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> {target_name}",
             "helperCommand": "scripts/open_squirrel_input_source_settings.sh --wait",
             "verificationCommand": "scripts/wait_squirrel_input_source_added.sh",
             "readinessChecks": readiness_checks,
@@ -902,11 +904,28 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
         "readinessMessage": "input source state is incomplete",
         "nextAction": "run doctor_squirrel_integration.sh",
         "manualAction": "inspect the input source checker output",
-        "verificationCommand": "scripts/check_macos_input_source.sh im.rime.inputmethod.Squirrel.Hans",
+        "verificationCommand": f"scripts/check_macos_input_source.sh {target}",
         "readinessChecks": readiness_checks,
         "expectedInputSourceId": target,
         "currentInputSourceId": current,
     }
+
+
+def _input_source_display_name(input_source_id: str) -> str:
+    if input_source_id.endswith(".Hant"):
+        suffix = "Traditional"
+    else:
+        suffix = "Simplified"
+    if "RagIme" in input_source_id or "rag-ime" in input_source_id:
+        return f"RAG-IME - {suffix}"
+    return f"Squirrel - {suffix}"
+
+
+def _input_source_product_name(display_name: str) -> str:
+    for suffix in (" - Simplified", " - Traditional"):
+        if display_name.endswith(suffix):
+            return display_name[: -len(suffix)]
+    return display_name
 
 
 def _cache_stats_delta(before: object, after: object) -> dict[str, object]:
