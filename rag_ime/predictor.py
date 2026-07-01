@@ -56,6 +56,21 @@ class OllamaPredictionConfig:
 
 
 @dataclass(frozen=True)
+class MlxPredictionConfig:
+    base_url: str
+    model: str
+    profile: str = "custom"
+    prompt_mode: str = "mlx-service"
+    timeout_s: float = 0.8
+    max_tokens: int = 8
+    temperature: float = 0.15
+    top_p: float = 0.85
+    provider_name: str = "local-mlx"
+    extra_body: dict[str, Any] | None = None
+    extra_headers: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
 class PredictionBenchmarkCase:
     current_input: str
     recent_context: str = ""
@@ -293,6 +308,86 @@ class OllamaPredictionProvider:
         return headers
 
 
+class MlxPredictionServiceProvider:
+    """Client for the resident MLX-LM sidecar.
+
+    The MLX path is intentionally separate from OpenAI-compatible chat. The
+    service owns the loaded model and can stream first text immediately, while
+    this client keeps the same fail-open PredictionProvider contract used by
+    the IME sidecar.
+    """
+
+    def __init__(self, config: MlxPredictionConfig):
+        self.config = config
+        self.last_error = ""
+
+    def predict(
+        self,
+        *,
+        current_input: str,
+        recent_context: str = "",
+        max_candidates: int = 5,
+    ) -> list[ModelPrediction]:
+        query = compact_whitespace(current_input)
+        context = compact_whitespace(recent_context)[-420:]
+        if not query and not context:
+            return []
+        max_items = max(1, min(10, int(max_candidates)))
+        self.last_error = ""
+        started = time.perf_counter()
+        payload = self._predict_payload(context=context, query=query, max_candidates=max_items)
+        wall_ms = int((time.perf_counter() - started) * 1000)
+        if not payload:
+            return []
+        latency_ms = _int_from_payload(payload.get("totalMs"), wall_ms)
+        raw_texts = _mlx_raw_texts_from_payload(payload)
+        candidates = _candidate_parts_from_json_value(payload.get("candidates"))
+        if not candidates:
+            candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
+        candidates = _parse_prediction_candidate_texts(candidates, max_candidates=max_items)
+        return [
+            ModelPrediction(
+                text=item,
+                rank=index,
+                provider_name=self.config.provider_name,
+                latency_ms=latency_ms,
+                confidence=max(0.0, min(1.0, 1.0 - (index - 1) * 0.08)),
+                metadata={
+                    "model": self.config.model,
+                    "base_url": self.config.base_url,
+                    "profile": self.config.profile,
+                    "prompt_mode": self.config.prompt_mode,
+                    "raw_text": "\n".join(raw_texts),
+                    "prompt_cache": payload.get("promptCache", {}),
+                    "server_timing": payload.get("timing", {}),
+                },
+            )
+            for index, item in enumerate(candidates, start=1)
+        ]
+
+    def _predict_payload(self, *, context: str, query: str, max_candidates: int) -> dict[str, Any]:
+        body = _mlx_predict_body(self.config, context=context, query=query, max_candidates=max_candidates, stream=False)
+        request = urllib.request.Request(
+            f"{self.config.base_url.rstrip('/')}/predict",
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers=self._headers(),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
+            self.last_error = _prediction_error_name(exc)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.config.extra_headers:
+            headers.update(self.config.extra_headers)
+        return headers
+
+
 class CooldownPredictionProvider:
     """Circuit breaker for the IME model lane.
 
@@ -372,10 +467,12 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
     source = env or os.environ
     provider = source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
     base_url = source.get("RAG_IME_PREDICTOR_BASE_URL", "").strip()
-    model = source.get("RAG_IME_PREDICTOR_MODEL", "").strip()
+    model = source.get("RAG_IME_PREDICTOR_MODEL", "").strip() or source.get("RAG_IME_MLX_MODEL", "").strip()
     if provider == "ollama" and not base_url:
         base_url = "http://127.0.0.1:11434"
-    if provider not in ("openai", "openai-compatible", "ollama") or not base_url or not model:
+    if provider in {"mlx", "mlx-lm", "mlx-service"} and not base_url:
+        base_url = "http://127.0.0.1:8767"
+    if provider not in ("openai", "openai-compatible", "ollama", "mlx", "mlx-lm", "mlx-service") or not base_url or not model:
         return NullPredictionProvider()
     profile = _normalized_predictor_profile(source.get("RAG_IME_PREDICTOR_PROFILE", "custom"))
     defaults = _prediction_profile_defaults(profile)
@@ -390,6 +487,21 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
                 temperature=_float_env(source, "RAG_IME_PREDICTOR_TEMPERATURE", defaults.temperature),
                 top_p=_float_env(source, "RAG_IME_PREDICTOR_TOP_P", defaults.top_p),
                 provider_name="local-ollama",
+                extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
+                extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
+            )
+        )
+    elif provider in {"mlx", "mlx-lm", "mlx-service"}:
+        configured_provider = MlxPredictionServiceProvider(
+            MlxPredictionConfig(
+                base_url=base_url.rstrip("/"),
+                model=model,
+                profile=profile,
+                timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", defaults.timeout_ms) / 1000,
+                max_tokens=int(_float_env(source, "RAG_IME_PREDICTOR_MAX_TOKENS", defaults.max_tokens)),
+                temperature=_float_env(source, "RAG_IME_PREDICTOR_TEMPERATURE", defaults.temperature),
+                top_p=_float_env(source, "RAG_IME_PREDICTOR_TOP_P", defaults.top_p),
+                provider_name="local-mlx",
                 extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
                 extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
             )
@@ -447,6 +559,7 @@ def prediction_provider_status(provider: PredictionProvider) -> dict[str, object
         "extraBodyKeys": sorted(str(key) for key in extra_body.keys()) if isinstance(extra_body, dict) else [],
         "extraHeaderKeys": sorted(str(key) for key in extra_headers.keys()) if isinstance(extra_headers, dict) else [],
     }
+    status["capabilities"] = _prediction_provider_capabilities(str(status["providerName"]))
     cooldown_status = getattr(provider, "cooldown_status", None)
     if callable(cooldown_status):
         status["cooldown"] = cooldown_status()
@@ -569,7 +682,8 @@ def benchmark_streaming_ttft_provider(
     status = prediction_provider_status(provider)
     provider_name = str(status.get("providerName") or provider.__class__.__name__)
     config = getattr(provider, "config", None)
-    supported = bool(config is not None and getattr(config, "provider_name", "") == "local-ollama")
+    provider_kind = str(getattr(config, "provider_name", "")) if config is not None else ""
+    supported = provider_kind in {"local-ollama", "local-mlx"}
     if not supported:
         return {
             "schemaVersion": "rag-ime.predictor-ttft.v1",
@@ -577,7 +691,7 @@ def benchmark_streaming_ttft_provider(
             "providerProfile": _prediction_provider_profile(provider),
             "providerConfigured": bool(status.get("configured")),
             "supported": False,
-            "reason": "streaming_ttft_currently_supports_native_ollama_only",
+            "reason": "streaming_ttft_currently_supports_native_ollama_or_mlx_only",
             "latencyBudgetMs": latency_budget_ms,
             "summary": {
                 "caseCount": 0,
@@ -594,13 +708,21 @@ def benchmark_streaming_ttft_provider(
     repeat_count = max(1, int(repeat))
     for repeat_index in range(1, repeat_count + 1):
         for case in cases:
-            measured = _measure_ollama_stream_ttft(
-                config,
-                current_input=case.current_input,
-                recent_context=case.recent_context,
-                max_candidates=max_candidates,
-                keep_alive=keep_alive,
-            )
+            if provider_kind == "local-mlx":
+                measured = _measure_mlx_stream_ttft(
+                    config,
+                    current_input=case.current_input,
+                    recent_context=case.recent_context,
+                    max_candidates=max_candidates,
+                )
+            else:
+                measured = _measure_ollama_stream_ttft(
+                    config,
+                    current_input=case.current_input,
+                    recent_context=case.recent_context,
+                    max_candidates=max_candidates,
+                    keep_alive=keep_alive,
+                )
             measured["currentInput"] = case.current_input
             if repeat_count > 1:
                 measured["repeatIndex"] = repeat_index
@@ -711,6 +833,81 @@ def _measure_ollama_stream_ttft(
         }
     total_ms = int((time.perf_counter() - started) * 1000)
     candidates = _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
+    return {
+        "ok": first_chunk_ms is not None,
+        "firstChunkMs": first_chunk_ms,
+        "totalMs": total_ms,
+        "firstText": first_text,
+        "rawText": full_text,
+        "candidateCount": len(candidates),
+        "candidates": candidates,
+    }
+
+
+def _measure_mlx_stream_ttft(
+    config: Any,
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+) -> dict[str, Any]:
+    query = compact_whitespace(current_input)
+    context = compact_whitespace(recent_context)[-420:]
+    body = _mlx_predict_body(config, context=context, query=query, max_candidates=max_candidates, stream=True)
+    request = urllib.request.Request(
+        f"{str(getattr(config, 'base_url', '')).rstrip('/')}/predict-stream",
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers=_headers_from_prediction_config(config),
+        method="POST",
+    )
+    started = time.perf_counter()
+    first_chunk_ms = None
+    first_text = ""
+    full_text = ""
+    final_candidates: list[str] = []
+    try:
+        with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
+            for raw_line in response:
+                if not raw_line.strip():
+                    continue
+                payload = json.loads(raw_line.decode("utf-8"))
+                text = _mlx_stream_text_delta(payload)
+                if text:
+                    full_text += text
+                    if first_chunk_ms is None:
+                        first_chunk_ms = int((time.perf_counter() - started) * 1000)
+                        first_text = text
+                if isinstance(payload.get("candidates"), list):
+                    final_candidates = _candidate_parts_from_json_value(payload.get("candidates"))
+                if payload.get("done"):
+                    break
+    except urllib.error.HTTPError as exc:
+        error = f"http_{exc.code}"
+        try:
+            body_text = exc.read().decode("utf-8")
+        except OSError:
+            body_text = ""
+        return {
+            "ok": False,
+            "error": error,
+            "errorBody": body_text[:300],
+            "firstChunkMs": first_chunk_ms,
+            "totalMs": int((time.perf_counter() - started) * 1000),
+            "candidateCount": 0,
+            "candidates": [],
+        }
+    except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
+        return {
+            "ok": False,
+            "error": _prediction_error_name(exc),
+            "firstChunkMs": first_chunk_ms,
+            "totalMs": int((time.perf_counter() - started) * 1000),
+            "candidateCount": 0,
+            "candidates": [],
+        }
+    total_ms = int((time.perf_counter() - started) * 1000)
+    candidates = final_candidates or _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
+    candidates = _parse_prediction_candidate_texts(candidates, max_candidates=max_candidates)
     return {
         "ok": first_chunk_ms is not None,
         "firstChunkMs": first_chunk_ms,
@@ -842,7 +1039,7 @@ def _normalized_prompt_mode(mode: str) -> str:
 
 def _status_prompt_mode(mode: str) -> str:
     normalized = mode.strip().lower()
-    if normalized == "ollama-chat":
+    if normalized in {"ollama-chat", "mlx-service"}:
         return normalized
     return _normalized_prompt_mode(normalized)
 
@@ -898,6 +1095,57 @@ def _ollama_chat_body(
             body["options"] = {**options, **extra_options}
         body.update(extra_body_copy)
     return body
+
+
+def _mlx_predict_body(
+    config: Any,
+    *,
+    context: str,
+    query: str,
+    max_candidates: int,
+    stream: bool,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "model": str(getattr(config, "model", "")),
+        "currentInput": query,
+        "recentContext": context,
+        "maxCandidates": max(1, min(10, int(max_candidates))),
+        "maxTokens": max(1, min(64, int(getattr(config, "max_tokens", 8)))),
+        "temperature": float(getattr(config, "temperature", 0.15)),
+        "topP": float(getattr(config, "top_p", 0.85)),
+        "stream": stream,
+        "profile": str(getattr(config, "profile", "custom")),
+    }
+    extra_body = getattr(config, "extra_body", None)
+    if isinstance(extra_body, dict) and extra_body:
+        body.update(extra_body)
+    return body
+
+
+def _mlx_raw_texts_from_payload(payload: dict[str, Any]) -> list[str]:
+    raw_texts: list[str] = []
+    for key in ("rawText", "text", "content", "completion"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            raw_texts.append(value)
+    if not raw_texts and isinstance(payload.get("candidates"), list):
+        raw_texts.extend(str(item) for item in payload["candidates"] if isinstance(item, str))
+    return raw_texts
+
+
+def _mlx_stream_text_delta(payload: dict[str, Any]) -> str:
+    for key in ("delta", "text", "content", "chunk"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _int_from_payload(value: object, fallback: int) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _percentile_ms(values: list[int], percentile: float) -> int:
@@ -996,6 +1244,44 @@ def _prediction_provider_profile(provider: PredictionProvider) -> str:
     config = getattr(provider, "config", None)
     profile = getattr(config, "profile", "")
     return profile if isinstance(profile, str) and profile else "none"
+
+
+def _prediction_provider_capabilities(provider_name: str) -> dict[str, bool]:
+    if provider_name == "local-mlx":
+        return {
+            "streaming": True,
+            "residentModel": True,
+            "promptCache": False,
+            "sequenceFork": False,
+            "batchCandidates": False,
+            "serverTiming": True,
+        }
+    if provider_name == "local-ollama":
+        return {
+            "streaming": True,
+            "residentModel": True,
+            "promptCache": False,
+            "sequenceFork": False,
+            "batchCandidates": False,
+            "serverTiming": True,
+        }
+    if provider_name == "local-openai-compatible":
+        return {
+            "streaming": False,
+            "residentModel": False,
+            "promptCache": False,
+            "sequenceFork": False,
+            "batchCandidates": False,
+            "serverTiming": False,
+        }
+    return {
+        "streaming": False,
+        "residentModel": False,
+        "promptCache": False,
+        "sequenceFork": False,
+        "batchCandidates": False,
+        "serverTiming": False,
+    }
 
 
 def _prediction_error_name(exc: BaseException) -> str:
@@ -1111,7 +1397,7 @@ def _headers_from_prediction_config(config: Any) -> dict[str, str]:
 def _prediction_doctor_next_actions(*, status: dict[str, object], checks: dict[str, Any]) -> list[str]:
     if not status.get("configured"):
         return [
-            "Set RAG_IME_PREDICTOR_PROVIDER=openai-compatible or ollama.",
+            "Set RAG_IME_PREDICTOR_PROVIDER=openai-compatible, ollama, or mlx.",
             "Set RAG_IME_PREDICTOR_BASE_URL and RAG_IME_PREDICTOR_MODEL.",
             "Use RAG_IME_PREDICTOR_PROFILE=instant for the first Qwen-style test.",
         ]

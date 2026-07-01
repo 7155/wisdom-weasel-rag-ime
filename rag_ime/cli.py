@@ -315,9 +315,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Short TTL cache for repeated /rime-suggest payloads. Use 0 to disable.",
     )
 
+    mlx_predictor_server = subparsers.add_parser(
+        "mlx-predictor-server",
+        help="Run the resident MLX-LM prediction service for the IME model lane",
+    )
+    mlx_predictor_server.add_argument("--host", default=os.environ.get("RAG_IME_MLX_HOST", "127.0.0.1"))
+    mlx_predictor_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_MLX_PORT", "8767")))
+    mlx_predictor_server.add_argument("--model", default=os.environ.get("RAG_IME_MLX_MODEL", ""))
+    mlx_predictor_server.add_argument("--max-tokens", type=int, default=int(os.environ.get("RAG_IME_MLX_MAX_TOKENS", "8")))
+    mlx_predictor_server.add_argument("--temperature", type=float, default=float(os.environ.get("RAG_IME_MLX_TEMPERATURE", "0.15")))
+    mlx_predictor_server.add_argument("--top-p", type=float, default=float(os.environ.get("RAG_IME_MLX_TOP_P", "0.85")))
+
     subparsers.add_parser("acceptance", help="Run deterministic adapter acceptance scenarios")
 
     args = parser.parse_args(argv)
+    if args.command == "mlx-predictor-server":
+        if not args.model:
+            raise SystemExit("mlx-predictor-server requires --model or RAG_IME_MLX_MODEL")
+        from .mlx_predictor_server import MlxPredictorServerConfig, serve_mlx_predictor
+
+        serve_mlx_predictor(
+            MlxPredictorServerConfig(
+                host=args.host,
+                port=args.port,
+                model=args.model,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                top_p=args.top_p,
+            )
+        )
+        return 0
+
     core = _build_core(args)
     adapter = InputMethodAdapter(core, project="wisdom-weasel-rag-ime")
     predictor = prediction_provider_from_env()

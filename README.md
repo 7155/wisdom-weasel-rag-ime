@@ -297,6 +297,26 @@ cache and multi-sequence candidate sampling. See
 `docs/model-ttft-kv-cache-plan.md` and
 `docs/local-model-prediction-benchmark.md` for the backend decision and commands.
 
+Run the resident MLX-LM service when testing the next Mac fast lane:
+
+```bash
+python3 -m rag_ime.cli mlx-predictor-server \
+  --model <mlx-compatible-qwen-model-id> \
+  --host 127.0.0.1 \
+  --port 8767
+
+export RAG_IME_PREDICTOR_PROVIDER=mlx
+export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767
+export RAG_IME_PREDICTOR_MODEL=<same-model-id>
+export RAG_IME_PREDICTOR_PROFILE=instant
+```
+
+The MLX service exposes `/predict`, `/predict-stream`, `/health`, and
+`/v1/models`. It loads the model once and lets `predictor-ttft` measure the
+first streamed candidate without going through an OpenAI-compatible chat layer.
+The protocol already reports prompt-cache metadata, but true MLX prompt-cache
+reuse is still the next optimization step.
+
 The model lane also has a default failure cooldown. If the configured endpoint times out or returns a slow empty result, subsequent prediction calls are skipped for a short window so composing refreshes do not pay one model timeout per key event:
 
 ```bash
@@ -348,7 +368,8 @@ python3 -m rag_ime.cli predictor-ttft \
   --latency-budget-ms 200
 ```
 
-`predictor-ttft` currently supports the native Ollama lane and reports
+`predictor-ttft` currently supports the native Ollama lane and the resident MLX
+service. It reports
 `firstChunkMs`, `totalMs`, parsed candidates, and over-budget counts. See
 `docs/model-ttft-kv-cache-plan.md` for why Ollama is only the baseline and why
 the final low-latency path should copy Wisdom-Weasel's native llama.cpp

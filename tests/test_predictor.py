@@ -13,6 +13,7 @@ from unittest.mock import patch
 from rag_ime.cli import main
 from rag_ime.predictor import (
     CooldownPredictionProvider,
+    MlxPredictionServiceProvider,
     OllamaPredictionProvider,
     OpenAICompatiblePredictionConfig,
     OpenAICompatiblePredictionProvider,
@@ -189,6 +190,73 @@ class _MockOllamaEmptyStreamingHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
         self.wfile.flush()
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
+class _MockMlxHandler(BaseHTTPRequestHandler):
+    captured_path = ""
+    captured_payload: dict[str, object] = {}
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib API
+        if self.path == "/v1/models":
+            body = json.dumps({"data": [{"id": "mlx-qwen3.5-0.8b"}]}, ensure_ascii=False).encode("utf-8")
+        elif self.path == "/health":
+            body = json.dumps(
+                {
+                    "ok": True,
+                    "provider": "mlx-lm",
+                    "model": "mlx-qwen3.5-0.8b",
+                    "modelLoaded": True,
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        _MockMlxHandler.captured_path = self.path
+        _MockMlxHandler.captured_payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if self.path == "/predict-stream":
+            chunks = [
+                {"delta": '["本地记忆"'},
+                {"delta": ',"输入法候选"]'},
+                {"done": True, "candidates": ["本地记忆", "输入法候选"], "totalMs": 19},
+            ]
+            body = b"".join(json.dumps(item, ensure_ascii=False).encode("utf-8") + b"\n" for item in chunks)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+            return
+        if self.path != "/predict":
+            self.send_error(404)
+            return
+        body = json.dumps(
+            {
+                "ok": True,
+                "candidates": ["本地记忆", "输入法候选", "RAG上下文"],
+                "rawText": '["本地记忆","输入法候选","RAG上下文"]',
+                "totalMs": 17,
+                "promptCache": {"enabled": False},
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, fmt: str, *args: object) -> None:
         return
@@ -403,6 +471,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(status["timeoutMs"], 350)
         self.assertIn("chat_template_kwargs", status["extraBodyKeys"])
         self.assertIn("seed", status["extraBodyKeys"])
+        self.assertFalse(status["capabilities"]["streaming"])
         self.assertTrue(status["cooldown"]["enabled"])
 
     def test_env_can_disable_prediction_failure_cooldown(self) -> None:
@@ -451,6 +520,48 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(_MockOllamaHandler.captured_payload["options"]["num_predict"], 24)
         self.assertEqual(predictions[0].text, "本地记忆")
         self.assertEqual(predictions[0].provider_name, "local-ollama")
+
+    def test_mlx_provider_uses_resident_prediction_service(self) -> None:
+        _MockMlxHandler.captured_path = ""
+        _MockMlxHandler.captured_payload = {}
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+            self.assertIsInstance(provider, MlxPredictionServiceProvider)
+            predictions = provider.predict(
+                current_input="RAG 输入法",
+                recent_context="用户正在写本地记忆输入法",
+                max_candidates=3,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(_MockMlxHandler.captured_path, "/predict")
+        self.assertEqual(_MockMlxHandler.captured_payload["model"], "mlx-qwen3.5-0.8b")
+        self.assertEqual(_MockMlxHandler.captured_payload["maxCandidates"], 3)
+        self.assertEqual(_MockMlxHandler.captured_payload["maxTokens"], 8)
+        self.assertEqual([item.text for item in predictions], ["本地记忆", "输入法候选", "RAG上下文"])
+        self.assertEqual(predictions[0].provider_name, "local-mlx")
+        self.assertEqual(predictions[0].latency_ms, 17)
+        self.assertEqual(predictions[0].metadata["prompt_cache"], {"enabled": False})
+        status = prediction_provider_status(provider)
+        self.assertTrue(status["capabilities"]["streaming"])
+        self.assertTrue(status["capabilities"]["residentModel"])
+        self.assertFalse(status["capabilities"]["promptCache"])
+        self.assertFalse(status["capabilities"]["sequenceFork"])
 
     def test_prediction_cooldown_skips_repeat_failures(self) -> None:
         class FailingProvider:
@@ -949,6 +1060,55 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(report["summary"]["failureCount"], 1)
         self.assertEqual(report["summary"]["overBudgetCount"], 1)
         self.assertTrue(report["cases"][0]["overBudget"])
+
+    def test_cli_predictor_ttft_supports_mlx_streaming_service(self) -> None:
+        _MockMlxHandler.captured_path = ""
+        _MockMlxHandler.captured_payload = {}
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            stdout = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "--core-mode",
+                            "fixture",
+                            "predictor-ttft",
+                            "--case",
+                            "RAG 输入法",
+                            "--repeat",
+                            "1",
+                            "--latency-budget-ms",
+                            "200",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertTrue(report["supported"])
+        self.assertEqual(report["providerName"], "local-mlx")
+        self.assertTrue(report["summary"]["hasFirstChunk"])
+        self.assertEqual(report["summary"]["firstChunkMissingCount"], 0)
+        self.assertEqual(report["cases"][0]["candidateCount"], 2)
+        self.assertEqual(report["cases"][0]["candidates"][0], "本地记忆")
+        self.assertEqual(_MockMlxHandler.captured_path, "/predict-stream")
+        self.assertTrue(_MockMlxHandler.captured_payload["stream"])
 
 
 if __name__ == "__main__":
