@@ -890,6 +890,7 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
             "readinessMessage": "Squirrel is not enabled in every macOS input-source list",
             "nextAction": "add Squirrel in System Settings, then wait for the add gate",
             "manualAction": "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel",
+            "helperCommand": "scripts/open_squirrel_input_source_settings.sh --wait",
             "verificationCommand": "scripts/wait_squirrel_input_source_added.sh",
             "readinessChecks": readiness_checks,
             "expectedInputSourceId": target,

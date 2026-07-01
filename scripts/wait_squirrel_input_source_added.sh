@@ -27,4 +27,5 @@ if [[ -n "$last_output" ]]; then
   echo "$last_output" >&2
 fi
 echo "If thirdPartyEnabled=false, use the System Settings Add flow; command-line writes may be ignored by macOS 27." >&2
+echo "Recommended helper: scripts/open_squirrel_input_source_settings.sh --wait" >&2
 exit 1

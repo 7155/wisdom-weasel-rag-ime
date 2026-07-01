@@ -267,7 +267,17 @@ input-source list: Keyboard -> Input Sources -> Add -> Chinese, Simplified ->
 Squirrel. If the check prints `thirdPartyEnabled=false`, command-line writes
 were not accepted by macOS and the UI Add path is required.
 
-After using the System Settings Add flow, wait for the strict source-list check:
+To open the Keyboard settings pane and wait for the strict source-list check,
+use:
+
+```bash
+scripts/open_squirrel_input_source_settings.sh --wait
+```
+
+The helper does not click System Settings or modify input-source preferences. It
+opens the Keyboard settings pane when macOS accepts the settings URL, prints the
+manual Add path, then runs the same strict wait gate. If System Settings is
+already open, the wait gate can still be run directly:
 
 ```bash
 scripts/wait_squirrel_input_source_added.sh
