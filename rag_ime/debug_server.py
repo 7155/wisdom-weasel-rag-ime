@@ -844,17 +844,43 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
     third_party_enabled = parsed.get("thirdPartyEnabled") is not False
     current = _string(parsed.get("current"))
     target = _string(parsed.get("id")) or "Squirrel"
+    readiness_checks = [
+        {
+            "name": "tis-visible",
+            "passed": enabled and selectable,
+            "enabled": parsed.get("enabled"),
+            "selectable": parsed.get("selectable"),
+        },
+        {
+            "name": "third-party-list",
+            "passed": hitoolbox_enabled and third_party_enabled,
+            "hitoolboxEnabled": parsed.get("hitoolboxEnabled"),
+            "thirdPartyEnabled": parsed.get("thirdPartyEnabled"),
+        },
+        {
+            "name": "selected",
+            "passed": ok and typing_ready,
+            "selected": parsed.get("selected"),
+            "current": current,
+        },
+    ]
     if ok and typing_ready:
         return {
             "readinessState": "ready",
             "readinessMessage": "Squirrel is the active input source",
             "nextAction": "start typing with Squirrel",
+            "manualAction": "type in a foreground macOS text field",
+            "verificationCommand": "scripts/wait_squirrel_typing_ready.sh",
+            "readinessChecks": readiness_checks,
         }
     if enabled and selectable and hitoolbox_enabled and third_party_enabled:
         return {
             "readinessState": "switch",
             "readinessMessage": "Squirrel is installed; switch the menu bar input source",
             "nextAction": "select Squirrel from the macOS input menu",
+            "manualAction": "macOS input menu -> Squirrel - Simplified",
+            "verificationCommand": "scripts/wait_squirrel_typing_ready.sh",
+            "readinessChecks": readiness_checks,
             "expectedInputSourceId": target,
             "currentInputSourceId": current,
         }
@@ -862,7 +888,10 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
         return {
             "readinessState": "install",
             "readinessMessage": "Squirrel is not enabled in every macOS input-source list",
-            "nextAction": "add Squirrel in System Settings or run the input-source enable helper",
+            "nextAction": "add Squirrel in System Settings, then wait for the add gate",
+            "manualAction": "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel",
+            "verificationCommand": "scripts/wait_squirrel_input_source_added.sh",
+            "readinessChecks": readiness_checks,
             "expectedInputSourceId": target,
             "currentInputSourceId": current,
         }
@@ -870,6 +899,9 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
         "readinessState": "error" if not ok else "waiting",
         "readinessMessage": "input source state is incomplete",
         "nextAction": "run doctor_squirrel_integration.sh",
+        "manualAction": "inspect the input source checker output",
+        "verificationCommand": "scripts/check_macos_input_source.sh im.rime.inputmethod.Squirrel.Hans",
+        "readinessChecks": readiness_checks,
         "expectedInputSourceId": target,
         "currentInputSourceId": current,
     }

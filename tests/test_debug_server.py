@@ -716,6 +716,12 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(status["current"], "com.apple.keylayout.ABC")
         self.assertEqual(status["readinessState"], "switch")
         self.assertEqual(status["nextAction"], "select Squirrel from the macOS input menu")
+        self.assertEqual(status["manualAction"], "macOS input menu -> Squirrel - Simplified")
+        self.assertEqual(status["verificationCommand"], "scripts/wait_squirrel_typing_ready.sh")
+        self.assertEqual(
+            [item["name"] for item in status["readinessChecks"]],
+            ["tis-visible", "third-party-list", "selected"],
+        )
 
     def test_http_debug_server_exposes_input_source_status(self) -> None:
         script = Path(self.tmp.name) / "check-input-source.sh"
@@ -761,6 +767,8 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(payload["selected"])
         self.assertEqual(payload["readinessState"], "ready")
         self.assertEqual(payload["nextAction"], "start typing with Squirrel")
+        self.assertEqual(payload["manualAction"], "type in a foreground macOS text field")
+        self.assertEqual(payload["verificationCommand"], "scripts/wait_squirrel_typing_ready.sh")
 
     def test_input_source_status_marks_missing_source_as_install_needed(self) -> None:
         script = Path(self.tmp.name) / "check-input-source-missing.sh"
@@ -790,7 +798,12 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertFalse(status["ok"])
         self.assertFalse(status["typingReady"])
         self.assertEqual(status["readinessState"], "install")
-        self.assertEqual(status["nextAction"], "add Squirrel in System Settings or run the input-source enable helper")
+        self.assertEqual(status["nextAction"], "add Squirrel in System Settings, then wait for the add gate")
+        self.assertEqual(
+            status["manualAction"],
+            "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel",
+        )
+        self.assertEqual(status["verificationCommand"], "scripts/wait_squirrel_input_source_added.sh")
 
     def test_input_source_status_marks_missing_third_party_registration_as_install_needed(self) -> None:
         script = Path(self.tmp.name) / "check-input-source-third-party-missing.sh"
@@ -824,7 +837,11 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertFalse(status["hitoolboxEnabled"])
         self.assertFalse(status["thirdPartyEnabled"])
         self.assertEqual(status["readinessState"], "install")
-        self.assertEqual(status["nextAction"], "add Squirrel in System Settings or run the input-source enable helper")
+        self.assertEqual(status["nextAction"], "add Squirrel in System Settings, then wait for the add gate")
+        self.assertEqual(status["verificationCommand"], "scripts/wait_squirrel_input_source_added.sh")
+        third_party_check = next(item for item in status["readinessChecks"] if item["name"] == "third-party-list")
+        self.assertFalse(third_party_check["passed"])
+        self.assertFalse(third_party_check["thirdPartyEnabled"])
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):

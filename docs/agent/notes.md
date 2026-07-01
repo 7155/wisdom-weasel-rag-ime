@@ -1995,3 +1995,22 @@ Verification:
 
 Status:
 - Manual next step is now operationally clean: run the add gate while adding Squirrel in System Settings, then run typing-ready after switching to Squirrel.
+
+### 2026-07-01 20:45 CST
+Problem:
+- The browser debug Input Source card still compressed the macOS input-source state into `list/selected/current`, so the current real blocker `thirdPartyEnabled=false` was visible only in JSON.
+- This made the page less useful for the exact "Squirrel is registered but cannot type" failure.
+
+Changes:
+- `/api/input-source` now returns `readinessChecks`, `manualAction`, and `verificationCommand`.
+- The debug Input Source card now shows four compact gates: TIS, third-party source list, selected source, and current source.
+- The card hint now includes the next action plus the verifying wait script.
+- Removed debug-page favicon noise and tightened RAG source text truncation inside the compact overlay.
+
+Verification:
+- Targeted input-source debug tests passed.
+- Playwright snapshot on the real machine showed `TIS=yes`, `3rd=no`, `selected=no`, `current=ABC`, readiness `install`, and `scripts/wait_squirrel_input_source_added.sh`.
+- Screenshot evidence: `output/playwright/rag-ime-debug-input-source-install.png`.
+
+Status:
+- The debug surface now points directly to the System Settings Add step when macOS has not accepted Squirrel into the third-party input-source list.

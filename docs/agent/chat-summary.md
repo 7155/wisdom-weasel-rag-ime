@@ -1420,3 +1420,20 @@ Verification:
 
 Next:
 - Run `scripts/wait_squirrel_input_source_added.sh` while adding Squirrel in System Settings, then switch the input menu and run `scripts/wait_squirrel_typing_ready.sh`.
+
+### 2026-07-01
+Topic:
+- Make the debug page show the real macOS third-party input-source blocker.
+
+Changes:
+- `/api/input-source` now includes `readinessChecks`, `manualAction`, and `verificationCommand`.
+- The debug Input Source card now shows `TIS`, `3rd`, `selected`, and `current` instead of hiding `thirdPartyEnabled` in JSON.
+- The card hint shows the next action and wait script, so `thirdPartyEnabled=false` leads to the System Settings Add flow.
+
+Verification:
+- Targeted input-source debug tests passed.
+- Playwright opened the real debug page; console had 0 errors after reload.
+- Real local visual state showed `TIS=yes`, `3rd=no`, `selected=no`, `current=ABC`, readiness `install`.
+
+Next:
+- Add Squirrel in System Settings, then run `scripts/wait_squirrel_input_source_added.sh` and `scripts/wait_squirrel_typing_ready.sh`.

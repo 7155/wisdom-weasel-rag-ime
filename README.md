@@ -122,13 +122,14 @@ Then open:
 http://127.0.0.1:8765/
 ```
 
-The debug page calls `/api/input-source` and shows whether Squirrel is installed
-in the current user's input-source list, whether it is the selected active input
-source, and which input source is currently active. This is the fastest way to
-spot the difference between "Squirrel is visible in System Settings" and "typing
-is actually going through Squirrel". The card refreshes automatically: `switch`
-means installed but not active, while `ready` means the real macOS typing gate
-can run.
+The debug page calls `/api/input-source` and shows the four practical typing
+gates: whether Squirrel is visible to TIS, whether it is present in the macOS
+third-party input-source list, whether it is selected, and which input source is
+currently active. This is the fastest way to spot the difference between
+"Squirrel is registered", "Squirrel has been added in System Settings", and
+"typing is actually going through Squirrel". The card refreshes automatically:
+`install` means the System Settings add flow is still required, `switch` means
+installed but not active, and `ready` means the real macOS typing gate can run.
 
 Run the lightweight HTTP sidecar for patched Squirrel:
 
@@ -263,8 +264,8 @@ scripts/enable_squirrel_hitoolbox_input_source.sh
 
 On macOS 27, System Settings may still require the UI route for the third-party
 input-source list: Keyboard -> Input Sources -> Add -> Chinese, Simplified ->
-Squirrel. If the check prints `thirdPartyEnabled=false`, the command-line helper
-could not make System Settings show Squirrel and the UI Add path is required.
+Squirrel. If the check prints `thirdPartyEnabled=false`, command-line writes
+were not accepted by macOS and the UI Add path is required.
 
 After using the System Settings Add flow, wait for the strict source-list check:
 
