@@ -576,10 +576,10 @@ index 0000000..a837039
 +  }
 +}
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..e63b851 100644
+index c2adf74..5e6433d 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
-@@ -27,6 +27,20 @@ final class SquirrelInputController: IMKInputController {
+@@ -27,6 +27,21 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
@@ -596,11 +596,12 @@ index c2adf74..e63b851 100644
 +  private var ragImeCommittedContext: String = ""
 +  private var ragImeCommittedContextUpdatedAt: Date = .distantPast
 +  private var ragImeLastRequestFingerprint: String = ""
++  private var ragImePendingRequestFingerprint: String = ""
 +  private var ragImePendingRequestWorkItem: DispatchWorkItem?
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -106,6 +120,9 @@ final class SquirrelInputController: IMKInputController {
+@@ -106,6 +121,9 @@ final class SquirrelInputController: IMKInputController {
          keyChars = event.characters
        }
        if let char = keyChars?.first {
@@ -610,7 +611,7 @@ index c2adf74..e63b851 100644
          let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
                                                             shift: modifiers.contains(.shift),
                                                             caps: modifiers.contains(.capsLock))
-@@ -124,6 +141,33 @@ final class SquirrelInputController: IMKInputController {
+@@ -124,6 +142,33 @@ final class SquirrelInputController: IMKInputController {
    }
  
    func selectCandidate(_ index: Int) -> Bool {
@@ -644,7 +645,7 @@ index c2adf74..e63b851 100644
      let success = rimeAPI.select_candidate_on_current_page(session, index)
      if success {
        rimeUpdate()
-@@ -131,6 +175,28 @@ final class SquirrelInputController: IMKInputController {
+@@ -131,6 +176,28 @@ final class SquirrelInputController: IMKInputController {
      return success
    }
  
@@ -673,7 +674,7 @@ index c2adf74..e63b851 100644
    // swiftlint:disable:next identifier_name
    func page(up: Bool) -> Bool {
      var handled = false
-@@ -301,6 +367,307 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,6 +368,349 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
@@ -715,8 +716,6 @@ index c2adf74..e63b851 100644
 +      return
 +    }
 +
-+    ragImeRequestSeq += 1
-+    let requestSeq = ragImeRequestSeq
 +    let rimeCandidates = candidates.enumerated().map { index, text in
 +      RagImeRimeCandidatePayload(
 +        label: index < labels.count ? labels[index] : "",
@@ -725,6 +724,21 @@ index c2adf74..e63b851 100644
 +        index: index
 +      )
 +    }
++    let fingerprint = ragImeRequestFingerprint(
++      rawInput: rawInput,
++      preedit: preedit,
++      commitTextPreview: commitTextPreview,
++      committedContext: ragImeCommittedContext,
++      page: page,
++      highlighted: highlighted,
++      candidates: rimeCandidates
++    )
++    if fingerprint == ragImeLastRequestFingerprint || fingerprint == ragImePendingRequestFingerprint {
++      return
++    }
++    ragImePendingRequestWorkItem?.cancel()
++    ragImeRequestSeq += 1
++    let requestSeq = ragImeRequestSeq
 +    let request = RagImeSidecarRequest(
 +      sessionId: String(session),
 +      requestSeq: requestSeq,
@@ -743,23 +757,11 @@ index c2adf74..e63b851 100644
 +        isLastPage: lastPage
 +      )
 +    )
-+
-+    let fingerprint = ragImeRequestFingerprint(
-+      rawInput: rawInput,
-+      preedit: preedit,
-+      commitTextPreview: commitTextPreview,
-+      committedContext: ragImeCommittedContext,
-+      page: page,
-+      highlighted: highlighted,
-+      candidates: rimeCandidates
-+    )
-+    if fingerprint == ragImeLastRequestFingerprint && !ragImeDisplayCandidates.isEmpty {
-+      return
-+    }
-+    ragImePendingRequestWorkItem?.cancel()
 +    let workItem = DispatchWorkItem { [weak self] in
 +      self?.sendRagImeSidecarRequest(request, fingerprint: fingerprint, sidecarClient: sidecarClient)
 +    }
++    ragImeLastRequestFingerprint = fingerprint
++    ragImePendingRequestFingerprint = fingerprint
 +    ragImePendingRequestWorkItem = workItem
 +    let delay = TimeInterval(sidecarClient.debounceMs) / 1000
 +    if delay <= 0 {
@@ -774,32 +776,62 @@ index c2adf74..e63b851 100644
 +    fingerprint: String,
 +    sidecarClient: RagImeSidecarClient
 +  ) {
-+    guard fingerprint != ragImeLastRequestFingerprint || ragImeDisplayCandidates.isEmpty else { return }
-+    ragImeLastRequestFingerprint = fingerprint
++    guard fingerprint == ragImeLastRequestFingerprint else { return }
 +    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 +      do {
 +        let response = try sidecarClient.request(request)
 +        DispatchQueue.main.async {
-+          self?.applyRagImeSidecarResponse(response, for: request)
++          self?.applyRagImeSidecarResponse(response, for: request, fingerprint: fingerprint)
 +        }
 +      } catch {
 +        print("RAG IME sidecar request failed: \(error)")
++        DispatchQueue.main.async {
++          self?.completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++        }
 +      }
 +    }
 +  }
 +
-+  func applyRagImeSidecarResponse(_ response: RagImeSidecarResponse, for request: RagImeSidecarRequest) {
-+    guard response.requestSeq == ragImeRequestSeq, response.requestSeq == request.requestSeq else { return }
-+    guard response.sessionId == request.sessionId else { return }
-+    guard session != 0 && rimeAPI.find_session(session) else { return }
++  func applyRagImeSidecarResponse(_ response: RagImeSidecarResponse, for request: RagImeSidecarRequest, fingerprint: String) {
++    guard fingerprint == ragImeLastRequestFingerprint else { return }
++    guard response.requestSeq == request.requestSeq else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
++    guard response.sessionId == request.sessionId else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
++    guard session != 0 && rimeAPI.find_session(session) else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
 +    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
 +    guard currentRawInput == request.rawInput else { return }
-+    guard response.preedit == request.preedit else { return }
-+    guard response.committedContext == request.committedContext else { return }
-+    guard ragImeCommittedContext == request.committedContext else { return }
-+    guard response.rimeContext.page == request.rimeContext.page else { return }
-+    guard ragImeCandidateFingerprint(response.rimeContext.candidates) == ragImeCandidateFingerprint(request.rimeContext.candidates) else { return }
-+    guard currentRagImeContextMatches(request) else { return }
++    guard response.preedit == request.preedit else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
++    guard response.committedContext == request.committedContext else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
++    guard ragImeCommittedContext == request.committedContext else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
++    guard response.rimeContext.page == request.rimeContext.page else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
++    guard ragImeCandidateFingerprint(response.rimeContext.candidates) == ragImeCandidateFingerprint(request.rimeContext.candidates) else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
++    guard currentRagImeContextMatches(request) else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
 +
 +    ragImeDisplayCandidates = response.displayCandidates
 +    ragImePanelUsesDisplayCandidates = false
@@ -808,7 +840,17 @@ index c2adf74..e63b851 100644
 +    ragImeDisplaySemanticQuery = response.semanticQuery
 +    ragImeDisplayQueryBasis = response.queryBasis
 +    ragImeDisplayUpdatedAt = Date()
++    completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: true)
 +    rimeUpdate(clearReservedComments: false, requestSidecar: false)
++  }
++
++  func completeRagImeSidecarRequest(fingerprint: String, keepLastFingerprint: Bool) {
++    if ragImePendingRequestFingerprint == fingerprint {
++      ragImePendingRequestFingerprint = ""
++    }
++    if !keepLastFingerprint && ragImeLastRequestFingerprint == fingerprint {
++      ragImeLastRequestFingerprint = ""
++    }
 +  }
 +
 +  func currentRagImeContextMatches(_ request: RagImeSidecarRequest) -> Bool {
@@ -932,6 +974,7 @@ index c2adf74..e63b851 100644
 +    ragImeDisplayQueryBasis = ""
 +    ragImeDisplayUpdatedAt = .distantPast
 +    ragImeLastRequestFingerprint = ""
++    ragImePendingRequestFingerprint = ""
 +    ragImePendingRequestWorkItem?.cancel()
 +    ragImePendingRequestWorkItem = nil
 +  }
@@ -981,7 +1024,7 @@ index c2adf74..e63b851 100644
    func onChordTimer(_: Timer) {
      var processedKeys = false
      if chordKeyCount > 0 && session != 0 {
-@@ -360,6 +727,7 @@ private extension SquirrelInputController {
+@@ -360,6 +770,7 @@ private extension SquirrelInputController {
  
      if session != 0 {
        updateAppOptions()
@@ -989,7 +1032,7 @@ index c2adf74..e63b851 100644
      }
    }
  
-@@ -434,7 +802,7 @@ private extension SquirrelInputController {
+@@ -434,7 +845,7 @@ private extension SquirrelInputController {
    }
  
    // Preserve reserved comment marks when librime requests a UI-only refresh.
@@ -998,7 +1041,7 @@ index c2adf74..e63b851 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +814,7 @@ private extension SquirrelInputController {
+@@ -446,6 +857,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -1006,7 +1049,7 @@ index c2adf74..e63b851 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +827,14 @@ private extension SquirrelInputController {
+@@ -458,13 +870,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -1022,7 +1065,7 @@ index c2adf74..e63b851 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -537,13 +907,35 @@ private extension SquirrelInputController {
+@@ -537,13 +950,35 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -1059,7 +1102,7 @@ index c2adf74..e63b851 100644
        hidePalettes()
      }
    }
-@@ -551,6 +943,7 @@ private extension SquirrelInputController {
+@@ -551,6 +986,7 @@ private extension SquirrelInputController {
    func commit(string: String) {
      guard let client = client else { return }
      client.insertText(string, replacementRange: .empty)
@@ -1068,7 +1111,7 @@ index c2adf74..e63b851 100644
      hidePalettes()
    }
 diff --git a/sources/SquirrelPanel.swift b/sources/SquirrelPanel.swift
-index a9e2dae..657f886 100644
+index a9e2dae..924732e 100644
 --- a/sources/SquirrelPanel.swift
 +++ b/sources/SquirrelPanel.swift
 @@ -57,6 +57,12 @@ final class SquirrelPanel: NSPanel {
@@ -1084,6 +1127,15 @@ index a9e2dae..657f886 100644
    var inlinePreedit: Bool {
      view.currentTheme.inlinePreedit
    }
+@@ -113,7 +119,7 @@ final class SquirrelPanel: NSPanel {
+         scrollDirection = .zero
+       } else if event.phase == .ended || (event.phase == .init(rawValue: 0) && event.momentumPhase != .init(rawValue: 0)) {
+         if abs(scrollDirection.dx) > abs(scrollDirection.dy) && abs(scrollDirection.dx) > 10 {
+-          _ = inputController?.page(up: (scrollDirection.dx < 0) == vertical)
++          _ = inputController?.page(up: (scrollDirection.dx < 0) == ragImePanelVertical)
+         } else if abs(scrollDirection.dx) < abs(scrollDirection.dy) && abs(scrollDirection.dy) > 10 {
+           _ = inputController?.page(up: scrollDirection.dy > 0)
+         }
 @@ -256,22 +262,22 @@ final class SquirrelPanel: NSPanel {
          line.addAttribute(.noBreak, value: true, range: NSRange(location: 1, length: line.length-1))
        }
@@ -1111,7 +1163,7 @@ index a9e2dae..657f886 100644
          let labelString = labeledLine.attributedSubstring(from: NSRange(location: 0, length: labelEnd.utf16Offset(in: labeledLine.string)))
          let labelWidth = labelString.boundingRect(with: .zero, options: [.usesLineFragmentOrigin]).width
          paragraphStyleCandidate.headIndent = labelWidth
-@@ -283,7 +289,7 @@ final class SquirrelPanel: NSPanel {
+@@ -283,11 +289,11 @@ final class SquirrelPanel: NSPanel {
      }
  
      view.textView.textContentStorage?.attributedString = text
@@ -1120,6 +1172,93 @@ index a9e2dae..657f886 100644
  
      // Force TextKit 2 layout before measuring wrapped text and highlight bounds.
      let textWidth = maxTextWidth()
+-    let maxTextHeight = vertical ? screenRect.width - theme.edgeInset.width * 2 : screenRect.height - theme.edgeInset.height * 2
++    let maxTextHeight = ragImePanelVertical ? screenRect.width - theme.edgeInset.width * 2 : screenRect.height - theme.edgeInset.height * 2
+     view.textContainer.size = NSSize(width: textWidth, height: maxTextHeight)
+     view.textLayoutManager.ensureLayout(for: view.textLayoutManager.documentRange)
+ 
+@@ -348,8 +354,8 @@ private extension SquirrelPanel {
+     let theme = view.currentTheme
+     let font: NSFont = theme.font
+     let fontScale = font.pointSize / 12
+-    let textWidthRatio = min(1, 1 / (vertical ? 4 : 3) + fontScale / 12)
+-    let maxWidth = if vertical {
++    let textWidthRatio = min(1, 1 / (ragImePanelVertical ? 4 : 3) + fontScale / 12)
++    let maxWidth = if ragImePanelVertical {
+       screenRect.height * textWidthRatio - theme.edgeInset.height * 2
+     } else {
+       screenRect.width * textWidthRatio - theme.edgeInset.width * 2
+@@ -385,7 +391,7 @@ private extension SquirrelPanel {
+ 
+     // Compute the largest size possible for a giant panel
+     var naturalPanelSize = NSSize.zero
+-    if vertical {
++    if ragImePanelVertical {
+       naturalPanelSize.width = contentRect.height + theme.edgeInset.height * 2
+       naturalPanelSize.height = contentRect.width + theme.edgeInset.width * 2 + theme.pagingOffset
+     } else {
+@@ -404,7 +410,7 @@ private extension SquirrelPanel {
+       let screenRatio = maxAllowedWidth / maxAllowedHeight
+ 
+       let optimalTextWidth: CGFloat
+-      if vertical {
++      if ragImePanelVertical {
+         // Width = screen height in vertical mode
+         optimalTextWidth = sqrt(area / screenRatio)
+       } else {
+@@ -419,7 +425,7 @@ private extension SquirrelPanel {
+ 
+         contentRect = view.contentRect
+ 
+-        if vertical {
++        if ragImePanelVertical {
+           naturalPanelSize.width = contentRect.height + theme.edgeInset.height * 2
+           naturalPanelSize.height = contentRect.width + theme.edgeInset.width * 2 + theme.pagingOffset
+         } else {
+@@ -445,13 +451,13 @@ private extension SquirrelPanel {
+ 
+       maxHeight = 0
+     } else {
+-      if theme.memorizeSize && (vertical && position.midY / screenRect.height < 0.5) ||
+-          (vertical && position.minX + max(contentRect.width, maxHeight) + theme.edgeInset.width * 2 > screenRect.maxX) {
++      if theme.memorizeSize && (ragImePanelVertical && position.midY / screenRect.height < 0.5) ||
++          (ragImePanelVertical && position.minX + max(contentRect.width, maxHeight) + theme.edgeInset.width * 2 > screenRect.maxX) {
+         if contentRect.width >= maxHeight {
+           maxHeight = contentRect.width
+         } else {
+           contentRect.size.width = maxHeight
+-          if vertical {
++          if ragImePanelVertical {
+             naturalPanelSize.height = contentRect.width + theme.edgeInset.width * 2 + theme.pagingOffset
+           } else {
+             naturalPanelSize.width = contentRect.width + theme.edgeInset.width * 2 + theme.pagingOffset
+@@ -461,7 +467,7 @@ private extension SquirrelPanel {
+ 
+       panelRect.size = naturalPanelSize
+ 
+-      if vertical {
++      if ragImePanelVertical {
+         // Anchor vertical panels on one side of the cursor to avoid jumping while typing.
+         if position.midY / screenRect.height >= 0.5 {
+           panelRect.origin.y = position.minY - SquirrelTheme.offsetHeight - panelRect.height + theme.pagingOffset
+@@ -480,7 +486,7 @@ private extension SquirrelPanel {
+       if panelRect.maxX > screenRect.maxX { panelRect.origin.x = screenRect.maxX - panelRect.width }
+       if panelRect.minX < screenRect.minX { panelRect.origin.x = screenRect.minX }
+       if panelRect.minY < screenRect.minY {
+-        if vertical { panelRect.origin.y = screenRect.minY } else { panelRect.origin.y = position.maxY + SquirrelTheme.offsetHeight }
++        if ragImePanelVertical { panelRect.origin.y = screenRect.minY } else { panelRect.origin.y = position.maxY + SquirrelTheme.offsetHeight }
+       }
+       if panelRect.maxY > screenRect.maxY { panelRect.origin.y = screenRect.maxY - panelRect.height }
+       if panelRect.minY < screenRect.minY { panelRect.origin.y = screenRect.minY }
+@@ -492,7 +498,7 @@ private extension SquirrelPanel {
+     contentView!.frame = NSRect(origin: .zero, size: panelRect.size)
+     contentView!.bounds = NSRect(origin: .zero, size: naturalPanelSize)
+ 
+-    if vertical {
++    if ragImePanelVertical {
+       contentView!.boundsRotation = -90
+       contentView!.setBoundsOrigin(NSPoint(x: 0, y: naturalPanelSize.width))
+     } else {
 @@ -533,7 +539,7 @@ private extension SquirrelPanel {
      let text = NSMutableAttributedString(string: message, attributes: theme.attrs)
      text.addAttribute(.paragraphStyle, value: theme.paragraphStyle, range: NSRange(location: 0, length: text.length))
