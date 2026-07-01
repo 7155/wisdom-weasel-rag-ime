@@ -748,3 +748,21 @@ Findings:
 
 Next:
 - Install/verify `mlx-lm`, run `mlx-predictor-server` against a concrete small Qwen-compatible MLX model, then compare `predictor-ttft` and `eval-prediction` with the Ollama MLX baseline.
+
+### 2026-07-01
+Topic:
+- Add MLX stable-prefix prompt-cache preparation and observability.
+
+Changes:
+- Added `--prompt-cache` and `--prompt-cache-max-kv-size` to the resident MLX predictor service.
+- The service now prepares the stable system prompt through MLX-LM's documented `make_prompt_cache` / `generate_step(..., prompt_cache=cache)` path when enabled.
+- `/health`, `/predict`, and `/predict-stream` include prompt-cache status fields.
+- Added server protocol tests with a fake engine.
+
+Boundary:
+- `promptCache.prepared=true` means the stable prefix cache was built at startup.
+- `promptCache.usedForGeneration=false` means streaming generation is not yet reusing that cache.
+- `capabilities.promptCache` remains false until a verified cached-generation path exists.
+
+Next:
+- With `mlx-lm` installed, validate cache preparation on a real Qwen-compatible MLX model, then implement a safe cached streaming path before changing the capability flag.

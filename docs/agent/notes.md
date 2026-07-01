@@ -1084,3 +1084,25 @@ Commands:
 - `python3 -m py_compile rag_ime/predictor.py rag_ime/mlx_predictor_server.py rag_ime/cli.py`
 - `env RAG_IME_PREDICTOR_PROVIDER=mlx RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767 RAG_IME_PREDICTOR_MODEL=mlx-qwen3.5-0.8b RAG_IME_PREDICTOR_PROFILE=instant python3 -m rag_ime.cli --core-mode fixture predictor-status`
 - `python3 -c "import importlib.util; print('mlx_lm', bool(importlib.util.find_spec('mlx_lm'))); print('mlx', bool(importlib.util.find_spec('mlx')))"`
+
+### 2026-07-01 11:44 CST
+Problem:
+- The MLX resident service exposed prompt-cache metadata, but did not yet have a concrete startup cache path or protocol tests around cache status.
+- `stream_generate` docs do not clearly expose a `prompt_cache` parameter, so claiming active cached-prefix streaming would be unsafe.
+
+Changes:
+- Added `--prompt-cache` and `--prompt-cache-max-kv-size` to `mlx-predictor-server`.
+- Added stable system-prompt cache preparation using MLX-LM's documented `make_prompt_cache` + `generate_step(..., prompt_cache=cache)` path.
+- Added `promptCache.enabled/prepared/usedForGeneration/stablePrefixHash/stablePrefixTokens/prepareMs/maxKvSize` payload fields.
+- Changed MLX-LM streaming call to use documented `temperature=` parameter instead of `temp=`.
+- Added `tests/test_mlx_predictor_server.py` covering `/health` and `/predict-stream` prompt-cache status with a fake engine.
+- Updated README and model benchmark docs to show `--prompt-cache` and the `usedForGeneration=false` boundary.
+
+Findings:
+- Current capability flags remain honest: the MLX lane has `streaming=true` and `residentModel=true`, but `promptCache=false` until generation actually reuses the cached prefix.
+- The next real MLX task is to implement a verified generate-step streaming path or another safe cache-copy path that can set `usedForGeneration=true` without corrupting the stable prefix cache.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor tests.test_mlx_predictor_server`
+- `python3 -m py_compile rag_ime/mlx_predictor_server.py rag_ime/cli.py rag_ime/predictor.py tests/test_mlx_predictor_server.py`
+- `python3 -m rag_ime.cli mlx-predictor-server --help`

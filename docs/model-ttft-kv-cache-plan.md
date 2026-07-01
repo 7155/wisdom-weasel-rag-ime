@@ -123,6 +123,25 @@ wire MLX-LM prompt-cache reuse. The next MLX-specific task is to split the
 stable instruction/schema prefix from the dynamic Rime/RAG tail and measure
 prompt-cache hit vs. miss TTFT.
 
+The service can already be started with `--prompt-cache`. That prepares the
+stable system prompt at startup through MLX-LM's `make_prompt_cache` /
+`generate_step(..., prompt_cache=cache)` path and reports:
+
+```json
+{
+  "promptCache": {
+    "enabled": true,
+    "prepared": true,
+    "usedForGeneration": false,
+    "reason": "prepared_only_streaming_generation_not_cached_yet"
+  }
+}
+```
+
+This is an intentional intermediate state: it proves the stable prefix can be
+prepared and observed, while keeping `capabilities.promptCache=false` until
+generation actually reuses the cached prefix.
+
 Provider status now reports explicit capability flags:
 
 ```json

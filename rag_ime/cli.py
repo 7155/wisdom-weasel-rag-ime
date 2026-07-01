@@ -325,6 +325,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     mlx_predictor_server.add_argument("--max-tokens", type=int, default=int(os.environ.get("RAG_IME_MLX_MAX_TOKENS", "8")))
     mlx_predictor_server.add_argument("--temperature", type=float, default=float(os.environ.get("RAG_IME_MLX_TEMPERATURE", "0.15")))
     mlx_predictor_server.add_argument("--top-p", type=float, default=float(os.environ.get("RAG_IME_MLX_TOP_P", "0.85")))
+    mlx_predictor_server.add_argument(
+        "--prompt-cache",
+        action="store_true",
+        default=os.environ.get("RAG_IME_MLX_PROMPT_CACHE", "").strip().lower() in {"1", "true", "yes", "on"},
+        help="Prepare the stable system-prompt cache at startup",
+    )
+    mlx_predictor_server.add_argument(
+        "--prompt-cache-max-kv-size",
+        type=int,
+        default=int(os.environ.get("RAG_IME_MLX_PROMPT_CACHE_MAX_KV_SIZE", "0")),
+    )
 
     subparsers.add_parser("acceptance", help="Run deterministic adapter acceptance scenarios")
 
@@ -342,6 +353,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
                 top_p=args.top_p,
+                prompt_cache=args.prompt_cache,
+                prompt_cache_max_kv_size=args.prompt_cache_max_kv_size,
             )
         )
         return 0

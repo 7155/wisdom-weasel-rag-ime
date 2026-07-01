@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ class MlxPredictorServerConfig:
     max_tokens: int = 8
     temperature: float = 0.15
     top_p: float = 0.85
+    prompt_cache: bool = False
+    prompt_cache_max_kv_size: int = 0
 
 
 class MlxLmEngine:
@@ -35,7 +38,13 @@ class MlxLmEngine:
     memory; the IME talks to it over a tiny local HTTP protocol.
     """
 
-    def __init__(self, model_id: str):
+    def __init__(
+        self,
+        model_id: str,
+        *,
+        enable_prompt_cache: bool = False,
+        prompt_cache_max_kv_size: int = 0,
+    ):
         if not model_id:
             raise RuntimeError("MLX predictor requires --model or RAG_IME_MLX_MODEL")
         try:
@@ -46,6 +55,13 @@ class MlxLmEngine:
         self.model_id = model_id
         self._stream_generate = stream_generate
         self.model, self.tokenizer = load(model_id)
+        self._prompt_cache = _PromptCacheState(
+            enabled=bool(enable_prompt_cache),
+            stable_prefix=_stable_prompt_prefix(),
+            max_kv_size=max(0, int(prompt_cache_max_kv_size)),
+        )
+        if self._prompt_cache.enabled:
+            self._prepare_prompt_cache()
 
     def health(self) -> dict[str, Any]:
         return {
@@ -53,11 +69,11 @@ class MlxLmEngine:
             "provider": "mlx-lm",
             "model": self.model_id,
             "modelLoaded": True,
-            "promptCache": {
-                "enabled": False,
-                "reason": "resident_model_ready_prompt_cache_not_yet_wired",
-            },
+            "promptCache": self.prompt_cache_status(),
         }
+
+    def prompt_cache_status(self) -> dict[str, Any]:
+        return self._prompt_cache.to_payload()
 
     def predict(
         self,
@@ -88,7 +104,7 @@ class MlxLmEngine:
             "rawText": raw_text,
             "candidates": candidates,
             "totalMs": total_ms,
-            "promptCache": self.health()["promptCache"],
+            "promptCache": self.prompt_cache_status(),
         }
 
     def stream_text(
@@ -111,12 +127,35 @@ class MlxLmEngine:
             self.tokenizer,
             prompt,
             max_tokens=max(1, min(64, int(max_tokens))),
-            temp=float(temperature),
+            temperature=float(temperature),
             top_p=float(top_p),
         ):
             text = getattr(response, "text", "")
             if isinstance(text, str) and text:
                 yield text
+
+    def _prepare_prompt_cache(self) -> None:
+        started = time.perf_counter()
+        try:
+            from mlx_lm.generate import generate_step  # type: ignore
+            from mlx_lm.models.cache import make_prompt_cache  # type: ignore
+            import mlx.core as mx  # type: ignore
+
+            tokens = self.tokenizer.encode(self._prompt_cache.stable_prefix)
+            self._prompt_cache.stable_prefix_tokens = len(tokens)
+            kwargs: dict[str, Any] = {}
+            if self._prompt_cache.max_kv_size > 0:
+                kwargs["max_kv_size"] = self._prompt_cache.max_kv_size
+            cache = make_prompt_cache(self.model, **kwargs)
+            for _ in generate_step(mx.array(tokens), self.model, max_tokens=1, prompt_cache=cache):
+                break
+            self._prompt_cache.prepared = True
+            self._prompt_cache.error = ""
+        except Exception as exc:  # pragma: no cover - depends on local MLX-LM internals
+            self._prompt_cache.prepared = False
+            self._prompt_cache.error = exc.__class__.__name__
+        finally:
+            self._prompt_cache.prepare_ms = int((time.perf_counter() - started) * 1000)
 
 
 def make_mlx_predictor_handler(engine: MlxLmEngine):
@@ -169,7 +208,7 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
                     "rawText": raw_text,
                     "candidates": candidates,
                     "totalMs": int((time.perf_counter() - started) * 1000),
-                    "promptCache": engine.health()["promptCache"],
+                    "promptCache": engine.prompt_cache_status(),
                 }
             )
 
@@ -192,7 +231,11 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
 
 
 def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
-    engine = MlxLmEngine(config.model)
+    engine = MlxLmEngine(
+        config.model,
+        enable_prompt_cache=config.prompt_cache,
+        prompt_cache_max_kv_size=config.prompt_cache_max_kv_size,
+    )
     server = ThreadingHTTPServer((config.host, config.port), make_mlx_predictor_handler(engine))
     print(
         json.dumps(
@@ -201,6 +244,7 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
                 "listening": f"http://{config.host}:{config.port}",
                 "model": config.model,
                 "maxTokens": config.max_tokens,
+                "promptCache": engine.prompt_cache_status(),
             },
             ensure_ascii=False,
         ),
@@ -226,11 +270,49 @@ def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str
 
 def _build_mlx_prompt(*, current_input: str, recent_context: str, max_candidates: int) -> str:
     return (
-        f"{SYSTEM_PROMPT}\n"
+        f"{_stable_prompt_prefix()}"
         f"上下文: {recent_context}\n"
         f"当前输入: {current_input}\n"
         f"输出 {max_candidates} 个最可能的短候选。"
     )
+
+
+def _stable_prompt_prefix() -> str:
+    return f"{SYSTEM_PROMPT}\n"
+
+
+@dataclass
+class _PromptCacheState:
+    enabled: bool
+    stable_prefix: str
+    max_kv_size: int = 0
+    prepared: bool = False
+    stable_prefix_tokens: int = 0
+    prepare_ms: int = 0
+    used_for_generation: bool = False
+    hit_count: int = 0
+    miss_count: int = 0
+    error: str = ""
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = {
+            "enabled": self.enabled,
+            "prepared": self.prepared,
+            "usedForGeneration": self.used_for_generation,
+            "stablePrefixHash": hashlib.sha256(self.stable_prefix.encode("utf-8")).hexdigest()[:16],
+            "stablePrefixTokens": self.stable_prefix_tokens,
+            "prepareMs": self.prepare_ms,
+            "maxKvSize": self.max_kv_size,
+            "hits": self.hit_count,
+            "misses": self.miss_count,
+        }
+        if self.error:
+            payload["error"] = self.error
+        if self.enabled and self.prepared and not self.used_for_generation:
+            payload["reason"] = "prepared_only_streaming_generation_not_cached_yet"
+        elif not self.enabled:
+            payload["reason"] = "disabled"
+        return payload
 
 
 def _int_payload(value: object, fallback: int) -> int:
@@ -255,6 +337,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-tokens", type=int, default=8)
     parser.add_argument("--temperature", type=float, default=0.15)
     parser.add_argument("--top-p", type=float, default=0.85)
+    parser.add_argument("--prompt-cache", action="store_true", help="Prepare the stable system-prompt cache at startup")
+    parser.add_argument("--prompt-cache-max-kv-size", type=int, default=0)
     args = parser.parse_args(argv)
     serve_mlx_predictor(
         MlxPredictorServerConfig(
@@ -264,6 +348,8 @@ def main(argv: list[str] | None = None) -> int:
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
+            prompt_cache=args.prompt_cache,
+            prompt_cache_max_kv_size=args.prompt_cache_max_kv_size,
         )
     )
     return 0
