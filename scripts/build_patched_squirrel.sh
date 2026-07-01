@@ -7,9 +7,19 @@ PROJECT_PATH="${RAG_IME_SQUIRREL_PROJECT:-$SQUIRREL_WORKDIR/Squirrel.xcodeproj}"
 SCHEME="${RAG_IME_SQUIRREL_SCHEME:-Squirrel}"
 CONFIGURATION="${RAG_IME_SQUIRREL_CONFIGURATION:-Release}"
 DERIVED_DATA="${RAG_IME_SQUIRREL_DERIVED_DATA:-/tmp/rag-ime-squirrel-derived-data}"
+INSTALL_DIR="${RAG_IME_SQUIRREL_INSTALL_DIR:-$HOME/Library/Input Methods}"
 ACTION="${1:-${RAG_IME_SQUIRREL_BUILD_ACTION:-build}}"
 DRY_RUN="${RAG_IME_SQUIRREL_BUILD_DRY_RUN:-0}"
 XCODEBUILD="${RAG_IME_XCODEBUILD:-$(command -v xcodebuild || true)}"
+PREINSTALL="${RAG_IME_SQUIRREL_PREINSTALL:-auto}"
+NO_DOWNLOAD="${RAG_IME_SQUIRREL_NO_DOWNLOAD:-0}"
+SKIP_POSTINSTALL="${RAG_IME_SQUIRREL_SKIP_POSTINSTALL:-0}"
+BUILD_SETTINGS_EXTRA="${RAG_IME_SQUIRREL_BUILD_SETTINGS:-CODE_SIGNING_ALLOWED=NO}"
+
+extra_build_settings=()
+if [[ -n "$BUILD_SETTINGS_EXTRA" ]]; then
+  read -r -a extra_build_settings <<< "$BUILD_SETTINGS_EXTRA"
+fi
 
 bool_true() {
   [[ "$1" == "1" || "$1" == "true" || "$1" == "TRUE" || "$1" == "yes" || "$1" == "YES" ]]
@@ -17,7 +27,7 @@ bool_true() {
 
 usage() {
   cat <<EOF
-Usage: scripts/build_patched_squirrel.sh [list|build]
+Usage: scripts/build_patched_squirrel.sh [list|build|install]
 
 Environment:
   RAG_IME_SQUIRREL_WORKDIR       patched Squirrel checkout (default: /tmp/rag-ime-squirrel)
@@ -25,6 +35,11 @@ Environment:
   RAG_IME_SQUIRREL_SCHEME        Xcode scheme (default: Squirrel)
   RAG_IME_SQUIRREL_CONFIGURATION Xcode configuration (default: Release)
   RAG_IME_SQUIRREL_DERIVED_DATA  derived data path (default: /tmp/rag-ime-squirrel-derived-data)
+  RAG_IME_SQUIRREL_INSTALL_DIR   install target (default: ~/Library/Input Methods)
+  RAG_IME_SQUIRREL_PREINSTALL    auto|1|0, run Squirrel action-install when dependencies are missing
+  RAG_IME_SQUIRREL_NO_DOWNLOAD   set no_download=1 for action-install
+  RAG_IME_SQUIRREL_BUILD_SETTINGS extra xcodebuild settings (default: CODE_SIGNING_ALLOWED=NO)
+  RAG_IME_SQUIRREL_SKIP_POSTINSTALL skip Squirrel scripts/postinstall after install
   RAG_IME_XCODEBUILD             xcodebuild executable override
   RAG_IME_SQUIRREL_BUILD_DRY_RUN print resolved commands without requiring Xcode/workdir
 EOF
@@ -39,11 +54,13 @@ xcodebuild_build_args=(
   -scheme "$SCHEME"
   -configuration "$CONFIGURATION"
   -derivedDataPath "$DERIVED_DATA"
-  CODE_SIGNING_ALLOWED=NO
+  "${extra_build_settings[@]}"
   build
 )
 
-if [[ "$ACTION" != "list" && "$ACTION" != "build" ]]; then
+PRODUCT_APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/Squirrel.app"
+
+if [[ "$ACTION" != "list" && "$ACTION" != "build" && "$ACTION" != "install" ]]; then
   usage >&2
   echo "unknown action: $ACTION" >&2
   exit 1
@@ -57,10 +74,16 @@ project=$PROJECT_PATH
 scheme=$SCHEME
 configuration=$CONFIGURATION
 derived_data=$DERIVED_DATA
+product_app=$PRODUCT_APP
+install_dir=$INSTALL_DIR
 action=$ACTION
 xcodebuild=${XCODEBUILD:-<not-found>}
+preinstall=$PREINSTALL
+no_download=$NO_DOWNLOAD
+build_settings=$BUILD_SETTINGS_EXTRA
 list_command=${XCODEBUILD:-xcodebuild} ${xcodebuild_base_args[*]} -list
 build_command=${XCODEBUILD:-xcodebuild} ${xcodebuild_build_args[*]}
+install_command=$0 install
 EOF
   exit 0
 fi
@@ -91,6 +114,72 @@ require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" "patched Squi
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "patched Squirrel workdir is missing patched SquirrelInputController"
 require_file "$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" "patched Squirrel workdir is missing generated config snippet"
 
+deps_ready() {
+  [[ -f "$SQUIRREL_WORKDIR/lib/librime.1.dylib" ]] &&
+    [[ -d "$SQUIRREL_WORKDIR/Frameworks/Sparkle.framework" ]] &&
+    [[ -f "$SQUIRREL_WORKDIR/bin/rime-install" ]]
+}
+
+prepare_squirrel_dependencies() {
+  if [[ "$ACTION" == "list" ]]; then
+    return 0
+  fi
+
+  local should_preinstall=0
+  if bool_true "$PREINSTALL"; then
+    should_preinstall=1
+  elif [[ "$PREINSTALL" == "auto" && ! deps_ready ]]; then
+    should_preinstall=1
+  fi
+
+  if [[ "$should_preinstall" == "1" ]]; then
+    if [[ ! -x "$SQUIRREL_WORKDIR/action-install.sh" ]]; then
+      echo "[WARN] Squirrel action-install.sh not found; skipping dependency preinstall" >&2
+    else
+      printf '[INFO] preparing Squirrel binary dependencies with action-install.sh\n'
+      if bool_true "$NO_DOWNLOAD"; then
+        (cd "$SQUIRREL_WORKDIR" && no_download=1 ./action-install.sh)
+      else
+        (cd "$SQUIRREL_WORKDIR" && ./action-install.sh)
+      fi
+    fi
+  fi
+
+  if [[ -f "$SQUIRREL_WORKDIR/package/add_data_files" ]]; then
+    printf '[INFO] refreshing Squirrel bundled data files\n'
+    (cd "$SQUIRREL_WORKDIR" && bash package/add_data_files)
+  fi
+}
+
+install_squirrel_app() {
+  if [[ ! -d "$PRODUCT_APP" ]]; then
+    echo "built Squirrel.app not found: $PRODUCT_APP" >&2
+    exit 1
+  fi
+  mkdir -p "$INSTALL_DIR"
+  rm -rf "$INSTALL_DIR/Squirrel.app"
+  cp -R "$PRODUCT_APP" "$INSTALL_DIR/Squirrel.app"
+  printf '[OK] installed patched Squirrel.app: %s\n' "$INSTALL_DIR/Squirrel.app"
+
+  RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
+    RAG_IME_SQUIRREL_CONFIG_SNIPPET="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" \
+    RAG_IME_SQUIRREL_APP="$INSTALL_DIR/Squirrel.app" \
+    RAG_IME_SQUIRREL_DEPLOY=0 \
+    "$ROOT/scripts/install_squirrel_rag_config.sh"
+  printf '[OK] installed RAG-IME Squirrel config\n'
+
+  if bool_true "$SKIP_POSTINSTALL"; then
+    printf '[WARN] skipped Squirrel postinstall; input source may need manual registration\n' >&2
+    return 0
+  fi
+  if [[ -f "$SQUIRREL_WORKDIR/scripts/postinstall" ]]; then
+    (cd "$SQUIRREL_WORKDIR" && DSTROOT="$INSTALL_DIR" bash scripts/postinstall)
+    printf '[OK] Squirrel postinstall completed\n'
+  else
+    printf '[WARN] Squirrel postinstall script not found; input source may need manual registration\n' >&2
+  fi
+}
+
 if [[ -z "$XCODEBUILD" || ! -x "$XCODEBUILD" ]]; then
   active_developer_dir="$(xcode-select -p 2>/dev/null || true)"
   if [[ "$active_developer_dir" == *CommandLineTools* ]]; then
@@ -120,6 +209,8 @@ printf 'project: %s\n' "$PROJECT_PATH"
 printf 'scheme: %s\n' "$SCHEME"
 printf 'configuration: %s\n' "$CONFIGURATION"
 printf 'derived_data: %s\n' "$DERIVED_DATA"
+printf 'product_app: %s\n' "$PRODUCT_APP"
+printf 'install_dir: %s\n' "$INSTALL_DIR"
 printf 'xcodebuild: %s\n' "$XCODEBUILD"
 printf 'xcodebuild_version: %s\n\n' "$(printf '%s' "$xcodebuild_version" | tr '\n' ' ')"
 
@@ -130,5 +221,11 @@ if [[ "$ACTION" == "list" ]]; then
   exit 0
 fi
 
+prepare_squirrel_dependencies
 "$XCODEBUILD" "${xcodebuild_build_args[@]}"
 printf '[OK] xcodebuild build succeeded\n'
+printf '[OK] built patched Squirrel.app: %s\n' "$PRODUCT_APP"
+
+if [[ "$ACTION" == "install" ]]; then
+  install_squirrel_app
+fi
