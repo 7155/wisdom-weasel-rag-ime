@@ -4,6 +4,9 @@ import copy
 import hashlib
 import json
 import mimetypes
+import os
+import re
+import subprocess
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -51,6 +54,9 @@ class DebugServerConfig:
     predictor: PredictionProvider | None = None
     server_name: str = "debug server"
     rime_cache_ttl_ms: int = 400
+    input_source_id: str = "im.rime.inputmethod.Squirrel.Hans"
+    input_source_check_script: Path | None = None
+    input_source_require_hitoolbox: bool = True
 
 
 @dataclass
@@ -107,6 +113,46 @@ class DebugImeService:
             "predictor": prediction_provider_status(self.predictor),
             "suggestionCache": self._suggestion_cache_stats(),
             "vectorStats": self._vector_index_stats(),
+        }
+
+    def input_source_status(self) -> dict[str, object]:
+        script = self._input_source_check_script()
+        payload: dict[str, object] = {
+            "schemaVersion": "rag-ime.debug-input-source.v1",
+            "inputSourceId": self.config.input_source_id,
+            "script": str(script),
+            "available": False,
+            "ok": False,
+            "typingReady": False,
+        }
+        if script is None or not script.exists():
+            return {**payload, "error": "input source check script is not available"}
+        args = [str(script)]
+        if self.config.input_source_require_hitoolbox:
+            args.append("--require-hitoolbox-enabled")
+        args.append(self.config.input_source_id)
+        try:
+            completed = subprocess.run(
+                args,
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=5,
+            )
+        except Exception as exc:
+            return {**payload, "available": True, "error": str(exc)}
+        output = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
+        parsed = _parse_input_source_check_output(output)
+        ok = completed.returncode == 0
+        typing_ready = bool(parsed.get("selected"))
+        return {
+            **payload,
+            "available": True,
+            "ok": ok,
+            "typingReady": ok and typing_ready,
+            "exitCode": completed.returncode,
+            "rawOutput": output,
+            **parsed,
         }
 
     def predictor_ttfc(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -561,6 +607,19 @@ class DebugImeService:
         with self._rime_cache_lock:
             self._rime_cache.clear()
 
+    def _input_source_check_script(self) -> Path | None:
+        if self.config.input_source_check_script is not None:
+            return self.config.input_source_check_script
+        source_root = os.environ.get("RAG_IME_SOURCE_ROOT") or os.environ.get("RAG_IME_REPO_ROOT")
+        candidates = []
+        if source_root:
+            candidates.append(Path(source_root) / "scripts" / "check_macos_input_source.sh")
+        candidates.append(Path.cwd() / "scripts" / "check_macos_input_source.sh")
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0] if candidates else None
+
     def _prune_rime_cache(self, *, now: float | None = None) -> None:
         current = time.monotonic() if now is None else now
         expired = [key for key, entry in self._rime_cache.items() if entry.expires_at <= current]
@@ -636,6 +695,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path in ("/api/health", "/health"):
             self._write_json(HTTPStatus.OK, self.service.health())
+            return
+        if parsed.path in ("/api/input-source", "/input-source"):
+            self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         self._serve_static(parsed.path)
 
@@ -747,6 +809,22 @@ def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> 
     if parsed is None:
         return default
     return max(minimum, min(maximum, parsed))
+
+
+def _parse_input_source_check_output(output: str) -> dict[str, object]:
+    parsed: dict[str, object] = {}
+    id_match = re.search(r"\bid=([^\s]+)", output)
+    if id_match:
+        parsed["id"] = id_match.group(1)
+    name_match = re.search(r"\bname=(.*?)\s+enabled=", output)
+    if name_match:
+        parsed["name"] = name_match.group(1)
+    for key, value in re.findall(r"\b(enabled|selectable|selected|hitoolboxEnabled)=([^\s]+)", output):
+        parsed[key] = value.lower() == "true"
+    current_match = re.search(r"\bcurrent=([^\s]+)", output)
+    if current_match:
+        parsed["current"] = current_match.group(1)
+    return parsed
 
 
 def _cache_stats_delta(before: object, after: object) -> dict[str, object]:

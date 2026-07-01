@@ -122,6 +122,12 @@ Then open:
 http://127.0.0.1:8765/
 ```
 
+The debug page calls `/api/input-source` and shows whether Squirrel is installed
+in the current user's input-source list, whether it is the selected active input
+source, and which input source is currently active. This is the fastest way to
+spot the difference between "Squirrel is visible in System Settings" and "typing
+is actually going through Squirrel".
+
 Run the lightweight HTTP sidecar for patched Squirrel:
 
 ```bash
