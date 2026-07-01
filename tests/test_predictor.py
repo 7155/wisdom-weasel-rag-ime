@@ -1358,6 +1358,111 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(all(payload["stream"] for payload in _MockOllamaStreamingMatrixHandler.captured_payloads))
         self.assertTrue(all(payload["think"] is False for payload in _MockOllamaStreamingMatrixHandler.captured_payloads))
 
+    def test_cli_quality_gate_can_require_model_ttfc(self) -> None:
+        _MockOllamaStreamingMatrixHandler.seen_models = []
+        _MockOllamaStreamingMatrixHandler.captured_payloads = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaStreamingMatrixHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-quality-ttfc-") as tmp:
+                db_path = os.path.join(tmp, "quality.sqlite")
+                with redirect_stdout(io.StringIO()):
+                    seed_code = main(["--db-path", db_path, "seed-demo", "--reset"])
+                self.assertEqual(seed_code, 0)
+
+                eval_cases_file = os.path.join(tmp, "quality-cases.jsonl")
+                with open(eval_cases_file, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "agent-hook",
+                                "query": "首次运行自动注入背景记忆",
+                                "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "memory-actions",
+                                "query": "本地记忆 action 如何支持 pin downrank delete",
+                                "expectedTerms": ["pin", "downrank", "delete"],
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                ttfc_cases_file = os.path.join(tmp, "ttfc-cases.jsonl")
+                with open(ttfc_cases_file, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "ttfc-short",
+                                "currentInput": "RAG 输入法",
+                                "recentContext": "用户正在写本地记忆输入法",
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    gate_code = main(
+                        [
+                            "--db-path",
+                            db_path,
+                            "quality-gate",
+                            "--cases-file",
+                            eval_cases_file,
+                            "--min-rag-pass-rate",
+                            "1",
+                            "--min-sidecar-pass-rate",
+                            "1",
+                            "--force-side-candidates",
+                            "--require-suggestion-cache",
+                            "--require-model-ttfc",
+                            "--model-ttfc-cases-file",
+                            ttfc_cases_file,
+                            "--model-ttfc-provider",
+                            "ollama",
+                            "--model-ttfc-base-url",
+                            f"http://127.0.0.1:{server.server_port}",
+                            "--model-ttfc-models",
+                            "qwen3.5:0.8b-mlx,qwen3.5:2b-mlx",
+                            "--model-ttfc-repeat",
+                            "1",
+                            "--model-ttfc-latency-budget-ms",
+                            "200",
+                            "--max-model-ttfc-p95-ms",
+                            "200",
+                            "--max-model-ttfc-over-budget-rate",
+                            "0",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(gate_code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertTrue(report["passed"])
+        self.assertTrue(report["thresholds"]["requireModelTtfc"])
+        self.assertEqual(report["modelTtfc"]["winner"]["model"], "qwen3.5:0.8b-mlx")
+        check_names = {item["name"] for item in report["checks"]}
+        self.assertIn("model-ttfc-supported", check_names)
+        self.assertIn("model-ttfc-first-candidate", check_names)
+        self.assertIn("model-ttfc-p95-first-candidate", check_names)
+        self.assertIn("model-ttfc-over-budget-rate", check_names)
+        self.assertTrue(all(item["passed"] for item in report["checks"] if item["name"].startswith("model-ttfc-")))
+        self.assertEqual(
+            _MockOllamaStreamingMatrixHandler.seen_models,
+            ["qwen3.5:0.8b-mlx", "qwen3.5:2b-mlx"],
+        )
+
     def test_cli_predictor_ttft_counts_missing_first_chunk_as_over_budget(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaEmptyStreamingHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

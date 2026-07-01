@@ -367,6 +367,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--max-sidecar-noise-rate", type=float, default=1.0)
     quality_gate.add_argument("--max-sidecar-rag-timeout-rate", type=float, default=1.0)
     quality_gate.add_argument("--max-sidecar-model-timeout-rate", type=float, default=1.0)
+    quality_gate.add_argument("--require-model-ttfc", action="store_true")
+    quality_gate.add_argument("--model-ttfc-cases-file", default="docs/eval/ime-ttfc-cases.example.jsonl")
+    quality_gate.add_argument(
+        "--model-ttfc-provider",
+        default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "ollama"),
+        help="Provider used for the optional first-candidate model gate.",
+    )
+    quality_gate.add_argument(
+        "--model-ttfc-base-url",
+        default=os.environ.get("RAG_IME_PREDICTOR_BASE_URL", "http://127.0.0.1:11434"),
+        help="Base URL used for the optional first-candidate model gate.",
+    )
+    quality_gate.add_argument(
+        "--model-ttfc-models",
+        default=os.environ.get("RAG_IME_PREDICTOR_MODEL", "qwen3.5:0.8b-mlx"),
+        help="Comma-separated model ids for the optional first-candidate model gate.",
+    )
+    quality_gate.add_argument("--model-ttfc-profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "instant"))
+    quality_gate.add_argument("--model-ttfc-repeat", type=int, default=3)
+    quality_gate.add_argument("--model-ttfc-latency-budget-ms", type=int, default=200)
+    quality_gate.add_argument("--max-model-ttfc-p95-ms", type=int, default=200)
+    quality_gate.add_argument("--max-model-ttfc-over-budget-rate", type=float, default=0.0)
     quality_gate.add_argument("--cache-repeat", type=int, default=3)
     quality_gate.add_argument("--cache-current-input", default="RAG 输入法")
     quality_gate.add_argument("--cache-recent-context", default="quality gate cache probe")
@@ -829,41 +851,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "bench-ime-ttfc":
-        cases = _load_ime_ttfc_benchmark_cases(args=args, core=core)
-        models = _parse_model_matrix_models(args.models)
-        reports = []
-        for model in models:
-            matrix_provider = _prediction_provider_for_model_matrix(args=args, model=model)
-            model_report = benchmark_streaming_ttft_provider(
-                matrix_provider,
-                cases,
-                max_candidates=max(1, min(10, args.max_candidates)),
-                repeat=max(1, args.repeat),
-                latency_budget_ms=max(1, args.latency_budget_ms),
-            )
-            model_report["model"] = model
-            if not args.include_cases:
-                model_report.pop("cases", None)
-            reports.append(model_report)
-        report = {
-            "schemaVersion": "rag-ime.ime-ttfc-benchmark.v1",
-            "casesFile": str(Path(args.cases_file)) if args.cases_file else "",
-            "project": args.project,
-            "provider": str(args.provider),
-            "baseUrl": args.base_url,
-            "profile": args.profile,
-            "repeat": {
-                "requested": max(1, args.repeat),
-                "baseCaseCount": len(cases),
-                "effectiveCaseCount": len(cases) * max(1, args.repeat),
-            },
-            "maxCandidates": max(1, min(10, args.max_candidates)),
-            "latencyBudgetMs": max(1, args.latency_budget_ms),
-            "failureCooldownMs": max(0, args.failure_cooldown_ms),
-            "localRunners": _local_model_runner_status(),
-            "models": reports,
-            "winner": _ttfc_matrix_winner(reports),
-        }
+        report = run_ime_ttfc_benchmark(
+            core=core,
+            cases_file=args.cases_file,
+            inline_cases=list(args.case),
+            recent_context=args.recent_context,
+            project=args.project,
+            provider=args.provider,
+            base_url=args.base_url,
+            models=args.models,
+            profile=args.profile,
+            max_candidates=max(1, min(10, args.max_candidates)),
+            repeat=max(1, args.repeat),
+            latency_budget_ms=max(1, args.latency_budget_ms),
+            failure_cooldown_ms=max(0, args.failure_cooldown_ms),
+            include_cases=bool(args.include_cases),
+        )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
@@ -1122,6 +1125,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_sidecar_noise_rate=max(0.0, min(1.0, args.max_sidecar_noise_rate)),
             max_sidecar_rag_timeout_rate=max(0.0, min(1.0, args.max_sidecar_rag_timeout_rate)),
             max_sidecar_model_timeout_rate=max(0.0, min(1.0, args.max_sidecar_model_timeout_rate)),
+            require_model_ttfc=bool(args.require_model_ttfc),
+            model_ttfc_cases_file=Path(args.model_ttfc_cases_file),
+            model_ttfc_provider=args.model_ttfc_provider,
+            model_ttfc_base_url=args.model_ttfc_base_url,
+            model_ttfc_models=args.model_ttfc_models,
+            model_ttfc_profile=args.model_ttfc_profile,
+            model_ttfc_repeat=max(1, args.model_ttfc_repeat),
+            model_ttfc_latency_budget_ms=max(1, args.model_ttfc_latency_budget_ms),
+            max_model_ttfc_p95_ms=max(1, args.max_model_ttfc_p95_ms),
+            max_model_ttfc_over_budget_rate=max(0.0, min(1.0, args.max_model_ttfc_over_budget_rate)),
             cache_current_input=args.cache_current_input,
             cache_recent_context=args.cache_recent_context,
             cache_repeat=max(1, args.cache_repeat),
@@ -1415,6 +1428,16 @@ def run_quality_gate(
     max_sidecar_noise_rate: float,
     max_sidecar_rag_timeout_rate: float,
     max_sidecar_model_timeout_rate: float,
+    require_model_ttfc: bool,
+    model_ttfc_cases_file: Path,
+    model_ttfc_provider: str,
+    model_ttfc_base_url: str,
+    model_ttfc_models: str,
+    model_ttfc_profile: str,
+    model_ttfc_repeat: int,
+    model_ttfc_latency_budget_ms: int,
+    max_model_ttfc_p95_ms: int,
+    max_model_ttfc_over_budget_rate: float,
     cache_current_input: str,
     cache_recent_context: str,
     cache_repeat: int,
@@ -1467,12 +1490,31 @@ def run_quality_gate(
         predictor,
         probe_capabilities=bool(required_predictor_capabilities),
     )
+    model_ttfc_report: dict[str, object] | None = None
+    if require_model_ttfc:
+        model_ttfc_report = run_ime_ttfc_benchmark(
+            core=core,
+            cases_file=str(model_ttfc_cases_file),
+            inline_cases=[],
+            recent_context="",
+            project=project,
+            provider=model_ttfc_provider,
+            base_url=model_ttfc_base_url,
+            models=model_ttfc_models,
+            profile=model_ttfc_profile,
+            max_candidates=3,
+            repeat=max(1, model_ttfc_repeat),
+            latency_budget_ms=max(1, model_ttfc_latency_budget_ms),
+            failure_cooldown_ms=0,
+            include_cases=False,
+        )
     checks = _quality_gate_checks(
         acceptance_report=acceptance_report,
         rag_report=rag_report,
         rime_report=rime_report,
         cache_report=cache_report,
         predictor_status=predictor_status,
+        model_ttfc_report=model_ttfc_report,
         min_rag_pass_rate=min_rag_pass_rate,
         min_sidecar_pass_rate=min_sidecar_pass_rate,
         min_rag_top1_accuracy=min_rag_top1_accuracy,
@@ -1483,6 +1525,9 @@ def run_quality_gate(
         max_sidecar_noise_rate=max_sidecar_noise_rate,
         max_sidecar_rag_timeout_rate=max_sidecar_rag_timeout_rate,
         max_sidecar_model_timeout_rate=max_sidecar_model_timeout_rate,
+        require_model_ttfc=require_model_ttfc,
+        max_model_ttfc_p95_ms=max_model_ttfc_p95_ms,
+        max_model_ttfc_over_budget_rate=max_model_ttfc_over_budget_rate,
         require_suggestion_cache=require_suggestion_cache,
         required_predictor_capabilities=required_predictor_capabilities,
     )
@@ -1504,6 +1549,15 @@ def run_quality_gate(
             "maxSidecarNoiseRate": max_sidecar_noise_rate,
             "maxSidecarRagTimeoutRate": max_sidecar_rag_timeout_rate,
             "maxSidecarModelTimeoutRate": max_sidecar_model_timeout_rate,
+            "requireModelTtfc": require_model_ttfc,
+            "modelTtfcProvider": model_ttfc_provider,
+            "modelTtfcBaseUrl": model_ttfc_base_url,
+            "modelTtfcModels": model_ttfc_models,
+            "modelTtfcCasesFile": str(model_ttfc_cases_file),
+            "modelTtfcRepeat": max(1, model_ttfc_repeat),
+            "modelTtfcLatencyBudgetMs": max(1, model_ttfc_latency_budget_ms),
+            "maxModelTtfcP95Ms": max_model_ttfc_p95_ms,
+            "maxModelTtfcOverBudgetRate": max_model_ttfc_over_budget_rate,
             "requireSuggestionCache": require_suggestion_cache,
             "requiredPredictorCapabilities": list(required_predictor_capabilities),
             "probePredictorCapabilities": bool(required_predictor_capabilities),
@@ -1514,6 +1568,7 @@ def run_quality_gate(
         "acceptance": acceptance_report,
         "rag": rag_payload,
         "rimeSidecar": rime_payload,
+        "modelTtfc": model_ttfc_report,
         "cacheProbe": cache_report,
     }
 
@@ -1557,6 +1612,7 @@ def _quality_gate_checks(
     rime_report: dict[str, object],
     cache_report: dict[str, object],
     predictor_status: dict[str, object],
+    model_ttfc_report: dict[str, object] | None,
     min_rag_pass_rate: float,
     min_sidecar_pass_rate: float,
     min_rag_top1_accuracy: float,
@@ -1567,6 +1623,9 @@ def _quality_gate_checks(
     max_sidecar_noise_rate: float,
     max_sidecar_rag_timeout_rate: float,
     max_sidecar_model_timeout_rate: float,
+    require_model_ttfc: bool,
+    max_model_ttfc_p95_ms: int,
+    max_model_ttfc_over_budget_rate: float,
     require_suggestion_cache: bool,
     required_predictor_capabilities: tuple[str, ...],
 ) -> list[dict[str, object]]:
@@ -1626,6 +1685,14 @@ def _quality_gate_checks(
             "actual": cache_summary.get("rimeCachePassed"),
         },
     ]
+    if require_model_ttfc:
+        checks.extend(
+            _model_ttfc_checks(
+                model_ttfc_report or {},
+                max_p95_first_candidate_ms=max_model_ttfc_p95_ms,
+                max_over_budget_rate=max_model_ttfc_over_budget_rate,
+            )
+        )
     checks.extend(_predictor_capability_checks(predictor_status, required_predictor_capabilities))
     return checks
 
@@ -1691,6 +1758,68 @@ def _sidecar_lane_timeout_checks(
             "calledCount": int(sidecar.get("modelLaneCalledCount") or 0),
         },
     ]
+
+
+def _model_ttfc_checks(
+    report: dict[str, object],
+    *,
+    max_p95_first_candidate_ms: int,
+    max_over_budget_rate: float,
+) -> list[dict[str, object]]:
+    winner_report = _ttfc_winner_model_report(report)
+    summary = winner_report.get("summary") if isinstance(winner_report.get("summary"), dict) else {}
+    sample_count = int(summary.get("sampleCount") or 0)
+    over_budget_count = int(summary.get("overBudgetCount") or 0)
+    over_budget_rate = _rate(over_budget_count, sample_count)
+    p95_first_candidate_ms = int(summary.get("p95FirstCandidateMs") or 0)
+    first_candidate_missing_count = int(summary.get("firstCandidateMissingCount") or 0)
+    failure_count = int(summary.get("failureCount") or 0)
+    winner = report.get("winner") if isinstance(report.get("winner"), dict) else {}
+    winner_model = str(winner.get("model") or winner_report.get("model") or "")
+    supported = bool(winner_report.get("supported"))
+    has_first_candidate = bool(summary.get("hasFirstCandidate"))
+    return [
+        {
+            "name": "model-ttfc-supported",
+            "passed": bool(winner_model) and supported,
+            "model": winner_model,
+            "reason": winner.get("reason") or winner_report.get("reason"),
+        },
+        {
+            "name": "model-ttfc-first-candidate",
+            "passed": has_first_candidate and first_candidate_missing_count == 0 and failure_count == 0,
+            "model": winner_model,
+            "hasFirstCandidate": has_first_candidate,
+            "firstCandidateMissingCount": first_candidate_missing_count,
+            "failureCount": failure_count,
+        },
+        {
+            "name": "model-ttfc-p95-first-candidate",
+            "passed": has_first_candidate and p95_first_candidate_ms <= max_p95_first_candidate_ms,
+            "model": winner_model,
+            "actual": p95_first_candidate_ms,
+            "expectedAtMost": max_p95_first_candidate_ms,
+        },
+        {
+            "name": "model-ttfc-over-budget-rate",
+            "passed": sample_count > 0 and over_budget_rate <= max_over_budget_rate,
+            "model": winner_model,
+            "actual": over_budget_rate,
+            "expectedAtMost": max_over_budget_rate,
+            "overBudgetCount": over_budget_count,
+            "sampleCount": sample_count,
+        },
+    ]
+
+
+def _ttfc_winner_model_report(report: dict[str, object]) -> dict[str, object]:
+    winner = report.get("winner") if isinstance(report.get("winner"), dict) else {}
+    winner_model = str(winner.get("model") or "")
+    models = report.get("models") if isinstance(report.get("models"), list) else []
+    for item in models:
+        if isinstance(item, dict) and str(item.get("model") or "") == winner_model:
+            return item
+    return {}
 
 
 def _rate(count: int, total: int) -> float:
@@ -1939,6 +2068,75 @@ def _prediction_provider_profile(predictor) -> str:
 
 def _is_null_prediction_provider(predictor) -> bool:
     return predictor.__class__.__name__ == "NullPredictionProvider"
+
+
+def run_ime_ttfc_benchmark(
+    *,
+    core,
+    cases_file: str,
+    inline_cases: list[str],
+    recent_context: str,
+    project: str,
+    provider: str,
+    base_url: str,
+    models: str,
+    profile: str,
+    max_candidates: int,
+    repeat: int,
+    latency_budget_ms: int,
+    failure_cooldown_ms: int,
+    include_cases: bool,
+) -> dict[str, object]:
+    args = argparse.Namespace(
+        cases_file=cases_file,
+        case=inline_cases,
+        recent_context=recent_context,
+        project=project,
+        provider=provider,
+        base_url=base_url,
+        models=models,
+        profile=profile,
+        max_candidates=max_candidates,
+        repeat=repeat,
+        latency_budget_ms=latency_budget_ms,
+        failure_cooldown_ms=failure_cooldown_ms,
+        include_cases=include_cases,
+    )
+    cases = _load_ime_ttfc_benchmark_cases(args=args, core=core)
+    model_ids = _parse_model_matrix_models(models)
+    reports = []
+    for model in model_ids:
+        matrix_provider = _prediction_provider_for_model_matrix(args=args, model=model)
+        model_report = benchmark_streaming_ttft_provider(
+            matrix_provider,
+            cases,
+            max_candidates=max(1, min(10, max_candidates)),
+            repeat=max(1, repeat),
+            latency_budget_ms=max(1, latency_budget_ms),
+        )
+        model_report["model"] = model
+        if not include_cases:
+            model_report.pop("cases", None)
+        reports.append(model_report)
+    return {
+        "schemaVersion": "rag-ime.ime-ttfc-benchmark.v1",
+        "casesFile": str(Path(cases_file)) if cases_file else "",
+        "project": project,
+        "provider": str(provider),
+        "baseUrl": base_url,
+        "profile": profile,
+        "repeat": {
+            "requested": max(1, repeat),
+            "baseCaseCount": len(cases),
+            "effectiveCaseCount": len(cases) * max(1, repeat),
+        },
+        "maxCandidates": max(1, min(10, max_candidates)),
+        "latencyBudgetMs": max(1, latency_budget_ms),
+        "failureCooldownMs": max(0, failure_cooldown_ms),
+        "localRunners": _local_model_runner_status(),
+        "models": reports,
+        "winner": _ttfc_matrix_winner(reports),
+    }
 
 
 def _load_ime_ttfc_benchmark_cases(*, args, core) -> list[PredictionBenchmarkCase]:
