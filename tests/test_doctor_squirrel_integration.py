@@ -56,7 +56,41 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
         self._send_json(
             {
                 "schemaVersion": "rag-ime.rime-sidecar.v1",
-                "displayCandidates": [{"label": "1", "text": "本地记忆"}],
+                "displayCandidates": [
+                    {
+                        "label": str(index + 1),
+                        "selectionKey": str(index + 1),
+                        "selectionRank": index + 1,
+                        "text": f"模型候选{index + 1}",
+                        "insertText": f"模型候选{index + 1}",
+                        "sourceType": "model",
+                        "selectionAction": "commit_side_candidate",
+                        "sourceIndex": index,
+                        "displayLayout": "inline",
+                        "displayLane": "model",
+                    }
+                    for index in range(5)
+                ]
+                + [
+                    {
+                        "label": str(index + 6),
+                        "selectionKey": str(index + 6),
+                        "selectionRank": index + 6,
+                        "text": f"记忆句子{index + 1}",
+                        "insertText": f"记忆句子{index + 1}",
+                        "sourceType": "rag",
+                        "selectionAction": "commit_side_candidate",
+                        "sourceIndex": index,
+                        "displayLayout": "block",
+                        "displayLane": "memory",
+                    }
+                    for index in range(3)
+                ],
+                "mergePolicy": {
+                    "rimeFirst": False,
+                    "sideFirst": True,
+                    "fallbackOrder": ["model", "rag", "rime"],
+                },
             }
         )
 
@@ -202,6 +236,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[OK] Squirrel workdir is a git checkout", result.stdout)
         self.assertIn("[OK] xcodebuild can inspect patched Squirrel project", result.stdout)
         self.assertIn("[OK] HTTP sidecar health, rime-suggest, and rime-select passed", result.stdout)
+        self.assertIn("[OK] candidate contract: model inline + rag block + shared selection keys passed", result.stdout)
         self.assertIn("[OK] tryout runtime path has launchd or healthy HTTP sidecar", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 

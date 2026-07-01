@@ -14,6 +14,8 @@ REQUIRE_XCODE="${RAG_IME_DOCTOR_REQUIRE_XCODE:-0}"
 REQUIRE_PREDICTOR="${RAG_IME_DOCTOR_REQUIRE_PREDICTOR:-0}"
 REQUIRE_TRYOUT="${RAG_IME_DOCTOR_REQUIRE_TRYOUT:-0}"
 REQUIRE_HITOOLBOX_ENABLED="${RAG_IME_DOCTOR_REQUIRE_HITOOLBOX_ENABLED:-${RAG_IME_REQUIRE_HITOOLBOX_ENABLED:-0}}"
+REQUIRE_MIXED_LAYOUT_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_MIXED_LAYOUT:-}"
+REQUIRE_MIXED_LAYOUT="${REQUIRE_MIXED_LAYOUT_CONFIGURED:-0}"
 CHECK_LAUNCHD="${RAG_IME_DOCTOR_CHECK_LAUNCHD:-1}"
 REQUIRE_INPUT_SOURCE_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE:-}"
 REQUIRE_INPUT_SOURCE="${REQUIRE_INPUT_SOURCE_CONFIGURED:-0}"
@@ -59,6 +61,9 @@ bool_true() {
 if bool_true "$REQUIRE_TRYOUT"; then
   REQUIRE_SIDECAR=1
   REQUIRE_XCODE=1
+  if [[ -z "$REQUIRE_MIXED_LAYOUT_CONFIGURED" ]]; then
+    REQUIRE_MIXED_LAYOUT=1
+  fi
   if [[ -z "$REQUIRE_INPUT_SOURCE_CONFIGURED" ]]; then
     REQUIRE_INPUT_SOURCE=1
   fi
@@ -72,6 +77,7 @@ printf 'squirrel_app: %s\n' "$SQUIRREL_APP"
 printf 'squirrel_input_source: %s\n' "$SQUIRREL_INPUT_SOURCE_ID"
 printf 'tryout_readiness: %s\n' "$REQUIRE_TRYOUT"
 printf 'require_hitoolbox_enabled: %s\n' "$REQUIRE_HITOOLBOX_ENABLED"
+printf 'require_mixed_layout: %s\n' "$REQUIRE_MIXED_LAYOUT"
 printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
 printf 'DEVELOPER_DIR: %s\n\n' "${DEVELOPER_DIR:-<unset>}"
 
@@ -193,7 +199,7 @@ fi
 sidecar_out="$(mktemp /tmp/rag-ime-doctor-sidecar.out.XXXXXX)"
 sidecar_err="$(mktemp /tmp/rag-ime-doctor-sidecar.err.XXXXXX)"
 set +e
-"$PYTHON_EXECUTABLE" - "$SIDECAR_BASE_URL" "$EXPECT_PREDICTOR_PROVIDER" "$EXPECT_PREDICTOR_MODEL" "$EXPECT_STREAM_FIRST" >"$sidecar_out" 2>"$sidecar_err" <<'PY'
+"$PYTHON_EXECUTABLE" - "$SIDECAR_BASE_URL" "$EXPECT_PREDICTOR_PROVIDER" "$EXPECT_PREDICTOR_MODEL" "$EXPECT_STREAM_FIRST" "$REQUIRE_MIXED_LAYOUT" >"$sidecar_out" 2>"$sidecar_err" <<'PY'
 import json
 import sys
 import urllib.error
@@ -219,15 +225,116 @@ def provider_matches(expected, actual):
 def truthy(value):
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
+require_mixed_layout = truthy(sys.argv[5].strip())
+
+def expected_rank_for_label(label):
+    if label == "0":
+        return 10
+    if str(label).isdigit():
+        return int(label)
+    return None
+
+def validate_candidate_contract(result, *, require):
+    display = result.get("displayCandidates")
+    if not isinstance(display, list):
+        return {
+            "ok": False,
+            "checked": require,
+            "message": "candidate contract: displayCandidates is not an array",
+        }
+    if not require:
+        return {
+            "ok": True,
+            "checked": False,
+            "message": "candidate contract: not required",
+            "displayCount": len(display),
+        }
+
+    errors = []
+    model_indices = []
+    rag_indices = []
+    rime_indices = []
+    for index, item in enumerate(display):
+        if not isinstance(item, dict):
+            errors.append(f"candidate {index + 1} is not an object")
+            continue
+        label = str(item.get("label") or "")
+        selection_key = str(item.get("selectionKey") or "")
+        selection_rank = item.get("selectionRank")
+        expected_label = "0" if index == 9 else str(index + 1)
+        if label != expected_label:
+            errors.append(f"candidate {index + 1} label={label!r}, expected {expected_label!r}")
+        if selection_key != label:
+            errors.append(f"candidate {index + 1} selectionKey={selection_key!r}, expected label")
+        if selection_rank != expected_rank_for_label(label):
+            errors.append(f"candidate {index + 1} selectionRank={selection_rank!r}, expected rank for {label!r}")
+
+        source_type = str(item.get("sourceType") or "")
+        display_layout = str(item.get("displayLayout") or "")
+        display_lane = str(item.get("displayLane") or "")
+        selection_action = str(item.get("selectionAction") or "")
+        if source_type in {"model", "rag"} and selection_action != "commit_side_candidate":
+            errors.append(f"{source_type} candidate {label} does not commit side candidate")
+        if source_type == "model":
+            model_indices.append(index)
+            if display_layout != "inline" or display_lane != "model":
+                errors.append(f"model candidate {label} is not inline/model")
+        elif source_type == "rag":
+            rag_indices.append(index)
+            if display_layout != "block" or display_lane != "memory":
+                errors.append(f"rag candidate {label} is not block/memory")
+        elif source_type == "rime":
+            rime_indices.append(index)
+            if selection_action != "select_rime_candidate":
+                errors.append(f"rime candidate {label} does not route to Rime selection")
+
+    policy = result.get("mergePolicy") if isinstance(result.get("mergePolicy"), dict) else {}
+    if policy.get("sideFirst") is not True or policy.get("rimeFirst") is not False:
+        errors.append("mergePolicy is not side-first")
+    if policy.get("fallbackOrder") != ["model", "rag", "rime"]:
+        errors.append("mergePolicy fallbackOrder is not model/rag/rime")
+    if not model_indices:
+        errors.append("no model inline candidates")
+    if not rag_indices:
+        errors.append("no rag block candidates")
+    if model_indices and rag_indices and max(model_indices) > min(rag_indices):
+        errors.append("model inline candidates do not precede rag block candidates")
+    if rime_indices and (model_indices or rag_indices) and min(rime_indices) < max(model_indices + rag_indices):
+        errors.append("Rime fallback appears before side candidates")
+
+    ok = not errors
+    return {
+        "ok": ok,
+        "checked": True,
+        "message": (
+            "candidate contract: model inline + rag block + shared selection keys passed"
+            if ok
+            else "candidate contract failed: " + "; ".join(errors[:5])
+        ),
+        "displayCount": len(display),
+        "modelCount": len(model_indices),
+        "ragCount": len(rag_indices),
+        "rimeCount": len(rime_indices),
+    }
+
 try:
     with urllib.request.urlopen(f"{base}/health", timeout=1.5) as response:
         health = json.loads(response.read().decode("utf-8"))
     payload = {
         "sessionId": "doctor",
         "requestSeq": 1,
-        "maxVisibleCandidates": 3,
-        "maxSideCandidates": 1,
-        "rimeContext": {"candidates": [{"label": "1", "text": "本地记忆", "comment": "rime"}]},
+        "rawInput": "ragshurufa",
+        "preedit": "ragshurufa",
+        "committedContext": "用户正在验证 RAG 输入法候选布局和数字键选择",
+        "maxVisibleCandidates": 8 if require_mixed_layout else 3,
+        "maxSideCandidates": 8 if require_mixed_layout else 1,
+        "forceSideCandidates": require_mixed_layout,
+        "rimeContext": {
+            "candidates": [
+                {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                {"label": "2", "text": "RAG 记忆", "comment": "rime"},
+            ]
+        },
     }
     request = urllib.request.Request(
         f"{base}/rime-suggest",
@@ -264,6 +371,7 @@ try:
         and selection.get("schemaVersion") == "rag-ime.rime-selection.v1"
         and selection.get("ok") is not False
     ):
+        candidate_contract = validate_candidate_contract(result, require=require_mixed_layout)
         predictor = health.get("predictor") if isinstance(health.get("predictor"), dict) else {}
         provider_name = str(predictor.get("providerName") or "")
         model = str(predictor.get("model") or "")
@@ -293,6 +401,7 @@ try:
             "eventCount": health.get("eventCount"),
             "displayCandidates": len(result.get("displayCandidates", [])),
             "rimeSelectOk": True,
+            "candidateContract": candidate_contract,
             "predictorCheck": {
                 "ok": predictor_ok,
                 "message": "; ".join(messages),
@@ -313,6 +422,34 @@ set -e
 if [[ "$sidecar_status" == "0" ]]; then
   sidecar_healthy=1
   ok "HTTP sidecar health, rime-suggest, and rime-select passed: $(cat "$sidecar_out")"
+  candidate_contract_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+contract = payload.get("candidateContract") if isinstance(payload.get("candidateContract"), dict) else {}
+if not contract.get("checked"):
+    print("SKIP\tcandidate contract: not required")
+else:
+    level = "OK" if contract.get("ok", False) else "WARN"
+    message = str(contract.get("message") or "candidate contract: status unavailable")
+    counts = (
+        f" display={contract.get('displayCount')} "
+        f"model={contract.get('modelCount')} "
+        f"rag={contract.get('ragCount')} "
+        f"rime={contract.get('rimeCount')}"
+    )
+    print(f"{level}\t{message};{counts}")
+PY
+)"
+  candidate_contract_level="${candidate_contract_line%%	*}"
+  candidate_contract_message="${candidate_contract_line#*	}"
+  if [[ "$candidate_contract_level" == "OK" ]]; then
+    ok "$candidate_contract_message"
+  elif [[ "$candidate_contract_level" != "SKIP" ]]; then
+    require_or_warn "$REQUIRE_MIXED_LAYOUT" "$candidate_contract_message"
+  fi
   predictor_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
 import json
 import sys

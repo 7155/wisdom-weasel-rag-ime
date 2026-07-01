@@ -2199,3 +2199,26 @@ Commands:
 Status:
 - Installed runtime is back to `Squirrel - Simplified`, selected and ready.
 - Remaining unproven part is still foreground live typing: user-visible panel behavior and number-key commit in real apps.
+
+### 2026-07-02 01:00 CST
+Problem:
+- Strict doctor verified sidecar health and `/rime-select`, but it did not yet fail on the actual product contract: 8 visible slots should be side-first, model candidates should be `inline/model`, RAG candidates should be `block/memory`, and visible labels must match `selectionKey` / `selectionRank`.
+- Without that gate, a regression could keep `/rime-suggest` alive while silently breaking the horizontal LLM lane or numeric selection routing.
+
+Changes:
+- Added a strict mixed-candidate contract check to `scripts/doctor_squirrel_integration.sh`.
+- In `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1` mode, doctor now requires shared selection keys/ranks, side-first merge policy, model-before-RAG ordering, at least one model inline candidate, and at least one RAG block candidate.
+- Updated doctor tests and debug/Xcode docs to state what this gate proves and what still needs manual foreground validation.
+
+Verification:
+- `python3 -m unittest tests.test_doctor_squirrel_integration` passed.
+- `bash -n scripts/doctor_squirrel_integration.sh` and `git diff --check` passed.
+- Real strict doctor passed with `display=8 model=5 rag=3 rime=0` and `candidate contract: model inline + rag block + shared selection keys passed`.
+
+Commands:
+- `python3 -m unittest tests.test_doctor_squirrel_integration`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/doctor_squirrel_integration.sh`
+
+Status:
+- Backend/native payload contract is now a repeatable strict gate.
+- Remaining unproven part is the actual foreground AppKit panel and real number-key commit in a normal editor.

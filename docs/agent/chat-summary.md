@@ -1562,3 +1562,19 @@ Verification:
 
 Next:
 - Foreground typing and number-key commit validation are still required before marking the whole goal complete.
+
+### 2026-07-02
+Topic:
+- Promote mixed candidate layout and numeric selection routing into strict doctor.
+
+Changes:
+- `scripts/doctor_squirrel_integration.sh` now checks the mixed candidate contract when `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1`.
+- The strict check requires shared `selectionKey` / `selectionRank`, side-first merge policy, model `inline/model` candidates before RAG `block/memory` rows, and at least one model plus one RAG candidate.
+- Debug/Xcode docs now distinguish this backend/native-payload gate from real foreground AppKit panel validation.
+
+Verification:
+- Doctor unit tests passed.
+- Real strict doctor passed with `display=8 model=5 rag=3 rime=0` and candidate contract OK.
+
+Next:
+- Remaining final validation is still foreground typing and real number-key side-candidate commit in a normal editor.

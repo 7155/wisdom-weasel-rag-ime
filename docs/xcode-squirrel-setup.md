@@ -278,6 +278,14 @@ the installed `Squirrel.app`, the actual Rime managed config, required
 `/rime-suggest` sidecar payload, and the backend/Rime-sidecar quality gate.
 It does not install, enable, switch, select a side candidate, or drive the GUI.
 
+Strict Squirrel doctor mode also checks the mixed candidate contract. With
+`RAG_IME_DOCTOR_REQUIRE_TRYOUT=1`, it requires the sidecar probe to return
+shared selection keys/ranks and a side-first display list where LLM candidates
+use `displayLayout=inline` and RAG/memory sentence candidates use
+`displayLayout=block`. This proves the backend/native payload contract before
+manual foreground typing; it still does not prove that the visible AppKit panel
+looked correct in a real editor.
+
 Manual continuous-use verification:
 
 1. Run `scripts/open_squirrel_input_source_settings.sh --wait`.

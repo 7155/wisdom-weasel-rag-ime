@@ -204,6 +204,13 @@ legacy visible `label` and explicit selection routing fields:
 - `selectionRank`: the 1-based rank written to memory feedback; `0` maps to
   rank 10 for the shared `1-9,0` candidate-key convention.
 
+The strict Squirrel doctor validates this contract through the live sidecar. In
+`RAG_IME_DOCTOR_REQUIRE_TRYOUT=1` mode it requires model candidates to be
+`inline/model`, RAG candidates to be `block/memory`, shared selection keys and
+ranks to match the visible labels, and the merge policy to stay side-first with
+`["model", "rag", "rime"]` fallback order. This catches backend/native-payload
+regressions before the foreground AppKit panel test.
+
 The semantic query is built from commit preview or Rime candidates before
 falling back to raw input.
 
