@@ -51,6 +51,39 @@ first parsed candidate instead of waiting for a complete list.
 | 5 | Core ML stateful model | macOS 15 stateful models can keep state buffers across predictions, which maps to KV-cache style inference. | Long-term only due conversion/support cost. |
 | 6 | MiniVLLM/vLLM concepts | Excellent design reference for paged KV, prefix cache, scheduler metrics. | Do not embed for Mac MVP; CUDA/Triton/server-throughput oriented. |
 
+## Decision Refinement
+
+Separate three questions that are easy to confuse:
+
+1. **Fastest measured smoke path today**: Ollama `qwen3.5:0.8b-mlx`. It is
+   already installed, no-proxy tested, and produces the current best local
+   first-chunk numbers on this Mac.
+2. **Best controllable product kernel**: native `llama.cpp`/Metal, with direct
+   MLX-LM as the Apple-Silicon experiment to beat. The input method eventually
+   needs cancellation, stable prompt/KV reuse, sequence-forked candidates, and
+   exact streaming parse control. A general local HTTP server is convenient, but
+   too opaque to prove all of those properties.
+3. **Best long-term Apple-native runtime**: Core ML stateful KV, only after the
+   model choice stabilizes and conversion/quantization cost is justified.
+
+Therefore the current product decision is:
+
+```text
+Ship/debug path now:
+  Ollama MLX baseline + stream-first candidate
+
+Near-term benchmark race:
+  direct MLX-LM resident service
+  vs native llama.cpp/Metal resident provider
+
+Default production kernel:
+  whichever wins p95 TTFC, quality, memory, cancellation, and packaging tests
+```
+
+This slightly differs from a pure "pick llama.cpp first" answer. `llama.cpp` is
+the strongest controllable kernel candidate, but the already measured Ollama MLX
+path remains the fastest way to keep the Squirrel/RAG product loop moving.
+
 ## Why Ollama MLX Is The Immediate Baseline
 
 Ollama is not the final low-level provider, but it gives the fastest path to a
@@ -258,14 +291,53 @@ The model lane must not starve RAG:
 7. Circuit-break slow/empty model results. Typing must keep working with Rime
    and RAG only.
 
+## Benchmark Metrics
+
+The benchmark should report these separately:
+
+| Metric | Meaning | Target for active typing |
+| --- | --- | --- |
+| `firstChunkMs` | first raw streamed bytes from the backend | diagnostic only |
+| `firstCandidateMs` / `ttfcMs` | first parsed candidate that can be selected | p50 < 150 ms, p95 < 200 ms after warmup |
+| `firstUiUpdateMs` | first panel refresh after request start | p95 < 220 ms |
+| `fullCandidatesMs` | all model candidates returned | debug only; can be slower |
+| `retrievalMs` | FTS/RAG retrieval time | p95 < 50 ms for hot local path |
+| `promptTokens` | actual prompt length | keep dynamic tail small |
+| `cacheHitRate` | prompt/KV cache hit rate | should rise during repeated typing |
+| `staleCancelRate` | old requests dropped after new input | expected non-zero while typing |
+| `validCandidateRate` | stream chunks that produce usable candidates | high enough to avoid empty UI flashes |
+| `rssMb` | resident memory | must leave room for RAG/embedding queues |
+| `mainThreadBlockMs` | IME frontend blocking time | p95 < 16 ms |
+
+Existing command today:
+
+```bash
+python3 -m rag_ime.cli predictor-ttft \
+  --case "本地 RAG 输入法需要根据历史输入预测候选" \
+  --recent-context "用户正在讨论 Mac 本地推理、Qwen3.5 0.8B、MLX、KV cache 和输入法首 token 延迟" \
+  --repeat 20 \
+  --latency-budget-ms 200
+```
+
+Future backend matrix should keep the same cases and report the same metrics for:
+
+```text
+ollama:qwen3.5:0.8b-mlx
+mlx-lm:<small-qwen-mlx-model>
+llama.cpp-metal:<same-or-comparable-gguf-model>
+```
+
 ## Decision For The Next Implementation Step
 
 The next implementation work should not be another prompt rewrite. It should be:
 
-1. finish Squirrel sidecar doctor coverage for predictor env and stream-first;
+1. keep the Squirrel sidecar doctor coverage strict for predictor env and
+   stream-first mode;
 2. make direct MLX-LM installation reproducible without proxy waste;
 3. run direct MLX-LM cached/uncached `predictor-ttft`;
-4. if MLX-LM cannot beat Ollama MLX consistently, implement a native
+4. implement or spike a native `llama.cpp`/Metal resident provider in parallel
+   once the Squirrel loop is stable enough to consume it;
+5. if MLX-LM cannot beat Ollama MLX consistently, default to the native
    `llama.cpp`/Metal provider modeled on Wisdom-Weasel's
    `PrepareSystemPrompt()` and `GenerateCandidatesBatch()`.
 
@@ -274,8 +346,13 @@ The next implementation work should not be another prompt rewrite. It should be:
 - MLX-LM README: https://github.com/ml-explore/mlx-lm
 - Ollama API: https://github.com/ollama/ollama/blob/main/docs/api.md
 - Ollama `qwen3.5`: https://ollama.com/library/qwen3.5
+- Ollama MLX preview: https://ollama.com/blog/mlx
+- Ollama MLX performance: https://ollama.com/blog/mlx-performance
 - llama.cpp server README: https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
+- llama.cpp public C API: https://github.com/ggml-org/llama.cpp/blob/master/include/llama.h
 - MLC LLM REST docs: https://llm.mlc.ai/docs/deploy/rest.html
 - MLC LLM CLI docs: https://llm.mlc.ai/docs/deploy/cli.html
 - Core ML stateful models: https://apple.github.io/coremltools/docs-guides/source/stateful-models.html
 - Apple `MLState`: https://developer.apple.com/documentation/coreml/mlstate
+- vLLM automatic prefix caching: https://docs.vllm.ai/en/latest/features/automatic_prefix_caching.html
+- Qwen3 technical report: https://arxiv.org/abs/2505.09388

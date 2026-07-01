@@ -1219,3 +1219,25 @@ Changes:
 Commands:
 - `python3 -m py_compile rag_ime/predictor.py tests/test_predictor.py`
 - `python3 -m unittest tests.test_predictor`
+
+### 2026-07-01 13:03 CST
+Problem:
+- The Mac inference decision needed to distinguish the fastest measured smoke path from the best controllable product kernel.
+- Squirrel patch preparation only proved that a patch applied; it did not assert the critical RAG-IME hooks were present after patching.
+
+Findings:
+- Ollama `qwen3.5:0.8b-mlx` remains the fastest already measured Mac smoke baseline for keeping the UI/RAG loop moving.
+- Native `llama.cpp`/Metal is still the strongest product-kernel candidate because it can own cancellation, prompt/KV reuse, sequence copy, and batch multi-candidate generation.
+- Direct MLX-LM should be benchmarked next as the Apple-Silicon resident-service experiment.
+- Core ML stateful KV and MLC LLM remain later paths because conversion/compile complexity is not worth blocking the IME loop yet.
+
+Changes:
+- Updated `docs/mac-local-inference-fast-path.md` with a decision-refinement section and explicit TTFC benchmark metrics.
+- Updated `docs/interview-project-difficulties.md` so the interview story says first parsed candidate/TTFC, not just first chunk.
+- Hardened `scripts/prepare_squirrel_workspace.sh` to assert required sidecar files and Squirrel integration hooks after patch application.
+- Added an offline fake-Squirrel test that clones a local repo, applies a generated RAG-IME patch, writes config, and typechecks the Swift sidecar files when `swiftc` is available.
+
+Commands:
+- `bash -n scripts/prepare_squirrel_workspace.sh`
+- `python3 -m unittest tests.test_prepare_squirrel_workspace`
+- `python3 -m unittest discover -s tests`

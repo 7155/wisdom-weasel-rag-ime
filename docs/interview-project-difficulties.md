@@ -139,14 +139,14 @@ raw key input
 ```text
 短期验证:
   Ollama qwen3.5:0.8b / qwen3.5:0.8b-mlx
-  -> predictor-ttft 测 first chunk
+  -> predictor-ttft 测 first parsed candidate / TTFC
 
 Mac 快速实验:
   MLX-LM resident service
   -> stream_generate + prompt_cache
 
-最终快路径:
-  native llama.cpp/Metal 或 MLX provider
+最终可控内核:
+  native llama.cpp/Metal 或 direct MLX provider
   -> stable prompt KV cache
   -> multi-sequence candidate sampling
 ```
@@ -159,6 +159,12 @@ Mac 快速实验:
 case 上只通过 2 条，完整 JSON 响应也仍然要数百毫秒。所以项目的真正难点不是
 “下载一个 0.8B 小模型”，而是把它改造成输入法可用的实时 side lane：首候选流式
 展示，完整候选异步补齐，事实和个人记忆仍由 RAG 负责。
+
+这里还有一个工程判断：Ollama MLX 是当前已测最快 smoke baseline，不等于最终
+产品内核。真正面试时可以强调我把两件事分开了：短期用 Ollama MLX 保证本地
+调试和 Squirrel/RAG 闭环继续前进；中长期用 native `llama.cpp`/Metal 或 direct
+MLX-LM 争取可控的 KV cache、取消过期请求、序列复制和批量多候选采样。这样讲
+比“我换了一个小模型”更像实时系统优化。
 
 ## 我已经落地的工程点
 
@@ -175,7 +181,7 @@ case 上只通过 2 条，完整 JSON 响应也仍然要数百毫秒。所以项
 - 单测和 macOS app 构建验证；
 - Rime/Squirrel 正式前端路线 ADR；
 - Squirrel patch pack：在 Rime 候选生成后调用本地 sidecar，异步合并 side candidates，按显示候选路由数字键，并在用户接受 RAG 候选后回写 commit/action。
-- `predictor-ttft` 首 chunk 延迟测量；
+- `predictor-ttft` 首 chunk 和 first parsed candidate 延迟测量；
 - Mac 本地推理路线调研：Ollama MLX tag、MLX-LM prompt cache、llama.cpp/Metal KV cache、Core ML stateful KV、MiniVLLM/vLLM 取舍。
 - 实测 `qwen3.5:0.8b-mlx` 在 Mac warm path 上达到 46ms p50 first chunk，同时用质量评测证明 0.8B 模型不能替代本地 RAG 记忆。
 

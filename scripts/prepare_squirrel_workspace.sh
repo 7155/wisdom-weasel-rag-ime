@@ -58,6 +58,33 @@ git -C "$SQUIRREL_WORKDIR" apply --check "$PATCH_FILE"
 git -C "$SQUIRREL_WORKDIR" apply "$PATCH_FILE"
 git -C "$SQUIRREL_WORKDIR" diff --check
 
+require_patch_file() {
+  local path="$1"
+  if [[ ! -f "$SQUIRREL_WORKDIR/$path" ]]; then
+    echo "patched Squirrel workdir is missing required RAG-IME file: $path" >&2
+    exit 1
+  fi
+}
+
+require_patch_text() {
+  local path="$1"
+  local text="$2"
+  local description="$3"
+  if ! grep -Fq "$text" "$SQUIRREL_WORKDIR/$path"; then
+    echo "patched Squirrel workdir is missing $description in $path" >&2
+    exit 1
+  fi
+}
+
+require_patch_file "sources/RagImeSidecarModels.swift"
+require_patch_file "sources/RagImeSidecarClient.swift"
+require_patch_file "sources/SquirrelInputController.swift"
+require_patch_text "sources/RagImeSidecarClient.swift" "rime-suggest" "sidecar suggestion request hook"
+require_patch_text "sources/RagImeSidecarClient.swift" "rime-select" "side candidate selection writeback hook"
+require_patch_text "sources/SquirrelInputController.swift" "selectRagImeSideCandidate" "number-key side-candidate routing"
+require_patch_text "sources/SquirrelInputController.swift" "ragImeRequestFingerprint" "stale response fingerprint guard"
+require_patch_text "sources/SquirrelInputController.swift" "mergedRagImePanelCandidates" "Rime and side candidate display merge"
+
 CONFIG_PATH="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml"
 ROOT="$ROOT" \
 DB_PATH="$DB_PATH" \

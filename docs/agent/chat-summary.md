@@ -852,3 +852,18 @@ Changes:
 
 Conclusion:
 - This aligns the latency gate with the actual input-method UI: raw streamed bytes are diagnostic only; the product budget is for a candidate the user could select.
+
+### 2026-07-01
+Topic:
+- Refine the Mac fastest-inference plan and harden Squirrel patch preparation.
+
+Changes:
+- Clarified that Ollama `qwen3.5:0.8b-mlx` is the fastest measured smoke baseline, while native `llama.cpp`/Metal is the strongest controllable product-kernel candidate.
+- Added TTFC-oriented benchmark metrics to the Mac inference decision note and tightened the interview material around first parsed candidate latency.
+- Made `prepare_squirrel_workspace.sh` fail if patched Squirrel is missing required RAG-IME sidecar files or hooks.
+- Added an offline fake-Squirrel integration test for clone/apply/config/typecheck preparation.
+
+Verification:
+- `bash -n scripts/prepare_squirrel_workspace.sh`
+- `python3 -m unittest tests.test_prepare_squirrel_workspace`
+- `python3 -m unittest discover -s tests`
