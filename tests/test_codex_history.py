@@ -888,6 +888,130 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertFalse(checks["input-source-selected"]["passed"])
         self.assertEqual(checks["input-source-selected"]["current"], "com.apple.keylayout.ABC")
 
+    def test_cli_squirrel_tryout_gate_fails_fast_when_input_source_is_not_selected(self) -> None:
+        db_path = self.root / "squirrel-tryout-input-source-fail.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "squirrel-tryout-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "agent-hook",
+                    "query": "首次运行自动注入背景记忆",
+                    "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script = self.root / "tryout-unselected-input-source.sh"
+        check_script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=false current=com.apple.keylayout.ABC hitoolboxEnabled=true'",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script.chmod(0o755)
+        report_path = self.root / "squirrel-tryout-report.json"
+
+        gate_stdout = io.StringIO()
+        with redirect_stdout(gate_stdout):
+            gate_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "squirrel-tryout-gate",
+                    "--cases-file",
+                    str(cases_file),
+                    "--input-source-check-script",
+                    str(check_script),
+                    "--skip-sidecar-health",
+                    "--report-path",
+                    str(report_path),
+                ]
+            )
+
+        self.assertEqual(gate_code, 1)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertEqual(report["schemaVersion"], "rag-ime.squirrel-tryout-gate.v1")
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["inputSource"]["readinessState"], "switch")
+        self.assertIsNone(report["qualityGate"])
+        self.assertIn("foreground editor typing verification", report["manualRequired"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertFalse(checks["input-source-ready"]["passed"])
+        self.assertTrue(checks["sidecar-health"]["passed"])
+        self.assertTrue(checks["sidecar-health"]["skipped"])
+        self.assertTrue(checks["quality-gate"]["skipped"])
+        self.assertEqual(json.loads(report_path.read_text(encoding="utf-8"))["schemaVersion"], report["schemaVersion"])
+
+    def test_cli_squirrel_tryout_gate_runs_quality_gate_when_input_source_is_selected(self) -> None:
+        db_path = self.root / "squirrel-tryout-selected.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "squirrel-tryout-selected-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "agent-hook",
+                    "query": "首次运行自动注入背景记忆",
+                    "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script = self.root / "tryout-selected-input-source.sh"
+        check_script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=true current=im.rime.inputmethod.Squirrel.Hans hitoolboxEnabled=true'",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script.chmod(0o755)
+
+        gate_stdout = io.StringIO()
+        with redirect_stdout(gate_stdout):
+            gate_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "squirrel-tryout-gate",
+                    "--cases-file",
+                    str(cases_file),
+                    "--min-rag-pass-rate",
+                    "1",
+                    "--min-sidecar-pass-rate",
+                    "1",
+                    "--input-source-check-script",
+                    str(check_script),
+                    "--skip-sidecar-health",
+                ]
+            )
+
+        self.assertEqual(gate_code, 0)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertTrue(report["passed"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertTrue(checks["input-source-ready"]["passed"])
+        self.assertTrue(checks["quality-gate"]["passed"])
+        self.assertEqual(report["qualityGate"]["schemaVersion"], "rag-ime.quality-gate.v1")
+        self.assertTrue(report["qualityGate"]["thresholds"]["requireInputSourceReady"])
+
     def test_cli_quality_gate_probes_mlx_capability_requirements(self) -> None:
         db_path = self.root / "quality-gate-mlx-capability.sqlite"
         with redirect_stdout(io.StringIO()):

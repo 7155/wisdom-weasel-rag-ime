@@ -7,6 +7,8 @@ import shutil
 import shlex
 import sys
 import time
+import urllib.error
+import urllib.request
 from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
@@ -433,6 +435,72 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Require a local model provider capability. Repeat for Wisdom-Weasel-style gates.",
     )
     quality_gate.add_argument("--include-cases", action="store_true", help="Include full per-case eval details in the quality-gate JSON")
+
+    squirrel_tryout_gate = subparsers.add_parser(
+        "squirrel-tryout-gate",
+        help="Run the real macOS Squirrel tryout readiness gate and quality gate",
+    )
+    squirrel_tryout_gate.add_argument("--cases-file", default="docs/eval/codex-history-cases.example.jsonl")
+    squirrel_tryout_gate.add_argument("--project", default="wisdom-weasel-rag-ime")
+    squirrel_tryout_gate.add_argument("--top-k", type=int, default=5)
+    squirrel_tryout_gate.add_argument("--match", choices=("any", "all"), default="any")
+    squirrel_tryout_gate.add_argument("--repeat", type=int, default=1)
+    squirrel_tryout_gate.add_argument("--min-rag-pass-rate", type=float, default=0.1)
+    squirrel_tryout_gate.add_argument("--min-sidecar-pass-rate", type=float, default=0.1)
+    squirrel_tryout_gate.add_argument("--min-rag-top1-accuracy", type=float, default=0.0)
+    squirrel_tryout_gate.add_argument("--min-sidecar-top1-accuracy", type=float, default=0.0)
+    squirrel_tryout_gate.add_argument("--min-rag-mrr", type=float, default=0.0)
+    squirrel_tryout_gate.add_argument("--min-sidecar-mrr", type=float, default=0.0)
+    squirrel_tryout_gate.add_argument("--max-rag-noise-rate", type=float, default=1.0)
+    squirrel_tryout_gate.add_argument("--max-sidecar-noise-rate", type=float, default=1.0)
+    squirrel_tryout_gate.add_argument("--max-sidecar-rag-timeout-rate", type=float, default=1.0)
+    squirrel_tryout_gate.add_argument("--max-sidecar-model-timeout-rate", type=float, default=1.0)
+    squirrel_tryout_gate.add_argument("--cache-repeat", type=int, default=3)
+    squirrel_tryout_gate.add_argument("--cache-current-input", default="RAG 输入法")
+    squirrel_tryout_gate.add_argument("--cache-recent-context", default="squirrel tryout cache probe")
+    squirrel_tryout_gate.add_argument("--rime-candidate", action="append", default=[])
+    squirrel_tryout_gate.add_argument("--max-visible-candidates", type=int, default=6)
+    squirrel_tryout_gate.add_argument("--max-side-candidates", type=int, default=3)
+    squirrel_tryout_gate.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
+    squirrel_tryout_gate.add_argument(
+        "--no-force-side-candidates",
+        action="store_true",
+        help="Do not force side-candidate refreshes during the quality-gate portion.",
+    )
+    squirrel_tryout_gate.add_argument(
+        "--no-require-suggestion-cache",
+        action="store_true",
+        help="Do not require warm local-core suggestion-cache hits.",
+    )
+    squirrel_tryout_gate.add_argument(
+        "--input-source-id",
+        default=os.environ.get("RAG_IME_SQUIRREL_INPUT_SOURCE_ID", "im.rime.inputmethod.Squirrel.Hans"),
+    )
+    squirrel_tryout_gate.add_argument(
+        "--input-source-check-script",
+        default=os.environ.get("RAG_IME_INPUT_SOURCE_CHECK_SCRIPT", ""),
+    )
+    squirrel_tryout_gate.add_argument("--sidecar-url", default=os.environ.get("RAG_IME_SIDECAR_URL", "http://127.0.0.1:8766"))
+    squirrel_tryout_gate.add_argument("--skip-sidecar-health", action="store_true")
+    squirrel_tryout_gate.add_argument("--require-model-ttfc", action="store_true")
+    squirrel_tryout_gate.add_argument("--model-ttfc-cases-file", default="docs/eval/ime-ttfc-cases.example.jsonl")
+    squirrel_tryout_gate.add_argument("--model-ttfc-provider", default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "ollama"))
+    squirrel_tryout_gate.add_argument("--model-ttfc-base-url", default=os.environ.get("RAG_IME_PREDICTOR_BASE_URL", "http://127.0.0.1:11434"))
+    squirrel_tryout_gate.add_argument("--model-ttfc-models", default=os.environ.get("RAG_IME_PREDICTOR_MODEL", "qwen3.5:0.8b-mlx"))
+    squirrel_tryout_gate.add_argument("--model-ttfc-profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "instant"))
+    squirrel_tryout_gate.add_argument("--model-ttfc-repeat", type=int, default=3)
+    squirrel_tryout_gate.add_argument("--model-ttfc-warmup-runs", type=int, default=0)
+    squirrel_tryout_gate.add_argument("--model-ttfc-latency-budget-ms", type=int, default=200)
+    squirrel_tryout_gate.add_argument("--max-model-ttfc-p95-ms", type=int, default=200)
+    squirrel_tryout_gate.add_argument("--max-model-ttfc-over-budget-rate", type=float, default=0.0)
+    squirrel_tryout_gate.add_argument(
+        "--require-predictor-capability",
+        action="append",
+        default=[],
+        choices=("streaming", "residentModel", "promptCache", "sequenceFork", "batchCandidates", "serverTiming"),
+    )
+    squirrel_tryout_gate.add_argument("--include-cases", action="store_true")
+    squirrel_tryout_gate.add_argument("--report-path", default="")
 
     debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
     debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
@@ -1182,6 +1250,61 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if bool(report.get("passed")) else 1
 
+    if args.command == "squirrel-tryout-gate":
+        report = run_squirrel_tryout_gate(
+            adapter,
+            core,
+            predictor,
+            db_path=Path(args.db_path),
+            cases_file=Path(args.cases_file),
+            project=args.project,
+            top_k=max(1, args.top_k),
+            match=args.match,
+            repeat=max(1, args.repeat),
+            min_rag_pass_rate=max(0.0, min(1.0, args.min_rag_pass_rate)),
+            min_sidecar_pass_rate=max(0.0, min(1.0, args.min_sidecar_pass_rate)),
+            min_rag_top1_accuracy=max(0.0, min(1.0, args.min_rag_top1_accuracy)),
+            min_sidecar_top1_accuracy=max(0.0, min(1.0, args.min_sidecar_top1_accuracy)),
+            min_rag_mrr=max(0.0, min(1.0, args.min_rag_mrr)),
+            min_sidecar_mrr=max(0.0, min(1.0, args.min_sidecar_mrr)),
+            max_rag_noise_rate=max(0.0, min(1.0, args.max_rag_noise_rate)),
+            max_sidecar_noise_rate=max(0.0, min(1.0, args.max_sidecar_noise_rate)),
+            max_sidecar_rag_timeout_rate=max(0.0, min(1.0, args.max_sidecar_rag_timeout_rate)),
+            max_sidecar_model_timeout_rate=max(0.0, min(1.0, args.max_sidecar_model_timeout_rate)),
+            require_model_ttfc=bool(args.require_model_ttfc),
+            model_ttfc_cases_file=Path(args.model_ttfc_cases_file),
+            model_ttfc_provider=args.model_ttfc_provider,
+            model_ttfc_base_url=args.model_ttfc_base_url,
+            model_ttfc_models=args.model_ttfc_models,
+            model_ttfc_profile=args.model_ttfc_profile,
+            model_ttfc_repeat=max(1, args.model_ttfc_repeat),
+            model_ttfc_warmup_runs=max(0, args.model_ttfc_warmup_runs),
+            model_ttfc_latency_budget_ms=max(1, args.model_ttfc_latency_budget_ms),
+            max_model_ttfc_p95_ms=max(1, args.max_model_ttfc_p95_ms),
+            max_model_ttfc_over_budget_rate=max(0.0, min(1.0, args.max_model_ttfc_over_budget_rate)),
+            cache_current_input=args.cache_current_input,
+            cache_recent_context=args.cache_recent_context,
+            cache_repeat=max(1, args.cache_repeat),
+            rime_candidates=list(args.rime_candidate),
+            max_visible_candidates=max(1, min(10, args.max_visible_candidates)),
+            max_side_candidates=max(0, min(6, args.max_side_candidates)),
+            rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
+            force_side_candidates=not bool(args.no_force_side_candidates),
+            require_suggestion_cache=not bool(args.no_require_suggestion_cache),
+            input_source_id=args.input_source_id,
+            input_source_check_script=Path(args.input_source_check_script) if args.input_source_check_script else None,
+            sidecar_url=args.sidecar_url,
+            skip_sidecar_health=bool(args.skip_sidecar_health),
+            required_predictor_capabilities=tuple(args.require_predictor_capability),
+            include_cases=bool(args.include_cases),
+        )
+        if args.report_path:
+            report_path = Path(args.report_path)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if bool(report.get("passed")) else 1
+
     if args.command == "debug-server":
         from .debug_server import DebugServerConfig, run_debug_server
 
@@ -1437,6 +1560,188 @@ def run_cache_probe(
             "forceSideCandidates": force_side_candidates,
         }
     )
+
+
+def run_squirrel_tryout_gate(
+    adapter: InputMethodAdapter,
+    core,
+    predictor,
+    *,
+    db_path: Path,
+    cases_file: Path,
+    project: str,
+    top_k: int,
+    match: str,
+    repeat: int,
+    min_rag_pass_rate: float,
+    min_sidecar_pass_rate: float,
+    min_rag_top1_accuracy: float,
+    min_sidecar_top1_accuracy: float,
+    min_rag_mrr: float,
+    min_sidecar_mrr: float,
+    max_rag_noise_rate: float,
+    max_sidecar_noise_rate: float,
+    max_sidecar_rag_timeout_rate: float,
+    max_sidecar_model_timeout_rate: float,
+    require_model_ttfc: bool,
+    model_ttfc_cases_file: Path,
+    model_ttfc_provider: str,
+    model_ttfc_base_url: str,
+    model_ttfc_models: str,
+    model_ttfc_profile: str,
+    model_ttfc_repeat: int,
+    model_ttfc_warmup_runs: int,
+    model_ttfc_latency_budget_ms: int,
+    max_model_ttfc_p95_ms: int,
+    max_model_ttfc_over_budget_rate: float,
+    cache_current_input: str,
+    cache_recent_context: str,
+    cache_repeat: int,
+    rime_candidates: list[str],
+    max_visible_candidates: int,
+    max_side_candidates: int,
+    rime_cache_ttl_ms: int,
+    force_side_candidates: bool,
+    require_suggestion_cache: bool,
+    input_source_id: str,
+    input_source_check_script: Path | None,
+    sidecar_url: str,
+    skip_sidecar_health: bool,
+    required_predictor_capabilities: tuple[str, ...],
+    include_cases: bool,
+) -> dict[str, object]:
+    from .debug_server import DebugImeService, DebugServerConfig
+
+    input_source_report = DebugImeService(
+        DebugServerConfig(
+            db_path=db_path,
+            project=project,
+            seed_if_empty=False,
+            core=core,
+            predictor=predictor,
+            input_source_id=input_source_id,
+            input_source_check_script=input_source_check_script,
+            input_source_require_hitoolbox=True,
+        )
+    ).input_source_status()
+    input_ready = bool(input_source_report.get("typingReady"))
+    sidecar_report = (
+        {"schemaVersion": "rag-ime.tryout-sidecar-health.v1", "skipped": True, "ok": True}
+        if skip_sidecar_health
+        else _tryout_sidecar_health(sidecar_url)
+    )
+    sidecar_ok = bool(sidecar_report.get("ok"))
+    quality_report: dict[str, object] | None = None
+    if input_ready and sidecar_ok:
+        quality_report = run_quality_gate(
+            adapter,
+            core,
+            predictor,
+            db_path=db_path,
+            cases_file=cases_file,
+            project=project,
+            top_k=top_k,
+            match=match,
+            repeat=repeat,
+            min_rag_pass_rate=min_rag_pass_rate,
+            min_sidecar_pass_rate=min_sidecar_pass_rate,
+            min_rag_top1_accuracy=min_rag_top1_accuracy,
+            min_sidecar_top1_accuracy=min_sidecar_top1_accuracy,
+            min_rag_mrr=min_rag_mrr,
+            min_sidecar_mrr=min_sidecar_mrr,
+            max_rag_noise_rate=max_rag_noise_rate,
+            max_sidecar_noise_rate=max_sidecar_noise_rate,
+            max_sidecar_rag_timeout_rate=max_sidecar_rag_timeout_rate,
+            max_sidecar_model_timeout_rate=max_sidecar_model_timeout_rate,
+            require_model_ttfc=require_model_ttfc,
+            model_ttfc_cases_file=model_ttfc_cases_file,
+            model_ttfc_provider=model_ttfc_provider,
+            model_ttfc_base_url=model_ttfc_base_url,
+            model_ttfc_models=model_ttfc_models,
+            model_ttfc_profile=model_ttfc_profile,
+            model_ttfc_repeat=model_ttfc_repeat,
+            model_ttfc_warmup_runs=model_ttfc_warmup_runs,
+            model_ttfc_latency_budget_ms=model_ttfc_latency_budget_ms,
+            max_model_ttfc_p95_ms=max_model_ttfc_p95_ms,
+            max_model_ttfc_over_budget_rate=max_model_ttfc_over_budget_rate,
+            cache_current_input=cache_current_input,
+            cache_recent_context=cache_recent_context,
+            cache_repeat=cache_repeat,
+            rime_candidates=rime_candidates,
+            max_visible_candidates=max_visible_candidates,
+            max_side_candidates=max_side_candidates,
+            rime_cache_ttl_ms=rime_cache_ttl_ms,
+            force_side_candidates=force_side_candidates,
+            require_suggestion_cache=require_suggestion_cache,
+            require_input_source_ready=True,
+            input_source_id=input_source_id,
+            input_source_check_script=input_source_check_script,
+            required_predictor_capabilities=required_predictor_capabilities,
+            include_cases=include_cases,
+        )
+    checks = [
+        {
+            "name": "input-source-ready",
+            "passed": input_ready,
+            "readinessState": input_source_report.get("readinessState"),
+            "current": input_source_report.get("current"),
+            "nextAction": input_source_report.get("nextAction"),
+        },
+        {
+            "name": "sidecar-health",
+            "passed": sidecar_ok,
+            "skipped": bool(sidecar_report.get("skipped")),
+            "url": sidecar_url,
+        },
+        {
+            "name": "quality-gate",
+            "passed": bool(quality_report and quality_report.get("passed")),
+            "skipped": quality_report is None,
+        },
+    ]
+    return {
+        "schemaVersion": "rag-ime.squirrel-tryout-gate.v1",
+        "passed": all(bool(item.get("passed")) for item in checks),
+        "project": project,
+        "dbPath": str(db_path),
+        "casesFile": str(cases_file),
+        "checks": checks,
+        "manualRequired": [
+            "foreground editor typing verification",
+            "real Squirrel candidate panel visual check",
+            "side candidate number-key commit verification",
+        ],
+        "inputSource": input_source_report,
+        "sidecar": sidecar_report,
+        "qualityGate": quality_report,
+    }
+
+
+def _tryout_sidecar_health(sidecar_url: str) -> dict[str, object]:
+    base = sidecar_url.rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{base}/health", timeout=2.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return {
+            "schemaVersion": "rag-ime.tryout-sidecar-health.v1",
+            "ok": False,
+            "url": base,
+            "error": str(exc),
+        }
+    predictor = payload.get("predictor") if isinstance(payload.get("predictor"), dict) else {}
+    return {
+        "schemaVersion": "rag-ime.tryout-sidecar-health.v1",
+        "ok": bool(payload.get("ok")),
+        "url": base,
+        "eventCount": payload.get("eventCount"),
+        "predictor": {
+            "providerName": predictor.get("providerName"),
+            "model": predictor.get("model"),
+            "streamFirstCandidate": predictor.get("streamFirstCandidate"),
+            "configured": predictor.get("configured"),
+        },
+    }
 
 
 def run_quality_gate(
