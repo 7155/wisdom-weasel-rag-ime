@@ -475,6 +475,7 @@ def _looks_like_runtime_context(text: str) -> bool:
         "Wall time:",
         "Original token count:",
         "(eval):",
+        "The following is the Codex agent history",
     )
     if stripped.startswith(prefixes):
         return True

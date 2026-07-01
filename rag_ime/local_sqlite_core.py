@@ -676,6 +676,7 @@ class LocalSqliteCoreClient:
         downranked = int(row["downranked"])
         pinned = bool(row["pinned"])
         project_boost = 0.4 if project and row["project"] == project else 0.0
+        runtime_penalty = _runtime_trace_penalty(committed_text)
         score = (
             lexical
             + overlap_score
@@ -686,6 +687,7 @@ class LocalSqliteCoreClient:
             + accepted * 0.6
             - skipped * 0.3
             - downranked * 0.85
+            - runtime_penalty
         )
         reason = [f"fts5:{lexical:.3f}"]
         if overlap:
@@ -701,6 +703,8 @@ class LocalSqliteCoreClient:
             reason.append(f"accepted:{accepted}")
         if downranked:
             reason.append(f"downranked:{downranked}")
+        if runtime_penalty:
+            reason.append(f"runtime-trace:-{runtime_penalty:.2f}")
         evidence = truncate_text(
             f"{row['committed_text']} | context: {row['recent_context']} | source: {row['source']}",
             260,
@@ -785,9 +789,42 @@ def _expand_query_for_local_rerank(query: str) -> str:
     if "squirrel" in lowered or "rime" in lowered or ("输入法" in text and ("候选" in text or "拼音" in text)):
         add("Squirrel", "Rime", "librime", "sidecar", "候选面板", "拼音解析", "词库")
     if "脏拼音" in text or "便拼音" in text or "raw pinyin" in lowered:
-        add("Rime", "librime", "拼音解析", "词库", "raw input")
-    if "本地记忆" in text or "个人记忆" in text or "rag" in lowered:
+        add("Rime", "librime", "拼音解析", "词库", "raw input", "raw pinyin fallback", "rawInputFallback")
+    if "本地记忆" in text or "个人记忆" in text or "rag" in lowered or "隐私" in text or "云端" in text:
         add("local-first", "SQLite", "FTS5", "memory", "personal memory", "本地记忆")
+    if "数字键" in text or ("候选" in text and ("共用" in text or "候选段" in text)):
+        add("Rime candidates", "side candidates", "displayCandidates", "selectionAction", "候选编号")
+    if "raw pinyin" in lowered or "fallback" in lowered or ("跳过" in text and ("side" in lowered or "刷新" in text)):
+        add("raw pinyin fallback", "rawInputFallback", "sideCandidatesEnabled", "triggerDecision")
+    if "缓存" in text and ("sidecar" in lowered or "重复" in text or "刷新" in text or "命中" in text):
+        add("rimeSuggestCache", "cacheStats", "cache hit", "suggestion cache", "semantic cache")
+    if "side slots" in lowered or ("模型" in text and ("占满" in text or "候选" in text)):
+        add("maxModelSideCandidates", "maxSideCandidates", "side slots", "model side candidates")
+    if "历史输入" in text or ("上下文" in text and "模型" in text):
+        add("historyContext", "recent_input_context", "recent input context", "build_prediction_context")
+    if "wisdom-weasel" in lowered or ("快速预测" in text and ("靠" in text or "什么" in text)):
+        add("KV cache", "batch", "batch candidates", "llama.cpp", "LlamaCppProvider", "stale guard")
+    if "openai compatible" in lowered or "openai-compatible" in lowered or ("predictor" in lowered and ("接" in text or "本地" in text)):
+        add("RAG_IME_PREDICTOR_BASE_URL", "RAG_IME_PREDICTOR_MODEL", "openai-compatible", "predictor")
+    if "旧候选" in text or "旧输入" in text or "覆盖" in text or "stale" in lowered:
+        add("requestSeq", "stale", "stale guard", "request sequence", "latest request")
+    if "trigger" in lowered or "触发" in text or ("什么时候" in text and ("跳过" in text or "刷新" in text)):
+        add("triggerDecision", "sideCandidatesEnabled", "shouldRefresh")
+    if "runtime 噪声" in text or "runtime noise" in lowered or "tool call" in lowered or ("过滤" in text and "codex" in lowered):
+        add(
+            "runtime noise",
+            "tool call output",
+            "tool output",
+            "tool-output",
+            "developer prompts",
+            "system prompts",
+            "AGENTS",
+            "environment",
+            "sandbox",
+            "shell output",
+            "shell 输出",
+            "Codex history import",
+        )
 
     return compact_whitespace(" ".join([text, *extras]))
 
@@ -845,6 +882,21 @@ def _bm25_relevance(bm25_score: float) -> float:
     if bm25_score < 0:
         return min(4.0, math.log1p(-bm25_score))
     return 1.0 / (1.0 + bm25_score)
+
+
+def _runtime_trace_penalty(text: str) -> float:
+    """Downrank raw Codex tool transcripts without deleting useful code identifiers."""
+
+    stripped = compact_whitespace(text)
+    lowered = stripped.lower()
+    prefix = lowered[:120]
+    if re.match(r"^\[\d+\]\s+tool\s+", stripped):
+        return 0.35
+    if prefix.startswith("tool ") and (" call" in prefix or " result" in prefix):
+        return 0.35
+    if "chunk id:" in lowered and ("process exited" in lowered or "wall time:" in lowered):
+        return 0.35
+    return 0.0
 
 
 def _copy_suggestions(suggestions: list[InputSuggestion] | tuple[InputSuggestion, ...]) -> list[InputSuggestion]:
