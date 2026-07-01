@@ -13,6 +13,7 @@ REQUIRE_SIDECAR="${RAG_IME_DOCTOR_REQUIRE_SIDECAR:-0}"
 REQUIRE_XCODE="${RAG_IME_DOCTOR_REQUIRE_XCODE:-0}"
 REQUIRE_PREDICTOR="${RAG_IME_DOCTOR_REQUIRE_PREDICTOR:-0}"
 REQUIRE_TRYOUT="${RAG_IME_DOCTOR_REQUIRE_TRYOUT:-0}"
+REQUIRE_HITOOLBOX_ENABLED="${RAG_IME_DOCTOR_REQUIRE_HITOOLBOX_ENABLED:-${RAG_IME_REQUIRE_HITOOLBOX_ENABLED:-0}}"
 CHECK_LAUNCHD="${RAG_IME_DOCTOR_CHECK_LAUNCHD:-1}"
 REQUIRE_INPUT_SOURCE_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE:-}"
 REQUIRE_INPUT_SOURCE="${REQUIRE_INPUT_SOURCE_CONFIGURED:-0}"
@@ -70,6 +71,7 @@ printf 'sidecar: %s\n' "$SIDECAR_BASE_URL"
 printf 'squirrel_app: %s\n' "$SQUIRREL_APP"
 printf 'squirrel_input_source: %s\n' "$SQUIRREL_INPUT_SOURCE_ID"
 printf 'tryout_readiness: %s\n' "$REQUIRE_TRYOUT"
+printf 'require_hitoolbox_enabled: %s\n' "$REQUIRE_HITOOLBOX_ENABLED"
 printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
 printf 'DEVELOPER_DIR: %s\n\n' "${DEVELOPER_DIR:-<unset>}"
 
@@ -143,6 +145,7 @@ fi
 check_macos_input_source() {
   local app="$1"
   local input_source_id="$2"
+  local tmpdir
   local out
   local status
 
@@ -153,9 +156,14 @@ check_macos_input_source() {
     return
   fi
 
-  out="$(mktemp /tmp/rag-ime-tis-input-source.out.XXXXXX)"
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/rag-ime-tis-input-source.out.XXXXXX")"
+  out="$tmpdir/out"
   set +e
-  "$ROOT/scripts/check_macos_input_source.sh" "$input_source_id" >"$out" 2>&1
+  if bool_true "$REQUIRE_HITOOLBOX_ENABLED"; then
+    "$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$input_source_id" >"$out" 2>&1
+  else
+    "$ROOT/scripts/check_macos_input_source.sh" "$input_source_id" >"$out" 2>&1
+  fi
   status=$?
   set -e
 
@@ -166,7 +174,7 @@ check_macos_input_source() {
   else
     require_or_warn "$REQUIRE_INPUT_SOURCE" "macOS input source is not registered: $(cat "$out")"
   fi
-  rm -f "$out"
+  rm -rf "$tmpdir"
 }
 
 if bool_true "$REQUIRE_INPUT_SOURCE" || [[ -d "$SQUIRREL_APP" ]]; then
