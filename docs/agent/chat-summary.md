@@ -1211,3 +1211,21 @@ Verification:
 
 Next:
 - Use the macOS input menu to switch to Squirrel and run continuous typing validation in a normal text app.
+
+### 2026-07-01
+Topic:
+- Make Squirrel visible in macOS System Settings and tighten install verification.
+
+Changes:
+- Added HIToolbox enabled-source verification on top of TIS registration.
+- Added a local helper to back up and update `com.apple.HIToolbox` for Squirrel, then re-register the input source.
+- Added selected-source/wait scripts for the final real typing gate.
+- Updated README and setup docs so install readiness requires `hitoolboxEnabled=true`.
+
+Verification:
+- System Settings shows `鼠须管`.
+- Strict doctor with HIToolbox requirement passed with no failures or warnings.
+- Full 142-test suite passed in non-sandbox mode.
+
+Next:
+- User must switch from the menu bar input menu to `鼠须管` / Squirrel, then rerun `scripts/wait_squirrel_typing_ready.sh` and type in a normal editor.

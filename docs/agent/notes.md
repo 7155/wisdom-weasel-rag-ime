@@ -1745,3 +1745,25 @@ Verification:
 
 Status:
 - System input-source enablement is now machine-verifiable. Remaining real-use validation is switching to Squirrel from the macOS input menu and typing continuously in a normal app.
+
+### 2026-07-01 18:45 CST
+Problem:
+- The user still could not see/use the installed input method in System Settings even though TIS reported `Squirrel.Hans enabled=true selectable=true`.
+- The earlier doctor check conflated "TIS can enumerate the source" with "the current user's HIToolbox enabled input-source list contains the source".
+
+Changes:
+- Added `hitoolboxEnabled` to `scripts/check_macos_input_source.sh`.
+- Added `scripts/enable_squirrel_hitoolbox_input_source.sh` as a local debug helper that backs up `com.apple.HIToolbox`, appends the Squirrel bundle/mode entries, restarts `cfprefsd`, re-registers Squirrel, and re-runs the strict check.
+- Added `scripts/select_macos_input_source.sh` and `scripts/wait_squirrel_typing_ready.sh` for selected-source validation.
+- Updated README and macOS setup docs to distinguish TIS registration, HIToolbox enablement, and active input-source selection.
+- Fixed doctor temp-file handling and `set -u` empty-array failure in the input-source check path.
+
+Verification:
+- System Settings now shows `鼠须管` / Squirrel in installed input methods.
+- `RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 RAG_IME_DOCTOR_REQUIRE_HITOOLBOX_ENABLED=1 RAG_IME_SQUIRREL_APP="/Library/Input Methods/Squirrel.app" scripts/doctor_squirrel_integration.sh` passed with `failures=0 warnings=0`.
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests` passed with 142 tests in non-sandbox mode.
+- `git diff --check` passed.
+
+Status:
+- Installed and enabled state is verified.
+- Active source selection is still manual: current input source was ABC after timeout, so continuous real typing validation still requires switching from the macOS input menu to Squirrel.

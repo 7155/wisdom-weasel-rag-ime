@@ -323,9 +323,34 @@ Use `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"` only when a
 machine-wide install is required.
 
 The strict doctor verifies that the installed macOS input source
-`im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. The
-active selected source may still need to be changed from the macOS input menu
-before the real continuous typing test.
+`im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. That
+is the TIS registration check. For the state visible in System Settings, require
+the current user's HIToolbox enabled-source list as well:
+
+```bash
+RAG_IME_REQUIRE_HITOOLBOX_ENABLED=1 \
+  scripts/check_macos_input_source.sh im.rime.inputmethod.Squirrel.Hans
+```
+
+If this reports `hitoolboxEnabled=false`, the bundle is registered but not in
+the user's enabled input-method list. For a local debug machine, run:
+
+```bash
+scripts/enable_squirrel_hitoolbox_input_source.sh
+```
+
+The helper creates a Desktop backup of `com.apple.HIToolbox`, adds Squirrel's
+bundle/mode entries, restarts `cfprefsd`, and re-registers the source. Prefer the
+normal System Settings "+" flow for a distributable product; the helper exists to
+unblock local iteration.
+
+The active selected source may still need to be changed from the macOS input
+menu before the real continuous typing test. Use this wait gate after switching
+from the input menu:
+
+```bash
+scripts/wait_squirrel_typing_ready.sh
+```
 
 ## Environment
 

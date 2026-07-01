@@ -191,19 +191,50 @@ RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
 ```
 
 In strict mode the doctor also checks macOS Text Input Services and should report
-`im.rime.inputmethod.Squirrel.Hans enabled=true selectable=true`. Terminal-based
-selection can still fail if macOS refuses to switch the active foreground input
-source from a background command; use the input menu for the continuous typing
-test.
+`im.rime.inputmethod.Squirrel.Hans enabled=true selectable=true`. This is not
+enough to prove the input method is visible in System Settings. Add the
+HIToolbox gate when verifying installation on the user's machine:
+
+```bash
+RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 \
+RAG_IME_DOCTOR_REQUIRE_HITOOLBOX_ENABLED=1 \
+RAG_IME_SQUIRREL_APP="/Library/Input Methods/Squirrel.app" \
+  scripts/doctor_squirrel_integration.sh
+```
+
+If the output says `hitoolboxEnabled=false`, Squirrel is registered but not
+present in the current user's enabled input-source list. The normal route is:
+System Settings -> Keyboard -> Input Sources -> "+" -> Chinese, Simplified ->
+Squirrel - Simplified. For local debug only, the repo includes a helper:
+
+```bash
+scripts/enable_squirrel_hitoolbox_input_source.sh
+```
+
+It backs up `com.apple.HIToolbox` to the Desktop, appends Squirrel's bundle/mode
+entries, restarts `cfprefsd`, and re-runs the strict source check. After that,
+run `Squirrel --register-input-source` again if TIS temporarily drops the source.
+
+Terminal-based selection can still fail if macOS refuses to switch the active
+foreground input source from a background command; use the input menu for the
+continuous typing test. After switching from the input menu, use:
+
+```bash
+scripts/wait_squirrel_typing_ready.sh
+```
+
+It waits until `im.rime.inputmethod.Squirrel.Hans selected=true`, then confirms
+the sidecar health and configured local model lane.
 
 Manual continuous-use verification:
 
 1. Open System Settings -> Keyboard -> Input Sources and confirm Squirrel is present.
-2. Select Squirrel, open a normal editor, and type at least 20 mixed Chinese/English prompts.
-3. Confirm normal Rime candidates still occupy the primary candidate slots.
-4. Confirm RAG/model side candidates appear only after stable Rime candidates or idle semantic input.
-5. Select at least one side candidate by number key and confirm `/rime-select` records the commit in the sidecar logs.
-6. Rerun `python3 -m rag_ime.cli --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" quality-gate --force-side-candidates --require-suggestion-cache`.
+2. Select Squirrel from the macOS input menu and wait for `scripts/wait_squirrel_typing_ready.sh` to pass.
+3. Open a normal editor and type at least 20 mixed Chinese/English prompts.
+4. Confirm normal Rime candidates still occupy the primary candidate slots.
+5. Confirm RAG/model side candidates appear only after stable Rime candidates or idle semantic input.
+6. Select at least one side candidate by number key and confirm `/rime-select` records the commit in the sidecar logs.
+7. Rerun `python3 -m rag_ime.cli --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" quality-gate --force-side-candidates --require-suggestion-cache`.
 
 If the project opens in Xcode but the script fails, inspect the exact
 `xcodebuild` output first; the wrapper checks the patched files and config before

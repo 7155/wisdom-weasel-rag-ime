@@ -229,8 +229,31 @@ default, writes the managed RAG-IME block into
 `~/Library/Rime/squirrel.custom.yaml`, ad-hoc signs the copied bundle for local
 use, and runs Squirrel postinstall unless `RAG_IME_SQUIRREL_SKIP_POSTINSTALL=1`
 is set. The strict doctor verifies that the macOS TIS source
-`im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. For
-a machine-wide install, set `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"`.
+`im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. This
+only proves Text Input Services can enumerate the source. For real user-level
+install readiness, also require `hitoolboxEnabled=true`:
+
+```bash
+RAG_IME_REQUIRE_HITOOLBOX_ENABLED=1 \
+  scripts/check_macos_input_source.sh im.rime.inputmethod.Squirrel.Hans
+```
+
+For a machine-wide install, set `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"`.
+If System Settings still does not show Squirrel after registration, run the local
+debug helper once. It backs up `com.apple.HIToolbox` to the Desktop, adds the
+Squirrel entries to the current user's enabled input-source list, restarts
+`cfprefsd`, and re-runs the strict source check:
+
+```bash
+scripts/enable_squirrel_hitoolbox_input_source.sh
+```
+
+Before a real typing test, switch to `Squirrel - Simplified` from the macOS input
+menu and wait for the selected-source plus sidecar check:
+
+```bash
+scripts/wait_squirrel_typing_ready.sh
+```
 
 See `docs/xcode-squirrel-setup.md` for the external-disk install route and the `DEVELOPER_DIR`/`xcode-select` commands.
 
