@@ -130,7 +130,7 @@ check_duplicate_squirrel_apps() {
     [[ "$bundle_id" == "$configured_bundle_id" ]] || continue
     if ! squirrel_app_has_mixed_frontend_trace "$candidate"; then
       found_stale=1
-      require_or_warn "$REQUIRE_PATCHED_APP" "stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace: $candidate"
+      require_or_warn "$REQUIRE_PATCHED_APP" "stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace: $candidate; replace it with the patched user app using scripts/replace_system_squirrel_app.sh"
     fi
   done
 

@@ -599,6 +599,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             "[WARN] stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace",
             result.stdout,
         )
+        self.assertIn("scripts/replace_system_squirrel_app.sh", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_fails_required_patched_app_when_stale_duplicate_exists(self) -> None:
@@ -642,6 +643,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             "[FAIL] stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace",
             result.stdout,
         )
+        self.assertIn("scripts/replace_system_squirrel_app.sh", result.stdout)
         self.assertIn("summary: failures=", result.stdout)
 
     def test_doctor_ignores_original_squirrel_when_configured_app_uses_branded_bundle_id(self) -> None:
