@@ -226,15 +226,29 @@ scripts/wait_squirrel_typing_ready.sh
 It waits until `im.rime.inputmethod.Squirrel.Hans selected=true`, then confirms
 the sidecar health and configured local model lane.
 
+After that, run the combined machine gate:
+
+```bash
+python3 -m rag_ime.cli \
+  --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" \
+  squirrel-tryout-gate \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --report-path /tmp/rag-ime-squirrel-tryout-report.json
+```
+
+This gate is intentionally read-only. It verifies the selected input source,
+sidecar health, and the backend/Rime-sidecar quality gate. It does not install,
+enable, switch, or drive the GUI.
+
 Manual continuous-use verification:
 
 1. Open System Settings -> Keyboard -> Input Sources and confirm Squirrel is present.
 2. Select Squirrel from the macOS input menu and wait for `scripts/wait_squirrel_typing_ready.sh` to pass.
-3. Open a normal editor and type at least 20 mixed Chinese/English prompts.
-4. Confirm normal Rime candidates still occupy the primary candidate slots.
-5. Confirm RAG/model side candidates appear only after stable Rime candidates or idle semantic input.
-6. Select at least one side candidate by number key and confirm `/rime-select` records the commit in the sidecar logs.
-7. Rerun `python3 -m rag_ime.cli --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" quality-gate --force-side-candidates --require-suggestion-cache`.
+3. Run `squirrel-tryout-gate` and keep `/tmp/rag-ime-squirrel-tryout-report.json`.
+4. Open a normal editor and type at least 20 mixed Chinese/English prompts.
+5. Confirm normal Rime candidates still occupy the primary candidate slots.
+6. Confirm RAG/model side candidates appear only after stable Rime candidates or idle semantic input.
+7. Select at least one side candidate by number key and confirm `/rime-select` records the commit in the sidecar logs.
 
 If the project opens in Xcode but the script fails, inspect the exact
 `xcodebuild` output first; the wrapper checks the patched files and config before

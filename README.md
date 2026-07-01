@@ -263,6 +263,24 @@ menu and wait for the selected-source plus sidecar check:
 scripts/wait_squirrel_typing_ready.sh
 ```
 
+After switching to Squirrel, run the machine-readable tryout gate:
+
+```bash
+python3 -m rag_ime.cli \
+  --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" \
+  squirrel-tryout-gate \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --report-path /tmp/rag-ime-squirrel-tryout-report.json
+```
+
+`squirrel-tryout-gate` first checks `readinessState=ready` for the active macOS
+input source, then checks the running sidecar `/health`, then runs the existing
+backend `quality-gate` with `--require-input-source-ready`. If the input source
+is still `switch`, it fails fast and skips the expensive quality gate. It does
+not install Squirrel, modify HIToolbox, switch input sources, or type into a
+foreground app. The report also includes `manualRequired` for the remaining
+foreground typing and candidate-panel checks.
+
 See `docs/xcode-squirrel-setup.md` for the external-disk install route and the `DEVELOPER_DIR`/`xcode-select` commands.
 
 Show memory action effects:

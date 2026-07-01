@@ -1279,3 +1279,20 @@ Verification:
 
 Next:
 - After the user switches the macOS menu-bar input source to `鼠须管`, rerun `scripts/wait_squirrel_typing_ready.sh` and then the quality gate with `--require-input-source-ready`.
+
+### 2026-07-01
+Topic:
+- Add one-command Squirrel tryout machine gate.
+
+Changes:
+- Added `python3 -m rag_ime.cli squirrel-tryout-gate`.
+- The gate checks input-source readiness, sidecar health, and then the existing backend `quality-gate` with input-source readiness enabled.
+- It fails fast on `readinessState=switch` and can write a report with `--report-path`.
+- README and Xcode setup docs now point to this command after `scripts/wait_squirrel_typing_ready.sh`.
+
+Verification:
+- Tests cover not-selected fast-fail and selected fake-source quality-gate continuation.
+- Real local smoke shows sidecar healthy with `local-ollama qwen3.5:0.8b-mlx`, but input source remains `ABC`, so the tryout gate correctly fails before quality-gate.
+
+Next:
+- Switch active macOS input source to `鼠须管`, then run `squirrel-tryout-gate` and continue with manual 20-prompt typing validation.

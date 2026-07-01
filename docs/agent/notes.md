@@ -1832,3 +1832,22 @@ Verification:
 Status:
 - Debug/debug-gate now gives live feedback while the user switches input sources.
 - Continuous real typing validation is still pending until the active source becomes Squirrel.
+
+### 2026-07-01 20:15 CST
+Problem:
+- After Squirrel became installed and visible, the workflow still required several separate commands: selected-source wait, sidecar health, and backend quality gate.
+- This made it easy to lose the exact machine-readable evidence needed for the real tryout handoff.
+
+Changes:
+- Added `python3 -m rag_ime.cli squirrel-tryout-gate`.
+- The new gate checks input-source readiness first, then sidecar `/health`, then runs the existing `quality-gate` with `--require-input-source-ready`.
+- It fails fast when `readinessState=switch` and skips the expensive quality gate until Squirrel is actually selected.
+- It can write the JSON report with `--report-path`.
+- Updated README and Xcode setup docs to use the tryout gate after `scripts/wait_squirrel_typing_ready.sh`.
+
+Verification:
+- Added CLI tests for the not-selected fast-fail path and the selected fake-input-source path that proceeds into `quality-gate`.
+- Current-machine smoke returned `readinessState=switch`, `sidecar-health passed`, and `quality-gate skipped`; the sidecar reports `local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true`.
+
+Status:
+- The real machine has a ready sidecar/model lane, but the active input source still must be switched from ABC to Squirrel before the tryout gate can pass.
