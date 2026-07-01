@@ -15,6 +15,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             workdir = Path(tmp) / "squirrel"
             env = {
                 **os.environ,
+                "HOME": tmp,
                 "RAG_IME_SQUIRREL_DRY_RUN": "1",
                 "RAG_IME_SQUIRREL_WORKDIR": str(workdir),
                 "RAG_IME_SIDECAR_PORT": "18766",
@@ -31,6 +32,10 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
         self.assertIn("base_ref=2158538", result.stdout)
         self.assertIn("sidecar_url=http://127.0.0.1:18766/api", result.stdout)
         self.assertIn(f"repo_root={root}", result.stdout)
+        self.assertIn(
+            f"db_path={Path(tmp) / 'Library' / 'Application Support' / 'RagIme' / 'rag-ime.sqlite'}",
+            result.stdout,
+        )
 
     def test_prepare_squirrel_workspace_applies_patch_and_writes_config_offline(self) -> None:
         root = Path(__file__).resolve().parents[1]

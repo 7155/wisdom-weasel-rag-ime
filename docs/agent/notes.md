@@ -1697,3 +1697,25 @@ Verification:
 Status:
 - Full suite passed with 137 tests.
 - `ollama list` could not connect because the Ollama server is not running, so this turn did not run a real-model TTFC benchmark.
+
+### 2026-07-01 17:53 CST
+Problem:
+- Xcode became available and the project needed to move from buildable prototype to an installed macOS input-method App bundle.
+- The sidecar LaunchAgent previously hit an intermittent `launchctl bootstrap` I/O error; manual retry succeeded, so the installer needed to be retry-safe.
+- The Squirrel fallback config still defaulted to the repo-local SQLite path while the LaunchAgent used the user Application Support database.
+
+Changes:
+- Added retry/backoff around LaunchAgent `bootstrap` after `bootout`.
+- Changed the generated Squirrel config default DB path to `~/Library/Application Support/RagIme/rag-ime.sqlite`, matching the LaunchAgent sidecar.
+- Installed patched `Squirrel.app` into `~/Library/Input Methods/Squirrel.app`.
+- Re-deployed `~/Library/Rime/squirrel.custom.yaml` with `rag_ime/sidecar_url` and the unified DB path.
+
+Verification:
+- `scripts/install_sidecar_launch_agent.sh` reinstalled the sidecar and reported `health: OK`.
+- `scripts/build_patched_squirrel.sh install` built and installed patched Squirrel.
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 ... scripts/doctor_squirrel_integration.sh` passed with `failures=0 warnings=0`.
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests` passed with 140 tests.
+- `git diff --check` passed.
+
+Status:
+- The project is now installed as a user-level macOS input method bundle; remaining validation is manual System Settings enablement and continuous typing in the real input source.

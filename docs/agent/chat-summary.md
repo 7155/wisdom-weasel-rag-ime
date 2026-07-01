@@ -1175,3 +1175,21 @@ Verification:
 
 Status:
 - Real Ollama model benchmark was not run in this turn because the Ollama server was not running.
+
+### 2026-07-01
+Topic:
+- Install patched Squirrel as the first real macOS input-method App bundle.
+
+Changes:
+- Added LaunchAgent bootstrap retry/backoff so sidecar reinstall survives transient `launchctl` I/O errors.
+- Unified the generated Squirrel fallback DB path with the LaunchAgent sidecar DB under `~/Library/Application Support/RagIme/rag-ime.sqlite`.
+- Built and installed patched `Squirrel.app` into `~/Library/Input Methods`.
+- Re-deployed the Rime `squirrel.custom.yaml` RAG-IME block with `sidecar_url=http://127.0.0.1:8766/api`.
+
+Verification:
+- Sidecar LaunchAgent reinstall reported `health: OK`.
+- Strict Squirrel doctor passed with `failures=0 warnings=0`.
+- Full test suite passed with 140 tests.
+
+Next:
+- Enable Squirrel/Rime in macOS System Settings and do continuous real typing validation with the installed input source.
