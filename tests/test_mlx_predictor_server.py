@@ -78,6 +78,30 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(calls["stream_generate"], 0)
         self.assertGreaterEqual(calls["generate_step"], 2)
 
+    def test_engine_predict_prefers_next_token_logits_candidates(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text='["JSON候选"]',
+            logits_tokens=["A", "现", "测", "本"],
+        )
+        with patch.dict(sys.modules, modules):
+            engine = MlxLmEngine("fake-qwen")
+            payload = engine.predict(
+                current_input="现在",
+                recent_context="本地记忆输入法",
+                max_candidates=3,
+                max_tokens=8,
+                temperature=0.15,
+                top_p=0.85,
+            )
+
+        self.assertEqual(payload["candidateMode"], "next-token-logits")
+        self.assertEqual(payload["candidates"], ["现", "测", "本"])
+        self.assertEqual(payload["rawText"], "现 测 本")
+        self.assertEqual(payload["timing"]["candidateMode"], "next-token-logits")
+        self.assertFalse(payload["timing"]["fallbackJson"])
+        self.assertEqual(payload["candidateScores"][0]["text"], "现")
+        self.assertIn("probability", payload["candidateScores"][0])
+
     def test_health_reports_prepared_prompt_cache_without_claiming_generation_use(self) -> None:
         server, thread = _start_fake_server()
         try:
@@ -165,7 +189,7 @@ class _FakeStreamResponse:
         self.text = text
 
 
-def _fake_mlx_modules(*, generated_text: str):
+def _fake_mlx_modules(*, generated_text: str, logits_tokens: list[str] | None = None):
     calls = {
         "generate_step": 0,
         "load_prompt_cache": 0,
@@ -189,6 +213,11 @@ def _fake_mlx_modules(*, generated_text: str):
 
     def generate_step(prompt, model, max_tokens: int, prompt_cache=None, sampler=None):
         calls["generate_step"] += 1
+        prompt_text = "".join(chr(int(token)) for token in prompt) if isinstance(prompt, list) else ""
+        if sampler is None and "直接从候选文本开始" in prompt_text and logits_tokens:
+            logprobs = _fake_logprobs(logits_tokens)
+            yield _FakeToken(ord(logits_tokens[0])), logprobs
+            return
         if sampler is None:
             yield _FakeToken(0), None
             return
@@ -241,6 +270,14 @@ def _fake_mlx_modules(*, generated_text: str):
         },
         calls,
     )
+
+
+def _fake_logprobs(tokens: list[str]) -> list[float]:
+    token_ids = [ord(token) for token in tokens]
+    logprobs = [-20.0] * (max(token_ids) + 1)
+    for rank, token_id in enumerate(token_ids):
+        logprobs[token_id] = -0.05 - rank
+    return logprobs
 
 
 if __name__ == "__main__":

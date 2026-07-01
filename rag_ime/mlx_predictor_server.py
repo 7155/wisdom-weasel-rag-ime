@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass
@@ -19,6 +21,13 @@ SYSTEM_PROMPT = (
     '返回 JSON 字符串数组, 例如 ["现在","现状"], 不要解释, 不要编号, '
     "不要输出拼音, 不要输出<think>。"
 )
+
+LOGITS_SYSTEM_PROMPT = (
+    "你是中文输入法候选预测器。根据上下文和当前输入, 直接给出最可能上屏的中文候选文本。"
+    "不要解释, 不要编号, 不要 JSON, 不要拼音。"
+)
+
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 
 
 @dataclass(frozen=True)
@@ -78,7 +87,8 @@ class MlxLmEngine:
                 "residentModel": True,
                 "promptCache": _prompt_cache_used_for_generation(prompt_cache),
                 "sequenceFork": False,
-                "batchCandidates": False,
+                "batchCandidates": True,
+                "logitsTopK": True,
                 "serverTiming": True,
             },
         }
@@ -98,6 +108,31 @@ class MlxLmEngine:
         request_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
+        logits_candidates = self.predict_next_token_logits(
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidates=max_candidates,
+            request_metadata=request_metadata,
+        )
+        if logits_candidates["candidates"]:
+            total_ms = int((time.perf_counter() - started) * 1000)
+            return {
+                "ok": True,
+                "model": self.model_id,
+                "rawText": " ".join(logits_candidates["candidates"]),
+                "candidates": logits_candidates["candidates"],
+                "candidateScores": logits_candidates["candidateScores"],
+                "candidateMode": "next-token-logits",
+                "totalMs": total_ms,
+                "promptCache": self.prompt_cache_status(),
+                "timing": {
+                    "candidateMode": "next-token-logits",
+                    "logitsMs": logits_candidates["elapsedMs"],
+                    "fallbackJson": False,
+                },
+                "requestMeta": dict(request_metadata or {}),
+            }
+
         raw_text = "".join(
             self.stream_text(
                 current_input=current_input,
@@ -116,10 +151,84 @@ class MlxLmEngine:
             "model": self.model_id,
             "rawText": raw_text,
             "candidates": candidates,
+            "candidateMode": "json-generation",
             "totalMs": total_ms,
             "promptCache": self.prompt_cache_status(),
+            "timing": {
+                "candidateMode": "json-generation",
+                "fallbackJson": True,
+            },
             "requestMeta": dict(request_metadata or {}),
         }
+
+    def predict_next_token_logits(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_candidates: int,
+        request_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        _ = request_metadata
+        started = time.perf_counter()
+        try:
+            from mlx_lm.generate import generate_step  # type: ignore
+            import mlx.core as mx  # type: ignore
+
+            prompt = self._build_logits_prompt(
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=max_candidates,
+            )
+            tokens = self.tokenizer.encode(prompt)
+            token, logprobs = next(generate_step(mx.array(tokens), self.model, max_tokens=1))
+            candidate_scores = self._candidate_scores_from_logprobs(
+                logprobs,
+                max_candidates=max_candidates,
+                scan_limit=max(64, max_candidates * 24),
+            )
+            return {
+                "candidates": [item["text"] for item in candidate_scores],
+                "candidateScores": candidate_scores,
+                "sampledTokenId": _token_to_int(token),
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+            }
+        except Exception as exc:  # pragma: no cover - depends on local MLX-LM internals
+            return {
+                "candidates": [],
+                "candidateScores": [],
+                "error": exc.__class__.__name__,
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+            }
+
+    def _candidate_scores_from_logprobs(
+        self,
+        logprobs: Any,
+        *,
+        max_candidates: int,
+        scan_limit: int,
+    ) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for token_id in _top_logprob_indices(logprobs, limit=max(1, int(scan_limit))):
+            text = _normalize_logits_candidate_text(self.tokenizer.decode([int(token_id)]))
+            if not text or text in seen:
+                continue
+            if len(text) > 8 or not _CJK_RE.search(text):
+                continue
+            seen.add(text)
+            logprob = _logprob_at(logprobs, int(token_id))
+            item: dict[str, Any] = {
+                "text": text,
+                "tokenId": int(token_id),
+            }
+            if logprob is not None:
+                item["logprob"] = logprob
+                item["probability"] = max(0.0, min(1.0, math.exp(max(-60.0, min(0.0, logprob)))))
+            result.append(item)
+            if len(result) >= max(1, min(10, int(max_candidates))):
+                break
+        return result
 
     def stream_text(
         self,
@@ -247,6 +356,17 @@ class MlxLmEngine:
         return (
             f"{self._stable_prompt_prefix()}"
             f"{self._dynamic_prompt_suffix(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates)}"
+        )
+
+    def _build_logits_prompt(self, *, current_input: str, recent_context: str, max_candidates: int) -> str:
+        return (
+            f"<|im_start|>system\n{LOGITS_SYSTEM_PROMPT}<|im_end|>\n"
+            "<|im_start|>user\n"
+            f"上下文: {recent_context}\n"
+            f"当前输入: {current_input}\n"
+            f"给出 {max_candidates} 个候选中最可能的第一个候选, 直接从候选文本开始。"
+            "\n/no_think"
+            "<|im_end|>\n<|im_start|>assistant\n"
         )
 
     def _prepare_prompt_cache(self) -> None:
@@ -471,6 +591,55 @@ def _token_to_int(token: object) -> int:
     if callable(item):
         return int(item())
     return int(token)  # type: ignore[arg-type]
+
+
+def _top_logprob_indices(logprobs: Any, *, limit: int) -> list[int]:
+    if isinstance(logprobs, (list, tuple)):
+        return sorted(range(len(logprobs)), key=lambda index: float(logprobs[index]), reverse=True)[:limit]
+    try:
+        import mlx.core as mx  # type: ignore
+
+        order = mx.argsort(-logprobs)[:limit]
+        return [int(item) for item in _array_to_list(order)]
+    except Exception:
+        return []
+
+
+def _logprob_at(logprobs: Any, token_id: int) -> float | None:
+    try:
+        if isinstance(logprobs, (list, tuple)):
+            return float(logprobs[token_id])
+        value = logprobs[token_id]
+        item = getattr(value, "item", None)
+        return float(item() if callable(item) else value)
+    except Exception:
+        return None
+
+
+def _array_to_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        result = tolist()
+        return result if isinstance(result, list) else [result]
+    try:
+        return list(value)
+    except TypeError:
+        return [value]
+
+
+def _normalize_logits_candidate_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="ignore")
+    text = compact_whitespace(str(value))
+    text = text.strip(" \t\r\n\"'`[]{}(),，。！？:：;；、|")
+    text = text.replace("<0x0A>", "").replace("<|endoftext|>", "")
+    if "<|" in text or "�" in text:
+        return ""
+    return text
 
 
 def _prompt_cache_used_for_generation(prompt_cache: dict[str, Any]) -> bool:

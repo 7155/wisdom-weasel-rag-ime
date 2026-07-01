@@ -240,7 +240,7 @@ class RimeSidecarTests(unittest.TestCase):
 
         display = response["displayCandidates"]
         self.assertEqual(len(display), 10)
-        self.assertEqual(display[9]["sourceType"], "model")
+        self.assertIn(display[9]["sourceType"], {"model", "rag"})
         self.assertEqual(display[9]["label"], "0")
         self.assertEqual(display[9]["selectionKey"], "0")
         self.assertEqual(display[9]["selectionRank"], 10)
@@ -318,11 +318,12 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(side_items[0]["sourceType"], "model")
         self.assertEqual(side_items[1]["sourceType"], "rag")
         self.assertEqual(response["mergePolicy"]["maxModelSideCandidates"], 2)
-        self.assertFalse(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
+        self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 1)
+        self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
         self.assertTrue(response["triggerDecision"]["shouldRefresh"])
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: stable Rime candidates")
 
-    def test_model_predictions_can_fill_all_side_slots_before_rag_fallback(self) -> None:
+    def test_model_predictions_keep_block_rows_for_rag_when_available(self) -> None:
         response = build_rime_sidecar_response(
             payload={
                 "sessionId": "squirrel-side-balance",
@@ -340,8 +341,43 @@ class RimeSidecarTests(unittest.TestCase):
             predictor=MultiPredictionProvider(),
         )
         side_items = [item for item in response["displayCandidates"] if item["sourceType"] != "rime"]
-        self.assertEqual([item["sourceType"] for item in side_items], ["model", "model", "model"])
+        self.assertEqual([item["sourceType"] for item in side_items], ["model", "rag", "rag"])
+        self.assertEqual(side_items[0]["displayLayout"], "inline")
+        self.assertEqual(side_items[1]["displayLayout"], "block")
         self.assertEqual(len(response["modelPredictions"]), 3)
+
+    def test_eight_slot_panel_uses_horizontal_model_lane_and_vertical_memory_rows(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-mixed-layout",
+                "requestSeq": 11,
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "而且", "comment": "rime"},
+                        {"label": "2", "text": "而去", "comment": "rime"},
+                        {"label": "3", "text": "二期", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+
+        display = response["displayCandidates"]
+        self.assertEqual(len(display), 8)
+        self.assertEqual([item["label"] for item in display], ["1", "2", "3", "4", "5", "6", "7", "8"])
+        self.assertEqual([item["sourceType"] for item in display[:5]], ["model"] * 5)
+        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline"] * 5)
+        self.assertEqual([item["displayLane"] for item in display[:5]], ["model"] * 5)
+        self.assertEqual([item["sourceType"] for item in display[5:]], ["rag", "rag", "rag"])
+        self.assertEqual([item["displayLayout"] for item in display[5:]], ["block", "block", "block"])
+        self.assertEqual([item["displayLane"] for item in display[5:]], ["memory", "memory", "memory"])
+        self.assertFalse(any(item["sourceType"] == "rime" for item in display))
+        self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 3)
+        self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
 
     def test_predictor_cooldown_skips_second_rime_refresh_but_keeps_rag(self) -> None:
         delegate = FailingPredictionProvider()

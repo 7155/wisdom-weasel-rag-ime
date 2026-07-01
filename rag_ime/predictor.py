@@ -472,6 +472,8 @@ class MlxPredictionServiceProvider:
                     "profile": self.config.profile,
                     "prompt_mode": self.config.prompt_mode,
                     "raw_text": "\n".join(raw_texts),
+                    "candidate_mode": str(payload.get("candidateMode") or ""),
+                    "candidate_scores": payload.get("candidateScores", []),
                     "prompt_cache": payload.get("promptCache", {}),
                     "server_timing": payload.get("timing", {}),
                     "requestMeta": request_meta,
@@ -1663,7 +1665,8 @@ def _prediction_provider_capabilities(provider_name: str) -> dict[str, bool]:
             "residentModel": True,
             "promptCache": False,
             "sequenceFork": False,
-            "batchCandidates": False,
+            "batchCandidates": True,
+            "logitsTopK": True,
             "serverTiming": True,
         }
     if provider_name == "local-ollama":
@@ -1673,6 +1676,7 @@ def _prediction_provider_capabilities(provider_name: str) -> dict[str, bool]:
             "promptCache": False,
             "sequenceFork": False,
             "batchCandidates": False,
+            "logitsTopK": False,
             "serverTiming": True,
         }
     if provider_name == "local-openai-compatible":
@@ -1682,6 +1686,7 @@ def _prediction_provider_capabilities(provider_name: str) -> dict[str, bool]:
             "promptCache": False,
             "sequenceFork": False,
             "batchCandidates": False,
+            "logitsTopK": False,
             "serverTiming": False,
         }
     return {
@@ -1690,6 +1695,7 @@ def _prediction_provider_capabilities(provider_name: str) -> dict[str, bool]:
         "promptCache": False,
         "sequenceFork": False,
         "batchCandidates": False,
+        "logitsTopK": False,
         "serverTiming": False,
     }
 

@@ -433,7 +433,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--require-predictor-capability",
         action="append",
         default=[],
-        choices=("streaming", "residentModel", "promptCache", "sequenceFork", "batchCandidates", "serverTiming"),
+        choices=("streaming", "residentModel", "promptCache", "sequenceFork", "batchCandidates", "logitsTopK", "serverTiming"),
         help="Require a local model provider capability. Repeat for Wisdom-Weasel-style gates.",
     )
     quality_gate.add_argument("--include-cases", action="store_true", help="Include full per-case eval details in the quality-gate JSON")
@@ -512,7 +512,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--require-predictor-capability",
         action="append",
         default=[],
-        choices=("streaming", "residentModel", "promptCache", "sequenceFork", "batchCandidates", "serverTiming"),
+        choices=("streaming", "residentModel", "promptCache", "sequenceFork", "batchCandidates", "logitsTopK", "serverTiming"),
     )
     squirrel_tryout_gate.add_argument("--include-cases", action="store_true")
     squirrel_tryout_gate.add_argument("--report-path", default="")
