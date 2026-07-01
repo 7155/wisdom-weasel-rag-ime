@@ -319,6 +319,13 @@ registration, and writes the managed RAG-IME patch block into:
 ~/Library/Rime/squirrel.custom.yaml
 ```
 
+It also runs `scripts/bootstrap_squirrel_user_data.sh`. This matters because a
+Squirrel bundle can be registered and visible in System Settings while the user
+Rime directory still has no compiled schema data. The bootstrap step copies
+bundled Rime data and Plum output into `~/Library/Rime`, runs `Squirrel --build`
+and `--reload` there, and verifies the expected `build/` artifacts before the
+first typing test.
+
 Use `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"` only when a
 machine-wide install is required.
 
@@ -333,16 +340,19 @@ RAG_IME_REQUIRE_HITOOLBOX_ENABLED=1 \
 ```
 
 If this reports `hitoolboxEnabled=false`, the bundle is registered but not in
-the user's enabled input-method list. For a local debug machine, run:
+all user input-source preference lists macOS uses. For a local debug machine,
+run:
 
 ```bash
 scripts/enable_squirrel_hitoolbox_input_source.sh
 ```
 
-The helper creates a Desktop backup of `com.apple.HIToolbox`, adds Squirrel's
-bundle/mode entries, restarts `cfprefsd`, and re-registers the source. Prefer the
-normal System Settings "+" flow for a distributable product; the helper exists to
-unblock local iteration.
+The helper creates Desktop backups of `com.apple.HIToolbox` and
+`com.apple.inputsources`, tries to add Squirrel's bundle/mode entries to both,
+restarts `cfprefsd`, and re-registers the source. Prefer the normal System
+Settings "+" flow for a distributable product; on macOS 27 the
+`com.apple.inputsources` third-party list may still require that UI route. If
+the check prints `thirdPartyEnabled=false`, add Squirrel from System Settings.
 
 The active selected source may still need to be changed from the macOS input
 menu before the real continuous typing test. Use this wait gate after switching

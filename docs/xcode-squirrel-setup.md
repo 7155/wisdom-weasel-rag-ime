@@ -165,7 +165,22 @@ The `install` action then:
 - copies the built `Squirrel.app` to `~/Library/Input Methods` by default;
 - ad-hoc signs the copied app with `codesign --force --deep --sign -` unless `RAG_IME_SQUIRREL_SKIP_CODESIGN=1` is set;
 - writes a managed `rag_ime/*` patch block into `~/Library/Rime/squirrel.custom.yaml`;
-- runs Squirrel `scripts/postinstall` so the input source is registered, built, and enabled.
+- bootstraps `~/Library/Rime` with bundled Squirrel data and Plum output, then runs `Squirrel --build` and `--reload` from the user Rime directory;
+- runs Squirrel `scripts/postinstall` so the input source is registered and enabled.
+
+The user-data bootstrap is required even when macOS already lists Squirrel in
+System Settings. A bundle can be registered while `~/Library/Rime` still lacks
+compiled schemas, which makes the selected input method produce no normal
+candidate output. The bootstrap command is:
+
+```bash
+scripts/bootstrap_squirrel_user_data.sh
+```
+
+It verifies build artifacts such as `~/Library/Rime/build/default.yaml` and
+`~/Library/Rime/build/luna_pinyin.table.bin`, and it treats Squirrel log lines
+like `missing input schema` or `failed to save config` as install failures even
+when the executable exits with status 0.
 
 Useful switches:
 
@@ -203,7 +218,7 @@ RAG_IME_SQUIRREL_APP="/Library/Input Methods/Squirrel.app" \
 ```
 
 If the output says `hitoolboxEnabled=false`, Squirrel is registered but not
-present in the current user's enabled input-source list. The normal route is:
+present in every current-user input-source list macOS uses. The normal route is:
 System Settings -> Keyboard -> Input Sources -> "+" -> Chinese, Simplified ->
 Squirrel - Simplified. For local debug only, the repo includes a helper:
 
@@ -211,9 +226,13 @@ Squirrel - Simplified. For local debug only, the repo includes a helper:
 scripts/enable_squirrel_hitoolbox_input_source.sh
 ```
 
-It backs up `com.apple.HIToolbox` to the Desktop, appends Squirrel's bundle/mode
-entries, restarts `cfprefsd`, and re-runs the strict source check. After that,
-run `Squirrel --register-input-source` again if TIS temporarily drops the source.
+It backs up `com.apple.HIToolbox` and `com.apple.inputsources` to the Desktop,
+tries to append Squirrel's bundle/mode entries to both domains, restarts
+`cfprefsd`, and re-runs the strict source check. On macOS 27 the third-party
+`com.apple.inputsources` domain may reject command-line writes. If the check
+prints `thirdPartyEnabled=false`, use the System Settings "+" flow; otherwise
+the input menu can keep showing another third-party input method even while TIS
+reports Squirrel as registered/selectable.
 
 Terminal-based selection can still fail if macOS refuses to switch the active
 foreground input source from a background command; use the input menu for the

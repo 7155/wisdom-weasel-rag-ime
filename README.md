@@ -235,8 +235,12 @@ scripts/build_patched_squirrel.sh install
 The `install` action copies `Squirrel.app` into `~/Library/Input Methods` by
 default, writes the managed RAG-IME block into
 `~/Library/Rime/squirrel.custom.yaml`, ad-hoc signs the copied bundle for local
-use, and runs Squirrel postinstall unless `RAG_IME_SQUIRREL_SKIP_POSTINSTALL=1`
-is set. The strict doctor verifies that the macOS TIS source
+use, bootstraps user Rime data with `scripts/bootstrap_squirrel_user_data.sh`,
+and runs Squirrel postinstall unless `RAG_IME_SQUIRREL_SKIP_POSTINSTALL=1`
+is set. The bootstrap step copies Squirrel `SharedSupport` data plus missing
+Plum output into `~/Library/Rime`, runs `Squirrel --build` and `--reload` from
+the user Rime directory, and fails on silent build errors such as
+`missing input schema`. The strict doctor verifies that the macOS TIS source
 `im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. This
 only proves Text Input Services can enumerate the source. For real user-level
 install readiness, also require `hitoolboxEnabled=true`:
@@ -248,13 +252,19 @@ RAG_IME_REQUIRE_HITOOLBOX_ENABLED=1 \
 
 For a machine-wide install, set `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"`.
 If System Settings still does not show Squirrel after registration, run the local
-debug helper once. It backs up `com.apple.HIToolbox` to the Desktop, adds the
-Squirrel entries to the current user's enabled input-source list, restarts
-`cfprefsd`, and re-runs the strict source check:
+debug helper once. It backs up `com.apple.HIToolbox` and
+`com.apple.inputsources` to the Desktop, tries to add the Squirrel entries to
+both the HIToolbox enabled-source list and the macOS third-party input-source
+list, restarts `cfprefsd`, and re-runs the strict source check:
 
 ```bash
 scripts/enable_squirrel_hitoolbox_input_source.sh
 ```
+
+On macOS 27, System Settings may still require the UI route for the third-party
+input-source list: Keyboard -> Input Sources -> Add -> Chinese, Simplified ->
+Squirrel. If the check prints `thirdPartyEnabled=false`, the command-line helper
+could not make System Settings show Squirrel and the UI Add path is required.
 
 Before a real typing test, switch to `Squirrel - Simplified` from the macOS input
 menu and wait for the selected-source plus sidecar check:

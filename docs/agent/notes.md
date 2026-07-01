@@ -1907,3 +1907,38 @@ Verification:
 Status:
 - The installed Squirrel/Rime frontend, real Rime config, persisted sidecar service, and sidecar candidate payload are now separately machine-verifiable.
 - Continuous real typing validation is still pending until the active input source becomes `鼠须管`.
+
+### 2026-07-01 20:01 CST
+Problem:
+- Squirrel/鼠须管 was visible in macOS input sources, but selecting it did not produce normal typing output.
+- Investigation found `~/Library/Rime` only had `squirrel.custom.yaml`; core schema/data files and `build/` artifacts were missing.
+- Squirrel `--build` against the installed app `SharedSupport` can print errors such as `failed to save config` or `missing input schema` without reliably failing the install path.
+
+Changes:
+- Added `scripts/bootstrap_squirrel_user_data.sh`.
+- The script copies bundled `SharedSupport` data and Plum output into `~/Library/Rime`, runs `Squirrel --build` and `--reload` from the user Rime directory, verifies expected build artifacts, and fails on silent build-error text.
+- Integrated the bootstrap step into `scripts/build_patched_squirrel.sh install` before Squirrel postinstall.
+- Updated README, Xcode setup, and macOS adapter docs to distinguish TIS/HIToolbox visibility from usable Rime schema data.
+
+Verification:
+- Added unit tests for user-data bootstrap success and silent `missing input schema` failure detection.
+- Updated the install-action test to require user Rime build artifacts.
+
+Status:
+- The install chain now has a regression guard for the "input method exists but cannot type" failure.
+- Next local step is to run the bootstrap script against the real installed Squirrel app and then perform manual foreground typing.
+
+### 2026-07-01 20:12 CST
+Problem:
+- After fixing `~/Library/Rime`, System Settings still showed `ABC / 简体拼音 / 豆包输入法` rather than `鼠须管`.
+- `com.apple.HIToolbox` contained Squirrel, but `com.apple.inputsources` still had only Doubao in `AppleEnabledThirdPartyInputSources`.
+- This made the old `hitoolboxEnabled=true` check a false positive for System Settings visibility on macOS 27.
+
+Changes:
+- Tightened `scripts/check_macos_input_source.sh`: third-party input methods now require both HIToolbox and `com.apple.inputsources` entries before reporting `hitoolboxEnabled=true`; it also prints `thirdPartyEnabled`.
+- Updated `scripts/enable_squirrel_hitoolbox_input_source.sh` to try updating both preference domains and to tell the user when the System Settings UI Add path is required.
+- Updated README, Xcode setup, and macOS adapter docs with the macOS 27 third-party input-source caveat.
+
+Findings:
+- `defaults write/import com.apple.inputsources` may not persist command-line changes on this host, while the System Settings UI can still add the source.
+- Real current state after tightening the check: Squirrel is TIS-registered/selectable but `thirdPartyEnabled=false`, so the remaining required step is UI Add -> Chinese, Simplified -> Squirrel.

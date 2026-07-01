@@ -1344,3 +1344,34 @@ Verification:
 
 Next:
 - Click "完成", switch the macOS input menu from ABC to `鼠须管`, then rerun `squirrel-tryout-gate` for the first full selected-source smoke.
+
+### 2026-07-01
+Topic:
+- Fix Squirrel installed-but-no-output failure.
+
+Changes:
+- Added `scripts/bootstrap_squirrel_user_data.sh` to populate `~/Library/Rime` from Squirrel `SharedSupport` and Plum output, run `Squirrel --build`/`--reload`, and verify compiled Rime artifacts.
+- Integrated the bootstrap into `scripts/build_patched_squirrel.sh install`.
+- Updated docs to make user Rime data build a required install condition, separate from TIS/HIToolbox registration.
+
+Verification:
+- New bootstrap tests cover successful user-data build and silent `missing input schema` failure detection.
+- Install-flow test now asserts `~/Library/Rime/build/luna_pinyin.table.bin` exists.
+
+Next:
+- Run the bootstrap against the real installed app, then switch to `鼠须管` from the input menu and test normal `nihao` typing before continuing RAG/model validation.
+
+### 2026-07-01
+Topic:
+- Tighten macOS input-source visibility check for third-party IMEs.
+
+Changes:
+- `scripts/check_macos_input_source.sh` now checks `com.apple.inputsources` for third-party IMEs and prints `thirdPartyEnabled`.
+- `scripts/enable_squirrel_hitoolbox_input_source.sh` now attempts both HIToolbox and inputsources updates and warns when System Settings UI Add is required.
+- Docs now explain that TIS registration/selectability is not enough on macOS 27.
+
+Verification:
+- Real local check now reports Squirrel as TIS enabled/selectable but `hitoolboxEnabled=false thirdPartyEnabled=false` until System Settings adds it to the third-party input-source list.
+
+Next:
+- Confirm or manually perform System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel, then rerun `scripts/check_macos_input_source.sh`.
