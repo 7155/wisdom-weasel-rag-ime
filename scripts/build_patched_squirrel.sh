@@ -134,8 +134,12 @@ require_file "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "patched 
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "patched Squirrel workdir is missing patched SquirrelPanel"
 require_file "$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" "patched Squirrel workdir is missing generated config snippet"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePanelForcesHorizontalLayout" "mixed LLM horizontal-lane guard"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "traceRagImeFrontendEvent" "foreground frontend trace hook"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "panel_text_layout" "actual frontend mixed-layout trace event"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate separator"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal layout for inline LLM candidates"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "traceRagImePanelTextLayout" "actual frontend mixed-layout trace"
 
 deps_ready() {
   [[ -f "$SQUIRREL_WORKDIR/lib/librime.1.dylib" ]] &&

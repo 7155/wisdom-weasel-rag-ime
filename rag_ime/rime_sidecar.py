@@ -450,6 +450,10 @@ def record_rime_side_candidate_selection(
     if not insert_text:
         raise ValueError("candidate insertText/text must not be empty")
 
+    dry_run = _bool(
+        payload.get("dryRun", payload.get("dry_run", payload.get("recordingDisabled"))),
+        default=False,
+    )
     source_type = _string(candidate.get("sourceType") or candidate.get("source_type")) or "side"
     project = _string(payload.get("project")) or default_project
     query = _string(payload.get("query") or payload.get("semanticQuery"))
@@ -466,24 +470,26 @@ def record_rime_side_candidate_selection(
         )
         if item
     )
-    event_id = adapter.commit_text(
-        insert_text,
-        recent_context=recent_context,
-        preedit=preedit,
-        schema_id="rime_sidecar",
-        app=_string(payload.get("app")) or "squirrel",
-        project=project,
-        source=_string(payload.get("source")) or "squirrel_rime_sidecar",
-        candidate_rank=candidate_rank,
-        provider_name=_string(payload.get("providerName")) or f"rime-sidecar:{source_type}",
-        tags=tags,
-    )
+    event_id = ""
+    if not dry_run:
+        event_id = adapter.commit_text(
+            insert_text,
+            recent_context=recent_context,
+            preedit=preedit,
+            schema_id="rime_sidecar",
+            app=_string(payload.get("app")) or "squirrel",
+            project=project,
+            source=_string(payload.get("source")) or "squirrel_rime_sidecar",
+            candidate_rank=candidate_rank,
+            provider_name=_string(payload.get("providerName")) or f"rime-sidecar:{source_type}",
+            tags=tags,
+        )
 
     action_payload: dict[str, object] | None = None
     memory_id = _string(candidate.get("memoryId") or candidate.get("memory_id"))
     suggestion_id = _string(candidate.get("suggestionId") or candidate.get("suggestion_id"))
     source_event_id = _optional_int(candidate.get("sourceEventId") or candidate.get("source_event_id"))
-    if source_type == "rag" and memory_id and suggestion_id and source_event_id is not None:
+    if not dry_run and source_type == "rag" and memory_id and suggestion_id and source_event_id is not None:
         action = core.apply_action(
             MemoryAction(
                 action_id=None,
@@ -505,6 +511,7 @@ def record_rime_side_candidate_selection(
     return {
         "schemaVersion": "rag-ime.rime-selection.v1",
         "ok": True,
+        "dryRun": dry_run,
         "eventId": event_id,
         "project": project,
         "sourceType": source_type,

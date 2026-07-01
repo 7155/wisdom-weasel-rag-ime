@@ -81,6 +81,9 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func ragImeRequestFingerprint() {}",
                         "  func mergedRagImePanelCandidates() {}",
                         "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
+                        "  func traceRagImeFrontendEvent() {}",
+                        '  func traceRagImePanelTextLayout() { _ = "panel_text_layout" }',
+                        '  func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" }',
                         "}",
                     ]
                 )
@@ -102,7 +105,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (upstream / "sources" / "SquirrelPanel.swift").write_text(
-                "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \"\\n\" } }\n",
+                "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \"\\n\" }; func traceRagImePanelTextLayout() {} }\n",
                 encoding="utf-8",
             )
             subprocess.run(["git", "add", "sources"], cwd=upstream, check=True)
@@ -162,6 +165,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             config = (workdir / "rag-ime.squirrel.custom.yaml").read_text(encoding="utf-8")
             self.assertIn("sidecar_url: http://127.0.0.1:19866/api", config)
             self.assertIn("project: offline-test", config)
+            self.assertIn("frontend_trace: true", config)
 
 
 if __name__ == "__main__":

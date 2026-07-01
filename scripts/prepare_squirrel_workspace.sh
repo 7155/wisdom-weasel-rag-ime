@@ -16,6 +16,7 @@ MAX_SIDE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_SIDE_CANDIDATES:-8}"
 LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-180}"
 DEBOUNCE_MS="${RAG_IME_SQUIRREL_DEBOUNCE_MS:-40}"
 TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-1200}"
+FRONTEND_TRACE="${RAG_IME_SQUIRREL_FRONTEND_TRACE:-true}"
 RESET="${RAG_IME_SQUIRREL_RESET:-0}"
 DRY_RUN="${RAG_IME_SQUIRREL_DRY_RUN:-0}"
 
@@ -40,6 +41,7 @@ max_side_candidates=$MAX_SIDE_CANDIDATES
 latency_budget_ms=$LATENCY_BUDGET_MS
 debounce_ms=$DEBOUNCE_MS
 timeout_ms=$TIMEOUT_MS
+frontend_trace=$FRONTEND_TRACE
 EOF
   exit 0
 fi
@@ -97,8 +99,12 @@ require_patch_text "sources/SquirrelInputController.swift" "selectRagImeSideCand
 require_patch_text "sources/SquirrelInputController.swift" "ragImeRequestFingerprint" "stale response fingerprint guard"
 require_patch_text "sources/SquirrelInputController.swift" "mergedRagImePanelCandidates" "Rime and side candidate display merge"
 require_patch_text "sources/SquirrelInputController.swift" "ragImePanelForcesHorizontalLayout" "LLM horizontal-lane layout guard"
+require_patch_text "sources/SquirrelInputController.swift" "traceRagImeFrontendEvent" "foreground frontend trace hook"
+require_patch_text "sources/SquirrelInputController.swift" "panel_text_layout" "actual frontend mixed-layout trace event"
+require_patch_text "sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
 require_patch_text "sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate layout"
 require_patch_text "sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal panel layout for LLM inline candidates"
+require_patch_text "sources/SquirrelPanel.swift" "traceRagImePanelTextLayout" "actual frontend mixed-layout trace"
 require_patch_text "sources/Main.swift" "static let appDir = Bundle.main.bundleURL" "dynamic input-source registration bundle path"
 
 CONFIG_PATH="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml"
@@ -114,6 +120,7 @@ MAX_SIDE_CANDIDATES="$MAX_SIDE_CANDIDATES" \
 LATENCY_BUDGET_MS="$LATENCY_BUDGET_MS" \
 DEBOUNCE_MS="$DEBOUNCE_MS" \
 TIMEOUT_MS="$TIMEOUT_MS" \
+FRONTEND_TRACE="$FRONTEND_TRACE" \
 "$PYTHON_EXECUTABLE" - <<'PY'
 import os
 from pathlib import Path
@@ -131,6 +138,7 @@ rag_ime:
   latency_budget_ms: {os.environ["LATENCY_BUDGET_MS"]}
   debounce_ms: {os.environ["DEBOUNCE_MS"]}
   timeout_ms: {os.environ["TIMEOUT_MS"]}
+  frontend_trace: {os.environ["FRONTEND_TRACE"]}
 """
 Path(os.environ["CONFIG_PATH"]).write_text(payload, encoding="utf-8")
 PY

@@ -168,6 +168,7 @@ for key in (
     "latency_budget_ms",
     "debounce_ms",
     "timeout_ms",
+    "frontend_trace",
 ):
     if key in values:
         managed_lines.append(f'  "rag_ime/{key}": {render_value(values[key])}')

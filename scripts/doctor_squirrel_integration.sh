@@ -345,6 +345,7 @@ try:
     with urllib.request.urlopen(request, timeout=2.5) as response:
         result = json.loads(response.read().decode("utf-8"))
     select_payload = {
+        "dryRun": True,
         "candidate": {
             "label": "2",
             "text": "doctor side candidate",
