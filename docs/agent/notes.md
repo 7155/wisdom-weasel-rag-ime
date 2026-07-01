@@ -2424,3 +2424,21 @@ Verification:
 
 Status:
 - Remaining blocker is still the stale root-owned `/Library/Input Methods/Squirrel.app`, which requires the user to run `scripts/replace_system_squirrel_app.sh` and enter the Mac admin password.
+
+### 2026-07-02 03:31 CST
+Problem:
+- `scripts/replace_system_squirrel_app.sh` replaced the system app but did not make the post-copy strict doctor gate mandatory.
+- A user could enter the admin password, copy the app, and still miss a stale duplicate, bad copy, or LaunchAgent model drift until a later manual doctor run.
+
+Changes:
+- `replace_system_squirrel_app.sh` now verifies the target app contains the mixed-layout patch immediately after copy.
+- The replacement script now runs strict doctor without foreground trace by default, with `RAG_IME_SQUIRREL_APP` set to the system target and duplicate candidates limited to source+target.
+- Added `RAG_IME_SQUIRREL_REPLACE_RUN_DOCTOR=0` as a narrow escape hatch for installer debugging.
+- Added tests with fake `sudo`, `ditto`, input-source scripts, and doctor to prove post-copy doctor env wiring and failure when the copied target lacks patch markers.
+
+Verification:
+- `bash -n scripts/replace_system_squirrel_app.sh` passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_replace_system_squirrel_app` passed: 2 tests.
+
+Status:
+- User still needs to run `scripts/replace_system_squirrel_app.sh` with admin password; after this change, that single command also performs the non-foreground strict runtime gate.

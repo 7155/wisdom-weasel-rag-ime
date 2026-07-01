@@ -393,6 +393,9 @@ scripts/replace_system_squirrel_app.sh
 
 The script keeps a timestamped backup under `/Library/Input Methods/` and
 restarts `Squirrel` after copying so the next panel uses the patched frontend.
+It also runs strict doctor without the foreground trace gate by default. That
+post-check proves the system copy has the mixed-layout patch, the stale duplicate
+is gone, and launchd will restart the same sidecar/MLX model configuration.
 
 The strict doctor verifies that the installed macOS input source
 `im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. That

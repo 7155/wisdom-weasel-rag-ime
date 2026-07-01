@@ -1716,3 +1716,19 @@ Verification:
 
 Next:
 - User must run `scripts/replace_system_squirrel_app.sh` with admin password, then rerun foreground trace validation for horizontal LLM row plus vertical RAG rows.
+
+### 2026-07-02
+Topic:
+- Make system Squirrel replacement self-verifying.
+
+Changes:
+- `scripts/replace_system_squirrel_app.sh` now checks the copied target app for mixed-layout patch markers.
+- The script runs strict doctor without foreground trace by default after registering/selecting the input source.
+- Added tests for post-copy doctor wiring and copied-target patch-marker failure.
+
+Verification:
+- Replacement script syntax check passed.
+- Focused replacement-script tests passed: 2 tests.
+
+Next:
+- User can run `scripts/replace_system_squirrel_app.sh` once with admin password; the script will now perform the non-foreground strict gate automatically.

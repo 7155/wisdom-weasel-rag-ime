@@ -223,8 +223,12 @@ scripts/replace_system_squirrel_app.sh
 
 The script backs up the old `/Library/Input Methods/Squirrel.app` before
 copying the patched app, restarts `Squirrel`, then registers and selects the
-input source. Add the HIToolbox gate when verifying installation on the user's
-machine:
+input source. It also runs strict doctor without foreground trace by default, so
+the command fails immediately if the copied system app is still unpatched, the
+same-bundle stale app remains visible, or the sidecar/MLX LaunchAgent runtime
+settings drifted. Set `RAG_IME_SQUIRREL_REPLACE_RUN_DOCTOR=0` only for narrow
+installer debugging. Add the HIToolbox gate when verifying installation on the
+user's machine:
 
 ```bash
 RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 \

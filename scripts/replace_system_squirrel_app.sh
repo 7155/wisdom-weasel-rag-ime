@@ -6,6 +6,10 @@ SOURCE_APP="${RAG_IME_SQUIRREL_SOURCE_APP:-$HOME/Library/Input Methods/Squirrel.
 TARGET_APP="${RAG_IME_SQUIRREL_SYSTEM_APP:-/Library/Input Methods/Squirrel.app}"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
 BACKUP_SUFFIX="${RAG_IME_SQUIRREL_BACKUP_SUFFIX:-rag-ime-backup-$(date +%Y%m%d-%H%M%S)}"
+SELECT_INPUT_SOURCE_SCRIPT="${RAG_IME_SELECT_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/select_macos_input_source.sh}"
+CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/check_macos_input_source.sh}"
+DOCTOR_SCRIPT="${RAG_IME_DOCTOR_SCRIPT:-$ROOT/scripts/doctor_squirrel_integration.sh}"
+RUN_DOCTOR="${RAG_IME_SQUIRREL_REPLACE_RUN_DOCTOR:-1}"
 
 has_mixed_layout_patch() {
   local app="$1"
@@ -13,6 +17,10 @@ has_mixed_layout_patch() {
   [[ -x "$executable" ]] || return 1
   strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
     strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout"
+}
+
+bool_true() {
+  [[ "$1" == "1" || "$1" == "true" || "$1" == "TRUE" || "$1" == "yes" || "$1" == "YES" ]]
 }
 
 canonical_path() {
@@ -60,6 +68,11 @@ if command -v codesign >/dev/null 2>&1; then
   sudo codesign --force --deep --sign - "$TARGET_APP"
 fi
 
+if ! has_mixed_layout_patch "$TARGET_APP"; then
+  echo "target Squirrel.app does not contain the RAG-IME mixed-layout patch after copy: $TARGET_APP" >&2
+  exit 1
+fi
+
 pkill -x Squirrel >/dev/null 2>&1 || true
 
 "$TARGET_APP/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
@@ -67,7 +80,15 @@ pkill -x Squirrel >/dev/null 2>&1 || true
   "$TARGET_APP/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 ||
   true
 
-"$ROOT/scripts/select_macos_input_source.sh" "$INPUT_SOURCE_ID"
-RAG_IME_SQUIRREL_APP="$TARGET_APP" "$ROOT/scripts/check_macos_input_source.sh" --require-selected "$INPUT_SOURCE_ID"
+"$SELECT_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
+RAG_IME_SQUIRREL_APP="$TARGET_APP" "$CHECK_INPUT_SOURCE_SCRIPT" --require-selected "$INPUT_SOURCE_ID"
+
+if bool_true "$RUN_DOCTOR"; then
+  RAG_IME_SQUIRREL_APP="$TARGET_APP" \
+    RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES="$SOURCE_APP:$TARGET_APP" \
+    RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 \
+    RAG_IME_DOCTOR_REQUIRE_FRONTEND_TRACE=0 \
+    "$DOCTOR_SCRIPT"
+fi
 
 echo "installed patched system Squirrel.app"
