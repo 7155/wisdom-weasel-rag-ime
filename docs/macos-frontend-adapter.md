@@ -391,7 +391,8 @@ app:
 scripts/replace_system_squirrel_app.sh
 ```
 
-The script keeps a timestamped backup under `/Library/Input Methods/`.
+The script keeps a timestamped backup under `/Library/Input Methods/` and
+restarts `Squirrel` after copying so the next panel uses the patched frontend.
 
 The strict doctor verifies that the installed macOS input source
 `im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. That

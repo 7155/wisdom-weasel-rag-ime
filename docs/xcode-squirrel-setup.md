@@ -222,8 +222,9 @@ scripts/replace_system_squirrel_app.sh
 ```
 
 The script backs up the old `/Library/Input Methods/Squirrel.app` before
-copying the patched app, then registers and selects the input source. Add the
-HIToolbox gate when verifying installation on the user's machine:
+copying the patched app, restarts `Squirrel`, then registers and selects the
+input source. Add the HIToolbox gate when verifying installation on the user's
+machine:
 
 ```bash
 RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 \

@@ -263,7 +263,8 @@ scripts/replace_system_squirrel_app.sh
 
 This command backs up the existing system app before copying the patched
 `~/Library/Input Methods/Squirrel.app`, then re-registers and selects
-`im.rime.inputmethod.Squirrel.Hans`.
+`im.rime.inputmethod.Squirrel.Hans`. It also restarts any running `Squirrel`
+process so macOS does not keep using the old frontend binary.
 
 If System Settings still does not show Squirrel after registration, run the local
 debug helper once. It backs up `com.apple.HIToolbox` and

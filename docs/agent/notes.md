@@ -15,7 +15,7 @@ Problem:
 
 Changes:
 - Changed strict doctor behavior so a stale same-bundle Squirrel without the mixed-layout frontend trace becomes a failure when patched-app readiness is required.
-- Added `scripts/replace_system_squirrel_app.sh` to back up the old system Squirrel and copy the patched user-local app into `/Library/Input Methods/`.
+- Added `scripts/replace_system_squirrel_app.sh` to back up the old system Squirrel, copy the patched user-local app into `/Library/Input Methods/`, and restart the Squirrel process.
 - Updated README, macOS frontend docs, and Xcode setup docs with the exact stale-app failure and repair path.
 
 Commands:
