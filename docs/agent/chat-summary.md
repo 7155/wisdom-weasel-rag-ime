@@ -1246,3 +1246,20 @@ Verification:
 
 Next:
 - Switch active input source to `鼠须管`, rerun `scripts/wait_squirrel_typing_ready.sh`, and then perform continuous editor typing validation.
+
+### 2026-07-01
+Topic:
+- Add active Squirrel selection to the aggregate quality gate.
+
+Changes:
+- Added `quality-gate --require-input-source-ready`.
+- Added `input-source-installed` and `input-source-selected` checks using the same input-source status logic as the debug page.
+- README mature-goldset command now includes the real macOS typing gate.
+
+Verification:
+- Focused quality-gate tests cover selected and unselected input-source states.
+- Current-machine smoke fails specifically on `input-source-selected` until the menu bar is switched to `鼠须管`.
+- Full 146-test suite passed.
+
+Next:
+- Use the gate after switching to `鼠须管`; until then it should fail specifically on `input-source-selected`.

@@ -1791,3 +1791,25 @@ Verification:
 Status:
 - Debug page can now diagnose the exact install-vs-selected gap.
 - Continuous typing verification is still pending until the active input source is switched to Squirrel.
+
+### 2026-07-01 19:25 CST
+Problem:
+- The aggregate `quality-gate` covered adapter acceptance, direct RAG eval, Rime sidecar display eval, cache hits, model TTFC, and provider capabilities, but it still did not fail when macOS was not actually using Squirrel.
+- This left the real typing path dependent on manual terminal checks after backend quality had already passed.
+
+Changes:
+- Added optional `quality-gate --require-input-source-ready`.
+- Added `--input-source-id` and `--input-source-check-script` so tests and nonstandard installs can reuse the same gate.
+- The gate reuses `DebugImeService.input_source_status()` and adds `input-source-installed` plus `input-source-selected` checks.
+- README's mature gold-set example now shows `--require-input-source-ready` as the real macOS typing gate.
+
+Verification:
+- Added tests for selected and unselected fake input-source scripts.
+- `python3 -m py_compile rag_ime/cli.py rag_ime/debug_server.py tests/test_codex_history.py`
+- Focused input-source quality-gate tests passed.
+- Current-machine smoke with `--require-input-source-ready` failed only on `input-source-selected`, while `input-source-installed` passed; this matches `current=com.apple.keylayout.ABC`.
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests` passed with 146 tests.
+
+Status:
+- Backend quality gates can now include active Squirrel selection when doing real macOS tryout.
+- The current machine still reports Squirrel installed but not selected until the user switches from the menu bar.
