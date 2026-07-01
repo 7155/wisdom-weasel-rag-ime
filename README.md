@@ -749,7 +749,9 @@ python3 -m rag_ime.cli --core-mode fixture rime-suggest-json \
   --payload-file /tmp/rime-sidecar-request.json
 ```
 
-This command prefers model/RAG side candidates in the visible slots, then fills remaining rows with Rime fallback candidates. Model candidates are marked `displayLayout: inline` for horizontal rendering, RAG/memory candidates are marked `displayLayout: block`, and Rime fallback candidates are marked `displayLayout: fallback`.
+This command prefers model/RAG side candidates in the visible slots, then fills remaining rows with Rime fallback candidates. Model candidates are marked `displayLayout: inline` for horizontal rendering, RAG/memory candidates are marked `displayLayout: block`, and Rime fallback candidates are marked `displayLayout: fallback`. When both model and RAG lanes return results, the sidecar keeps a small block-row reserve for RAG snippets so the panel does not become eight model tokens with no memory context.
+
+The resident MLX service now tries `candidateMode: next-token-logits` before JSON generation. That path reads the first generation step's logprobs, filters top-k Chinese token candidates, and can fill multiple inline LLM slots without asking the model to write a JSON array. It is not the same as Wisdom-Weasel's llama.cpp sequence-fork path yet: `logitsTopK=true` and `batchCandidates=true`, while `sequenceFork=false`.
 
 Open the native AppKit candidate panel preview:
 

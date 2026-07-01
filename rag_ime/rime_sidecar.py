@@ -146,7 +146,8 @@ def build_rime_sidecar_response(
             "reservedSideSlots": min(snapshot.max_side_candidates, snapshot.max_visible_candidates),
             "maxRimeVisibleCandidates": max(0, snapshot.max_visible_candidates - min(snapshot.max_side_candidates, snapshot.max_visible_candidates)),
             "maxModelSideCandidates": max_model_side_candidates(snapshot.max_side_candidates),
-            "ragKeepsRemainingSideSlots": False,
+            "ragBlockReserve": rag_block_reserve(snapshot.max_side_candidates),
+            "ragKeepsRemainingSideSlots": True,
             "rawPinyinFallback": query_basis == "rawInputFallback",
             "sideCandidatesEnabled": trigger_decision.should_refresh,
             "fallbackOrder": ["model", "rag", "rime"],
@@ -642,8 +643,9 @@ def merge_display_candidates(
     max_visible = snapshot.max_visible_candidates
     display: list[SideCandidateDisplayItem] = []
     side_budget = min(snapshot.max_side_candidates, max_visible)
+    rag_reserve = min(rag_block_reserve(side_budget), len(suggestions)) if model_predictions else 0
     side_limit = min(
-        max_model_side_candidates(side_budget),
+        max(0, max_model_side_candidates(side_budget) - rag_reserve),
         max(0, max_visible - len(display)),
         len(model_predictions),
     )
@@ -712,6 +714,14 @@ def max_model_side_candidates(side_budget: int) -> int:
     if side_budget <= 0:
         return 0
     return side_budget
+
+
+def rag_block_reserve(side_budget: int) -> int:
+    if side_budget <= 1:
+        return 0
+    if side_budget <= 3:
+        return side_budget - 1
+    return min(3, max(0, side_budget // 2))
 
 
 def rime_context_to_payload(snapshot: RimeContextSnapshot) -> dict[str, object]:

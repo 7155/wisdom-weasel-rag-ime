@@ -183,15 +183,18 @@ Provider status now reports explicit capability flags:
     "residentModel": true,
     "promptCache": false,
     "sequenceFork": false,
-    "batchCandidates": false
+    "batchCandidates": true,
+    "logitsTopK": true
   }
 }
 ```
 
 This prevents accidental overclaiming. The current MLX service has a resident
-model, streaming TTFT path, and a conservative prompt-cache generation path.
-It does not yet have real-model validation, llama.cpp-style sequence fork, or
-true batch-candidate sampling.
+model, streaming TTFT path, conservative prompt-cache generation path, and a
+`next-token-logits` mode that reads the first step logprobs to return multiple
+inline Chinese candidates without JSON completion. It still does not have
+llama.cpp-style sequence fork, so `sequenceFork=false` remains the honest
+boundary.
 
 ### Why llama.cpp Native Still Matters
 

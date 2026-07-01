@@ -2035,3 +2035,28 @@ Verification:
 
 Status:
 - The repo still does not click System Settings automatically; the manual Add step remains required, but the setup flow now opens the right settings area and waits with a strict machine-verifiable gate.
+
+### 2026-07-01 23:50 CST
+Problem:
+- The real candidate panel still needed the product layout locked down: LLM short candidates should be horizontal, while RAG/memory sentence snippets should be vertical.
+- The model lane also needed a real multi-candidate path instead of relying on stream-first single-candidate output or JSON completion.
+
+Changes:
+- Added direct MLX `candidateMode: next-token-logits` before JSON generation; `/predict` now derives multiple candidates from first-step logprobs.
+- Sidecar merge keeps RAG block-row reserve when model predictions are available, so 8 visible slots can show short `model/inline` candidates followed by `rag/block` memory rows.
+- Added regression coverage for the 8-slot mixed layout and updated the active Goal plus inference benchmark docs.
+
+Verification:
+- Focused sidecar/MLX/predictor tests passed: 61 tests.
+- `py_compile` and `git diff --check` passed.
+- Real doctor passed with `failures=0 warnings=0`.
+- Manual `/rime-suggest` returned 5 `model/inline` candidates and 3 `rag/block` candidates; model lane elapsed 145 ms.
+
+Commands:
+- `.venv-mlx314sys/bin/python -m unittest tests.test_rime_sidecar tests.test_mlx_predictor_server tests.test_predictor`
+- `python3 -m py_compile rag_ime/rime_sidecar.py rag_ime/mlx_predictor_server.py rag_ime/predictor.py rag_ime/cli.py`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/doctor_squirrel_integration.sh`
+
+Status:
+- Current active path is direct MLX service with local `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit`, `streamFirstCandidate=false`, `logitsTopK=true`, `batchCandidates=true`, `sequenceFork=false`.
+- Remaining uncompleted item in the Goal is the 3 downloaded safetensors model comparison plus final git sync.

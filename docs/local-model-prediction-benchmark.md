@@ -187,7 +187,7 @@ Operational notes:
   product UI should stream the first parsed useful candidate, not merely the
   first raw token.
 
-Implemented product switch:
+Earlier latency fallback:
 
 ```bash
 export RAG_IME_PREDICTOR_STREAM_FIRST=1
@@ -202,6 +202,26 @@ flag unset when running model-quality evals that need all candidates. The
 production direction is a resident MLX/llama.cpp backend that can return several
 short inline model candidates via logits/top-k or forked decoding, while RAG
 candidates fill block rows.
+
+Current direct MLX product setting:
+
+```bash
+export RAG_IME_PREDICTOR_STREAM_FIRST=0
+```
+
+The resident MLX service now tries `candidateMode: next-token-logits` on
+`/predict` before any JSON generation. It reads the first generation step's
+logprobs, filters top-k Chinese token candidates, and can return several short
+model candidates in one response. This is why the Squirrel panel can show a
+horizontal LLM lane instead of a single streamed candidate.
+
+Manual tryout on 2026-07-01:
+
+| Path | Result |
+| --- | --- |
+| `http://127.0.0.1:8767/predict` | `candidateMode: next-token-logits`, 8 model candidates, `fallbackJson=false` |
+| `http://127.0.0.1:8766/api/rime-suggest` | 8 visible candidates: 5 `model/inline` followed by 3 `rag/block` rows |
+| Capability status | `batchCandidates=true`, `logitsTopK=true`, `sequenceFork=false` |
 
 The stable rule for this project is: configure any candidate through one explicit provider lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
@@ -603,7 +623,12 @@ For the Squirrel/Rime sidecar path:
 - target useful top-1 candidates on project-specific terms before enabling the lane by default;
 - no UI blocking when a request times out;
 - stale responses must be discarded by request sequence on the frontend;
-- Rime candidates remain first, model predictions only fill spare side-candidate slots.
+- MLX/RAG side candidates occupy the visible slots first when the semantic signal
+  is stable; Rime candidates remain deterministic fallback rows when side lanes
+  are slow, empty, or unsafe.
+- short LLM candidates render with `displayLayout: inline` so they share one
+  horizontal lane; RAG/memory snippets render with `displayLayout: block` so
+  sentence-like material stays vertical and readable.
 - Qwen-style thinking output and JSON/list output are cleaned before candidate ranking, but the preferred config should still use `RAG_IME_PREDICTOR_PROFILE=instant` or set `RAG_IME_PREDICTOR_DISABLE_THINKING=1`.
 
 The exact model can change later. The benchmark command is the stable gate.

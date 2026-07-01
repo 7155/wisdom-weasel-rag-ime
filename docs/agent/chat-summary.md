@@ -1455,3 +1455,20 @@ Verification:
 
 Next:
 - Run `scripts/open_squirrel_input_source_settings.sh --wait`, add Squirrel in System Settings, then run `scripts/wait_squirrel_typing_ready.sh`.
+
+### 2026-07-01
+Topic:
+- Lock down direct MLX multi-candidate output and mixed candidate-panel layout.
+
+Changes:
+- Resident MLX `/predict` now tries `candidateMode: next-token-logits` before JSON generation and reports `logitsTopK=true`, `batchCandidates=true`, `sequenceFork=false`.
+- Sidecar merge keeps RAG block-row reserve, so an 8-slot response can show short `model/inline` candidates in a horizontal lane followed by `rag/block` memory rows.
+- Updated the active Goal and Mac inference docs to reflect direct MLX as the current product path, with Ollama MLX kept as a debug baseline.
+
+Verification:
+- Focused sidecar/MLX/predictor tests passed, plus `py_compile` and `git diff --check`.
+- Real Squirrel integration doctor passed with `failures=0 warnings=0`.
+- Manual `/rime-suggest` returned 5 `model/inline` candidates and 3 `rag/block` candidates with model lane elapsed 145 ms.
+
+Next:
+- Finish identifying and comparing the three downloaded safetensors models, then run continuous foreground typing verification with the user.

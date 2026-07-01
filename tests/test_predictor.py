@@ -299,6 +299,8 @@ class _MockMlxHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "candidates": ["本地记忆", "输入法候选", "RAG上下文"],
                 "rawText": '["本地记忆","输入法候选","RAG上下文"]',
+                "candidateMode": "next-token-logits",
+                "candidateScores": [{"text": "本地记忆", "tokenId": 42, "probability": 0.42}],
                 "totalMs": 17,
                 "promptCache": {"enabled": False},
             },
@@ -690,6 +692,8 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual([item.text for item in predictions], ["本地记忆", "输入法候选", "RAG上下文"])
         self.assertEqual(predictions[0].provider_name, "local-mlx")
         self.assertEqual(predictions[0].latency_ms, 17)
+        self.assertEqual(predictions[0].metadata["candidate_mode"], "next-token-logits")
+        self.assertEqual(predictions[0].metadata["candidate_scores"][0]["tokenId"], 42)
         self.assertEqual(predictions[0].metadata["prompt_cache"], {"enabled": False})
         self.assertEqual(
             predictions[0].metadata["requestMeta"]["contextFingerprint"],

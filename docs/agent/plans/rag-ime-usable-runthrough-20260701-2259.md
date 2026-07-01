@@ -9,6 +9,7 @@
 - 1-9/0 数字键能按显示候选正确选择并提交。
 - sidecar、MLX 本地模型、Rime 配置、LaunchAgent、debug/doctor gate 都能重复启动和验证。
 - 8 个候选位优先给 MLX/RAG，Rime 只作为 fallback；当 MLX/RAG 不可用、超时或没有稳定语义信号时，Rime 候选立即兜底。
+- 候选面板采用混合布局：LLM 短候选横向排列，RAG/记忆句子或片段纵向排列；输入法小框里不展示调试状态和长证据。
 - 模型候选长期优化方向必须参考 Wisdom-Weasel：logits/top-k、KV cache、sequence fork / batch candidates，而不是长期依赖 JSON 文本生成。
 - raw 拼音/误拼输入不能直接交给 LLM 猜中文；必须先通过 Rime 候选、拼音切分或 logits processor 约束得到可解释的中文候选，再让 LLM/RAG 做排序、续写和记忆增强。
 
@@ -20,7 +21,7 @@
 5. 跑 sidecar / predictor / MLX 聚焦测试，确保失败时仍返回 Rime。
 6. 用真实 LaunchAgent 重启 sidecar 和 MLX predictor，执行 doctor gate 和手工 `/rime-suggest` 验证。
 7. 对 3 个已下载 MLX safetensors 建模型目录并做 TTFC / 多候选质量对比。
-8. 实现或记录下一步 MLX logits/top-k 原生候选接口，目标是替代 JSON completion。
+8. 实现 MLX logits/top-k 原生候选接口，目标是替代 JSON completion。
 9. 设计 raw 拼音处理边界：Rime 有候选时用候选作为语义输入；Rime 没候选时跳过 side lane 或进入拼音约束解码，不让模型自由猜音码。
 
 ## 进度 (TODO)
@@ -30,6 +31,8 @@
 - [x] 更新测试和文档里的旧 `1-5 Rime, 6 model, 7-8 RAG` 口径。
 - [x] 运行聚焦测试、`py_compile`、`git diff --check`。
 - [x] 重启 LaunchAgent 并跑真实 doctor / sidecar payload。
+- [x] 接入 direct MLX `/predict` 的 `candidateMode: next-token-logits`，一次返回多个横向 LLM 候选。
+- [x] 固化候选布局：`model/inline` 横向 lane，`rag/block` 纵向句子行，Rime fallback。
 - [ ] 完成 3 个 MLX 模型对比。
 - [ ] Git 同步。
 
@@ -44,14 +47,15 @@
 ## 验收 / 退出条件
 - 系统输入法里选择 Squirrel/Rime 后，真实输入窗口可以输入简体。
 - 稳定 Rime candidate 或 commit preview 触发后，候选列表优先展示 MLX/RAG，Rime 只在空位或失败时显示。
+- 8 位面板在 MLX/RAG 均可用时应显示短模型候选横排在前，RAG/记忆候选纵排在后；真实 `/rime-suggest` payload 中对应 `displayLayout=inline/block`。
 - 数字键选择 side candidate 会提交 `insertText`，选择 Rime candidate 仍走 Rime 原生选择。
 - `scripts/doctor_squirrel_integration.sh` 通过。
 - 聚焦测试通过，且 `git diff --check` 无空白错误。
 - 文档记录当前边界、难点和下一步 logits/top-k/KV cache 路线。
 
 ## 风险 / 开放问题
-- MLX-LM 当前 JSON completion 多候选速度慢，stream-first 快但通常只有 1 个候选。
-- 需要确认 MLX-LM 能否低成本暴露下一 token logits；如果不能，下一步应转 llama.cpp/Metal 或更底层 MLX forward。
+- MLX-LM 当前已经能通过下一 token logits 暴露多个候选，但还没有 Wisdom-Weasel 的 sequence fork / seq-copy 并行采样能力。
+- direct MLX 的 prompt cache 仍是 prepared/observed 状态，尚未证明真实生成复用稳定 KV 前缀。
 - Rime fallback 后移会改变传统输入法肌肉记忆，需要真实连续输入测试确认是否可接受。
 - 3 个 safetensors 需要逐一识别 config/tokenizer，不能只按文件名假设模型。
 - `asdioj` 这类 raw key sequence 可能是误拼、双拼或英文缩写；没有 Rime 候选或拼音约束时，模型自由生成会产生噪声，必须 fail closed。

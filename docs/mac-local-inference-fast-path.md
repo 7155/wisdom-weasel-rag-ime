@@ -11,9 +11,11 @@ input method?
 
 Use a tiered path:
 
-1. **Current product path**: direct resident MLX-LM with a text-only small
-   model, starting from `mlx-community/Qwen3-0.6B-4bit` and escalating to
-   `mlx-community/Qwen3-1.7B-4bit` only if candidate quality is too weak.
+1. **Current product path**: direct resident MLX-LM service with the local
+   `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit` model. The hot
+   `/predict` path first reads next-token logits and returns multiple
+   top-k Chinese candidates as `candidateMode: next-token-logits`; JSON
+   generation is only the fallback.
 2. **Debug baseline only**: Ollama `qwen3.5:0.8b-mlx`, native Ollama API,
    `think:false`, `keep_alive`, streaming, and
    `RAG_IME_PREDICTOR_STREAM_FIRST=1`. This remains useful as a measured smoke
@@ -30,28 +32,30 @@ first raw token, or complete JSON response.
 The final product should optimize two different things separately:
 
 - **model choice**: start with the smallest non-thinking model that can produce
-  useful short continuations. Prefer text-only Qwen3 MLX-LM models for the
-  active input method lane; treat Qwen3.5 VLM models as a separate experiment;
+  useful short continuations. The current machine is using the local Qwen3.5
+  0.8B 4-bit MLX directory because it is already downloaded and loads through
+  `mlx_lm`;
 - **runtime kernel**: keep the model resident, avoid cold load, reuse the stable
-  prompt/KV prefix, stream the first useful candidate, cancel stale requests,
-  and never wait for a complete JSON list in the active typing path.
+  prompt/KV prefix, cancel stale requests, and prefer logits/top-k candidates
+  over a complete generated JSON list in the active typing path.
 
 ## 2026-07-01 Runtime Correction
 
 The latest Squirrel/sidecar tryout changes the operational default:
 
 - The real sidecar can now return 8 display candidates after setting
-  `menu/page_size: 8`; model/RAG side candidates can occupy labels 1-8 first,
-  with Rime candidates used as deterministic fallback rows.
-- The current Ollama `qwen3.5:0.8b-mlx` lane is reachable, but a live
-  `predictor-doctor` run took about 2006 ms and returned no parsed candidates
-  under the 200 ms input-method budget. It should not be the default model lane.
-- Hugging Face and MLX-community model cards show `Qwen3.5-0.8B/2B` as
-  image-text / VLM-style models. The available MLX-community Qwen3.5 packages
-  use `mlx-vlm`, not the existing `mlx-lm` text service.
-- Therefore the MVP model lane should use text-only MLX-LM models first:
-  `mlx-community/Qwen3-0.6B-4bit`, then `mlx-community/Qwen3-1.7B-4bit` if the
-  0.6B quality is insufficient.
+  `menu/page_size: 8`; MLX/RAG side candidates occupy labels 1-8 first, with
+  Rime candidates used as deterministic fallback rows when side lanes are slow,
+  empty, or unsafe.
+- The candidate panel is deliberately mixed-layout: short MLX model candidates
+  are `displayLayout: inline` and share one horizontal row; RAG/memory snippets
+  are `displayLayout: block` and render as vertical sentence rows.
+- The current local MLX service reports `logitsTopK=true` and
+  `batchCandidates=true` because `/predict` can derive several model candidates
+  from first-step logits. It still reports `sequenceFork=false`, so it has not
+  reached Wisdom-Weasel's seq-copy batch sampling parity.
+- Ollama `qwen3.5:0.8b-mlx` remains a useful smoke/debug baseline, but it is no
+  longer the primary path for the system input method.
 
 This keeps the architecture honest: Squirrel/Rime handles deterministic pinyin
 and dictionary candidates, RAG handles personal memory, and the model lane only
@@ -64,10 +68,10 @@ implementation boundary sharper:
 
 | Question | Decision |
 | --- | --- |
-| What is fastest on this Mac today? | Use Ollama `qwen3.5:0.8b-mlx` as the current measured smoke path. It is already downloaded and has produced warm first chunks inside the 200 ms budget. |
+| What is fastest on this Mac today? | Use the resident MLX service with the local Qwen3.5 0.8B 4-bit model and `candidateMode: next-token-logits` for the active IME lane. Manual sidecar tryout produced multiple model candidates inside the sidecar budget; broader p95 testing is still pending. |
 | What should the product measure? | Measure `firstCandidateMs` / TTFC: the first parsed candidate that a user can select. Raw `firstChunkMs` is diagnostic only because the first streamed bytes can be JSON syntax or an incomplete token. |
 | Is there a Qwen "Instant" model to look for? | No project decision should depend on an `Instant` model name. For Qwen3.5 small models, configure small + non-thinking + streaming + resident runner. |
-| Which provider should ship first? | Ollama MLX for debug and Squirrel/RAG integration. It is the fastest way to keep the product loop moving. |
+| Which provider should ship first? | Direct MLX service for the product loop, because it can expose `logitsTopK` multi-candidate behavior. Keep Ollama MLX as a smoke/debug route. |
 | Which provider should become the interview-grade fast path? | Native `llama.cpp`/Metal or direct MLX-LM, whichever proves lower p95 TTFC with explicit prompt/KV cache control, cancellation, and usable candidate quality. |
 
 Primary-source implications:
@@ -81,9 +85,10 @@ Primary-source implications:
   own KV state, copy sequence memory, and batch multiple short candidate
   sequences. The server/OpenAI-compatible path is useful for benchmarks, but
   cannot by itself prove `sequenceFork=true` and `batchCandidates=true`.
-- Ollama MLX is the best immediate baseline because it combines simple model
+- Ollama MLX remains a useful baseline because it combines simple model
   management, streaming, keep-alive behavior, `think:false`, and Apple-Silicon
-  MLX packaging. Its cache behavior is intentionally treated as opaque.
+  MLX packaging. Its cache behavior is intentionally treated as opaque, and it
+  cannot prove our current `logitsTopK` contract.
 - MLC LLM and Core ML stateful models remain research lanes. They may become
   useful if MLX-LM and llama.cpp fail the target, but they add build,
   conversion, or packaging cost before the input method loop is stable.
@@ -99,6 +104,7 @@ unset and models stored under `/Volumes/undo 4t/ollama-models`.
 
 | Backend | Model | First-candidate result | Product meaning |
 | --- | --- | ---: | --- |
+| Direct MLX-LM service | local `mlx-community-Qwen3.5-0.8B-4bit` | manual `/predict` returned `candidateMode: next-token-logits` with 8 candidates; manual `/rime-suggest` returned 5 inline model candidates plus 3 block RAG candidates in about 150-200 ms | Current active IME route. Needs repeated p95 and quality comparison before calling the latency work finished. |
 | Ollama MLX runner | `qwen3.5:0.8b-mlx` | p50 first chunk 46 ms in the first smoke; later rerun p50 124 ms, warm post-load samples 76-133 ms | Best current Mac TTFT baseline. Use for UI iteration and smoke tests. |
 | Ollama MLX runner | `qwen3.5:0.8b-mlx` | warm single-model `bench-ime-ttfc`: p50 `firstCandidateMs` 102 ms, p95 122 ms, with 1/12 samples over 200 ms | Best current TTFC evidence, but still needs stale-cancel and quality gates. |
 | Ollama GGUF/Q8 runner | `qwen3.5:0.8b` | p50 first chunk 194 ms in one run, 296 ms in rerun; unstable cold/outlier behavior | Useful baseline, not the preferred Mac route. |
@@ -114,8 +120,8 @@ first parsed candidate instead of waiting for a complete list.
 
 | Rank | Runtime | Why it ranks here | Use now? |
 | ---: | --- | --- | --- |
-| 1 | Ollama MLX tag | Already downloaded and measured; easiest no-code TTFT baseline; Ollama API supports streaming, `keep_alive`, and thinking controls. | Yes, as the baseline and default smoke route. |
-| 2 | Direct MLX-LM resident service | Apple Silicon-native; official Python API exposes `stream_generate`; docs include prompt caching and rotating KV cache. | Next product experiment. |
+| 1 | Direct MLX-LM resident service | Apple Silicon-native; current implementation exposes `/predict`, `/predict-stream`, `/health`, and `next-token-logits` multi-candidate output. | Yes, current product route. |
+| 2 | Ollama MLX tag | Already downloaded and measured; easiest no-code TTFT baseline; Ollama API supports streaming, `keep_alive`, and thinking controls. | Keep as baseline and fallback smoke route. |
 | 3 | Native `llama.cpp`/Metal provider | Best control over prompt/KV reuse and sequence-copy candidate batching; closest to Wisdom-Weasel's proven low-latency design. | Final fast provider after MLX experiment. |
 | 4 | MLC LLM | Supports Metal device, local/interactive/server modes, OpenAI-style streaming, prefix-cache and speculative configuration knobs. | Keep as backup; compile pipeline is heavier. |
 | 5 | Core ML stateful model | macOS 15 stateful models can keep state buffers across predictions, which maps to KV-cache style inference. | Long-term only due conversion/support cost. |
@@ -125,9 +131,8 @@ first parsed candidate instead of waiting for a complete list.
 
 Separate three questions that are easy to confuse:
 
-1. **Fastest measured smoke path today**: Ollama `qwen3.5:0.8b-mlx`. It is
-   already installed, no-proxy tested, and produces the current best local
-   first-chunk numbers on this Mac.
+1. **Fastest active product path today**: direct MLX service with the local
+   Qwen3.5 0.8B 4-bit model and `next-token-logits` multi-candidate output.
 2. **Best controllable product kernel**: native `llama.cpp`/Metal, with direct
    MLX-LM as the Apple-Silicon experiment to beat. The input method eventually
    needs cancellation, stable prompt/KV reuse, sequence-forked candidates, and
@@ -140,7 +145,8 @@ Therefore the current product decision is:
 
 ```text
 Ship/debug path now:
-  Ollama MLX baseline + stream-first candidate
+  direct MLX service + next-token-logits candidates
+  Ollama MLX kept as smoke fallback
 
 Near-term benchmark race:
   direct MLX-LM resident service
@@ -151,13 +157,14 @@ Default production kernel:
 ```
 
 This slightly differs from a pure "pick llama.cpp first" answer. `llama.cpp` is
-the strongest controllable kernel candidate, but the already measured Ollama MLX
-path remains the fastest way to keep the Squirrel/RAG product loop moving.
+the strongest controllable kernel candidate, but the current direct MLX service
+keeps the Squirrel/RAG product loop moving while still exposing a concrete
+multi-candidate logits contract.
 
-## Why Ollama MLX Is The Immediate Baseline
+## Why Ollama MLX Remains A Debug Baseline
 
 Ollama is not the final low-level provider, but it gives the fastest path to a
-real local smoke test:
+portable local smoke tests:
 
 - model management is simple;
 - the native API streams JSON chunks;
@@ -480,12 +487,15 @@ llama.cpp-metal:<same-or-comparable-gguf-model>
 The next implementation work should not be another prompt rewrite. It should be:
 
 1. keep the Squirrel sidecar doctor coverage strict for predictor env and
-   stream-first mode;
-2. make direct MLX-LM installation reproducible without proxy waste;
-3. run direct MLX-LM cached/uncached `predictor-ttft`;
+   direct MLX `logitsTopK` capability;
+2. run repeated direct MLX `/predict` and `/rime-suggest` p95 checks with the
+   current local Qwen3.5 0.8B model;
+3. compare the three downloaded MLX safetensors only after their tokenizer and
+   config directories are identified;
 4. implement or spike a native `llama.cpp`/Metal resident provider in parallel
    once the Squirrel loop is stable enough to consume it;
-5. if MLX-LM cannot beat Ollama MLX consistently, default to the native
+5. if direct MLX cannot meet p95 latency and candidate quality consistently,
+   default to the native
    `llama.cpp`/Metal provider modeled on Wisdom-Weasel's
    `PrepareSystemPrompt()` and `GenerateCandidatesBatch()`.
 
