@@ -297,6 +297,19 @@ cache and multi-sequence candidate sampling. See
 `docs/model-ttft-kv-cache-plan.md` and
 `docs/local-model-prediction-benchmark.md` for the backend decision and commands.
 
+When the Ollama or MLX lane is used for real IME side candidates, enable the
+stream-first path:
+
+```bash
+export RAG_IME_PREDICTOR_STREAM_FIRST=1
+```
+
+With this flag, `predict()` reads `/api/chat` or `/predict-stream` until the
+first parsed candidate is available, then returns one model side candidate
+instead of waiting for the full JSON list. This is the product path for
+sub-200 ms first-visible candidates. Keep the flag off for quality evals that
+need all model candidates.
+
 Run the resident MLX-LM service when testing the next Mac fast lane:
 
 ```bash

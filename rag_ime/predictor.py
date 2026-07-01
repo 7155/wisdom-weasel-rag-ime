@@ -53,6 +53,7 @@ class OllamaPredictionConfig:
     provider_name: str = "local-ollama"
     extra_body: dict[str, Any] | None = None
     extra_headers: dict[str, str] | None = None
+    stream_first_candidate: bool = False
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ class MlxPredictionConfig:
     provider_name: str = "local-mlx"
     extra_body: dict[str, Any] | None = None
     extra_headers: dict[str, str] | None = None
+    stream_first_candidate: bool = False
 
 
 @dataclass(frozen=True)
@@ -263,6 +265,28 @@ class OllamaPredictionProvider:
         max_items = max(1, min(10, int(max_candidates)))
         self.last_error = ""
         started = time.perf_counter()
+        if self.config.stream_first_candidate:
+            streamed = self._stream_first_candidate(context=context, query=query, max_candidates=max_items)
+            if streamed:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                return [
+                    ModelPrediction(
+                        text=streamed["candidate"],
+                        rank=1,
+                        provider_name=self.config.provider_name,
+                        latency_ms=latency_ms,
+                        confidence=1.0,
+                        metadata={
+                            "model": self.config.model,
+                            "base_url": self.config.base_url,
+                            "profile": self.config.profile,
+                            "prompt_mode": self.config.prompt_mode,
+                            "raw_text": streamed["raw_text"],
+                            "stream_first_candidate": True,
+                            "first_candidate_ms": streamed["first_candidate_ms"],
+                        },
+                    )
+                ]
         raw_texts = self._complete(context=context, query=query, max_candidates=max_items)
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_text = "\n".join(raw_texts)
@@ -301,6 +325,30 @@ class OllamaPredictionProvider:
             return []
         return extract_ollama_contents(payload)
 
+    def _stream_first_candidate(self, *, context: str, query: str, max_candidates: int) -> dict[str, Any]:
+        measured = _measure_ollama_stream_ttft(
+            self.config,
+            current_input=query,
+            recent_context=context,
+            max_candidates=max_candidates,
+            keep_alive=-1,
+            stop_after_first_candidate=True,
+        )
+        if not measured.get("ok"):
+            self.last_error = str(measured.get("error") or "")
+            return {}
+        candidates = measured.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            return {}
+        first = str(candidates[0]).strip()
+        if not first:
+            return {}
+        return {
+            "candidate": first,
+            "raw_text": str(measured.get("rawText") or ""),
+            "first_candidate_ms": int(measured.get("firstCandidateMs") or measured.get("firstChunkMs") or 0),
+        }
+
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.config.extra_headers:
@@ -335,6 +383,30 @@ class MlxPredictionServiceProvider:
         max_items = max(1, min(10, int(max_candidates)))
         self.last_error = ""
         started = time.perf_counter()
+        if self.config.stream_first_candidate:
+            streamed = self._stream_first_candidate(context=context, query=query, max_candidates=max_items)
+            if streamed:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                return [
+                    ModelPrediction(
+                        text=streamed["candidate"],
+                        rank=1,
+                        provider_name=self.config.provider_name,
+                        latency_ms=latency_ms,
+                        confidence=1.0,
+                        metadata={
+                            "model": self.config.model,
+                            "base_url": self.config.base_url,
+                            "profile": self.config.profile,
+                            "prompt_mode": self.config.prompt_mode,
+                            "raw_text": streamed["raw_text"],
+                            "stream_first_candidate": True,
+                            "first_candidate_ms": streamed["first_candidate_ms"],
+                            "prompt_cache": streamed.get("prompt_cache", {}),
+                            "server_timing": streamed.get("server_timing", {}),
+                        },
+                    )
+                ]
         payload = self._predict_payload(context=context, query=query, max_candidates=max_items)
         wall_ms = int((time.perf_counter() - started) * 1000)
         if not payload:
@@ -380,6 +452,31 @@ class MlxPredictionServiceProvider:
             self.last_error = _prediction_error_name(exc)
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    def _stream_first_candidate(self, *, context: str, query: str, max_candidates: int) -> dict[str, Any]:
+        measured = _measure_mlx_stream_ttft(
+            self.config,
+            current_input=query,
+            recent_context=context,
+            max_candidates=max_candidates,
+            stop_after_first_candidate=True,
+        )
+        if not measured.get("ok"):
+            self.last_error = str(measured.get("error") or "")
+            return {}
+        candidates = measured.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            return {}
+        first = str(candidates[0]).strip()
+        if not first:
+            return {}
+        return {
+            "candidate": first,
+            "raw_text": str(measured.get("rawText") or ""),
+            "first_candidate_ms": int(measured.get("firstCandidateMs") or measured.get("firstChunkMs") or 0),
+            "prompt_cache": measured.get("promptCache", {}),
+            "server_timing": measured.get("serverTiming", {}),
+        }
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -489,6 +586,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
                 provider_name="local-ollama",
                 extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
                 extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
+                stream_first_candidate=_bool_env(source, "RAG_IME_PREDICTOR_STREAM_FIRST", default=False),
             )
         )
     elif provider in {"mlx", "mlx-lm", "mlx-service"}:
@@ -504,6 +602,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
                 provider_name="local-mlx",
                 extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
                 extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
+                stream_first_candidate=_bool_env(source, "RAG_IME_PREDICTOR_STREAM_FIRST", default=False),
             )
         )
     else:
@@ -558,6 +657,7 @@ def prediction_provider_status(provider: PredictionProvider) -> dict[str, object
         "topP": float(getattr(config, "top_p", 0.0)),
         "extraBodyKeys": sorted(str(key) for key in extra_body.keys()) if isinstance(extra_body, dict) else [],
         "extraHeaderKeys": sorted(str(key) for key in extra_headers.keys()) if isinstance(extra_headers, dict) else [],
+        "streamFirstCandidate": bool(getattr(config, "stream_first_candidate", False)),
     }
     status["capabilities"] = _prediction_provider_capabilities(str(status["providerName"]))
     cooldown_status = getattr(provider, "cooldown_status", None)
@@ -777,6 +877,7 @@ def _measure_ollama_stream_ttft(
     recent_context: str,
     max_candidates: int,
     keep_alive: int | str | None,
+    stop_after_first_candidate: bool = False,
 ) -> dict[str, Any]:
     query = compact_whitespace(current_input)
     context = compact_whitespace(recent_context)[-420:]
@@ -792,7 +893,9 @@ def _measure_ollama_stream_ttft(
     started = time.perf_counter()
     first_chunk_ms = None
     first_text = ""
+    first_candidate_ms = None
     full_text = ""
+    candidates: list[str] = []
     try:
         with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
             for raw_line in response:
@@ -805,6 +908,12 @@ def _measure_ollama_stream_ttft(
                     if first_chunk_ms is None:
                         first_chunk_ms = int((time.perf_counter() - started) * 1000)
                         first_text = text
+                    if first_candidate_ms is None:
+                        candidates = _parse_streaming_prediction_candidates(full_text, max_candidates=max_candidates)
+                        if candidates:
+                            first_candidate_ms = int((time.perf_counter() - started) * 1000)
+                            if stop_after_first_candidate:
+                                break
                 if payload.get("done"):
                     break
     except urllib.error.HTTPError as exc:
@@ -832,10 +941,14 @@ def _measure_ollama_stream_ttft(
             "candidates": [],
         }
     total_ms = int((time.perf_counter() - started) * 1000)
-    candidates = _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
+    if not stop_after_first_candidate:
+        candidates = _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
+    elif not candidates:
+        candidates = _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
     return {
         "ok": first_chunk_ms is not None,
         "firstChunkMs": first_chunk_ms,
+        "firstCandidateMs": first_candidate_ms,
         "totalMs": total_ms,
         "firstText": first_text,
         "rawText": full_text,
@@ -850,6 +963,7 @@ def _measure_mlx_stream_ttft(
     current_input: str,
     recent_context: str,
     max_candidates: int,
+    stop_after_first_candidate: bool = False,
 ) -> dict[str, Any]:
     query = compact_whitespace(current_input)
     context = compact_whitespace(recent_context)[-420:]
@@ -863,8 +977,11 @@ def _measure_mlx_stream_ttft(
     started = time.perf_counter()
     first_chunk_ms = None
     first_text = ""
+    first_candidate_ms = None
     full_text = ""
     final_candidates: list[str] = []
+    prompt_cache: dict[str, Any] = {}
+    server_timing: dict[str, Any] = {}
     try:
         with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
             for raw_line in response:
@@ -877,8 +994,22 @@ def _measure_mlx_stream_ttft(
                     if first_chunk_ms is None:
                         first_chunk_ms = int((time.perf_counter() - started) * 1000)
                         first_text = text
+                    if first_candidate_ms is None:
+                        final_candidates = _parse_streaming_prediction_candidates(full_text, max_candidates=max_candidates)
+                        if final_candidates:
+                            first_candidate_ms = int((time.perf_counter() - started) * 1000)
+                            if stop_after_first_candidate:
+                                break
                 if isinstance(payload.get("candidates"), list):
                     final_candidates = _candidate_parts_from_json_value(payload.get("candidates"))
+                    if final_candidates and first_candidate_ms is None:
+                        first_candidate_ms = int((time.perf_counter() - started) * 1000)
+                        if stop_after_first_candidate:
+                            break
+                if isinstance(payload.get("promptCache"), dict):
+                    prompt_cache = dict(payload["promptCache"])
+                if isinstance(payload.get("timing"), dict):
+                    server_timing = dict(payload["timing"])
                 if payload.get("done"):
                     break
     except urllib.error.HTTPError as exc:
@@ -911,11 +1042,14 @@ def _measure_mlx_stream_ttft(
     return {
         "ok": first_chunk_ms is not None,
         "firstChunkMs": first_chunk_ms,
+        "firstCandidateMs": first_candidate_ms,
         "totalMs": total_ms,
         "firstText": first_text,
         "rawText": full_text,
         "candidateCount": len(candidates),
         "candidates": candidates,
+        "promptCache": prompt_cache,
+        "serverTiming": server_timing,
     }
 
 
@@ -998,6 +1132,26 @@ def _candidate_parts_from_text(text: str) -> list[str]:
             continue
         candidates.append(item)
     return candidates
+
+
+def _parse_streaming_prediction_candidates(text: str, *, max_candidates: int = 5) -> list[str]:
+    cleaned = _clean_prediction_output(text)
+    if not cleaned:
+        return []
+    json_candidates = _candidate_parts_from_json_text(cleaned)
+    if json_candidates:
+        return _parse_prediction_candidate_texts(json_candidates, max_candidates=max_candidates)
+
+    # During JSON streaming the buffer often looks like '["候选一"' before the
+    # closing array arrives. Only accept closed string elements; a bare '["'
+    # or an unfinished token should not become an IME candidate.
+    quoted = [match.strip() for match in re.findall(r'"([^"\n\r]{1,48})"', cleaned)]
+    if quoted:
+        return _parse_prediction_candidate_texts(quoted, max_candidates=max_candidates)
+
+    if not any(mark in cleaned for mark in "[]{}\""):
+        return _parse_prediction_candidate_texts([cleaned], max_candidates=max_candidates)
+    return []
 
 
 def _clean_prediction_output(text: str) -> str:
