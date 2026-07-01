@@ -827,3 +827,16 @@ Changes:
 
 Findings:
 - This fixes the practical gap where manual shell commands could use the fast model lane, but a login-started sidecar would not inherit the same predictor configuration.
+
+### 2026-07-01
+Topic:
+- Source-backed Mac local inference fast-path decision.
+
+Changes:
+- Added `docs/mac-local-inference-fast-path.md`.
+- Updated README and TTFT/KV-cache docs to point to the new decision note.
+
+Conclusion:
+- Keep Ollama `qwen3.5:0.8b-mlx` as the current fastest Mac TTFT smoke baseline.
+- Next validate a direct resident MLX-LM service with streaming and prompt cache.
+- Keep native llama.cpp/Metal as the final Wisdom-Weasel parity route because it can own prompt KV reuse, sequence fork, and batch candidate generation.

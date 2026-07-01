@@ -38,6 +38,9 @@ fast enough with an MLX-tag small model, but the product cannot wait for full
 JSON completion or rely on the 0.8B model for project-specific memory. The model
 lane should stream one short continuation; RAG remains the source of truth.
 
+For the full current Mac runtime ranking and implementation decision, see
+`docs/mac-local-inference-fast-path.md`.
+
 ## Mac Backend Research
 
 Research date: 2026-07-01.

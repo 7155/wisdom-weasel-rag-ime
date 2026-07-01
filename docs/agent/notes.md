@@ -1188,3 +1188,19 @@ Findings:
 Commands:
 - `RAG_IME_LAUNCH_AGENT_DRY_RUN=1 scripts/install_sidecar_launch_agent.sh`
 - `python3 -m unittest tests.test_launch_agent_script`
+
+### 2026-07-01 13:42 CST
+Problem:
+- Need a fuller, source-backed answer for the fastest Mac local inference plan before continuing the input-method implementation.
+
+Findings:
+- The current project evidence still ranks Ollama `qwen3.5:0.8b-mlx` first for immediate TTFT smoke because it already produced sub-200 ms warm first chunks.
+- Official MLX-LM docs provide the exact primitives needed for the next experiment: `stream_generate`, prompt caching, and rotating KV cache.
+- Official llama.cpp server docs confirm prompt cache, continuous batching, slot save/cache controls, KV cache type controls, and reasoning controls, but Wisdom-Weasel's native provider remains the better final reference because it uses explicit sequence-state save/restore and sequence copy for multi-candidate sampling.
+- MLC LLM supports Metal, local/interactive/server modes, streaming, and prefix-cache-related overrides, but its compile/model-library flow makes it a backup, not the fastest MVP route.
+- Core ML stateful models map well to KV-state ideas on macOS 15+, but conversion/support cost pushes it to a later research lane.
+
+Changes:
+- Added `docs/mac-local-inference-fast-path.md` with the runtime ranking, commands, acceptance gates, Wisdom-Weasel/MiniVLLM lessons, and source links.
+- Linked the new document from the README and `docs/model-ttft-kv-cache-plan.md`.
+- Folded in subagent findings about Wisdom-Weasel being Windows Weasel-only, native llama context concurrency risk, and the need to track first parsed candidate time separately from raw token TTFT.
