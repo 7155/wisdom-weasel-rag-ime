@@ -396,6 +396,85 @@ def validate_candidate_contract(result, *, require):
         "rimeCount": len(rime_indices),
     }
 
+def post_rime_suggest(payload):
+    request = urllib.request.Request(
+        f"{base}/rime-suggest",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=2.5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+def validate_raw_pinyin_guard():
+    dirty = post_rime_suggest({
+        "sessionId": "doctor-raw-pinyin",
+        "requestSeq": 2,
+        "rawInput": "jiubiruwopinshishur",
+        "preedit": "jiubiruwopinshishur",
+        "maxVisibleCandidates": 6,
+        "maxSideCandidates": 3,
+        "rimeContext": {"candidates": []},
+    })
+    fallback = post_rime_suggest({
+        "sessionId": "doctor-raw-context",
+        "requestSeq": 3,
+        "rawInput": "asdioj",
+        "preedit": "asdioj",
+        "committedContext": "刚刚输入了 RAG 输入法的候选布局，需要继续预测下一句",
+        "maxVisibleCandidates": 6,
+        "maxSideCandidates": 3,
+        "rimeContext": {"candidates": []},
+    })
+
+    errors = []
+    dirty_trigger = dirty.get("triggerDecision") if isinstance(dirty.get("triggerDecision"), dict) else {}
+    dirty_policy = dirty.get("mergePolicy") if isinstance(dirty.get("mergePolicy"), dict) else {}
+    if dirty.get("queryBasis") != "rawInputFallback":
+        errors.append(f"dirty raw queryBasis={dirty.get('queryBasis')!r}, expected rawInputFallback")
+    if dirty_trigger.get("shouldRefresh") is not False:
+        errors.append("dirty raw input refreshed side lanes")
+    if dirty_policy.get("sideCandidatesEnabled") is not False:
+        errors.append("dirty raw input left side candidates enabled")
+    if dirty.get("displayCandidates") not in ([], None):
+        errors.append("dirty raw input returned display candidates")
+
+    fallback_trigger = fallback.get("triggerDecision") if isinstance(fallback.get("triggerDecision"), dict) else {}
+    fallback_display = fallback.get("displayCandidates")
+    fallback_side_count = sum(
+        1
+        for item in fallback_display
+        if isinstance(item, dict) and item.get("sourceType") in {"model", "rag"}
+    ) if isinstance(fallback_display, list) else 0
+    if fallback.get("queryBasis") != "committedContext":
+        errors.append(f"context fallback queryBasis={fallback.get('queryBasis')!r}, expected committedContext")
+    if fallback_trigger.get("shouldRefresh") is not True:
+        errors.append("context fallback did not refresh side lanes")
+    if fallback_side_count <= 0:
+        errors.append("context fallback returned no model/RAG side candidates")
+
+    ok = not errors
+    return {
+        "ok": ok,
+        "message": (
+            "raw pinyin guard: dirty raw input skips side lanes, committedContext fallback predicts"
+            if ok
+            else "raw pinyin guard failed: " + "; ".join(errors[:5])
+        ),
+        "dirty": {
+            "queryBasis": dirty.get("queryBasis"),
+            "shouldRefresh": dirty_trigger.get("shouldRefresh"),
+            "displayCount": len(dirty.get("displayCandidates") or []),
+            "reason": dirty_trigger.get("reason"),
+        },
+        "fallback": {
+            "queryBasis": fallback.get("queryBasis"),
+            "shouldRefresh": fallback_trigger.get("shouldRefresh"),
+            "sideCount": fallback_side_count,
+            "reason": fallback_trigger.get("reason"),
+        },
+    }
+
 try:
     with urllib.request.urlopen(f"{base}/health", timeout=1.5) as response:
         health = json.loads(response.read().decode("utf-8"))
@@ -415,14 +494,8 @@ try:
             ]
         },
     }
-    request = urllib.request.Request(
-        f"{base}/rime-suggest",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=2.5) as response:
-        result = json.loads(response.read().decode("utf-8"))
+    result = post_rime_suggest(payload)
+    raw_pinyin_guard = validate_raw_pinyin_guard()
     select_payload = {
         "dryRun": True,
         "candidate": {
@@ -482,6 +555,7 @@ try:
             "displayCandidates": len(result.get("displayCandidates", [])),
             "rimeSelectOk": True,
             "candidateContract": candidate_contract,
+            "rawPinyinGuard": raw_pinyin_guard,
             "predictorCheck": {
                 "ok": predictor_ok,
                 "message": "; ".join(messages),
@@ -529,6 +603,25 @@ PY
     ok "$candidate_contract_message"
   elif [[ "$candidate_contract_level" != "SKIP" ]]; then
     require_or_warn "$REQUIRE_MIXED_LAYOUT" "$candidate_contract_message"
+  fi
+  raw_pinyin_guard_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+guard = payload.get("rawPinyinGuard") if isinstance(payload.get("rawPinyinGuard"), dict) else {}
+level = "OK" if guard.get("ok", False) else "WARN"
+message = str(guard.get("message") or "raw pinyin guard: status unavailable")
+print(f"{level}\t{message}")
+PY
+)"
+  raw_pinyin_guard_level="${raw_pinyin_guard_line%%	*}"
+  raw_pinyin_guard_message="${raw_pinyin_guard_line#*	}"
+  if [[ "$raw_pinyin_guard_level" == "OK" ]]; then
+    ok "$raw_pinyin_guard_message"
+  else
+    require_or_warn "$REQUIRE_SIDECAR" "$raw_pinyin_guard_message"
   fi
   predictor_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
 import json
