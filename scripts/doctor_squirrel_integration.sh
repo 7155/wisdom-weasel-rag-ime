@@ -11,7 +11,11 @@ SIDECAR_BASE_URL="${RAG_IME_SIDECAR_URL:-http://$SIDECAR_HOST:$SIDECAR_PORT}"
 LAUNCH_AGENT_LABEL="${RAG_IME_LAUNCH_AGENT_LABEL:-com.rag-ime.sidecar}"
 REQUIRE_SIDECAR="${RAG_IME_DOCTOR_REQUIRE_SIDECAR:-0}"
 REQUIRE_XCODE="${RAG_IME_DOCTOR_REQUIRE_XCODE:-0}"
+REQUIRE_PREDICTOR="${RAG_IME_DOCTOR_REQUIRE_PREDICTOR:-0}"
 CHECK_LAUNCHD="${RAG_IME_DOCTOR_CHECK_LAUNCHD:-1}"
+EXPECT_PREDICTOR_PROVIDER="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROVIDER:-${RAG_IME_PREDICTOR_PROVIDER:-}}"
+EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDICTOR_MODEL:-}}"
+EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
 
 failures=0
 warnings=0
@@ -118,13 +122,32 @@ fi
 sidecar_out="$(mktemp /tmp/rag-ime-doctor-sidecar.out.XXXXXX)"
 sidecar_err="$(mktemp /tmp/rag-ime-doctor-sidecar.err.XXXXXX)"
 set +e
-"$PYTHON_EXECUTABLE" - "$SIDECAR_BASE_URL" >"$sidecar_out" 2>"$sidecar_err" <<'PY'
+"$PYTHON_EXECUTABLE" - "$SIDECAR_BASE_URL" "$EXPECT_PREDICTOR_PROVIDER" "$EXPECT_PREDICTOR_MODEL" "$EXPECT_STREAM_FIRST" >"$sidecar_out" 2>"$sidecar_err" <<'PY'
 import json
 import sys
 import urllib.error
 import urllib.request
 
 base = sys.argv[1].rstrip("/")
+expected_provider = sys.argv[2].strip()
+expected_model = sys.argv[3].strip()
+expected_stream_first = sys.argv[4].strip()
+
+def provider_matches(expected, actual):
+    aliases = {
+        "ollama": "local-ollama",
+        "mlx": "local-mlx",
+        "mlx-lm": "local-mlx",
+        "mlx-service": "local-mlx",
+        "openai": "local-openai-compatible",
+        "openai-compatible": "local-openai-compatible",
+    }
+    normalized = aliases.get(expected.strip().lower(), expected.strip())
+    return not normalized or normalized == actual
+
+def truthy(value):
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
 try:
     with urllib.request.urlopen(f"{base}/health", timeout=1.5) as response:
         health = json.loads(response.read().decode("utf-8"))
@@ -144,7 +167,38 @@ try:
     with urllib.request.urlopen(request, timeout=2.5) as response:
         result = json.loads(response.read().decode("utf-8"))
     if health.get("ok") and result.get("schemaVersion") == "rag-ime.rime-sidecar.v1":
-        print(json.dumps({"ok": True, "eventCount": health.get("eventCount"), "displayCandidates": len(result.get("displayCandidates", []))}, ensure_ascii=False))
+        predictor = health.get("predictor") if isinstance(health.get("predictor"), dict) else {}
+        provider_name = str(predictor.get("providerName") or "")
+        model = str(predictor.get("model") or "")
+        stream_first = bool(predictor.get("streamFirstCandidate"))
+        predictor_ok = True
+        messages = []
+        if expected_provider and not provider_matches(expected_provider, provider_name):
+            predictor_ok = False
+            messages.append(f"expected provider {expected_provider}, got {provider_name or '<none>'}")
+        if expected_model and expected_model != model:
+            predictor_ok = False
+            messages.append(f"expected model {expected_model}, got {model or '<none>'}")
+        if expected_stream_first and truthy(expected_stream_first) != stream_first:
+            predictor_ok = False
+            messages.append(f"expected streamFirstCandidate={truthy(expected_stream_first)}, got {stream_first}")
+        if not messages:
+            if predictor.get("configured"):
+                messages.append(f"sidecar predictor: {provider_name} {model} streamFirstCandidate={str(stream_first).lower()}")
+            else:
+                messages.append("sidecar predictor: not configured")
+        print(json.dumps({
+            "ok": True,
+            "eventCount": health.get("eventCount"),
+            "displayCandidates": len(result.get("displayCandidates", [])),
+            "predictorCheck": {
+                "ok": predictor_ok,
+                "message": "; ".join(messages),
+                "providerName": provider_name,
+                "model": model,
+                "streamFirstCandidate": stream_first,
+            },
+        }, ensure_ascii=False))
     else:
         raise RuntimeError("sidecar returned unexpected payload")
 except Exception as exc:
@@ -155,6 +209,25 @@ sidecar_status=$?
 set -e
 if [[ "$sidecar_status" == "0" ]]; then
   ok "HTTP sidecar health and rime-suggest passed: $(cat "$sidecar_out")"
+  predictor_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+check = payload.get("predictorCheck") if isinstance(payload.get("predictorCheck"), dict) else {}
+level = "OK" if check.get("ok", True) else "WARN"
+message = str(check.get("message") or "sidecar predictor: status unavailable")
+print(f"{level}\t{message}")
+PY
+)"
+  predictor_level="${predictor_line%%	*}"
+  predictor_message="${predictor_line#*	}"
+  if [[ "$predictor_level" == "OK" ]]; then
+    ok "$predictor_message"
+  else
+    require_or_warn "$REQUIRE_PREDICTOR" "$predictor_message"
+  fi
 else
   require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; run scripts/install_sidecar_launch_agent.sh"
 fi

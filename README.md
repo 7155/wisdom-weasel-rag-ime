@@ -401,6 +401,7 @@ python3 -m rag_ime.cli predictor-ttft \
 `predictor-ttft` currently supports the native Ollama lane and the resident MLX
 service. It reports
 `firstChunkMs`, `totalMs`, parsed candidates, and over-budget counts. See
+`docs/mac-local-inference-fast-path.md` and
 `docs/model-ttft-kv-cache-plan.md` for why Ollama is only the baseline and why
 the final low-latency path should copy Wisdom-Weasel's native llama.cpp
 system-prompt KV cache plus multi-sequence batch sampling.
