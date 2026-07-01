@@ -137,6 +137,8 @@ export RAG_IME_RIME_CACHE_TTL_MS=400
 
 The cache key is based on the parsed Rime snapshot and semantic query, not the raw request sequence. When Rime candidates or commit preview already provide the semantic query, raw pinyin/preedit changes do not force another model/RAG call; cached responses still rewrite `sessionId`, `requestSeq`, `rawInput`, and `preedit` to the current request. Set it to `0` while debugging cache behavior.
 
+The sidecar also deduplicates equivalent `/rime-suggest` requests that are already in flight. This is the VCP-style pending-request cache for the IME path: concurrent refreshes wait for the first request and reuse its response instead of calling the model/RAG pipeline twice. Health and response cache payloads expose `inFlightHits` / `inFlightHit` separately from TTL cache `hits`.
+
 `/rime-suggest` also returns a `triggerDecision`. Rime candidates are always preserved, but model/RAG side candidates are skipped for raw pinyin fallback, unstable composing updates, or full visible Rime candidate pages. This is the backend safety valve that prevents the local model and retrieval stack from running on every key event.
 
 The local SQLite core also keeps a small process-local suggestion cache for repeated equivalent RAG requests:

@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import sqlite3
 import tempfile
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from urllib.request import Request, urlopen
 
 from rag_ime.core_client import FixtureCoreClient
@@ -30,6 +32,28 @@ class FakePredictionProvider:
                 rank=1,
                 provider_name="fake-model",
                 latency_ms=7,
+                confidence=0.9,
+            )
+        ][:max_candidates]
+
+
+class BlockingPredictionProvider:
+    def __init__(self) -> None:
+        self.entered = Event()
+        self.release = Event()
+        self.calls = 0
+
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.calls += 1
+        self.entered.set()
+        if not self.release.wait(timeout=5):
+            raise TimeoutError("blocking test predictor was not released")
+        return [
+            ModelPrediction(
+                text=f"{current_input}阻塞候选",
+                rank=1,
+                provider_name="blocking-model",
+                latency_ms=25,
                 confidence=0.9,
             )
         ][:max_candidates]
@@ -175,6 +199,41 @@ class DebugImeServiceTests(unittest.TestCase):
         third = self.service.rime_suggest(third_payload)
         self.assertFalse(third["cache"]["hit"])
         self.assertEqual(predictor.calls, 2)
+
+    def test_rime_suggest_dedupes_in_flight_equivalent_payloads(self) -> None:
+        predictor = BlockingPredictionProvider()
+        self.service.predictor = predictor
+        payload = {
+            "sessionId": "inflight-a",
+            "requestSeq": 61,
+            "rawInput": "ragshurufa",
+            "preedit": "ragshurufa",
+            "committedContext": "用户正在写 RAG 输入法",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 2,
+            "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
+        }
+        second_payload = dict(payload)
+        second_payload["sessionId"] = "inflight-b"
+        second_payload["requestSeq"] = 62
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_future = pool.submit(self.service.rime_suggest, payload)
+            self.assertTrue(predictor.entered.wait(timeout=2))
+            second_future = pool.submit(self.service.rime_suggest, second_payload)
+            self._wait_for_inflight_hits(expected=1)
+            predictor.release.set()
+            first = first_future.result(timeout=2)
+            second = second_future.result(timeout=2)
+
+        self.assertEqual(predictor.calls, 1)
+        self.assertFalse(first["cache"]["hit"])
+        self.assertFalse(first["cache"]["inFlightHit"])
+        self.assertFalse(second["cache"]["hit"])
+        self.assertTrue(second["cache"]["inFlightHit"])
+        self.assertEqual(second["sessionId"], "inflight-b")
+        self.assertEqual(second["requestSeq"], 62)
+        self.assertEqual(self.service.health()["rimeSuggestCache"]["inFlightHits"], 1)
 
     def test_rime_suggest_cache_key_includes_vector_index_state(self) -> None:
         predictor = FakePredictionProvider()
@@ -418,6 +477,14 @@ class DebugImeServiceTests(unittest.TestCase):
         payload = service.suggest({"currentInput": "local-first 记忆", "topK": 2})
         self.assertEqual(payload["schemaVersion"], "rag-ime.suggestions.v1")
         self.assertGreaterEqual(len(payload["suggestions"]), 1)
+
+    def _wait_for_inflight_hits(self, *, expected: int) -> None:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if self.service.health()["rimeSuggestCache"]["inFlightHits"] >= expected:
+                return
+            time.sleep(0.01)
+        self.fail(f"timed out waiting for {expected} in-flight cache hit(s)")
 
 
 if __name__ == "__main__":
