@@ -289,6 +289,13 @@ as `RAG`, `智能检索`, and `知识图谱`; a non-thinking instruction-tuned s
 model such as `qwen2.5:0.5b` or `qwen2.5:1.5b` remains the next candidate to
 test before enabling model side candidates by default.
 
+For Mac-specific speed work, the next test order is: Ollama `qwen3.5:0.8b-mlx`
+smoke first, then direct MLX-LM resident service with `stream_generate` and
+prompt cache, then a native llama.cpp/Metal provider with stable prompt KV
+cache and multi-sequence candidate sampling. See
+`docs/model-ttft-kv-cache-plan.md` and
+`docs/local-model-prediction-benchmark.md` for the backend decision and commands.
+
 The model lane also has a default failure cooldown. If the configured endpoint times out or returns a slow empty result, subsequent prediction calls are skipped for a short window so composing refreshes do not pay one model timeout per key event:
 
 ```bash
@@ -328,6 +335,23 @@ python3 -m rag_ime.cli predict-benchmark \
   --recent-context "用户正在写本地记忆和候选预测" \
   --latency-budget-ms 150
 ```
+
+For input methods, also measure streaming first-chunk latency. This is the
+metric that approximates "when the first model-side candidate can appear":
+
+```bash
+python3 -m rag_ime.cli predictor-ttft \
+  --case "RAG 输入法" \
+  --recent-context "用户正在写本地记忆和候选预测" \
+  --repeat 8 \
+  --latency-budget-ms 200
+```
+
+`predictor-ttft` currently supports the native Ollama lane and reports
+`firstChunkMs`, `totalMs`, parsed candidates, and over-budget counts. See
+`docs/model-ttft-kv-cache-plan.md` for why Ollama is only the baseline and why
+the final low-latency path should copy Wisdom-Weasel's native llama.cpp
+system-prompt KV cache plus multi-sequence batch sampling.
 
 Evaluate local model prediction quality against the same JSONL case format used by RAG evaluation:
 

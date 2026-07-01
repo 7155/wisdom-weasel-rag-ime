@@ -30,6 +30,7 @@ from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import (
     PredictionBenchmarkCase,
     benchmark_prediction_provider,
+    benchmark_streaming_ttft_provider,
     doctor_prediction_provider,
     prediction_provider_from_env,
     prediction_provider_status,
@@ -213,6 +214,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     predict_benchmark.add_argument("--max-candidates", type=int, default=3)
     predict_benchmark.add_argument("--latency-budget-ms", type=int, default=150)
 
+    predictor_ttft = subparsers.add_parser(
+        "predictor-ttft",
+        help="Measure streaming first-chunk latency for the local model lane",
+    )
+    predictor_ttft.add_argument("--case", action="append", default=[], help="Input case to predict. Can be repeated.")
+    predictor_ttft.add_argument("--recent-context", default="")
+    predictor_ttft.add_argument("--project", default="wisdom-weasel-rag-ime")
+    predictor_ttft.add_argument("--max-candidates", type=int, default=3)
+    predictor_ttft.add_argument("--repeat", type=int, default=3)
+    predictor_ttft.add_argument("--latency-budget-ms", type=int, default=200)
+
     subparsers.add_parser("predictor-status", help="Show local model prediction configuration without calling the model")
 
     predictor_doctor = subparsers.add_parser("predictor-doctor", help="Probe local model endpoint and one short prediction")
@@ -241,7 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_model_matrix.add_argument(
         "--base-url",
         default=os.environ.get("RAG_IME_PREDICTOR_BASE_URL", "http://127.0.0.1:11434/v1"),
-        help="OpenAI-compatible base URL shared by all model ids. Defaults to Ollama /v1.",
+        help="Base URL shared by all model ids. Defaults to Ollama /v1; --provider ollama normalizes it to native /api endpoints.",
     )
     eval_model_matrix.add_argument(
         "--models",
@@ -725,6 +737,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(prediction_provider_status(predictor), ensure_ascii=False, indent=2))
         return 0
 
+    if args.command == "predictor-ttft":
+        prediction_context = build_prediction_context(
+            core,
+            explicit_recent_context=args.recent_context,
+            project=args.project,
+        )
+        raw_cases = args.case or [
+            "RAG 输入法",
+            "Squirrel 候选",
+            "PROJECT_MEMORY_BLOCK",
+        ]
+        cases = [PredictionBenchmarkCase(current_input=item, recent_context=prediction_context) for item in raw_cases]
+        print(
+            json.dumps(
+                benchmark_streaming_ttft_provider(
+                    predictor,
+                    cases,
+                    max_candidates=max(1, args.max_candidates),
+                    repeat=max(1, args.repeat),
+                    latency_budget_ms=max(1, args.latency_budget_ms),
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
     if args.command == "predictor-doctor":
         report = doctor_prediction_provider(
             predictor,
@@ -824,6 +863,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "schemaVersion": "rag-ime.model-matrix-eval.v1",
             "casesFile": str(Path(args.cases_file)),
             "project": args.project,
+            "provider": str(args.provider),
             "baseUrl": args.base_url,
             "profile": args.profile,
             "match": args.match,
