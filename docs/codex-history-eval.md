@@ -376,7 +376,18 @@ Rime sidecar display path, repeat 2 with --rime-cache-ttl-ms 5000:
   latency.p95Ms = 32
 ```
 
-The remaining failed sidecar cases are useful product work, not a core retrieval failure: with three visible side slots, some correct terms remain just outside the merged display payload or exist only in debug/model-context metadata. Treat this as the next candidate-compression/ranking target.
+After adding visible-candidate technical identifier summaries, product/runtime query expansions, and stronger patch/tool/subagent downranking, the same DB reports:
+
+```text
+Rime sidecar display path:
+  passRate 34/34 = 1.000
+  top1Accuracy = 0.765
+  meanReciprocalRank = 0.868
+  latency.p95Ms = 46
+  noiseRate = 0
+```
+
+This should be treated as a display-path milestone, not as proof that the model lane is useful. The improvement came from making the three visible side slots expose canonical project keys such as `RAG_IME_EMBEDDING_BASE_URL` and `maxModelSideCandidates`, while filtering raw patch/file-hit surfaces out of the IME candidate bar.
 
 The current default remains FTS5/rule rerank. `local-hash` is useful only as a deterministic side-index contract test and should not be enabled as a product default. The next meaningful comparison needs a real local/WSL semantic embedding provider and the same 34-case report.
 

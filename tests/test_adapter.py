@@ -169,6 +169,84 @@ class InputMethodAdapterTests(unittest.TestCase):
         self.assertIn("RAG_IME_PREDICTOR_BASE_URL", suggestion.surface_text)
         self.assertIn("tool exec_command", suggestion.metadata["insert_text"])
 
+    def test_candidate_surface_skips_patch_and_file_hit_noise(self) -> None:
+        patch_memory = CoreMemory(
+            memory_id="mem-patch-noise",
+            source_event_id="503",
+            text="*** Begin Patch *** Update File: rag_ime/debug_server.py rimeSuggestCache cacheStats",
+            source_ref="memory:503#patch",
+            score=0.9,
+            reason="fixture:patch-noise",
+            evidence_preview="raw patch output should not become candidate UI text.",
+            tags=("codex-history",),
+        )
+        file_hit_memory = CoreMemory(
+            memory_id="mem-file-hit-noise",
+            source_event_id="504",
+            text="README.md:187:python3 -m rag_ime.cli agent-hook",
+            source_ref="memory:504#file-hit",
+            score=0.8,
+            reason="fixture:file-hit-noise",
+            evidence_preview="search result line should not become candidate UI text.",
+            tags=("codex-history",),
+        )
+        good_memory = CoreMemory(
+            memory_id="mem-readable",
+            source_event_id="505",
+            text="Debug health reports rimeSuggestCache and cacheStats for sidecar cache inspection.",
+            source_ref="memory:505#readable",
+            score=0.7,
+            reason="fixture:readable",
+            evidence_preview="readable assistant summary",
+            tags=("codex-history",),
+        )
+
+        suggestions = SuggestionCompiler().compile(
+            [
+                RankedMemory(memory=patch_memory, score=0.9, rank=1),
+                RankedMemory(memory=file_hit_memory, score=0.8, rank=2),
+                RankedMemory(memory=good_memory, score=0.7, rank=3),
+            ]
+        )
+
+        self.assertEqual(len(suggestions), 1)
+        self.assertEqual(suggestions[0].surface_text, "rimeSuggestCache / cacheStats")
+
+    def test_candidate_surface_infers_project_config_keys(self) -> None:
+        embedding_memory = CoreMemory(
+            memory_id="mem-embedding-config",
+            source_event_id="506",
+            text=(
+                "需要对比时可以用 RAG_IME_EMBEDDING_PROVIDER=local-hash "
+                "或后续 OpenAI-compatible/WSL embedding endpoint。"
+            ),
+            source_ref="memory:506#embedding",
+            score=0.8,
+            reason="fixture:embedding-config",
+            evidence_preview="embedding config",
+            tags=("codex-history",),
+        )
+        budget_memory = CoreMemory(
+            memory_id="mem-model-budget",
+            source_event_id="507",
+            text="最多 1 个模型 side candidate，剩余 side slots 留给 RAG/记忆。",
+            source_ref="memory:507#budget",
+            score=0.7,
+            reason="fixture:model-budget",
+            evidence_preview="merge policy",
+            tags=("codex-history",),
+        )
+
+        suggestions = SuggestionCompiler().compile(
+            [
+                RankedMemory(memory=embedding_memory, score=0.8, rank=1),
+                RankedMemory(memory=budget_memory, score=0.7, rank=2),
+            ]
+        )
+
+        self.assertIn("RAG_IME_EMBEDDING_BASE_URL", suggestions[0].surface_text)
+        self.assertEqual(suggestions[1].surface_text, "maxModelSideCandidates / ragKeepsRemainin…")
+
     def test_native_frontend_payload_is_stable_json_shape(self) -> None:
         scenario = get_scenario("technical-plan")
         suggestions = self.adapter.suggest(

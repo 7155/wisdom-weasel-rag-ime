@@ -794,12 +794,26 @@ def _expand_query_for_local_rerank(query: str) -> str:
         add("local-first", "SQLite", "FTS5", "memory", "personal memory", "本地记忆")
     if "数字键" in text or ("候选" in text and ("共用" in text or "候选段" in text)):
         add("Rime candidates", "side candidates", "displayCandidates", "selectionAction", "候选编号")
+    if ("区分" in text or "选择" in text or "路由" in text) and (
+        "squirrel" in lowered or "rime" in lowered or "side candidate" in lowered or "候选" in text
+    ):
+        add("select_candidate_on_current_page", "commit_side_candidate", "selectionAction", "selection routing")
     if "raw pinyin" in lowered or "fallback" in lowered or ("跳过" in text and ("side" in lowered or "刷新" in text)):
         add("raw pinyin fallback", "rawInputFallback", "sideCandidatesEnabled", "triggerDecision")
     if "缓存" in text and ("sidecar" in lowered or "重复" in text or "刷新" in text or "命中" in text):
         add("rimeSuggestCache", "cacheStats", "cache hit", "suggestion cache", "semantic cache")
+    if "embedding" in lowered and ("endpoint" in lowered or "wsl" in lowered or "环境变量" in text):
+        add("RAG_IME_EMBEDDING_BASE_URL", "RAG_IME_EMBEDDING_MODEL", "embedding endpoint", "WSL endpoint")
+    if "suggestion cache" in lowered or ("缓存" in text and ("命中" in text or "失效" in text or "统计" in text)):
+        add("suggestionCache", "LRU", "hitRate", "evictions", "invalidations", "suggestion_cache_stats")
+    if ("codex" in lowered and "history" in lowered and "eval" in lowered) or (
+        "ranking" in lowered and "metrics" in lowered
+    ):
+        add("top1Accuracy", "meanReciprocalRank", "meanFirstMatchRank", "eval_report", "ranking metrics")
     if "side slots" in lowered or ("模型" in text and ("占满" in text or "候选" in text)):
         add("maxModelSideCandidates", "maxSideCandidates", "side slots", "model side candidates")
+    if "rag" in lowered and "模型" in text and ("比较" in text or "同一 case" in lowered or "同一个 case" in lowered):
+        add("eval-comparison", "eval-prediction", "model prediction", "same case comparison")
     if "历史输入" in text or ("上下文" in text and "模型" in text):
         add("historyContext", "recent_input_context", "recent input context", "build_prediction_context")
     if "wisdom-weasel" in lowered or ("快速预测" in text and ("靠" in text or "什么" in text)):
@@ -844,6 +858,12 @@ def _field_rerank_boosts(
     tag_hits = overlap_terms(query, tags_text)
     source_hits = overlap_terms(query, source_fields)
     raw_ascii_hits = _important_ascii_hits(raw_query, f"{committed_text} {recent_context} {tags_text} {source_fields}")
+    expanded_ascii_hits = [
+        hit
+        for hit in _important_ascii_hits(query, f"{committed_text} {recent_context} {tags_text} {source_fields}")
+        if hit not in raw_ascii_hits
+    ]
+    canonical_alias = _canonical_alias_boost(query, f"{committed_text} {recent_context}")
 
     exact_phrase = 0.0
     raw = compact_whitespace(raw_query).lower()
@@ -858,6 +878,8 @@ def _field_rerank_boosts(
         ("tag", min(1.6, len(tag_hits) * 0.45)),
         ("source", min(0.8, len(source_hits) * 0.25)),
         ("raw", min(2.4, len(raw_ascii_hits) * 0.8)),
+        ("expanded", min(2.1, len(expanded_ascii_hits) * 0.7)),
+        ("canonical", canonical_alias),
     ]
     return [(label, boost) for label, boost in boosts if boost > 0]
 
@@ -876,6 +898,22 @@ def _important_ascii_hits(query: str, text: str) -> list[str]:
     return hits
 
 
+def _canonical_alias_boost(query: str, text: str) -> float:
+    query_lower = (query or "").lower()
+    compact = compact_whitespace(text or "")
+    lowered = compact.lower()
+    score = 0.0
+    if "rag_ime_embedding_base_url" in query_lower and "embedding endpoint" in lowered and (
+        "wsl" in lowered or "openai-compatible" in lowered or "rag_ime_embedding_provider" in lowered
+    ):
+        score += 0.9
+    if "maxmodelsidecandidates" in query_lower and (
+        "模型候选挤掉" in compact or ("最多 1 个模型" in compact and "side" in lowered)
+    ):
+        score += 1.0
+    return min(1.4, score)
+
+
 def _bm25_relevance(bm25_score: float) -> float:
     """Convert SQLite FTS5 bm25, where lower and often negative is better, to a positive boost."""
 
@@ -890,6 +928,14 @@ def _runtime_trace_penalty(text: str) -> float:
     stripped = compact_whitespace(text)
     lowered = stripped.lower()
     prefix = lowered[:120]
+    if stripped.startswith(("*** Begin Patch", "*** Update File:", "*** Add File:", "diff --git")):
+        return 2.4
+    if "*** begin patch" in lowered or " apply_patch " in lowered or "tool apply_patch" in lowered:
+        return 2.4
+    if stripped.startswith("<subagent_notification>"):
+        return 1.2
+    if stripped.startswith("**只读结论**") or stripped.startswith("只读结论"):
+        return 0.8
     if re.match(r"^\[\d+\]\s+tool\s+", stripped):
         return 0.35
     if prefix.startswith("tool ") and (" call" in prefix or " result" in prefix):

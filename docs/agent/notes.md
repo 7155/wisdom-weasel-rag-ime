@@ -376,6 +376,27 @@ Commands:
 Next:
 - Full Xcode build/install of patched Squirrel remains the next hard gate.
 
+### 2026-07-01
+Topic:
+- Restore full Rime-sidecar display-path eval after filtering raw trace surfaces.
+
+Changes:
+- Added product/runtime query expansions for selection routing, RAG-vs-model comparison, WSL embedding env vars, suggestion-cache metrics, and Codex-history ranking metrics.
+- Added canonical surface summaries so visible IME candidates can show project keys such as `RAG_IME_EMBEDDING_BASE_URL`, `suggestionCache`, `top1Accuracy`, and `maxModelSideCandidates` instead of generic status text.
+- Filtered patch/file-hit candidate surfaces and downranked patch/tool/subagent traces so they remain recallable but do not become candidate-bar text.
+- Updated the local model plan for Ollama `qwen3.5` small tags: `0.8b`, `2b`, `4b`, and corresponding `-mlx` variants.
+
+Verification:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_adapter tests.test_local_sqlite_core`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-rime-sidecar-eval-20260701.sqlite eval-rime-sidecar --cases-file docs/eval/codex-history-cases.example.jsonl --match any --repeat 1`
+- Rime sidecar display path now passes 34/34, top1Accuracy=0.765, meanReciprocalRank=0.868, p95=46ms, noiseRate=0.
+- `curl -s https://ollama.com/library/qwen3.5 | rg -o "qwen3\\.5:[0-9.]+b(?:-mlx)?" | sort -u` confirmed Ollama tags including `0.8b`, `2b`, `4b`, and `-mlx` variants.
+- `ollama` is not installed or visible in this Mac session, so real model inference remains pending.
+
+Next:
+- Run full suite, fixture acceptance, direct Codex-history eval, and `git diff --check`, then push if clean.
+- Start a real Ollama/WSL endpoint later and run `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and `eval-rime-sidecar`.
+
 ### 2026-07-01 07:39 CST
 Problem:
 - FTS5/rerank can handle many exact project-history cases, but the core did not yet have a pluggable vector side-index for true semantic recall experiments.
@@ -558,11 +579,11 @@ Findings:
 - With Qwen instant env set, config status becomes `configured=true`, `providerProfile=instant`, `promptMode=chat`, `model=Qwen3-0.6B`, `timeoutMs=350`, `maxTokens=8`.
 - Real benchmark against `127.0.0.1:8000` returned `hasCandidates=false`, so no usable local model server is currently running there.
 - Common local endpoints `8000`, `8080`, `1234`, and `11434` all returned connection refused in this session.
-- Qwen3.5 exists as a later family, but the first IME test should prefer verified small/non-thinking Qwen3 checkpoints unless a small Qwen3.5 local checkpoint is confirmed.
+- Ollama `qwen3.5` has small tags, so it should be included in the first local IME test matrix: `qwen3.5:0.8b`, `qwen3.5:2b`, `qwen3.5:4b`, plus `-mlx` variants on Mac when available.
 
 Next:
 - Start a real local/WSL OpenAI-compatible Qwen/llama.cpp/MLX endpoint, then run `predictor-status`, `predict-benchmark`, and `eval-prediction`.
-- Prefer Qwen instant/no-thinking first; compare chat `instant` against completion `completion-instant` before building a native KV-cache provider.
+- Prefer Qwen/Qwen3.5 instant/no-thinking first; compare chat `instant` against completion `completion-instant` before building a native KV-cache provider.
 
 ### 2026-07-01 08:46 CST
 Problem:

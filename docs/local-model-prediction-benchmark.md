@@ -39,12 +39,30 @@ thinking: disabled through chat_template_kwargs.enable_thinking=false
 
 ## Model Choice Note
 
-As of 2026-07-01, the first local IME test should optimize for latency, not the newest model-family name. The official Qwen3 README lists small dense checkpoints such as 0.6B, 1.7B, and 4B, plus Qwen3-Instruct-2507 non-thinking variants; those are the practical first candidates for a local typing predictor. Qwen3.5 exists as a later family, but the public Qwen3.5-Omni technical report describes a much larger multimodal model, so it is not the first target for a compact macOS IME lane unless a small local checkpoint is verified separately.
+As of 2026-07-01, the first local IME test should optimize for latency, not the newest model-family name. The Ollama `qwen3.5` library page lists small local tags that are valid candidates for this project:
 
-- Qwen3 reference: https://github.com/QwenLM/Qwen3
-- Qwen3.5-Omni reference: https://arxiv.org/abs/2604.15804
+- first latency smoke: `qwen3.5:0.8b`
+- quality/speed middle: `qwen3.5:2b`
+- upper local bound: `qwen3.5:4b`
+- Mac MLX variants to try when available: `qwen3.5:0.8b-mlx`, `qwen3.5:2b-mlx`, `qwen3.5:4b-mlx`
 
-The stable rule for this project is therefore: configure any candidate through the same OpenAI-compatible lane, then accept it only if `predict-benchmark`, `eval-prediction`, and the Rime sidecar latency budget pass.
+Reference: https://ollama.com/library/qwen3.5
+
+Example Ollama route:
+
+```bash
+ollama pull qwen3.5:0.8b
+ollama serve
+
+export RAG_IME_PREDICTOR_PROVIDER=openai-compatible
+export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434/v1
+export RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b
+export RAG_IME_PREDICTOR_PROFILE=instant
+```
+
+The current Mac session does not have `ollama` in `PATH`, so this remains a prepared test matrix rather than a completed model benchmark.
+
+The stable rule for this project is: configure any candidate through the same OpenAI-compatible lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
 Some OpenAI-compatible servers need custom request fields or headers. Use:
 

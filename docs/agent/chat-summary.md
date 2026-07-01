@@ -589,7 +589,7 @@ Verification:
 - Actual benchmark against `127.0.0.1:8000` returned no candidates, so no real model is currently running there.
 - Probed common local endpoints `8000`, `8080`, `1234`, and `11434`; all refused connection.
 - Real 5000-record Codex-history eval still passed 34/34 with top1Accuracy=0.824, meanReciprocalRank=0.880, p95=34ms.
-- Model choice note: Qwen3.5 exists, but first IME latency tests should use verified small/non-thinking Qwen3 checkpoints unless a compact Qwen3.5 local checkpoint is confirmed.
+- Model choice note: Ollama `qwen3.5` has small local tags (`0.8b`, `2b`, `4b`, plus `-mlx` variants), so include them in the first IME latency/quality matrix.
 
 Next:
 - Start a real local or WSL OpenAI-compatible model endpoint, then run `predictor-status`, `predict-benchmark`, `eval-prediction`, and `eval-comparison`.
@@ -675,3 +675,10 @@ Verification:
 Next:
 - Improve remaining sidecar-only misses with candidate compression/ranking for three visible side slots.
 - Test a real local/WSL Qwen endpoint when available.
+
+### 2026-07-01
+- Added technical identifier surface summaries and canonical project-key mapping for visible IME candidates.
+- Filtered patch/file-hit surfaces and downranked patch/tool/subagent traces while keeping useful code identifiers recallable.
+- Expanded local rerank mappings for selection routing, RAG/model comparison, WSL embedding env vars, suggestion-cache metrics, and Codex-history ranking metrics.
+- Rime sidecar display-path eval on the same temp DB now passes 34/34 with top1Accuracy=0.765, meanReciprocalRank=0.868, p95=46ms, and noiseRate=0.
+- Updated README and model benchmark docs for Ollama `qwen3.5:0.8b`, `2b`, `4b`, and MLX variants; this Mac still has no visible `ollama`, so real inference is pending.
