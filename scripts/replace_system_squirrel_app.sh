@@ -60,6 +60,8 @@ if command -v codesign >/dev/null 2>&1; then
   sudo codesign --force --deep --sign - "$TARGET_APP"
 fi
 
+pkill -x Squirrel >/dev/null 2>&1 || true
+
 "$TARGET_APP/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
 "$TARGET_APP/Contents/MacOS/Squirrel" --enable-input-source "$INPUT_SOURCE_ID" >/dev/null 2>&1 ||
   "$TARGET_APP/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 ||
