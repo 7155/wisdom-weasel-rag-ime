@@ -106,6 +106,16 @@ require_file() {
   fi
 }
 
+require_text() {
+  local path="$1"
+  local text="$2"
+  local description="$3"
+  if ! grep -Fq "$text" "$path"; then
+    echo "patched Squirrel workdir is missing $description in $path" >&2
+    exit 1
+  fi
+}
+
 if [[ ! -d "$SQUIRREL_WORKDIR/.git" ]]; then
   echo "Squirrel workdir not prepared: $SQUIRREL_WORKDIR" >&2
   echo "Run scripts/prepare_squirrel_workspace.sh first." >&2
@@ -121,7 +131,11 @@ fi
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" "patched Squirrel workdir is missing RAG-IME model file"
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" "patched Squirrel workdir is missing RAG-IME client file"
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "patched Squirrel workdir is missing patched SquirrelInputController"
+require_file "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "patched Squirrel workdir is missing patched SquirrelPanel"
 require_file "$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" "patched Squirrel workdir is missing generated config snippet"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePanelForcesHorizontalLayout" "mixed LLM horizontal-lane guard"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate separator"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal layout for inline LLM candidates"
 
 deps_ready() {
   [[ -f "$SQUIRREL_WORKDIR/lib/librime.1.dylib" ]] &&

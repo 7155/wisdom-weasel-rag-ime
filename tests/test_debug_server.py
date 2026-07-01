@@ -233,8 +233,12 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["queryBasis"], "rimeCandidates")
         self.assertIn("就比如", predictor.last_current_input)
         self.assertNotIn("jiubiruwopinshishur", predictor.last_current_input)
-        self.assertEqual(payload["displayCandidates"][0]["selectionAction"], "select_rime_candidate")
-        self.assertEqual(payload["displayCandidates"][2]["selectionAction"], "commit_side_candidate")
+        self.assertEqual(payload["displayCandidates"][0]["selectionAction"], "commit_side_candidate")
+        self.assertEqual(payload["displayCandidates"][0]["displayLayout"], "inline")
+        self.assertEqual(payload["displayCandidates"][1]["selectionAction"], "commit_side_candidate")
+        self.assertEqual(payload["displayCandidates"][1]["displayLayout"], "block")
+        self.assertEqual(payload["displayCandidates"][2]["selectionAction"], "select_rime_candidate")
+        self.assertEqual(payload["displayCandidates"][2]["displayLayout"], "fallback")
         self.assertFalse(payload["cache"]["hit"])
 
     def test_rime_suggest_cache_hits_repeated_equivalent_payloads(self) -> None:

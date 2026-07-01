@@ -110,7 +110,7 @@ class DebugImeService:
                 "inFlightHits": self._rime_inflight_hits,
                 "inFlightErrors": self._rime_inflight_errors,
             },
-            "predictor": prediction_provider_status(self.predictor),
+            "predictor": prediction_provider_status(self.predictor, probe_capabilities=True),
             "suggestionCache": self._suggestion_cache_stats(),
             "vectorStats": self._vector_index_stats(),
         }

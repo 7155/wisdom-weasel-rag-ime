@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import threading
 import types
 import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.mlx_predictor_server import MlxLmEngine, _PromptCacheState, make_mlx_predictor_handler
@@ -116,6 +118,71 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertFalse(payload["promptCache"]["usedForGeneration"])
         self.assertEqual(payload["promptCache"]["stablePrefixTokens"], 5)
         self.assertEqual(payload["promptCache"]["reason"], "prepared_only_streaming_generation_not_cached_yet")
+
+    def test_engine_health_reports_local_text_only_model_info(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text='["本地"]')
+        with tempfile.TemporaryDirectory(prefix="rag-ime-mlx-model-") as tmp, patch.dict(sys.modules, modules):
+            model_dir = Path(tmp)
+            (model_dir / "model.safetensors").write_bytes(b"fake")
+            (model_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "architectures": ["Qwen3ForCausalLM"],
+                        "model_type": "qwen3",
+                        "hidden_size": 1024,
+                        "intermediate_size": 3072,
+                        "num_attention_heads": 16,
+                        "num_hidden_layers": 28,
+                        "num_key_value_heads": 8,
+                        "vocab_size": 151936,
+                        "quantization": {"bits": 4, "group_size": 64},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = MlxLmEngine(str(model_dir)).health()
+
+        info = payload["modelInfo"]
+        self.assertTrue(info["localPath"])
+        self.assertTrue(info["configPresent"])
+        self.assertTrue(info["textOnly"])
+        self.assertFalse(info["hasVisionConfig"])
+        self.assertEqual(info["architecture"], "Qwen3ForCausalLM")
+        self.assertEqual(info["vocabSize"], 151936)
+        self.assertEqual(info["quantization"]["bits"], 4)
+        self.assertTrue(payload["capabilities"]["textOnlyModel"])
+
+    def test_engine_health_flags_local_vision_language_model(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text='["本地"]')
+        with tempfile.TemporaryDirectory(prefix="rag-ime-mlx-model-") as tmp, patch.dict(sys.modules, modules):
+            model_dir = Path(tmp)
+            (model_dir / "model.safetensors").write_bytes(b"fake")
+            (model_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "architectures": ["Qwen3_5ForConditionalGeneration"],
+                        "model_type": "qwen3_5",
+                        "text_config": {
+                            "model_type": "qwen3_5_text",
+                            "hidden_size": 1024,
+                            "num_hidden_layers": 24,
+                            "vocab_size": 248320,
+                        },
+                        "vision_config": {"model_type": "qwen3_5", "hidden_size": 768},
+                        "quantization": {"bits": 4, "group_size": 64},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = MlxLmEngine(str(model_dir)).health()
+
+        info = payload["modelInfo"]
+        self.assertFalse(info["textOnly"])
+        self.assertTrue(info["hasVisionConfig"])
+        self.assertEqual(info["modelType"], "qwen3_5")
+        self.assertEqual(info["textModelType"], "qwen3_5_text")
+        self.assertEqual(info["vocabSize"], 248320)
+        self.assertFalse(payload["capabilities"]["textOnlyModel"])
 
     def test_predict_stream_includes_prompt_cache_status_on_done_event(self) -> None:
         server, thread = _start_fake_server()

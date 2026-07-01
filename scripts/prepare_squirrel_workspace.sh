@@ -96,7 +96,9 @@ require_patch_text "sources/RagImeSidecarModels.swift" "displayLayout" "per-cand
 require_patch_text "sources/SquirrelInputController.swift" "selectRagImeSideCandidate" "number-key side-candidate routing"
 require_patch_text "sources/SquirrelInputController.swift" "ragImeRequestFingerprint" "stale response fingerprint guard"
 require_patch_text "sources/SquirrelInputController.swift" "mergedRagImePanelCandidates" "Rime and side candidate display merge"
+require_patch_text "sources/SquirrelInputController.swift" "ragImePanelForcesHorizontalLayout" "LLM horizontal-lane layout guard"
 require_patch_text "sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate layout"
+require_patch_text "sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal panel layout for LLM inline candidates"
 require_patch_text "sources/Main.swift" "static let appDir = Bundle.main.bundleURL" "dynamic input-source registration bundle path"
 
 CONFIG_PATH="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml"

@@ -1509,3 +1509,20 @@ Verification:
 
 Next:
 - User should try foreground typing; if the first frame briefly shows Rime fallback, wait ~200 ms for the sidecar refresh and check whether the panel updates to horizontal LLM + vertical RAG.
+
+### 2026-07-02
+Topic:
+- Reinstall and verify horizontal LLM lane plus vertical sentence rows in the real Squirrel/MLX runtime.
+
+Changes:
+- Added build/preparation guards for the mixed panel patch so old Squirrel workdirs cannot pass without `ragImePanelForcesHorizontalLayout`, `ragImePanelLinear`, and `candidateSeparator`.
+- Added MLX local model metadata to `/health` and propagated it through sidecar predictor status and doctor.
+- Reinstalled patched Squirrel.app, restarted the resident MLX predictor, and reinstalled the sidecar with `RAG_IME_PREDICTOR_PROVIDER=mlx`.
+
+Verification:
+- 95 focused tests passed, plus syntax/check scripts.
+- Installed `/rime-suggest` now returns labels 1-5 as `model/inline` and 6-8 as `rag/block`.
+- Doctor passes with `failures=0 warnings=1`; the warning correctly flags the current Qwen3.5 MLX package as vision-language rather than pure text.
+
+Next:
+- Foreground typing should be tested again. The next model task is replacing the active Qwen3.5 VLM directory with a complete pure-text MLX model directory.

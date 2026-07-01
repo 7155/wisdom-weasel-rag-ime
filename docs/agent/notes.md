@@ -2113,3 +2113,33 @@ Commands:
 
 Status:
 - Installed Squirrel is now selected and ready for foreground typing tests with the user.
+
+### 2026-07-02 00:32 CST
+Problem:
+- User clarified the final panel rule again: LLM candidates must be horizontally arranged; sentence-like RAG/memory candidates are the vertical rows.
+- Live sidecar payload already returned `model/inline` followed by `rag/block`, but the installed app could still be an older Squirrel build and the sidecar LaunchAgent could lose its MLX predictor environment.
+
+Changes:
+- Added build/preparation guards so patched Squirrel workdirs must contain `ragImePanelForcesHorizontalLayout`, `ragImePanelLinear`, and `candidateSeparator`.
+- Added MLX model inspection to `/health` and sidecar predictor status, including `textOnly`, `hasVisionConfig`, architecture, vocab/layer sizes, and quantization.
+- Doctor now warns when the active MLX model contains `vision_config`, because that wastes memory/latency for an input method compared with a pure text model.
+- Reinstalled patched Squirrel from `/tmp/rag-ime-squirrel-verify`.
+- Reinstalled the resident MLX predictor LaunchAgent and reinstalled the sidecar LaunchAgent with `RAG_IME_PREDICTOR_PROVIDER=mlx`.
+
+Verification:
+- Focused tests passed: `tests.test_mlx_predictor_server`, `tests.test_predictor`, `tests.test_debug_server`, `tests.test_rime_sidecar`, `tests.test_build_patched_squirrel`, `tests.test_prepare_squirrel_workspace` (95 tests).
+- `py_compile`, `bash -n`, and `git diff --check` passed.
+- Installed `/rime-suggest` payload returned 1-5 as `model/inline` and 6-8 as `rag/block`; model lane elapsed 118 ms.
+- MLX `/health` and sidecar `/health` both report provider `local-mlx` with model `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit`.
+- Doctor passed with `failures=0 warnings=1`; the warning is the intended text-only-model warning for the current Qwen3.5 VLM package.
+
+Commands:
+- `python3 -m unittest tests.test_mlx_predictor_server tests.test_predictor tests.test_debug_server tests.test_rime_sidecar tests.test_build_patched_squirrel tests.test_prepare_squirrel_workspace`
+- `RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/build_patched_squirrel.sh install`
+- `RAG_IME_MLX_PYTHON="$PWD/.venv-mlx314sys/bin/python" RAG_IME_MLX_MODEL="/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit" scripts/install_mlx_predictor_launch_agent.sh`
+- `RAG_IME_PREDICTOR_PROVIDER=mlx RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767 RAG_IME_PREDICTOR_MODEL="/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit" RAG_IME_PREDICTOR_PROFILE=instant RAG_IME_PREDICTOR_TIMEOUT_MS=350 scripts/install_sidecar_launch_agent.sh`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/doctor_squirrel_integration.sh`
+
+Status:
+- Runtime layout contract is correct: short LLM predictions are inline/horizontal metadata, RAG/memory sentences are block rows.
+- Current model is usable for the path but not ideal: it is a Qwen3.5 vision-language MLX package, so the next model task is to replace it with a complete pure-text MLX directory.

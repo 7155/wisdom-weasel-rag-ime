@@ -80,6 +80,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func selectRagImeSideCandidate() {}",
                         "  func ragImeRequestFingerprint() {}",
                         "  func mergedRagImePanelCandidates() {}",
+                        "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
                         "}",
                     ]
                 )
@@ -101,7 +102,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (upstream / "sources" / "SquirrelPanel.swift").write_text(
-                "final class SquirrelPanel { func candidateSeparator(before index: Int) -> String { \"\\n\" } }\n",
+                "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \"\\n\" } }\n",
                 encoding="utf-8",
             )
             subprocess.run(["git", "add", "sources"], cwd=upstream, check=True)

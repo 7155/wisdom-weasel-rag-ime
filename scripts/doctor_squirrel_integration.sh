@@ -268,6 +268,7 @@ try:
         provider_name = str(predictor.get("providerName") or "")
         model = str(predictor.get("model") or "")
         stream_first = bool(predictor.get("streamFirstCandidate"))
+        model_info = predictor.get("modelInfo") if isinstance(predictor.get("modelInfo"), dict) else {}
         predictor_ok = True
         messages = []
         if expected_provider and not provider_matches(expected_provider, provider_name):
@@ -279,6 +280,9 @@ try:
         if expected_stream_first and truthy(expected_stream_first) != stream_first:
             predictor_ok = False
             messages.append(f"expected streamFirstCandidate={truthy(expected_stream_first)}, got {stream_first}")
+        if model_info and model_info.get("textOnly") is False and model_info.get("hasVisionConfig") is True:
+            predictor_ok = False
+            messages.append("active MLX model includes vision_config; prefer a text-only model for IME latency/memory")
         if not messages:
             if predictor.get("configured"):
                 messages.append(f"sidecar predictor: {provider_name} {model} streamFirstCandidate={str(stream_first).lower()}")
@@ -295,6 +299,7 @@ try:
                 "providerName": provider_name,
                 "model": model,
                 "streamFirstCandidate": stream_first,
+                "modelInfo": model_info,
             },
         }, ensure_ascii=False))
     else:

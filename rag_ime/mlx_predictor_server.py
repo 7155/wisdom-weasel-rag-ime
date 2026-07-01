@@ -10,6 +10,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Iterable
 
 from .predictor import parse_prediction_candidates
@@ -65,6 +66,7 @@ class MlxLmEngine:
             raise RuntimeError("Install mlx-lm before running mlx-predictor-server") from exc
 
         self.model_id = model_id
+        self.model_info = _inspect_local_mlx_model(model_id)
         self.model, self.tokenizer = load(model_id)
         self._prompt_cache = _PromptCacheState(
             enabled=bool(enable_prompt_cache),
@@ -81,11 +83,13 @@ class MlxLmEngine:
             "provider": "mlx-lm",
             "model": self.model_id,
             "modelLoaded": True,
+            "modelInfo": self.model_info,
             "promptCache": prompt_cache,
             "capabilities": {
                 "streaming": True,
                 "residentModel": True,
                 "promptCache": _prompt_cache_used_for_generation(prompt_cache),
+                "textOnlyModel": bool(self.model_info.get("textOnly")),
                 "sequenceFork": False,
                 "batchCandidates": True,
                 "logitsTopK": True,
@@ -513,6 +517,87 @@ def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str
         "temperature": _float_payload(payload.get("temperature"), 0.15),
         "top_p": _float_payload(payload.get("topP"), 0.85),
         "request_metadata": _request_metadata_from_payload(payload),
+    }
+
+
+def _inspect_local_mlx_model(model_id: str) -> dict[str, Any]:
+    path = Path(model_id).expanduser()
+    info: dict[str, Any] = {
+        "modelId": model_id,
+        "localPath": path.exists(),
+        "textOnly": False,
+        "hasVisionConfig": False,
+        "configPresent": False,
+        "modelFileCount": 0,
+        "diskBytes": 0,
+    }
+    if not path.exists():
+        info["reason"] = "non_local_model_id"
+        return info
+
+    model_dir = path if path.is_dir() else path.parent
+    info["modelDir"] = str(model_dir)
+    model_files = sorted(model_dir.glob("*.safetensors"))
+    info["modelFileCount"] = len(model_files)
+    info["diskBytes"] = sum(file.stat().st_size for file in model_files if file.is_file())
+
+    config_path = model_dir / "config.json"
+    if not config_path.exists():
+        info["reason"] = "missing_config_json"
+        return info
+
+    info["configPresent"] = True
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        info["reason"] = f"invalid_config_json:{exc.__class__.__name__}"
+        return info
+
+    text_config = config.get("text_config") if isinstance(config.get("text_config"), dict) else {}
+    source = text_config if text_config else config
+    has_vision_config = isinstance(config.get("vision_config"), dict)
+    info.update(
+        {
+            "architecture": _first_string(config.get("architectures")),
+            "modelType": str(config.get("model_type") or source.get("model_type") or ""),
+            "textModelType": str(text_config.get("model_type") or ""),
+            "hasVisionConfig": has_vision_config,
+            "textOnly": not has_vision_config,
+            "vocabSize": _optional_int(source.get("vocab_size")),
+            "hiddenSize": _optional_int(source.get("hidden_size")),
+            "numHiddenLayers": _optional_int(source.get("num_hidden_layers")),
+            "intermediateSize": _optional_int(source.get("intermediate_size")),
+            "numAttentionHeads": _optional_int(source.get("num_attention_heads")),
+            "numKeyValueHeads": _optional_int(source.get("num_key_value_heads")),
+            "quantization": _quantization_summary(config),
+        }
+    )
+    return info
+
+
+def _first_string(value: Any) -> str:
+    if isinstance(value, list) and value:
+        return str(value[0])
+    return str(value or "")
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _quantization_summary(config: dict[str, Any]) -> dict[str, Any]:
+    quantization = config.get("quantization")
+    if not isinstance(quantization, dict):
+        quantization = config.get("quantization_config")
+    if not isinstance(quantization, dict):
+        return {}
+    return {
+        key: value
+        for key, value in quantization.items()
+        if isinstance(value, (str, int, float, bool)) or value is None
     }
 
 
