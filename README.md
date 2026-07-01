@@ -276,10 +276,11 @@ python3 -m rag_ime.cli \
 `squirrel-tryout-gate` first checks the installed `Squirrel.app` bundle and the
 actual `~/Library/Rime/squirrel.custom.yaml` managed block, then checks
 `readinessState=ready` for the active macOS input source, then checks the running
-sidecar `/health`, then runs the existing backend `quality-gate` with
-`--require-input-source-ready`. If the input source is still `switch`, it fails
-fast and skips the expensive quality gate. It does not install Squirrel, modify
-HIToolbox, switch input sources, or type into a foreground app. The report also
+sidecar `/health` and a safe `/rime-suggest` candidate probe, then runs the
+existing backend `quality-gate` with `--require-input-source-ready`. If the input
+source is still `switch`, it fails fast and skips the expensive quality gate. It
+does not install Squirrel, modify HIToolbox, switch input sources, or type into a
+foreground app, and it does not call `/rime-select` by default. The report also
 includes `manualRequired` for the remaining foreground typing and candidate-panel
 checks.
 

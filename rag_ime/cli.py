@@ -1899,9 +1899,12 @@ def _tryout_sidecar_health(sidecar_url: str) -> dict[str, object]:
             "error": str(exc),
         }
     predictor = payload.get("predictor") if isinstance(payload.get("predictor"), dict) else {}
+    rime_probe = _tryout_sidecar_rime_suggest(base)
+    health_ok = bool(payload.get("ok"))
     return {
         "schemaVersion": "rag-ime.tryout-sidecar-health.v1",
-        "ok": bool(payload.get("ok")),
+        "ok": health_ok and bool(rime_probe.get("ok")),
+        "healthOk": health_ok,
         "url": base,
         "eventCount": payload.get("eventCount"),
         "predictor": {
@@ -1910,6 +1913,55 @@ def _tryout_sidecar_health(sidecar_url: str) -> dict[str, object]:
             "streamFirstCandidate": predictor.get("streamFirstCandidate"),
             "configured": predictor.get("configured"),
         },
+        "rimeSuggest": rime_probe,
+    }
+
+
+def _tryout_sidecar_rime_suggest(base_url: str) -> dict[str, object]:
+    request_payload = {
+        "sessionId": "tryout-gate",
+        "requestSeq": 1,
+        "rawInput": "bendi",
+        "preedit": "bendi",
+        "committedContext": "Squirrel tryout gate",
+        "maxVisibleCandidates": 3,
+        "maxSideCandidates": 1,
+        "idleMs": 0,
+        "rimeContext": {
+            "candidates": [
+                {
+                    "label": "1",
+                    "text": "本地记忆",
+                    "comment": "tryout",
+                    "index": 0,
+                }
+            ],
+            "highlightedIndex": 0,
+            "page": 0,
+            "isLastPage": True,
+        },
+    }
+    try:
+        request = urllib.request.Request(
+            f"{base_url}/rime-suggest",
+            data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=3.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+        }
+    display_candidates = payload.get("displayCandidates") if isinstance(payload.get("displayCandidates"), list) else []
+    return {
+        "ok": payload.get("schemaVersion") == "rag-ime.rime-sidecar.v1" and bool(display_candidates),
+        "schemaVersion": payload.get("schemaVersion"),
+        "displayCandidateCount": len(display_candidates),
+        "queryBasis": payload.get("queryBasis"),
+        "cache": payload.get("cache") if isinstance(payload.get("cache"), dict) else None,
     }
 
 
