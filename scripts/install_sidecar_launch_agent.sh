@@ -100,6 +100,42 @@ args.extend(
 if os.environ.get("NO_SEED") in {"1", "true", "TRUE", "yes", "YES"}:
     args.append("--no-seed")
 
+env_vars = {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1",
+    "RAG_IME_ROOT": app_code_dir,
+    "RAG_IME_SOURCE_ROOT": root,
+    "RAG_IME_DB_PATH": os.environ["DB_PATH"],
+    "RAG_IME_CORE_MODE": os.environ["CORE_MODE"],
+}
+for key in (
+    "RAG_IME_RIME_CACHE_TTL_MS",
+    "RAG_IME_SUGGESTION_CACHE_SIZE",
+    "RAG_IME_HISTORY_CONTEXT_EVENTS",
+    "RAG_IME_HISTORY_CONTEXT_CHARS",
+    "RAG_IME_PREDICTOR_PROVIDER",
+    "RAG_IME_PREDICTOR_BASE_URL",
+    "RAG_IME_PREDICTOR_MODEL",
+    "RAG_IME_PREDICTOR_PROFILE",
+    "RAG_IME_PREDICTOR_TIMEOUT_MS",
+    "RAG_IME_PREDICTOR_MAX_TOKENS",
+    "RAG_IME_PREDICTOR_TEMPERATURE",
+    "RAG_IME_PREDICTOR_TOP_P",
+    "RAG_IME_PREDICTOR_DISABLE_THINKING",
+    "RAG_IME_PREDICTOR_STREAM_FIRST",
+    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS",
+    "RAG_IME_PREDICTOR_FAILURE_LATENCY_MS",
+    "RAG_IME_PREDICTOR_EXTRA_BODY_JSON",
+    "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON",
+    "RAG_IME_PREDICTOR_API_KEY",
+    "RAG_IME_MLX_MODEL",
+):
+    value = os.environ.get(key)
+    if value:
+        env_vars[key] = value
+if core_command:
+    env_vars["RAG_MEMORY_CORE_COMMAND"] = core_command
+
 payload = {
     "Label": label,
     "ProgramArguments": args,
@@ -109,17 +145,8 @@ payload = {
     "StandardOutPath": str(Path(os.environ["LOG_DIR"]) / "sidecar.out.log"),
     "StandardErrorPath": str(Path(os.environ["LOG_DIR"]) / "sidecar.err.log"),
     "WorkingDirectory": app_support_dir,
-    "EnvironmentVariables": {
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "PYTHONUNBUFFERED": "1",
-        "RAG_IME_ROOT": app_code_dir,
-        "RAG_IME_SOURCE_ROOT": root,
-        "RAG_IME_DB_PATH": os.environ["DB_PATH"],
-        "RAG_IME_CORE_MODE": os.environ["CORE_MODE"],
-    },
+    "EnvironmentVariables": env_vars,
 }
-if core_command:
-    payload["EnvironmentVariables"]["RAG_MEMORY_CORE_COMMAND"] = core_command
 
 with open(os.environ["PLIST_PATH"], "wb") as fh:
     plistlib.dump(payload, fh)
