@@ -533,21 +533,29 @@ sampling so the panel can fill multiple inline model slots.
 Run the resident MLX-LM service when testing the next Mac fast lane:
 
 ```bash
+.venv-mlx314sys/bin/python scripts/derive_text_mlx_model.py \
+  --source-dir "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit" \
+  --target-dir "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local" \
+  --overwrite
+
 python3 -m rag_ime.cli mlx-predictor-server \
-  --model <mlx-compatible-qwen-model-id> \
+  --model "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local" \
   --host 127.0.0.1 \
   --port 8767 \
   --prompt-cache
 
 export RAG_IME_PREDICTOR_PROVIDER=mlx
 export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767
-export RAG_IME_PREDICTOR_MODEL=<same-model-id>
+export RAG_IME_PREDICTOR_MODEL="/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local"
 export RAG_IME_PREDICTOR_PROFILE=instant
 ```
 
 The MLX service exposes `/predict`, `/predict-stream`, `/health`, and
 `/v1/models`. It loads the model once and lets `predictor-ttft` measure the
 first streamed candidate without going through an OpenAI-compatible chat layer.
+When the source Qwen3.5 MLX package includes `vision_config`, use
+`scripts/derive_text_mlx_model.py` first; the derived local directory keeps only
+`language_model.*` weights and should report `textOnlyModel=true` in `/health`.
 With `--prompt-cache`, it prepares the stable system-prompt cache at startup and
 uses a fresh loaded prompt-cache copy for each `generate_step` streaming
 request, so `promptCache.usedForGeneration` can turn true without mutating the
