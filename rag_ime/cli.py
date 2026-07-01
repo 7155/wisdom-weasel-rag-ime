@@ -359,6 +359,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--repeat", type=int, default=1)
     quality_gate.add_argument("--min-rag-pass-rate", type=float, default=0.1)
     quality_gate.add_argument("--min-sidecar-pass-rate", type=float, default=0.1)
+    quality_gate.add_argument("--min-rag-top1-accuracy", type=float, default=0.0)
+    quality_gate.add_argument("--min-sidecar-top1-accuracy", type=float, default=0.0)
+    quality_gate.add_argument("--min-rag-mrr", type=float, default=0.0)
+    quality_gate.add_argument("--min-sidecar-mrr", type=float, default=0.0)
+    quality_gate.add_argument("--max-rag-noise-rate", type=float, default=1.0)
+    quality_gate.add_argument("--max-sidecar-noise-rate", type=float, default=1.0)
     quality_gate.add_argument("--cache-repeat", type=int, default=3)
     quality_gate.add_argument("--cache-current-input", default="RAG 输入法")
     quality_gate.add_argument("--cache-recent-context", default="quality gate cache probe")
@@ -1106,6 +1112,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             repeat=max(1, args.repeat),
             min_rag_pass_rate=max(0.0, min(1.0, args.min_rag_pass_rate)),
             min_sidecar_pass_rate=max(0.0, min(1.0, args.min_sidecar_pass_rate)),
+            min_rag_top1_accuracy=max(0.0, min(1.0, args.min_rag_top1_accuracy)),
+            min_sidecar_top1_accuracy=max(0.0, min(1.0, args.min_sidecar_top1_accuracy)),
+            min_rag_mrr=max(0.0, min(1.0, args.min_rag_mrr)),
+            min_sidecar_mrr=max(0.0, min(1.0, args.min_sidecar_mrr)),
+            max_rag_noise_rate=max(0.0, min(1.0, args.max_rag_noise_rate)),
+            max_sidecar_noise_rate=max(0.0, min(1.0, args.max_sidecar_noise_rate)),
             cache_current_input=args.cache_current_input,
             cache_recent_context=args.cache_recent_context,
             cache_repeat=max(1, args.cache_repeat),
@@ -1369,6 +1381,12 @@ def run_quality_gate(
     repeat: int,
     min_rag_pass_rate: float,
     min_sidecar_pass_rate: float,
+    min_rag_top1_accuracy: float,
+    min_sidecar_top1_accuracy: float,
+    min_rag_mrr: float,
+    min_sidecar_mrr: float,
+    max_rag_noise_rate: float,
+    max_sidecar_noise_rate: float,
     cache_current_input: str,
     cache_recent_context: str,
     cache_repeat: int,
@@ -1429,6 +1447,12 @@ def run_quality_gate(
         predictor_status=predictor_status,
         min_rag_pass_rate=min_rag_pass_rate,
         min_sidecar_pass_rate=min_sidecar_pass_rate,
+        min_rag_top1_accuracy=min_rag_top1_accuracy,
+        min_sidecar_top1_accuracy=min_sidecar_top1_accuracy,
+        min_rag_mrr=min_rag_mrr,
+        min_sidecar_mrr=min_sidecar_mrr,
+        max_rag_noise_rate=max_rag_noise_rate,
+        max_sidecar_noise_rate=max_sidecar_noise_rate,
         require_suggestion_cache=require_suggestion_cache,
         required_predictor_capabilities=required_predictor_capabilities,
     )
@@ -1442,6 +1466,12 @@ def run_quality_gate(
         "thresholds": {
             "minRagPassRate": min_rag_pass_rate,
             "minSidecarPassRate": min_sidecar_pass_rate,
+            "minRagTop1Accuracy": min_rag_top1_accuracy,
+            "minSidecarTop1Accuracy": min_sidecar_top1_accuracy,
+            "minRagMeanReciprocalRank": min_rag_mrr,
+            "minSidecarMeanReciprocalRank": min_sidecar_mrr,
+            "maxRagNoiseRate": max_rag_noise_rate,
+            "maxSidecarNoiseRate": max_sidecar_noise_rate,
             "requireSuggestionCache": require_suggestion_cache,
             "requiredPredictorCapabilities": list(required_predictor_capabilities),
             "probePredictorCapabilities": bool(required_predictor_capabilities),
@@ -1497,6 +1527,12 @@ def _quality_gate_checks(
     predictor_status: dict[str, object],
     min_rag_pass_rate: float,
     min_sidecar_pass_rate: float,
+    min_rag_top1_accuracy: float,
+    min_sidecar_top1_accuracy: float,
+    min_rag_mrr: float,
+    min_sidecar_mrr: float,
+    max_rag_noise_rate: float,
+    max_sidecar_noise_rate: float,
     require_suggestion_cache: bool,
     required_predictor_capabilities: tuple[str, ...],
 ) -> list[dict[str, object]]:
@@ -1521,6 +1557,20 @@ def _quality_gate_checks(
             "actual": float(rime_report.get("passRate") or 0.0),
             "expectedAtLeast": min_sidecar_pass_rate,
         },
+        *_quality_metric_checks(
+            "rag",
+            rag_report,
+            min_top1_accuracy=min_rag_top1_accuracy,
+            min_mrr=min_rag_mrr,
+            max_noise_rate=max_rag_noise_rate,
+        ),
+        *_quality_metric_checks(
+            "rime-sidecar",
+            rime_report,
+            min_top1_accuracy=min_sidecar_top1_accuracy,
+            min_mrr=min_sidecar_mrr,
+            max_noise_rate=max_sidecar_noise_rate,
+        ),
         {
             "name": "rime-sidecar-has-side-candidates",
             "passed": bool(sidecar.get("hasSideCandidates")),
@@ -1539,6 +1589,40 @@ def _quality_gate_checks(
     ]
     checks.extend(_predictor_capability_checks(predictor_status, required_predictor_capabilities))
     return checks
+
+
+def _quality_metric_checks(
+    prefix: str,
+    report: dict[str, object],
+    *,
+    min_top1_accuracy: float,
+    min_mrr: float,
+    max_noise_rate: float,
+) -> list[dict[str, object]]:
+    metrics = report.get("metrics") if isinstance(report.get("metrics"), dict) else {}
+    top1 = float(metrics.get("top1Accuracy") or 0.0)
+    mrr = float(metrics.get("meanReciprocalRank") or 0.0)
+    noise = float(metrics.get("noiseRate") or 0.0)
+    return [
+        {
+            "name": f"{prefix}-top1-accuracy",
+            "passed": top1 >= min_top1_accuracy,
+            "actual": top1,
+            "expectedAtLeast": min_top1_accuracy,
+        },
+        {
+            "name": f"{prefix}-mean-reciprocal-rank",
+            "passed": mrr >= min_mrr,
+            "actual": mrr,
+            "expectedAtLeast": min_mrr,
+        },
+        {
+            "name": f"{prefix}-noise-rate",
+            "passed": noise <= max_noise_rate,
+            "actual": noise,
+            "expectedAtMost": max_noise_rate,
+        },
+    ]
 
 
 def _predictor_capability_checks(
