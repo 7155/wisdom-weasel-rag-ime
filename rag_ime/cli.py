@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import shlex
 import sys
 import time
@@ -28,6 +29,7 @@ from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import (
     PredictionBenchmarkCase,
     benchmark_prediction_provider,
+    doctor_prediction_provider,
     prediction_provider_from_env,
     prediction_provider_status,
 )
@@ -198,6 +200,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     predict_benchmark.add_argument("--latency-budget-ms", type=int, default=150)
 
     subparsers.add_parser("predictor-status", help="Show local model prediction configuration without calling the model")
+
+    predictor_doctor = subparsers.add_parser("predictor-doctor", help="Probe local model endpoint and one short prediction")
+    predictor_doctor.add_argument("--case", default="RAG 输入法")
+    predictor_doctor.add_argument("--recent-context", default="")
+    predictor_doctor.add_argument("--max-candidates", type=int, default=3)
+    predictor_doctor.add_argument("--latency-budget-ms", type=int, default=150)
 
     eval_prediction = subparsers.add_parser(
         "eval-prediction",
@@ -592,6 +600,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "predictor-status":
         print(json.dumps(prediction_provider_status(predictor), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "predictor-doctor":
+        report = doctor_prediction_provider(
+            predictor,
+            sample_input=args.case,
+            recent_context=args.recent_context,
+            max_candidates=max(1, args.max_candidates),
+            latency_budget_ms=max(1, args.latency_budget_ms),
+        )
+        report["localRunners"] = _local_model_runner_status()
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "eval-prediction":
@@ -1059,6 +1079,19 @@ def _core_has_event_tag(core, tag: str) -> bool:
     if not callable(checker):
         return False
     return bool(checker(tag))
+
+
+def _local_model_runner_status() -> dict[str, object]:
+    runners = {
+        "ollama": shutil.which("ollama"),
+        "llama-server": shutil.which("llama-server"),
+        "lmstudio": shutil.which("lmstudio"),
+        "mlx_lm.server": shutil.which("mlx_lm.server"),
+    }
+    return {
+        "available": {name: path for name, path in runners.items() if path},
+        "missing": [name for name, path in runners.items() if not path],
+    }
 
 
 if __name__ == "__main__":

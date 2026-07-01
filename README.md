@@ -253,7 +253,18 @@ Check whether the model lane is configured without calling the model:
 python3 -m rag_ime.cli predictor-status
 ```
 
-`configured: true` means the `RAG_IME_PREDICTOR_*` environment is set. It does not prove the local model server is running; use `predict-benchmark` for that.
+`configured: true` means the `RAG_IME_PREDICTOR_*` environment is set. It does not prove the local model server is running.
+
+Probe the configured endpoint, `/v1/models`, one short prediction, local runner commands, and the latency budget:
+
+```bash
+python3 -m rag_ime.cli predictor-doctor \
+  --case "RAG 输入法" \
+  --recent-context "用户正在写本地记忆和候选预测" \
+  --latency-budget-ms 150
+```
+
+Use `predictor-doctor` before deeper evaluations. It distinguishes common failures: no env config, server not started, model id not listed by `/v1/models`, no parsed candidates, and latency over budget.
 
 Benchmark local model prediction latency before using it in the input-method lane:
 
