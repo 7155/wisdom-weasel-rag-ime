@@ -1035,3 +1035,27 @@ Commands:
 Next:
 - Do not download more models through proxy. Use explicit `env -u ...` for any future `ollama pull`.
 - Test non-thinking instruction-tuned small models next, especially `qwen2.5:0.5b` or `qwen2.5:1.5b`, before larger Qwen3.5 thinking models.
+
+### 2026-07-01 11:16 CST
+Problem:
+- The Mac-local model lane needed a real fastest-path answer, not just "try a small local model".
+- `predictor-ttft` undercounted bad samples because timeout/no-first-chunk cases were not counted as over-budget.
+
+Changes:
+- Pulled `qwen3.5:0.8b-mlx` with proxy variables unset and kept Ollama models under `/Volumes/undo 4t/ollama-models`.
+- Fixed TTFT summary accounting so missing first chunks count as over-budget and failures.
+- Added a unit test for empty streaming output.
+- Updated model benchmark, TTFT/KV-cache plan, README, and interview notes with measured Mac results.
+
+Findings:
+- `qwen3.5:0.8b-mlx` is the current best Mac smoke path: warm sequential p50 first chunk 46 ms, p95 213 ms, p50 total 456 ms.
+- Ordinary `qwen3.5:0.8b` Q8 can approach 200 ms when warm, but one sequential sample stalled to 2547 ms first chunk.
+- Quality remains poor for project memory: MLX passed 2/34 Codex-history prediction cases; Q8 passed 4/34.
+- Conclusion: use MLX-tag Qwen3.5 0.8B only as a TTFT baseline and optional short-continuation lane. RAG/FTS/vector memory remains the source of truth; next fast provider should be resident MLX-LM or native llama.cpp/Metal with prompt/KV reuse and streaming first candidate.
+
+Commands:
+- `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy OLLAMA_MODELS="/Volumes/undo 4t/ollama-models" ollama serve`
+- `ollama pull qwen3.5:0.8b-mlx`
+- `python3 -m rag_ime.cli --core-mode fixture predictor-ttft --case "RAG 输入法" --recent-context "用户正在写本地记忆和候选预测" --repeat 8 --max-candidates 3 --latency-budget-ms 200`
+- `python3 -m rag_ime.cli --core-mode fixture eval-prediction --cases-file docs/eval/codex-history-cases.example.jsonl --max-candidates 3 --latency-budget-ms 500 --match any`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`

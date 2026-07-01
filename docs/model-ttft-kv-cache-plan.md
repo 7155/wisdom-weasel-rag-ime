@@ -23,6 +23,21 @@ the final latency target:
 - non-streaming full candidate response is much slower and unsuitable as the
   only metric.
 
+The newer no-proxy Mac MLX smoke changes the baseline:
+
+- `qwen3.5:0.8b-mlx` is downloaded and runs through Ollama on this Mac.
+- Warm sequential `predictor-ttft` reached p50 first chunk 46 ms, p95 213 ms,
+  and p50 total response 456 ms on the short IME prompt.
+- The ordinary `qwen3.5:0.8b` Q8 path had p50 first chunk 194 ms, but p95
+  2547 ms because one sequential sample stalled badly.
+- On 34 Codex-history prediction cases, both 0.8B models failed the quality
+  gate: MLX passed 2/34 and Q8 passed 4/34.
+
+So the current answer is precise: Mac can produce the first visible model token
+fast enough with an MLX-tag small model, but the product cannot wait for full
+JSON completion or rely on the 0.8B model for project-specific memory. The model
+lane should stream one short continuation; RAG remains the source of truth.
+
 ## Mac Backend Research
 
 Research date: 2026-07-01.
@@ -35,7 +50,8 @@ reuse prompt/KV state and generate several short candidates together.
 
 | Backend | Fit For RAG-IME | Why | Risk |
 | --- | --- | --- | --- |
-| **MLX-LM direct service** | Best short-term Mac latency experiment | Apple Silicon first, `stream_generate` yields streaming responses, Python API accepts `prompt_cache`, CLI supports prompt caching and rotating KV cache | Python sidecar must stay resident; Qwen3.5 MLX model availability must be verified per tag |
+| **Ollama MLX tag** | Best immediate Mac TTFT smoke | Already reached 46 ms p50 first chunk with `qwen3.5:0.8b-mlx`; no new provider code | Opaque cache behavior; complete JSON response and quality are not enough for default IME use |
+| **MLX-LM direct service** | Best next Mac latency experiment | Apple Silicon first, `stream_generate` yields streaming responses, Python API accepts `prompt_cache`, CLI supports prompt caching and rotating KV cache | Python sidecar must stay resident; must shape output as first useful candidate rather than full JSON |
 | **llama.cpp native Metal provider** | Best final low-latency engineering route | Mature C/C++/Metal runtime, GGUF ecosystem, native APIs can cache system prompt state and copy KV state for multi-candidate sampling, matches Wisdom-Weasel's proven approach | More implementation work than HTTP; model architecture/GGUF support must be verified |
 | **Ollama native API** | Best smoke-test route | Easy model management, `keep_alive=-1`, streaming, `think:false`; Ollama has `qwen3.5` small tags and MLX tags | Opaque caching, HTTP overhead, no direct multi-sequence KV batch control |
 | **MLC LLM** | Useful research/backstop | Metal device support, OpenAI-compatible server, streaming, local/interactive/server modes, prefix-cache knobs, speculative modes | Model compilation/build pipeline is heavier than MLX/Ollama; less direct fit for IME adapter MVP |
@@ -46,16 +62,28 @@ reuse prompt/KV state and generate several short candidates together.
 
 Use three tiers, not one winner:
 
-1. **Immediate benchmark**: test `qwen3.5:0.8b-mlx` through Ollama if available,
-   then test direct MLX-LM with an MLX-compatible 0.8B/2B non-thinking model.
-   This answers whether Mac MLX can beat the current Ollama GGUF baseline
-   without building a native provider.
+1. **Immediate benchmark**: keep `qwen3.5:0.8b-mlx` as the current Mac TTFT
+   baseline. It beats the GGUF/Q8 Ollama path for first chunk on this machine.
+   It should stay a smoke baseline, not the final product provider.
 2. **Production fast lane**: implement a native `llama.cpp` or MLX resident
    provider that owns the loaded model and stable prompt cache. The provider
    should expose `predict_many_short_candidates()` instead of a generic chat
    API.
 3. **Research lane**: keep Core ML stateful KV and MLC LLM as follow-up
    experiments after the Squirrel/Rime product loop is stable.
+
+### Next Experiment Matrix
+
+The next implementation experiment should be MLX-LM first, not more Ollama
+prompt tuning:
+
+| Experiment | What To Measure | Accept / Reject Signal |
+| --- | --- | --- |
+| Ollama MLX baseline | `stream:true`, `keep_alive`, `think:false`; record first chunk plus Ollama timing fields | Keep only as baseline if p50 first chunk stays near 50 ms but full JSON remains slow. |
+| MLX-LM resident Python service | Load once, use `stream_generate`, compare prompt-cache on/off, emit first candidate text directly | Accept if first useful candidate stays under 200 ms and output quality improves over Ollama JSON prompting. |
+| llama.cpp/Metal server/native provider | Metal backend, streaming, stable prompt state, eventually sequence-copy multi-candidate sampling | Accept if it can match Wisdom-Weasel-style prompt/KV reuse and produce 3-5 candidates without repeated prefill. |
+| MLC/Core ML | Model conversion/server setup cost vs. TTFT gain | Defer unless MLX-LM and llama.cpp fail the 200 ms warm target. |
+| MiniVLLM/vLLM concepts | Prefix cache, paged KV, scheduler metrics | Use as design reference only; do not port CUDA/Triton runtime to the Mac IME MVP. |
 
 ### Why MLX First For Measurement
 
@@ -300,3 +328,10 @@ turn language-model prediction into a real-time side lane:
 - stale results are dropped by request sequence;
 - measured TTFT, not total response time, decides whether the model lane is
   enabled.
+
+The strongest current evidence is concrete: on this Mac, `qwen3.5:0.8b-mlx`
+hit 46 ms p50 first chunk in a warm sequential test, but full response and
+project-memory quality still failed the gate. That makes the next problem more
+interesting than "install a smaller model": preserve fast first-token behavior
+while moving candidate generation to a resident cached provider and using RAG
+for factual/local-memory grounding.

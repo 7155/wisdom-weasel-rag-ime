@@ -713,3 +713,20 @@ Next:
 - Added native `RAG_IME_PREDICTOR_PROVIDER=ollama` because Ollama's OpenAI-compatible `/v1` Qwen3.5 response returned empty `content` and reasoning-only output.
 - Real native Ollama smoke found `qwen3.5:0.8b` through `/api/tags` and produced 3 parsed candidates. Observed warm latency varied from about 477 ms to 1157 ms, so it can pass a 1500 ms debug budget but is not stable enough for the default per-keystroke IME path.
 - Caveat: candidate quality is still generic, so Qwen3.5 0.8B proves the adapter path but should not become the default IME model yet. No public Ollama `qwen3.5:*instant*` tag was found; next model tests should prefer non-thinking instruction-tuned small models such as `qwen2.5:0.5b` or `qwen2.5:1.5b`.
+
+### 2026-07-01
+Topic:
+- Mac fastest local inference path for the IME model lane.
+
+Changes:
+- Downloaded and tested `qwen3.5:0.8b-mlx` through no-proxy Ollama.
+- Fixed `predictor-ttft` so timeout/no-first-chunk samples count as over-budget.
+- Documented the backend order: Ollama MLX smoke, direct MLX-LM resident service, native llama.cpp/Metal provider, then Core ML/MLC as later research.
+
+Findings:
+- `qwen3.5:0.8b-mlx` reached 46 ms p50 first chunk on the short warm IME prompt, which is the current best Mac TTFT evidence.
+- Full candidate response and project-memory prediction quality are still not good enough: MLX passed 2/34 cases, Q8 passed 4/34.
+- The implementation direction is streaming first side candidate plus resident prompt/KV cache; RAG remains the factual memory source.
+
+Next:
+- Add resident MLX-LM or native llama.cpp/Metal provider experiments after the Squirrel/Rime product loop remains stable.

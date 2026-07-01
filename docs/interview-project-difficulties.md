@@ -153,6 +153,13 @@ Mac 快速实验:
 
 这个难点的面试表达是：我没有把“本地小模型”当成黑盒，而是把实时输入法拆成可测的首 token 路径。模型必须常驻、非思考、短输出、可流式、可复用 prompt/KV cache；如果超过预算，输入法继续显示 Rime/RAG 候选，模型 lane 自动降级。
 
+目前已经有可讲的实测结果：在 Mac 上用无代理下载的
+`qwen3.5:0.8b-mlx`，warm sequential TTFT 的 p50 首 chunk 是 46ms，说明
+“200ms 内出现第一个模型侧候选”不是空想。但同一模型在 34 条历史上下文预测
+case 上只通过 2 条，完整 JSON 响应也仍然要数百毫秒。所以项目的真正难点不是
+“下载一个 0.8B 小模型”，而是把它改造成输入法可用的实时 side lane：首候选流式
+展示，完整候选异步补齐，事实和个人记忆仍由 RAG 负责。
+
 ## 我已经落地的工程点
 
 - macOS `InputMethodKit` 前端壳；
@@ -170,6 +177,7 @@ Mac 快速实验:
 - Squirrel patch pack：在 Rime 候选生成后调用本地 sidecar，异步合并 side candidates，按显示候选路由数字键，并在用户接受 RAG 候选后回写 commit/action。
 - `predictor-ttft` 首 chunk 延迟测量；
 - Mac 本地推理路线调研：Ollama MLX tag、MLX-LM prompt cache、llama.cpp/Metal KV cache、Core ML stateful KV、MiniVLLM/vLLM 取舍。
+- 实测 `qwen3.5:0.8b-mlx` 在 Mac warm path 上达到 46ms p50 first chunk，同时用质量评测证明 0.8B 模型不能替代本地 RAG 记忆。
 
 ## 面试讲法
 

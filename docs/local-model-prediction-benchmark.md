@@ -92,6 +92,47 @@ per-keystroke budget. The next model-quality tests should prefer non-thinking
 instruction-tuned small models, especially `qwen2.5:0.5b` and `qwen2.5:1.5b`,
 before spending bandwidth on larger thinking models.
 
+### 2026-07-01 Mac Qwen3.5 0.8B Result
+
+The first real Mac comparison used Ollama 0.30.11 with proxy variables unset and
+models stored under `/Volumes/undo 4t/ollama-models`.
+
+Downloaded models:
+
+| Model | Local size | Format / quantization | Notes |
+| --- | ---: | --- | --- |
+| `qwen3.5:0.8b-mlx` | 1.2 GB | MLX / `mxfp8` | 852.88M parameters; preferred Mac TTFT smoke. |
+| `qwen3.5:0.8b` | 1.0 GB | GGUF / `Q8_0` | Useful baseline, but less stable for first chunk. |
+
+Sequential warm TTFT on the short IME prompt:
+
+| Model | p50 first chunk | p95 first chunk | p50 total | Result |
+| --- | ---: | ---: | ---: | --- |
+| `qwen3.5:0.8b-mlx` | 46 ms | 213 ms | 456 ms | Best measured first-visible path; one warm sample exceeded 200 ms. |
+| `qwen3.5:0.8b` | 194 ms | 2547 ms | 488 ms | Warm samples can touch 200 ms, but cold/unstable samples are too slow. |
+
+Sequential prediction-quality eval on `docs/eval/codex-history-cases.example.jsonl`
+shows that speed alone is not enough:
+
+| Model | Pass rate | Top-1 | MRR | p50 latency | p95 latency |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.5:0.8b-mlx` | 2/34 | 0.059 | 0.059 | 902 ms | 1408 ms |
+| `qwen3.5:0.8b` | 4/34 | 0.059 | 0.083 | 1208 ms | 1606 ms |
+
+Interpretation:
+
+- `qwen3.5:0.8b-mlx` is the current best Mac smoke path for first visible model
+  output. It proves that sub-200 ms TTFT is realistic on this Mac when the
+  model is warm and streaming.
+- Full JSON candidate completion still takes hundreds of milliseconds, so the
+  IME should stream the first useful side candidate instead of waiting for a
+  full response.
+- Neither 0.8B model is good enough as the project-memory source. The RAG/FTS
+  path must remain the source of truth for project-specific recall.
+- The next backend should be a resident MLX-LM or native llama.cpp/Metal
+  provider with explicit prompt/KV reuse. More prompt wording will not fix the
+  main latency and quality gap by itself.
+
 The stable rule for this project is: configure any candidate through one explicit provider lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
 ## Mac Runtime Order
@@ -135,6 +176,11 @@ python3 -m rag_ime.cli predictor-ttft \
 If this still has p50 first chunk above 200 ms, the next work item is not more
 prompt tuning. It is a resident MLX-LM or native llama.cpp provider that can
 reuse prompt/KV state explicitly.
+
+Current result: `qwen3.5:0.8b-mlx` reached 46 ms p50 first chunk on the short
+prompt, so the next work item is not "find any model that can stream quickly".
+It is to keep that first-visible behavior while improving candidate quality and
+removing the wait for complete JSON output.
 
 Run the small-model matrix after the models are actually downloaded and the endpoint is serving:
 
