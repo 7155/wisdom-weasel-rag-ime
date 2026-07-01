@@ -7,6 +7,26 @@
 
 ## Log
 
+### 2026-07-02 02:45 CST
+Problem:
+- Foreground AppKit trace validation was still operationally scattered: clear trace, select Squirrel, open an editor, type, accept side candidate, then run the checker manually.
+
+Changes:
+- Added `scripts/verify_squirrel_foreground_trace.sh`.
+- The wrapper verifies Squirrel is added, selects `im.rime.inputmethod.Squirrel.Hans`, clears the trace, opens a TextEdit test file, then waits for mixed panel trace and number-key side commit.
+- Added `--mixed-only`, `--no-open`, `--no-clear`, `--no-select`, `--wait`, and `--dry-run` for repeatable debugging.
+- Updated README, Xcode setup docs, and debug-surface docs to use the wrapper as the foreground gate.
+
+Commands:
+- `bash -n scripts/verify_squirrel_foreground_trace.sh scripts/doctor_squirrel_integration.sh`
+- `scripts/verify_squirrel_foreground_trace.sh --dry-run --no-open --mixed-only --wait 12`
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_squirrel_frontend_trace`
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`
+
+Findings:
+- Full test suite passed: 186 tests.
+- Real frontend trace is still empty until the user performs foreground typing and accepts a side candidate; the new wrapper makes that remaining manual gate one command.
+
 ### 2026-07-02 02:28 CST
 Problem:
 - User reported the real candidate panel was still vertical; requirement is LLM short candidates horizontal, sentence/RAG candidates vertical.

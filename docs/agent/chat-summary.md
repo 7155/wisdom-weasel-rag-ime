@@ -2,6 +2,23 @@
 
 ### 2026-07-02
 Topic:
+- Add one-command foreground AppKit trace validation.
+
+Changes:
+- Added `scripts/verify_squirrel_foreground_trace.sh`.
+- The wrapper selects Squirrel, clears frontend trace, opens a TextEdit test file, and waits for mixed-panel plus number-key side-commit evidence.
+- Updated README, Xcode setup, and debug-surface docs to make this the foreground validation path.
+
+Verification:
+- Wrapper dry-run and shell syntax passed.
+- Frontend trace tests passed.
+- Full test suite passed: 186 tests.
+
+Next:
+- User can run `scripts/verify_squirrel_foreground_trace.sh`, type `er qi`, and press `6`, `7`, or `8` to produce the remaining real AppKit evidence.
+
+### 2026-07-02
+Topic:
 - Reinstall real Squirrel frontend and lock mixed candidate layout.
 
 Changes:

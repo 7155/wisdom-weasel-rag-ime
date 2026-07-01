@@ -234,16 +234,28 @@ multi-token JSON generation while still showing plausible candidates.
 For the foreground AppKit panel test, use the installed Squirrel frontend trace:
 
 ```bash
-python3 scripts/check_squirrel_frontend_trace.py --clear
-# type with Squirrel in a normal editor, then accept one side candidate by number
+scripts/verify_squirrel_foreground_trace.sh
+```
+
+This wrapper selects `Squirrel - Simplified`, clears the old trace, opens a
+small TextEdit test file, and waits for the same trace evidence as the lower
+level checker. During the wait, type a semantic prefix such as `er qi`, then
+press `6`, `7`, or `8` to accept a side sentence candidate. Use `--mixed-only`
+when you only want to verify the horizontal/vertical panel layout without
+committing a side candidate.
+
+The lower level checker is still useful when you have already produced trace
+events and only want to inspect them:
+
+```bash
 python3 scripts/check_squirrel_frontend_trace.py \
   --require-mixed-panel \
   --require-side-commit \
   --print-last 8
 ```
 
-The same foreground evidence can be required through the Squirrel doctor after
-manual typing:
+The same foreground evidence can also be required through the Squirrel doctor
+after manual typing:
 
 ```bash
 RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 \

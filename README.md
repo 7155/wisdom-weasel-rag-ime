@@ -290,6 +290,14 @@ menu and wait for the selected-source plus sidecar check:
 scripts/wait_squirrel_typing_ready.sh
 ```
 
+Then run the foreground AppKit trace gate. It opens a small TextEdit test file,
+waits for the patched Squirrel panel to render horizontal MLX/LLM candidates plus
+vertical RAG/memory rows, and requires a number-key side-candidate commit:
+
+```bash
+scripts/verify_squirrel_foreground_trace.sh
+```
+
 After switching to Squirrel, run the machine-readable tryout gate:
 
 ```bash

@@ -299,20 +299,22 @@ Manual continuous-use verification:
 2. In System Settings, add Squirrel from Chinese, Simplified if it is not present.
 3. Select Squirrel from the macOS input menu and wait for `scripts/wait_squirrel_typing_ready.sh` to pass.
 4. Run `squirrel-tryout-gate` and keep `/tmp/rag-ime-squirrel-tryout-report.json`.
-5. Clear the frontend trace before manual foreground typing:
+5. Run the foreground AppKit trace gate:
 
 ```bash
-python3 scripts/check_squirrel_frontend_trace.py --clear
+scripts/verify_squirrel_foreground_trace.sh
 ```
 
-6. Open a normal editor and type at least 20 mixed Chinese/English prompts.
-7. Confirm normal Rime candidates remain available as fallback when side candidates do not fill the panel.
-8. Confirm side candidates are side-first when available: short LLM/model
+6. In the opened editor, type at least one semantic pinyin prefix such as `er qi`
+   and accept a side sentence candidate with `6`, `7`, or `8`.
+7. For a longer manual pass, type at least 20 mixed Chinese/English prompts.
+8. Confirm normal Rime candidates remain available as fallback when side candidates do not fill the panel.
+9. Confirm side candidates are side-first when available: short LLM/model
    candidates fill the first horizontal row, RAG/memory sentence candidates start
    below as vertical rows, and native Rime candidates appear only after remaining
    side slots are exhausted.
-9. Select at least one side candidate by number key.
-10. Check the real Squirrel frontend trace:
+10. If you need to inspect an existing trace without reopening the foreground
+    test file, run the lower-level checker:
 
 ```bash
 python3 scripts/check_squirrel_frontend_trace.py \
