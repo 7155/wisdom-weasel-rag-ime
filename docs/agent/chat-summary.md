@@ -2,6 +2,23 @@
 
 ### 2026-07-02
 Topic:
+- Add optional foreground auto-typing and record macOS permission blocker.
+
+Changes:
+- Added `--auto-type`, `--auto-query`, and `--auto-key` to `scripts/verify_squirrel_foreground_trace.sh`.
+- The wrapper now explains the macOS Accessibility permission path when simulated keystrokes are blocked.
+- README and debug-surface docs now state that auto-typing failure is a UI automation permission issue, not proof that Squirrel/RAG-IME/MLX failed.
+
+Verification:
+- Manual automation attempt failed with `osascript` keystroke permission error.
+- Frontend trace tests passed.
+- Full test suite passed: 186 tests.
+
+Next:
+- User still needs to perform the foreground typing step manually or grant Accessibility permission to Codex/terminal before `--auto-type` can complete the trace gate.
+
+### 2026-07-02
+Topic:
 - Add one-command foreground AppKit trace validation.
 
 Changes:

@@ -298,6 +298,17 @@ vertical RAG/memory rows, and requires a number-key side-candidate commit:
 scripts/verify_squirrel_foreground_trace.sh
 ```
 
+If Codex or your terminal has macOS Accessibility permission, you can ask the
+wrapper to try the typing step too:
+
+```bash
+scripts/verify_squirrel_foreground_trace.sh --auto-type
+```
+
+If macOS rejects simulated keystrokes, the script prints the Accessibility
+permission path and keeps the manual fallback: click the editor, type `er qi`,
+then press `6`, `7`, or `8`.
+
 After switching to Squirrel, run the machine-readable tryout gate:
 
 ```bash

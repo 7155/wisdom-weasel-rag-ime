@@ -7,6 +7,27 @@
 
 ## Log
 
+### 2026-07-02 03:05 CST
+Problem:
+- Tried to automate the final foreground AppKit trace, but macOS rejected AppleScript key events with `osascript is not allowed to send keystrokes`; Computer Use also could not see a usable TextEdit window.
+
+Changes:
+- Extended `scripts/verify_squirrel_foreground_trace.sh` with optional `--auto-type`, `--auto-query`, and `--auto-key`.
+- The auto path tries to activate TextEdit, type the semantic prefix, wait, and press a side-candidate number key.
+- If macOS blocks simulated keystrokes, the script prints the Accessibility settings path and keeps the manual fallback.
+- Updated README and debug-surface docs to distinguish UI automation permission failure from IME/Squirrel/MLX failure.
+
+Commands:
+- `scripts/verify_squirrel_foreground_trace.sh --wait 45`
+- `osascript` foreground typing attempt, failed with Accessibility permission error.
+- `bash -n scripts/verify_squirrel_foreground_trace.sh`
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_squirrel_frontend_trace`
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`
+
+Findings:
+- Full test suite passed: 186 tests.
+- Remaining foreground trace still requires the user to click the editor, type `er qi`, and press `6`, `7`, or `8`, unless Codex/Terminal gets Accessibility permission.
+
 ### 2026-07-02 02:45 CST
 Problem:
 - Foreground AppKit trace validation was still operationally scattered: clear trace, select Squirrel, open an editor, type, accept side candidate, then run the checker manually.

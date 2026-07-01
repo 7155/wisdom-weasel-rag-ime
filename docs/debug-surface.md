@@ -244,6 +244,17 @@ press `6`, `7`, or `8` to accept a side sentence candidate. Use `--mixed-only`
 when you only want to verify the horizontal/vertical panel layout without
 committing a side candidate.
 
+If the app running the command has macOS Accessibility permission, the wrapper
+can attempt the foreground typing step:
+
+```bash
+scripts/verify_squirrel_foreground_trace.sh --auto-type
+```
+
+When macOS rejects simulated keystrokes, the script prints the Accessibility
+path and falls back to the manual action. That failure means local UI automation
+is blocked; it is not evidence that Squirrel, RAG-IME, or MLX failed.
+
 The lower level checker is still useful when you have already produced trace
 events and only want to inspect them:
 

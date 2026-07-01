@@ -17,6 +17,11 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 "--dry-run",
                 "--no-open",
                 "--mixed-only",
+                "--auto-type",
+                "--auto-query",
+                "xian zai",
+                "--auto-key",
+                "7",
                 "--wait",
                 "12",
             ],
@@ -29,6 +34,9 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("wait_seconds=12", result.stdout)
         self.assertIn("open_test_file=0", result.stdout)
         self.assertIn("require_side_commit=0", result.stdout)
+        self.assertIn("auto_type=1", result.stdout)
+        self.assertIn("auto_query=xian zai", result.stdout)
+        self.assertIn("auto_key=7", result.stdout)
         self.assertIn("--require-mixed-panel", result.stdout)
         self.assertNotIn("--require-side-commit", result.stdout)
 
