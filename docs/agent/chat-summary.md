@@ -2,6 +2,24 @@
 
 ### 2026-07-01
 Topic:
+- Refresh Mac local inference fast-path research.
+
+Decisions:
+- Keep Ollama `qwen3.5:0.8b-mlx` as the current fastest measured Mac smoke/debug route.
+- Product metric is `firstCandidateMs` / TTFC, not raw first chunk or full JSON completion.
+- Do not wait for an `Instant`-named Qwen3.5 model; use small + non-thinking + streaming + resident runner.
+- Final product kernel still needs direct MLX-LM or native `llama.cpp`/Metal with explicit prompt/KV cache, sequence fork, batch candidates, and stale cancellation.
+
+Changes:
+- Updated `docs/mac-local-inference-fast-path.md` with source-refresh decisions, Qwen3.5 small-model rules, verified TTFC numbers, and extra upstream sources.
+- Updated `docs/agent/notes.md` with the research findings and next implementation direction.
+
+Next:
+- Run direct MLX-LM cached/uncached TTFC when dependencies are available.
+- If MLX-LM does not beat Ollama MLX consistently, spike native `llama.cpp`/Metal `predict_many_short_candidates()`.
+
+### 2026-07-01
+Topic:
 - Promote cache probe to a CLI gate.
 
 Changes:

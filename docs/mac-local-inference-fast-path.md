@@ -1,6 +1,7 @@
 # Mac Local Inference Fast Path
 
 Research date: 2026-07-01.
+Latest source refresh: 2026-07-01 14:10 CST.
 
 This document answers one product question: how should RAG-IME run a local model
 on Mac so the first useful model-side candidate can appear fast enough for an
@@ -36,6 +37,41 @@ The final product should optimize two different things separately:
   prompt/KV prefix, stream the first useful candidate, cancel stale requests,
   and never wait for a complete JSON list in the active typing path.
 
+## Source Refresh And Locked Direction
+
+The 2026-07-01 source refresh keeps the existing ranking, but makes the
+implementation boundary sharper:
+
+| Question | Decision |
+| --- | --- |
+| What is fastest on this Mac today? | Use Ollama `qwen3.5:0.8b-mlx` as the current measured smoke path. It is already downloaded and has produced warm first chunks inside the 200 ms budget. |
+| What should the product measure? | Measure `firstCandidateMs` / TTFC: the first parsed candidate that a user can select. Raw `firstChunkMs` is diagnostic only because the first streamed bytes can be JSON syntax or an incomplete token. |
+| Is there a Qwen "Instant" model to look for? | No project decision should depend on an `Instant` model name. For Qwen3.5 small models, configure small + non-thinking + streaming + resident runner. |
+| Which provider should ship first? | Ollama MLX for debug and Squirrel/RAG integration. It is the fastest way to keep the product loop moving. |
+| Which provider should become the interview-grade fast path? | Native `llama.cpp`/Metal or direct MLX-LM, whichever proves lower p95 TTFC with explicit prompt/KV cache control, cancellation, and usable candidate quality. |
+
+Primary-source implications:
+
+- MLX-LM exposes the primitives we need for a Mac experiment:
+  `stream_generate`, `prompt_cache`, `make_prompt_cache`, `max_kv_size`, and
+  KV-cache quantization. This supports a resident Apple-Silicon sidecar, but
+  the product still must isolate stable prompt cache from dynamic Rime/RAG
+  context.
+- llama.cpp is the strongest final control surface because the native path can
+  own KV state, copy sequence memory, and batch multiple short candidate
+  sequences. The server/OpenAI-compatible path is useful for benchmarks, but
+  cannot by itself prove `sequenceFork=true` and `batchCandidates=true`.
+- Ollama MLX is the best immediate baseline because it combines simple model
+  management, streaming, keep-alive behavior, `think:false`, and Apple-Silicon
+  MLX packaging. Its cache behavior is intentionally treated as opaque.
+- MLC LLM and Core ML stateful models remain research lanes. They may become
+  useful if MLX-LM and llama.cpp fail the target, but they add build,
+  conversion, or packaging cost before the input method loop is stable.
+- MiniVLLM/vLLM should be copied as ideas only: prefix-cache hashing,
+  block-table ownership, prefill/decode split, and cache-hit metrics. Their
+  CUDA/Triton/throughput-server path is not the right dependency for a
+  single-user Mac input method.
+
 ## Local Evidence
 
 The project already measured both Ollama tags on this Mac with proxy variables
@@ -44,7 +80,9 @@ unset and models stored under `/Volumes/undo 4t/ollama-models`.
 | Backend | Model | First-candidate result | Product meaning |
 | --- | --- | ---: | --- |
 | Ollama MLX runner | `qwen3.5:0.8b-mlx` | p50 first chunk 46 ms in the first smoke; later rerun p50 124 ms, warm post-load samples 76-133 ms | Best current Mac TTFT baseline. Use for UI iteration and smoke tests. |
+| Ollama MLX runner | `qwen3.5:0.8b-mlx` | warm single-model `bench-ime-ttfc`: p50 `firstCandidateMs` 102 ms, p95 122 ms, with 1/12 samples over 200 ms | Best current TTFC evidence, but still needs stale-cancel and quality gates. |
 | Ollama GGUF/Q8 runner | `qwen3.5:0.8b` | p50 first chunk 194 ms in one run, 296 ms in rerun; unstable cold/outlier behavior | Useful baseline, not the preferred Mac route. |
+| Ollama GGUF/Q8 runner | `qwen3.5:0.8b` | warm single-model `bench-ime-ttfc`: p50 `firstCandidateMs` 241 ms, p95 397 ms, 12/12 samples over 200 ms | Too slow for the active typing lane. |
 | Full JSON candidate response | same 0.8B models | hundreds of ms to more than 1 s | Too slow for per-keystroke UI. Stream the first parsed candidate instead. |
 | 34-case Codex-history model eval | both 0.8B models | `qwen3.5:0.8b-mlx` passed 2/34, GGUF passed 4/34 | Small model cannot replace RAG memory. RAG remains source of truth. |
 
@@ -311,6 +349,42 @@ The model lane must not starve RAG:
 7. Circuit-break slow/empty model results. Typing must keep working with Rime
    and RAG only.
 
+## Qwen3.5 Small-Model Rule
+
+Treat Qwen3.5 as a model family, not as a guarantee of instant input-method
+behavior. The practical rule for this project is:
+
+```text
+qwen3.5:0.8b-mlx
+  -> first Mac smoke and UI iteration
+
+qwen3.5:2b-mlx or direct MLX-LM 2B
+  -> quality/speed comparison only after the 0.8B path is stable
+
+qwen3.5:4b or larger
+  -> do not use in the active typing lane unless p95 TTFC, memory, and quality
+     all pass; otherwise keep it for offline compression/rerank experiments
+```
+
+There is no need to wait for an `Instant`-named Qwen3.5 artifact. The equivalent
+engineering configuration is:
+
+```text
+resident runner
+non-thinking request
+streaming response
+max output 4-8 tokens
+temperature around 0.1-0.2
+stable prompt/prefix cache
+RAG/Rime context kept short
+```
+
+For Ollama, this means the native provider path with `think:false`,
+`keep_alive`, and `RAG_IME_PREDICTOR_STREAM_FIRST=1`. For OpenAI-compatible
+or MLX-LM style servers, this means disabling thinking through the chat template
+or request body and validating with `predictor-ttft`, not assuming the model card
+name is enough.
+
 ## Benchmark Metrics
 
 The benchmark should report these separately:
@@ -381,6 +455,8 @@ The next implementation work should not be another prompt rewrite. It should be:
 - Ollama `qwen3.5`: https://ollama.com/library/qwen3.5
 - Ollama MLX preview: https://ollama.com/blog/mlx
 - Ollama MLX performance: https://ollama.com/blog/mlx-performance
+- Qwen3.5 0.8B model card: https://huggingface.co/Qwen/Qwen3.5-0.8B
+- Qwen3.5 2B model card: https://huggingface.co/Qwen/Qwen3.5-2B
 - llama.cpp server README: https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
 - llama.cpp public C API: https://github.com/ggml-org/llama.cpp/blob/master/include/llama.h
 - MLC LLM REST docs: https://llm.mlc.ai/docs/deploy/rest.html

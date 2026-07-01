@@ -7,6 +7,26 @@
 
 ## Log
 
+### 2026-07-01 14:10 CST
+Problem:
+- 用户要求充分调研 Mac 上本地推理最快方案，尤其是输入法首候选 <200 ms 的可落地路径。
+
+Findings:
+- 当前最快已测 smoke/debug 路线仍是 Ollama `qwen3.5:0.8b-mlx`，用 native Ollama API、`think:false`、`keep_alive`、stream-first candidate；它适合继续推进 Squirrel/RAG 产品闭环。
+- 最终产品内核不能只依赖 Ollama HTTP 调用；需要 direct MLX-LM 或 native `llama.cpp`/Metal provider，显式拥有 resident model、稳定 prompt/KV cache、过期请求取消和多候选共享 prefill。
+- Qwen3.5 不需要继续找 `Instant` 命名；本项目等价配置是小模型、non-thinking、streaming、4-8 token 输出和 warm resident runner。
+- MLX-LM 官方能力覆盖 `stream_generate`、`prompt_cache`、`make_prompt_cache`、rotating KV cache；但 prompt cache 要隔离动态 Rime/RAG 上下文，不能过早宣称 Wisdom-Weasel parity。
+- Wisdom-Weasel 的关键源码机制是 `PrepareSystemPrompt()` 保存 seq-0 state、`GenerateCandidatesBatch()` 用 `llama_memory_seq_cp` 复制到多个 sequence id 后 batch decode，前端用 request sequence 丢弃旧结果。
+- MiniVLLM/vLLM 只借鉴 prefix cache、block table、prefill/decode 分离和指标；CUDA/Triton/连续批处理不是 Mac 单用户输入法 MVP 依赖。
+
+Changes:
+- 更新 `docs/mac-local-inference-fast-path.md`，加入 source refresh、locked direction、Qwen3.5 small-model rule 和补充来源。
+
+Next:
+- 保持 Ollama MLX 作为当前 Mac smoke baseline。
+- 下一步跑 direct MLX-LM cached/uncached TTFC；若不能稳定胜过 Ollama MLX，则实现 native `llama.cpp`/Metal provider spike。
+- 后续质量门禁应同时看 p95 TTFC、candidate quality、memory/RSS、cache-hit、stale-cancel 和 packaging。
+
 ### 2026-07-01 13:58 CST
 Problem:
 - Cache probe 只有 debug HTTP 页面入口，不利于 CI/终端自动验收，也不方便 shared-core adapter 做无浏览器缓存命中测试。
