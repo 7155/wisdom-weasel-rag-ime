@@ -66,12 +66,21 @@ class MlxLmEngine:
             self._prepare_prompt_cache()
 
     def health(self) -> dict[str, Any]:
+        prompt_cache = self.prompt_cache_status()
         return {
             "ok": True,
             "provider": "mlx-lm",
             "model": self.model_id,
             "modelLoaded": True,
-            "promptCache": self.prompt_cache_status(),
+            "promptCache": prompt_cache,
+            "capabilities": {
+                "streaming": True,
+                "residentModel": True,
+                "promptCache": _prompt_cache_used_for_generation(prompt_cache),
+                "sequenceFork": False,
+                "batchCandidates": False,
+                "serverTiming": True,
+            },
         }
 
     def prompt_cache_status(self) -> dict[str, Any]:
@@ -412,6 +421,15 @@ def _token_to_int(token: object) -> int:
     if callable(item):
         return int(item())
     return int(token)  # type: ignore[arg-type]
+
+
+def _prompt_cache_used_for_generation(prompt_cache: dict[str, Any]) -> bool:
+    return (
+        bool(prompt_cache.get("enabled"))
+        and bool(prompt_cache.get("prepared"))
+        and bool(prompt_cache.get("cacheFileReady"))
+        and bool(prompt_cache.get("usedForGeneration"))
+    )
 
 
 def _int_payload(value: object, fallback: int) -> int:

@@ -1016,3 +1016,16 @@ Findings:
 - Wisdom-Weasel's useful local-model mechanisms are resident llama.cpp, stable system prompt state save/restore, `llama_memory_seq_cp` sequence copy, and batched short candidate sampling.
 - Do not copy its unbounded detached-thread provider shape directly; RAG-IME should keep latest-only guards and serialize or cancel native model context use.
 - Full Xcode remains the hard external blocker on this host. `xcodebuild -version` reports that the active developer directory is CommandLineTools and requires a full Xcode installation.
+
+### 2026-07-01
+Topic:
+- Make predictor capability gates probe the MLX runtime instead of only static config.
+
+Changes:
+- MLX `/health` now reports runtime capabilities.
+- `prediction_provider_status(..., probe_capabilities=True)` and `predictor-status --probe-capabilities` can read runtime capability facts.
+- `quality-gate` automatically probes capabilities whenever `--require-predictor-capability` is used.
+- `promptCache=true` requires the MLX cache to be prepared, present on disk, and already used by generation.
+
+Status:
+- This advances the local model lane toward a real Wisdom-Weasel-style acceptance gate, but `sequenceFork` and `batchCandidates` still remain false until a native llama.cpp/Metal or stronger MLX provider exists.

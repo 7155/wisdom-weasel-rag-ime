@@ -288,7 +288,10 @@ real Codex-history DB, raise `--min-rag-pass-rate` and
 For the final Wisdom-Weasel-style local model provider, add explicit capability
 requirements. This should fail for Ollama/MLX smoke providers until a native
 provider can prove stable prompt-cache reuse, sequence fork, and batch
-candidate generation:
+candidate generation. When capability requirements are present, `quality-gate`
+also probes runtime capability endpoints such as the MLX service `/health`; for
+`promptCache`, the MLX service must report that the prepared cache was actually
+used for generation, not only prepared at startup:
 
 ```bash
 python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \

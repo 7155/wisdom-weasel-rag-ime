@@ -305,7 +305,11 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
 
 Use the gate without those capability requirements for smoke/debug work. Use
 the capability requirements before claiming that the Mac model lane matches the
-Wisdom-Weasel fast path.
+Wisdom-Weasel fast path. Capability-gated quality runs also probe runtime
+capability endpoints when available. The current MLX service derives
+`promptCache=true` only when `/health` reports a prepared cache that has already
+been used for generation; a startup-prepared cache alone is still treated as an
+unproven capability.
 
 ## MiniVLLM Lessons
 

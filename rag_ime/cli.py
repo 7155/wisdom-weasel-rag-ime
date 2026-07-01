@@ -260,7 +260,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Include full per-sample streaming measurements for every model.",
     )
 
-    subparsers.add_parser("predictor-status", help="Show local model prediction configuration without calling the model")
+    predictor_status = subparsers.add_parser("predictor-status", help="Show local model prediction configuration")
+    predictor_status.add_argument(
+        "--probe-capabilities",
+        action="store_true",
+        help="Probe provider health endpoints for runtime capability claims such as MLX prompt-cache use",
+    )
 
     predictor_doctor = subparsers.add_parser("predictor-doctor", help="Probe local model endpoint and one short prediction")
     predictor_doctor.add_argument("--case", default="RAG 输入法")
@@ -779,7 +784,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "predictor-status":
-        print(json.dumps(prediction_provider_status(predictor), ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                prediction_provider_status(predictor, probe_capabilities=bool(args.probe_capabilities)),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
     if args.command == "predictor-ttft":
@@ -1406,7 +1417,10 @@ def run_quality_gate(
         force_side_candidates=force_side_candidates,
     )
     acceptance_report = run_acceptance(adapter)
-    predictor_status = prediction_provider_status(predictor)
+    predictor_status = prediction_provider_status(
+        predictor,
+        probe_capabilities=bool(required_predictor_capabilities),
+    )
     checks = _quality_gate_checks(
         acceptance_report=acceptance_report,
         rag_report=rag_report,
@@ -1430,6 +1444,7 @@ def run_quality_gate(
             "minSidecarPassRate": min_sidecar_pass_rate,
             "requireSuggestionCache": require_suggestion_cache,
             "requiredPredictorCapabilities": list(required_predictor_capabilities),
+            "probePredictorCapabilities": bool(required_predictor_capabilities),
             "cacheRepeat": cache_repeat,
         },
         "checks": checks,

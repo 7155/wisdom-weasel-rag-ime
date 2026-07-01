@@ -249,20 +249,19 @@ class _MockOllamaUnparsedStreamingHandler(BaseHTTPRequestHandler):
 class _MockMlxHandler(BaseHTTPRequestHandler):
     captured_path = ""
     captured_payload: dict[str, object] = {}
+    health_payload: dict[str, object] = {}
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         if self.path == "/v1/models":
             body = json.dumps({"data": [{"id": "mlx-qwen3.5-0.8b"}]}, ensure_ascii=False).encode("utf-8")
         elif self.path == "/health":
-            body = json.dumps(
-                {
-                    "ok": True,
-                    "provider": "mlx-lm",
-                    "model": "mlx-qwen3.5-0.8b",
-                    "modelLoaded": True,
-                },
-                ensure_ascii=False,
-            ).encode("utf-8")
+            payload = _MockMlxHandler.health_payload or {
+                "ok": True,
+                "provider": "mlx-lm",
+                "model": "mlx-qwen3.5-0.8b",
+                "modelLoaded": True,
+            }
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         else:
             self.send_error(404)
             return
@@ -610,6 +609,7 @@ class PredictionProviderTests(unittest.TestCase):
     def test_mlx_provider_uses_resident_prediction_service(self) -> None:
         _MockMlxHandler.captured_path = ""
         _MockMlxHandler.captured_payload = {}
+        _MockMlxHandler.health_payload = {}
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -649,9 +649,126 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertFalse(status["capabilities"]["promptCache"])
         self.assertFalse(status["capabilities"]["sequenceFork"])
 
+    def test_mlx_provider_status_can_probe_prompt_cache_runtime_capability(self) -> None:
+        _MockMlxHandler.captured_path = ""
+        _MockMlxHandler.captured_payload = {}
+        _MockMlxHandler.health_payload = {
+            "ok": True,
+            "provider": "mlx-lm",
+            "model": "mlx-qwen3.5-0.8b",
+            "modelLoaded": True,
+            "promptCache": {
+                "enabled": True,
+                "prepared": True,
+                "cacheFileReady": True,
+                "usedForGeneration": True,
+                "hits": 3,
+                "misses": 0,
+            },
+            "capabilities": {
+                "streaming": True,
+                "residentModel": True,
+                "promptCache": True,
+                "sequenceFork": False,
+                "batchCandidates": False,
+                "serverTiming": True,
+            },
+        }
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+            status = prediction_provider_status(provider, probe_capabilities=True)
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+            _MockMlxHandler.health_payload = {}
+
+        self.assertTrue(status["capabilityProbe"]["ok"])
+        self.assertTrue(status["capabilities"]["promptCache"])
+        self.assertFalse(status["capabilities"]["sequenceFork"])
+        self.assertFalse(status["capabilities"]["batchCandidates"])
+        self.assertEqual(status["capabilityProbe"]["promptCache"]["hits"], 3)
+
+    def test_cli_predictor_status_can_probe_mlx_runtime_capabilities(self) -> None:
+        _MockMlxHandler.captured_path = ""
+        _MockMlxHandler.captured_payload = {}
+        _MockMlxHandler.health_payload = {
+            "ok": True,
+            "provider": "mlx-lm",
+            "model": "mlx-qwen3.5-0.8b",
+            "modelLoaded": True,
+            "promptCache": {
+                "enabled": True,
+                "prepared": True,
+                "cacheFileReady": True,
+                "usedForGeneration": True,
+            },
+        }
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            stdout = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(stdout):
+                    code = main(["--core-mode", "fixture", "predictor-status", "--probe-capabilities"])
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+            _MockMlxHandler.health_payload = {}
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertTrue(report["capabilityProbe"]["ok"])
+        self.assertTrue(report["capabilities"]["promptCache"])
+
+    def test_mlx_failed_capability_probe_clears_runtime_capabilities(self) -> None:
+        provider = prediction_provider_from_env(
+            {
+                "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:9",
+                "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
+                "RAG_IME_PREDICTOR_PROFILE": "instant",
+                "RAG_IME_PREDICTOR_TIMEOUT_MS": "100",
+                "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+            }
+        )
+
+        status = prediction_provider_status(provider, probe_capabilities=True)
+
+        self.assertFalse(status["capabilityProbe"]["ok"])
+        self.assertFalse(status["capabilities"]["streaming"])
+        self.assertFalse(status["capabilities"]["residentModel"])
+        self.assertFalse(status["capabilities"]["promptCache"])
+
     def test_mlx_provider_can_return_first_streamed_candidate(self) -> None:
         _MockMlxHandler.captured_path = ""
         _MockMlxHandler.captured_payload = {}
+        _MockMlxHandler.health_payload = {}
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

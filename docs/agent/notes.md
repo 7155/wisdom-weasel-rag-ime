@@ -1467,3 +1467,20 @@ Commands:
 - `scripts/doctor_squirrel_integration.sh`
 - `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh`
 - `scripts/build_patched_squirrel.sh list`
+
+### 2026-07-01 15:46 CST
+Problem:
+- The previous predictor capability gate was static. It could say that `local-mlx` was a resident streaming service, but it could not prove whether the MLX prompt cache was actually used by the runtime generation path.
+
+Changes:
+- Added MLX service runtime capabilities to `/health`.
+- Added `MlxPredictionServiceProvider.capability_probe()` and delegated probe support through `CooldownPredictionProvider`.
+- Added `prediction_provider_status(..., probe_capabilities=True)` and CLI `predictor-status --probe-capabilities`.
+- `quality-gate` now probes provider capabilities automatically when `--require-predictor-capability` is present.
+- `promptCache=true` now requires `enabled`, `prepared`, `cacheFileReady`, and `usedForGeneration`; a startup-prepared-only MLX cache remains unproven.
+- Added provider, CLI, and aggregate quality-gate tests for MLX prompt-cache capability probing.
+
+Commands:
+- `python3 -m py_compile rag_ime/predictor.py rag_ime/mlx_predictor_server.py rag_ime/cli.py tests/test_predictor.py tests/test_codex_history.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor tests.test_codex_history tests.test_mlx_predictor_server`
+- `git diff --check`

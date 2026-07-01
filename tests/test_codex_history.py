@@ -49,6 +49,73 @@ class _MockComparisonPredictionHandler(BaseHTTPRequestHandler):
         return
 
 
+class _MockMlxCapabilityHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 - stdlib API
+        if self.path == "/health":
+            body = json.dumps(
+                {
+                    "ok": True,
+                    "provider": "mlx-lm",
+                    "model": "mlx-qwen3.5-0.8b",
+                    "modelLoaded": True,
+                    "promptCache": {
+                        "enabled": True,
+                        "prepared": True,
+                        "cacheFileReady": True,
+                        "usedForGeneration": True,
+                        "hits": 2,
+                    },
+                    "capabilities": {
+                        "streaming": True,
+                        "residentModel": True,
+                        "promptCache": True,
+                        "sequenceFork": False,
+                        "batchCandidates": False,
+                        "serverTiming": True,
+                    },
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+        elif self.path == "/v1/models":
+            body = json.dumps({"data": [{"id": "mlx-qwen3.5-0.8b"}]}, ensure_ascii=False).encode("utf-8")
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        self.rfile.read(length)
+        body = json.dumps(
+            {
+                "ok": True,
+                "candidates": ["PROJECT_MEMORY_BLOCK"],
+                "rawText": '["PROJECT_MEMORY_BLOCK"]',
+                "totalMs": 12,
+                "promptCache": {
+                    "enabled": True,
+                    "prepared": True,
+                    "cacheFileReady": True,
+                    "usedForGeneration": True,
+                    "hits": 2,
+                },
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
 class CodexHistoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-codex-history-")
@@ -545,6 +612,73 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(len(capability_checks), 1)
         self.assertFalse(capability_checks[0]["passed"])
         self.assertIs(capability_checks[0]["actual"], False)
+
+    def test_cli_quality_gate_probes_mlx_capability_requirements(self) -> None:
+        db_path = self.root / "quality-gate-mlx-capability.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "quality-gate-mlx-capability-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "agent-hook",
+                    "query": "首次运行自动注入背景记忆",
+                    "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxCapabilityHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            gate_stdout = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(gate_stdout):
+                    gate_code = main(
+                        [
+                            "--db-path",
+                            str(db_path),
+                            "quality-gate",
+                            "--cases-file",
+                            str(cases_file),
+                            "--min-rag-pass-rate",
+                            "1",
+                            "--min-sidecar-pass-rate",
+                            "1",
+                            "--force-side-candidates",
+                            "--require-predictor-capability",
+                            "promptCache",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(gate_code, 0)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertTrue(report["passed"])
+        self.assertTrue(report["thresholds"]["probePredictorCapabilities"])
+        self.assertTrue(report["predictor"]["capabilityProbe"]["ok"])
+        self.assertTrue(report["predictor"]["capabilities"]["promptCache"])
+        capability_checks = [item for item in report["checks"] if item["name"] == "predictor-capability:promptCache"]
+        self.assertEqual(len(capability_checks), 1)
+        self.assertTrue(capability_checks[0]["passed"])
 
     def test_cli_eval_comparison_runs_rag_and_model_on_same_cases(self) -> None:
         db_path = self.root / "comparison.sqlite"

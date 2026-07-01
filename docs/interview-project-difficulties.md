@@ -172,7 +172,9 @@ sidecar、缓存和候选展示；最终模型 lane gate 还必须显式通过 `
 `sequenceFork`、`batchCandidates`。这对应 Wisdom-Weasel
 `LlamaCppProvider::PrepareSystemPrompt()` 和 `GenerateCandidatesBatch()` 的源码机制，
 也让面试时能说清楚：我不是只报一个快的 token 数，而是把底层能力变成了可重复
-验收的工程条件。
+验收的工程条件。进一步说，MLX 这条实验 lane 现在会通过 `/health` 做 runtime
+capability probe；`promptCache=true` 要求缓存已经被生成路径实际使用，不能只靠
+“启动时准备了缓存”来算通过。
 
 ## 我已经落地的工程点
 
