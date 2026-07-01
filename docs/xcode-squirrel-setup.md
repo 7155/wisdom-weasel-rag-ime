@@ -321,6 +321,17 @@ python3 scripts/check_squirrel_frontend_trace.py \
   --print-last 8
 ```
 
+Or make the strict doctor require the same foreground evidence after manual
+typing:
+
+```bash
+RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 \
+RAG_IME_DOCTOR_REQUIRE_FRONTEND_TRACE=1 \
+RAG_IME_DOCTOR_FRONTEND_TRACE_WAIT=30 \
+RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify \
+  scripts/doctor_squirrel_integration.sh
+```
+
 The trace file is local-only at `~/Library/Logs/RagIme/squirrel-frontend.jsonl`
 and is enabled by `rag_ime/frontend_trace: true` in the managed Squirrel config.
 It is the repeatable evidence that the installed AppKit frontend actually used

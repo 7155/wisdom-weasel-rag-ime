@@ -222,6 +222,21 @@ python3 scripts/check_squirrel_frontend_trace.py \
   --print-last 8
 ```
 
+The same foreground evidence can be required through the Squirrel doctor after
+manual typing:
+
+```bash
+RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 \
+RAG_IME_DOCTOR_REQUIRE_FRONTEND_TRACE=1 \
+RAG_IME_DOCTOR_FRONTEND_TRACE_WAIT=30 \
+RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify \
+  scripts/doctor_squirrel_integration.sh
+```
+
+This is the preferred final gate for a local run because it checks sidecar
+health, model/RAG merge contract, raw-pinyin guard, input-source readiness, and
+the real Squirrel AppKit trace in one command.
+
 The trace is written by the patched Squirrel app itself, not by the sidecar. A
 passing `latestMixedPanel` proves the actual frontend used sidecar display
 candidates and forced horizontal layout for the mixed panel. A passing
