@@ -1041,3 +1041,19 @@ Changes:
 
 Next:
 - Subagent read-only research points to VCP-style in-flight provider dedupe as the next shared-core slice: add pending request coalescing around embedding/rerank provider cache misses in the PI shared memory core.
+
+### 2026-07-01
+Topic:
+- Add VCP-style in-flight provider dedupe to the shared RAG/memory core.
+
+Changes:
+- Implemented coalescing for concurrent identical query embedding, embedding rerank, and LLM rerank provider misses in the PI shared core.
+- Added a standalone in-flight regression test for dedupe and retry-after-failure behavior.
+- learnA top-level has local commit `4c67f8e7`; it was not pushed because that repo already contains unrelated dirty/ahead state.
+
+Verification:
+- The focused in-flight test, provider import smoke test, `git diff --check`, and PI extension `npm test` all passed.
+
+Status:
+- RAG-IME product branch remains the main pushed branch for this work.
+- Full-Xcode Squirrel build/install/system-input-method continuous-use verification remains blocked until a real `Xcode.app` is installed and selected; current host only has Command Line Tools active.

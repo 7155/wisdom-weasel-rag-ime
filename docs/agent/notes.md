@@ -1509,3 +1509,29 @@ Commands:
 - `python3 -m py_compile rag_ime/cli.py tests/test_codex_history.py`
 - `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history`
 - `git diff --check`
+
+### 2026-07-01 15:32 CST
+Problem:
+- Shared RAG/memory provider caches could still duplicate expensive provider calls when identical embedding or rerank misses arrived concurrently.
+- This matters for the IME path because typing can fire bursty repeated queries; cache hit rate alone is not enough if the first miss fans out.
+
+Changes:
+- Applied a VCP-style in-flight request dedupe slice to the PI shared memory core in `agent-source-projects/pi-rag-memory-extension/src/retrieval-rerank-provider.ts`.
+- Added `withInFlight(...)` and coalesced concurrent identical misses for query embeddings, embedding rerank batches, and LLM rerank calls.
+- Added `agent-source-projects/pi-rag-memory-extension/test/retrieval-rerank-inflight.test.mjs` covering query embedding dedupe, embedding rerank dedupe, LLM rerank dedupe, and retry after failure.
+
+Git:
+- learnA top-level local commit: `4c67f8e7 Dedupe rerank provider misses`.
+- Not pushed from learnA because the top-level repo already has many unrelated dirty files and is ahead of origin.
+
+Verification:
+- `node --experimental-strip-types test/retrieval-rerank-inflight.test.mjs`
+- `node --experimental-strip-types -e "await import('./src/retrieval-rerank-provider.ts'); console.log('provider import ok')"`
+- `git diff --check -- src/retrieval-rerank-provider.ts test/retrieval-rerank-inflight.test.mjs`
+- `npm test`
+
+Full-Xcode status:
+- Real Squirrel build/install/system input-method continuous-use verification is still blocked on this host.
+- `xcode-select -p` returns `/Library/Developer/CommandLineTools`.
+- `xcodebuild -version` fails with `tool 'xcodebuild' requires Xcode`.
+- `/Applications` and Spotlight lookup do not show `Xcode.app`.
