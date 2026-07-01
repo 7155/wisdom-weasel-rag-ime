@@ -2507,3 +2507,24 @@ Verification:
 Status:
 - Backend and installed sidecar now satisfy the requested layout contract.
 - Remaining user-visible validation is foreground Squirrel/RAG-IME panel trace and real number-key commit in an editor.
+
+### 2026-07-02 04:34 CST
+Problem:
+- Continued the goal audit after the layout commit.
+- `RAG-IME - Simplified` is visible to TIS but cannot be selected: `TISSelectInputSource failed: -50`.
+- `com.apple.inputsources.plist` does not persist `AppleEnabledThirdPartyInputSources` for `im.rag-ime.inputmethod.RagIme`; `defaults import` is rolled back and direct plist write is denied by macOS.
+- Current selectable source is still `im.rime.inputmethod.Squirrel.Hans`; user-local `~/Library/Input Methods/Squirrel.app` is patched, but root-owned `/Library/Input Methods/Squirrel.app` has the same bundle id and lacks the RAG-IME mixed-layout patch.
+- Foreground auto trace could not be produced from Codex: `osascript` lacks Accessibility permission for key events, and system screenshot capture returned a black frame.
+
+Changes:
+- Clarified doctor stale-duplicate output so it points directly to `scripts/replace_system_squirrel_app.sh`.
+- Added test assertions that stale duplicate warnings/failures include the replacement command.
+
+Verification:
+- `scripts/check_macos_input_source.sh --require-selected im.rime.inputmethod.Squirrel.Hans` passed.
+- Branded `RAG-IME` input source remains enabled/selectable but not selected and `thirdPartyEnabled=false`.
+- User-local patched Squirrel passed runtime sidecar checks, but doctor fails when duplicate stale `/Library/Input Methods/Squirrel.app` is treated as required.
+
+Status:
+- The next real unblock is replacing `/Library/Input Methods/Squirrel.app` with the patched app using admin credentials, or manually removing the stale system Squirrel app.
+- After that, rerun foreground trace with either manual typing or Accessibility permission for Codex/Terminal automation.

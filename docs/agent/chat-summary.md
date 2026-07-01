@@ -1748,3 +1748,19 @@ Verification:
 
 Next:
 - Remaining runtime blocker is still the stale root-owned system Squirrel app; run the replacement script with admin password.
+
+### 2026-07-02
+Topic:
+- Continue real macOS foreground run audit after candidate-layout commit.
+
+Findings:
+- `RAG-IME - Simplified` is registered in TIS but cannot be selected because `com.apple.inputsources.plist` does not persist its third-party whitelist entry; `TISSelectInputSource` returns `-50`.
+- The accepted/selected source remains `im.rime.inputmethod.Squirrel.Hans`.
+- User-local `~/Library/Input Methods/Squirrel.app` contains the RAG-IME mixed-layout patch, but `/Library/Input Methods/Squirrel.app` has the same bundle id and is stale.
+- Automatic foreground trace was blocked by macOS permissions: `osascript` cannot send keystrokes and screenshot capture is black.
+
+Changes:
+- Doctor stale duplicate message now tells the user to run `scripts/replace_system_squirrel_app.sh`.
+
+Next:
+- Replace the root-owned system Squirrel with the patched app using admin credentials, then rerun foreground trace and number-key commit validation.
