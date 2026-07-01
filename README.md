@@ -126,7 +126,9 @@ The debug page calls `/api/input-source` and shows whether Squirrel is installed
 in the current user's input-source list, whether it is the selected active input
 source, and which input source is currently active. This is the fastest way to
 spot the difference between "Squirrel is visible in System Settings" and "typing
-is actually going through Squirrel".
+is actually going through Squirrel". The card refreshes automatically: `switch`
+means installed but not active, while `ready` means the real macOS typing gate
+can run.
 
 Run the lightweight HTTP sidecar for patched Squirrel:
 

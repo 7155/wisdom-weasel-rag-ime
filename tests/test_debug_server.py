@@ -714,6 +714,8 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(status["selectable"])
         self.assertTrue(status["hitoolboxEnabled"])
         self.assertEqual(status["current"], "com.apple.keylayout.ABC")
+        self.assertEqual(status["readinessState"], "switch")
+        self.assertEqual(status["nextAction"], "select Squirrel from the macOS input menu")
 
     def test_http_debug_server_exposes_input_source_status(self) -> None:
         script = Path(self.tmp.name) / "check-input-source.sh"
@@ -757,6 +759,38 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["typingReady"])
         self.assertTrue(payload["selected"])
+        self.assertEqual(payload["readinessState"], "ready")
+        self.assertEqual(payload["nextAction"], "start typing with Squirrel")
+
+    def test_input_source_status_marks_missing_source_as_install_needed(self) -> None:
+        script = Path(self.tmp.name) / "check-input-source-missing.sh"
+        script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=false selectable=false selected=false current=com.apple.keylayout.ABC hitoolboxEnabled=false'",
+                    "exit 1",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "input-source-missing.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                input_source_check_script=script,
+            )
+        )
+
+        status = service.input_source_status()
+
+        self.assertFalse(status["ok"])
+        self.assertFalse(status["typingReady"])
+        self.assertEqual(status["readinessState"], "install")
+        self.assertEqual(status["nextAction"], "run the Squirrel install and input-source enable scripts")
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):

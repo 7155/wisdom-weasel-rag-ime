@@ -499,6 +499,20 @@ button {
   color: var(--amber);
 }
 
+.wide-button.is-good {
+  border-color: rgba(45, 155, 104, 0.5);
+  color: var(--green);
+}
+
+.panel-hint {
+  min-height: 29px;
+  margin: -2px 0 9px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 #debugJson {
   max-height: 260px;
   margin: 0;
