@@ -287,6 +287,34 @@ Per-case fields include:
 - `forbiddenMatchedTerms`: noise terms found in returned suggestions. If any forbidden term appears, the case fails even if expected terms matched.
 - `elapsedMs`: end-to-end adapter suggestion time for that case.
 
+## Aggregate Quality Gate
+
+`quality-gate` combines adapter acceptance, direct RAG eval, `/rime-suggest`
+sidecar eval, warm cache probing, and optional predictor capability checks.
+For early smoke tests, pass-rate thresholds are enough. For a stable gold set,
+use the ranking/noise gates as well:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  quality-gate \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --force-side-candidates \
+  --require-suggestion-cache \
+  --min-rag-pass-rate 0.9 \
+  --min-rag-top1-accuracy 0.75 \
+  --min-rag-mrr 0.8 \
+  --max-rag-noise-rate 0.05 \
+  --min-sidecar-pass-rate 0.9 \
+  --min-sidecar-top1-accuracy 0.75 \
+  --min-sidecar-mrr 0.8 \
+  --max-sidecar-noise-rate 0.05
+```
+
+The direct RAG and sidecar gates are intentionally separate. Direct RAG catches
+retrieval/ranking regressions in the core. Sidecar eval catches display-path
+problems such as Rime-first merge, side-slot limits, trigger policy, and
+sidecar cache behavior.
+
 ## Compare RAG Against Model Prediction
 
 After configuring a local model with `RAG_IME_PREDICTOR_*`, run the same case file through both the RAG lane and the model prediction lane:

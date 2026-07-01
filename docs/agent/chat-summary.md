@@ -1029,3 +1029,15 @@ Changes:
 
 Status:
 - This advances the local model lane toward a real Wisdom-Weasel-style acceptance gate, but `sequenceFork` and `batchCandidates` still remain false until a native llama.cpp/Metal or stronger MLX provider exists.
+
+### 2026-07-01
+Topic:
+- Strengthen RAG/memory quality gates beyond pass-rate.
+
+Changes:
+- `quality-gate` now supports top1, MRR, and noise thresholds separately for direct RAG and `/rime-suggest` sidecar eval.
+- Added regression tests for metric-check presence and forbidden-term noise gate failures.
+- README and Codex-history eval docs now show stricter mature-goldset commands.
+
+Next:
+- Subagent read-only research points to VCP-style in-flight provider dedupe as the next shared-core slice: add pending request coalescing around embedding/rerank provider cache misses in the PI shared memory core.

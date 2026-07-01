@@ -1484,3 +1484,28 @@ Commands:
 - `python3 -m py_compile rag_ime/predictor.py rag_ime/mlx_predictor_server.py rag_ime/cli.py tests/test_predictor.py tests/test_codex_history.py`
 - `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor tests.test_codex_history tests.test_mlx_predictor_server`
 - `git diff --check`
+
+### 2026-07-01 16:18 CST
+Problem:
+- The aggregate RAG-IME gate could enforce recall/pass-rate and cache hits, but not ranking quality or noise. That is too weak for an input method, where rank 1 and low-noise candidates matter more than broad recall.
+
+Changes:
+- Added explicit `quality-gate` thresholds for direct RAG and `/rime-suggest` sidecar:
+  - `--min-rag-top1-accuracy`
+  - `--min-sidecar-top1-accuracy`
+  - `--min-rag-mrr`
+  - `--min-sidecar-mrr`
+  - `--max-rag-noise-rate`
+  - `--max-sidecar-noise-rate`
+- The gate now emits separate checks for pass rate, top1, MRR, and noise on both direct RAG and sidecar paths.
+- Added tests that verify the new metric checks are present and that noise thresholds fail the gate when forbidden terms appear.
+- README and Codex-history eval docs now show mature-goldset threshold commands.
+
+Subagent finding:
+- PI shared core already has retrieval/rerank cache, vector cache, memory governance review queue, and goldset gates.
+- The smallest next VCP-style optimization is provider miss in-flight dedupe for embedding/rerank calls in `agent-source-projects/pi-rag-memory-extension/src/retrieval-rerank-provider.ts`, similar to VCP `RAGDiaryPlugin` pending embedding requests.
+
+Commands:
+- `python3 -m py_compile rag_ime/cli.py tests/test_codex_history.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history`
+- `git diff --check`

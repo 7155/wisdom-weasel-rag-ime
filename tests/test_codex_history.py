@@ -565,6 +565,66 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertTrue(report["cacheProbe"]["summary"]["rimeCachePassed"])
         self.assertIn("predictor", report)
         self.assertEqual(report["thresholds"]["requiredPredictorCapabilities"], [])
+        self.assertEqual(report["thresholds"]["minRagTop1Accuracy"], 0.0)
+        self.assertEqual(report["thresholds"]["minSidecarMeanReciprocalRank"], 0.0)
+        self.assertEqual(report["thresholds"]["maxRagNoiseRate"], 1.0)
+        check_names = {item["name"] for item in report["checks"]}
+        self.assertIn("rag-top1-accuracy", check_names)
+        self.assertIn("rag-mean-reciprocal-rank", check_names)
+        self.assertIn("rag-noise-rate", check_names)
+        self.assertIn("rime-sidecar-top1-accuracy", check_names)
+        self.assertIn("rime-sidecar-mean-reciprocal-rank", check_names)
+        self.assertIn("rime-sidecar-noise-rate", check_names)
+
+    def test_cli_quality_gate_can_enforce_noise_thresholds(self) -> None:
+        db_path = self.root / "quality-gate-noise.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "quality-gate-noise-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "agent-hook-noise",
+                    "query": "首次运行自动注入背景记忆",
+                    "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                    "forbiddenTerms": ["Agent"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        gate_stdout = io.StringIO()
+        with redirect_stdout(gate_stdout):
+            gate_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "quality-gate",
+                    "--cases-file",
+                    str(cases_file),
+                    "--min-rag-pass-rate",
+                    "0",
+                    "--min-sidecar-pass-rate",
+                    "0",
+                    "--max-rag-noise-rate",
+                    "0",
+                    "--max-sidecar-noise-rate",
+                    "0",
+                    "--force-side-candidates",
+                ]
+            )
+        self.assertEqual(gate_code, 1)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertFalse(report["passed"])
+        noise_checks = {item["name"]: item for item in report["checks"] if item["name"].endswith("noise-rate")}
+        self.assertFalse(noise_checks["rag-noise-rate"]["passed"])
+        self.assertFalse(noise_checks["rime-sidecar-noise-rate"]["passed"])
+        self.assertEqual(noise_checks["rag-noise-rate"]["expectedAtMost"], 0.0)
+        self.assertEqual(report["rag"]["metrics"]["noiseRate"], 1.0)
 
     def test_cli_quality_gate_can_require_predictor_capabilities(self) -> None:
         db_path = self.root / "quality-gate-capability.sqlite"
