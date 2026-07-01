@@ -252,6 +252,19 @@ RAG_IME_REQUIRE_HITOOLBOX_ENABLED=1 \
 ```
 
 For a machine-wide install, set `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"`.
+If the strict doctor reports
+`stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace`,
+macOS may be loading an older `/Library/Input Methods/Squirrel.app` instead of
+the patched user-local app. Replace the machine-wide copy with the patched app:
+
+```bash
+scripts/replace_system_squirrel_app.sh
+```
+
+This command backs up the existing system app before copying the patched
+`~/Library/Input Methods/Squirrel.app`, then re-registers and selects
+`im.rime.inputmethod.Squirrel.Hans`.
+
 If System Settings still does not show Squirrel after registration, run the local
 debug helper once. It backs up `com.apple.HIToolbox` and
 `com.apple.inputsources` to the Desktop, tries to add the Squirrel entries to
