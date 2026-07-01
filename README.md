@@ -307,13 +307,25 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --min-sidecar-mrr 0.8 \
   --max-sidecar-noise-rate 0.05 \
   --max-sidecar-rag-timeout-rate 0 \
-  --max-sidecar-model-timeout-rate 0
+  --max-sidecar-model-timeout-rate 0 \
+  --require-model-ttfc \
+  --model-ttfc-cases-file docs/eval/ime-ttfc-cases.example.jsonl \
+  --model-ttfc-provider ollama \
+  --model-ttfc-base-url http://127.0.0.1:11434 \
+  --model-ttfc-models qwen3.5:0.8b-mlx \
+  --model-ttfc-repeat 20 \
+  --model-ttfc-latency-budget-ms 200 \
+  --max-model-ttfc-p95-ms 200 \
+  --max-model-ttfc-over-budget-rate 0
 ```
 
 This matters for an IME because a hit at rank 5 still slows typing, and a
 forbidden/noisy candidate is worse than a missed side candidate. The sidecar
 timeout gates make the display-path contract stricter: RAG/model side lanes must
 fit the IME budget instead of silently falling back on most requests.
+`--require-model-ttfc` adds the local-model speed contract: the selected model
+must produce a first parsed candidate within the configured p95 and over-budget
+thresholds. Leave it off when no local model server is running.
 
 For the final Wisdom-Weasel-style local model provider, add explicit capability
 requirements. This should fail for Ollama/MLX smoke providers until a native
@@ -528,6 +540,9 @@ python3 -m rag_ime.cli --core-mode fixture \
 `bench-ime-ttfc` reports one summary per model with `p50FirstCandidateMs`,
 `p95FirstCandidateMs`, `overBudgetCount`, `failureCount`, and a latency-only
 winner. Add `--include-cases` when debugging individual samples.
+Once a model is chosen, wire the same TTFC cases into `quality-gate` with
+`--require-model-ttfc`; this makes first-candidate latency part of the normal
+release gate instead of a manual benchmark result.
 
 Evaluate local model prediction quality against the same JSONL case format used by RAG evaluation:
 

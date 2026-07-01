@@ -203,6 +203,29 @@ that need all candidates.
 
 The stable rule for this project is: configure any candidate through one explicit provider lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
+For release-style checks, make TTFC part of the normal quality gate instead of
+leaving it as a manual benchmark:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  quality-gate \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --force-side-candidates \
+  --require-model-ttfc \
+  --model-ttfc-cases-file docs/eval/ime-ttfc-cases.example.jsonl \
+  --model-ttfc-provider ollama \
+  --model-ttfc-base-url http://127.0.0.1:11434 \
+  --model-ttfc-models qwen3.5:0.8b-mlx \
+  --model-ttfc-repeat 20 \
+  --model-ttfc-latency-budget-ms 200 \
+  --max-model-ttfc-p95-ms 200 \
+  --max-model-ttfc-over-budget-rate 0
+```
+
+This gate reuses `bench-ime-ttfc` logic and fails if the winning model has no
+first parsed candidate, p95 first-candidate latency exceeds the threshold, or
+any sample is over budget when the over-budget rate is set to zero.
+
 ## Mac Runtime Order
 
 Do not treat "local model" as one implementation. On Mac, evaluate backends in

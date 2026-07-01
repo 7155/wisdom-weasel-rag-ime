@@ -309,7 +309,16 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --min-sidecar-mrr 0.8 \
   --max-sidecar-noise-rate 0.05 \
   --max-sidecar-rag-timeout-rate 0 \
-  --max-sidecar-model-timeout-rate 0
+  --max-sidecar-model-timeout-rate 0 \
+  --require-model-ttfc \
+  --model-ttfc-cases-file docs/eval/ime-ttfc-cases.example.jsonl \
+  --model-ttfc-provider ollama \
+  --model-ttfc-base-url http://127.0.0.1:11434 \
+  --model-ttfc-models qwen3.5:0.8b-mlx \
+  --model-ttfc-repeat 20 \
+  --model-ttfc-latency-budget-ms 200 \
+  --max-model-ttfc-p95-ms 200 \
+  --max-model-ttfc-over-budget-rate 0
 ```
 
 The direct RAG and sidecar gates are intentionally separate. Direct RAG catches
@@ -317,7 +326,9 @@ retrieval/ranking regressions in the core. Sidecar eval catches display-path
 problems such as Rime-first merge, side-slot limits, trigger policy, and
 sidecar cache behavior. The timeout gates catch a separate failure mode: the
 candidate panel looks correct in easy cases but the RAG/model side lanes are
-falling open under the real IME latency budget.
+falling open under the real IME latency budget. `--require-model-ttfc` catches
+the model-specific latency failure: the model may be configured and reachable
+but still too slow to produce the first selectable side candidate.
 
 ## Compare RAG Against Model Prediction
 

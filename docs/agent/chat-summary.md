@@ -1122,3 +1122,19 @@ Verification:
 Status:
 - Product repo work is ready to commit/push.
 - Full Xcode real build/install/system input-method verification remains a separate blocker until `Xcode.app` is installed and selected.
+
+### 2026-07-01
+Topic:
+- Make local model TTFC part of the quality gate.
+
+Changes:
+- Added `quality-gate --require-model-ttfc`.
+- The gate reuses the `bench-ime-ttfc` implementation and checks the winning model's first parsed candidate behavior.
+- New checks cover streaming support, missing first candidates, p95 first-candidate latency, and over-budget rate.
+- Documentation now shows how to enforce `qwen3.5:0.8b-mlx` as the current Ollama MLX smoke model.
+
+Verification:
+- Predictor-focused tests, Codex-history quality-gate tests, full 137-test suite, and `git diff --check` passed.
+
+Status:
+- Real Ollama model benchmark was not run in this turn because the Ollama server was not running.

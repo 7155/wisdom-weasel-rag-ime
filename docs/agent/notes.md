@@ -1622,3 +1622,26 @@ Verification:
 
 Status:
 - Full-Xcode Squirrel build/install/system-input-method continuous-use verification is still blocked on this host because only Command Line Tools are selected.
+
+### 2026-07-01 16:25 CST
+Problem:
+- `bench-ime-ttfc` could measure the first parsed model candidate, but the normal `quality-gate` did not enforce that result.
+- That left a gap between manual model-speed experiments and release-style acceptance: a local model could be reachable yet too slow for the input-method lane.
+
+Changes:
+- Refactored the IME TTFC benchmark into `run_ime_ttfc_benchmark()` so CLI and quality gate share the same implementation.
+- Added optional `quality-gate --require-model-ttfc` with provider, base URL, model list, TTFC cases, repeat count, p95 threshold, and over-budget-rate threshold.
+- Added model TTFC checks: supported streaming provider, first-candidate presence, p95 first-candidate latency, and over-budget rate.
+- Added an integration test using a mock Ollama streaming server with one good MLX-tag model and one bad model.
+- Updated README, Codex-history eval docs, and local-model benchmark docs.
+
+Verification:
+- `python3 -m py_compile rag_ime/cli.py tests/test_predictor.py tests/test_codex_history.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor tests.test_codex_history`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `git diff --check`
+
+Status:
+- Full suite passed with 137 tests.
+- `ollama list` could not connect because the Ollama server is not running, so this turn did not run a real-model TTFC benchmark.
