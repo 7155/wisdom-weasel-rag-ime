@@ -334,7 +334,9 @@ python3 -m rag_ime.cli \
 ```
 
 `squirrel-tryout-gate` first checks the installed `Squirrel.app` bundle, the
-actual `~/Library/Rime/squirrel.custom.yaml` managed block, and required
+actual `~/Library/Rime/squirrel.custom.yaml` managed block, the default Rime
+schema/page-size contract (`luna_pinyin_simp`, `menu.page_size=8`) in both
+`default.custom.yaml` and compiled `build/default.yaml`, and required
 `~/Library/Rime/build` artifacts, then checks `readinessState=ready` for the
 active macOS input source, then checks the user LaunchAgent and the running
 sidecar `/health` plus a safe `/rime-suggest`

@@ -490,6 +490,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             str(Path.home() / "Library" / "Rime" / "squirrel.custom.yaml"),
         ),
     )
+    squirrel_tryout_gate.add_argument(
+        "--expected-rime-primary-schema",
+        default=os.environ.get("RAG_IME_RIME_PRIMARY_SCHEMA", "luna_pinyin_simp"),
+    )
+    squirrel_tryout_gate.add_argument(
+        "--expected-rime-page-size",
+        type=int,
+        default=int(os.environ.get("RAG_IME_RIME_PAGE_SIZE", "8")),
+    )
     squirrel_tryout_gate.add_argument("--sidecar-url", default=os.environ.get("RAG_IME_SIDECAR_URL", "http://127.0.0.1:8766"))
     squirrel_tryout_gate.add_argument(
         "--launch-agent-label",
@@ -1310,6 +1319,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             input_source_check_script=Path(args.input_source_check_script) if args.input_source_check_script else None,
             squirrel_app=Path(args.squirrel_app) if args.squirrel_app else None,
             squirrel_config_path=Path(args.squirrel_config_path),
+            expected_rime_primary_schema=args.expected_rime_primary_schema,
+            expected_rime_page_size=max(1, min(10, args.expected_rime_page_size)),
             sidecar_url=args.sidecar_url,
             launch_agent_label=args.launch_agent_label,
             skip_launch_agent=bool(args.skip_launch_agent),
@@ -1626,6 +1637,8 @@ def run_squirrel_tryout_gate(
     input_source_check_script: Path | None,
     squirrel_app: Path | None,
     squirrel_config_path: Path,
+    expected_rime_primary_schema: str,
+    expected_rime_page_size: int,
     sidecar_url: str,
     launch_agent_label: str,
     skip_launch_agent: bool,
@@ -1641,6 +1654,11 @@ def run_squirrel_tryout_gate(
         expected_db_path=db_path,
         expected_project=project,
         expected_sidecar_url=sidecar_url,
+    )
+    defaults_report = _tryout_installed_rime_defaults(
+        squirrel_config_path,
+        expected_primary_schema=expected_rime_primary_schema,
+        expected_page_size=expected_rime_page_size,
     )
     build_report = _tryout_installed_rime_build(squirrel_config_path)
     input_source_report = DebugImeService(
@@ -1668,11 +1686,12 @@ def run_squirrel_tryout_gate(
     )
     bundle_ok = bool(bundle_report.get("ok"))
     config_ok = bool(config_report.get("ok"))
+    defaults_ok = bool(defaults_report.get("ok"))
     build_ok = bool(build_report.get("ok"))
     launch_agent_ok = bool(launch_agent_report.get("ok"))
     sidecar_ok = bool(sidecar_report.get("ok"))
     quality_report: dict[str, object] | None = None
-    if bundle_ok and config_ok and build_ok and launch_agent_ok and input_ready and sidecar_ok:
+    if bundle_ok and config_ok and defaults_ok and build_ok and launch_agent_ok and input_ready and sidecar_ok:
         quality_report = run_quality_gate(
             adapter,
             core,
@@ -1736,6 +1755,18 @@ def run_squirrel_tryout_gate(
             "projectMatches": config_report.get("projectMatches"),
         },
         {
+            "name": "installed-rime-defaults",
+            "passed": defaults_ok,
+            "defaultConfigPath": defaults_report.get("defaultConfigPath"),
+            "buildDefaultPath": defaults_report.get("buildDefaultPath"),
+            "primarySchema": defaults_report.get("primarySchema"),
+            "expectedPrimarySchema": defaults_report.get("expectedPrimarySchema"),
+            "primarySchemaMatches": defaults_report.get("primarySchemaMatches"),
+            "pageSize": defaults_report.get("pageSize"),
+            "expectedPageSize": defaults_report.get("expectedPageSize"),
+            "pageSizeMatches": defaults_report.get("pageSizeMatches"),
+        },
+        {
             "name": "installed-rime-build",
             "passed": build_ok,
             "rimeDir": build_report.get("rimeDir"),
@@ -1782,6 +1813,7 @@ def run_squirrel_tryout_gate(
         ],
         "installedBundle": bundle_report,
         "installedRimeConfig": config_report,
+        "installedRimeDefaults": defaults_report,
         "installedRimeBuild": build_report,
         "inputSource": input_source_report,
         "launchAgent": launch_agent_report,
@@ -1872,6 +1904,60 @@ def _tryout_installed_rime_config(
     }
 
 
+def _tryout_installed_rime_defaults(
+    config_path: Path,
+    *,
+    expected_primary_schema: str,
+    expected_page_size: int,
+) -> dict[str, object]:
+    rime_dir = config_path.expanduser().parent
+    default_config_path = rime_dir / "default.custom.yaml"
+    build_default_path = rime_dir / "build" / "default.yaml"
+    expected_primary_schema = expected_primary_schema.strip() or "luna_pinyin_simp"
+    expected_page_size = max(1, min(10, int(expected_page_size)))
+    default_custom = _parse_rime_default_settings(default_config_path.read_text(encoding="utf-8")) if default_config_path.exists() else {}
+    build_default = _parse_rime_default_settings(build_default_path.read_text(encoding="utf-8")) if build_default_path.exists() else {}
+    primary_schema = str(build_default.get("primarySchema") or "")
+    page_size = build_default.get("pageSize")
+    default_custom_primary_matches = default_custom.get("primarySchema") == expected_primary_schema
+    default_custom_page_matches = default_custom.get("pageSize") == expected_page_size
+    primary_matches = primary_schema == expected_primary_schema
+    page_matches = page_size == expected_page_size
+    ok = (
+        default_config_path.exists()
+        and build_default_path.exists()
+        and default_custom_primary_matches
+        and default_custom_page_matches
+        and primary_matches
+        and page_matches
+    )
+    missing = []
+    if not default_config_path.exists():
+        missing.append("default.custom.yaml")
+    if not build_default_path.exists():
+        missing.append("build/default.yaml")
+    return {
+        "schemaVersion": "rag-ime.tryout-installed-rime-defaults.v1",
+        "ok": ok,
+        "rimeDir": str(rime_dir),
+        "defaultConfigPath": str(default_config_path),
+        "defaultConfigExists": default_config_path.exists(),
+        "buildDefaultPath": str(build_default_path),
+        "buildDefaultExists": build_default_path.exists(),
+        "missingFiles": missing,
+        "expectedPrimarySchema": expected_primary_schema,
+        "expectedPageSize": expected_page_size,
+        "defaultCustom": default_custom,
+        "defaultCustomPrimarySchemaMatches": default_custom_primary_matches,
+        "defaultCustomPageSizeMatches": default_custom_page_matches,
+        "buildDefault": build_default,
+        "primarySchema": primary_schema,
+        "primarySchemaMatches": primary_matches,
+        "pageSize": page_size,
+        "pageSizeMatches": page_matches,
+    }
+
+
 def _tryout_installed_rime_build(config_path: Path) -> dict[str, object]:
     rime_dir = config_path.expanduser().parent
     expected_files = (
@@ -1895,6 +1981,62 @@ def _tryout_installed_rime_build(config_path: Path) -> dict[str, object]:
         "expectedFiles": files,
         "missingFiles": missing,
     }
+
+
+def _parse_rime_default_settings(text: str) -> dict[str, object]:
+    primary_schema = ""
+    page_size: int | None = None
+    in_schema_list = False
+    schema_indent = 0
+    in_menu = False
+    menu_indent = 0
+
+    for raw_line in text.splitlines():
+        line_without_comment = raw_line.split("#", 1)[0].rstrip()
+        stripped = line_without_comment.strip()
+        if not stripped:
+            continue
+        indent = len(line_without_comment) - len(line_without_comment.lstrip(" "))
+
+        if stripped == "schema_list:":
+            in_schema_list = True
+            schema_indent = indent
+            continue
+        if in_schema_list:
+            if indent <= schema_indent and not stripped.startswith("-"):
+                in_schema_list = False
+            elif "schema:" in stripped and not primary_schema:
+                value = stripped.split("schema:", 1)[1].strip().strip("'\"")
+                if value:
+                    primary_schema = value
+
+        if stripped == "menu:":
+            in_menu = True
+            menu_indent = indent
+            continue
+        if in_menu:
+            if indent <= menu_indent:
+                in_menu = False
+            elif stripped.startswith("page_size:"):
+                page_size = _parse_int_config_value(stripped.split(":", 1)[1])
+
+        if stripped.startswith('"menu/page_size":') or stripped.startswith("menu/page_size:"):
+            page_size = _parse_int_config_value(stripped.split(":", 1)[1])
+
+    return {
+        "primarySchema": primary_schema,
+        "pageSize": page_size,
+    }
+
+
+def _parse_int_config_value(value_text: str) -> int | None:
+    value = value_text.strip().strip("'\"")
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _parse_rag_ime_managed_config(text: str) -> dict[str, object]:
