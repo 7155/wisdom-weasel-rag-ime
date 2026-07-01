@@ -644,6 +644,51 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         )
         self.assertIn("summary: failures=", result.stdout)
 
+    def test_doctor_ignores_original_squirrel_when_configured_app_uses_branded_bundle_id(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-branded-app-") as tmp:
+            tmp_path = Path(tmp)
+            app = _write_fake_squirrel_app(
+                tmp_path / "RAG-IME.app",
+                body=(
+                    "#!/usr/bin/env bash\n"
+                    "# rag-ime.squirrel-frontend-trace.v1\n"
+                    "# panel_text_layout\n"
+                    "exit 0\n"
+                ),
+                bundle_id="im.rag-ime.inputmethod.RagIme",
+            )
+            original_squirrel = _write_fake_squirrel_app(
+                tmp_path / "SystemSquirrel.app",
+                body="#!/usr/bin/env bash\nexit 0\n",
+            )
+            fake_bin = _write_fake_swift(tmp_path, enabled=True)
+
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                "RAG_IME_SQUIRREL_APP": str(app),
+                "RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES": f"{app}:{original_squirrel}",
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "1",
+                "RAG_IME_DOCTOR_REQUIRE_PATCHED_APP": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertIn("[OK] no stale same-bundle Squirrel.app detected", result.stdout)
+        self.assertNotIn("stale Squirrel.app with same bundle id", result.stdout)
+        self.assertIn("summary: failures=0", result.stdout)
+
     def test_doctor_can_require_frontend_trace_gate(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-frontend-trace-") as tmp:
@@ -769,14 +814,19 @@ def _write_fake_swift(tmp_path: Path, *, enabled: bool) -> Path:
     return fake_bin
 
 
-def _write_fake_squirrel_app(path: Path, *, body: str) -> Path:
+def _write_fake_squirrel_app(
+    path: Path,
+    *,
+    body: str,
+    bundle_id: str = "im.rime.inputmethod.Squirrel",
+) -> Path:
     executable = path / "Contents" / "MacOS" / "Squirrel"
     executable.parent.mkdir(parents=True)
     executable.write_text(body, encoding="utf-8")
     executable.chmod(0o755)
     info_plist = path / "Contents" / "Info.plist"
     with info_plist.open("wb") as handle:
-        plistlib.dump({"CFBundleIdentifier": "im.rime.inputmethod.Squirrel"}, handle)
+        plistlib.dump({"CFBundleIdentifier": bundle_id}, handle)
     return path
 
 

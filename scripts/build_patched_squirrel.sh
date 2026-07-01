@@ -8,6 +8,7 @@ SCHEME="${RAG_IME_SQUIRREL_SCHEME:-Squirrel}"
 CONFIGURATION="${RAG_IME_SQUIRREL_CONFIGURATION:-Release}"
 DERIVED_DATA="${RAG_IME_SQUIRREL_DERIVED_DATA:-/tmp/rag-ime-squirrel-derived-data}"
 INSTALL_DIR="${RAG_IME_SQUIRREL_INSTALL_DIR:-$HOME/Library/Input Methods}"
+INSTALL_APP_NAME="${RAG_IME_SQUIRREL_INSTALL_APP_NAME:-Squirrel}"
 ACTION="${1:-${RAG_IME_SQUIRREL_BUILD_ACTION:-build}}"
 DRY_RUN="${RAG_IME_SQUIRREL_BUILD_DRY_RUN:-0}"
 XCODEBUILD="${RAG_IME_XCODEBUILD:-$(command -v xcodebuild || true)}"
@@ -16,7 +17,21 @@ NO_DOWNLOAD="${RAG_IME_SQUIRREL_NO_DOWNLOAD:-0}"
 SKIP_POSTINSTALL="${RAG_IME_SQUIRREL_SKIP_POSTINSTALL:-0}"
 SKIP_CODESIGN="${RAG_IME_SQUIRREL_SKIP_CODESIGN:-0}"
 CODESIGN_IDENTITY="${RAG_IME_SQUIRREL_CODESIGN_IDENTITY:--}"
-INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
+DEFAULT_BUNDLE_ID="im.rime.inputmethod.Squirrel"
+BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
+INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
+HANT_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID:-$BUNDLE_ID.Hant}"
+if [[ "$BUNDLE_ID" == "$DEFAULT_BUNDLE_ID" && "$INSTALL_APP_NAME" == "Squirrel" ]]; then
+  DEFAULT_DISPLAY_NAME="Squirrel"
+  DEFAULT_CONNECTION_NAME="Squirrel_Connection"
+else
+  DEFAULT_DISPLAY_NAME="$INSTALL_APP_NAME"
+  DEFAULT_CONNECTION_NAME="RagIme_Connection"
+fi
+DISPLAY_NAME="${RAG_IME_SQUIRREL_DISPLAY_NAME:-$DEFAULT_DISPLAY_NAME}"
+HANS_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANS_DISPLAY_NAME:-$DISPLAY_NAME - Simplified}"
+HANT_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANT_DISPLAY_NAME:-$DISPLAY_NAME - Traditional}"
+CONNECTION_NAME="${RAG_IME_SQUIRREL_CONNECTION_NAME:-$DEFAULT_CONNECTION_NAME}"
 BUILD_SETTINGS_EXTRA="${RAG_IME_SQUIRREL_BUILD_SETTINGS:-CODE_SIGNING_ALLOWED=NO}"
 
 extra_build_settings=()
@@ -39,6 +54,10 @@ Environment:
   RAG_IME_SQUIRREL_CONFIGURATION Xcode configuration (default: Release)
   RAG_IME_SQUIRREL_DERIVED_DATA  derived data path (default: /tmp/rag-ime-squirrel-derived-data)
   RAG_IME_SQUIRREL_INSTALL_DIR   install target (default: ~/Library/Input Methods)
+  RAG_IME_SQUIRREL_INSTALL_APP_NAME installed app bundle name (default: Squirrel)
+  RAG_IME_SQUIRREL_BUNDLE_ID     app/input-source bundle prefix (default: im.rime.inputmethod.Squirrel)
+  RAG_IME_SQUIRREL_DISPLAY_NAME  app/input-source display name (default: Squirrel or install app name)
+  RAG_IME_SQUIRREL_CONNECTION_NAME input method connection name (default: Squirrel_Connection or RagIme_Connection)
   RAG_IME_SQUIRREL_PREINSTALL    auto|1|0, run Squirrel action-install when dependencies are missing
   RAG_IME_SQUIRREL_NO_DOWNLOAD   set no_download=1 for action-install
   RAG_IME_SQUIRREL_BUILD_SETTINGS extra xcodebuild settings (default: CODE_SIGNING_ALLOWED=NO)
@@ -65,6 +84,7 @@ xcodebuild_build_args=(
 )
 
 PRODUCT_APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/Squirrel.app"
+TARGET_APP="$INSTALL_DIR/$INSTALL_APP_NAME.app"
 
 if [[ "$ACTION" != "list" && "$ACTION" != "build" && "$ACTION" != "install" ]]; then
   usage >&2
@@ -82,6 +102,8 @@ configuration=$CONFIGURATION
 derived_data=$DERIVED_DATA
 product_app=$PRODUCT_APP
 install_dir=$INSTALL_DIR
+install_app_name=$INSTALL_APP_NAME
+target_app=$TARGET_APP
 action=$ACTION
 xcodebuild=${XCODEBUILD:-<not-found>}
 preinstall=$PREINSTALL
@@ -89,7 +111,11 @@ no_download=$NO_DOWNLOAD
 build_settings=$BUILD_SETTINGS_EXTRA
 codesign_identity=$CODESIGN_IDENTITY
 skip_codesign=$SKIP_CODESIGN
+bundle_id=$BUNDLE_ID
 input_source_id=$INPUT_SOURCE_ID
+hant_input_source_id=$HANT_INPUT_SOURCE_ID
+display_name=$DISPLAY_NAME
+connection_name=$CONNECTION_NAME
 list_command=${XCODEBUILD:-xcodebuild} ${xcodebuild_base_args[*]} -list
 build_command=${XCODEBUILD:-xcodebuild} ${xcodebuild_build_args[*]}
 install_command=$0 install
@@ -140,6 +166,9 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "candidat
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate separator"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal layout for inline LLM candidates"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "traceRagImePanelTextLayout" "actual frontend mixed-layout trace"
+if [[ -f "$SQUIRREL_WORKDIR/sources/InputSource.swift" ]]; then
+  require_text "$SQUIRREL_WORKDIR/sources/InputSource.swift" "static var inputSourceIDPrefix: String" "brandable input-source prefix"
+fi
 
 deps_ready() {
   [[ -f "$SQUIRREL_WORKDIR/lib/librime.1.dylib" ]] &&
@@ -201,20 +230,71 @@ ensure_squirrel_input_source_enabled() {
   printf '[WARN] If thirdPartyEnabled=false, add Squirrel from System Settings -> Keyboard -> Input Sources.\n' >&2
 }
 
+should_brand_app() {
+  [[ "$INSTALL_APP_NAME" != "Squirrel" ||
+    "$BUNDLE_ID" != "$DEFAULT_BUNDLE_ID" ||
+    "$INPUT_SOURCE_ID" != "$DEFAULT_BUNDLE_ID.Hans" ||
+    "$HANT_INPUT_SOURCE_ID" != "$DEFAULT_BUNDLE_ID.Hant" ||
+    "$DISPLAY_NAME" != "Squirrel" ||
+    "$CONNECTION_NAME" != "Squirrel_Connection" ]]
+}
+
+run_branded_postinstall() {
+  local app="$1"
+  local output
+
+  "$app/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
+  sleep 0.5
+  "$app/Contents/MacOS/Squirrel" --enable-input-source "$INPUT_SOURCE_ID" >/dev/null 2>&1 || true
+  sleep 0.5
+  if output="$("$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
+    printf '[OK] branded macOS input source enabled for real use: %s\n' "$output"
+  else
+    printf '[WARN] branded macOS input source not confirmed after install: %s\n' "$output" >&2
+    RAG_IME_SQUIRREL_APP="$app" \
+      RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+      RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+      "$ROOT/scripts/enable_squirrel_hitoolbox_input_source.sh" >/dev/null 2>&1 || true
+    if output="$("$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
+      printf '[OK] branded macOS input source enabled after HIToolbox repair: %s\n' "$output"
+    else
+      printf '[WARN] branded macOS input source still needs manual System Settings add: %s\n' "$output" >&2
+    fi
+  fi
+  if output="$("$ROOT/scripts/select_macos_input_source.sh" "$INPUT_SOURCE_ID" 2>&1)"; then
+    printf '[OK] selected branded input source: %s\n' "$output"
+  else
+    printf '[WARN] branded input source was not selected automatically: %s\n' "$output" >&2
+  fi
+}
+
 install_squirrel_app() {
   if [[ ! -d "$PRODUCT_APP" ]]; then
     echo "built Squirrel.app not found: $PRODUCT_APP" >&2
     exit 1
   fi
   mkdir -p "$INSTALL_DIR"
-  rm -rf "$INSTALL_DIR/Squirrel.app"
-  cp -R "$PRODUCT_APP" "$INSTALL_DIR/Squirrel.app"
-  printf '[OK] installed patched Squirrel.app: %s\n' "$INSTALL_DIR/Squirrel.app"
+  rm -rf "$TARGET_APP"
+  cp -R "$PRODUCT_APP" "$TARGET_APP"
+  printf '[OK] installed patched Squirrel.app: %s\n' "$TARGET_APP"
+
+  if should_brand_app; then
+    RAG_IME_SQUIRREL_APP="$TARGET_APP" \
+      RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+      RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+      RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID="$HANT_INPUT_SOURCE_ID" \
+      RAG_IME_SQUIRREL_DISPLAY_NAME="$DISPLAY_NAME" \
+      RAG_IME_SQUIRREL_HANS_DISPLAY_NAME="$HANS_DISPLAY_NAME" \
+      RAG_IME_SQUIRREL_HANT_DISPLAY_NAME="$HANT_DISPLAY_NAME" \
+      RAG_IME_SQUIRREL_CONNECTION_NAME="$CONNECTION_NAME" \
+      "$ROOT/scripts/brand_squirrel_app.sh" "$TARGET_APP"
+    printf '[OK] branded patched Squirrel.app as %s (%s)\n' "$DISPLAY_NAME" "$BUNDLE_ID"
+  fi
 
   if bool_true "$SKIP_CODESIGN"; then
     printf '[WARN] skipped Squirrel codesign; input source registration may fail\n' >&2
   elif command -v codesign >/dev/null 2>&1; then
-    codesign --force --deep --sign "$CODESIGN_IDENTITY" "$INSTALL_DIR/Squirrel.app"
+    codesign --force --deep --sign "$CODESIGN_IDENTITY" "$TARGET_APP"
     printf '[OK] signed patched Squirrel.app with identity: %s\n' "$CODESIGN_IDENTITY"
   else
     printf '[WARN] codesign not found; input source registration may fail\n' >&2
@@ -222,23 +302,25 @@ install_squirrel_app() {
 
   RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
     RAG_IME_SQUIRREL_CONFIG_SNIPPET="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" \
-    RAG_IME_SQUIRREL_APP="$INSTALL_DIR/Squirrel.app" \
+    RAG_IME_SQUIRREL_APP="$TARGET_APP" \
     RAG_IME_SQUIRREL_DEPLOY=0 \
     "$ROOT/scripts/install_squirrel_rag_config.sh"
   printf '[OK] installed RAG-IME Squirrel config\n'
 
   RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
-    RAG_IME_SQUIRREL_APP="$INSTALL_DIR/Squirrel.app" \
+    RAG_IME_SQUIRREL_APP="$TARGET_APP" \
     "$ROOT/scripts/bootstrap_squirrel_user_data.sh"
 
   if bool_true "$SKIP_POSTINSTALL"; then
     printf '[WARN] skipped Squirrel postinstall; input source may need manual registration\n' >&2
     return 0
   fi
-  if [[ -f "$SQUIRREL_WORKDIR/scripts/postinstall" ]]; then
+  if should_brand_app; then
+    run_branded_postinstall "$TARGET_APP"
+  elif [[ -f "$SQUIRREL_WORKDIR/scripts/postinstall" ]]; then
     (cd "$SQUIRREL_WORKDIR" && DSTROOT="$INSTALL_DIR" bash scripts/postinstall)
     printf '[OK] Squirrel postinstall completed\n'
-    ensure_squirrel_input_source_enabled "$INSTALL_DIR/Squirrel.app"
+    ensure_squirrel_input_source_enabled "$TARGET_APP"
   else
     printf '[WARN] Squirrel postinstall script not found; input source may need manual registration\n' >&2
   fi
@@ -275,6 +357,9 @@ printf 'configuration: %s\n' "$CONFIGURATION"
 printf 'derived_data: %s\n' "$DERIVED_DATA"
 printf 'product_app: %s\n' "$PRODUCT_APP"
 printf 'install_dir: %s\n' "$INSTALL_DIR"
+printf 'target_app: %s\n' "$TARGET_APP"
+printf 'bundle_id: %s\n' "$BUNDLE_ID"
+printf 'input_source_id: %s\n' "$INPUT_SOURCE_ID"
 printf 'xcodebuild: %s\n' "$XCODEBUILD"
 printf 'xcodebuild_version: %s\n\n' "$(printf '%s' "$xcodebuild_version" | tr '\n' ' ')"
 

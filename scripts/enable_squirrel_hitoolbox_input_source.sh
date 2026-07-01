@@ -148,10 +148,23 @@ defaults import "$INPUTSOURCES_DOMAIN" "$inputs_after" || {
 killall cfprefsd >/dev/null 2>&1 || true
 sleep 0.5
 
+if ! plutil -extract AppleEnabledThirdPartyInputSources xml1 -o "$tmpdir/third-party-after-import.plist" "$HOME/Library/Preferences/$INPUTSOURCES_DOMAIN.plist" >/dev/null 2>&1 ||
+  ! grep -Fq "<string>$INPUT_SOURCE_ID</string>" "$tmpdir/third-party-after-import.plist" ||
+  ! grep -Fq "<string>$BUNDLE_ID</string>" "$tmpdir/third-party-after-import.plist"; then
+  echo "warning: defaults import did not persist $INPUTSOURCES_DOMAIN; writing user plist directly" >&2
+  if cp "$inputs_after" "$HOME/Library/Preferences/$INPUTSOURCES_DOMAIN.plist" 2>/dev/null; then
+    killall cfprefsd >/dev/null 2>&1 || true
+    sleep 0.5
+  else
+    echo "warning: macOS denied direct write to $HOME/Library/Preferences/$INPUTSOURCES_DOMAIN.plist" >&2
+    echo "warning: add $INPUT_SOURCE_ID from System Settings -> Keyboard -> Input Sources -> Add." >&2
+  fi
+fi
+
 if [[ -x "$SQUIRREL_APP/Contents/MacOS/Squirrel" ]]; then
   "$SQUIRREL_APP/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
   sleep 0.5
 fi
 
-echo "If thirdPartyEnabled=false below, use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel."
+echo "If thirdPartyEnabled=false below, use System Settings -> Keyboard -> Input Sources -> Add and choose this input source: $INPUT_SOURCE_ID."
 "$CHECK_INPUT_SOURCE_SCRIPT" --require-hitoolbox-enabled "$INPUT_SOURCE_ID"
