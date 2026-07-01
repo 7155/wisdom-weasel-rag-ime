@@ -1001,3 +1001,18 @@ Changes:
 Status:
 - Patched Squirrel workspace, LaunchAgent sidecar, `/rime-suggest`, and `/rime-select` are ready.
 - Real build/install/system input-method verification is still blocked on the host because no full `Xcode.app` is installed and `xcode-select` points to CommandLineTools.
+
+### 2026-07-01
+Topic:
+- Convert Wisdom-Weasel fast-path source lessons into model-lane quality gates.
+
+Changes:
+- Added repeatable `quality-gate --require-predictor-capability`.
+- Aggregate gate reports predictor status and fails explicit capability checks such as `promptCache`, `sequenceFork`, and `batchCandidates`.
+- `NullPredictionProvider` now exposes the same capability-map shape, so strict model-lane gates fail with a readable `actual=false` instead of a missing field.
+- README, Mac local inference docs, and interview difficulty notes now explain that Ollama/MLX smoke providers are useful for debugging, but the final Wisdom-Weasel-style local model lane must prove KV prompt cache, sequence fork, and batch candidate generation.
+
+Findings:
+- Wisdom-Weasel's useful local-model mechanisms are resident llama.cpp, stable system prompt state save/restore, `llama_memory_seq_cp` sequence copy, and batched short candidate sampling.
+- Do not copy its unbounded detached-thread provider shape directly; RAG-IME should keep latest-only guards and serialize or cancel native model context use.
+- Full Xcode remains the hard external blocker on this host. `xcodebuild -version` reports that the active developer directory is CommandLineTools and requires a full Xcode installation.

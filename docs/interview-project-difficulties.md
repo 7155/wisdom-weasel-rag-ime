@@ -166,6 +166,14 @@ case 上只通过 2 条，完整 JSON 响应也仍然要数百毫秒。所以项
 MLX-LM 争取可控的 KV cache、取消过期请求、序列复制和批量多候选采样。这样讲
 比“我换了一个小模型”更像实时系统优化。
 
+为了避免把 smoke baseline 误包装成最终成果，我把这个判断做成了
+`quality-gate --require-predictor-capability ...`。默认 gate 可以验证 RAG、
+sidecar、缓存和候选展示；最终模型 lane gate 还必须显式通过 `promptCache`、
+`sequenceFork`、`batchCandidates`。这对应 Wisdom-Weasel
+`LlamaCppProvider::PrepareSystemPrompt()` 和 `GenerateCandidatesBatch()` 的源码机制，
+也让面试时能说清楚：我不是只报一个快的 token 数，而是把底层能力变成了可重复
+验收的工程条件。
+
 ## 我已经落地的工程点
 
 - macOS `InputMethodKit` 前端壳；

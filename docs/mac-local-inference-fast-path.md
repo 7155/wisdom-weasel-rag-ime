@@ -291,6 +291,22 @@ An OpenAI-compatible HTTP server cannot prove this by itself. It can be a
 benchmark target, but the final provider should expose an explicit
 `predict_many_short_candidates()` contract.
 
+The aggregate quality gate can now enforce this distinction:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  quality-gate \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --force-side-candidates \
+  --require-predictor-capability promptCache \
+  --require-predictor-capability sequenceFork \
+  --require-predictor-capability batchCandidates
+```
+
+Use the gate without those capability requirements for smoke/debug work. Use
+the capability requirements before claiming that the Mac model lane matches the
+Wisdom-Weasel fast path.
+
 ## MiniVLLM Lessons
 
 MiniVLLM is useful as a design reference, not a Mac runtime dependency.

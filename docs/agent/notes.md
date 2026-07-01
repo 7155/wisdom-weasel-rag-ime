@@ -1436,3 +1436,34 @@ Commands:
 - `bash -n scripts/build_patched_squirrel.sh scripts/install_squirrel_rag_config.sh`
 - `python3 -m unittest tests.test_build_patched_squirrel tests.test_install_squirrel_rag_config`
 - `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+
+### 2026-07-01 15:12 CST
+Problem:
+- Wisdom-Weasel's local LLM path has real low-latency mechanisms, but the current RAG-IME Ollama/MLX smoke path should not be treated as the final model lane.
+- The project needed an enforceable distinction between "debug provider works" and "provider has the KV/cache/forking capabilities needed for a production IME".
+
+Source findings:
+- Wisdom-Weasel's llama.cpp provider keeps the model/context resident, prepares a stable system prompt once, saves/restores sequence state, copies sequence memory to parallel sequence ids, and samples multiple short candidates in one batch.
+- The useful mechanisms map to `promptCache`, `sequenceFork`, and `batchCandidates`.
+- Do not copy Wisdom-Weasel's unbounded detached-thread shape directly; RAG-IME should keep latest-only request handling and serialize or cancel native model context use.
+
+Changes:
+- Added `quality-gate --require-predictor-capability`, repeatable for `streaming`, `residentModel`, `promptCache`, `sequenceFork`, `batchCandidates`, and `serverTiming`.
+- The aggregate quality-gate JSON now includes `predictor` status and explicit `predictor-capability:*` checks.
+- `NullPredictionProvider` status now reports the same capability map as configured providers, so missing model capability requirements fail clearly.
+- README, Mac local inference docs, and interview difficulty notes now document the Wisdom-Weasel-style capability gate.
+
+Current machine result:
+- `scripts/setup_xcode_for_squirrel.sh` still finds no full `Xcode.app`; active developer directory is `/Library/Developer/CommandLineTools`.
+- `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh` fails only on full Xcode availability; sidecar health, `/rime-suggest`, and `/rime-select` pass.
+- Escalated `xcodebuild -version` confirms the real error: `tool 'xcodebuild' requires Xcode`.
+
+Commands:
+- `python3 -m py_compile rag_ime/cli.py rag_ime/predictor.py tests/test_codex_history.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history tests.test_predictor`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `git diff --check`
+- `scripts/setup_xcode_for_squirrel.sh`
+- `scripts/doctor_squirrel_integration.sh`
+- `RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh`
+- `scripts/build_patched_squirrel.sh list`

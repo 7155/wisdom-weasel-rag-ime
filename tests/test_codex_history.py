@@ -496,6 +496,55 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertNotIn("cases", report["rimeSidecar"])
         self.assertTrue(report["cacheProbe"]["summary"]["suggestionCachePassed"])
         self.assertTrue(report["cacheProbe"]["summary"]["rimeCachePassed"])
+        self.assertIn("predictor", report)
+        self.assertEqual(report["thresholds"]["requiredPredictorCapabilities"], [])
+
+    def test_cli_quality_gate_can_require_predictor_capabilities(self) -> None:
+        db_path = self.root / "quality-gate-capability.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "quality-gate-capability-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "agent-hook",
+                    "query": "首次运行自动注入背景记忆",
+                    "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        gate_stdout = io.StringIO()
+        with redirect_stdout(gate_stdout):
+            gate_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "quality-gate",
+                    "--cases-file",
+                    str(cases_file),
+                    "--min-rag-pass-rate",
+                    "1",
+                    "--min-sidecar-pass-rate",
+                    "1",
+                    "--force-side-candidates",
+                    "--require-predictor-capability",
+                    "sequenceFork",
+                ]
+            )
+        self.assertEqual(gate_code, 1)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["thresholds"]["requiredPredictorCapabilities"], ["sequenceFork"])
+        capability_checks = [item for item in report["checks"] if item["name"] == "predictor-capability:sequenceFork"]
+        self.assertEqual(len(capability_checks), 1)
+        self.assertFalse(capability_checks[0]["passed"])
+        self.assertIs(capability_checks[0]["actual"], False)
 
     def test_cli_eval_comparison_runs_rag_and_model_on_same_cases(self) -> None:
         db_path = self.root / "comparison.sqlite"

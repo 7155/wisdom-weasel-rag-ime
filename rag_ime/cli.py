@@ -363,6 +363,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
     quality_gate.add_argument("--force-side-candidates", action="store_true")
     quality_gate.add_argument("--require-suggestion-cache", action="store_true")
+    quality_gate.add_argument(
+        "--require-predictor-capability",
+        action="append",
+        default=[],
+        choices=("streaming", "residentModel", "promptCache", "sequenceFork", "batchCandidates", "serverTiming"),
+        help="Require a local model provider capability. Repeat for Wisdom-Weasel-style gates.",
+    )
     quality_gate.add_argument("--include-cases", action="store_true", help="Include full per-case eval details in the quality-gate JSON")
 
     debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
@@ -1097,6 +1104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
             force_side_candidates=bool(args.force_side_candidates),
             require_suggestion_cache=bool(args.require_suggestion_cache),
+            required_predictor_capabilities=tuple(args.require_predictor_capability),
             include_cases=bool(args.include_cases),
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -1359,6 +1367,7 @@ def run_quality_gate(
     rime_cache_ttl_ms: int,
     force_side_candidates: bool,
     require_suggestion_cache: bool,
+    required_predictor_capabilities: tuple[str, ...],
     include_cases: bool,
 ) -> dict[str, object]:
     rag_report = run_codex_history_eval(
@@ -1397,14 +1406,17 @@ def run_quality_gate(
         force_side_candidates=force_side_candidates,
     )
     acceptance_report = run_acceptance(adapter)
+    predictor_status = prediction_provider_status(predictor)
     checks = _quality_gate_checks(
         acceptance_report=acceptance_report,
         rag_report=rag_report,
         rime_report=rime_report,
         cache_report=cache_report,
+        predictor_status=predictor_status,
         min_rag_pass_rate=min_rag_pass_rate,
         min_sidecar_pass_rate=min_sidecar_pass_rate,
         require_suggestion_cache=require_suggestion_cache,
+        required_predictor_capabilities=required_predictor_capabilities,
     )
     rag_payload = rag_report if include_cases else _compact_eval_report(rag_report)
     rime_payload = rime_report if include_cases else _compact_eval_report(rime_report)
@@ -1417,9 +1429,11 @@ def run_quality_gate(
             "minRagPassRate": min_rag_pass_rate,
             "minSidecarPassRate": min_sidecar_pass_rate,
             "requireSuggestionCache": require_suggestion_cache,
+            "requiredPredictorCapabilities": list(required_predictor_capabilities),
             "cacheRepeat": cache_repeat,
         },
         "checks": checks,
+        "predictor": predictor_status,
         "acceptance": acceptance_report,
         "rag": rag_payload,
         "rimeSidecar": rime_payload,
@@ -1465,9 +1479,11 @@ def _quality_gate_checks(
     rag_report: dict[str, object],
     rime_report: dict[str, object],
     cache_report: dict[str, object],
+    predictor_status: dict[str, object],
     min_rag_pass_rate: float,
     min_sidecar_pass_rate: float,
     require_suggestion_cache: bool,
+    required_predictor_capabilities: tuple[str, ...],
 ) -> list[dict[str, object]]:
     cache_summary = cache_report.get("summary") if isinstance(cache_report.get("summary"), dict) else {}
     sidecar = rime_report.get("sidecar") if isinstance(rime_report.get("sidecar"), dict) else {}
@@ -1506,6 +1522,27 @@ def _quality_gate_checks(
             "actual": cache_summary.get("rimeCachePassed"),
         },
     ]
+    checks.extend(_predictor_capability_checks(predictor_status, required_predictor_capabilities))
+    return checks
+
+
+def _predictor_capability_checks(
+    predictor_status: dict[str, object],
+    required_predictor_capabilities: tuple[str, ...],
+) -> list[dict[str, object]]:
+    capabilities = predictor_status.get("capabilities") if isinstance(predictor_status.get("capabilities"), dict) else {}
+    checks = []
+    for name in required_predictor_capabilities:
+        checks.append(
+            {
+                "name": f"predictor-capability:{name}",
+                "passed": capabilities.get(name) is True,
+                "required": True,
+                "actual": capabilities.get(name),
+                "providerName": predictor_status.get("providerName"),
+                "providerProfile": predictor_status.get("providerProfile"),
+            }
+        )
     return checks
 
 

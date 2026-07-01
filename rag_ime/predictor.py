@@ -637,11 +637,13 @@ def prediction_provider_status(provider: PredictionProvider) -> dict[str, object
     config = getattr(provider, "config", None)
     configured = provider.__class__.__name__ != "NullPredictionProvider"
     if config is None:
+        provider_name = provider.__class__.__name__
         return {
             "configured": configured,
-            "providerName": provider.__class__.__name__,
+            "providerName": provider_name,
             "providerProfile": "none",
             "promptMode": "none",
+            "capabilities": _prediction_provider_capabilities(provider_name),
         }
     extra_body = getattr(config, "extra_body", None) or {}
     extra_headers = getattr(config, "extra_headers", None) or {}
