@@ -9,10 +9,15 @@ SIDECAR_HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
 SIDECAR_PORT="${RAG_IME_SIDECAR_PORT:-8766}"
 SIDECAR_BASE_URL="${RAG_IME_SIDECAR_URL:-http://$SIDECAR_HOST:$SIDECAR_PORT}"
 LAUNCH_AGENT_LABEL="${RAG_IME_LAUNCH_AGENT_LABEL:-com.rag-ime.sidecar}"
+SIDECAR_LAUNCH_AGENT_PLIST="${RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST:-$HOME/Library/LaunchAgents/$LAUNCH_AGENT_LABEL.plist}"
+MLX_LAUNCH_AGENT_LABEL="${RAG_IME_MLX_LAUNCH_AGENT_LABEL:-com.rag-ime.mlx-predictor}"
+MLX_LAUNCH_AGENT_PLIST="${RAG_IME_MLX_LAUNCH_AGENT_PLIST:-$HOME/Library/LaunchAgents/$MLX_LAUNCH_AGENT_LABEL.plist}"
 REQUIRE_SIDECAR="${RAG_IME_DOCTOR_REQUIRE_SIDECAR:-0}"
 REQUIRE_XCODE="${RAG_IME_DOCTOR_REQUIRE_XCODE:-0}"
 REQUIRE_PREDICTOR="${RAG_IME_DOCTOR_REQUIRE_PREDICTOR:-0}"
 REQUIRE_TRYOUT="${RAG_IME_DOCTOR_REQUIRE_TRYOUT:-0}"
+REQUIRE_LAUNCH_AGENT_PLIST_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_LAUNCH_AGENT_PLIST:-}"
+REQUIRE_LAUNCH_AGENT_PLIST="${REQUIRE_LAUNCH_AGENT_PLIST_CONFIGURED:-0}"
 REQUIRE_HITOOLBOX_ENABLED="${RAG_IME_DOCTOR_REQUIRE_HITOOLBOX_ENABLED:-${RAG_IME_REQUIRE_HITOOLBOX_ENABLED:-0}}"
 REQUIRE_MIXED_LAYOUT_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_MIXED_LAYOUT:-}"
 REQUIRE_MIXED_LAYOUT="${REQUIRE_MIXED_LAYOUT_CONFIGURED:-0}"
@@ -32,6 +37,8 @@ REQUIRE_LOGITS_MODEL_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_LOGITS_MODEL:-}"
 REQUIRE_LOGITS_MODEL="${REQUIRE_LOGITS_MODEL_CONFIGURED:-0}"
 EXPECT_PREDICTOR_PROVIDER="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROVIDER:-${RAG_IME_PREDICTOR_PROVIDER:-}}"
 EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDICTOR_MODEL:-}}"
+EXPECT_PREDICTOR_BASE_URL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_BASE_URL:-${RAG_IME_PREDICTOR_BASE_URL:-}}"
+EXPECT_PREDICTOR_PROFILE="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
 
 failures=0
@@ -202,9 +209,246 @@ PY
   rm -f "$out"
 }
 
+check_launch_agent_plist_drift() {
+  local sidecar_json="$1"
+  local sidecar_status="$2"
+  local out
+  local line
+  local required
+  local level
+  local message
+
+  if ! bool_true "$REQUIRE_LAUNCH_AGENT_PLIST" &&
+    [[ ! -f "$SIDECAR_LAUNCH_AGENT_PLIST" && ! -f "$MLX_LAUNCH_AGENT_PLIST" ]]; then
+    return 0
+  fi
+
+  out="$(mktemp /tmp/rag-ime-launch-agent-plist.out.XXXXXX)"
+  set +e
+  "$PYTHON_EXECUTABLE" - \
+    "$ROOT" \
+    "$SIDECAR_LAUNCH_AGENT_PLIST" \
+    "$LAUNCH_AGENT_LABEL" \
+    "$MLX_LAUNCH_AGENT_PLIST" \
+    "$MLX_LAUNCH_AGENT_LABEL" \
+    "$sidecar_json" \
+    "$sidecar_status" \
+    "$EXPECT_PREDICTOR_PROVIDER" \
+    "$EXPECT_PREDICTOR_MODEL" \
+    "$EXPECT_PREDICTOR_BASE_URL" \
+    "$EXPECT_PREDICTOR_PROFILE" \
+    "$EXPECT_STREAM_FIRST" \
+    "$REQUIRE_LOGITS_MODEL" \
+    "$REQUIRE_LAUNCH_AGENT_PLIST" >"$out" <<'PY'
+import json
+import plistlib
+import sys
+from pathlib import Path
+from urllib.parse import urlparse
+
+root = sys.argv[1]
+sidecar_plist_path = Path(sys.argv[2])
+sidecar_label = sys.argv[3]
+mlx_plist_path = Path(sys.argv[4])
+mlx_label = sys.argv[5]
+sidecar_json_path = Path(sys.argv[6])
+sidecar_status = sys.argv[7]
+expected_provider = sys.argv[8].strip()
+expected_model = sys.argv[9].strip()
+expected_base_url = sys.argv[10].strip()
+expected_profile = sys.argv[11].strip()
+expected_stream_first = sys.argv[12].strip()
+require_logits_model = sys.argv[13].strip().lower() in {"1", "true", "yes", "on"}
+require_plist = sys.argv[14].strip().lower() in {"1", "true", "yes", "on"}
+
+provider_aliases = {
+    "ollama": "local-ollama",
+    "local-ollama": "local-ollama",
+    "mlx": "local-mlx",
+    "mlx-lm": "local-mlx",
+    "mlx-service": "local-mlx",
+    "local-mlx": "local-mlx",
+    "openai": "local-openai-compatible",
+    "openai-compatible": "local-openai-compatible",
+    "local-openai-compatible": "local-openai-compatible",
+}
+
+
+def truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_provider(value: str) -> str:
+    return provider_aliases.get(value.strip().lower(), value.strip())
+
+
+def provider_matches(expected: str, actual: str) -> bool:
+    if not expected:
+        return True
+    return normalize_provider(expected) == normalize_provider(actual)
+
+
+def load_plist(path: Path) -> dict[str, object] | None:
+    if not path.exists():
+        return None
+    with path.open("rb") as handle:
+        payload = plistlib.load(handle)
+    return payload if isinstance(payload, dict) else None
+
+
+def arg_value(args: list[object], flag: str) -> str:
+    for index, item in enumerate(args):
+        if str(item) == flag and index + 1 < len(args):
+            return str(args[index + 1])
+    return ""
+
+
+def parsed_port(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        port = urlparse(url).port
+    except ValueError:
+        return ""
+    return str(port or "")
+
+
+def emit(name: str, ok: bool, required: bool, message: str) -> None:
+    level = "OK" if ok else "FAIL" if required else "WARN"
+    print(f"{level}\t{1 if required else 0}\t{name}: {message}")
+
+
+health: dict[str, object] = {}
+if sidecar_status == "0" and sidecar_json_path.exists():
+    with sidecar_json_path.open("r", encoding="utf-8") as handle:
+        parsed = json.load(handle)
+    health = parsed if isinstance(parsed, dict) else {}
+
+predictor = health.get("predictorCheck") if isinstance(health.get("predictorCheck"), dict) else {}
+health_provider = str(predictor.get("providerName") or "")
+health_model = str(predictor.get("model") or "")
+health_stream_first = predictor.get("streamFirstCandidate")
+expected_provider = expected_provider or health_provider
+expected_model = expected_model or health_model
+is_mlx_provider = provider_matches("mlx", expected_provider) or require_logits_model
+sidecar_predictor_base_url = ""
+
+sidecar_plist = load_plist(sidecar_plist_path)
+if sidecar_plist is None:
+    emit(
+        "sidecar LaunchAgent plist",
+        False,
+        require_plist,
+        f"missing: {sidecar_plist_path}",
+    )
+else:
+    errors: list[str] = []
+    args = sidecar_plist.get("ProgramArguments") if isinstance(sidecar_plist.get("ProgramArguments"), list) else []
+    env = sidecar_plist.get("EnvironmentVariables") if isinstance(sidecar_plist.get("EnvironmentVariables"), dict) else {}
+    if sidecar_plist.get("Label") != sidecar_label:
+        errors.append(f"Label={sidecar_plist.get('Label')!r}, expected {sidecar_label!r}")
+    if "sidecar-server" not in [str(item) for item in args]:
+        errors.append("ProgramArguments missing sidecar-server")
+    source_root = str(env.get("RAG_IME_SOURCE_ROOT") or "")
+    if source_root != root:
+        errors.append(f"RAG_IME_SOURCE_ROOT={source_root!r}, expected {root!r}")
+    plist_provider = str(env.get("RAG_IME_PREDICTOR_PROVIDER") or "")
+    if expected_provider and not provider_matches(plist_provider, expected_provider):
+        errors.append(f"RAG_IME_PREDICTOR_PROVIDER={plist_provider!r}, expected {expected_provider!r}")
+    plist_model = str(env.get("RAG_IME_PREDICTOR_MODEL") or "")
+    if expected_model and plist_model != expected_model:
+        errors.append(f"RAG_IME_PREDICTOR_MODEL={plist_model!r}, expected {expected_model!r}")
+    plist_base_url = str(env.get("RAG_IME_PREDICTOR_BASE_URL") or "")
+    sidecar_predictor_base_url = plist_base_url
+    if expected_base_url and plist_base_url != expected_base_url:
+        errors.append(f"RAG_IME_PREDICTOR_BASE_URL={plist_base_url!r}, expected {expected_base_url!r}")
+    if is_mlx_provider and not plist_base_url:
+        errors.append("RAG_IME_PREDICTOR_BASE_URL missing for MLX provider")
+    plist_profile = str(env.get("RAG_IME_PREDICTOR_PROFILE") or "")
+    if expected_profile and plist_profile != expected_profile:
+        errors.append(f"RAG_IME_PREDICTOR_PROFILE={plist_profile!r}, expected {expected_profile!r}")
+    stream_env = str(env.get("RAG_IME_PREDICTOR_STREAM_FIRST") or "")
+    if expected_stream_first and truthy(stream_env) != truthy(expected_stream_first):
+        errors.append(
+            f"RAG_IME_PREDICTOR_STREAM_FIRST={stream_env!r}, expected {expected_stream_first!r}"
+        )
+    elif stream_env and isinstance(health_stream_first, bool) and truthy(stream_env) != health_stream_first:
+        errors.append(
+            f"RAG_IME_PREDICTOR_STREAM_FIRST={stream_env!r}, health has {health_stream_first!r}"
+        )
+    emit(
+        "sidecar LaunchAgent plist",
+        not errors,
+        require_plist,
+        "matches current sidecar provider/model env"
+        if not errors
+        else "drift: " + "; ".join(errors[:6]),
+    )
+
+mlx_required = require_plist and is_mlx_provider
+mlx_plist = load_plist(mlx_plist_path)
+if mlx_plist is None:
+    if mlx_required:
+        emit("MLX predictor LaunchAgent plist", False, True, f"missing: {mlx_plist_path}")
+elif mlx_plist is not None:
+    errors = []
+    args = mlx_plist.get("ProgramArguments") if isinstance(mlx_plist.get("ProgramArguments"), list) else []
+    env = mlx_plist.get("EnvironmentVariables") if isinstance(mlx_plist.get("EnvironmentVariables"), dict) else {}
+    if mlx_plist.get("Label") != mlx_label:
+        errors.append(f"Label={mlx_plist.get('Label')!r}, expected {mlx_label!r}")
+    if "mlx-predictor-server" not in [str(item) for item in args]:
+        errors.append("ProgramArguments missing mlx-predictor-server")
+    mlx_model = str(env.get("RAG_IME_MLX_MODEL") or arg_value(args, "--model"))
+    if expected_model and mlx_model != expected_model:
+        errors.append(f"RAG_IME_MLX_MODEL={mlx_model!r}, expected {expected_model!r}")
+    sidecar_port = parsed_port(expected_base_url or sidecar_predictor_base_url)
+    mlx_port = str(env.get("RAG_IME_MLX_PORT") or arg_value(args, "--port"))
+    if sidecar_port and mlx_port != sidecar_port:
+        errors.append(f"RAG_IME_MLX_PORT={mlx_port!r}, expected sidecar base URL port {sidecar_port!r}")
+    prompt_cache = str(env.get("RAG_IME_MLX_PROMPT_CACHE") or "")
+    if not truthy(prompt_cache) or "--prompt-cache" not in [str(item) for item in args]:
+        errors.append("MLX prompt cache is not enabled in LaunchAgent")
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        if str(env.get(key) or ""):
+            errors.append(f"{key} should be empty for local MLX LaunchAgent")
+            break
+    emit(
+        "MLX predictor LaunchAgent plist",
+        not errors,
+        mlx_required,
+        "matches text-only MLX model and prompt-cache startup"
+        if not errors
+        else "drift: " + "; ".join(errors[:6]),
+    )
+PY
+  status=$?
+  set -e
+
+  if [[ "$status" != "0" ]]; then
+    require_or_warn "$REQUIRE_LAUNCH_AGENT_PLIST" "LaunchAgent plist drift check failed to run"
+    rm -f "$out"
+    return 0
+  fi
+
+  while IFS=$'\t' read -r level required message; do
+    [[ -n "$level" ]] || continue
+    if [[ "$level" == "OK" ]]; then
+      ok "$message"
+    elif [[ "$required" == "1" ]]; then
+      fail "$message"
+    else
+      warn "$message"
+    fi
+  done <"$out"
+  rm -f "$out"
+}
+
 if bool_true "$REQUIRE_TRYOUT"; then
   REQUIRE_SIDECAR=1
   REQUIRE_XCODE=1
+  if [[ -z "$REQUIRE_LAUNCH_AGENT_PLIST_CONFIGURED" ]]; then
+    REQUIRE_LAUNCH_AGENT_PLIST=1
+  fi
   if [[ -z "$REQUIRE_MIXED_LAYOUT_CONFIGURED" ]]; then
     REQUIRE_MIXED_LAYOUT=1
   fi
@@ -231,6 +475,9 @@ printf 'require_mixed_layout: %s\n' "$REQUIRE_MIXED_LAYOUT"
 printf 'refresh_input_source: %s\n' "$REFRESH_INPUT_SOURCE"
 printf 'require_frontend_trace: %s\n' "$REQUIRE_FRONTEND_TRACE"
 printf 'require_logits_model: %s\n' "$REQUIRE_LOGITS_MODEL"
+printf 'require_launch_agent_plist: %s\n' "$REQUIRE_LAUNCH_AGENT_PLIST"
+printf 'sidecar_launch_agent_plist: %s\n' "$SIDECAR_LAUNCH_AGENT_PLIST"
+printf 'mlx_launch_agent_plist: %s\n' "$MLX_LAUNCH_AGENT_PLIST"
 printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
 printf 'DEVELOPER_DIR: %s\n\n' "${DEVELOPER_DIR:-<unset>}"
 
@@ -852,6 +1099,7 @@ PY
 else
   require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; run scripts/install_sidecar_launch_agent.sh"
 fi
+check_launch_agent_plist_drift "$sidecar_out" "$sidecar_status"
 rm -f "$sidecar_out" "$sidecar_err"
 
 check_frontend_trace

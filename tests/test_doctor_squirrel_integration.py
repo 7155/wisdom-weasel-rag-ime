@@ -318,6 +318,18 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 (workdir / "Squirrel.xcodeproj").mkdir()
                 (workdir / "Squirrel.xcodeproj" / "project.pbxproj").write_text("// pbxproj\n", encoding="utf-8")
                 (workdir / "rag-ime.squirrel.custom.yaml").write_text("rag_ime:\n  enabled: true\n", encoding="utf-8")
+                sidecar_plist = _write_sidecar_launch_agent_plist(
+                    tmp_path / "sidecar.plist",
+                    root=root,
+                    model=_DoctorSidecarHandler.model,
+                    base_url="http://127.0.0.1:18767",
+                )
+                mlx_plist = _write_mlx_launch_agent_plist(
+                    tmp_path / "mlx.plist",
+                    root=root,
+                    model=_DoctorSidecarHandler.model,
+                    port="18767",
+                )
 
                 fake_bin = tmp_path / "bin"
                 fake_bin.mkdir()
@@ -355,6 +367,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
                     "RAG_IME_DOCTOR_REQUIRE_TRYOUT": "1",
                     "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "0",
+                    "RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST": str(sidecar_plist),
+                    "RAG_IME_MLX_LAUNCH_AGENT_PLIST": str(mlx_plist),
                 }
                 result = subprocess.run(
                     ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
@@ -378,8 +392,60 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[OK] candidate contract: model inline + rag block + shared selection keys passed", result.stdout)
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("[OK] model generation path: MLX candidates use next-token logits/top-k", result.stdout)
+        self.assertIn("[OK] sidecar LaunchAgent plist: matches current sidecar provider/model env", result.stdout)
+        self.assertIn("[OK] MLX predictor LaunchAgent plist: matches text-only MLX model", result.stdout)
         self.assertIn("[OK] tryout runtime path has launchd or healthy HTTP sidecar", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
+
+    def test_doctor_fails_required_launch_agent_plist_when_model_drifts(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        _DoctorSidecarHandler.use_mlx_logits()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-launchd-drift-") as tmp:
+                tmp_path = Path(tmp)
+                sidecar_plist = _write_sidecar_launch_agent_plist(
+                    tmp_path / "sidecar.plist",
+                    root=root,
+                    model="/tmp/old-qwen-model",
+                    base_url="http://127.0.0.1:18767",
+                )
+                mlx_plist = _write_mlx_launch_agent_plist(
+                    tmp_path / "mlx.plist",
+                    root=root,
+                    model="/tmp/old-qwen-model",
+                    port="18767",
+                )
+                env = {
+                    **os.environ,
+                    "RAG_IME_PYTHON": sys.executable,
+                    "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                    "RAG_IME_SIDECAR_HOST": "127.0.0.1",
+                    "RAG_IME_SIDECAR_PORT": str(server.server_port),
+                    "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                    "RAG_IME_DOCTOR_REQUIRE_LAUNCH_AGENT_PLIST": "1",
+                    "RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST": str(sidecar_plist),
+                    "RAG_IME_MLX_LAUNCH_AGENT_PLIST": str(mlx_plist),
+                }
+                result = subprocess.run(
+                    ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                    cwd="/tmp",
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[FAIL] sidecar LaunchAgent plist: drift:", result.stdout)
+        self.assertIn("RAG_IME_PREDICTOR_MODEL='/tmp/old-qwen-model'", result.stdout)
+        self.assertIn("[FAIL] MLX predictor LaunchAgent plist: drift:", result.stdout)
+        self.assertIn("RAG_IME_MLX_MODEL='/tmp/old-qwen-model'", result.stdout)
 
     def test_doctor_tryout_mode_fails_when_squirrel_workdir_is_missing(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -705,6 +771,91 @@ def _write_fake_squirrel_app(path: Path, *, body: str) -> Path:
     info_plist = path / "Contents" / "Info.plist"
     with info_plist.open("wb") as handle:
         plistlib.dump({"CFBundleIdentifier": "im.rime.inputmethod.Squirrel"}, handle)
+    return path
+
+
+def _write_sidecar_launch_agent_plist(path: Path, *, root: Path, model: str, base_url: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "Label": "com.rag-ime.sidecar",
+        "ProgramArguments": [
+            sys.executable,
+            str(root / "scripts" / "sidecar_launch.py"),
+            "--core-mode",
+            "local",
+            "--db-path",
+            "/tmp/rag-ime.sqlite",
+            "sidecar-server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8766",
+            "--project",
+            "wisdom-weasel-rag-ime",
+        ],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "EnvironmentVariables": {
+            "RAG_IME_SOURCE_ROOT": str(root),
+            "RAG_IME_ROOT": "/tmp/RagIme/app",
+            "RAG_IME_DB_PATH": "/tmp/rag-ime.sqlite",
+            "RAG_IME_CORE_MODE": "local",
+            "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+            "RAG_IME_PREDICTOR_BASE_URL": base_url,
+            "RAG_IME_PREDICTOR_MODEL": model,
+            "RAG_IME_PREDICTOR_PROFILE": "instant",
+            "RAG_IME_PREDICTOR_STREAM_FIRST": "0",
+        },
+    }
+    with path.open("wb") as handle:
+        plistlib.dump(payload, handle)
+    return path
+
+
+def _write_mlx_launch_agent_plist(path: Path, *, root: Path, model: str, port: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "Label": "com.rag-ime.mlx-predictor",
+        "ProgramArguments": [
+            sys.executable,
+            str(root / "scripts" / "sidecar_launch.py"),
+            "mlx-predictor-server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            port,
+            "--model",
+            model,
+            "--max-tokens",
+            "16",
+            "--temperature",
+            "0.05",
+            "--top-p",
+            "0.8",
+            "--prompt-cache",
+        ],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "EnvironmentVariables": {
+            "RAG_IME_SOURCE_ROOT": str(root),
+            "RAG_IME_ROOT": "/tmp/RagIme/app",
+            "RAG_IME_MLX_MODEL": model,
+            "RAG_IME_MLX_HOST": "127.0.0.1",
+            "RAG_IME_MLX_PORT": port,
+            "RAG_IME_MLX_MAX_TOKENS": "16",
+            "RAG_IME_MLX_TEMPERATURE": "0.05",
+            "RAG_IME_MLX_TOP_P": "0.8",
+            "RAG_IME_MLX_PROMPT_CACHE": "1",
+            "HTTP_PROXY": "",
+            "HTTPS_PROXY": "",
+            "ALL_PROXY": "",
+            "http_proxy": "",
+            "https_proxy": "",
+            "all_proxy": "",
+        },
+    }
+    with path.open("wb") as handle:
+        plistlib.dump(payload, handle)
     return path
 
 
