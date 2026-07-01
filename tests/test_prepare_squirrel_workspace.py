@@ -54,7 +54,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             subprocess.run(["git", "commit", "-m", "base"], cwd=upstream, check=True, capture_output=True, text=True)
 
             (upstream / "sources" / "RagImeSidecarModels.swift").write_text(
-                "import Foundation\nstruct RagImeSidecarRequest: Codable {}\n",
+                "import Foundation\nstruct RagImeSidecarRequest: Codable {}\nstruct RagImeDisplayCandidate { let displayLayout: String? }\n",
                 encoding="utf-8",
             )
             (upstream / "sources" / "RagImeSidecarClient.swift").write_text(
@@ -98,6 +98,10 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     ]
                 )
                 + "\n",
+                encoding="utf-8",
+            )
+            (upstream / "sources" / "SquirrelPanel.swift").write_text(
+                "final class SquirrelPanel { func candidateSeparator(before index: Int) -> String { \"\\n\" } }\n",
                 encoding="utf-8",
             )
             subprocess.run(["git", "add", "sources"], cwd=upstream, check=True)

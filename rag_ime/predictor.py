@@ -1290,6 +1290,8 @@ def _parse_prediction_candidate_texts(texts: list[str], *, max_candidates: int =
 
 
 def _filter_repeated_input_candidates(candidates: list[str], current_input: str) -> list[str]:
+    if _looks_like_candidate_list_input(current_input):
+        return candidates
     input_norm = _candidate_repeat_norm(current_input)
     if not input_norm:
         return candidates
@@ -1312,6 +1314,14 @@ def _candidate_repeat_norm(text: str) -> str:
     return re.sub(r"[\s\W_]+", "", text, flags=re.UNICODE).lower()
 
 
+def _looks_like_candidate_list_input(text: str) -> bool:
+    parts = [part for part in re.split(r"[\s,，、;；|/]+", compact_whitespace(text)) if part]
+    if len(parts) < 2:
+        return False
+    cjk_parts = sum(1 for part in parts if re.search(r"[\u3400-\u9fff]", part))
+    return cjk_parts >= 2
+
+
 def _candidate_parts_from_text(text: str) -> list[str]:
     cleaned = _clean_prediction_output(text)
     if not cleaned:
@@ -1319,6 +1329,9 @@ def _candidate_parts_from_text(text: str) -> list[str]:
     json_candidates = _candidate_parts_from_json_text(cleaned)
     if json_candidates:
         return json_candidates
+    json_fragment_candidates = _candidate_parts_from_json_fragment(cleaned)
+    if json_fragment_candidates:
+        return json_fragment_candidates
     parts = re.split(r"[\s,，、;；|/]+", cleaned)
     candidates: list[str] = []
     for part in parts:
@@ -1368,6 +1381,7 @@ def _clean_prediction_output(text: str) -> str:
     cleaned = re.sub(r"(?is)<think>.*", " ", cleaned)
     cleaned = re.sub(r"(?is)<analysis>.*?</analysis>", " ", cleaned)
     cleaned = re.sub(r"(?is)<reasoning>.*?</reasoning>", " ", cleaned)
+    cleaned = re.sub(r"<\|[^|]{1,64}\|>", " ", cleaned)
     cleaned = cleaned.replace("```json", " ").replace("```", " ")
     return compact_whitespace(cleaned)
 
@@ -1378,6 +1392,13 @@ def _candidate_parts_from_json_text(text: str) -> list[str]:
     except json.JSONDecodeError:
         return []
     return _candidate_parts_from_json_value(parsed)
+
+
+def _candidate_parts_from_json_fragment(text: str) -> list[str]:
+    match = re.search(r"\[[^\[\]]{1,512}\]", text, flags=re.DOTALL)
+    if not match:
+        return []
+    return _candidate_parts_from_json_text(match.group(0))
 
 
 def _candidate_parts_from_json_value(value: Any) -> list[str]:

@@ -11,6 +11,11 @@ DB_PATH="${RAG_IME_DB_PATH:-$HOME/Library/Application Support/RagIme/rag-ime.sql
 PROJECT="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 SIDECAR_HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
 SIDECAR_PORT="${RAG_IME_SIDECAR_PORT:-8766}"
+MAX_VISIBLE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_VISIBLE_CANDIDATES:-8}"
+MAX_SIDE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_SIDE_CANDIDATES:-8}"
+LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-180}"
+DEBOUNCE_MS="${RAG_IME_SQUIRREL_DEBOUNCE_MS:-40}"
+TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-1200}"
 RESET="${RAG_IME_SQUIRREL_RESET:-0}"
 DRY_RUN="${RAG_IME_SQUIRREL_DRY_RUN:-0}"
 
@@ -30,6 +35,11 @@ repo_root=$ROOT
 db_path=$DB_PATH
 python=$PYTHON_EXECUTABLE
 project=$PROJECT
+max_visible_candidates=$MAX_VISIBLE_CANDIDATES
+max_side_candidates=$MAX_SIDE_CANDIDATES
+latency_budget_ms=$LATENCY_BUDGET_MS
+debounce_ms=$DEBOUNCE_MS
+timeout_ms=$TIMEOUT_MS
 EOF
   exit 0
 fi
@@ -79,11 +89,14 @@ require_patch_text() {
 require_patch_file "sources/RagImeSidecarModels.swift"
 require_patch_file "sources/RagImeSidecarClient.swift"
 require_patch_file "sources/SquirrelInputController.swift"
+require_patch_file "sources/SquirrelPanel.swift"
 require_patch_text "sources/RagImeSidecarClient.swift" "rime-suggest" "sidecar suggestion request hook"
 require_patch_text "sources/RagImeSidecarClient.swift" "rime-select" "side candidate selection writeback hook"
+require_patch_text "sources/RagImeSidecarModels.swift" "displayLayout" "per-candidate display layout metadata"
 require_patch_text "sources/SquirrelInputController.swift" "selectRagImeSideCandidate" "number-key side-candidate routing"
 require_patch_text "sources/SquirrelInputController.swift" "ragImeRequestFingerprint" "stale response fingerprint guard"
 require_patch_text "sources/SquirrelInputController.swift" "mergedRagImePanelCandidates" "Rime and side candidate display merge"
+require_patch_text "sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate layout"
 require_patch_text "sources/Main.swift" "static let appDir = Bundle.main.bundleURL" "dynamic input-source registration bundle path"
 
 CONFIG_PATH="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml"
@@ -94,6 +107,11 @@ PROJECT="$PROJECT" \
 SIDECAR_HOST="$SIDECAR_HOST" \
 SIDECAR_PORT="$SIDECAR_PORT" \
 CONFIG_PATH="$CONFIG_PATH" \
+MAX_VISIBLE_CANDIDATES="$MAX_VISIBLE_CANDIDATES" \
+MAX_SIDE_CANDIDATES="$MAX_SIDE_CANDIDATES" \
+LATENCY_BUDGET_MS="$LATENCY_BUDGET_MS" \
+DEBOUNCE_MS="$DEBOUNCE_MS" \
+TIMEOUT_MS="$TIMEOUT_MS" \
 "$PYTHON_EXECUTABLE" - <<'PY'
 import os
 from pathlib import Path
@@ -106,11 +124,11 @@ rag_ime:
   repo_root: {os.environ["ROOT"]}
   db_path: {os.environ["DB_PATH"]}
   project: {os.environ["PROJECT"]}
-  max_visible_candidates: 8
-  max_side_candidates: 2
-  latency_budget_ms: 180
-  debounce_ms: 40
-  timeout_ms: 1200
+  max_visible_candidates: {os.environ["MAX_VISIBLE_CANDIDATES"]}
+  max_side_candidates: {os.environ["MAX_SIDE_CANDIDATES"]}
+  latency_budget_ms: {os.environ["LATENCY_BUDGET_MS"]}
+  debounce_ms: {os.environ["DEBOUNCE_MS"]}
+  timeout_ms: {os.environ["TIMEOUT_MS"]}
 """
 Path(os.environ["CONFIG_PATH"]).write_text(payload, encoding="utf-8")
 PY

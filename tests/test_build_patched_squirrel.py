@@ -9,6 +9,25 @@ from pathlib import Path
 
 
 class BuildPatchedSquirrelScriptTests(unittest.TestCase):
+    def test_squirrel_patch_contains_side_first_mixed_layout_hooks(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+
+        self.assertIn("fallback: 8, range: 0...10", patch_text)
+        self.assertIn("let displayLayout: String?", patch_text)
+        self.assertIn("let displayLane: String?", patch_text)
+        self.assertIn("func candidateSeparator(before index: Int) -> String", patch_text)
+        self.assertIn('currentLayout == "inline", previousLayout == "inline"', patch_text)
+        self.assertIn(
+            "+  func selectRagImeSideCandidate(forKey key: String) -> Bool {\n"
+            "+    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {\n"
+            "+      return false\n"
+            "+    }\n"
+            "+    return selectCandidate(index)\n"
+            "+  }",
+            patch_text,
+        )
+
     def test_build_script_dry_run_reports_resolved_commands(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-squirrel-build-") as tmp:
@@ -216,7 +235,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 f"  db_path: {tmp_path / 'rag-ime.sqlite'}",
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
-                "  max_side_candidates: 2",
+                "  max_side_candidates: 8",
                 "  latency_budget_ms: 180",
                 "  debounce_ms: 40",
                 "  timeout_ms: 1200",

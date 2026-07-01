@@ -149,7 +149,7 @@ The cache key is based on the parsed Rime snapshot and semantic query, not the r
 
 The sidecar also deduplicates equivalent `/rime-suggest` requests that are already in flight. This is the VCP-style pending-request cache for the IME path: concurrent refreshes wait for the first request and reuse its response instead of calling the model/RAG pipeline twice. Health and response cache payloads expose `inFlightHits` / `inFlightHit` separately from TTL cache `hits`.
 
-`/rime-suggest` also returns a `triggerDecision`. Rime candidates are always preserved, but model/RAG side candidates are skipped for raw pinyin fallback, unstable composing updates, or full visible Rime candidate pages. This is the backend safety valve that prevents the local model and retrieval stack from running on every key event.
+`/rime-suggest` also returns a `triggerDecision`. Rime candidates are preserved as deterministic parsing/fallback, while model/RAG side candidates get first display priority when a stable semantic signal exists. Side lanes are skipped for raw pinyin fallback or unstable composing updates; raw key sequences such as `asdioj` should be handled by Rime candidates or a future pinyin-constrained logits path, not by unconstrained LLM guessing.
 
 `latencyBudgetMs` is enforced on the RAG and model side lanes. RAG retrieval is
 budgeted first, then the model is allowed to use only the remaining budget. If
@@ -441,7 +441,7 @@ See `docs/codex-history-eval.md`.
 
 The report includes candidate-level ranking metrics such as `top1Accuracy`, `meanReciprocalRank`, `noiseRate`, end-to-end suggestion latency, and repeat/cache statistics, not just pass/fail recall.
 When running against the local core, it also includes `cacheStats` so repeated-case evaluations can measure suggestion-cache hits. If optional vector recall is enabled, the same report includes `vectorStats`.
-`eval-rime-sidecar` uses the same case format but scores only model/RAG side candidates from the merged `/rime-suggest` display payload. Use it after `eval-codex-history` to catch failures in Rime-first merge, side-slot limits, trigger policy, and `/rime-suggest` cache behavior.
+`eval-rime-sidecar` uses the same case format but scores only model/RAG side candidates from the merged `/rime-suggest` display payload. Use it after `eval-codex-history` to catch failures in side-first merge, side-slot limits, trigger policy, and `/rime-suggest` cache behavior.
 
 Optional vector recall can be enabled without changing the input-method adapter. `local-hash` is a deterministic local baseline for testing the side-index contract, not a semantic model:
 
@@ -523,10 +523,12 @@ export RAG_IME_PREDICTOR_STREAM_FIRST=1
 ```
 
 With this flag, `predict()` reads `/api/chat` or `/predict-stream` until the
-first parsed candidate is available, then returns one model side candidate
-instead of waiting for the full JSON list. This is the product path for
-sub-200 ms first-visible candidates. Keep the flag off for quality evals that
-need all model candidates.
+first parsed candidate is available, then returns that early model side
+candidate instead of waiting for the full JSON list. This is the latency
+fallback for sub-200 ms first-visible candidates. Keep the flag off for quality
+evals that need all model candidates; the long-term IME path should use a
+resident MLX/llama.cpp backend that exposes logits/top-k or forked sequence
+sampling so the panel can fill multiple inline model slots.
 
 Run the resident MLX-LM service when testing the next Mac fast lane:
 
@@ -747,7 +749,7 @@ python3 -m rag_ime.cli --core-mode fixture rime-suggest-json \
   --payload-file /tmp/rime-sidecar-request.json
 ```
 
-This command keeps Rime candidates first, appends model/RAG side candidates only if visible slots remain, reserves side slots for RAG/memory after at most one model prediction, and uses Rime candidates or commit preview as the semantic query instead of asking the model to decode raw pinyin.
+This command prefers model/RAG side candidates in the visible slots, then fills remaining rows with Rime fallback candidates. Model candidates are marked `displayLayout: inline` for horizontal rendering, RAG/memory candidates are marked `displayLayout: block`, and Rime fallback candidates are marked `displayLayout: fallback`.
 
 Open the native AppKit candidate panel preview:
 

@@ -377,6 +377,13 @@ class PredictionProviderTests(unittest.TestCase):
         )
         self.assertEqual(parsed, ["本地记忆", "RAG候选", "输入法候选"])
 
+    def test_parse_prediction_candidates_extracts_qwen_json_before_special_tokens(self) -> None:
+        parsed = parse_prediction_candidates(
+            '<think>\n\n</think>\n\n["现在", "现状"]<|im_end|>\n<|endoftext|><|im_start|>user\n',
+            max_candidates=3,
+        )
+        self.assertEqual(parsed, ["现在", "现状"])
+
     def test_openai_compatible_provider_returns_short_ranked_predictions(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -636,6 +643,12 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(
             _filter_repeated_input_candidates(["PROJECT", "背景记忆"], "PROJECT_MEMORY_BLOCK"),
             ["背景记忆"],
+        )
+
+    def test_prediction_filter_keeps_choices_from_rime_candidate_list(self) -> None:
+        self.assertEqual(
+            _filter_repeated_input_candidates(["现在", "现状"], "现在 限制 现状"),
+            ["现在", "现状"],
         )
 
     def test_mlx_provider_uses_resident_prediction_service(self) -> None:

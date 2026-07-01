@@ -96,7 +96,7 @@ class RimeContextSnapshot:
     is_last_page: bool = True
     latency_budget_ms: int = 150
     max_visible_candidates: int = 8
-    max_side_candidates: int = 3
+    max_side_candidates: int = 8
     idle_ms: int = 0
     force_side_candidates: bool = False
 
@@ -117,6 +117,8 @@ class SideCandidateDisplayItem:
     memory_id: str = ""
     source_event_id: int | None = None
     rime_index: int | None = None
+    display_layout: str = "block"
+    display_lane: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
