@@ -440,3 +440,13 @@ The remaining product problem is not "can the Mac show a token under 200 ms".
 It can, on the MLX tag. The problem is to turn that into a parsed, useful
 candidate without waiting 800-900 ms for full JSON and without letting the small
 model replace RAG as the factual memory source.
+
+Current implementation step:
+
+- `RAG_IME_PREDICTOR_STREAM_FIRST=1` now makes the native Ollama and resident
+  MLX providers return after the first parsed streaming candidate.
+- The parser does not treat raw JSON syntax such as `["` as a candidate; it
+  waits for a complete string item or a clean non-JSON candidate fragment.
+- This is a side-lane latency bridge, not the final Wisdom-Weasel parity route:
+  `promptCache`, `sequenceFork`, and `batchCandidates` remain separate
+  capability gates for the future native provider.

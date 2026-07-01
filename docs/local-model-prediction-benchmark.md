@@ -179,6 +179,20 @@ Operational notes:
   product UI should stream the first parsed useful candidate, not merely the
   first raw token.
 
+Implemented product switch:
+
+```bash
+export RAG_IME_PREDICTOR_STREAM_FIRST=1
+```
+
+For native Ollama and resident MLX providers, this changes `predict()` from
+"wait for complete JSON candidate list" to "return after the first parsed
+candidate". The returned prediction carries
+`metadata.stream_first_candidate=true` and `metadata.first_candidate_ms`. This
+is intentionally limited to one model side slot; RAG candidates still fill the
+remaining side slots. Leave the flag unset when running model-quality evals
+that need all candidates.
+
 The stable rule for this project is: configure any candidate through one explicit provider lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
 ## Mac Runtime Order

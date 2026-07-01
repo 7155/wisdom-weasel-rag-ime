@@ -521,6 +521,41 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(predictions[0].text, "本地记忆")
         self.assertEqual(predictions[0].provider_name, "local-ollama")
 
+    def test_ollama_provider_can_return_first_streamed_candidate(self) -> None:
+        _MockOllamaStreamingHandler.captured_payload = {}
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaStreamingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "ollama",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "qwen3.5:0.8b-mlx",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_STREAM_FIRST": "1",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+            predictions = provider.predict(
+                current_input="RAG 输入法",
+                recent_context="用户正在写本地记忆输入法",
+                max_candidates=3,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual([item.text for item in predictions], ["本地记忆"])
+        self.assertTrue(_MockOllamaStreamingHandler.captured_payload["stream"])
+        self.assertEqual(_MockOllamaStreamingHandler.captured_payload["keep_alive"], -1)
+        self.assertTrue(predictions[0].metadata["stream_first_candidate"])
+        self.assertIsInstance(predictions[0].metadata["first_candidate_ms"], int)
+        status = prediction_provider_status(provider)
+        self.assertTrue(status["streamFirstCandidate"])
+
     def test_mlx_provider_uses_resident_prediction_service(self) -> None:
         _MockMlxHandler.captured_path = ""
         _MockMlxHandler.captured_payload = {}
@@ -562,6 +597,42 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(status["capabilities"]["residentModel"])
         self.assertFalse(status["capabilities"]["promptCache"])
         self.assertFalse(status["capabilities"]["sequenceFork"])
+
+    def test_mlx_provider_can_return_first_streamed_candidate(self) -> None:
+        _MockMlxHandler.captured_path = ""
+        _MockMlxHandler.captured_payload = {}
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_STREAM_FIRST": "1",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+            predictions = provider.predict(
+                current_input="RAG 输入法",
+                recent_context="用户正在写本地记忆输入法",
+                max_candidates=3,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(_MockMlxHandler.captured_path, "/predict-stream")
+        self.assertTrue(_MockMlxHandler.captured_payload["stream"])
+        self.assertEqual([item.text for item in predictions], ["本地记忆"])
+        self.assertTrue(predictions[0].metadata["stream_first_candidate"])
+        self.assertIsInstance(predictions[0].metadata["first_candidate_ms"], int)
+        status = prediction_provider_status(provider)
+        self.assertTrue(status["streamFirstCandidate"])
 
     def test_prediction_cooldown_skips_repeat_failures(self) -> None:
         class FailingProvider:

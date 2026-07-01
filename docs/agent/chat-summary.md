@@ -801,3 +801,17 @@ Findings:
 
 Next:
 - Keep Ollama MLX as the current TTFT baseline; continue toward direct MLX-LM or native llama.cpp/Metal only when we can control prompt/KV cache and multi-candidate generation directly.
+
+### 2026-07-01
+Topic:
+- Convert streaming TTFT into a usable model side-candidate path.
+
+Changes:
+- Added `RAG_IME_PREDICTOR_STREAM_FIRST=1` for native Ollama and resident MLX providers.
+- With the flag enabled, `predict()` returns after the first parsed streaming candidate instead of waiting for the full JSON list.
+- Added incremental parsing so JSON prefix chunks like `["` are ignored until a real candidate is available.
+- `predictor-status` exposes `streamFirstCandidate`.
+
+Findings:
+- This lets `/rime-suggest` use the fast first-visible model behavior without changing the existing sidecar contract.
+- The mode should be disabled for quality evals that need all model candidates.

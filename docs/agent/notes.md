@@ -1151,3 +1151,22 @@ Commands:
 - `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy OLLAMA_MODELS="/Volumes/undo 4t/ollama-models" OLLAMA_KEEP_ALIVE=-1 OLLAMA_FLASH_ATTENTION=1 ollama serve`
 - `env RAG_IME_PREDICTOR_PROVIDER=ollama RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434 RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b-mlx RAG_IME_PREDICTOR_PROFILE=instant RAG_IME_PREDICTOR_TIMEOUT_MS=2000 RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=0 python3 -m rag_ime.cli predictor-ttft --case "本地 RAG 输入法需要根据历史输入预测候选" --recent-context "用户正在讨论 Mac 本地推理、Qwen3.5 0.8B、MLX、KV cache 和输入法首 token 延迟" --repeat 8 --latency-budget-ms 200`
 - `env RAG_IME_PREDICTOR_PROVIDER=ollama RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434 RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b RAG_IME_PREDICTOR_PROFILE=instant RAG_IME_PREDICTOR_TIMEOUT_MS=5000 RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=0 python3 -m rag_ime.cli predictor-ttft --case "本地 RAG 输入法需要根据历史输入预测候选" --recent-context "用户正在讨论 Mac 本地推理、Qwen3.5 0.8B、MLX、KV cache 和输入法首 token 延迟" --repeat 4 --latency-budget-ms 200`
+
+### 2026-07-01 12:47 CST
+Problem:
+- `/rime-suggest` still called `predictor.predict()`, and native Ollama / MLX `predict()` waited for the full JSON candidate list even though TTFT measurement proved first chunk can arrive much earlier.
+
+Changes:
+- Added `RAG_IME_PREDICTOR_STREAM_FIRST=1` for native Ollama and resident MLX providers.
+- When enabled, `predict()` reads the streaming endpoint until the first parsed candidate appears, then returns one model side candidate with `metadata.stream_first_candidate=true`.
+- Added incremental streaming candidate parsing that ignores raw JSON syntax like `["` and waits for a complete string candidate or clean non-JSON fragment.
+- `predictor-status` now reports `streamFirstCandidate`.
+- Added unit tests for Ollama `/api/chat stream:true` and MLX `/predict-stream` first-candidate paths.
+
+Findings:
+- This turns the current Mac TTFT finding into a real sidecar-usable product path.
+- It is still a latency bridge, not the final Wisdom-Weasel provider: prompt cache, sequence fork, and batch candidate generation remain separate capability gates.
+
+Commands:
+- `python3 -m py_compile rag_ime/predictor.py tests/test_predictor.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
