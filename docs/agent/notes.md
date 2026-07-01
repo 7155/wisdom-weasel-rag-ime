@@ -2222,3 +2222,32 @@ Commands:
 Status:
 - Backend/native payload contract is now a repeatable strict gate.
 - Remaining unproven part is the actual foreground AppKit panel and real number-key commit in a normal editor.
+
+### 2026-07-02 01:21 CST
+Problem:
+- User clarified the real panel design: LLM short candidates should be horizontal; sentence/paragraph candidates should be vertical rows.
+- The sidecar already returned `displayLayout=inline/displayLane=model` and `displayLayout=block/displayLane=memory`, but real Squirrel could still show the native vertical list because repeated UI refreshes advanced request state and made valid sidecar responses look stale.
+
+Changes:
+- Added `ragImePendingRequestFingerprint` and duplicate in-flight suppression to the Squirrel patch so equivalent refreshes do not keep bumping `requestSeq`.
+- Relaxed sidecar response freshness to require request-local `response.requestSeq == request.requestSeq` plus current input/context/fingerprint match, instead of comparing with the latest global sequence.
+- Updated `SquirrelPanel` sizing, positioning, scroll paging, bounds rotation, and text layout to use the mixed `ragImePanelVertical` decision rather than raw theme `vertical`.
+- Updated patch tests to lock the frontend contract.
+- Rebuilt and installed patched Squirrel.app into `~/Library/Input Methods/Squirrel.app`.
+
+Verification:
+- Xcode Release install succeeded from `/tmp/rag-ime-squirrel-verify`.
+- `scripts/check_macos_input_source.sh --require-selected im.rime.inputmethod.Squirrel.Hans` passed; Squirrel Simplified is enabled, selectable, selected, HIToolbox enabled, and third-party enabled.
+- Strict doctor passed with `failures=0 warnings=0`; candidate contract reports `display=8 model=5 rag=3 rime=0`.
+- Manual `/rime-suggest` schema check returned labels 1-5 as `sourceType=model`, `displayLayout=inline`, `displayLane=model`; labels 6-8 as `sourceType=rag`, `displayLayout=block`, `displayLane=memory`.
+- Focused tests passed: 57 tests. `git diff --check` and shell syntax checks passed.
+
+Commands:
+- `RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/build_patched_squirrel.sh install`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/doctor_squirrel_integration.sh`
+- `scripts/check_macos_input_source.sh --require-selected im.rime.inputmethod.Squirrel.Hans`
+- `python3 -m unittest tests.test_build_patched_squirrel tests.test_prepare_squirrel_workspace tests.test_doctor_squirrel_integration tests.test_rime_sidecar tests.test_debug_server`
+
+Status:
+- Installed input method now has the frontend patch for horizontal LLM lane plus vertical RAG sentence rows.
+- Remaining validation is visual foreground typing in a normal editor and real number-key commit confirmation.

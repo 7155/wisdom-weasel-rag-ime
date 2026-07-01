@@ -1578,3 +1578,23 @@ Verification:
 
 Next:
 - Remaining final validation is still foreground typing and real number-key side-candidate commit in a normal editor.
+
+### 2026-07-02
+Topic:
+- Fix real Squirrel panel path for horizontal LLM candidates and vertical sentence/RAG rows.
+
+Changes:
+- Added pending-request fingerprint suppression in the Squirrel frontend patch so repeated equivalent UI refreshes do not invalidate valid sidecar responses.
+- Changed response freshness checks to compare against the original request and current input/context fingerprint, preventing the global `requestSeq` from dropping live model/RAG responses.
+- Made Squirrel panel measurement and placement use `ragImePanelVertical` consistently, so `model/inline` candidates can render in the horizontal lane while `rag/block` candidates remain row-based.
+- Rebuilt and reinstalled patched Squirrel.app.
+
+Verification:
+- Real Xcode Release install succeeded.
+- Current selected input source is `im.rime.inputmethod.Squirrel.Hans`.
+- Strict doctor passed with `failures=0 warnings=0`, `display=8 model=5 rag=3 rime=0`.
+- Manual `/rime-suggest` confirmed 1-5 are `model/inline`, 6-8 are `rag/block`.
+- Focused tests passed: 57 tests.
+
+Next:
+- User should visually test in a normal editor. If a first native Rime frame appears, wait for the sidecar refresh and check whether it updates to one horizontal LLM row plus vertical RAG rows.

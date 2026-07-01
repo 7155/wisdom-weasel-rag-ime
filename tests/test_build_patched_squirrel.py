@@ -22,12 +22,18 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func ragImePanelForcesHorizontalLayout() -> Bool", patch_text)
         self.assertIn("var ragImePanelLinear: Bool", patch_text)
         self.assertIn("view.textView.setLayoutOrientation(ragImePanelVertical ? .vertical : .horizontal)", patch_text)
+        self.assertIn("let maxTextHeight = ragImePanelVertical", patch_text)
+        self.assertIn("let maxWidth = if ragImePanelVertical", patch_text)
         self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 1.2", patch_text)
         self.assertIn("func canUseRagImeDisplayHoldover(", patch_text)
         self.assertIn('ragImeDisplayQueryBasis == "committedContext"', patch_text)
         self.assertIn("committedContext: ragImeCommittedContext", patch_text)
-        self.assertIn("guard response.committedContext == request.committedContext else { return }", patch_text)
-        self.assertIn("guard ragImeCommittedContext == request.committedContext else { return }", patch_text)
+        self.assertIn("private var ragImePendingRequestFingerprint: String = \"\"", patch_text)
+        self.assertIn("fingerprint == ragImeLastRequestFingerprint || fingerprint == ragImePendingRequestFingerprint", patch_text)
+        self.assertIn("guard response.requestSeq == request.requestSeq else {", patch_text)
+        self.assertIn("guard response.committedContext == request.committedContext else {", patch_text)
+        self.assertIn("guard ragImeCommittedContext == request.committedContext else {", patch_text)
+        self.assertIn("func completeRagImeSidecarRequest(fingerprint: String, keepLastFingerprint: Bool)", patch_text)
         self.assertIn(
             "+    committedContext: String,\n"
             "+    page: Int,\n"
