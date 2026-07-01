@@ -273,13 +273,15 @@ python3 -m rag_ime.cli \
   --report-path /tmp/rag-ime-squirrel-tryout-report.json
 ```
 
-`squirrel-tryout-gate` first checks `readinessState=ready` for the active macOS
-input source, then checks the running sidecar `/health`, then runs the existing
-backend `quality-gate` with `--require-input-source-ready`. If the input source
-is still `switch`, it fails fast and skips the expensive quality gate. It does
-not install Squirrel, modify HIToolbox, switch input sources, or type into a
-foreground app. The report also includes `manualRequired` for the remaining
-foreground typing and candidate-panel checks.
+`squirrel-tryout-gate` first checks the installed `Squirrel.app` bundle and the
+actual `~/Library/Rime/squirrel.custom.yaml` managed block, then checks
+`readinessState=ready` for the active macOS input source, then checks the running
+sidecar `/health`, then runs the existing backend `quality-gate` with
+`--require-input-source-ready`. If the input source is still `switch`, it fails
+fast and skips the expensive quality gate. It does not install Squirrel, modify
+HIToolbox, switch input sources, or type into a foreground app. The report also
+includes `manualRequired` for the remaining foreground typing and candidate-panel
+checks.
 
 See `docs/xcode-squirrel-setup.md` for the external-disk install route and the `DEVELOPER_DIR`/`xcode-select` commands.
 
