@@ -1887,3 +1887,23 @@ Verification:
 Status:
 - Installed bundle, real Rime config, sidecar health, and sidecar candidate payload are now machine-verifiable.
 - The active input source is still ABC, so backend quality-gate and foreground typing remain pending until switching to Squirrel.
+
+### 2026-07-01 21:20 CST
+Problem:
+- The tryout gate could still pass sidecar health against a temporary terminal-started process.
+- For a real input method install, the evidence needs to prove the sidecar is persisted as the login-time user LaunchAgent that Squirrel will call during normal typing.
+
+Changes:
+- Added a `launch-agent` check to `squirrel-tryout-gate`.
+- The gate now runs `launchctl print gui/<uid>/com.rag-ime.sidecar`, reports `state`, `pid`, `path`, and `program`, and only allows backend `quality-gate` when the LaunchAgent is `running`.
+- Tests use `--skip-launch-agent` so unit coverage stays independent of the host launchd state.
+
+Verification:
+- Added parser coverage for launchctl output.
+- Real local smoke reports `installed-bundle passed`, `installed-rime-config passed`, `launch-agent passed state=running pid=13454`, `sidecar-health passed`, and `sidecar.rimeSuggest.displayCandidateCount=2`.
+- The same real smoke still fails `input-source-ready` with `current=com.apple.keylayout.ABC`, so backend `quality-gate` is correctly skipped until the active macOS input menu is switched to Squirrel.
+- Full 151-test suite passed.
+
+Status:
+- The installed Squirrel/Rime frontend, real Rime config, persisted sidecar service, and sidecar candidate payload are now separately machine-verifiable.
+- Continuous real typing validation is still pending until the active input source becomes `鼠须管`.

@@ -6,6 +6,7 @@ import os
 import plistlib
 import shutil
 import shlex
+import subprocess
 import sys
 import time
 import urllib.error
@@ -490,6 +491,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     squirrel_tryout_gate.add_argument("--sidecar-url", default=os.environ.get("RAG_IME_SIDECAR_URL", "http://127.0.0.1:8766"))
+    squirrel_tryout_gate.add_argument(
+        "--launch-agent-label",
+        default=os.environ.get("RAG_IME_LAUNCH_AGENT_LABEL", "com.rag-ime.sidecar"),
+    )
+    squirrel_tryout_gate.add_argument("--skip-launch-agent", action="store_true")
     squirrel_tryout_gate.add_argument("--skip-sidecar-health", action="store_true")
     squirrel_tryout_gate.add_argument("--require-model-ttfc", action="store_true")
     squirrel_tryout_gate.add_argument("--model-ttfc-cases-file", default="docs/eval/ime-ttfc-cases.example.jsonl")
@@ -1305,6 +1311,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             squirrel_app=Path(args.squirrel_app) if args.squirrel_app else None,
             squirrel_config_path=Path(args.squirrel_config_path),
             sidecar_url=args.sidecar_url,
+            launch_agent_label=args.launch_agent_label,
+            skip_launch_agent=bool(args.skip_launch_agent),
             skip_sidecar_health=bool(args.skip_sidecar_health),
             required_predictor_capabilities=tuple(args.require_predictor_capability),
             include_cases=bool(args.include_cases),
@@ -1619,6 +1627,8 @@ def run_squirrel_tryout_gate(
     squirrel_app: Path | None,
     squirrel_config_path: Path,
     sidecar_url: str,
+    launch_agent_label: str,
+    skip_launch_agent: bool,
     skip_sidecar_health: bool,
     required_predictor_capabilities: tuple[str, ...],
     include_cases: bool,
@@ -1645,6 +1655,11 @@ def run_squirrel_tryout_gate(
         )
     ).input_source_status()
     input_ready = bool(input_source_report.get("typingReady"))
+    launch_agent_report = (
+        {"schemaVersion": "rag-ime.tryout-launch-agent.v1", "skipped": True, "ok": True, "label": launch_agent_label}
+        if skip_launch_agent
+        else _tryout_launch_agent_status(launch_agent_label)
+    )
     sidecar_report = (
         {"schemaVersion": "rag-ime.tryout-sidecar-health.v1", "skipped": True, "ok": True}
         if skip_sidecar_health
@@ -1652,9 +1667,10 @@ def run_squirrel_tryout_gate(
     )
     bundle_ok = bool(bundle_report.get("ok"))
     config_ok = bool(config_report.get("ok"))
+    launch_agent_ok = bool(launch_agent_report.get("ok"))
     sidecar_ok = bool(sidecar_report.get("ok"))
     quality_report: dict[str, object] | None = None
-    if bundle_ok and config_ok and input_ready and sidecar_ok:
+    if bundle_ok and config_ok and launch_agent_ok and input_ready and sidecar_ok:
         quality_report = run_quality_gate(
             adapter,
             core,
@@ -1725,6 +1741,14 @@ def run_squirrel_tryout_gate(
             "nextAction": input_source_report.get("nextAction"),
         },
         {
+            "name": "launch-agent",
+            "passed": launch_agent_ok,
+            "skipped": bool(launch_agent_report.get("skipped")),
+            "label": launch_agent_label,
+            "state": launch_agent_report.get("state"),
+            "pid": launch_agent_report.get("pid"),
+        },
+        {
             "name": "sidecar-health",
             "passed": sidecar_ok,
             "skipped": bool(sidecar_report.get("skipped")),
@@ -1751,6 +1775,7 @@ def run_squirrel_tryout_gate(
         "installedBundle": bundle_report,
         "installedRimeConfig": config_report,
         "inputSource": input_source_report,
+        "launchAgent": launch_agent_report,
         "sidecar": sidecar_report,
         "qualityGate": quality_report,
     }
@@ -1884,6 +1909,43 @@ def _same_path_text(left: str, right: str) -> bool:
     if not left or not right:
         return False
     return os.path.abspath(os.path.expanduser(left)) == os.path.abspath(os.path.expanduser(right))
+
+
+def _tryout_launch_agent_status(label: str) -> dict[str, object]:
+    command = ["launchctl", "print", f"gui/{os.getuid()}/{label}"]
+    try:
+        completed = subprocess.run(command, check=False, text=True, capture_output=True, timeout=3.0)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "schemaVersion": "rag-ime.tryout-launch-agent.v1",
+            "ok": False,
+            "label": label,
+            "error": str(exc),
+        }
+    output = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
+    state = _launchctl_field(output, "state")
+    report: dict[str, object] = {
+        "schemaVersion": "rag-ime.tryout-launch-agent.v1",
+        "ok": completed.returncode == 0 and state == "running",
+        "label": label,
+        "exitCode": completed.returncode,
+        "state": state,
+        "pid": _launchctl_field(output, "pid"),
+        "path": _launchctl_field(output, "path"),
+        "program": _launchctl_field(output, "program"),
+    }
+    if not report["ok"]:
+        report["rawOutput"] = output[-4000:]
+    return report
+
+
+def _launchctl_field(output: str, key: str) -> str:
+    prefix = f"{key} = "
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix) :].strip()
+    return ""
 
 
 def _tryout_sidecar_health(sidecar_url: str) -> dict[str, object]:

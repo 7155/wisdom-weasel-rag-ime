@@ -1328,3 +1328,19 @@ Verification:
 
 Next:
 - Switch active input source to `鼠须管`, then rerun the same tryout gate so it can proceed into backend `quality-gate`.
+
+### 2026-07-01
+Topic:
+- Add LaunchAgent persistence check to Squirrel tryout gate.
+
+Changes:
+- `squirrel-tryout-gate` now checks `launchctl print gui/<uid>/com.rag-ime.sidecar` and reports the LaunchAgent `state`, `pid`, `path`, and `program`.
+- Backend `quality-gate` only runs after installed bundle, real Rime config, LaunchAgent, selected input source, and sidecar checks all pass.
+- Tests can pass `--skip-launch-agent` to avoid depending on the host launchd service.
+
+Verification:
+- Full 151-test suite passed.
+- Real local smoke passes installed bundle, real Rime config, LaunchAgent `state=running`, sidecar health, and `/rime-suggest`; it still stops at `current=com.apple.keylayout.ABC`.
+
+Next:
+- Click "完成", switch the macOS input menu from ABC to `鼠须管`, then rerun `squirrel-tryout-gate` for the first full selected-source smoke.
