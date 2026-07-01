@@ -1491,3 +1491,21 @@ Verification:
 
 Next:
 - Switch to Squirrel in the menu bar and do foreground continuous typing verification; then continue the 3 downloaded safetensors model comparison.
+
+### 2026-07-02
+Topic:
+- Enforce real-panel layout: horizontal LLM lane, vertical sentence/RAG rows.
+
+Changes:
+- Squirrel patch now tracks whether the current panel is actually using sidecar display candidates before applying sidecar layout or number-key routing.
+- Active `model/inline` candidates force local panel linear/horizontal behavior; `rag/block` candidates still use newline-separated rows.
+- Rebuilt and installed patched Squirrel.app from `/tmp/rag-ime-squirrel-verify`.
+
+Verification:
+- `/rime-suggest` for `erq` returned 5 `model/inline` candidates and 3 `rag/block` candidates, model lane elapsed 158 ms.
+- Focused tests passed: 66 tests.
+- `py_compile`, `git diff --check`, patch prepare, Xcode Release install, input-source selection, and doctor all passed.
+- Current input source is `im.rime.inputmethod.Squirrel.Hans`; doctor summary is `failures=0 warnings=0`.
+
+Next:
+- User should try foreground typing; if the first frame briefly shows Rime fallback, wait ~200 ms for the sidecar refresh and check whether the panel updates to horizontal LLM + vertical RAG.

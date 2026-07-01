@@ -18,11 +18,18 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("let displayLane: String?", patch_text)
         self.assertIn("func candidateSeparator(before index: Int) -> String", patch_text)
         self.assertIn('currentLayout == "inline", previousLayout == "inline"', patch_text)
+        self.assertIn("private var ragImePanelUsesDisplayCandidates: Bool = false", patch_text)
+        self.assertIn("func ragImePanelForcesHorizontalLayout() -> Bool", patch_text)
+        self.assertIn("var ragImePanelLinear: Bool", patch_text)
+        self.assertIn("view.textView.setLayoutOrientation(ragImePanelVertical ? .vertical : .horizontal)", patch_text)
         self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 1.2", patch_text)
         self.assertIn("func canUseRagImeDisplayHoldover(", patch_text)
         self.assertIn('ragImeDisplayQueryBasis == "committedContext"', patch_text)
         self.assertIn(
             "+  func selectRagImeSideCandidate(forKey key: String) -> Bool {\n"
+            "+    guard ragImePanelUsesDisplayCandidates else {\n"
+            "+      return false\n"
+            "+    }\n"
             "+    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {\n"
             "+      return false\n"
             "+    }\n"

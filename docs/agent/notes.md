@@ -2085,3 +2085,31 @@ Commands:
 
 Status:
 - Installed Squirrel is registered as `im.rime.inputmethod.Squirrel.Hans`, enabled and third-party-visible, but current source remains ABC until the user switches input source for foreground typing.
+
+### 2026-07-02 00:14 CST
+Problem:
+- User clarified the real panel rule: LLM short candidates should be horizontal, while sentence-like RAG/memory candidates should remain vertical rows.
+- The screenshot showed Rime fallback candidates in a vertical list, so the Squirrel front end needed stronger sidecar-panel state guarding and the installed app needed to be refreshed.
+
+Changes:
+- Updated the Squirrel patch with `ragImePanelUsesDisplayCandidates` so stale sidecar candidates cannot hijack ordinary Rime fallback display or number-key routing.
+- Added `ragImePanelForcesHorizontalLayout`, `ragImePanelLinear`, and `ragImePanelVertical`; when active sidecar candidates include `model/inline`, the panel uses a horizontal LLM lane while `rag/block` candidates still start new rows.
+- Re-generated the patch from the applied Squirrel worktree to keep git hunk counts valid.
+
+Verification:
+- `scripts/prepare_squirrel_workspace.sh` passed with a reset `/tmp/rag-ime-squirrel-verify` workdir.
+- Focused tests passed: `tests.test_build_patched_squirrel`, `tests.test_rime_sidecar`, `tests.test_mlx_predictor_server`, `tests.test_predictor` (66 tests).
+- `py_compile` and `git diff --check` passed.
+- Manual `/rime-suggest` for `erq` returned 5 `model/inline` candidates followed by 3 `rag/block` candidates; model lane elapsed 158 ms.
+- Xcode Release build installed patched `~/Library/Input Methods/Squirrel.app`; after re-registering, selected source is `im.rime.inputmethod.Squirrel.Hans`.
+- Doctor passed with `failures=0 warnings=0`.
+
+Commands:
+- `RAG_IME_SQUIRREL_RESET=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/prepare_squirrel_workspace.sh`
+- `python3 -m unittest tests.test_build_patched_squirrel tests.test_rime_sidecar tests.test_mlx_predictor_server tests.test_predictor`
+- `RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/build_patched_squirrel.sh install`
+- `scripts/select_macos_input_source.sh im.rime.inputmethod.Squirrel.Hans`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/doctor_squirrel_integration.sh`
+
+Status:
+- Installed Squirrel is now selected and ready for foreground typing tests with the user.
