@@ -1851,3 +1851,21 @@ Verification:
 
 Status:
 - The real machine has a ready sidecar/model lane, but the active input source still must be switched from ABC to Squirrel before the tryout gate can pass.
+
+### 2026-07-01 20:40 CST
+Problem:
+- `squirrel-tryout-gate` still trusted the CLI `--db-path` and sidecar URL without proving the installed `Squirrel.app` and the real user Rime config point at the same runtime.
+- This could let the backend gate pass against one database while Squirrel was configured to use another database.
+
+Changes:
+- Added read-only installed bundle and installed Rime config checks to `squirrel-tryout-gate`.
+- The bundle check verifies the installed `Squirrel.app` executable and reports the bundle identifier.
+- The config check parses the `# >>> RAG-IME managed block` in `~/Library/Rime/squirrel.custom.yaml` and compares `enabled`, `sidecar_url`, `db_path`, and `project` against the tryout command.
+- The sidecar URL comparison treats `http://127.0.0.1:8766` and `http://127.0.0.1:8766/api` as the same base because Squirrel appends endpoint paths under the configured base.
+
+Verification:
+- Added tests with fake `Squirrel.app` bundles and fake managed config blocks for both not-selected and selected input-source paths.
+- Real local smoke now reports `installed-bundle passed`, `installed-rime-config passed`, and `sidecar-health passed`; it still fails on `input-source-ready` because current input source is ABC.
+
+Status:
+- The installed app/config/runtime path is machine-verifiable. Remaining blocker for the next gate is switching active macOS input source to Squirrel.

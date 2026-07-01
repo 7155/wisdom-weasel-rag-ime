@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import plistlib
 import shutil
 import shlex
 import sys
@@ -479,6 +480,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     squirrel_tryout_gate.add_argument(
         "--input-source-check-script",
         default=os.environ.get("RAG_IME_INPUT_SOURCE_CHECK_SCRIPT", ""),
+    )
+    squirrel_tryout_gate.add_argument("--squirrel-app", default=os.environ.get("RAG_IME_SQUIRREL_APP", ""))
+    squirrel_tryout_gate.add_argument(
+        "--squirrel-config-path",
+        default=os.environ.get(
+            "RAG_IME_SQUIRREL_CUSTOM_CONFIG",
+            str(Path.home() / "Library" / "Rime" / "squirrel.custom.yaml"),
+        ),
     )
     squirrel_tryout_gate.add_argument("--sidecar-url", default=os.environ.get("RAG_IME_SIDECAR_URL", "http://127.0.0.1:8766"))
     squirrel_tryout_gate.add_argument("--skip-sidecar-health", action="store_true")
@@ -1293,6 +1302,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             require_suggestion_cache=not bool(args.no_require_suggestion_cache),
             input_source_id=args.input_source_id,
             input_source_check_script=Path(args.input_source_check_script) if args.input_source_check_script else None,
+            squirrel_app=Path(args.squirrel_app) if args.squirrel_app else None,
+            squirrel_config_path=Path(args.squirrel_config_path),
             sidecar_url=args.sidecar_url,
             skip_sidecar_health=bool(args.skip_sidecar_health),
             required_predictor_capabilities=tuple(args.require_predictor_capability),
@@ -1605,6 +1616,8 @@ def run_squirrel_tryout_gate(
     require_suggestion_cache: bool,
     input_source_id: str,
     input_source_check_script: Path | None,
+    squirrel_app: Path | None,
+    squirrel_config_path: Path,
     sidecar_url: str,
     skip_sidecar_health: bool,
     required_predictor_capabilities: tuple[str, ...],
@@ -1612,6 +1625,13 @@ def run_squirrel_tryout_gate(
 ) -> dict[str, object]:
     from .debug_server import DebugImeService, DebugServerConfig
 
+    bundle_report = _tryout_installed_bundle(squirrel_app)
+    config_report = _tryout_installed_rime_config(
+        squirrel_config_path,
+        expected_db_path=db_path,
+        expected_project=project,
+        expected_sidecar_url=sidecar_url,
+    )
     input_source_report = DebugImeService(
         DebugServerConfig(
             db_path=db_path,
@@ -1630,9 +1650,11 @@ def run_squirrel_tryout_gate(
         if skip_sidecar_health
         else _tryout_sidecar_health(sidecar_url)
     )
+    bundle_ok = bool(bundle_report.get("ok"))
+    config_ok = bool(config_report.get("ok"))
     sidecar_ok = bool(sidecar_report.get("ok"))
     quality_report: dict[str, object] | None = None
-    if input_ready and sidecar_ok:
+    if bundle_ok and config_ok and input_ready and sidecar_ok:
         quality_report = run_quality_gate(
             adapter,
             core,
@@ -1681,6 +1703,21 @@ def run_squirrel_tryout_gate(
         )
     checks = [
         {
+            "name": "installed-bundle",
+            "passed": bundle_ok,
+            "appPath": bundle_report.get("appPath"),
+            "bundleIdentifier": bundle_report.get("bundleIdentifier"),
+        },
+        {
+            "name": "installed-rime-config",
+            "passed": config_ok,
+            "configPath": config_report.get("configPath"),
+            "enabled": config_report.get("enabled"),
+            "sidecarUrlMatches": config_report.get("sidecarUrlMatches"),
+            "dbPathMatches": config_report.get("dbPathMatches"),
+            "projectMatches": config_report.get("projectMatches"),
+        },
+        {
             "name": "input-source-ready",
             "passed": input_ready,
             "readinessState": input_source_report.get("readinessState"),
@@ -1711,10 +1748,142 @@ def run_squirrel_tryout_gate(
             "real Squirrel candidate panel visual check",
             "side candidate number-key commit verification",
         ],
+        "installedBundle": bundle_report,
+        "installedRimeConfig": config_report,
         "inputSource": input_source_report,
         "sidecar": sidecar_report,
         "qualityGate": quality_report,
     }
+
+
+def _tryout_installed_bundle(squirrel_app: Path | None) -> dict[str, object]:
+    app_path = _resolve_squirrel_app_path(squirrel_app)
+    executable = app_path / "Contents" / "MacOS" / "Squirrel"
+    info_plist = app_path / "Contents" / "Info.plist"
+    bundle_identifier = ""
+    if info_plist.exists():
+        try:
+            with info_plist.open("rb") as fh:
+                info = plistlib.load(fh)
+            bundle_identifier = str(info.get("CFBundleIdentifier") or "")
+        except Exception:
+            bundle_identifier = ""
+    executable_exists = executable.exists() and os.access(executable, os.X_OK)
+    return {
+        "schemaVersion": "rag-ime.tryout-installed-bundle.v1",
+        "ok": app_path.is_dir() and executable_exists,
+        "appPath": str(app_path),
+        "bundleExists": app_path.is_dir(),
+        "executablePath": str(executable),
+        "executableExists": executable_exists,
+        "bundleIdentifier": bundle_identifier,
+    }
+
+
+def _resolve_squirrel_app_path(squirrel_app: Path | None) -> Path:
+    if squirrel_app is not None:
+        return squirrel_app.expanduser()
+    candidates = [
+        Path.home() / "Library" / "Input Methods" / "Squirrel.app",
+        Path("/Library/Input Methods/Squirrel.app"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def _tryout_installed_rime_config(
+    config_path: Path,
+    *,
+    expected_db_path: Path,
+    expected_project: str,
+    expected_sidecar_url: str,
+) -> dict[str, object]:
+    expanded_config_path = config_path.expanduser()
+    payload: dict[str, object] = {
+        "schemaVersion": "rag-ime.tryout-installed-rime-config.v1",
+        "configPath": str(expanded_config_path),
+        "exists": expanded_config_path.exists(),
+        "ok": False,
+    }
+    if not expanded_config_path.exists():
+        return {**payload, "error": "Squirrel custom config is missing"}
+    values = _parse_rag_ime_managed_config(expanded_config_path.read_text(encoding="utf-8"))
+    required_keys = ("enabled", "sidecar_url", "db_path", "project")
+    missing = [key for key in required_keys if key not in values]
+    enabled = _config_bool(values.get("enabled"))
+    sidecar_url = str(values.get("sidecar_url") or "")
+    db_path = str(values.get("db_path") or "")
+    project = str(values.get("project") or "")
+    sidecar_matches = _same_sidecar_base(sidecar_url, expected_sidecar_url)
+    db_matches = _same_path_text(db_path, str(expected_db_path))
+    project_matches = project == expected_project
+    ok = not missing and enabled and sidecar_matches and db_matches and project_matches
+    return {
+        **payload,
+        "ok": ok,
+        "values": values,
+        "missingKeys": missing,
+        "enabled": enabled,
+        "sidecarUrl": sidecar_url,
+        "expectedSidecarUrl": expected_sidecar_url,
+        "sidecarUrlMatches": sidecar_matches,
+        "dbPath": db_path,
+        "expectedDbPath": str(expected_db_path),
+        "dbPathMatches": db_matches,
+        "project": project,
+        "expectedProject": expected_project,
+        "projectMatches": project_matches,
+    }
+
+
+def _parse_rag_ime_managed_config(text: str) -> dict[str, object]:
+    start = "# >>> RAG-IME managed block"
+    end = "# <<< RAG-IME managed block"
+    if start not in text or end not in text:
+        return {}
+    managed = text.split(start, 1)[1].split(end, 1)[0]
+    values: dict[str, object] = {}
+    for raw_line in managed.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, raw_value = line.partition(":")
+        if not sep:
+            continue
+        key = key.strip().strip('"')
+        if not key.startswith("rag_ime/"):
+            continue
+        value_text = raw_value.strip()
+        try:
+            value: object = json.loads(value_text)
+        except json.JSONDecodeError:
+            value = value_text.strip('"')
+        values[key.removeprefix("rag_ime/")] = value
+    return values
+
+
+def _config_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _same_sidecar_base(left: str, right: str) -> bool:
+    def normalize(value: str) -> str:
+        text = value.strip().rstrip("/")
+        if text.endswith("/api"):
+            text = text[:-4]
+        return text.rstrip("/")
+
+    return bool(left and right) and normalize(left) == normalize(right)
+
+
+def _same_path_text(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    return os.path.abspath(os.path.expanduser(left)) == os.path.abspath(os.path.expanduser(right))
 
 
 def _tryout_sidecar_health(sidecar_url: str) -> dict[str, object]:

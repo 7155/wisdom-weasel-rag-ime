@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import plistlib
 import sqlite3
 import tempfile
 import threading
@@ -157,6 +158,37 @@ class CodexHistoryTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def _write_fake_squirrel_app(self, name: str) -> Path:
+        app = self.root / f"{name}.app"
+        contents = app / "Contents"
+        executable_dir = contents / "MacOS"
+        executable_dir.mkdir(parents=True)
+        executable = executable_dir / "Squirrel"
+        executable.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        with (contents / "Info.plist").open("wb") as fh:
+            plistlib.dump({"CFBundleIdentifier": "im.rime.inputmethod.Squirrel"}, fh)
+        return app
+
+    def _write_fake_squirrel_config(self, name: str, *, db_path: Path, project: str) -> Path:
+        config = self.root / f"{name}.squirrel.custom.yaml"
+        config.write_text(
+            "\n".join(
+                [
+                    "patch:",
+                    "# >>> RAG-IME managed block",
+                    '  "rag_ime/enabled": true',
+                    '  "rag_ime/sidecar_url": "http://127.0.0.1:8766/api"',
+                    f'  "rag_ime/db_path": "{str(db_path)}"',
+                    f'  "rag_ime/project": "{project}"',
+                    "# <<< RAG-IME managed block",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return config
 
     def test_load_codex_history_records_skips_invalid_jsonl_and_extracts_text(self) -> None:
         records = load_codex_history_records(self.history, limit=10)
@@ -919,6 +951,12 @@ class CodexHistoryTests(unittest.TestCase):
             encoding="utf-8",
         )
         check_script.chmod(0o755)
+        fake_app = self._write_fake_squirrel_app("tryout-unselected")
+        config_path = self._write_fake_squirrel_config(
+            "tryout-unselected",
+            db_path=db_path,
+            project="wisdom-weasel-rag-ime",
+        )
         report_path = self.root / "squirrel-tryout-report.json"
 
         gate_stdout = io.StringIO()
@@ -932,6 +970,10 @@ class CodexHistoryTests(unittest.TestCase):
                     str(cases_file),
                     "--input-source-check-script",
                     str(check_script),
+                    "--squirrel-app",
+                    str(fake_app),
+                    "--squirrel-config-path",
+                    str(config_path),
                     "--skip-sidecar-health",
                     "--report-path",
                     str(report_path),
@@ -943,9 +985,13 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(report["schemaVersion"], "rag-ime.squirrel-tryout-gate.v1")
         self.assertFalse(report["passed"])
         self.assertEqual(report["inputSource"]["readinessState"], "switch")
+        self.assertTrue(report["installedBundle"]["ok"])
+        self.assertTrue(report["installedRimeConfig"]["ok"])
         self.assertIsNone(report["qualityGate"])
         self.assertIn("foreground editor typing verification", report["manualRequired"])
         checks = {item["name"]: item for item in report["checks"]}
+        self.assertTrue(checks["installed-bundle"]["passed"])
+        self.assertTrue(checks["installed-rime-config"]["passed"])
         self.assertFalse(checks["input-source-ready"]["passed"])
         self.assertTrue(checks["sidecar-health"]["passed"])
         self.assertTrue(checks["sidecar-health"]["skipped"])
@@ -983,6 +1029,12 @@ class CodexHistoryTests(unittest.TestCase):
             encoding="utf-8",
         )
         check_script.chmod(0o755)
+        fake_app = self._write_fake_squirrel_app("tryout-selected")
+        config_path = self._write_fake_squirrel_config(
+            "tryout-selected",
+            db_path=db_path,
+            project="wisdom-weasel-rag-ime",
+        )
 
         gate_stdout = io.StringIO()
         with redirect_stdout(gate_stdout):
@@ -999,6 +1051,10 @@ class CodexHistoryTests(unittest.TestCase):
                     "1",
                     "--input-source-check-script",
                     str(check_script),
+                    "--squirrel-app",
+                    str(fake_app),
+                    "--squirrel-config-path",
+                    str(config_path),
                     "--skip-sidecar-health",
                 ]
             )
@@ -1007,6 +1063,8 @@ class CodexHistoryTests(unittest.TestCase):
         report = json.loads(gate_stdout.getvalue())
         self.assertTrue(report["passed"])
         checks = {item["name"]: item for item in report["checks"]}
+        self.assertTrue(checks["installed-bundle"]["passed"])
+        self.assertTrue(checks["installed-rime-config"]["passed"])
         self.assertTrue(checks["input-source-ready"]["passed"])
         self.assertTrue(checks["quality-gate"]["passed"])
         self.assertEqual(report["qualityGate"]["schemaVersion"], "rag-ime.quality-gate.v1")

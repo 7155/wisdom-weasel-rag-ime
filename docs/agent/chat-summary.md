@@ -1296,3 +1296,19 @@ Verification:
 
 Next:
 - Switch active macOS input source to `鼠须管`, then run `squirrel-tryout-gate` and continue with manual 20-prompt typing validation.
+
+### 2026-07-01
+Topic:
+- Extend Squirrel tryout gate with installed bundle/config checks.
+
+Changes:
+- `squirrel-tryout-gate` now checks the installed `Squirrel.app` executable and bundle id.
+- It parses the real `~/Library/Rime/squirrel.custom.yaml` RAG-IME managed block and compares `enabled`, `sidecar_url`, `db_path`, and `project`.
+- It treats `/api` sidecar config as equivalent to the base sidecar health URL.
+
+Verification:
+- Tests use fake app bundles and fake managed configs for not-selected and selected input-source paths.
+- Real local smoke passes installed bundle, installed Rime config, and sidecar health; it still fails only because current input source is ABC, not Squirrel.
+
+Next:
+- Switch active input source to `鼠须管`; then the same gate can proceed into backend `quality-gate`.
