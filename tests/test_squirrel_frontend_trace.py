@@ -8,6 +8,30 @@ from pathlib import Path
 
 
 class SquirrelFrontendTraceScriptTests(unittest.TestCase):
+    def test_foreground_trace_wrapper_dry_run_reports_gate(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "verify_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--no-open",
+                "--mixed-only",
+                "--wait",
+                "12",
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertIn("wait_seconds=12", result.stdout)
+        self.assertIn("open_test_file=0", result.stdout)
+        self.assertIn("require_side_commit=0", result.stdout)
+        self.assertIn("--require-mixed-panel", result.stdout)
+        self.assertNotIn("--require-side-commit", result.stdout)
+
     def test_trace_check_passes_for_mixed_panel_and_side_commit(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
