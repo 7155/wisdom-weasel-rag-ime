@@ -815,3 +815,15 @@ Changes:
 Findings:
 - This lets `/rime-suggest` use the fast first-visible model behavior without changing the existing sidecar contract.
 - The mode should be disabled for quality evals that need all model candidates.
+
+### 2026-07-01
+Topic:
+- Persist model-lane configuration into the macOS sidecar LaunchAgent.
+
+Changes:
+- `scripts/install_sidecar_launch_agent.sh` now writes a whitelist of predictor, history-context, and cache tuning env vars into the generated plist.
+- Dry-run LaunchAgent test now verifies `RAG_IME_PREDICTOR_PROVIDER`, `RAG_IME_PREDICTOR_MODEL`, `RAG_IME_PREDICTOR_STREAM_FIRST`, and related variables are persisted.
+- README and macOS frontend docs now show the install flow for Ollama MLX + stream-first sidecar.
+
+Findings:
+- This fixes the practical gap where manual shell commands could use the fast model lane, but a login-started sidecar would not inherit the same predictor configuration.

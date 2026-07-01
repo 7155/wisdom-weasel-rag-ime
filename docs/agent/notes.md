@@ -1170,3 +1170,21 @@ Findings:
 Commands:
 - `python3 -m py_compile rag_ime/predictor.py tests/test_predictor.py`
 - `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+
+### 2026-07-01 13:08 CST
+Problem:
+- `RAG_IME_PREDICTOR_STREAM_FIRST=1` worked in manual commands, but the user LaunchAgent installer did not persist any `RAG_IME_PREDICTOR_*` variables into the sidecar plist.
+- A login-started Squirrel sidecar would therefore lose the Ollama/MLX model configuration and run without the stream-first model lane.
+
+Changes:
+- Added a LaunchAgent environment whitelist for predictor, history-context, and cache tuning variables.
+- The installer now persists variables such as `RAG_IME_PREDICTOR_PROVIDER`, `RAG_IME_PREDICTOR_MODEL`, `RAG_IME_PREDICTOR_STREAM_FIRST`, `RAG_IME_HISTORY_CONTEXT_EVENTS`, and `RAG_IME_RIME_CACHE_TTL_MS`.
+- Extended the dry-run plist test to assert the predictor env is written.
+- Documented the real install flow for Ollama MLX + stream-first sidecar.
+
+Findings:
+- This closes the gap between predictor code support and the actual macOS login sidecar path.
+
+Commands:
+- `RAG_IME_LAUNCH_AGENT_DRY_RUN=1 scripts/install_sidecar_launch_agent.sh`
+- `python3 -m unittest tests.test_launch_agent_script`

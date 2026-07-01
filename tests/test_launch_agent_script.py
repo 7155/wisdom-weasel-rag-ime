@@ -19,6 +19,14 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_PYTHON": sys.executable,
                 "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
                 "RAG_IME_SIDECAR_PORT": "18766",
+                "RAG_IME_PREDICTOR_PROVIDER": "ollama",
+                "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:11434",
+                "RAG_IME_PREDICTOR_MODEL": "qwen3.5:0.8b-mlx",
+                "RAG_IME_PREDICTOR_PROFILE": "instant",
+                "RAG_IME_PREDICTOR_STREAM_FIRST": "1",
+                "RAG_IME_PREDICTOR_TIMEOUT_MS": "350",
+                "RAG_IME_HISTORY_CONTEXT_EVENTS": "6",
+                "RAG_IME_RIME_CACHE_TTL_MS": "400",
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
@@ -43,6 +51,11 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertNotIn("PYTHONPATH", payload["EnvironmentVariables"])
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_SOURCE_ROOT"], str(root))
         self.assertTrue(payload["EnvironmentVariables"]["RAG_IME_ROOT"].endswith("RagIme/app"))
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PREDICTOR_PROVIDER"], "ollama")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PREDICTOR_MODEL"], "qwen3.5:0.8b-mlx")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PREDICTOR_STREAM_FIRST"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_HISTORY_CONTEXT_EVENTS"], "6")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_RIME_CACHE_TTL_MS"], "400")
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
         self.assertIn("sidecar-server", payload["ProgramArguments"])
         self.assertIn("18766", payload["ProgramArguments"])

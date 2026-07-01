@@ -158,6 +158,19 @@ scripts/install_sidecar_launch_agent.sh
 
 The installer copies the runtime Python package into `~/Library/Application Support/RagIme/app` and stores the default sidecar database at `~/Library/Application Support/RagIme/rag-ime.sqlite`. This keeps the login service independent of the repository path and avoids launchd startup issues on external volumes.
 
+If the IME should use a local model lane at login, export the predictor
+variables before running the installer. The installer writes a whitelist of
+`RAG_IME_PREDICTOR_*`, history-context, and cache variables into the plist:
+
+```bash
+export RAG_IME_PREDICTOR_PROVIDER=ollama
+export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434
+export RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b-mlx
+export RAG_IME_PREDICTOR_PROFILE=instant
+export RAG_IME_PREDICTOR_STREAM_FIRST=1
+scripts/install_sidecar_launch_agent.sh
+```
+
 Remove the LaunchAgent:
 
 ```bash

@@ -227,6 +227,25 @@ RAG_MEMORY_CORE_COMMAND
 RAG_IME_SIDECAR_NO_SEED
 ```
 
+It also persists a whitelist of runtime tuning variables into the LaunchAgent
+plist when they are present in the installer environment. This matters for the
+actual Squirrel path because launchd does not inherit your interactive shell
+exports after login.
+
+```bash
+export RAG_IME_PREDICTOR_PROVIDER=ollama
+export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434
+export RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b-mlx
+export RAG_IME_PREDICTOR_PROFILE=instant
+export RAG_IME_PREDICTOR_STREAM_FIRST=1
+export RAG_IME_HISTORY_CONTEXT_EVENTS=6
+scripts/install_sidecar_launch_agent.sh
+```
+
+Whitelisted variables include `RAG_IME_PREDICTOR_*`,
+`RAG_IME_HISTORY_CONTEXT_*`, `RAG_IME_RIME_CACHE_TTL_MS`, and
+`RAG_IME_SUGGESTION_CACHE_SIZE`.
+
 Dry-run without loading launchd:
 
 ```bash
