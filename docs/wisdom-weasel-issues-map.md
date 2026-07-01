@@ -38,12 +38,12 @@ Rime commit
 | [#16](https://github.com/scukeqi/Wisdom-Weasel/issues/16) | 云端模型 thinking/base 模型配置不透明 | 默认不依赖云端；本地 OpenAI-compatible provider 只要求短候选，失败返回空候选；支持 `RAG_IME_PREDICTOR_PROFILE=instant|completion-instant`、`RAG_IME_PREDICTOR_DISABLE_THINKING=1`、`RAG_IME_PREDICTOR_EXTRA_BODY_JSON` / `RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON` | 已覆盖 chat/base 两种 OpenAI-compatible 入口 |
 | [#15](https://github.com/scukeqi/Wisdom-Weasel/issues/15) | 小白配置教程不足 | 保留 `README.md`、`docs/macos-frontend-adapter.md`、debug page 和 preview-json 验证命令 | 继续完善安装/配置文档 |
 | [#13](https://github.com/scukeqi/Wisdom-Weasel/issues/13) | 将用户输入作为模型已有输出，然后继续生成 | 将最近 committed input 历史和显式 recentContext 合并，传给本地小模型预测 | 本轮已实现历史上下文预测 |
-| [#12](https://github.com/scukeqi/Wisdom-Weasel/issues/12) | 4B 模型实时解码、rerank 延迟约 200ms | 用 `predict-benchmark` / `predictor-ttft` / `eval-prediction` 固定完整响应、首 chunk、质量三类门槛；Squirrel patch 已加 debounce；Mac 后端按 Ollama MLX tag -> direct MLX-LM -> native llama.cpp/Metal provider 排序 | 已有 benchmark/eval/TTFT 命令，native KV/batch provider 待实现 |
-| [#11](https://github.com/scukeqi/Wisdom-Weasel/issues/11) | LLM 流式解码降低延迟 | 已加 `predictor-ttft` 测首 chunk；但 Wisdom-Weasel 真正快点不是 streaming，而是 native llama.cpp system prompt KV cache + 多序列 batch sampling；MLX-LM 的 `stream_generate` + `prompt_cache` 是 Mac 快速实验路线 | TTFT 可测，低延迟 provider 待实现 |
+| [#12](https://github.com/scukeqi/Wisdom-Weasel/issues/12) | 4B 模型实时解码、rerank 延迟约 200ms | 用 `predict-benchmark` / `predictor-ttft` / `eval-prediction` 固定完整响应、首 chunk、质量三类门槛；Squirrel patch 已加 debounce；当前 Mac 路线优先 MLX text-only 0.8B logits top-k，后续再做 native KV/batch provider | 已跑通 MLX `next-token-logits` 多候选，doctor 可强制验证；native KV/batch provider 待实现 |
+| [#11](https://github.com/scukeqi/Wisdom-Weasel/issues/11) | LLM 流式解码降低延迟 | 已加 `predictor-ttft` 测首 chunk；但 Wisdom-Weasel 真正快点不是 streaming，而是 native llama.cpp system prompt KV cache + 多序列 batch sampling；当前 MLX 服务先用 logits top-k 直接拿多个短候选，避免 JSON 多 token 生成 | MLX logits/top-k 已接入并纳入 strict doctor；真实 KV cache 命中生成仍待做 |
 | [#8](https://github.com/scukeqi/Wisdom-Weasel/issues/8) | Transformer 拼音输入法，上下文 + 拼音 beam search | 当前先做上下文短预测；Rime/Squirrel 负责 raw pinyin parsing；RAG/模型优先看 commit preview 或 Rime candidates；无 Rime 候选但有最近已提交中文时，用 committedContext 继续预测并让 Squirrel 短暂 holdover，不让 LLM 直接解 `asdioj` | 已规避 LLM 解脏拼音，并纳入 strict doctor；拼音约束 logits / beam search 待做 |
 | [#6](https://github.com/scukeqi/Wisdom-Weasel/issues/6) | 后台可执行文件、基础词库和本体自动更新 | RAG-IME 当前优先解决本地可运行；自动更新涉及签名、模型包和词库版本治理 | 暂不做 |
 | [#5](https://github.com/scukeqi/Wisdom-Weasel/issues/5) | 收集原始拼音、上下文、最终选择文本用于微调 | 本项目默认本地保存 committed_text/recent_context/preedit/candidate_rank/provider_name；不默认上传 | 已以 local-first 方式覆盖 |
-| [#4](https://github.com/scukeqi/Wisdom-Weasel/issues/4) | llama.cpp 后端支持约束解码和束搜索 | 当前已有 `/v1/completions` prefix baseline；后续仍要做原生 llama.cpp/MLX batch/constraint provider，复用 KV cache 并并行采样多候选 | 部分覆盖，原生 provider 待实现 |
+| [#4](https://github.com/scukeqi/Wisdom-Weasel/issues/4) | llama.cpp 后端支持约束解码和束搜索 | 当前已有 `/v1/completions` prefix baseline；MLX 侧已先实现 next-token logits top-k，多候选来自一次 logits 排序而不是让模型写 JSON；后续仍要做原生 llama.cpp/MLX batch/constraint provider，复用 KV cache 并并行采样多候选 | 部分覆盖，约束解码/beam/native provider 待实现 |
 | [#2](https://github.com/scukeqi/Wisdom-Weasel/issues/2) | Linux 支持 | 当前目标是 macOS InputMethodKit；Linux 可参考 fcitx5 adapter 作为下一平台 | 暂不做 |
 
 ## 本轮加入 Goal 的内容
@@ -80,7 +80,7 @@ RAG_IME_PREDICTOR_PROFILE=instant
 
 ## 下一批可做
 
-1. 把 `PredictionProvider` 继续升级：`predictor-ttft` 已能测 streaming 首候选；下一步先测 Ollama `qwen3.5:0.8b-mlx`，再实现 direct MLX-LM 或原生 llama.cpp/Metal KV cache/batch sampling。
+1. 把 `PredictionProvider` 继续升级：MLX text-only 0.8B 的 `next-token-logits` 已跑通；下一步做真实 prompt KV cache 命中生成、原生 llama.cpp/Metal KV cache/batch sampling，以及约束候选过滤。
 2. 用 `predict-benchmark` / `predictor-ttft` 对 Qwen/Ollama MLX/MLX-LM/llama.cpp endpoint 跑真模型，记录 p50/max latency、首 chunk、候选命中和 over-budget 次数。
 3. 针对 Qwen 等模型继续压制 verbose 输出；当前支持 `RAG_IME_PREDICTOR_PROFILE=instant` / `RAG_IME_PREDICTOR_DISABLE_THINKING=1`，并在解析层继续清理 `<think>`/JSON/list 格式。
 4. 将 history context 拆成 `typed_history`、`accepted_memory`、`active_document_tail` 三类，减少上下文噪声。

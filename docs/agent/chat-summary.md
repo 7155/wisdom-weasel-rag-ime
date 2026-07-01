@@ -1,5 +1,23 @@
 # Chat Summary
 
+### 2026-07-02
+Topic:
+- Reinstall real Squirrel frontend and lock mixed candidate layout.
+
+Changes:
+- Rebuilt `/tmp/rag-ime-squirrel` from the current patch and installed the new `~/Library/Input Methods/Squirrel.app`.
+- Confirmed the patched workdir now contains `ragImePanelLinear`, `ragImePanelVertical`, `traceRagImePanelTextLayout`, and mixed separators.
+- Added strict doctor coverage for MLX `next-token-logits` candidates with `candidate_scores`, no JSON fallback, and prepared prompt cache.
+- Documented the compact layout: labels 1-5 horizontal MLX/LLM short candidates, labels 6-8 vertical RAG/memory sentence candidates.
+
+Verification:
+- `scripts/build_patched_squirrel.sh install` succeeded with Xcode 26.6.
+- Strict doctor passed with 5 model inline candidates, 3 RAG block candidates, MLX `next-token-logits`, and `failures=0 warnings=0`.
+- Focused doctor integration tests passed.
+
+Next:
+- Do one manual foreground typing pass in a normal editor, accept a side candidate by number, then run the frontend trace gate to prove AppKit rendered the horizontal/vertical split.
+
 ### 2026-07-01
 Topic:
 - Full Xcode/Squirrel build and strict local-model TTFC validation.

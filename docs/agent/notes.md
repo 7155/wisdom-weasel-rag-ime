@@ -7,6 +7,34 @@
 
 ## Log
 
+### 2026-07-02 02:28 CST
+Problem:
+- User reported the real candidate panel was still vertical; requirement is LLM short candidates horizontal, sentence/RAG candidates vertical.
+
+Findings:
+- The repo patch already had the mixed layout contract, but `/tmp/rag-ime-squirrel` was still an older patched workdir that only changed separators and did not force the panel horizontal or emit full `panel_text_layout` trace.
+- The active sidecar uses the text-only MLX model at `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local`.
+
+Changes:
+- Reset and regenerated `/tmp/rag-ime-squirrel` from the current patch.
+- Rebuilt and installed patched `~/Library/Input Methods/Squirrel.app`.
+- Restarted/reselected `im.rime.inputmethod.Squirrel.Hans`.
+- Added doctor validation for MLX `next-token-logits` candidates with `candidate_scores`, no JSON fallback, and prepared prompt cache.
+- Documented that labels 1-5 are horizontal MLX/LLM short candidates and 6-8 are vertical RAG/memory sentence rows.
+
+Commands:
+- `RAG_IME_SQUIRREL_RESET=1 scripts/prepare_squirrel_workspace.sh`
+- `scripts/build_patched_squirrel.sh install`
+- `RAG_IME_DOCTOR_CHECK_LAUNCHD=0 RAG_IME_DOCTOR_REQUIRE_PATCHED_APP=1 RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 RAG_IME_DOCTOR_REQUIRE_MIXED_LAYOUT=1 RAG_IME_DOCTOR_REQUIRE_LOGITS_MODEL=1 bash scripts/doctor_squirrel_integration.sh`
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_doctor_squirrel_integration`
+
+Findings:
+- Strict doctor passed with `failures=0 warnings=0`; live sidecar returned 8 candidates: 5 `model inline`, 3 `rag block`, 0 Rime fallback.
+- MLX model path reported `candidateModes=['next-token-logits', ...]`, `fallbackJson=[False, ...]`, `candidateScoreCounts=[8, ...]`, `promptCachePrepared=True`.
+
+Next:
+- User should type in a normal editor with Squirrel selected and then run the frontend trace gate; Codex still cannot synthesize trusted macOS input-method keystrokes for foreground AppKit verification.
+
 ### 2026-07-01 17:33 CST
 Problem:
 - Full Xcode CLI was available, but the first patched Squirrel build failed because `Frameworks/Sparkle.framework` and other Squirrel binary dependencies were not prepared.

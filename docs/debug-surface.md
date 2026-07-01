@@ -69,6 +69,21 @@ Reason:
 - the same payload can drive the debug page and native AppKit panel;
 - the IME panel stays small because it only shows one prediction row and up to three memory rows.
 
+Native Squirrel layout contract:
+
+```text
+1-5   MLX/LLM short candidates, rendered in one horizontal inline row
+6-8   RAG/memory sentence candidates, rendered as vertical block rows
+```
+
+The numbering is still global. The user does not switch number modes; the
+frontend only changes visual grouping. The patched Squirrel frontend forces the
+panel into horizontal TextKit orientation when `displayLayout=inline` model
+candidates are present, uses spaces between adjacent inline candidates, and
+uses newlines before `block/memory` candidates. The foreground trace event
+`panel_text_layout` records the separators so the doctor can catch regressions
+where MLX candidates accidentally become a vertical list again.
+
 ## Small-Area Constraint
 
 The native input method panel should not cover the document.
@@ -210,6 +225,11 @@ The strict Squirrel doctor validates this contract through the live sidecar. In
 ranks to match the visible labels, and the merge policy to stay side-first with
 `["model", "rag", "rime"]` fallback order. This catches backend/native-payload
 regressions before the foreground AppKit panel test.
+
+The same strict mode also requires the configured MLX predictor path to return
+`next-token-logits` candidates with `candidate_scores`, no JSON fallback, and a
+prepared prompt cache. This prevents the IME from silently regressing to slow
+multi-token JSON generation while still showing plausible candidates.
 
 For the foreground AppKit panel test, use the installed Squirrel frontend trace:
 
