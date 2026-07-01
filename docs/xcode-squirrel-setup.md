@@ -289,9 +289,11 @@ python3 -m rag_ime.cli \
 ```
 
 This gate is intentionally read-only. It verifies the selected input source,
-the installed `Squirrel.app`, the actual Rime managed config, required
-`~/Library/Rime/build` artifacts, the user LaunchAgent, sidecar health, the
-`/rime-suggest` sidecar payload, and the backend/Rime-sidecar quality gate.
+the installed `Squirrel.app`, the actual Rime managed config, default simplified
+schema/page-size settings in `default.custom.yaml` and compiled
+`build/default.yaml`, required `~/Library/Rime/build` artifacts, the user
+LaunchAgent, sidecar health, the `/rime-suggest` sidecar payload, and the
+backend/Rime-sidecar quality gate.
 It does not install, enable, switch, select a side candidate, or drive the GUI.
 
 Strict Squirrel doctor mode also checks the mixed candidate contract. With

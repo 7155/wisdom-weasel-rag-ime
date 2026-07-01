@@ -2,6 +2,23 @@
 
 ### 2026-07-02
 Topic:
+- Add a read-only default Rime contract gate for real Squirrel tryout.
+
+Changes:
+- `squirrel-tryout-gate` now reports `installedRimeDefaults`.
+- The gate checks both `default.custom.yaml` and compiled `build/default.yaml` for `luna_pinyin_simp` and page size 8.
+- Added a regression case where `luna_pinyin` and page size 5 fail before the quality gate.
+
+Verification:
+- Focused tryout-gate tests passed.
+- Full test suite passed: 188 tests.
+- Local Rime files already contain the expected simplified schema and page size.
+
+Next:
+- The remaining real doctor blocker is still stale `/Library/Input Methods/Squirrel.app`; run `scripts/replace_system_squirrel_app.sh` with administrator password, then rerun strict doctor and foreground trace.
+
+### 2026-07-02
+Topic:
 - Add optional foreground auto-typing and record macOS permission blocker.
 
 Changes:

@@ -234,6 +234,8 @@ class CodexHistoryTests(unittest.TestCase):
         project: str,
         sidecar_url: str = "http://127.0.0.1:8766/api",
         create_build: bool = True,
+        primary_schema: str = "luna_pinyin_simp",
+        page_size: int = 8,
     ) -> Path:
         rime_dir = self.root / f"{name}-rime"
         rime_dir.mkdir(parents=True, exist_ok=True)
@@ -253,10 +255,28 @@ class CodexHistoryTests(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
+        (rime_dir / "default.custom.yaml").write_text(
+            "\n".join(
+                [
+                    "patch:",
+                    "# >>> RAG-IME default managed block",
+                    f'  "menu/page_size": {page_size}',
+                    "  schema_list:",
+                    f"    - schema: {primary_schema}",
+                    "    - schema: luna_pinyin",
+                    "# <<< RAG-IME default managed block",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         if create_build:
             build_dir = rime_dir / "build"
             build_dir.mkdir()
-            (build_dir / "default.yaml").write_text("schema_list:\n  - schema: luna_pinyin\n", encoding="utf-8")
+            (build_dir / "default.yaml").write_text(
+                f"menu:\n  page_size: {page_size}\nschema_list:\n  - schema: {primary_schema}\n  - schema: luna_pinyin\n",
+                encoding="utf-8",
+            )
             (build_dir / "luna_pinyin.schema.yaml").write_text("schema:\n  schema_id: luna_pinyin\n", encoding="utf-8")
             (build_dir / "luna_pinyin.table.bin").write_bytes(b"table")
         return config
@@ -1076,12 +1096,16 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(report["inputSource"]["readinessState"], "switch")
         self.assertTrue(report["installedBundle"]["ok"])
         self.assertTrue(report["installedRimeConfig"]["ok"])
+        self.assertTrue(report["installedRimeDefaults"]["ok"])
+        self.assertEqual(report["installedRimeDefaults"]["primarySchema"], "luna_pinyin_simp")
+        self.assertEqual(report["installedRimeDefaults"]["pageSize"], 8)
         self.assertTrue(report["installedRimeBuild"]["ok"])
         self.assertIsNone(report["qualityGate"])
         self.assertIn("foreground editor typing verification", report["manualRequired"])
         checks = {item["name"]: item for item in report["checks"]}
         self.assertTrue(checks["installed-bundle"]["passed"])
         self.assertTrue(checks["installed-rime-config"]["passed"])
+        self.assertTrue(checks["installed-rime-defaults"]["passed"])
         self.assertTrue(checks["installed-rime-build"]["passed"])
         self.assertFalse(checks["input-source-ready"]["passed"])
         self.assertTrue(checks["launch-agent"]["passed"])
@@ -1159,6 +1183,7 @@ class CodexHistoryTests(unittest.TestCase):
         checks = {item["name"]: item for item in report["checks"]}
         self.assertTrue(checks["installed-bundle"]["passed"])
         self.assertTrue(checks["installed-rime-config"]["passed"])
+        self.assertTrue(checks["installed-rime-defaults"]["passed"])
         self.assertTrue(checks["installed-rime-build"]["passed"])
         self.assertTrue(checks["input-source-ready"]["passed"])
         self.assertTrue(checks["launch-agent"]["passed"])
@@ -1234,6 +1259,79 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertIsNone(report["qualityGate"])
         checks = {item["name"]: item for item in report["checks"]}
         self.assertFalse(checks["installed-rime-build"]["passed"])
+        self.assertTrue(checks["quality-gate"]["skipped"])
+
+    def test_cli_squirrel_tryout_gate_fails_when_default_rime_schema_is_not_simplified(self) -> None:
+        db_path = self.root / "squirrel-tryout-wrong-default.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "squirrel-tryout-wrong-default-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "agent-hook",
+                    "query": "首次运行自动注入背景记忆",
+                    "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script = self.root / "tryout-selected-wrong-default-input-source.sh"
+        check_script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=true current=im.rime.inputmethod.Squirrel.Hans hitoolboxEnabled=true thirdPartyEnabled=true'",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script.chmod(0o755)
+        fake_app = self._write_fake_squirrel_app("tryout-wrong-default")
+        config_path = self._write_fake_squirrel_config(
+            "tryout-wrong-default",
+            db_path=db_path,
+            project="wisdom-weasel-rag-ime",
+            primary_schema="luna_pinyin",
+            page_size=5,
+        )
+
+        gate_stdout = io.StringIO()
+        with redirect_stdout(gate_stdout):
+            gate_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "squirrel-tryout-gate",
+                    "--cases-file",
+                    str(cases_file),
+                    "--input-source-check-script",
+                    str(check_script),
+                    "--squirrel-app",
+                    str(fake_app),
+                    "--squirrel-config-path",
+                    str(config_path),
+                    "--skip-launch-agent",
+                    "--skip-sidecar-health",
+                ]
+            )
+
+        self.assertEqual(gate_code, 1)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["installedRimeDefaults"]["ok"])
+        self.assertEqual(report["installedRimeDefaults"]["primarySchema"], "luna_pinyin")
+        self.assertFalse(report["installedRimeDefaults"]["primarySchemaMatches"])
+        self.assertEqual(report["installedRimeDefaults"]["pageSize"], 5)
+        self.assertFalse(report["installedRimeDefaults"]["pageSizeMatches"])
+        self.assertIsNone(report["qualityGate"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertFalse(checks["installed-rime-defaults"]["passed"])
         self.assertTrue(checks["quality-gate"]["skipped"])
 
     def test_cli_squirrel_tryout_gate_probes_sidecar_rime_suggest(self) -> None:

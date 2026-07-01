@@ -7,6 +7,28 @@
 
 ## Log
 
+### 2026-07-02 03:55 CST
+Problem:
+- The install script wrote default simplified Rime settings, but `squirrel-tryout-gate` only checked that build files existed.
+- A real install could silently compile `luna_pinyin` or a smaller page size while still passing the earlier tryout gate.
+
+Changes:
+- Added `installedRimeDefaults` to `squirrel-tryout-gate`.
+- The gate now verifies `default.custom.yaml` and compiled `build/default.yaml` both use primary schema `luna_pinyin_simp` and `menu.page_size=8` by default.
+- Added a regression test proving `luna_pinyin` plus `page_size=5` fails before quality-gate execution.
+- Updated README and Xcode setup docs to describe the read-only default Rime contract check.
+
+Commands:
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_codex_history.CodexHistoryTests.test_cli_squirrel_tryout_gate_fails_fast_when_input_source_is_not_selected tests.test_codex_history.CodexHistoryTests.test_cli_squirrel_tryout_gate_runs_quality_gate_when_input_source_is_selected tests.test_codex_history.CodexHistoryTests.test_cli_squirrel_tryout_gate_fails_fast_when_rime_build_is_missing tests.test_codex_history.CodexHistoryTests.test_cli_squirrel_tryout_gate_fails_when_default_rime_schema_is_not_simplified tests.test_codex_history.CodexHistoryTests.test_cli_squirrel_tryout_gate_probes_sidecar_rime_suggest`
+- `python3 -m py_compile rag_ime/cli.py`
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`
+- Real local `_tryout_installed_rime_defaults(...)` probe against `~/Library/Rime/squirrel.custom.yaml`.
+
+Findings:
+- Focused tryout-gate tests passed: 5 tests.
+- Full test suite passed: 188 tests.
+- Real local `~/Library/Rime/default.custom.yaml` and `~/Library/Rime/build/default.yaml` already show `luna_pinyin_simp` and page size 8.
+
 ### 2026-07-02 03:32 CST
 Problem:
 - User clarified the panel rule again: LLM candidates should be horizontal; sentence/RAG candidates should be vertical.
