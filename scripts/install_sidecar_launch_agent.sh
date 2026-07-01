@@ -163,8 +163,34 @@ if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "TRUE" ]]; then
 fi
 
 DOMAIN="gui/$(id -u)"
+
+bootstrap_launch_agent() {
+  local attempt
+  local delay
+  local error_log
+
+  error_log="$(mktemp "${TMPDIR:-/tmp}/rag-ime-launchctl-bootstrap.XXXXXX")"
+  trap 'rm -f "$error_log"' RETURN
+
+  for attempt in 1 2 3 4 5; do
+    if launchctl bootstrap "$DOMAIN" "$PLIST_PATH" 2>"$error_log"; then
+      return 0
+    fi
+    if [[ "$attempt" == "5" ]]; then
+      break
+    fi
+    delay="$(awk "BEGIN { printf \"%.1f\", $attempt * 0.4 }")"
+    sleep "$delay"
+  done
+
+  echo "launchctl bootstrap failed for $DOMAIN/$LABEL" >&2
+  cat "$error_log" >&2
+  return 1
+}
+
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-launchctl bootstrap "$DOMAIN" "$PLIST_PATH"
+sleep 0.2
+bootstrap_launch_agent
 launchctl kickstart -k "$DOMAIN/$LABEL"
 
 echo "$PLIST_PATH"
