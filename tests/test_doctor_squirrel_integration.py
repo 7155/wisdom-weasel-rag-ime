@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -276,11 +277,11 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-input-source-") as tmp:
             tmp_path = Path(tmp)
-            app = tmp_path / "Squirrel.app"
-            executable = app / "Contents" / "MacOS" / "Squirrel"
-            executable.parent.mkdir(parents=True)
-            executable.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-            executable.chmod(0o755)
+            calls_log = tmp_path / "squirrel-calls.log"
+            app = _write_fake_squirrel_app(
+                tmp_path / "Squirrel.app",
+                body="#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$SQUIRREL_CALLS_LOG\"\nexit 0\n",
+            )
 
             fake_bin = tmp_path / "bin"
             fake_bin.mkdir()
@@ -303,6 +304,80 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 "RAG_IME_PYTHON": sys.executable,
                 "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
                 "RAG_IME_SQUIRREL_APP": str(app),
+                "RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES": str(app),
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "1",
+                "SQUIRREL_CALLS_LOG": str(calls_log),
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            calls = calls_log.read_text(encoding="utf-8")
+
+        self.assertIn("[OK] installed Squirrel.app executable exists", result.stdout)
+        self.assertIn("[OK] macOS input source enabled", result.stdout)
+        self.assertIn("--register-input-source", calls)
+        self.assertIn("--enable-input-source im.rime.inputmethod.Squirrel.Hans", calls)
+        self.assertIn("summary: failures=0", result.stdout)
+
+    def test_doctor_can_require_patched_squirrel_app_marker(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-patched-app-") as tmp:
+            tmp_path = Path(tmp)
+            app = _write_fake_squirrel_app(tmp_path / "Squirrel.app", body="#!/usr/bin/env bash\nexit 0\n")
+            fake_bin = _write_fake_swift(tmp_path, enabled=True)
+
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                "RAG_IME_SQUIRREL_APP": str(app),
+                "RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES": str(app),
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_PATCHED_APP": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[FAIL] installed Squirrel.app lacks RAG-IME mixed-layout frontend trace", result.stdout)
+
+    def test_doctor_reports_stale_duplicate_squirrel_app_as_info(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-duplicate-app-") as tmp:
+            tmp_path = Path(tmp)
+            app = _write_fake_squirrel_app(
+                tmp_path / "Squirrel.app",
+                body=(
+                    "#!/usr/bin/env bash\n"
+                    "# rag-ime.squirrel-frontend-trace.v1\n"
+                    "# panel_text_layout\n"
+                    "exit 0\n"
+                ),
+            )
+            stale = _write_fake_squirrel_app(tmp_path / "StaleSquirrel.app", body="#!/usr/bin/env bash\nexit 0\n")
+            fake_bin = _write_fake_swift(tmp_path, enabled=True)
+
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                "RAG_IME_SQUIRREL_APP": str(app),
+                "RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES": f"{app}:{stale}",
                 "RAG_IME_SIDECAR_PORT": "19876",
                 "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
                 "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "1",
@@ -316,8 +391,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 capture_output=True,
             )
 
-        self.assertIn("[OK] installed Squirrel.app executable exists", result.stdout)
-        self.assertIn("[OK] macOS input source enabled", result.stdout)
+        self.assertIn("[OK] installed Squirrel.app contains RAG-IME mixed-layout frontend trace", result.stdout)
+        self.assertIn("[INFO] stale Squirrel.app with same bundle id exists outside target app", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_fails_required_macos_input_source_when_not_enabled(self) -> None:
@@ -351,6 +426,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 "RAG_IME_PYTHON": sys.executable,
                 "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
                 "RAG_IME_SQUIRREL_APP": str(app),
+                "RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES": str(app),
                 "RAG_IME_SIDECAR_PORT": "19876",
                 "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
                 "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "1",
@@ -365,6 +441,38 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("[FAIL] macOS input source is registered but not enabled/selectable", result.stdout)
+
+
+def _write_fake_swift(tmp_path: Path, *, enabled: bool) -> Path:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(exist_ok=True)
+    swift = fake_bin / "swift"
+    swift.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                (
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified "
+                    f"enabled={'true' if enabled else 'false'} selectable=true selected=false'"
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    swift.chmod(0o755)
+    return fake_bin
+
+
+def _write_fake_squirrel_app(path: Path, *, body: str) -> Path:
+    executable = path / "Contents" / "MacOS" / "Squirrel"
+    executable.parent.mkdir(parents=True)
+    executable.write_text(body, encoding="utf-8")
+    executable.chmod(0o755)
+    info_plist = path / "Contents" / "Info.plist"
+    with info_plist.open("wb") as handle:
+        plistlib.dump({"CFBundleIdentifier": "im.rime.inputmethod.Squirrel"}, handle)
+    return path
 
 
 if __name__ == "__main__":

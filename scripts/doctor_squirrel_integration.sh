@@ -21,6 +21,10 @@ REQUIRE_INPUT_SOURCE_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE:-}"
 REQUIRE_INPUT_SOURCE="${REQUIRE_INPUT_SOURCE_CONFIGURED:-0}"
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
+REFRESH_INPUT_SOURCE="${RAG_IME_DOCTOR_REFRESH_INPUT_SOURCE:-1}"
+REQUIRE_PATCHED_APP_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_PATCHED_APP:-}"
+REQUIRE_PATCHED_APP="${REQUIRE_PATCHED_APP_CONFIGURED:-0}"
+SQUIRREL_DUPLICATE_APP_CANDIDATES="${RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES:-$HOME/Library/Input Methods/Squirrel.app:/Library/Input Methods/Squirrel.app}"
 EXPECT_PREDICTOR_PROVIDER="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROVIDER:-${RAG_IME_PREDICTOR_PROVIDER:-}}"
 EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDICTOR_MODEL:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
@@ -32,6 +36,10 @@ sidecar_healthy=0
 
 ok() {
   printf '[OK] %s\n' "$1"
+}
+
+info() {
+  printf '[INFO] %s\n' "$1"
 }
 
 warn() {
@@ -58,6 +66,61 @@ bool_true() {
   [[ "$1" == "1" || "$1" == "true" || "$1" == "TRUE" || "$1" == "yes" || "$1" == "YES" ]]
 }
 
+app_bundle_id() {
+  local app="$1"
+  plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist" 2>/dev/null || true
+}
+
+same_path() {
+  local left="$1"
+  local right="$2"
+  [[ "$(cd "$(dirname "$left")" 2>/dev/null && pwd -P)/$(basename "$left")" == "$(cd "$(dirname "$right")" 2>/dev/null && pwd -P)/$(basename "$right")" ]]
+}
+
+squirrel_app_has_mixed_frontend_trace() {
+  local app="$1"
+  local executable="$app/Contents/MacOS/Squirrel"
+  [[ -x "$executable" ]] || return 1
+  strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
+    strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout"
+}
+
+check_patched_squirrel_app() {
+  local app="$1"
+  local required="$2"
+
+  if squirrel_app_has_mixed_frontend_trace "$app"; then
+    ok "installed Squirrel.app contains RAG-IME mixed-layout frontend trace"
+  else
+    require_or_warn "$required" "installed Squirrel.app lacks RAG-IME mixed-layout frontend trace; rebuild/install patched Squirrel: $app"
+  fi
+}
+
+check_duplicate_squirrel_apps() {
+  local configured_app="$1"
+  local candidate
+  local bundle_id
+  local found_stale=0
+
+  IFS=':' read -r -a duplicate_candidates <<< "$SQUIRREL_DUPLICATE_APP_CANDIDATES"
+  for candidate in "${duplicate_candidates[@]}"; do
+    [[ -n "$candidate" && -d "$candidate" ]] || continue
+    if same_path "$candidate" "$configured_app"; then
+      continue
+    fi
+    bundle_id="$(app_bundle_id "$candidate")"
+    [[ "$bundle_id" == "im.rime.inputmethod.Squirrel" ]] || continue
+    if ! squirrel_app_has_mixed_frontend_trace "$candidate"; then
+      found_stale=1
+      info "stale Squirrel.app with same bundle id exists outside target app: $candidate"
+    fi
+  done
+
+  if [[ "$found_stale" == "0" ]]; then
+    ok "no stale same-bundle Squirrel.app detected in duplicate app candidates"
+  fi
+}
+
 if bool_true "$REQUIRE_TRYOUT"; then
   REQUIRE_SIDECAR=1
   REQUIRE_XCODE=1
@@ -66,6 +129,9 @@ if bool_true "$REQUIRE_TRYOUT"; then
   fi
   if [[ -z "$REQUIRE_INPUT_SOURCE_CONFIGURED" ]]; then
     REQUIRE_INPUT_SOURCE=1
+  fi
+  if [[ -z "$REQUIRE_PATCHED_APP_CONFIGURED" ]]; then
+    REQUIRE_PATCHED_APP=1
   fi
 fi
 
@@ -78,6 +144,7 @@ printf 'squirrel_input_source: %s\n' "$SQUIRREL_INPUT_SOURCE_ID"
 printf 'tryout_readiness: %s\n' "$REQUIRE_TRYOUT"
 printf 'require_hitoolbox_enabled: %s\n' "$REQUIRE_HITOOLBOX_ENABLED"
 printf 'require_mixed_layout: %s\n' "$REQUIRE_MIXED_LAYOUT"
+printf 'refresh_input_source: %s\n' "$REFRESH_INPUT_SOURCE"
 printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
 printf 'DEVELOPER_DIR: %s\n\n' "${DEVELOPER_DIR:-<unset>}"
 
@@ -162,6 +229,18 @@ check_macos_input_source() {
     return
   fi
 
+  check_patched_squirrel_app "$app" "$REQUIRE_PATCHED_APP"
+  check_duplicate_squirrel_apps "$app"
+
+  if bool_true "$REFRESH_INPUT_SOURCE"; then
+    "$app/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
+    sleep 0.3
+    "$app/Contents/MacOS/Squirrel" --enable-input-source "$input_source_id" >/dev/null 2>&1 ||
+      "$app/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 ||
+      true
+    sleep 0.3
+  fi
+
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/rag-ime-tis-input-source.out.XXXXXX")"
   out="$tmpdir/out"
   set +e
@@ -178,7 +257,7 @@ check_macos_input_source() {
   elif grep -Fq "id=$input_source_id" "$out"; then
     require_or_warn "$REQUIRE_INPUT_SOURCE" "macOS input source is registered but not enabled/selectable: $(cat "$out")"
   else
-    require_or_warn "$REQUIRE_INPUT_SOURCE" "macOS input source is not registered: $(cat "$out")"
+    require_or_warn "$REQUIRE_INPUT_SOURCE" "macOS input source is not registered: $(cat "$out"); run RAG_IME_SQUIRREL_APP=\"$app\" scripts/enable_squirrel_hitoolbox_input_source.sh"
   fi
   rm -rf "$tmpdir"
 }
