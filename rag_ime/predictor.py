@@ -20,8 +20,13 @@ OPENAI_CHAT_SYSTEM_PROMPT = (
 )
 
 OLLAMA_CHAT_SYSTEM_PROMPT = (
-    "你是中文输入法候选预测器。只输出 JSON 字符串数组, "
-    '例如 ["本地记忆输入法","RAG候选","历史上下文"], 不要解释。'
+    "你是中文输入法续写候选预测器。只输出 JSON 字符串数组, "
+    '例如 ["候选展示","RAG候选","历史上下文"], 不要重复当前输入, 不要解释。'
+)
+
+OLLAMA_STREAM_FIRST_SYSTEM_PROMPT = (
+    "你是中文输入法续写候选预测器。只输出一个最可能接在当前输入后面的候选词或短语, "
+    "不要重复当前输入, 不要 JSON, 不要编号, 不要解释, 输出后停止。"
 )
 
 MLX_STABLE_PREFIX = f"{OLLAMA_CHAT_SYSTEM_PROMPT}\n"
@@ -159,6 +164,7 @@ class OpenAICompatiblePredictionProvider:
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_text = "\n".join(raw_texts)
         candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
+        candidates = _filter_repeated_input_candidates(candidates, query)
         return [
             ModelPrediction(
                 text=item,
@@ -283,10 +289,11 @@ class OllamaPredictionProvider:
         if not query and not context:
             return []
         max_items = max(1, min(10, int(max_candidates)))
+        stable_prefix = OLLAMA_STREAM_FIRST_SYSTEM_PROMPT if self.config.stream_first_candidate else OLLAMA_CHAT_SYSTEM_PROMPT
         request_meta = _prediction_request_metadata(
             context=context,
             query=query,
-            stable_prefix=OLLAMA_CHAT_SYSTEM_PROMPT,
+            stable_prefix=stable_prefix,
         )
         self.last_error = ""
         started = time.perf_counter()
@@ -317,6 +324,7 @@ class OllamaPredictionProvider:
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_text = "\n".join(raw_texts)
         candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
+        candidates = _filter_repeated_input_candidates(candidates, query)
         return [
             ModelPrediction(
                 text=item,
@@ -450,6 +458,7 @@ class MlxPredictionServiceProvider:
         if not candidates:
             candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
         candidates = _parse_prediction_candidate_texts(candidates, max_candidates=max_items)
+        candidates = _filter_repeated_input_candidates(candidates, query)
         return [
             ModelPrediction(
                 text=item,
@@ -886,6 +895,7 @@ def benchmark_streaming_ttft_provider(
     *,
     max_candidates: int = 3,
     repeat: int = 3,
+    warmup_runs: int = 0,
     latency_budget_ms: int = 200,
     keep_alive: int | str | None = -1,
 ) -> dict[str, Any]:
@@ -912,6 +922,35 @@ def benchmark_streaming_ttft_provider(
             "cases": [],
         }
 
+    def measure_case(case: PredictionBenchmarkCase) -> dict[str, Any]:
+        if provider_kind == "local-mlx":
+            return _measure_mlx_stream_ttft(
+                config,
+                current_input=case.current_input,
+                recent_context=case.recent_context,
+                max_candidates=max_candidates,
+                stop_after_first_candidate=True,
+            )
+        return _measure_ollama_stream_ttft(
+            config,
+            current_input=case.current_input,
+            recent_context=case.recent_context,
+            max_candidates=max_candidates,
+            keep_alive=keep_alive,
+            stop_after_first_candidate=True,
+        )
+
+    warmup_results: list[dict[str, Any]] = []
+    warmup_count = max(0, int(warmup_runs))
+    for warmup_index in range(1, warmup_count + 1):
+        for case in cases:
+            measured = measure_case(case)
+            measured["currentInput"] = case.current_input
+            if case.case_id:
+                measured["caseId"] = case.case_id
+            measured["warmupIndex"] = warmup_index
+            warmup_results.append(measured)
+
     results: list[dict[str, Any]] = []
     first_chunk_latencies = []
     first_candidate_latencies = []
@@ -919,21 +958,7 @@ def benchmark_streaming_ttft_provider(
     repeat_count = max(1, int(repeat))
     for repeat_index in range(1, repeat_count + 1):
         for case in cases:
-            if provider_kind == "local-mlx":
-                measured = _measure_mlx_stream_ttft(
-                    config,
-                    current_input=case.current_input,
-                    recent_context=case.recent_context,
-                    max_candidates=max_candidates,
-                )
-            else:
-                measured = _measure_ollama_stream_ttft(
-                    config,
-                    current_input=case.current_input,
-                    recent_context=case.recent_context,
-                    max_candidates=max_candidates,
-                    keep_alive=keep_alive,
-                )
+            measured = measure_case(case)
             measured["currentInput"] = case.current_input
             if case.case_id:
                 measured["caseId"] = case.case_id
@@ -967,6 +992,7 @@ def benchmark_streaming_ttft_provider(
             "baseCaseCount": len(cases),
             "effectiveCaseCount": len(results),
         },
+        "warmup": _streaming_ttft_warmup_summary(warmup_results, requested_runs=warmup_count),
         "summary": {
             "caseCount": len(cases),
             "sampleCount": len(results),
@@ -990,6 +1016,24 @@ def benchmark_streaming_ttft_provider(
             "candidateSampleCount": sum(1 for item in results if int(item.get("candidateCount") or 0) > 0),
         },
         "cases": results,
+    }
+
+
+def _streaming_ttft_warmup_summary(results: list[dict[str, Any]], *, requested_runs: int) -> dict[str, Any]:
+    first_candidate_latencies = [
+        int(item["firstCandidateMs"]) for item in results if isinstance(item.get("firstCandidateMs"), int)
+    ]
+    first_chunk_latencies = [int(item["firstChunkMs"]) for item in results if isinstance(item.get("firstChunkMs"), int)]
+    return {
+        "requestedRuns": requested_runs,
+        "sampleCount": len(results),
+        "hasFirstCandidate": bool(first_candidate_latencies),
+        "p50FirstCandidateMs": _percentile_ms(first_candidate_latencies, 0.50),
+        "p95FirstCandidateMs": _percentile_ms(first_candidate_latencies, 0.95),
+        "p50FirstChunkMs": _percentile_ms(first_chunk_latencies, 0.50),
+        "p95FirstChunkMs": _percentile_ms(first_chunk_latencies, 0.95),
+        "firstCandidateMissingCount": sum(1 for item in results if not isinstance(item.get("firstCandidateMs"), int)),
+        "failureCount": sum(1 for item in results if not bool(item.get("ok"))),
     }
 
 
@@ -1033,6 +1077,7 @@ def _measure_ollama_stream_ttft(
                         first_text = text
                     if first_candidate_ms is None:
                         candidates = _parse_streaming_prediction_candidates(full_text, max_candidates=max_candidates)
+                        candidates = _filter_repeated_input_candidates(candidates, query)
                         if candidates:
                             first_candidate_ms = int((time.perf_counter() - started) * 1000)
                             if stop_after_first_candidate:
@@ -1066,8 +1111,10 @@ def _measure_ollama_stream_ttft(
     total_ms = int((time.perf_counter() - started) * 1000)
     if not stop_after_first_candidate:
         candidates = _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
+        candidates = _filter_repeated_input_candidates(candidates, query)
     elif not candidates:
         candidates = _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
+        candidates = _filter_repeated_input_candidates(candidates, query)
     return {
         "ok": first_chunk_ms is not None,
         "firstChunkMs": first_chunk_ms,
@@ -1119,12 +1166,14 @@ def _measure_mlx_stream_ttft(
                         first_text = text
                     if first_candidate_ms is None:
                         final_candidates = _parse_streaming_prediction_candidates(full_text, max_candidates=max_candidates)
+                        final_candidates = _filter_repeated_input_candidates(final_candidates, query)
                         if final_candidates:
                             first_candidate_ms = int((time.perf_counter() - started) * 1000)
                             if stop_after_first_candidate:
                                 break
                 if isinstance(payload.get("candidates"), list):
                     final_candidates = _candidate_parts_from_json_value(payload.get("candidates"))
+                    final_candidates = _filter_repeated_input_candidates(final_candidates, query)
                     if final_candidates and first_candidate_ms is None:
                         first_candidate_ms = int((time.perf_counter() - started) * 1000)
                         if stop_after_first_candidate:
@@ -1162,6 +1211,7 @@ def _measure_mlx_stream_ttft(
     total_ms = int((time.perf_counter() - started) * 1000)
     candidates = final_candidates or _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
     candidates = _parse_prediction_candidate_texts(candidates, max_candidates=max_candidates)
+    candidates = _filter_repeated_input_candidates(candidates, query)
     return {
         "ok": first_chunk_ms is not None,
         "firstChunkMs": first_chunk_ms,
@@ -1239,6 +1289,29 @@ def _parse_prediction_candidate_texts(texts: list[str], *, max_candidates: int =
     return candidates
 
 
+def _filter_repeated_input_candidates(candidates: list[str], current_input: str) -> list[str]:
+    input_norm = _candidate_repeat_norm(current_input)
+    if not input_norm:
+        return candidates
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_norm = _candidate_repeat_norm(candidate)
+        if not candidate_norm:
+            continue
+        if candidate_norm == input_norm or candidate_norm in input_norm:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+    return result
+
+
+def _candidate_repeat_norm(text: str) -> str:
+    return re.sub(r"[\s\W_]+", "", text, flags=re.UNICODE).lower()
+
+
 def _candidate_parts_from_text(text: str) -> list[str]:
     cleaned = _clean_prediction_output(text)
     if not cleaned:
@@ -1272,9 +1345,22 @@ def _parse_streaming_prediction_candidates(text: str, *, max_candidates: int = 5
     if quoted:
         return _parse_prediction_candidate_texts(quoted, max_candidates=max_candidates)
 
-    if not any(mark in cleaned for mark in "[]{}\""):
+    if not any(mark in cleaned for mark in "[]{}\"") and _plain_streaming_candidate_ready(cleaned):
         return _parse_prediction_candidate_texts([cleaned], max_candidates=max_candidates)
     return []
+
+
+def _plain_streaming_candidate_ready(text: str) -> bool:
+    compacted = compact_whitespace(text)
+    if not compacted:
+        return False
+    cjk_count = len(re.findall(r"[\u3400-\u9fff]", compacted))
+    visible_len = len(re.sub(r"\s+", "", compacted))
+    if cjk_count >= 2:
+        return True
+    if cjk_count == 0:
+        return visible_len >= 3
+    return visible_len >= 4
 
 
 def _clean_prediction_output(text: str) -> str:
@@ -1336,6 +1422,19 @@ def _ollama_chat_body(
     max_candidates: int,
     stream: bool,
 ) -> dict[str, Any]:
+    stream_first_prompt = bool(stream)
+    system_prompt = OLLAMA_STREAM_FIRST_SYSTEM_PROMPT if stream_first_prompt else OLLAMA_CHAT_SYSTEM_PROMPT
+    user_content = (
+        f"上下文: {context}\n"
+        f"当前输入: {query}\n"
+        "只输出 1 个最可能接在当前输入后面的短候选, 不要重复当前输入。"
+        if stream_first_prompt
+        else (
+            f"上下文: {context}\n"
+            f"当前输入: {query}\n"
+            f"输出 {max_candidates} 个最可能接在当前输入后面的短候选, 不要重复当前输入。"
+        )
+    )
     options = {
         "num_predict": max(1, min(64, int(getattr(config, "max_tokens", 12)))),
         "temperature": float(getattr(config, "temperature", 0.2)),
@@ -1346,15 +1445,11 @@ def _ollama_chat_body(
         "messages": [
             {
                 "role": "system",
-                "content": OLLAMA_CHAT_SYSTEM_PROMPT,
+                "content": system_prompt,
             },
             {
                 "role": "user",
-                "content": (
-                    f"上下文: {context}\n"
-                    f"当前输入: {query}\n"
-                    f"输出 {max_candidates} 个最可能的短候选。"
-                ),
+                "content": user_content,
             },
         ],
         "stream": stream,

@@ -23,6 +23,8 @@ from rag_ime.predictor import (
     parse_prediction_candidates,
     prediction_provider_from_env,
     prediction_provider_status,
+    _filter_repeated_input_candidates,
+    _parse_streaming_prediction_candidates,
 )
 
 
@@ -612,11 +614,29 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual([item.text for item in predictions], ["本地记忆"])
         self.assertTrue(_MockOllamaStreamingHandler.captured_payload["stream"])
         self.assertEqual(_MockOllamaStreamingHandler.captured_payload["keep_alive"], -1)
+        self.assertIn("只输出一个最可能", _MockOllamaStreamingHandler.captured_payload["messages"][0]["content"])
+        self.assertNotIn("JSON 字符串数组", _MockOllamaStreamingHandler.captured_payload["messages"][0]["content"])
         self.assertTrue(predictions[0].metadata["stream_first_candidate"])
         self.assertIsInstance(predictions[0].metadata["first_candidate_ms"], int)
         self.assertEqual(len(predictions[0].metadata["requestMeta"]["contextFingerprint"]), 16)
         status = prediction_provider_status(provider)
         self.assertTrue(status["streamFirstCandidate"])
+
+    def test_streaming_plain_text_parser_waits_for_usable_candidate(self) -> None:
+        self.assertEqual(_parse_streaming_prediction_candidates("本", max_candidates=1), [])
+        self.assertEqual(_parse_streaming_prediction_candidates("本地", max_candidates=1), ["本地"])
+        self.assertEqual(_parse_streaming_prediction_candidates("R", max_candidates=1), [])
+        self.assertEqual(_parse_streaming_prediction_candidates("RAG", max_candidates=1), ["RAG"])
+
+    def test_prediction_filter_removes_repeated_current_input_tokens(self) -> None:
+        self.assertEqual(
+            _filter_repeated_input_candidates(["RAG", "候选展示"], "RAG 输入法"),
+            ["候选展示"],
+        )
+        self.assertEqual(
+            _filter_repeated_input_candidates(["PROJECT", "背景记忆"], "PROJECT_MEMORY_BLOCK"),
+            ["背景记忆"],
+        )
 
     def test_mlx_provider_uses_resident_prediction_service(self) -> None:
         _MockMlxHandler.captured_path = ""
@@ -1273,7 +1293,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(report["supported"])
         self.assertTrue(report["summary"]["hasFirstChunk"])
         self.assertTrue(report["summary"]["hasFirstCandidate"])
-        self.assertEqual(report["cases"][0]["candidateCount"], 2)
+        self.assertEqual(report["cases"][0]["candidateCount"], 1)
         self.assertEqual(report["cases"][0]["candidates"][0], "本地记忆")
         self.assertIsInstance(report["cases"][0]["firstChunkMs"], int)
         self.assertIsInstance(report["cases"][0]["firstCandidateMs"], int)
@@ -1357,6 +1377,66 @@ class PredictionProviderTests(unittest.TestCase):
         )
         self.assertTrue(all(payload["stream"] for payload in _MockOllamaStreamingMatrixHandler.captured_payloads))
         self.assertTrue(all(payload["think"] is False for payload in _MockOllamaStreamingMatrixHandler.captured_payloads))
+
+    def test_cli_bench_ime_ttfc_can_warm_model_without_scoring_warmup(self) -> None:
+        _MockOllamaStreamingMatrixHandler.seen_models = []
+        _MockOllamaStreamingMatrixHandler.captured_payloads = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaStreamingMatrixHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-ttfc-warmup-") as tmp:
+                cases_file = os.path.join(tmp, "ime-ttfc-cases.jsonl")
+                with open(cases_file, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "short-context",
+                                "currentInput": "RAG 输入法",
+                                "recentContext": "用户正在写本地记忆输入法",
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "--core-mode",
+                            "fixture",
+                            "bench-ime-ttfc",
+                            "--cases-file",
+                            cases_file,
+                            "--provider",
+                            "ollama",
+                            "--base-url",
+                            f"http://127.0.0.1:{server.server_port}",
+                            "--models",
+                            "qwen3.5:0.8b-mlx",
+                            "--warmup-runs",
+                            "2",
+                            "--repeat",
+                            "1",
+                            "--latency-budget-ms",
+                            "200",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["warmupRuns"], 2)
+        self.assertEqual(report["repeat"]["effectiveCaseCount"], 1)
+        self.assertEqual(report["models"][0]["warmup"]["sampleCount"], 2)
+        self.assertEqual(report["models"][0]["summary"]["sampleCount"], 1)
+        self.assertEqual(
+            _MockOllamaStreamingMatrixHandler.seen_models,
+            ["qwen3.5:0.8b-mlx", "qwen3.5:0.8b-mlx", "qwen3.5:0.8b-mlx"],
+        )
 
     def test_cli_quality_gate_can_require_model_ttfc(self) -> None:
         _MockOllamaStreamingMatrixHandler.seen_models = []
@@ -1600,7 +1680,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(report["summary"]["hasFirstCandidate"])
         self.assertEqual(report["summary"]["firstChunkMissingCount"], 0)
         self.assertEqual(report["summary"]["firstCandidateMissingCount"], 0)
-        self.assertEqual(report["cases"][0]["candidateCount"], 2)
+        self.assertEqual(report["cases"][0]["candidateCount"], 1)
         self.assertEqual(report["cases"][0]["candidates"][0], "本地记忆")
         self.assertEqual(_MockMlxHandler.captured_path, "/predict-stream")
         self.assertTrue(_MockMlxHandler.captured_payload["stream"])

@@ -117,8 +117,11 @@ PY
 if command -v swiftc >/dev/null 2>&1; then
   tmpdir="$(mktemp -d /tmp/rag-ime-squirrel-stub.XXXXXX)"
   stubfile="$tmpdir/SquirrelConfigStub.swift"
+  module_cache="$tmpdir/module-cache"
+  mkdir -p "$module_cache"
   printf 'import Foundation\nfinal class SquirrelConfig {\n  func getBool(_ option: String) -> Bool? { nil }\n  func getString(_ option: String) -> String? { nil }\n  func getDouble(_ option: String) -> Double? { nil }\n}\n' > "$stubfile"
   swiftc -typecheck \
+    -module-cache-path "$module_cache" \
     "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" \
     "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" \
     "$stubfile"

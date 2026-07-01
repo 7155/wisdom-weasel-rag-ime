@@ -22,7 +22,7 @@ This repo should focus on:
 - Rime/Squirrel production frontend integration plan;
 - optional local OpenAI-compatible model prediction lane;
 - history-input context for local model prediction;
-- measured Mac-local model TTFT gate: `qwen3.5:0.8b-mlx` reached 46 ms p50 first chunk in a warm sequential smoke, but still fails project-memory quality gates, so RAG remains the source of truth;
+- measured Mac-local model gate: `qwen3.5:0.8b-mlx` can stream raw text well under 200 ms on a warm runner, but strict TTFC filters now reject half tokens and repeated current-input tokens; the 0.8B model is therefore a speed smoke path, not the default quality source;
 - Mac-local acceptance scenarios.
 
 This repo should not duplicate:
@@ -313,6 +313,7 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --model-ttfc-provider ollama \
   --model-ttfc-base-url http://127.0.0.1:11434 \
   --model-ttfc-models qwen3.5:0.8b-mlx \
+  --model-ttfc-warmup-runs 1 \
   --model-ttfc-repeat 20 \
   --model-ttfc-latency-budget-ms 200 \
   --max-model-ttfc-p95-ms 200 \
@@ -325,7 +326,10 @@ timeout gates make the display-path contract stricter: RAG/model side lanes must
 fit the IME budget instead of silently falling back on most requests.
 `--require-model-ttfc` adds the local-model speed contract: the selected model
 must produce a first parsed candidate within the configured p95 and over-budget
-thresholds. Leave it off when no local model server is running.
+thresholds. `--model-ttfc-warmup-runs` separates cold model load from the
+resident input-method path; still record cold-start results separately when
+choosing a production runner. Leave the TTFC gate off when no local model server
+is running.
 
 For the final Wisdom-Weasel-style local model provider, add explicit capability
 requirements. This should fail for Ollama/MLX smoke providers until a native
@@ -533,13 +537,25 @@ python3 -m rag_ime.cli --core-mode fixture \
   --provider ollama \
   --base-url http://127.0.0.1:11434 \
   --models qwen3.5:0.8b-mlx,qwen3.5:2b-mlx \
+  --warmup-runs 1 \
   --repeat 20 \
   --latency-budget-ms 200
 ```
 
 `bench-ime-ttfc` reports one summary per model with `p50FirstCandidateMs`,
 `p95FirstCandidateMs`, `overBudgetCount`, `failureCount`, and a latency-only
-winner. Add `--include-cases` when debugging individual samples.
+winner. `--warmup-runs` runs full case passes before scoring so cold-load or
+model-switch samples do not hide the resident IME path. Add `--include-cases`
+when debugging individual samples.
+
+The benchmark counts only usable first candidates. A raw token such as `R`, a
+JSON prefix such as `["`, or a model echo of the current input such as `RAG`
+does not satisfy TTFC. On 2026-07-01, `qwen3.5:0.8b-mlx` stayed fast on the
+Mac warm path, but it frequently repeated mixed English/Chinese technical
+input (`RAG`, `Squirrel`, `Wisdom-Weasel`), so the strict TTFC gate correctly
+reported many missing candidates. That is the expected decision point: keep
+Rime/RAG as the primary lane, and test larger or completion-oriented local
+models before enabling model side candidates by default.
 Once a model is chosen, wire the same TTFC cases into `quality-gate` with
 `--require-model-ttfc`; this makes first-candidate latency part of the normal
 release gate instead of a manual benchmark result.
