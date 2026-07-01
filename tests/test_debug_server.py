@@ -74,6 +74,8 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(health["suggestionCache"]["enabled"])
         self.assertEqual(health["suggestionCache"]["hits"], 0)
         self.assertFalse(health["vectorStats"]["enabled"])
+        self.assertFalse(health["predictor"]["configured"])
+        self.assertEqual(health["predictor"]["providerName"], "NullPredictionProvider")
         seeded = self.service.seed()
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)

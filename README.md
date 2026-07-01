@@ -247,6 +247,14 @@ python3 -m rag_ime.cli suggest-json "输入法 个人记忆" --recent-context "l
 
 Use `RAG_IME_PREDICTOR_PROFILE=completion-instant` for base-model or llama.cpp-style `/v1/completions` servers. That mode sends `history + current_input` as a prefix and requests multiple candidates with `n`, matching Wisdom-Weasel's faster base-completion direction more closely than chat prompting. It is still an OpenAI-compatible baseline; native llama.cpp KV-cache/batch sampling remains a later provider.
 
+Check whether the model lane is configured without calling the model:
+
+```bash
+python3 -m rag_ime.cli predictor-status
+```
+
+`configured: true` means the `RAG_IME_PREDICTOR_*` environment is set. It does not prove the local model server is running; use `predict-benchmark` for that.
+
 Benchmark local model prediction latency before using it in the input-method lane:
 
 ```bash

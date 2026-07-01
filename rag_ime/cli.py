@@ -25,7 +25,12 @@ from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
 from .payloads import action_response_payload, suggestions_response_payload
-from .predictor import PredictionBenchmarkCase, benchmark_prediction_provider, prediction_provider_from_env
+from .predictor import (
+    PredictionBenchmarkCase,
+    benchmark_prediction_provider,
+    prediction_provider_from_env,
+    prediction_provider_status,
+)
 from .renderer import render_agent_injection, render_terminal_panel
 from .rime_sidecar import build_rime_sidecar_response, record_rime_side_candidate_selection
 from .scenarios import SCENARIOS, get_scenario
@@ -191,6 +196,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     predict_benchmark.add_argument("--project", default="wisdom-weasel-rag-ime")
     predict_benchmark.add_argument("--max-candidates", type=int, default=3)
     predict_benchmark.add_argument("--latency-budget-ms", type=int, default=150)
+
+    subparsers.add_parser("predictor-status", help="Show local model prediction configuration without calling the model")
 
     eval_prediction = subparsers.add_parser(
         "eval-prediction",
@@ -581,6 +588,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+
+    if args.command == "predictor-status":
+        print(json.dumps(prediction_provider_status(predictor), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "eval-prediction":

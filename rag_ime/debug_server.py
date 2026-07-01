@@ -20,7 +20,7 @@ from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
-from .predictor import PredictionProvider, prediction_provider_from_env
+from .predictor import PredictionProvider, prediction_provider_from_env, prediction_provider_status
 from .rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
@@ -84,6 +84,7 @@ class DebugImeService:
                 "hits": self._rime_cache_hits,
                 "misses": self._rime_cache_misses,
             },
+            "predictor": prediction_provider_status(self.predictor),
             "suggestionCache": self._suggestion_cache_stats(),
             "vectorStats": self._vector_index_stats(),
         }
