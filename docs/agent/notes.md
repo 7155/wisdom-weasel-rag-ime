@@ -7,6 +7,26 @@
 
 ## Log
 
+### 2026-07-01 10:51 CST
+Problem:
+- The user asked for a deeper Mac inference investigation before choosing the local model path.
+- The existing Ollama `qwen3.5:0.8b` smoke proved the adapter path but missed the target: observed first chunk was roughly 240-408 ms for the normal JSON prompt and full candidate latency was much higher.
+
+Findings:
+- MLX-LM is the best short-term Mac latency experiment because it is Apple Silicon first and exposes `stream_generate`, prompt cache, rotating KV cache, and speculative decoding primitives.
+- `llama.cpp`/Metal is still the best final engineering route because a native provider can cache stable prompt KV state and sample multiple candidates from copied sequence state, matching Wisdom-Weasel's strongest latency mechanism.
+- Ollama remains the easiest smoke-test route, and `qwen3.5:0.8b-mlx` is the next no-proxy model tag to try, but Ollama is too opaque for final prompt/KV control.
+- Core ML stateful KV and MLC LLM are follow-up research paths; MiniVLLM/vLLM are useful for prefix-cache/scheduler concepts but not a direct Mac IME runtime.
+
+Changes:
+- Added a Mac backend decision table and recommendation tiers to `docs/model-ttft-kv-cache-plan.md`.
+- Added Mac runtime test order and no-proxy Ollama MLX smoke commands to `docs/local-model-prediction-benchmark.md`.
+- Updated README, Wisdom-Weasel issue map, and interview difficulty notes to frame TTFT/KV cache as a core project challenge.
+
+Next:
+- Start Ollama without proxy and test `qwen3.5:0.8b-mlx` with `predictor-ttft`.
+- If p50 first chunk remains above 200 ms, prototype a resident MLX-LM provider or native llama.cpp/Metal provider instead of further prompt tuning.
+
 ### 2026-07-01 07:34 CST
 Problem:
 - Boyle subagent returned no patch for the planned lightweight tag/app/context rerank.

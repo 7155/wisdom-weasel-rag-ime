@@ -271,40 +271,7 @@ class OllamaPredictionProvider:
         ]
 
     def _complete(self, *, context: str, query: str, max_candidates: int) -> list[str]:
-        options = {
-            "num_predict": max(1, min(64, int(self.config.max_tokens))),
-            "temperature": self.config.temperature,
-            "top_p": self.config.top_p,
-        }
-        body: dict[str, Any] = {
-            "model": self.config.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "你是中文输入法候选预测器。只输出 JSON 字符串数组, "
-                        '例如 ["本地记忆输入法","RAG候选","历史上下文"], 不要解释。'
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"上下文: {context}\n"
-                        f"当前输入: {query}\n"
-                        f"输出 {max_candidates} 个最可能的短候选。"
-                    ),
-                },
-            ],
-            "stream": False,
-            "think": False,
-            "options": options,
-        }
-        if self.config.extra_body:
-            extra_body = dict(self.config.extra_body)
-            extra_options = extra_body.pop("options", None)
-            if isinstance(extra_options, dict):
-                body["options"] = {**options, **extra_options}
-            body.update(extra_body)
+        body = _ollama_chat_body(self.config, context=context, query=query, max_candidates=max_candidates, stream=False)
         request = urllib.request.Request(
             f"{self.config.base_url.rstrip('/')}/api/chat",
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -590,6 +557,167 @@ def doctor_prediction_provider(
     }
 
 
+def benchmark_streaming_ttft_provider(
+    provider: PredictionProvider,
+    cases: list[PredictionBenchmarkCase],
+    *,
+    max_candidates: int = 3,
+    repeat: int = 3,
+    latency_budget_ms: int = 200,
+    keep_alive: int | str | None = -1,
+) -> dict[str, Any]:
+    status = prediction_provider_status(provider)
+    provider_name = str(status.get("providerName") or provider.__class__.__name__)
+    config = getattr(provider, "config", None)
+    supported = bool(config is not None and getattr(config, "provider_name", "") == "local-ollama")
+    if not supported:
+        return {
+            "schemaVersion": "rag-ime.predictor-ttft.v1",
+            "providerName": provider_name,
+            "providerProfile": _prediction_provider_profile(provider),
+            "providerConfigured": bool(status.get("configured")),
+            "supported": False,
+            "reason": "streaming_ttft_currently_supports_native_ollama_only",
+            "latencyBudgetMs": latency_budget_ms,
+            "summary": {
+                "caseCount": 0,
+                "sampleCount": 0,
+                "hasFirstChunk": False,
+                "allWithinBudget": False,
+            },
+            "cases": [],
+        }
+
+    results: list[dict[str, Any]] = []
+    first_chunk_latencies = []
+    total_latencies = []
+    repeat_count = max(1, int(repeat))
+    for repeat_index in range(1, repeat_count + 1):
+        for case in cases:
+            measured = _measure_ollama_stream_ttft(
+                config,
+                current_input=case.current_input,
+                recent_context=case.recent_context,
+                max_candidates=max_candidates,
+                keep_alive=keep_alive,
+            )
+            measured["currentInput"] = case.current_input
+            if repeat_count > 1:
+                measured["repeatIndex"] = repeat_index
+            first_ms = measured.get("firstChunkMs")
+            if isinstance(first_ms, int):
+                first_chunk_latencies.append(first_ms)
+            total_ms = measured.get("totalMs")
+            if isinstance(total_ms, int):
+                total_latencies.append(total_ms)
+            measured["overBudget"] = isinstance(first_ms, int) and first_ms > latency_budget_ms
+            results.append(measured)
+
+    return {
+        "schemaVersion": "rag-ime.predictor-ttft.v1",
+        "providerName": provider_name,
+        "providerProfile": _prediction_provider_profile(provider),
+        "providerConfigured": bool(status.get("configured")),
+        "supported": True,
+        "latencyBudgetMs": latency_budget_ms,
+        "maxCandidates": max_candidates,
+        "repeat": {
+            "requested": repeat_count,
+            "baseCaseCount": len(cases),
+            "effectiveCaseCount": len(results),
+        },
+        "summary": {
+            "caseCount": len(cases),
+            "sampleCount": len(results),
+            "hasFirstChunk": bool(first_chunk_latencies),
+            "p50FirstChunkMs": _percentile_ms(first_chunk_latencies, 0.50),
+            "p95FirstChunkMs": _percentile_ms(first_chunk_latencies, 0.95),
+            "minFirstChunkMs": min(first_chunk_latencies) if first_chunk_latencies else 0,
+            "maxFirstChunkMs": max(first_chunk_latencies) if first_chunk_latencies else 0,
+            "p50TotalMs": _percentile_ms(total_latencies, 0.50),
+            "p95TotalMs": _percentile_ms(total_latencies, 0.95),
+            "allWithinBudget": bool(first_chunk_latencies) and all(item <= latency_budget_ms for item in first_chunk_latencies),
+            "overBudgetCount": sum(1 for item in first_chunk_latencies if item > latency_budget_ms),
+            "candidateSampleCount": sum(1 for item in results if int(item.get("candidateCount") or 0) > 0),
+        },
+        "cases": results,
+    }
+
+
+def _measure_ollama_stream_ttft(
+    config: Any,
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+    keep_alive: int | str | None,
+) -> dict[str, Any]:
+    query = compact_whitespace(current_input)
+    context = compact_whitespace(recent_context)[-420:]
+    body = _ollama_chat_body(config, context=context, query=query, max_candidates=max_candidates, stream=True)
+    if keep_alive is not None:
+        body["keep_alive"] = keep_alive
+    request = urllib.request.Request(
+        f"{str(getattr(config, 'base_url', '')).rstrip('/')}/api/chat",
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers=_headers_from_prediction_config(config),
+        method="POST",
+    )
+    started = time.perf_counter()
+    first_chunk_ms = None
+    first_text = ""
+    full_text = ""
+    try:
+        with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
+            for raw_line in response:
+                if not raw_line.strip():
+                    continue
+                payload = json.loads(raw_line.decode("utf-8"))
+                text = extract_ollama_content_delta(payload)
+                if text:
+                    full_text += text
+                    if first_chunk_ms is None:
+                        first_chunk_ms = int((time.perf_counter() - started) * 1000)
+                        first_text = text
+                if payload.get("done"):
+                    break
+    except urllib.error.HTTPError as exc:
+        error = f"http_{exc.code}"
+        try:
+            body_text = exc.read().decode("utf-8")
+        except OSError:
+            body_text = ""
+        return {
+            "ok": False,
+            "error": error,
+            "errorBody": body_text[:300],
+            "firstChunkMs": first_chunk_ms,
+            "totalMs": int((time.perf_counter() - started) * 1000),
+            "candidateCount": 0,
+            "candidates": [],
+        }
+    except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
+        return {
+            "ok": False,
+            "error": _prediction_error_name(exc),
+            "firstChunkMs": first_chunk_ms,
+            "totalMs": int((time.perf_counter() - started) * 1000),
+            "candidateCount": 0,
+            "candidates": [],
+        }
+    total_ms = int((time.perf_counter() - started) * 1000)
+    candidates = _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
+    return {
+        "ok": first_chunk_ms is not None,
+        "firstChunkMs": first_chunk_ms,
+        "totalMs": total_ms,
+        "firstText": first_text,
+        "rawText": full_text,
+        "candidateCount": len(candidates),
+        "candidates": candidates,
+    }
+
+
 def extract_openai_content(payload: dict[str, Any]) -> str:
     return "\n".join(extract_openai_contents(payload))
 
@@ -621,6 +749,15 @@ def extract_ollama_contents(payload: dict[str, Any]) -> list[str]:
     if isinstance(payload.get("response"), str):
         return [payload["response"]]
     return extract_openai_contents(payload)
+
+
+def extract_ollama_content_delta(payload: dict[str, Any]) -> str:
+    message = payload.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), str):
+        return message["content"]
+    if isinstance(payload.get("response"), str):
+        return payload["response"]
+    return extract_openai_content(payload)
 
 
 def parse_prediction_candidates(text: str, *, max_candidates: int = 5) -> list[str]:
@@ -711,6 +848,60 @@ def _ollama_base_url(base_url: str) -> str:
     if normalized.endswith("/v1"):
         return normalized[:-3].rstrip("/")
     return normalized
+
+
+def _ollama_chat_body(
+    config: Any,
+    *,
+    context: str,
+    query: str,
+    max_candidates: int,
+    stream: bool,
+) -> dict[str, Any]:
+    options = {
+        "num_predict": max(1, min(64, int(getattr(config, "max_tokens", 12)))),
+        "temperature": float(getattr(config, "temperature", 0.2)),
+        "top_p": float(getattr(config, "top_p", 0.9)),
+    }
+    body: dict[str, Any] = {
+        "model": str(getattr(config, "model", "")),
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "你是中文输入法候选预测器。只输出 JSON 字符串数组, "
+                    '例如 ["本地记忆输入法","RAG候选","历史上下文"], 不要解释。'
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"上下文: {context}\n"
+                    f"当前输入: {query}\n"
+                    f"输出 {max_candidates} 个最可能的短候选。"
+                ),
+            },
+        ],
+        "stream": stream,
+        "think": False,
+        "options": options,
+    }
+    extra_body = getattr(config, "extra_body", None)
+    if isinstance(extra_body, dict) and extra_body:
+        extra_body_copy = dict(extra_body)
+        extra_options = extra_body_copy.pop("options", None)
+        if isinstance(extra_options, dict):
+            body["options"] = {**options, **extra_options}
+        body.update(extra_body_copy)
+    return body
+
+
+def _percentile_ms(values: list[int], percentile: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = int(round((len(ordered) - 1) * max(0.0, min(1.0, percentile))))
+    return ordered[index]
 
 
 def _float_env(env: dict[str, str], name: str, fallback: float) -> float:

@@ -94,6 +94,48 @@ before spending bandwidth on larger thinking models.
 
 The stable rule for this project is: configure any candidate through one explicit provider lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
+## Mac Runtime Order
+
+Do not treat "local model" as one implementation. On Mac, evaluate backends in
+this order:
+
+1. **Ollama MLX tag smoke**: try `qwen3.5:0.8b-mlx` first if the tag is
+   available. This checks whether Ollama's MLX packaging reduces TTFT without
+   new integration code.
+2. **Direct MLX-LM resident service**: if Ollama MLX is still too slow or too
+   opaque, run MLX-LM directly so the project can use `stream_generate`,
+   prompt cache, and first-text timing without OpenAI-compatible overhead.
+3. **Native llama.cpp/Metal provider**: if direct MLX is not enough or GGUF
+   support is better for the selected model, implement the Wisdom-Weasel style
+   provider: stable prompt KV cache plus multi-sequence candidate sampling.
+4. **Core ML / MLC LLM research**: keep these as later experiments after the
+   Squirrel/Rime loop works; both can be promising but add conversion or build
+   complexity.
+
+No-proxy Ollama MLX smoke command:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy \
+  ollama pull qwen3.5:0.8b-mlx
+```
+
+Then switch only the model id:
+
+```bash
+export RAG_IME_PREDICTOR_PROVIDER=ollama
+export RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b-mlx
+python3 -m rag_ime.cli predictor-ttft \
+  --case "RAG 输入法" \
+  --recent-context "用户正在写本地记忆和候选预测" \
+  --repeat 8 \
+  --latency-budget-ms 200
+```
+
+If this still has p50 first chunk above 200 ms, the next work item is not more
+prompt tuning. It is a resident MLX-LM or native llama.cpp provider that can
+reuse prompt/KV state explicitly.
+
 Run the small-model matrix after the models are actually downloaded and the endpoint is serving:
 
 ```bash
@@ -235,6 +277,42 @@ Output shape:
   }
 }
 ```
+
+## Measure Streaming TTFT
+
+For an input method, total response latency is not enough. The user feels the
+delay until the first visible model-side candidate. Use:
+
+```bash
+python3 -m rag_ime.cli predictor-ttft \
+  --case "RAG 输入法" \
+  --recent-context "用户正在写本地记忆和候选预测" \
+  --repeat 8 \
+  --latency-budget-ms 200
+```
+
+Output shape:
+
+```json
+{
+  "schemaVersion": "rag-ime.predictor-ttft.v1",
+  "providerName": "local-ollama",
+  "supported": true,
+  "summary": {
+    "p50FirstChunkMs": 240,
+    "p95FirstChunkMs": 408,
+    "allWithinBudget": false,
+    "overBudgetCount": 8
+  }
+}
+```
+
+The current Ollama `qwen3.5:0.8b` baseline can approach but does not reliably
+meet the 200 ms target. It is useful for install smoke and TTFT measurement,
+but the project should not treat it as the final low-latency provider. The
+next implementation target is documented in `docs/model-ttft-kv-cache-plan.md`:
+native llama.cpp or MLX with resident model, stable prompt KV/prompt cache, and
+batch sampling for multiple short candidates.
 
 ## Evaluate Prediction Quality
 

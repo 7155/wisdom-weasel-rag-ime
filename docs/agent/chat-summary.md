@@ -2,6 +2,24 @@
 
 ### 2026-07-01
 Topic:
+- Research the fastest Mac local inference path for RAG-IME TTFT.
+
+Findings:
+- The current Ollama `qwen3.5:0.8b` path proves local integration but not the <200 ms first-candidate target.
+- Short-term Mac testing should try Ollama `qwen3.5:0.8b-mlx`, then direct MLX-LM with `stream_generate` and prompt cache.
+- The final low-latency provider should likely be native llama.cpp/Metal or resident MLX, because it must own stable prompt KV cache and multi-candidate sampling.
+- Core ML stateful KV and MLC LLM are useful later research paths; MiniVLLM/vLLM contribute scheduler/prefix-cache concepts but are not direct Mac IME runtimes.
+
+Changes:
+- Added `docs/model-ttft-kv-cache-plan.md` backend decision table and recommendation tiers.
+- Updated local model benchmark docs, README, Wisdom-Weasel issue map, and interview difficulty notes.
+
+Next:
+- Run `predictor-ttft` against `qwen3.5:0.8b-mlx` without proxy download.
+- If it misses the 200 ms p50 first-chunk target, prototype resident MLX-LM or native llama.cpp/Metal provider.
+
+### 2026-07-01
+Topic:
 - Add lightweight local rerank for real Codex-history RAG quality.
 
 Changes:

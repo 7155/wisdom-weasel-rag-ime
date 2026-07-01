@@ -111,6 +111,73 @@ class _MockOllamaHandler(BaseHTTPRequestHandler):
         return
 
 
+class _MockOllamaMatrixHandler(BaseHTTPRequestHandler):
+    seen_models: list[str] = []
+    captured_payloads: list[dict[str, object]] = []
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib API
+        if self.path != "/api/tags":
+            self.send_error(404)
+            return
+        body = json.dumps(
+            {"models": [{"name": "qwen3.5:0.8b"}, {"name": "qwen3.5:2b"}]},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        model = str(payload.get("model") or "")
+        _MockOllamaMatrixHandler.seen_models.append(model)
+        _MockOllamaMatrixHandler.captured_payloads.append(payload)
+        content = '["本地记忆","输入法候选"]' if model == "qwen3.5:0.8b" else '["无关候选"]'
+        body = json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                },
+                "done": True,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
+class _MockOllamaStreamingHandler(BaseHTTPRequestHandler):
+    captured_payload: dict[str, object] = {}
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        _MockOllamaStreamingHandler.captured_payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        chunks = [
+            {"message": {"role": "assistant", "content": '["本地记忆"'}},
+            {"message": {"role": "assistant", "content": ',"输入法候选"]'}, "done": True},
+        ]
+        body = b"".join(json.dumps(item, ensure_ascii=False).encode("utf-8") + b"\n" for item in chunks)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
 class _MockCompletionHandler(BaseHTTPRequestHandler):
     captured_path = ""
     captured_payload: dict[str, object] = {}
@@ -712,6 +779,115 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(report["models"][1]["failedCaseIds"], ["local-memory-prediction"])
         self.assertEqual(report["winner"]["model"], "qwen3.5:0.8b")
         self.assertEqual(_MockModelMatrixHandler.seen_models, ["qwen3.5:0.8b", "qwen3.5:2b"])
+
+    def test_cli_eval_model_matrix_can_use_native_ollama_provider(self) -> None:
+        _MockOllamaMatrixHandler.seen_models = []
+        _MockOllamaMatrixHandler.captured_payloads = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaMatrixHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-ollama-matrix-") as tmp:
+                cases_file = f"{tmp}/cases.jsonl"
+                with open(cases_file, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "local-memory-prediction",
+                                "query": "RAG 输入法",
+                                "recentContext": "用户正在写本地记忆输入法",
+                                "expectedTerms": ["本地记忆"],
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                stdout = io.StringIO()
+                with patch.dict(os.environ, {"RAG_IME_PREDICTOR_TIMEOUT_MS": "1000"}, clear=False):
+                    with redirect_stdout(stdout):
+                        code = main(
+                            [
+                                "--db-path",
+                                f"{tmp}/matrix.sqlite",
+                                "eval-model-matrix",
+                                "--cases-file",
+                                cases_file,
+                                "--provider",
+                                "ollama",
+                                "--base-url",
+                                f"http://127.0.0.1:{server.server_port}/v1",
+                                "--models",
+                                "qwen3.5:0.8b,qwen3.5:2b",
+                                "--latency-budget-ms",
+                                "1000",
+                            ]
+                        )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["schemaVersion"], "rag-ime.model-matrix-eval.v1")
+        self.assertEqual(report["provider"], "ollama")
+        self.assertEqual([item["model"] for item in report["models"]], ["qwen3.5:0.8b", "qwen3.5:2b"])
+        self.assertEqual(report["models"][0]["passed"], 1)
+        self.assertEqual(report["models"][1]["passed"], 0)
+        self.assertEqual(report["winner"]["model"], "qwen3.5:0.8b")
+        self.assertEqual(_MockOllamaMatrixHandler.seen_models, ["qwen3.5:0.8b", "qwen3.5:2b"])
+        self.assertTrue(all(payload["think"] is False for payload in _MockOllamaMatrixHandler.captured_payloads))
+
+    def test_cli_predictor_ttft_measures_streaming_first_chunk(self) -> None:
+        _MockOllamaStreamingHandler.captured_payload = {}
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaStreamingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            stdout = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "ollama",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "qwen3.5:0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "--core-mode",
+                            "fixture",
+                            "predictor-ttft",
+                            "--case",
+                            "RAG 输入法",
+                            "--recent-context",
+                            "用户正在写本地记忆输入法",
+                            "--repeat",
+                            "1",
+                            "--latency-budget-ms",
+                            "200",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["schemaVersion"], "rag-ime.predictor-ttft.v1")
+        self.assertTrue(report["supported"])
+        self.assertTrue(report["summary"]["hasFirstChunk"])
+        self.assertEqual(report["cases"][0]["candidateCount"], 2)
+        self.assertEqual(report["cases"][0]["candidates"][0], "本地记忆")
+        self.assertIsInstance(report["cases"][0]["firstChunkMs"], int)
+        self.assertTrue(_MockOllamaStreamingHandler.captured_payload["stream"])
+        self.assertFalse(_MockOllamaStreamingHandler.captured_payload["think"])
+        self.assertEqual(_MockOllamaStreamingHandler.captured_payload["keep_alive"], -1)
 
 
 if __name__ == "__main__":

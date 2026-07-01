@@ -130,6 +130,29 @@ raw key input
 
 这里的工程判断是：不要重新造一个拼音输入法，也不要让模型替代确定性的输入引擎。创新点应该放在候选增强、记忆召回、证据反馈和本地模型延迟控制上。
 
+### 9. 首 token 低延迟不是简单换小模型
+
+输入法里的模型预测看的是 TTFT，也就是第一个可见候选出现的时间，而不是完整回复耗时。一个 0.8B 模型如果每次都走 HTTP、重复系统 prompt、输出解释文字，仍然会慢到不适合打字。
+
+当前方案把模型 lane 拆成三层：
+
+```text
+短期验证:
+  Ollama qwen3.5:0.8b / qwen3.5:0.8b-mlx
+  -> predictor-ttft 测 first chunk
+
+Mac 快速实验:
+  MLX-LM resident service
+  -> stream_generate + prompt_cache
+
+最终快路径:
+  native llama.cpp/Metal 或 MLX provider
+  -> stable prompt KV cache
+  -> multi-sequence candidate sampling
+```
+
+这个难点的面试表达是：我没有把“本地小模型”当成黑盒，而是把实时输入法拆成可测的首 token 路径。模型必须常驻、非思考、短输出、可流式、可复用 prompt/KV cache；如果超过预算，输入法继续显示 Rime/RAG 候选，模型 lane 自动降级。
+
 ## 我已经落地的工程点
 
 - macOS `InputMethodKit` 前端壳；
@@ -145,6 +168,8 @@ raw key input
 - 单测和 macOS app 构建验证；
 - Rime/Squirrel 正式前端路线 ADR；
 - Squirrel patch pack：在 Rime 候选生成后调用本地 sidecar，异步合并 side candidates，按显示候选路由数字键，并在用户接受 RAG 候选后回写 commit/action。
+- `predictor-ttft` 首 chunk 延迟测量；
+- Mac 本地推理路线调研：Ollama MLX tag、MLX-LM prompt cache、llama.cpp/Metal KV cache、Core ML stateful KV、MiniVLLM/vLLM 取舍。
 
 ## 面试讲法
 
