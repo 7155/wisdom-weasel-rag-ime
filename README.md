@@ -142,6 +142,12 @@ The sidecar also deduplicates equivalent `/rime-suggest` requests that are alrea
 
 `/rime-suggest` also returns a `triggerDecision`. Rime candidates are always preserved, but model/RAG side candidates are skipped for raw pinyin fallback, unstable composing updates, or full visible Rime candidate pages. This is the backend safety valve that prevents the local model and retrieval stack from running on every key event.
 
+`latencyBudgetMs` is enforced on the model lane. RAG retrieval runs first, then
+the model is allowed to use only the remaining budget. If the model exceeds the
+budget or another model request is already running, `/rime-suggest` returns
+Rime/RAG candidates without waiting for the model. The response exposes this as
+`modelLane.called`, `modelLane.timedOut`, and `modelLane.skippedReason`.
+
 The local SQLite core also keeps a small process-local suggestion cache for repeated equivalent RAG requests:
 
 ```bash

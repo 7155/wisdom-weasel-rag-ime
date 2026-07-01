@@ -1556,3 +1556,28 @@ Verification:
 
 Status:
 - This is not native KV cache completion. It is the protocol gate needed before implementing a llama.cpp/Metal or stronger MLX provider that can safely reuse stable prefix state.
+
+### 2026-07-01 15:51 CST
+Problem:
+- `/rime-suggest` parsed and returned `latencyBudgetMs`, but the model lane could still block the whole response until the provider's static timeout.
+- That is wrong for an input method: a slow model must not delay Rime/RAG candidates.
+
+Subagent finding:
+- The risk was confirmed by read-only review: the sidecar called `predictor.predict(...)` without a budget/deadline, and RAG suggestions ran only after the model call.
+- The suggested minimum was per-request deadline/fail-open behavior, not a full async scheduler.
+
+Changes:
+- `build_rime_sidecar_response()` now runs RAG retrieval first, then gives the model lane only the remaining `latencyBudgetMs`.
+- Added a single in-process model-lane guard: if the model exceeds the budget, the response returns `modelPredictions=[]` while preserving Rime/RAG candidates.
+- Added `modelLane` response metadata with `called`, `timedOut`, `skippedReason`, `latencyBudgetMs`, `elapsedMs`, `totalLatencyBudgetMs`, and `elapsedBeforeModelMs`.
+- If a previous model request is still running, new requests skip the model lane instead of piling up provider calls.
+- Documented the behavior in README, debug-surface docs, and local-model benchmark docs.
+
+Verification:
+- `python3 -m py_compile rag_ime/rime_sidecar.py rag_ime/debug_server.py tests/test_rime_sidecar.py tests/test_debug_server.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_rime_sidecar tests.test_debug_server`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `git diff --check`
+
+Status:
+- This enforces IME responsiveness for the sidecar hot path without claiming native cancellation. A timed-out provider call may still finish in the daemon guard thread, but subsequent requests do not wait for it.

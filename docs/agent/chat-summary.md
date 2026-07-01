@@ -1073,3 +1073,20 @@ Verification:
 
 Next:
 - Use these fields in the native llama.cpp/Metal or stronger MLX provider to guard prompt/KV cache reuse and later sequence-forked multi-candidate sampling.
+
+### 2026-07-01
+Topic:
+- Enforce `latencyBudgetMs` on the `/rime-suggest` model lane.
+
+Changes:
+- RAG retrieval now runs before the optional model lane in the sidecar.
+- The model lane only waits for the remaining request budget; timeout returns Rime/RAG candidates with `modelPredictions=[]`.
+- Added `modelLane` observability to sidecar responses.
+- Added regression coverage for a slow model timing out while RAG candidates remain responsive.
+
+Verification:
+- Sidecar/debug-server focused tests passed.
+- Full suite passed with 133 tests.
+
+Next:
+- Later native llama.cpp/Metal or stronger MLX provider should use real cancellation/sequence state, but the hot path now has fail-open behavior even before that provider exists.

@@ -5,6 +5,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 
@@ -65,6 +66,24 @@ class FailingPredictionProvider:
         self.calls += 1
         self.last_error = "timeout"
         return []
+
+
+class SlowPredictionProvider:
+    def __init__(self, sleep_s: float = 0.1) -> None:
+        self.sleep_s = sleep_s
+        self.calls = 0
+
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.calls += 1
+        time.sleep(self.sleep_s)
+        return [
+            ModelPrediction(
+                text=f"{current_input}慢模型",
+                rank=1,
+                provider_name="slow-model",
+                latency_ms=int(self.sleep_s * 1000),
+            )
+        ]
 
 
 class CapturingCore:
@@ -156,6 +175,10 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[3]["selectionAction"], "commit_side_candidate")
         self.assertIsInstance(display[3]["sourceEventId"], int)
         self.assertEqual([item["label"] for item in display[:4]], ["1", "2", "3", "4"])
+        self.assertTrue(response["modelLane"]["called"])
+        self.assertFalse(response["modelLane"]["timedOut"])
+        self.assertEqual(response["modelLane"]["predictionCount"], 1)
+        self.assertEqual(response["modelLane"]["totalLatencyBudgetMs"], 150)
 
     def test_history_context_is_only_used_for_model_not_rag_retrieval(self) -> None:
         core = CapturingCore()
@@ -278,6 +301,40 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(second["modelPredictions"], [])
         self.assertTrue(any(item["sourceType"] == "rag" for item in first["displayCandidates"]))
         self.assertTrue(any(item["sourceType"] == "rag" for item in second["displayCandidates"]))
+
+    def test_model_lane_timeout_keeps_rag_candidates_responsive(self) -> None:
+        slow_predictor = SlowPredictionProvider(sleep_s=0.12)
+        started = time.perf_counter()
+        try:
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "squirrel-tight-budget",
+                    "requestSeq": 77,
+                    "latencyBudgetMs": 30,
+                    "maxVisibleCandidates": 5,
+                    "maxSideCandidates": 2,
+                    "rimeContext": {
+                        "candidates": [
+                            {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                        ]
+                    },
+                },
+                adapter=self.adapter,
+                core=self.core,
+                predictor=slow_predictor,
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+        finally:
+            time.sleep(0.14)
+
+        self.assertLess(elapsed_ms, 100)
+        self.assertEqual(slow_predictor.calls, 1)
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertTrue(response["modelLane"]["called"])
+        self.assertTrue(response["modelLane"]["timedOut"])
+        self.assertEqual(response["modelLane"]["skippedReason"], "model lane exceeded latency budget")
+        self.assertEqual(response["modelLane"]["predictionCount"], 0)
+        self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
 
     def test_rag_display_text_is_compressed_but_insert_text_is_full(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-sidecar-surface-") as tmp:

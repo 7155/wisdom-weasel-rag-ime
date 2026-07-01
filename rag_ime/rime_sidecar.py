@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
+from threading import BoundedSemaphore, Event, Thread
 from typing import Any
 
 from .adapter import InputMethodAdapter, SuggestionRequest
@@ -20,6 +22,7 @@ from .text_utils import compact_whitespace, now_ms
 
 
 RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
+_MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 
 
 @dataclass(frozen=True)
@@ -44,15 +47,11 @@ def build_rime_sidecar_response(
         query_basis=query_basis,
     )
     if trigger_decision.should_refresh:
+        started = time.perf_counter()
         prediction_context = build_prediction_context(
             core,
             explicit_recent_context=snapshot.committed_context,
             project=snapshot.project or default_project,
-        )
-        model_predictions = predictor.predict(
-            current_input=semantic_query,
-            recent_context=prediction_context,
-            max_candidates=snapshot.max_side_candidates,
         )
         suggestions = adapter.suggest(
             SuggestionRequest(
@@ -62,10 +61,35 @@ def build_rime_sidecar_response(
                 top_k=snapshot.max_side_candidates,
             )
         )
+        elapsed_before_model_ms = int((time.perf_counter() - started) * 1000)
+        model_budget_ms = max(0, snapshot.latency_budget_ms - elapsed_before_model_ms)
+        model_predictions, model_lane = predict_model_with_latency_budget(
+            predictor=predictor,
+            current_input=semantic_query,
+            recent_context=prediction_context,
+            max_candidates=snapshot.max_side_candidates,
+            latency_budget_ms=model_budget_ms,
+        )
+        model_lane.update(
+            {
+                "totalLatencyBudgetMs": snapshot.latency_budget_ms,
+                "elapsedBeforeModelMs": elapsed_before_model_ms,
+            }
+        )
     else:
         prediction_context = ""
         model_predictions = []
         suggestions = []
+        model_lane = {
+            "called": False,
+            "timedOut": False,
+            "skippedReason": "side candidates disabled by trigger",
+            "predictionCount": 0,
+            "latencyBudgetMs": 0,
+            "elapsedMs": 0,
+            "totalLatencyBudgetMs": snapshot.latency_budget_ms,
+            "elapsedBeforeModelMs": 0,
+        }
     display_candidates = merge_display_candidates(
         snapshot=snapshot,
         model_predictions=model_predictions,
@@ -92,6 +116,7 @@ def build_rime_sidecar_response(
         "historyContext": prediction_context,
         "historyContextMeta": prediction_context_metadata(prediction_context),
         "latencyBudgetMs": snapshot.latency_budget_ms,
+        "modelLane": model_lane,
         "rimeContext": rime_context_to_payload(snapshot),
         "modelPredictions": [model_prediction_to_payload(item) for item in model_predictions],
         "ragCandidates": [suggestion_to_payload(item) for item in suggestions],
@@ -109,6 +134,97 @@ def build_rime_sidecar_response(
             "rawPinyinFallback": query_basis == "rawInputFallback",
             "sideCandidatesEnabled": trigger_decision.should_refresh,
         },
+    }
+
+
+def predict_model_with_latency_budget(
+    *,
+    predictor: PredictionProvider,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+    latency_budget_ms: int,
+) -> tuple[list[ModelPrediction], dict[str, object]]:
+    budget_ms = max(0, int(latency_budget_ms))
+    if budget_ms <= 0:
+        return [], _model_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason="no latency budget remaining",
+            budget_ms=budget_ms,
+        )
+    if max_candidates <= 0:
+        return [], _model_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason="no side candidate slot",
+            budget_ms=budget_ms,
+        )
+    if not _MODEL_LANE_SEMAPHORE.acquire(blocking=False):
+        return [], _model_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason="model lane already running",
+            budget_ms=budget_ms,
+        )
+
+    done = Event()
+    result: dict[str, object] = {"predictions": []}
+
+    def run_prediction() -> None:
+        started = time.perf_counter()
+        try:
+            result["predictions"] = predictor.predict(
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=max_candidates,
+            )
+        except Exception as exc:  # pragma: no cover - defensive fail-open guard
+            result["error"] = exc.__class__.__name__
+        finally:
+            result["elapsedMs"] = int((time.perf_counter() - started) * 1000)
+            done.set()
+            _MODEL_LANE_SEMAPHORE.release()
+
+    Thread(target=run_prediction, name="rag-ime-model-lane", daemon=True).start()
+    if not done.wait(timeout=budget_ms / 1000):
+        return [], _model_lane_status(
+            called=True,
+            timed_out=True,
+            skipped_reason="model lane exceeded latency budget",
+            budget_ms=budget_ms,
+        )
+
+    predictions = result.get("predictions")
+    if not isinstance(predictions, list):
+        predictions = []
+    error = _string(result.get("error"))
+    return predictions, _model_lane_status(
+        called=True,
+        timed_out=False,
+        skipped_reason=f"error: {error}" if error else "",
+        budget_ms=budget_ms,
+        elapsed_ms=_optional_int(result.get("elapsedMs")) or 0,
+        prediction_count=len(predictions),
+    )
+
+
+def _model_lane_status(
+    *,
+    called: bool,
+    timed_out: bool,
+    skipped_reason: str,
+    budget_ms: int,
+    elapsed_ms: int = 0,
+    prediction_count: int = 0,
+) -> dict[str, object]:
+    return {
+        "called": called,
+        "timedOut": timed_out,
+        "skippedReason": skipped_reason,
+        "predictionCount": prediction_count,
+        "latencyBudgetMs": budget_ms,
+        "elapsedMs": elapsed_ms,
     }
 
 
