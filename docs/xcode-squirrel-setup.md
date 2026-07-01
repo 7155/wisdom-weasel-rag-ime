@@ -238,8 +238,8 @@ python3 -m rag_ime.cli \
 
 This gate is intentionally read-only. It verifies the selected input source,
 the installed `Squirrel.app`, the actual Rime managed config, sidecar health,
-and the backend/Rime-sidecar quality gate. It does not install, enable, switch,
-or drive the GUI.
+the `/rime-suggest` sidecar payload, and the backend/Rime-sidecar quality gate.
+It does not install, enable, switch, select a side candidate, or drive the GUI.
 
 Manual continuous-use verification:
 

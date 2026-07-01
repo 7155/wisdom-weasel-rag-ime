@@ -1869,3 +1869,21 @@ Verification:
 
 Status:
 - The installed app/config/runtime path is machine-verifiable. Remaining blocker for the next gate is switching active macOS input source to Squirrel.
+
+### 2026-07-01 21:00 CST
+Problem:
+- `squirrel-tryout-gate` checked sidecar `/health`, but health alone did not prove the Squirrel-facing `/rime-suggest` candidate payload was available.
+- Calling `/rime-select` by default would write commit/action evidence, so the default gate needed a non-mutating sidecar probe.
+
+Changes:
+- Extended `squirrel-tryout-gate` sidecar check to POST a safe `/rime-suggest` probe with one synthetic Rime candidate.
+- The report now includes `sidecar.rimeSuggest.schemaVersion`, `displayCandidateCount`, `queryBasis`, and cache metadata.
+- The gate still does not call `/rime-select` by default; real side-candidate commit remains part of the manual/GUI verification layer.
+
+Verification:
+- Added a mock sidecar test proving the tryout gate calls `/rime-suggest` and records its display-candidate count.
+- Real local smoke reports `rimeSuggest.ok=true`, `schemaVersion=rag-ime.rime-sidecar.v1`, `displayCandidateCount=2`, and `queryBasis=rimeCandidates`.
+
+Status:
+- Installed bundle, real Rime config, sidecar health, and sidecar candidate payload are now machine-verifiable.
+- The active input source is still ABC, so backend quality-gate and foreground typing remain pending until switching to Squirrel.

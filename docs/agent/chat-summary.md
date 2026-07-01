@@ -1312,3 +1312,19 @@ Verification:
 
 Next:
 - Switch active input source to `鼠须管`; then the same gate can proceed into backend `quality-gate`.
+
+### 2026-07-01
+Topic:
+- Add sidecar candidate-payload probe to Squirrel tryout gate.
+
+Changes:
+- `squirrel-tryout-gate` now checks sidecar `/health` and also POSTs a safe `/rime-suggest` probe.
+- The report includes `sidecar.rimeSuggest.schemaVersion`, `displayCandidateCount`, `queryBasis`, and cache metadata.
+- It still does not call `/rime-select` by default, so real side-candidate commit remains manual/GUI evidence.
+
+Verification:
+- Added a mock sidecar test for the `/rime-suggest` probe.
+- Real local smoke reports `rag-ime.rime-sidecar.v1`, `displayCandidateCount=2`, and `queryBasis=rimeCandidates`; the only failing gate remains active input source `ABC`.
+
+Next:
+- Switch active input source to `鼠须管`, then rerun the same tryout gate so it can proceed into backend `quality-gate`.

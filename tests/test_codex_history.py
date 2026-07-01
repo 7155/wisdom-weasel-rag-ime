@@ -117,6 +117,61 @@ class _MockMlxCapabilityHandler(BaseHTTPRequestHandler):
         return
 
 
+class _MockTryoutSidecarHandler(BaseHTTPRequestHandler):
+    rime_suggest_calls = 0
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib API
+        if self.path != "/health":
+            self.send_error(404)
+            return
+        self._send_json(
+            {
+                "ok": True,
+                "eventCount": 7,
+                "predictor": {
+                    "configured": True,
+                    "providerName": "local-ollama",
+                    "model": "qwen3.5:0.8b-mlx",
+                    "streamFirstCandidate": True,
+                },
+            }
+        )
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        if self.path != "/rime-suggest":
+            self.send_error(404)
+            return
+        _MockTryoutSidecarHandler.rime_suggest_calls += 1
+        length = int(self.headers.get("Content-Length") or "0")
+        self.rfile.read(length)
+        self._send_json(
+            {
+                "schemaVersion": "rag-ime.rime-sidecar.v1",
+                "queryBasis": "rimeCandidates",
+                "displayCandidates": [
+                    {
+                        "label": "1",
+                        "text": "本地记忆",
+                        "sourceType": "rime",
+                        "selectionAction": "select_rime_candidate",
+                    }
+                ],
+                "cache": {"hit": False},
+            }
+        )
+
+    def _send_json(self, payload: dict[str, object]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
 class CodexHistoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-codex-history-")
@@ -171,7 +226,14 @@ class CodexHistoryTests(unittest.TestCase):
             plistlib.dump({"CFBundleIdentifier": "im.rime.inputmethod.Squirrel"}, fh)
         return app
 
-    def _write_fake_squirrel_config(self, name: str, *, db_path: Path, project: str) -> Path:
+    def _write_fake_squirrel_config(
+        self,
+        name: str,
+        *,
+        db_path: Path,
+        project: str,
+        sidecar_url: str = "http://127.0.0.1:8766/api",
+    ) -> Path:
         config = self.root / f"{name}.squirrel.custom.yaml"
         config.write_text(
             "\n".join(
@@ -179,7 +241,7 @@ class CodexHistoryTests(unittest.TestCase):
                     "patch:",
                     "# >>> RAG-IME managed block",
                     '  "rag_ime/enabled": true',
-                    '  "rag_ime/sidecar_url": "http://127.0.0.1:8766/api"',
+                    f'  "rag_ime/sidecar_url": "{sidecar_url}"',
                     f'  "rag_ime/db_path": "{str(db_path)}"',
                     f'  "rag_ime/project": "{project}"',
                     "# <<< RAG-IME managed block",
@@ -1069,6 +1131,86 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertTrue(checks["quality-gate"]["passed"])
         self.assertEqual(report["qualityGate"]["schemaVersion"], "rag-ime.quality-gate.v1")
         self.assertTrue(report["qualityGate"]["thresholds"]["requireInputSourceReady"])
+
+    def test_cli_squirrel_tryout_gate_probes_sidecar_rime_suggest(self) -> None:
+        db_path = self.root / "squirrel-tryout-sidecar.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "squirrel-tryout-sidecar-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "agent-hook",
+                    "query": "首次运行自动注入背景记忆",
+                    "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script = self.root / "tryout-sidecar-selected-input-source.sh"
+        check_script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=true current=im.rime.inputmethod.Squirrel.Hans hitoolboxEnabled=true'",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script.chmod(0o755)
+        fake_app = self._write_fake_squirrel_app("tryout-sidecar")
+        _MockTryoutSidecarHandler.rime_suggest_calls = 0
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockTryoutSidecarHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            sidecar_base = f"http://127.0.0.1:{server.server_port}"
+            config_path = self._write_fake_squirrel_config(
+                "tryout-sidecar",
+                db_path=db_path,
+                project="wisdom-weasel-rag-ime",
+                sidecar_url=f"{sidecar_base}/api",
+            )
+            gate_stdout = io.StringIO()
+            with redirect_stdout(gate_stdout):
+                gate_code = main(
+                    [
+                        "--db-path",
+                        str(db_path),
+                        "squirrel-tryout-gate",
+                        "--cases-file",
+                        str(cases_file),
+                        "--min-rag-pass-rate",
+                        "1",
+                        "--min-sidecar-pass-rate",
+                        "1",
+                        "--input-source-check-script",
+                        str(check_script),
+                        "--squirrel-app",
+                        str(fake_app),
+                        "--squirrel-config-path",
+                        str(config_path),
+                        "--sidecar-url",
+                        sidecar_base,
+                    ]
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertEqual(gate_code, 0)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertTrue(report["passed"])
+        self.assertTrue(report["sidecar"]["healthOk"])
+        self.assertEqual(report["sidecar"]["rimeSuggest"]["schemaVersion"], "rag-ime.rime-sidecar.v1")
+        self.assertEqual(report["sidecar"]["rimeSuggest"]["displayCandidateCount"], 1)
+        self.assertEqual(_MockTryoutSidecarHandler.rime_suggest_calls, 1)
 
     def test_cli_quality_gate_probes_mlx_capability_requirements(self) -> None:
         db_path = self.root / "quality-gate-mlx-capability.sqlite"
