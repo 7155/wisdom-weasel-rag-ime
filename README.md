@@ -258,17 +258,36 @@ python3 -m rag_ime.cli suggest-json "输入法 个人记忆" --recent-context "l
 
 `RAG_IME_PREDICTOR_PROFILE=instant` is the recommended first profile for Qwen-style small instruct models. It uses chat mode, a 350 ms timeout, 8 output tokens, low sampling temperature, and `chat_template_kwargs.enable_thinking=false`. Individual env vars such as `RAG_IME_PREDICTOR_TIMEOUT_MS`, `RAG_IME_PREDICTOR_MAX_TOKENS`, or `RAG_IME_PREDICTOR_DISABLE_THINKING` can still override the profile. `RAG_IME_PREDICTOR_EXTRA_BODY_JSON` can add server-specific fields such as seeds or sampling controls.
 
-For Ollama `qwen3.5` small-model smoke tests, point the same OpenAI-compatible lane at Ollama's `/v1` endpoint:
+For Ollama `qwen3.5` small-model smoke tests, use the native Ollama lane. The
+OpenAI-compatible `/v1` endpoint can keep Qwen thinking output in a separate
+reasoning field and return empty `content`; the native `/api/chat` route lets
+RAG-IME send `think:false`.
 
 ```bash
-ollama pull qwen3.5:0.8b
-ollama serve
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy \
+  ollama pull qwen3.5:0.8b
 
-export RAG_IME_PREDICTOR_PROVIDER=openai-compatible
-export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434/v1
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy \
+  OLLAMA_MODELS="/Volumes/undo 4t/ollama-models" \
+  ollama serve
+
+export RAG_IME_PREDICTOR_PROVIDER=ollama
+export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434
 export RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b
 export RAG_IME_PREDICTOR_PROFILE=instant
 ```
+
+On 2026-07-01, the local Mac smoke result for `qwen3.5:0.8b` was:
+downloaded size 1.0 GB, `/api/tags` found the configured model, and warm short
+predictions returned 3 parsed candidates. Observed latency varied from about
+0.48 s to 1.16 s, so it can pass a debug budget but is not acceptable for the
+default per-keystroke IME path. This proves the adapter path, not final model
+quality. The 0.8B thinking model still tends to produce generic candidates such
+as `RAG`, `智能检索`, and `知识图谱`; a non-thinking instruction-tuned small
+model such as `qwen2.5:0.5b` or `qwen2.5:1.5b` remains the next candidate to
+test before enabling model side candidates by default.
 
 The model lane also has a default failure cooldown. If the configured endpoint times out or returns a slow empty result, subsequent prediction calls are skipped for a short window so composing refreshes do not pay one model timeout per key event:
 

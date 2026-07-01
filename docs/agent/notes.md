@@ -982,3 +982,36 @@ Commands:
 
 Next:
 - Full Xcode build/install of patched Squirrel remains the next hard gate.
+- Local smoke confirms the command works but no real model is downloaded or running here: `ollama`, `llama-server`, `lmstudio`, and `mlx_lm.server` are all missing, and qwen3.5 matrix candidates are empty.
+
+### 2026-07-01
+Problem:
+- The user asked whether a concrete local model had actually been used/downloaded, and whether Qwen3.5 has an instant/non-thinking variant suitable for IME prediction.
+- The Codex shell has proxy variables set (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, plus lowercase variants), so model downloads can accidentally consume proxy bandwidth.
+
+Changes:
+- Installed Ollama 0.30.11 through Homebrew.
+- Started Ollama with `OLLAMA_MODELS=/Volumes/undo 4t/ollama-models`.
+- Pulled `qwen3.5:0.8b` successfully; `ollama list` shows `qwen3.5:0.8b`, size 1.0 GB.
+- Added `RAG_IME_PREDICTOR_PROVIDER=ollama`.
+- The new provider calls Ollama native `/api/chat` with `think:false`, checks `/api/tags`, and uses JSON-array prompting for parsed short candidates.
+- Kept OpenAI-compatible provider separate because Ollama `/v1/chat/completions` returned empty `content` and put Qwen3.5 output into a `reasoning` field.
+
+Findings:
+- Real `qwen3.5:0.8b` smoke through OpenAI-compatible `/v1` produced no parsed candidates because `content` was empty.
+- Real `qwen3.5:0.8b` smoke through native Ollama provider found the configured model through `/api/tags` and returned 3 parsed candidates. Observed warm latency varied from about 477 ms to 1157 ms; it can pass a 1500 ms debug budget but is not stable enough for the default per-keystroke IME path.
+- Candidate quality is not yet good enough for default IME use: examples were generic (`RAG`, `智能检索`, `知识图谱`).
+- Current web check did not find a public Ollama `qwen3.5:*instant*` or `qwen3.5:*instruct*` local tag. Ollama lists Qwen3.5 as a `thinking` model family with size tags such as `0.8b`, `2b`, `4b`, and MLX variants. Treat "instant" as a desired inference mode/provider behavior, not as a confirmed local weight tag.
+
+Commands:
+- `brew info ollama`
+- `brew install ollama`
+- `OLLAMA_MODELS="/Volumes/undo 4t/ollama-models" OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve`
+- `ollama pull qwen3.5:0.8b`
+- `ollama list`
+- `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy RAG_IME_PREDICTOR_PROVIDER=ollama RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434 RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b RAG_IME_PREDICTOR_PROFILE=instant RAG_IME_PREDICTOR_TIMEOUT_MS=8000 RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=0 python3 -m rag_ime.cli --core-mode fixture predictor-doctor --case "RAG 输入法" --recent-context "用户正在写本地记忆输入法，需要根据历史输入上下文预测候选短语。" --latency-budget-ms 1500`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+
+Next:
+- Do not download more models through proxy. Use explicit `env -u ...` for any future `ollama pull`.
+- Test non-thinking instruction-tuned small models next, especially `qwen2.5:0.5b` or `qwen2.5:1.5b`, before larger Qwen3.5 thinking models.

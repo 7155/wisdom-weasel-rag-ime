@@ -688,3 +688,10 @@ Next:
 - Default model matrix is `qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b` against Ollama `/v1`.
 - The command reports per-model pass rate, ranking metrics, p95 latency, candidate availability, local runner availability, and a winner summary; full per-case output is opt-in via `--include-cases`.
 - Local smoke confirms the command works but no real model is downloaded or running here: `ollama`, `llama-server`, `lmstudio`, and `mlx_lm.server` are all missing, and qwen3.5 matrix candidates are empty.
+
+### 2026-07-01
+- Installed Ollama 0.30.11 and downloaded `qwen3.5:0.8b` to the external Ollama model directory (`/Volumes/undo 4t/ollama-models`); `ollama list` shows 1.0 GB.
+- Found a proxy-risk issue: this Codex shell exports `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY=127.0.0.1:7897`, so future model downloads should explicitly unset proxy vars unless intentionally using the proxy.
+- Added native `RAG_IME_PREDICTOR_PROVIDER=ollama` because Ollama's OpenAI-compatible `/v1` Qwen3.5 response returned empty `content` and reasoning-only output.
+- Real native Ollama smoke found `qwen3.5:0.8b` through `/api/tags` and produced 3 parsed candidates. Observed warm latency varied from about 477 ms to 1157 ms, so it can pass a 1500 ms debug budget but is not stable enough for the default per-keystroke IME path.
+- Caveat: candidate quality is still generic, so Qwen3.5 0.8B proves the adapter path but should not become the default IME model yet. No public Ollama `qwen3.5:*instant*` tag was found; next model tests should prefer non-thinking instruction-tuned small models such as `qwen2.5:0.5b` or `qwen2.5:1.5b`.

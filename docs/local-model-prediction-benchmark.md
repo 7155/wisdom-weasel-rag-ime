@@ -48,21 +48,51 @@ As of 2026-07-01, the first local IME test should optimize for latency, not the 
 
 Reference: https://ollama.com/library/qwen3.5
 
-Example Ollama route:
+However, `qwen3.5` is a thinking-model line on Ollama. For IME prediction, this
+is a real risk: reasoning tokens delay the first visible candidate and can
+produce empty OpenAI-compatible `content`. Use `qwen3.5` only through the native
+Ollama provider, which calls `/api/chat` with `think:false`.
+
+Example Ollama route that avoids shell proxy variables during model download:
 
 ```bash
-ollama pull qwen3.5:0.8b
-ollama serve
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy \
+  ollama pull qwen3.5:0.8b
 
-export RAG_IME_PREDICTOR_PROVIDER=openai-compatible
-export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434/v1
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy \
+  OLLAMA_MODELS="/Volumes/undo 4t/ollama-models" \
+  ollama serve
+
+export RAG_IME_PREDICTOR_PROVIDER=ollama
+export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434
 export RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b
 export RAG_IME_PREDICTOR_PROFILE=instant
 ```
 
-The current Mac session does not have `ollama` in `PATH`, so this remains a prepared test matrix rather than a completed model benchmark.
+Current Mac smoke result:
 
-The stable rule for this project is: configure any candidate through the same OpenAI-compatible lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
+```json
+{
+  "model": "qwen3.5:0.8b",
+  "provider": "local-ollama",
+  "downloaded": true,
+  "size": "1.0 GB",
+  "doctorReadyAt1500msBudget": true,
+  "observedWarmPredictionMs": "477-1157",
+  "candidates": ["RAG", "智能检索", "知识图谱"]
+}
+```
+
+This proves the install and adapter path. It does not prove that `qwen3.5:0.8b`
+is the right production model. Its candidates are still generic for this IME
+case, and observed warm latency around 0.48-1.16 s is above the desired
+per-keystroke budget. The next model-quality tests should prefer non-thinking
+instruction-tuned small models, especially `qwen2.5:0.5b` and `qwen2.5:1.5b`,
+before spending bandwidth on larger thinking models.
+
+The stable rule for this project is: configure any candidate through one explicit provider lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
 Run the small-model matrix after the models are actually downloaded and the endpoint is serving:
 
@@ -76,7 +106,11 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --latency-budget-ms 150
 ```
 
-The command evaluates all listed models on the same cases and reports pass rate, `top1Accuracy`, `meanReciprocalRank`, p95 latency, candidate availability, local runner availability, and the current winner. It does not download models; use `ollama pull ...` or the equivalent WSL/MLX setup first. Add `--include-cases` when you need the full per-case failure list.
+The command currently evaluates OpenAI-compatible `/v1` model ids. It does not
+download models; use `ollama pull ...` or the equivalent WSL/MLX setup first.
+For Ollama `qwen3.5`, prefer `predictor-doctor` with `RAG_IME_PREDICTOR_PROVIDER=ollama`
+until the matrix command grows a native-Ollama provider option. Add `--include-cases`
+when you need the full per-case failure list.
 
 Some OpenAI-compatible servers need custom request fields or headers. Use:
 

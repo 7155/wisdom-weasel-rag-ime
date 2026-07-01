@@ -13,6 +13,7 @@ from unittest.mock import patch
 from rag_ime.cli import main
 from rag_ime.predictor import (
     CooldownPredictionProvider,
+    OllamaPredictionProvider,
     OpenAICompatiblePredictionConfig,
     OpenAICompatiblePredictionProvider,
     PredictionBenchmarkCase,
@@ -55,6 +56,48 @@ class _MockOpenAIHandler(BaseHTTPRequestHandler):
                         }
                     }
                 ]
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
+class _MockOllamaHandler(BaseHTTPRequestHandler):
+    captured_path = ""
+    captured_payload: dict[str, object] = {}
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib API
+        if self.path != "/api/tags":
+            self.send_error(404)
+            return
+        body = json.dumps(
+            {"models": [{"name": "qwen3.5:0.8b"}, {"name": "qwen2.5:0.5b"}]},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        _MockOllamaHandler.captured_path = self.path
+        _MockOllamaHandler.captured_payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        body = json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "本地记忆 输入法候选 RAG候选",
+                },
+                "done": True,
             },
             ensure_ascii=False,
         ).encode("utf-8")
@@ -291,6 +334,41 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
 
+    def test_ollama_provider_uses_native_chat_with_thinking_disabled(self) -> None:
+        _MockOllamaHandler.captured_path = ""
+        _MockOllamaHandler.captured_payload = {}
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "ollama",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+                    "RAG_IME_PREDICTOR_MODEL": "qwen3.5:0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+            self.assertIsInstance(provider, OllamaPredictionProvider)
+            predictions = provider.predict(
+                current_input="RAG 输入法",
+                recent_context="用户正在写本地记忆输入法",
+                max_candidates=3,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(_MockOllamaHandler.captured_path, "/api/chat")
+        self.assertFalse(_MockOllamaHandler.captured_payload["think"])
+        self.assertEqual(_MockOllamaHandler.captured_payload["model"], "qwen3.5:0.8b")
+        self.assertEqual(_MockOllamaHandler.captured_payload["options"]["num_predict"], 24)
+        self.assertEqual(predictions[0].text, "本地记忆")
+        self.assertEqual(predictions[0].provider_name, "local-ollama")
+
     def test_prediction_cooldown_skips_repeat_failures(self) -> None:
         class FailingProvider:
             config = OpenAICompatiblePredictionConfig(
@@ -419,6 +497,49 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(report["checks"]["prediction"]["hasCandidates"])
         self.assertEqual(report["checks"]["prediction"]["candidates"][0], "本地记忆")
         self.assertIn("localRunners", report)
+
+    def test_cli_predictor_doctor_checks_ollama_tags_and_short_prediction(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            stdout = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "ollama",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "qwen3.5:0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "--core-mode",
+                            "fixture",
+                            "predictor-doctor",
+                            "--case",
+                            "RAG 输入法",
+                            "--latency-budget-ms",
+                            "1000",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertTrue(report["ready"])
+        self.assertEqual(report["status"]["providerName"], "local-ollama")
+        self.assertEqual(report["status"]["promptMode"], "ollama-chat")
+        self.assertTrue(report["checks"]["modelsEndpoint"]["ok"])
+        self.assertTrue(report["checks"]["modelsEndpoint"]["configuredModelFound"])
+        self.assertEqual(report["checks"]["prediction"]["candidates"][0], "本地记忆")
 
     def test_prediction_benchmark_reports_latency_budget(self) -> None:
         class FakeProvider:

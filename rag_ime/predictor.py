@@ -41,6 +41,21 @@ class OpenAICompatiblePredictionConfig:
 
 
 @dataclass(frozen=True)
+class OllamaPredictionConfig:
+    base_url: str
+    model: str
+    profile: str = "custom"
+    prompt_mode: str = "ollama-chat"
+    timeout_s: float = 0.8
+    max_tokens: int = 12
+    temperature: float = 0.2
+    top_p: float = 0.9
+    provider_name: str = "local-ollama"
+    extra_body: dict[str, Any] | None = None
+    extra_headers: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
 class PredictionBenchmarkCase:
     current_input: str
     recent_context: str = ""
@@ -207,6 +222,110 @@ class OpenAICompatiblePredictionProvider:
         return headers
 
 
+class OllamaPredictionProvider:
+    """Ollama-native prediction lane.
+
+    Ollama's OpenAI-compatible endpoint can keep Qwen thinking output separate
+    from normal content. The native chat API exposes `think: false`, which is a
+    better fit for IME latency and candidate parsing.
+    """
+
+    def __init__(self, config: OllamaPredictionConfig):
+        self.config = config
+        self.last_error = ""
+
+    def predict(
+        self,
+        *,
+        current_input: str,
+        recent_context: str = "",
+        max_candidates: int = 5,
+    ) -> list[ModelPrediction]:
+        query = compact_whitespace(current_input)
+        context = compact_whitespace(recent_context)[-420:]
+        if not query and not context:
+            return []
+        max_items = max(1, min(10, int(max_candidates)))
+        self.last_error = ""
+        started = time.perf_counter()
+        raw_texts = self._complete(context=context, query=query, max_candidates=max_items)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        raw_text = "\n".join(raw_texts)
+        candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
+        return [
+            ModelPrediction(
+                text=item,
+                rank=index,
+                provider_name=self.config.provider_name,
+                latency_ms=latency_ms,
+                confidence=max(0.0, min(1.0, 1.0 - (index - 1) * 0.08)),
+                metadata={
+                    "model": self.config.model,
+                    "base_url": self.config.base_url,
+                    "profile": self.config.profile,
+                    "prompt_mode": self.config.prompt_mode,
+                    "raw_text": raw_text,
+                },
+            )
+            for index, item in enumerate(candidates, start=1)
+        ]
+
+    def _complete(self, *, context: str, query: str, max_candidates: int) -> list[str]:
+        options = {
+            "num_predict": max(1, min(64, int(self.config.max_tokens))),
+            "temperature": self.config.temperature,
+            "top_p": self.config.top_p,
+        }
+        body: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是中文输入法候选预测器。只输出 JSON 字符串数组, "
+                        '例如 ["本地记忆输入法","RAG候选","历史上下文"], 不要解释。'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"上下文: {context}\n"
+                        f"当前输入: {query}\n"
+                        f"输出 {max_candidates} 个最可能的短候选。"
+                    ),
+                },
+            ],
+            "stream": False,
+            "think": False,
+            "options": options,
+        }
+        if self.config.extra_body:
+            extra_body = dict(self.config.extra_body)
+            extra_options = extra_body.pop("options", None)
+            if isinstance(extra_options, dict):
+                body["options"] = {**options, **extra_options}
+            body.update(extra_body)
+        request = urllib.request.Request(
+            f"{self.config.base_url.rstrip('/')}/api/chat",
+            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            headers=self._headers(),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
+            self.last_error = _prediction_error_name(exc)
+            return []
+        return extract_ollama_contents(payload)
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.config.extra_headers:
+            headers.update(self.config.extra_headers)
+        return headers
+
+
 class CooldownPredictionProvider:
     """Circuit breaker for the IME model lane.
 
@@ -287,12 +406,30 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
     provider = source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
     base_url = source.get("RAG_IME_PREDICTOR_BASE_URL", "").strip()
     model = source.get("RAG_IME_PREDICTOR_MODEL", "").strip()
-    if provider not in ("openai", "openai-compatible") or not base_url or not model:
+    if provider == "ollama" and not base_url:
+        base_url = "http://127.0.0.1:11434"
+    if provider not in ("openai", "openai-compatible", "ollama") or not base_url or not model:
         return NullPredictionProvider()
     profile = _normalized_predictor_profile(source.get("RAG_IME_PREDICTOR_PROFILE", "custom"))
     defaults = _prediction_profile_defaults(profile)
-    provider = OpenAICompatiblePredictionProvider(
-        OpenAICompatiblePredictionConfig(
+    if provider == "ollama":
+        configured_provider: PredictionProvider = OllamaPredictionProvider(
+            OllamaPredictionConfig(
+                base_url=_ollama_base_url(base_url),
+                model=model,
+                profile=profile,
+                timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", defaults.timeout_ms) / 1000,
+                max_tokens=int(_float_env(source, "RAG_IME_PREDICTOR_MAX_TOKENS", max(24, defaults.max_tokens))),
+                temperature=_float_env(source, "RAG_IME_PREDICTOR_TEMPERATURE", defaults.temperature),
+                top_p=_float_env(source, "RAG_IME_PREDICTOR_TOP_P", defaults.top_p),
+                provider_name="local-ollama",
+                extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
+                extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
+            )
+        )
+    else:
+        configured_provider = OpenAICompatiblePredictionProvider(
+            OpenAICompatiblePredictionConfig(
             base_url=base_url,
             model=model,
             api_key=source.get("RAG_IME_PREDICTOR_API_KEY", "").strip(),
@@ -305,13 +442,13 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
             provider_name="local-openai-compatible",
             extra_body=_prediction_extra_body_from_env(source, disable_thinking_default=defaults.disable_thinking),
             extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
+            )
         )
-    )
     cooldown_ms = int(_non_negative_float_env(source, "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS", 5000))
     if cooldown_ms <= 0:
-        return provider
+        return configured_provider
     return CooldownPredictionProvider(
-        provider,
+        configured_provider,
         cooldown_ms=cooldown_ms,
         failure_latency_ms=int(_float_env(source, "RAG_IME_PREDICTOR_FAILURE_LATENCY_MS", 250)),
     )
@@ -333,7 +470,7 @@ def prediction_provider_status(provider: PredictionProvider) -> dict[str, object
         "configured": configured,
         "providerName": getattr(config, "provider_name", "") or provider.__class__.__name__,
         "providerProfile": getattr(config, "profile", "") or "custom",
-        "promptMode": _normalized_prompt_mode(str(getattr(config, "prompt_mode", ""))),
+        "promptMode": _status_prompt_mode(str(getattr(config, "prompt_mode", ""))),
         "baseUrl": getattr(config, "base_url", ""),
         "model": getattr(config, "model", ""),
         "timeoutMs": int(float(getattr(config, "timeout_s", 0.0)) * 1000),
@@ -477,6 +614,15 @@ def extract_openai_contents(payload: dict[str, Any]) -> list[str]:
     return []
 
 
+def extract_ollama_contents(payload: dict[str, Any]) -> list[str]:
+    message = payload.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), str):
+        return [message["content"]]
+    if isinstance(payload.get("response"), str):
+        return [payload["response"]]
+    return extract_openai_contents(payload)
+
+
 def parse_prediction_candidates(text: str, *, max_candidates: int = 5) -> list[str]:
     return _parse_prediction_candidate_texts([text], max_candidates=max_candidates)
 
@@ -551,6 +697,20 @@ def _candidate_parts_from_json_value(value: Any) -> list[str]:
 def _normalized_prompt_mode(mode: str) -> str:
     normalized = mode.strip().lower()
     return "completion" if normalized in {"completion", "base", "prefix"} else "chat"
+
+
+def _status_prompt_mode(mode: str) -> str:
+    normalized = mode.strip().lower()
+    if normalized == "ollama-chat":
+        return normalized
+    return _normalized_prompt_mode(normalized)
+
+
+def _ollama_base_url(base_url: str) -> str:
+    normalized = base_url.strip().rstrip("/")
+    if normalized.endswith("/v1"):
+        return normalized[:-3].rstrip("/")
+    return normalized
 
 
 def _float_env(env: dict[str, str], name: str, fallback: float) -> float:
@@ -666,7 +826,11 @@ def _probe_openai_compatible_models(provider: PredictionProvider) -> dict[str, A
             "modelIds": [],
             "configuredModelFound": False,
         }
-    url = f"{str(getattr(config, 'base_url', '')).rstrip('/')}/v1/models"
+    provider_name = str(getattr(config, "provider_name", ""))
+    if provider_name == "local-ollama":
+        url = f"{str(getattr(config, 'base_url', '')).rstrip('/')}/api/tags"
+    else:
+        url = f"{str(getattr(config, 'base_url', '')).rstrip('/')}/v1/models"
     started = time.perf_counter()
     request = urllib.request.Request(
         url,
@@ -723,11 +887,18 @@ def _prediction_probe_error(
 def _model_ids_from_models_payload(payload: dict[str, Any]) -> list[str]:
     data = payload.get("data")
     if not isinstance(data, list):
-        return []
+        models = payload.get("models")
+        if not isinstance(models, list):
+            return []
+        data = models
     ids: list[str] = []
     for item in data:
         if isinstance(item, dict) and isinstance(item.get("id"), str):
             ids.append(item["id"])
+        elif isinstance(item, dict) and isinstance(item.get("name"), str):
+            ids.append(item["name"])
+        elif isinstance(item, dict) and isinstance(item.get("model"), str):
+            ids.append(item["model"])
     return ids
 
 
@@ -745,7 +916,7 @@ def _headers_from_prediction_config(config: Any) -> dict[str, str]:
 def _prediction_doctor_next_actions(*, status: dict[str, object], checks: dict[str, Any]) -> list[str]:
     if not status.get("configured"):
         return [
-            "Set RAG_IME_PREDICTOR_PROVIDER=openai-compatible.",
+            "Set RAG_IME_PREDICTOR_PROVIDER=openai-compatible or ollama.",
             "Set RAG_IME_PREDICTOR_BASE_URL and RAG_IME_PREDICTOR_MODEL.",
             "Use RAG_IME_PREDICTOR_PROFILE=instant for the first Qwen-style test.",
         ]
