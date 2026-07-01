@@ -56,6 +56,15 @@ class PredictionProfileDefaults:
     disable_thinking: bool = False
 
 
+@dataclass
+class PredictionCooldownState:
+    failure_count: int = 0
+    skipped_count: int = 0
+    cooldown_until: float = 0.0
+    last_error: str = ""
+    last_failure_elapsed_ms: int = 0
+
+
 class NullPredictionProvider:
     def predict(
         self,
@@ -76,6 +85,7 @@ class OpenAICompatiblePredictionProvider:
 
     def __init__(self, config: OpenAICompatiblePredictionConfig):
         self.config = config
+        self.last_error = ""
 
     def predict(
         self,
@@ -89,6 +99,7 @@ class OpenAICompatiblePredictionProvider:
         if not query and not context:
             return []
         max_items = max(1, min(10, int(max_candidates)))
+        self.last_error = ""
         started = time.perf_counter()
         raw_texts = self._complete(context=context, query=query, max_candidates=max_items)
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -153,7 +164,8 @@ class OpenAICompatiblePredictionProvider:
         try:
             with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError):
+        except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
+            self.last_error = _prediction_error_name(exc)
             return []
         return extract_openai_contents(payload)
 
@@ -181,7 +193,8 @@ class OpenAICompatiblePredictionProvider:
         try:
             with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError):
+        except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
+            self.last_error = _prediction_error_name(exc)
             return []
         return extract_openai_contents(payload)
 
@@ -194,6 +207,81 @@ class OpenAICompatiblePredictionProvider:
         return headers
 
 
+class CooldownPredictionProvider:
+    """Circuit breaker for the IME model lane.
+
+    The OpenAI-compatible provider already fails open, but a dead endpoint can
+    still cost one timeout per composing refresh. This wrapper skips temporary
+    repeat calls after transport failures or slow empty responses.
+    """
+
+    def __init__(
+        self,
+        delegate: PredictionProvider,
+        *,
+        cooldown_ms: int = 5000,
+        failure_latency_ms: int = 250,
+    ):
+        self.delegate = delegate
+        self.cooldown_ms = max(0, int(cooldown_ms))
+        self.failure_latency_ms = max(1, int(failure_latency_ms))
+        self._state = PredictionCooldownState()
+
+    @property
+    def config(self) -> Any:
+        return getattr(self.delegate, "config", None)
+
+    def predict(
+        self,
+        *,
+        current_input: str,
+        recent_context: str = "",
+        max_candidates: int = 5,
+    ) -> list[ModelPrediction]:
+        now = time.perf_counter()
+        if self.cooldown_ms > 0 and now < self._state.cooldown_until:
+            self._state.skipped_count += 1
+            return []
+
+        started = time.perf_counter()
+        predictions = self.delegate.predict(
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidates=max_candidates,
+        )
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        delegate_error = str(getattr(self.delegate, "last_error", "") or "")
+        failed_transport = bool(delegate_error)
+        slow_empty = not predictions and elapsed_ms >= self.failure_latency_ms
+        if failed_transport or slow_empty:
+            self._state.failure_count += 1
+            self._state.last_error = delegate_error or "slow_empty_prediction"
+            self._state.last_failure_elapsed_ms = elapsed_ms
+            if self.cooldown_ms > 0:
+                self._state.cooldown_until = time.perf_counter() + self.cooldown_ms / 1000.0
+        elif predictions:
+            self._state.failure_count = 0
+            self._state.last_error = ""
+            self._state.last_failure_elapsed_ms = 0
+            self._state.cooldown_until = 0.0
+        return predictions
+
+    def cooldown_status(self) -> dict[str, object]:
+        now = time.perf_counter()
+        remaining_ms = max(0, int((self._state.cooldown_until - now) * 1000))
+        return {
+            "enabled": self.cooldown_ms > 0,
+            "cooldownMs": self.cooldown_ms,
+            "failureLatencyMs": self.failure_latency_ms,
+            "active": remaining_ms > 0,
+            "remainingMs": remaining_ms,
+            "failureCount": self._state.failure_count,
+            "skippedCount": self._state.skipped_count,
+            "lastError": self._state.last_error,
+            "lastFailureElapsedMs": self._state.last_failure_elapsed_ms,
+        }
+
+
 def prediction_provider_from_env(env: dict[str, str] | None = None) -> PredictionProvider:
     source = env or os.environ
     provider = source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
@@ -203,7 +291,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
         return NullPredictionProvider()
     profile = _normalized_predictor_profile(source.get("RAG_IME_PREDICTOR_PROFILE", "custom"))
     defaults = _prediction_profile_defaults(profile)
-    return OpenAICompatiblePredictionProvider(
+    provider = OpenAICompatiblePredictionProvider(
         OpenAICompatiblePredictionConfig(
             base_url=base_url,
             model=model,
@@ -219,6 +307,14 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
             extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
         )
     )
+    cooldown_ms = int(_non_negative_float_env(source, "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS", 5000))
+    if cooldown_ms <= 0:
+        return provider
+    return CooldownPredictionProvider(
+        provider,
+        cooldown_ms=cooldown_ms,
+        failure_latency_ms=int(_float_env(source, "RAG_IME_PREDICTOR_FAILURE_LATENCY_MS", 250)),
+    )
 
 
 def prediction_provider_status(provider: PredictionProvider) -> dict[str, object]:
@@ -233,7 +329,7 @@ def prediction_provider_status(provider: PredictionProvider) -> dict[str, object
         }
     extra_body = getattr(config, "extra_body", None) or {}
     extra_headers = getattr(config, "extra_headers", None) or {}
-    return {
+    status = {
         "configured": configured,
         "providerName": getattr(config, "provider_name", "") or provider.__class__.__name__,
         "providerProfile": getattr(config, "profile", "") or "custom",
@@ -247,6 +343,10 @@ def prediction_provider_status(provider: PredictionProvider) -> dict[str, object
         "extraBodyKeys": sorted(str(key) for key in extra_body.keys()) if isinstance(extra_body, dict) else [],
         "extraHeaderKeys": sorted(str(key) for key in extra_headers.keys()) if isinstance(extra_headers, dict) else [],
     }
+    cooldown_status = getattr(provider, "cooldown_status", None)
+    if callable(cooldown_status):
+        status["cooldown"] = cooldown_status()
+    return status
 
 
 def benchmark_prediction_provider(
@@ -324,6 +424,7 @@ def doctor_prediction_provider(
     within_budget = bool(benchmark["summary"]["allWithinBudget"])
     model_probe_ok = bool(model_probe["ok"])
     ready = bool(status["configured"]) and has_candidates and within_budget
+    updated_status = prediction_provider_status(provider)
     checks = {
         "configured": bool(status["configured"]),
         "modelsEndpoint": model_probe,
@@ -339,7 +440,7 @@ def doctor_prediction_provider(
     return {
         "schemaVersion": "rag-ime.predictor-doctor.v1",
         "ready": ready,
-        "status": status,
+        "status": updated_status,
         "checks": checks,
         "summary": {
             "configured": bool(status["configured"]),
@@ -460,6 +561,14 @@ def _float_env(env: dict[str, str], name: str, fallback: float) -> float:
     return value if value > 0 else fallback
 
 
+def _non_negative_float_env(env: dict[str, str], name: str, fallback: float) -> float:
+    try:
+        value = float(env.get(name, ""))
+    except ValueError:
+        return fallback
+    return value if value >= 0 else fallback
+
+
 def _json_object_env(env: dict[str, str], name: str) -> dict[str, Any]:
     raw = env.get(name, "").strip()
     if not raw:
@@ -532,6 +641,19 @@ def _prediction_provider_profile(provider: PredictionProvider) -> str:
     config = getattr(provider, "config", None)
     profile = getattr(config, "profile", "")
     return profile if isinstance(profile, str) and profile else "none"
+
+
+def _prediction_error_name(exc: BaseException) -> str:
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", None)
+        if reason:
+            return f"url_error:{reason}"
+        return "url_error"
+    if isinstance(exc, json.JSONDecodeError):
+        return "invalid_json"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    return exc.__class__.__name__
 
 
 def _probe_openai_compatible_models(provider: PredictionProvider) -> dict[str, Any]:

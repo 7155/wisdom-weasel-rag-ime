@@ -16,6 +16,15 @@ export RAG_IME_PREDICTOR_EXTRA_BODY_JSON='{"seed":7}'
 
 The prompt asks for short candidates only and the provider fails open on timeout. This carries forward the Wisdom-Weasel lesson we are using as a design constraint: typing must not block on model output.
 
+The provider is wrapped in a small failure cooldown by default:
+
+```bash
+export RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=5000
+export RAG_IME_PREDICTOR_FAILURE_LATENCY_MS=250
+```
+
+If a request fails at the transport layer or returns no candidates after the failure-latency threshold, the next prediction calls are skipped until the cooldown expires. RAG candidates still run. This protects `/rime-suggest` from paying the model timeout repeatedly while a local or WSL endpoint is down. Set `RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=0` only when debugging the endpoint itself.
+
 For Qwen-style local servers, `RAG_IME_PREDICTOR_PROFILE=instant` is the recommended first test. It sets:
 
 ```text
@@ -84,7 +93,12 @@ Example after setting a Qwen-style instant profile:
   "baseUrl": "http://127.0.0.1:8000",
   "model": "Qwen3-0.6B",
   "timeoutMs": 350,
-  "maxTokens": 8
+  "maxTokens": 8,
+  "cooldown": {
+    "enabled": true,
+    "cooldownMs": 5000,
+    "active": false
+  }
 }
 ```
 

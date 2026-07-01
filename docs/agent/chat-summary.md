@@ -615,3 +615,23 @@ Verification:
 
 Next:
 - Start a WSL or Mac OpenAI-compatible Qwen endpoint and run `predictor-doctor` before `predict-benchmark` / `eval-prediction`.
+
+### 2026-07-01
+Topic:
+- Protect IME refreshes from repeated model endpoint failures.
+
+Changes:
+- Added `CooldownPredictionProvider` for configured OpenAI-compatible predictors.
+- Default failure cooldown is 5000 ms after transport errors or slow empty predictions.
+- Predictor status/debug health now expose cooldown state.
+- Rime sidecar test proves failed model predictions are skipped on the next refresh while RAG candidates still appear.
+
+Verification:
+- Full suite passed: 91 tests.
+- Fixture acceptance passed.
+- Real 5000-record Codex-history eval still passed 34/34 with top1Accuracy=0.824, meanReciprocalRank=0.880, p95=32ms.
+- Qwen instant doctor against `127.0.0.1:8000` reports connection refused and `cooldown.active=true`.
+- `git diff --check` passed.
+
+Next:
+- When a real WSL/Mac endpoint is available, compare no-cooldown endpoint debugging with default cooldown sidecar behavior.

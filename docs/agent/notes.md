@@ -601,6 +601,41 @@ Next:
 - Use `predictor-doctor` as the first command after starting a WSL or Mac OpenAI-compatible Qwen endpoint.
 - Only run the heavier 34-case `eval-prediction` after doctor reports reachable endpoint and parsed candidates.
 
+### 2026-07-01 08:55 CST
+Problem:
+- The model lane failed open, but a configured endpoint that times out could still cost one model timeout per `/rime-suggest` composing refresh.
+- This would break the input method's responsiveness even though RAG candidates can still work.
+
+Changes:
+- Added `CooldownPredictionProvider` around configured OpenAI-compatible predictors.
+- Default cooldown: `RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=5000`, failure threshold `RAG_IME_PREDICTOR_FAILURE_LATENCY_MS=250`.
+- `prediction_provider_status()` and debug health now expose cooldown state.
+- Added sidecar coverage proving a failed model endpoint is called once, subsequent refreshes skip the model, and RAG candidates still appear.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_rime_sidecar`
+- `RAG_IME_PREDICTOR_PROVIDER=openai-compatible RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000 RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B RAG_IME_PREDICTOR_PROFILE=instant python3 -m rag_ime.cli --core-mode fixture predictor-status`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `RAG_IME_PREDICTOR_PROVIDER=openai-compatible RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000 RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B RAG_IME_PREDICTOR_PROFILE=instant python3 -m rag_ime.cli --core-mode fixture predictor-doctor --case "RAG 输入法" --recent-context "用户正在写本地记忆输入法" --latency-budget-ms 150`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-predictor-cooldown-eval-20260701.sqlite import-codex-history --path /Users/undo/.codex/sessions --project wisdom-weasel-rag-ime --limit 5000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-predictor-cooldown-eval-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 1`
+- `git diff --check`
+
+Findings:
+- Predictor tests pass with cooldown on by default and with cooldown disabled through env.
+- Rime sidecar tests pass and verify model-failure cooldown does not suppress RAG candidates.
+- Predictor status shows cooldown metadata for configured Qwen instant env.
+- Full suite passed: 91 tests.
+- Fixture acceptance passed.
+- Real 5000-record Codex-history eval still passed 34/34, top1Accuracy=0.824, meanReciprocalRank=0.880, p95=32ms.
+- Qwen instant doctor against `127.0.0.1:8000` now reports `cooldown.active=true` after connection refused, proving the failure is surfaced and repeat model calls are short-circuited in-process.
+- `git diff --check` passed.
+
+Next:
+- When a real WSL/Mac endpoint is available, compare no-cooldown debug mode vs default cooldown only for endpoint debugging.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.

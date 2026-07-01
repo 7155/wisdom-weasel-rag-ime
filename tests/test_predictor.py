@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from rag_ime.cli import main
 from rag_ime.predictor import (
+    CooldownPredictionProvider,
     OpenAICompatiblePredictionConfig,
     OpenAICompatiblePredictionProvider,
     PredictionBenchmarkCase,
@@ -188,10 +189,10 @@ class PredictionProviderTests(unittest.TestCase):
             }
         )
 
-        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
-        assert isinstance(provider, OpenAICompatiblePredictionProvider)
+        self.assertIsInstance(provider, CooldownPredictionProvider)
+        config = provider.config
         self.assertEqual(
-            provider.config.extra_body,
+            config.extra_body,
             {
                 "seed": 7,
                 "chat_template_kwargs": {
@@ -212,16 +213,16 @@ class PredictionProviderTests(unittest.TestCase):
             }
         )
 
-        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
-        assert isinstance(provider, OpenAICompatiblePredictionProvider)
-        self.assertEqual(provider.config.profile, "instant")
-        self.assertEqual(provider.config.prompt_mode, "chat")
-        self.assertEqual(provider.config.timeout_s, 0.35)
-        self.assertEqual(provider.config.max_tokens, 8)
-        self.assertEqual(provider.config.temperature, 0.15)
-        self.assertEqual(provider.config.top_p, 0.85)
+        self.assertIsInstance(provider, CooldownPredictionProvider)
+        config = provider.config
+        self.assertEqual(config.profile, "instant")
+        self.assertEqual(config.prompt_mode, "chat")
+        self.assertEqual(config.timeout_s, 0.35)
+        self.assertEqual(config.max_tokens, 8)
+        self.assertEqual(config.temperature, 0.15)
+        self.assertEqual(config.top_p, 0.85)
         self.assertEqual(
-            provider.config.extra_body,
+            config.extra_body,
             {
                 "seed": 7,
                 "chat_template_kwargs": {"enable_thinking": False},
@@ -253,6 +254,72 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(status["timeoutMs"], 350)
         self.assertIn("chat_template_kwargs", status["extraBodyKeys"])
         self.assertIn("seed", status["extraBodyKeys"])
+        self.assertTrue(status["cooldown"]["enabled"])
+
+    def test_env_can_disable_prediction_failure_cooldown(self) -> None:
+        provider = prediction_provider_from_env(
+            {
+                "RAG_IME_PREDICTOR_PROVIDER": "openai-compatible",
+                "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:8000",
+                "RAG_IME_PREDICTOR_MODEL": "Qwen3-0.6B",
+                "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+            }
+        )
+
+        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
+
+    def test_prediction_cooldown_skips_repeat_failures(self) -> None:
+        class FailingProvider:
+            config = OpenAICompatiblePredictionConfig(
+                base_url="http://127.0.0.1:9",
+                model="Qwen3-0.6B",
+                provider_name="failing-provider",
+                profile="instant",
+            )
+
+            def __init__(self) -> None:
+                self.calls = 0
+                self.last_error = ""
+
+            def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+                self.calls += 1
+                self.last_error = "timeout"
+                return []
+
+        delegate = FailingProvider()
+        provider = CooldownPredictionProvider(delegate, cooldown_ms=1000, failure_latency_ms=1)
+
+        self.assertEqual(provider.predict(current_input="RAG 输入法"), [])
+        self.assertEqual(provider.predict(current_input="RAG 输入法"), [])
+        self.assertEqual(delegate.calls, 1)
+        status = prediction_provider_status(provider)
+        self.assertTrue(status["cooldown"]["active"])
+        self.assertEqual(status["cooldown"]["failureCount"], 1)
+        self.assertEqual(status["cooldown"]["skippedCount"], 1)
+        self.assertEqual(status["cooldown"]["lastError"], "timeout")
+
+    def test_predictor_doctor_reports_cooldown_after_failed_probe(self) -> None:
+        class FailingProvider:
+            config = OpenAICompatiblePredictionConfig(
+                base_url="http://127.0.0.1:9",
+                model="Qwen3-0.6B",
+                provider_name="doctor-failing-provider",
+                profile="instant",
+            )
+
+            def __init__(self) -> None:
+                self.last_error = ""
+
+            def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+                self.last_error = "timeout"
+                return []
+
+        provider = CooldownPredictionProvider(FailingProvider(), cooldown_ms=1000, failure_latency_ms=1)
+        report = doctor_prediction_provider(provider, latency_budget_ms=1000)
+
+        self.assertFalse(report["ready"])
+        self.assertTrue(report["status"]["cooldown"]["active"])
+        self.assertEqual(report["status"]["cooldown"]["lastError"], "timeout")
 
     def test_cli_predictor_status_reports_env_configuration(self) -> None:
         stdout = io.StringIO()
