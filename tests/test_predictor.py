@@ -178,6 +178,22 @@ class _MockOllamaStreamingHandler(BaseHTTPRequestHandler):
         return
 
 
+class _MockOllamaEmptyStreamingHandler(BaseHTTPRequestHandler):
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        self.rfile.read(length)
+        body = json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}).encode("utf-8") + b"\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
 class _MockCompletionHandler(BaseHTTPRequestHandler):
     captured_path = ""
     captured_payload: dict[str, object] = {}
@@ -888,6 +904,51 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(_MockOllamaStreamingHandler.captured_payload["stream"])
         self.assertFalse(_MockOllamaStreamingHandler.captured_payload["think"])
         self.assertEqual(_MockOllamaStreamingHandler.captured_payload["keep_alive"], -1)
+
+    def test_cli_predictor_ttft_counts_missing_first_chunk_as_over_budget(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaEmptyStreamingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            stdout = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "ollama",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "qwen3.5:0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "--core-mode",
+                            "fixture",
+                            "predictor-ttft",
+                            "--case",
+                            "RAG 输入法",
+                            "--repeat",
+                            "1",
+                            "--latency-budget-ms",
+                            "200",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertFalse(report["summary"]["hasFirstChunk"])
+        self.assertFalse(report["summary"]["allWithinBudget"])
+        self.assertEqual(report["summary"]["firstChunkMissingCount"], 1)
+        self.assertEqual(report["summary"]["failureCount"], 1)
+        self.assertEqual(report["summary"]["overBudgetCount"], 1)
+        self.assertTrue(report["cases"][0]["overBudget"])
 
 
 if __name__ == "__main__":

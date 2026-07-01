@@ -610,8 +610,10 @@ def benchmark_streaming_ttft_provider(
             total_ms = measured.get("totalMs")
             if isinstance(total_ms, int):
                 total_latencies.append(total_ms)
-            measured["overBudget"] = isinstance(first_ms, int) and first_ms > latency_budget_ms
+            measured["overBudget"] = not isinstance(first_ms, int) or first_ms > latency_budget_ms
             results.append(measured)
+    first_chunk_missing_count = sum(1 for item in results if not isinstance(item.get("firstChunkMs"), int))
+    over_budget_count = sum(1 for item in results if bool(item.get("overBudget")))
 
     return {
         "schemaVersion": "rag-ime.predictor-ttft.v1",
@@ -636,8 +638,10 @@ def benchmark_streaming_ttft_provider(
             "maxFirstChunkMs": max(first_chunk_latencies) if first_chunk_latencies else 0,
             "p50TotalMs": _percentile_ms(total_latencies, 0.50),
             "p95TotalMs": _percentile_ms(total_latencies, 0.95),
-            "allWithinBudget": bool(first_chunk_latencies) and all(item <= latency_budget_ms for item in first_chunk_latencies),
-            "overBudgetCount": sum(1 for item in first_chunk_latencies if item > latency_budget_ms),
+            "allWithinBudget": bool(results) and over_budget_count == 0,
+            "overBudgetCount": over_budget_count,
+            "firstChunkMissingCount": first_chunk_missing_count,
+            "failureCount": sum(1 for item in results if not bool(item.get("ok"))),
             "candidateSampleCount": sum(1 for item in results if int(item.get("candidateCount") or 0) > 0),
         },
         "cases": results,

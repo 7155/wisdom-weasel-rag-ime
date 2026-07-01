@@ -22,6 +22,7 @@ This repo should focus on:
 - Rime/Squirrel production frontend integration plan;
 - optional local OpenAI-compatible model prediction lane;
 - history-input context for local model prediction;
+- measured Mac-local model TTFT gate: `qwen3.5:0.8b-mlx` reached 46 ms p50 first chunk in a warm sequential smoke, but still fails project-memory quality gates, so RAG remains the source of truth;
 - Mac-local acceptance scenarios.
 
 This repo should not duplicate:
