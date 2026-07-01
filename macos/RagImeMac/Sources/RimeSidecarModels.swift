@@ -56,6 +56,8 @@ struct RimeTriggerDecision: Codable {
 
 struct RimeDisplayCandidate: Codable, Hashable {
     let label: String
+    let selectionKey: String?
+    let selectionRank: Int?
     let text: String
     let insertText: String
     let sourceType: String
@@ -67,6 +69,8 @@ struct RimeDisplayCandidate: Codable, Hashable {
     let memoryId: String
     let sourceEventId: Int?
     let rimeIndex: Int?
+    let displayLayout: String?
+    let displayLane: String?
     let metadata: [String: JSONValue]
 }
 

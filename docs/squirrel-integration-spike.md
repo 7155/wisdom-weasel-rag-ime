@@ -130,7 +130,7 @@ The Python sidecar now has a second guard before model/RAG work:
 Rime context -> semantic query -> triggerDecision
 ```
 
-It returns Rime candidates on every response, but skips model/RAG side lanes when the request is still raw pinyin fallback, has no stable Rime candidate, has no visible side slot, or has only a one-character candidate before idle. The response exposes:
+It returns Rime fallback candidates on every response, but skips model/RAG side lanes when the request is still raw pinyin fallback, lacks a stable semantic signal, or has only a one-character candidate before idle. A full Rime page no longer blocks side lanes because model/RAG candidates own the visible side budget first. The response exposes:
 
 ```json
 {
@@ -151,8 +151,9 @@ This keeps the real Squirrel key path cheap even when Rime fires many panel refr
 Short-term path:
 
 - let Python return `displayCandidates`;
-- pass only `.text`, `.comment`, `.label` to `SquirrelPanel.update(...)`;
+- pass `.text`, `.comment`, and visible `.label` to `SquirrelPanel.update(...)`;
 - keep `displayCandidates` cached in `SquirrelInputController` for selection routing.
+- treat `selectionKey` as the authoritative key for side-candidate interception when present, and `selectionRank` as the rank written to feedback; key `0` means rank 10.
 
 Selection routing:
 

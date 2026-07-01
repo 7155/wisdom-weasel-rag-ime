@@ -15,8 +15,9 @@ from .text_utils import compact_whitespace
 
 
 SYSTEM_PROMPT = (
-    "你是中文输入法候选预测器。只输出 JSON 字符串数组, "
-    '例如 ["本地记忆输入法","RAG候选","历史上下文"], 不要解释。'
+    "你是中文输入法候选预测器。只输出可以直接上屏的中文候选短语。"
+    '返回 JSON 字符串数组, 例如 ["现在","现状"], 不要解释, 不要编号, '
+    "不要输出拼音, 不要输出<think>。"
 )
 
 
@@ -50,16 +51,15 @@ class MlxLmEngine:
         if not model_id:
             raise RuntimeError("MLX predictor requires --model or RAG_IME_MLX_MODEL")
         try:
-            from mlx_lm import load, stream_generate  # type: ignore
+            from mlx_lm import load  # type: ignore
         except ImportError as exc:  # pragma: no cover - depends on local Mac setup
             raise RuntimeError("Install mlx-lm before running mlx-predictor-server") from exc
 
         self.model_id = model_id
-        self._stream_generate = stream_generate
         self.model, self.tokenizer = load(model_id)
         self._prompt_cache = _PromptCacheState(
             enabled=bool(enable_prompt_cache),
-            stable_prefix=_stable_prompt_prefix(),
+            stable_prefix=self._stable_prompt_prefix(),
             max_kv_size=max(0, int(prompt_cache_max_kv_size)),
         )
         if self._prompt_cache.enabled:
@@ -133,7 +133,7 @@ class MlxLmEngine:
         request_metadata: dict[str, Any] | None = None,
     ) -> Iterable[str]:
         _ = request_metadata
-        prompt = _build_mlx_prompt(
+        prompt = self._build_prompt(
             current_input=current_input,
             recent_context=recent_context,
             max_candidates=max_candidates,
@@ -156,17 +156,13 @@ class MlxLmEngine:
 
         if self._prompt_cache.enabled:
             self._prompt_cache.miss_count += 1
-        for response in self._stream_generate(
-            self.model,
-            self.tokenizer,
-            prompt,
+        for text in self._stream_text_with_generate_step(
+            prompt=prompt,
             max_tokens=max(1, min(64, int(max_tokens))),
             temperature=float(temperature),
             top_p=float(top_p),
         ):
-            text = getattr(response, "text", "")
-            if isinstance(text, str) and text:
-                yield text
+            yield text
 
     def _stream_text_with_prompt_cache(
         self,
@@ -184,23 +180,45 @@ class MlxLmEngine:
         import mlx.core as mx  # type: ignore
 
         cache = load_prompt_cache(str(self._prompt_cache.cache_file))
-        dynamic_prompt = _build_mlx_dynamic_prompt(
+        dynamic_prompt = self._dynamic_prompt_suffix(
             current_input=current_input,
             recent_context=recent_context,
             max_candidates=max_candidates,
         )
-        tokens = self.tokenizer.encode(dynamic_prompt)
-        sampler = make_sampler(temp=float(temperature), top_p=float(top_p))
-        emitted = ""
-        generated_tokens: list[int] = []
         self._prompt_cache.used_for_generation = True
         self._prompt_cache.hit_count += 1
         self._prompt_cache.error = ""
+        for text in self._stream_text_with_generate_step(
+            prompt=dynamic_prompt,
+            max_tokens=max(1, min(64, int(max_tokens))),
+            temperature=float(temperature),
+            top_p=float(top_p),
+            prompt_cache=cache,
+        ):
+            yield text
+
+    def _stream_text_with_generate_step(
+        self,
+        *,
+        prompt: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        prompt_cache: Any | None = None,
+    ) -> Iterable[str]:
+        from mlx_lm.generate import generate_step  # type: ignore
+        from mlx_lm.sample_utils import make_sampler  # type: ignore
+        import mlx.core as mx  # type: ignore
+
+        tokens = self.tokenizer.encode(prompt)
+        sampler = make_sampler(temp=max(0.0, float(temperature)), top_p=max(0.0, float(top_p)))
+        emitted = ""
+        generated_tokens: list[int] = []
         for token, _logprobs in generate_step(
             mx.array(tokens),
             self.model,
             max_tokens=max(1, min(64, int(max_tokens))),
-            prompt_cache=cache,
+            prompt_cache=prompt_cache,
             sampler=sampler,
         ):
             token_id = _token_to_int(token)
@@ -214,6 +232,22 @@ class MlxLmEngine:
             emitted = decoded
             if delta:
                 yield delta
+
+    def _stable_prompt_prefix(self) -> str:
+        return f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n"
+
+    def _dynamic_prompt_suffix(self, *, current_input: str, recent_context: str, max_candidates: int) -> str:
+        return (
+            f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates)}"
+            "\n/no_think"
+            "<|im_end|>\n<|im_start|>assistant\n"
+        )
+
+    def _build_prompt(self, *, current_input: str, recent_context: str, max_candidates: int) -> str:
+        return (
+            f"{self._stable_prompt_prefix()}"
+            f"{self._dynamic_prompt_suffix(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates)}"
+        )
 
     def _prepare_prompt_cache(self) -> None:
         started = time.perf_counter()

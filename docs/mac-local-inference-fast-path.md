@@ -11,14 +11,13 @@ input method?
 
 Use a tiered path:
 
-1. **Current fastest measured debug path**: Ollama `qwen3.5:0.8b-mlx`, native
-   Ollama API, `think:false`, `keep_alive`, streaming, and
-   `RAG_IME_PREDICTOR_STREAM_FIRST=1`. This is the fastest path already proven
-   on this Mac, but it is a smoke/debug route rather than the final inference
-   kernel.
-2. **Next product experiment**: direct resident MLX-LM service using
-   `stream_generate`, stable-prompt cache isolation, and first parsed candidate
-   emission.
+1. **Current product path**: direct resident MLX-LM with a text-only small
+   model, starting from `mlx-community/Qwen3-0.6B-4bit` and escalating to
+   `mlx-community/Qwen3-1.7B-4bit` only if candidate quality is too weak.
+2. **Debug baseline only**: Ollama `qwen3.5:0.8b-mlx`, native Ollama API,
+   `think:false`, `keep_alive`, streaming, and
+   `RAG_IME_PREDICTOR_STREAM_FIRST=1`. This remains useful as a measured smoke
+   baseline, but it is no longer the preferred product route.
 3. **Final Wisdom-Weasel parity path**: native `llama.cpp`/Metal provider with
    stable system-prompt KV reuse plus sequence-copy multi-candidate sampling.
 4. **Later research**: Core ML stateful KV and MLC LLM. They are promising but
@@ -31,11 +30,32 @@ first raw token, or complete JSON response.
 The final product should optimize two different things separately:
 
 - **model choice**: start with the smallest non-thinking model that can produce
-  useful short continuations (`qwen3.5:0.8b-mlx` for speed smoke; 2B/4B only if
-  quality needs it);
+  useful short continuations. Prefer text-only Qwen3 MLX-LM models for the
+  active input method lane; treat Qwen3.5 VLM models as a separate experiment;
 - **runtime kernel**: keep the model resident, avoid cold load, reuse the stable
   prompt/KV prefix, stream the first useful candidate, cancel stale requests,
   and never wait for a complete JSON list in the active typing path.
+
+## 2026-07-01 Runtime Correction
+
+The latest Squirrel/sidecar tryout changes the operational default:
+
+- The real sidecar can now return 8 display candidates after setting
+  `menu/page_size: 8`; model/RAG side candidates can occupy labels 1-8 first,
+  with Rime candidates used as deterministic fallback rows.
+- The current Ollama `qwen3.5:0.8b-mlx` lane is reachable, but a live
+  `predictor-doctor` run took about 2006 ms and returned no parsed candidates
+  under the 200 ms input-method budget. It should not be the default model lane.
+- Hugging Face and MLX-community model cards show `Qwen3.5-0.8B/2B` as
+  image-text / VLM-style models. The available MLX-community Qwen3.5 packages
+  use `mlx-vlm`, not the existing `mlx-lm` text service.
+- Therefore the MVP model lane should use text-only MLX-LM models first:
+  `mlx-community/Qwen3-0.6B-4bit`, then `mlx-community/Qwen3-1.7B-4bit` if the
+  0.6B quality is insufficient.
+
+This keeps the architecture honest: Squirrel/Rime handles deterministic pinyin
+and dictionary candidates, RAG handles personal memory, and the model lane only
+adds a fast local continuation when it can meet the latency budget.
 
 ## Source Refresh And Locked Direction
 
@@ -352,8 +372,9 @@ The model lane must not starve RAG:
 - Use WSL or another machine for heavy batch embedding if needed, but avoid
   remote calls for per-keystroke model prediction because tens of milliseconds
   of network latency consumes too much of the 200 ms budget.
-- The local model should occupy at most one model side slot by default; RAG
-  candidates and Rime candidates keep the UI useful if the model lane is slow.
+- The local model may occupy multiple short inline slots when it is fast enough;
+  RAG/memory candidates occupy block rows, and Rime candidates remain the
+  deterministic fallback when side lanes are slow, empty, or unsafe.
 
 ## Operational Rules
 

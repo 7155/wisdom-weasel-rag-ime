@@ -55,16 +55,17 @@ http://127.0.0.1:8765/
 The native input method uses one shared number-key set instead of splitting numbers between word candidates and paragraph candidates.
 
 ```text
-1-3   choose top-layer model prediction
-4-6   choose lower RAG/memory candidate
+1-8   prefer MLX/model and RAG/memory candidates
+fallback rows choose Rime candidates when side lanes are unavailable or empty
 Esc   cancel current composition
 Enter commit the current composition
 ```
 
 Reason:
 
-- traditional number-key muscle memory stays stable;
-- paragraph candidates do not need a separate key mode;
+- model candidates are short and should render inline/horizontally;
+- RAG/memory candidates are sentence-like and should render as block rows;
+- Rime remains available as deterministic parsing/fallback rather than the main ranked list;
 - the same payload can drive the debug page and native AppKit panel;
 - the IME panel stays small because it only shows one prediction row and up to three memory rows.
 
@@ -194,12 +195,22 @@ python3 -m rag_ime.cli cache-probe "RAG 输入法" \
 }
 ```
 
-The response includes `displayCandidates` where Rime candidates keep `selectionAction: select_rime_candidate`, while model/RAG side candidates use `selectionAction: commit_side_candidate`. The semantic query is built from commit preview or Rime candidates before falling back to raw input.
+The response includes `displayCandidates` where Rime candidates keep
+`selectionAction: select_rime_candidate`, while model/RAG side candidates use
+`selectionAction: commit_side_candidate`. Each display candidate carries both the
+legacy visible `label` and explicit selection routing fields:
+
+- `selectionKey`: the key that selects this visible row;
+- `selectionRank`: the 1-based rank written to memory feedback; `0` maps to
+  rank 10 for the shared `1-9,0` candidate-key convention.
+
+The semantic query is built from commit preview or Rime candidates before
+falling back to raw input.
 
 The response also includes `triggerDecision`. This is the backend guard that keeps the input method small and responsive:
 
-- Rime candidates are always returned.
-- Model/RAG side lanes are skipped for raw pinyin fallback, empty input, no side slot, or composing updates without stable Rime candidates.
+- Rime candidates are kept as fallback rows when side candidates do not fill the visible list.
+- Model/RAG side lanes are skipped for raw pinyin fallback, empty input, or composing updates without stable Rime candidates.
 - `forceSideCandidates: true` can be used by debug tooling to force a refresh.
 - Skipped refreshes return empty `modelPredictions` / `ragCandidates` and `mergePolicy.sideCandidatesEnabled: false`.
 
@@ -218,8 +229,9 @@ side lane was allowed to run inside the request budget:
   "modelLane": {
     "called": true,
     "timedOut": false,
-    "latencyBudgetMs": 142,
-    "elapsedBeforeModelMs": 8,
+    "latencyBudgetMs": 150,
+    "sideLaneMode": "parallel",
+    "elapsedBeforeModelMs": 0,
     "predictionCount": 1
   }
 }
@@ -309,6 +321,8 @@ only invalidate the dynamic tail.
 {
   "candidate": {
     "label": "4",
+    "selectionKey": "4",
+    "selectionRank": 4,
     "text": "先用 FTS5 证明召回收益",
     "insertText": "先用 FTS5 证明召回收益",
     "sourceType": "rag",

@@ -162,7 +162,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertIn("就比如", semantic_query)
         self.assertNotIn("jiubiruwopinshishur", semantic_query)
 
-    def test_response_merges_rime_first_then_side_candidates(self) -> None:
+    def test_response_merges_side_candidates_first_then_rime_fallback(self) -> None:
         payload = {
             "sessionId": "squirrel-1",
             "requestSeq": 42,
@@ -192,20 +192,58 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["queryBasis"], "rimeCandidates")
         self.assertIn("RAG 输入法", self.predictor.last_current_input)
         display = response["displayCandidates"]
-        self.assertEqual(display[0]["sourceType"], "rime")
-        self.assertEqual(display[0]["selectionAction"], "select_rime_candidate")
-        self.assertEqual(display[0]["rimeIndex"], 0)
-        self.assertEqual(display[1]["sourceType"], "rime")
-        self.assertEqual(display[2]["sourceType"], "model")
+        self.assertEqual(display[0]["sourceType"], "model")
+        self.assertEqual(display[0]["selectionAction"], "commit_side_candidate")
+        self.assertEqual(display[0]["displayLayout"], "inline")
+        self.assertEqual(display[0]["displayLane"], "model")
+        self.assertEqual(display[1]["sourceType"], "rag")
+        self.assertEqual(display[1]["selectionAction"], "commit_side_candidate")
+        self.assertEqual(display[1]["displayLayout"], "block")
+        self.assertEqual(display[1]["displayLane"], "memory")
+        self.assertIsInstance(display[1]["sourceEventId"], int)
+        self.assertEqual(display[2]["sourceType"], "rag")
         self.assertEqual(display[2]["selectionAction"], "commit_side_candidate")
-        self.assertEqual(display[3]["sourceType"], "rag")
-        self.assertEqual(display[3]["selectionAction"], "commit_side_candidate")
-        self.assertIsInstance(display[3]["sourceEventId"], int)
+        self.assertEqual(display[3]["sourceType"], "rime")
+        self.assertEqual(display[3]["selectionAction"], "select_rime_candidate")
+        self.assertEqual(display[3]["displayLayout"], "fallback")
+        self.assertEqual(display[3]["displayLane"], "rime")
+        self.assertEqual(display[3]["rimeIndex"], 0)
         self.assertEqual([item["label"] for item in display[:4]], ["1", "2", "3", "4"])
+        self.assertEqual([item["selectionKey"] for item in display[:4]], ["1", "2", "3", "4"])
+        self.assertEqual([item["selectionRank"] for item in display[:4]], [1, 2, 3, 4])
+        self.assertFalse(response["mergePolicy"]["rimeFirst"])
+        self.assertTrue(response["mergePolicy"]["sideFirst"])
+        self.assertEqual(response["mergePolicy"]["fallbackOrder"], ["model", "rag", "rime"])
         self.assertTrue(response["modelLane"]["called"])
         self.assertFalse(response["modelLane"]["timedOut"])
         self.assertEqual(response["modelLane"]["predictionCount"], 1)
         self.assertEqual(response["modelLane"]["totalLatencyBudgetMs"], 150)
+
+    def test_tenth_shared_candidate_uses_zero_key_with_rank_ten(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-zero-key",
+                "requestSeq": 44,
+                "maxVisibleCandidates": 10,
+                "maxSideCandidates": 10,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": str(index + 1), "text": f"候选{index + 1}", "comment": "rime"}
+                        for index in range(9)
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+
+        display = response["displayCandidates"]
+        self.assertEqual(len(display), 10)
+        self.assertEqual(display[9]["sourceType"], "model")
+        self.assertEqual(display[9]["label"], "0")
+        self.assertEqual(display[9]["selectionKey"], "0")
+        self.assertEqual(display[9]["selectionRank"], 10)
 
     def test_history_context_is_only_used_for_model_not_rag_retrieval(self) -> None:
         core = CapturingCore()
@@ -279,12 +317,12 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(len(side_items), 2)
         self.assertEqual(side_items[0]["sourceType"], "model")
         self.assertEqual(side_items[1]["sourceType"], "rag")
-        self.assertEqual(response["mergePolicy"]["maxModelSideCandidates"], 1)
-        self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
+        self.assertEqual(response["mergePolicy"]["maxModelSideCandidates"], 2)
+        self.assertFalse(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
         self.assertTrue(response["triggerDecision"]["shouldRefresh"])
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: stable Rime candidates")
 
-    def test_model_predictions_cannot_consume_all_side_slots(self) -> None:
+    def test_model_predictions_can_fill_all_side_slots_before_rag_fallback(self) -> None:
         response = build_rime_sidecar_response(
             payload={
                 "sessionId": "squirrel-side-balance",
@@ -302,7 +340,7 @@ class RimeSidecarTests(unittest.TestCase):
             predictor=MultiPredictionProvider(),
         )
         side_items = [item for item in response["displayCandidates"] if item["sourceType"] != "rime"]
-        self.assertEqual([item["sourceType"] for item in side_items], ["model", "rag", "rag"])
+        self.assertEqual([item["sourceType"] for item in side_items], ["model", "model", "model"])
         self.assertEqual(len(response["modelPredictions"]), 3)
 
     def test_predictor_cooldown_skips_second_rime_refresh_but_keeps_rag(self) -> None:
@@ -363,7 +401,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["predictionCount"], 0)
         self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
 
-    def test_rag_lane_timeout_returns_rime_without_waiting_for_rag_or_model(self) -> None:
+    def test_rag_lane_timeout_does_not_block_parallel_model_lane(self) -> None:
         core = SlowSuggestionCore(sleep_s=0.12)
         adapter = InputMethodAdapter(core)
         predictor = FakePredictionProvider()
@@ -392,13 +430,15 @@ class RimeSidecarTests(unittest.TestCase):
 
         self.assertLess(elapsed_ms, 100)
         self.assertEqual(core.calls, 1)
-        self.assertEqual(predictor.last_current_input, "")
+        self.assertEqual(predictor.last_current_input, "RAG 输入法")
         self.assertEqual(response["ragCandidates"], [])
         self.assertTrue(response["ragLane"]["called"])
         self.assertTrue(response["ragLane"]["timedOut"])
         self.assertEqual(response["ragLane"]["skippedReason"], "RAG lane exceeded latency budget")
-        self.assertFalse(response["modelLane"]["called"])
-        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime"])
+        self.assertTrue(response["modelLane"]["called"])
+        self.assertFalse(response["modelLane"]["timedOut"])
+        self.assertEqual(response["modelLane"]["sideLaneMode"], "parallel")
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["model", "rime"])
 
     def test_slow_history_context_does_not_call_model_after_budget_timeout(self) -> None:
         core = SlowHistoryCore(sleep_s=0.12)
@@ -478,7 +518,6 @@ class RimeSidecarTests(unittest.TestCase):
                 "requestSeq": 11,
                 "rawInput": "jiubiruwopinshishur",
                 "preedit": "jiubiruwopinshishur",
-                "committedContext": "用户正在讨论 RAG 输入法如何复用 Rime",
                 "maxVisibleCandidates": 6,
                 "maxSideCandidates": 3,
                 "rimeContext": {"candidates": []},
@@ -489,11 +528,32 @@ class RimeSidecarTests(unittest.TestCase):
         )
         self.assertEqual(self.predictor.last_current_input, "")
         self.assertFalse(response["triggerDecision"]["shouldRefresh"])
-        self.assertEqual(response["triggerDecision"]["reason"], "skip: composing without stable Rime candidate")
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: raw pinyin fallback")
         self.assertEqual(response["modelPredictions"], [])
         self.assertEqual(response["ragCandidates"], [])
         self.assertEqual(response["displayCandidates"], [])
         self.assertFalse(response["mergePolicy"]["sideCandidatesEnabled"])
+
+    def test_dirty_raw_pinyin_can_use_recent_committed_context_fallback(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-recent-context-fallback",
+                "requestSeq": 15,
+                "rawInput": "asdioj",
+                "preedit": "asdioj",
+                "committedContext": "刚刚输入了 RAG 输入法的候选布局，需要继续预测下一句",
+                "maxVisibleCandidates": 6,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+        )
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: recent committed context fallback")
+        self.assertIn("刚刚输入了", self.predictor.last_current_input)
+        self.assertIn(response["displayCandidates"][0]["sourceType"], {"model", "rag"})
 
     def test_short_rime_candidate_skips_until_idle(self) -> None:
         snapshot = parse_rime_context_payload(
@@ -558,7 +618,7 @@ class RimeSidecarTests(unittest.TestCase):
         response = json.loads(stdout.getvalue())
         self.assertEqual(response["schemaVersion"], "rag-ime.rime-sidecar.v1")
         self.assertEqual(response["sessionId"], "cli-s1")
-        self.assertEqual(response["displayCandidates"][0]["sourceType"], "rime")
+        self.assertIn(response["displayCandidates"][0]["sourceType"], {"model", "rag"})
 
     def test_cli_rime_select_json_records_side_candidate_commit(self) -> None:
         payload = {
@@ -596,6 +656,43 @@ class RimeSidecarTests(unittest.TestCase):
                     ("统一选择写回接口",),
                 ).fetchone()
             self.assertEqual(row, ("统一选择写回接口", 3, "squirrel_rime_sidecar"))
+
+    def test_cli_rime_select_json_maps_zero_label_to_rank_ten(self) -> None:
+        payload = {
+            "candidate": {
+                "label": "0",
+                "selectionKey": "0",
+                "selectionRank": 10,
+                "text": "第十个候选",
+                "insertText": "第十个候选",
+                "sourceType": "model",
+                "selectionAction": "commit_side_candidate",
+                "sourceIndex": 0,
+            },
+            "query": "第十个",
+            "recentContext": "Squirrel shared labels",
+            "preedit": "di",
+        }
+        with tempfile.TemporaryDirectory(prefix="rag-ime-rime-select-zero-") as tmp:
+            db_path = f"{tmp}/select.sqlite"
+            stdin = io.StringIO(json.dumps(payload, ensure_ascii=False))
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                old_stdin = sys.stdin
+                try:
+                    sys.stdin = stdin
+                    code = main(["--db-path", db_path, "rime-select-json"])
+                finally:
+                    sys.stdin = old_stdin
+            self.assertEqual(code, 0)
+            response = json.loads(stdout.getvalue())
+            self.assertEqual(response["schemaVersion"], "rag-ime.rime-selection.v1")
+            with sqlite3.connect(db_path) as conn:
+                row = conn.execute(
+                    "SELECT committed_text, candidate_rank FROM input_events WHERE committed_text = ?",
+                    ("第十个候选",),
+                ).fetchone()
+            self.assertEqual(row, ("第十个候选", 10))
 
 
 if __name__ == "__main__":

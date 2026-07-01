@@ -114,7 +114,7 @@ RAG · input_event:4
 Design rules:
 
 - short candidate rows stay fast and number-selectable;
-- the native IME panel stays small: at most one model-prediction row, three RAG rows, and one evidence hint;
+- the native IME panel stays small: short LLM predictions share one inline row when possible, while RAG/memory snippets use compact block rows;
 - model predictions and RAG suggestions share the same number-key sequence;
 - do not show pipeline status, model names, debug JSON, confidence scores, or governance buttons in the IME panel;
 - governance actions and full pipeline detail belong in `debug/` or a future preferences/debug window;
@@ -245,6 +245,47 @@ scripts/install_sidecar_launch_agent.sh
 Whitelisted variables include `RAG_IME_PREDICTOR_*`,
 `RAG_IME_HISTORY_CONTEXT_*`, `RAG_IME_RIME_CACHE_TTL_MS`, and
 `RAG_IME_SUGGESTION_CACHE_SIZE`.
+
+### Text-Only MLX Model Lane
+
+For the active input-method model lane, prefer text-only MLX-LM models over
+Qwen3.5 VLM models. The current default local model target is
+`mlx-community/Qwen3-0.6B-4bit`; move to `mlx-community/Qwen3-1.7B-4bit` only
+if the 0.6B model is too weak.
+
+Install the Python runtime with proxy variables unset and a repo-local pip
+cache:
+
+```bash
+scripts/setup_mlx_predictor_env.sh
+```
+
+Then install the resident MLX predictor LaunchAgent:
+
+```bash
+RAG_IME_MLX_PYTHON="$PWD/.venv-mlx314sys/bin/python" \
+RAG_IME_MLX_MODEL=mlx-community/Qwen3-0.6B-4bit \
+RAG_IME_HF_HOME="/Volumes/undo 4t/huggingface-cache" \
+scripts/install_mlx_predictor_launch_agent.sh
+```
+
+Finally point the RAG/Rime sidecar at the MLX service:
+
+```bash
+RAG_IME_PREDICTOR_PROVIDER=mlx \
+RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767 \
+RAG_IME_PREDICTOR_MODEL=mlx-community/Qwen3-0.6B-4bit \
+RAG_IME_PREDICTOR_PROFILE=instant \
+RAG_IME_PREDICTOR_STREAM_FIRST=1 \
+RAG_IME_PREDICTOR_TIMEOUT_MS=350 \
+RAG_IME_HISTORY_CONTEXT_EVENTS=6 \
+scripts/install_sidecar_launch_agent.sh
+```
+
+The MLX predictor LaunchAgent clears common proxy environment variables so the
+first Hugging Face model download does not accidentally use a shell proxy.
+Set `RAG_IME_HF_HOME` to an external-drive cache path if you do not want model
+weights under the default Hugging Face cache.
 
 Dry-run without loading launchd:
 
@@ -437,7 +478,7 @@ Set `RAG_IME_PREDICTOR_PROMPT_MODE=completion` when testing a local base model o
 - `expand` copies full evidence to clipboard instead of opening a rich source browser.
 - The optional local model provider can either ask for several candidates in one complete response or, with `RAG_IME_PREDICTOR_STREAM_FIRST=1`, return the first parsed streaming candidate for the side lane. llama.cpp-style batch sampling and KV cache reuse are still future optimization work.
 - The Squirrel patch debounces sidecar refreshes and fingerprints request state so stale model/RAG results cannot overwrite a newer Rime page.
-- The sidecar merge policy allows at most one model side candidate; remaining side slots are reserved for RAG/memory candidates.
+- The sidecar merge policy lets model/RAG lanes fill the visible 1-8 slots first; Rime candidates remain deterministic fallback rows.
 - The local HTTP sidecar caches repeated equivalent `/rime-suggest` payloads for a short TTL and reports `cache.hit` in debug payloads.
 - Accepted side candidates write back through `/rime-select`, so Swift does not need to duplicate commit/action governance rules.
 

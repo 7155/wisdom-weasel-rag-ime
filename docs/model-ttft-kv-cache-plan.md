@@ -13,7 +13,8 @@ IME candidates. The target worth presenting in interviews is:
 - first visible model-side candidate under 200 ms on a warm local Mac path;
 - no UI blocking while the model is slow;
 - multiple candidates produced from one model invocation;
-- Rime candidates remain first, model/RAG candidates remain side candidates.
+- model/RAG candidates should occupy the visible slots first, with Rime acting as the deterministic pinyin parser and fallback candidate source.
+- raw pinyin such as `asdioj` must not be decoded by an unconstrained LLM; it needs Rime candidates, explicit pinyin segmentation, or a logits processor constraint before model ranking/continuation.
 
 The current Ollama-native `qwen3.5:0.8b` smoke proves local integration but not
 the final latency target:
@@ -251,7 +252,7 @@ Key mechanisms:
 - `_TriggerLLMPrediction()` gets recent context from `ContextHistory.GetRecentContext(50)`.
 - It increments `m_llm_request_seq` for each request.
 - The background thread drops stale results when its sequence is no longer the latest.
-- `_GetCandidateInfo()` keeps normal Rime candidates first and appends LLM candidates after them.
+- `_GetCandidateInfo()` keeps normal Rime candidates first and appends LLM candidates after them; RAG-IME intentionally reverses display priority so model/RAG candidates occupy the main 1-8 slots and Rime remains the parsing/fallback source.
 - Candidate selection checks whether the selected index is before or after the Rime candidate count.
 
 Reference files:
@@ -261,8 +262,8 @@ Reference files:
 - `_GetCandidateInfo()` around line 920.
 
 RAG-IME already has equivalent guardrails in the Squirrel patch and sidecar:
-request sequence checks, Rime-first merge, side-candidate routing, and accepted
-candidate feedback.
+request sequence checks, side-first display merge, Rime fallback routing, and
+accepted candidate feedback.
 
 ### KV Cache
 

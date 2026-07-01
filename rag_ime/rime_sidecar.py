@@ -48,37 +48,35 @@ def build_rime_sidecar_response(
         query_basis=query_basis,
     )
     if trigger_decision.should_refresh:
-        started = time.perf_counter()
-        suggestions, rag_lane = suggest_rag_with_latency_budget(
+        lane_started = time.perf_counter()
+        suggestions, rag_lane, model_predictions, model_lane = run_side_lanes_with_latency_budget(
             adapter=adapter,
-            current_input=semantic_query,
-            recent_context=snapshot.committed_context,
-            project=snapshot.project or default_project,
-            top_k=snapshot.max_side_candidates,
-            latency_budget_ms=snapshot.latency_budget_ms,
-        )
-        elapsed_before_model_ms = int((time.perf_counter() - started) * 1000)
-        model_budget_ms = max(0, snapshot.latency_budget_ms - elapsed_before_model_ms)
-        model_predictions, model_lane = predict_model_with_latency_budget(
             core=core,
             predictor=predictor,
             current_input=semantic_query,
+            recent_context=snapshot.committed_context,
             explicit_recent_context=snapshot.committed_context,
             project=snapshot.project or default_project,
+            top_k=snapshot.max_side_candidates,
             max_candidates=snapshot.max_side_candidates,
-            latency_budget_ms=model_budget_ms,
+            latency_budget_ms=snapshot.latency_budget_ms,
         )
         prediction_context = _string(model_lane.get("historyContext"))
         model_lane.pop("historyContext", None)
+        total_elapsed_ms = int((time.perf_counter() - lane_started) * 1000)
         rag_lane.update(
             {
                 "totalLatencyBudgetMs": snapshot.latency_budget_ms,
+                "sideLaneMode": "parallel",
+                "sideLaneElapsedMs": total_elapsed_ms,
             }
         )
         model_lane.update(
             {
                 "totalLatencyBudgetMs": snapshot.latency_budget_ms,
-                "elapsedBeforeModelMs": elapsed_before_model_ms,
+                "elapsedBeforeModelMs": 0,
+                "sideLaneMode": "parallel",
+                "sideLaneElapsedMs": total_elapsed_ms,
             }
         )
     else:
@@ -141,13 +139,17 @@ def build_rime_sidecar_response(
             "side": "commit_side_candidate",
         },
         "mergePolicy": {
-            "rimeFirst": True,
+            "rimeFirst": False,
+            "sideFirst": True,
             "maxVisibleCandidates": snapshot.max_visible_candidates,
             "maxSideCandidates": snapshot.max_side_candidates,
+            "reservedSideSlots": min(snapshot.max_side_candidates, snapshot.max_visible_candidates),
+            "maxRimeVisibleCandidates": max(0, snapshot.max_visible_candidates - min(snapshot.max_side_candidates, snapshot.max_visible_candidates)),
             "maxModelSideCandidates": max_model_side_candidates(snapshot.max_side_candidates),
-            "ragKeepsRemainingSideSlots": True,
+            "ragKeepsRemainingSideSlots": False,
             "rawPinyinFallback": query_basis == "rawInputFallback",
             "sideCandidatesEnabled": trigger_decision.should_refresh,
+            "fallbackOrder": ["model", "rag", "rime"],
         },
     }
 
@@ -226,6 +228,83 @@ def suggest_rag_with_latency_budget(
         elapsed_ms=_optional_int(result.get("elapsedMs")) or 0,
         suggestion_count=len(suggestions),
     )
+
+
+def run_side_lanes_with_latency_budget(
+    *,
+    adapter: InputMethodAdapter,
+    core: CoreClient,
+    predictor: PredictionProvider,
+    current_input: str,
+    recent_context: str,
+    explicit_recent_context: str,
+    project: str,
+    top_k: int,
+    max_candidates: int,
+    latency_budget_ms: int,
+) -> tuple[list[InputSuggestion], dict[str, object], list[ModelPrediction], dict[str, object]]:
+    rag_result: dict[str, object] = {}
+    model_result: dict[str, object] = {}
+
+    def run_rag() -> None:
+        suggestions, lane = suggest_rag_with_latency_budget(
+            adapter=adapter,
+            current_input=current_input,
+            recent_context=recent_context,
+            project=project,
+            top_k=top_k,
+            latency_budget_ms=latency_budget_ms,
+        )
+        rag_result["suggestions"] = suggestions
+        rag_result["lane"] = lane
+
+    def run_model() -> None:
+        predictions, lane = predict_model_with_latency_budget(
+            core=core,
+            predictor=predictor,
+            current_input=current_input,
+            explicit_recent_context=explicit_recent_context,
+            project=project,
+            max_candidates=max_candidates,
+            latency_budget_ms=latency_budget_ms,
+        )
+        model_result["predictions"] = predictions
+        model_result["lane"] = lane
+
+    threads = [
+        Thread(target=run_rag, name="rag-ime-sidecar-rag-dispatch", daemon=True),
+        Thread(target=run_model, name="rag-ime-sidecar-model-dispatch", daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=max(0, latency_budget_ms) / 1000)
+
+    suggestions = rag_result.get("suggestions")
+    if not isinstance(suggestions, list):
+        suggestions = []
+    rag_lane = rag_result.get("lane")
+    if not isinstance(rag_lane, dict):
+        rag_lane = _rag_lane_status(
+            called=True,
+            timed_out=True,
+            skipped_reason="RAG dispatch exceeded latency budget",
+            budget_ms=max(0, int(latency_budget_ms)),
+        )
+
+    predictions = model_result.get("predictions")
+    if not isinstance(predictions, list):
+        predictions = []
+    model_lane = model_result.get("lane")
+    if not isinstance(model_lane, dict):
+        model_lane = _model_lane_status(
+            called=True,
+            timed_out=True,
+            skipped_reason="model dispatch exceeded latency budget",
+            budget_ms=max(0, int(latency_budget_ms)),
+        )
+
+    return suggestions, rag_lane, predictions, model_lane
 
 
 def predict_model_with_latency_budget(
@@ -375,8 +454,8 @@ def record_rime_side_candidate_selection(
     query = _string(payload.get("query") or payload.get("semanticQuery"))
     recent_context = _string(payload.get("recentContext") or payload.get("committedContext"))
     preedit = _string(payload.get("preedit"))
-    label = _string(candidate.get("label"))
-    candidate_rank = _candidate_rank(label)
+    label = _string(candidate.get("selectionKey") or candidate.get("label"))
+    candidate_rank = _optional_int(candidate.get("selectionRank")) or _candidate_rank(label)
     tags = tuple(
         item
         for item in (
@@ -469,7 +548,7 @@ def parse_rime_context_payload(payload: dict[str, Any], *, default_project: str)
         is_last_page=_bool(rime_context.get("isLastPage", payload.get("isLastPage")), default=True),
         latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=150, minimum=30, maximum=2000),
         max_visible_candidates=_bounded_int(payload.get("maxVisibleCandidates"), default=8, minimum=1, maximum=10),
-        max_side_candidates=_bounded_int(payload.get("maxSideCandidates"), default=3, minimum=0, maximum=6),
+        max_side_candidates=_bounded_int(payload.get("maxSideCandidates"), default=8, minimum=0, maximum=10),
         idle_ms=_bounded_int(_first_present(payload, rime_context, "idleMs"), default=0, minimum=0, maximum=10000),
         force_side_candidates=_bool(
             _first_present(payload, rime_context, "forceSideCandidates"),
@@ -511,10 +590,6 @@ def decide_side_candidate_refresh(
     if snapshot.max_side_candidates <= 0:
         return RimeSideCandidateTriggerDecision(False, "skip: side candidates disabled")
 
-    visible_side_slots = max(0, snapshot.max_visible_candidates - min(len(snapshot.candidates), snapshot.max_visible_candidates))
-    if visible_side_slots <= 0:
-        return RimeSideCandidateTriggerDecision(False, "skip: no visible side slot")
-
     if snapshot.force_side_candidates:
         return RimeSideCandidateTriggerDecision(True, "force: explicit side candidate refresh")
 
@@ -527,6 +602,8 @@ def decide_side_candidate_refresh(
 
     composing_without_rime_candidate = bool(compact_whitespace(snapshot.raw_input)) and not snapshot.candidates
     if composing_without_rime_candidate and query_basis == "committedContext":
+        if signal_len >= 4:
+            return RimeSideCandidateTriggerDecision(True, "refresh: recent committed context fallback")
         return RimeSideCandidateTriggerDecision(False, "skip: composing without stable Rime candidate")
 
     if query_basis == "commitTextPreview" and signal_len >= 2:
@@ -564,20 +641,7 @@ def merge_display_candidates(
 ) -> list[SideCandidateDisplayItem]:
     max_visible = snapshot.max_visible_candidates
     display: list[SideCandidateDisplayItem] = []
-    for index, candidate in enumerate(snapshot.candidates[:max_visible]):
-        display.append(
-            SideCandidateDisplayItem(
-                label=_display_label(candidate.label, len(display)),
-                text=candidate.text,
-                insert_text=candidate.text,
-                source_type="rime",
-                selection_action="select_rime_candidate",
-                source_index=index,
-                comment=candidate.comment,
-                rime_index=candidate.index,
-            )
-        )
-    side_budget = min(snapshot.max_side_candidates, max(0, max_visible - len(display)))
+    side_budget = min(snapshot.max_side_candidates, max_visible)
     side_limit = min(
         max_model_side_candidates(side_budget),
         max(0, max_visible - len(display)),
@@ -593,6 +657,8 @@ def merge_display_candidates(
                 selection_action="commit_side_candidate",
                 source_index=prediction.rank - 1,
                 comment=prediction.provider_name,
+                display_layout="inline",
+                display_lane="model",
                 metadata={
                     "providerName": prediction.provider_name,
                     "latencyMs": prediction.latency_ms,
@@ -618,7 +684,25 @@ def merge_display_candidates(
                 suggestion_id=suggestion.suggestion_id,
                 memory_id=str(metadata.get("memory_id") or suggestion.suggestion_id),
                 source_event_id=suggestion.source_event_id,
+                display_layout="block",
+                display_lane="memory",
                 metadata=metadata,
+            )
+        )
+    rime_remaining = max(0, max_visible - len(display))
+    for index, candidate in enumerate(snapshot.candidates[:rime_remaining]):
+        display.append(
+            SideCandidateDisplayItem(
+                label=_display_label(candidate.label if not display else "", len(display)),
+                text=candidate.text,
+                insert_text=candidate.text,
+                source_type="rime",
+                selection_action="select_rime_candidate",
+                source_index=index,
+                comment=candidate.comment,
+                rime_index=candidate.index,
+                display_layout="fallback",
+                display_lane="rime",
             )
         )
     return display
@@ -627,7 +711,7 @@ def merge_display_candidates(
 def max_model_side_candidates(side_budget: int) -> int:
     if side_budget <= 0:
         return 0
-    return 1
+    return side_budget
 
 
 def rime_context_to_payload(snapshot: RimeContextSnapshot) -> dict[str, object]:
@@ -648,8 +732,11 @@ def rime_context_to_payload(snapshot: RimeContextSnapshot) -> dict[str, object]:
 
 
 def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]:
+    selection_key = item.label
     return {
         "label": item.label,
+        "selectionKey": selection_key,
+        "selectionRank": _candidate_rank(selection_key),
         "text": item.text,
         "insertText": item.insert_text,
         "sourceType": item.source_type,
@@ -661,6 +748,8 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "memoryId": item.memory_id,
         "sourceEventId": item.source_event_id,
         "rimeIndex": item.rime_index,
+        "displayLayout": item.display_layout,
+        "displayLane": item.display_lane or item.source_type,
         "metadata": dict(item.metadata),
     }
 

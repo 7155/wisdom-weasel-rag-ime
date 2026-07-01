@@ -14,6 +14,7 @@ The patch is intentionally small and frontend-only:
 - adds a fail-closed Python sidecar client;
 - uses a long-running HTTP sidecar when `rag_ime/sidecar_url` is configured, with CLI fallback;
 - adds a display-list merge after Squirrel has already read Rime candidates;
+- keeps LLM word predictions inline while forcing RAG/memory sentence candidates onto block rows;
 - routes selection by display metadata, so Rime candidates still call `select_candidate_on_current_page` and side candidates insert `insertText` directly;
 - records side-candidate commits and accepted RAG actions back to the local memory core through `/rime-select`;
 - drops stale sidecar responses by request sequence and current raw input.
@@ -97,7 +98,7 @@ rag_ime:
   db_path: /Volumes/undo 4t/git/learnA/wisdom-weasel-rag-ime/.rag-ime-data/rag-ime.sqlite
   project: wisdom-weasel-rag-ime
   max_visible_candidates: 8
-  max_side_candidates: 2
+  max_side_candidates: 8
   latency_budget_ms: 180
   timeout_ms: 1200
 ```
@@ -163,6 +164,21 @@ Keyboard selection is intentionally narrow:
 
 - if a number/key label points to a side candidate, Squirrel intercepts it and inserts the side candidate;
 - otherwise the key continues through normal Rime processing.
+
+The sidecar response keeps `label` for panel compatibility and also includes
+`selectionKey` / `selectionRank` for routing and feedback. The shared key scheme
+is `1-9,0`; key `0` is recorded as rank 10, so Rime candidates and side
+candidates can share one visible number row without a second paragraph-selection
+mode.
+
+Squirrel's normal config has one global candidate-list layout. RAG-IME adds
+per-candidate metadata instead:
+
+```text
+displayLayout=inline  -> LLM short predictions share a horizontal line
+displayLayout=block   -> RAG/memory sentence snippets start a new row
+displayLayout=fallback -> Rime fallback rows follow the native layout rule
+```
 
 The candidate panel only shows short candidate text and short comments. Evidence previews and pipeline timing belong in the debug surface, not in the small input-method panel.
 

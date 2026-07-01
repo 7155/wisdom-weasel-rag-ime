@@ -189,6 +189,8 @@ function render() {
             cache: state.rimeSidecar.cache || null,
             displayCandidates: (state.rimeSidecar.displayCandidates || []).map((item) => ({
               label: item.label,
+              selectionKey: item.selectionKey,
+              selectionRank: item.selectionRank,
               text: item.text,
               sourceType: item.sourceType,
             })),

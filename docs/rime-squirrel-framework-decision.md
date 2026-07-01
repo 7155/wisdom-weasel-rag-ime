@@ -182,7 +182,13 @@ Return:
 
 The sidecar must be optional and fail-closed: when it times out or errors, normal Rime typing continues.
 
-The response also includes `displayCandidates`, a merged display list where Rime rows keep `selectionAction: select_rime_candidate` and model/RAG rows use `selectionAction: commit_side_candidate`.
+The response also includes `displayCandidates`, a merged display list where Rime
+rows keep `selectionAction: select_rime_candidate` and model/RAG rows use
+`selectionAction: commit_side_candidate`. The visible `label` stays for Squirrel
+panel compatibility, while `selectionKey` and `selectionRank` make the shared
+candidate-key contract explicit. `selectionRank` is 1-based and maps key `0` to
+rank 10, so normal `1-9,0` candidate selection can be reused for both Rime rows
+and side candidates without a separate paragraph mode.
 
 ### Phase 3: Candidate Merge
 
@@ -194,7 +200,7 @@ Merge rules:
    - side model candidates;
    - RAG/memory candidates.
 3. When the user selects a Rime candidate, call normal `select_candidate_on_current_page`.
-4. When the user selects a side candidate, insert the side candidate text, clear or commit the current composition as appropriate, and record the acceptance action.
+4. When the user selects a side candidate, route by `selectionKey`, insert the side candidate text, clear or commit the current composition as appropriate, and record the acceptance action with `selectionRank`.
 5. Keep a request sequence guard so stale side results are ignored.
 
 This mirrors Wisdom-Weasel's append-and-branch selection idea, but the RAG side candidate includes evidence metadata and memory governance feedback.

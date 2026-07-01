@@ -25,14 +25,14 @@ RetrievedMemory
 
 ### 2. 候选字和候选段落共用 1-9 数字键
 
-输入法的数字键是高频肌肉记忆，不能简单拆成“1-5 选字、6-0 选段落”，也不能让 RAG 候选抢走用户对传统候选的预期。当前正式前端策略是统一显示列表，但 Rime 候选优先：
+输入法的数字键是高频肌肉记忆，不能简单拆成“1-5 选字、6-0 选段落”。这个项目的产品判断是：如果 RAG/LLM 候选永远排在传统候选后面，它就只是普通输入法的附属功能，项目亮点会消失。当前正式前端策略是统一数字键，但候选源按“智能候选优先、Rime 兜底”合并：
 
 ```text
-1-5: Rime / 词库 / 拼音方案生成的主候选
-6-8: 本地小模型 / RAG / 记忆生成的 side candidate
+1-8: 本地小模型 / RAG / 记忆候选优先占位
+剩余: Rime / 词库 / 拼音方案候选兜底
 ```
 
-模型候选和 RAG 候选共享同一套数字键，但选择路由不同：Rime 候选继续调用 librime 的 `select_candidate_on_current_page`，side candidate 才由前端直接插入 `insertText`。这样既保留传统输入法速度，又能让用户用同一套键位选择记忆候选。
+显示上再分层：LLM 短预测适合横向排列，像普通词候选一样快速扫视；RAG/记忆候选往往是短句或片段，需要纵向排列，保留可读性。选择路由仍然不同：Rime 候选调用 librime 的 `select_candidate_on_current_page`，side candidate 由前端直接插入 `insertText` 并回写选择反馈。
 
 ### 3. 输入法是实时系统，RAG 不能阻塞打字
 
@@ -137,13 +137,13 @@ raw key input
 当前方案把模型 lane 拆成三层：
 
 ```text
-短期验证:
-  Ollama qwen3.5:0.8b / qwen3.5:0.8b-mlx
-  -> predictor-ttft 测 first parsed candidate / TTFC
-
 Mac 快速实验:
-  MLX-LM resident service
+  text-only Qwen3 0.6B/1.7B + MLX-LM resident service
   -> stream_generate + prompt_cache
+
+短期对照:
+  Ollama qwen3.5:0.8b-mlx
+  -> 只作为 smoke baseline, 不作为最终输入法模型 lane
 
 最终可控内核:
   native llama.cpp/Metal 或 direct MLX provider
@@ -159,6 +159,13 @@ Mac 快速实验:
 case 上只通过 2 条，完整 JSON 响应也仍然要数百毫秒。所以项目的真正难点不是
 “下载一个 0.8B 小模型”，而是把它改造成输入法可用的实时 side lane：首候选流式
 展示，完整候选异步补齐，事实和个人记忆仍由 RAG 负责。
+
+最新工程修正是：Qwen3.5 小模型路线在 Hugging Face / MLX-community 上更偏
+VLM，`Qwen3.5-0.8B` 标为 image-text，MLX 版本需要 `mlx-vlm`。输入法并不需要
+视觉 encoder，所以 MVP 改成 text-only Qwen3 + `mlx-lm`，先试
+`mlx-community/Qwen3-0.6B-4bit`，质量不够再升到 `Qwen3-1.7B-4bit`。这个判断
+可以作为面试亮点：我不是追最新模型名，而是按输入法首候选延迟、常驻内存和
+输出协议选择最小可控模型。
 
 这里还有一个工程判断：Ollama MLX 是当前已测最快 smoke baseline，不等于最终
 产品内核。真正面试时可以强调我把两件事分开了：短期用 Ollama MLX 保证本地

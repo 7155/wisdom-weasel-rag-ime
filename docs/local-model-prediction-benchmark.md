@@ -197,9 +197,11 @@ For native Ollama and resident MLX providers, this changes `predict()` from
 "wait for complete JSON candidate list" to "return after the first parsed
 candidate". The returned prediction carries
 `metadata.stream_first_candidate=true` and `metadata.first_candidate_ms`. This
-is intentionally limited to one model side slot; RAG candidates still fill the
-remaining side slots. Leave the flag unset when running model-quality evals
-that need all candidates.
+is a latency fallback that may return only one early model candidate. Leave the
+flag unset when running model-quality evals that need all candidates. The
+production direction is a resident MLX/llama.cpp backend that can return several
+short inline model candidates via logits/top-k or forked decoding, while RAG
+candidates fill block rows.
 
 The stable rule for this project is: configure any candidate through one explicit provider lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
@@ -325,15 +327,17 @@ quality and avoiding current-input echoes.
 Resident MLX service route:
 
 ```bash
-python3 -m rag_ime.cli mlx-predictor-server \
-  --model <mlx-compatible-qwen-model-id> \
+scripts/setup_mlx_predictor_env.sh
+
+.venv-mlx314sys/bin/python -m rag_ime.cli mlx-predictor-server \
+  --model mlx-community/Qwen3-0.6B-4bit \
   --host 127.0.0.1 \
   --port 8767 \
   --prompt-cache
 
 export RAG_IME_PREDICTOR_PROVIDER=mlx
 export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767
-export RAG_IME_PREDICTOR_MODEL=<same-model-id>
+export RAG_IME_PREDICTOR_MODEL=mlx-community/Qwen3-0.6B-4bit
 export RAG_IME_PREDICTOR_PROFILE=instant
 
 python3 -m rag_ime.cli predictor-ttft \
@@ -350,6 +354,12 @@ and stores it as a local safetensors file. Each request loads a fresh cache copy
 before `generate_step` streaming, so `promptCache.usedForGeneration=true` means
 the cached path was actually used for that request without polluting the shared
 stable prefix.
+
+Do not use Qwen3.5 VLM weights as the first MLX-LM target. The available
+Qwen3.5 0.8B/2B MLX-community routes are image-text / `mlx-vlm` oriented, while
+the current RAG-IME predictor service imports `mlx_lm`. Use
+`mlx-community/Qwen3-0.6B-4bit` first and escalate to
+`mlx-community/Qwen3-1.7B-4bit` only after measuring candidate quality.
 
 Run the small-model matrix after the models are actually downloaded and the endpoint is serving:
 
