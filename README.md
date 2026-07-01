@@ -149,7 +149,7 @@ The cache key is based on the parsed Rime snapshot and semantic query, not the r
 
 The sidecar also deduplicates equivalent `/rime-suggest` requests that are already in flight. This is the VCP-style pending-request cache for the IME path: concurrent refreshes wait for the first request and reuse its response instead of calling the model/RAG pipeline twice. Health and response cache payloads expose `inFlightHits` / `inFlightHit` separately from TTL cache `hits`.
 
-`/rime-suggest` also returns a `triggerDecision`. Rime candidates are preserved as deterministic parsing/fallback, while model/RAG side candidates get first display priority when a stable semantic signal exists. Side lanes are skipped for raw pinyin fallback or unstable composing updates; raw key sequences such as `asdioj` should be handled by Rime candidates or a future pinyin-constrained logits path, not by unconstrained LLM guessing.
+`/rime-suggest` also returns a `triggerDecision`. Rime candidates are preserved as deterministic parsing/fallback, while model/RAG side candidates get first display priority when a stable semantic signal exists. Raw key sequences such as `asdioj` are not decoded by an unconstrained LLM: if Rime has candidates, those candidates become the semantic input; if there are no Rime candidates but the user has just committed Chinese text, the sidecar can use recent `committedContext` for continuation and the patched Squirrel frontend briefly holds those side candidates while the raw composition changes; if neither signal exists, side lanes fail closed until a future pinyin-constrained logits path exists.
 
 `latencyBudgetMs` is enforced on the RAG and model side lanes. RAG retrieval is
 budgeted first, then the model is allowed to use only the remaining budget. If
