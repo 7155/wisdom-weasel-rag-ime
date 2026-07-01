@@ -153,6 +153,18 @@ The local HTTP server keeps a short TTL cache for repeated equivalent `/rime-sug
 }
 ```
 
+It also has an in-flight dedupe guard. If two equivalent `/rime-suggest` requests arrive before the first one finishes, the second waits for the first response and returns it with refreshed `sessionId` / `requestSeq` metadata. This is separate from the TTL cache: `cache.hit` is false, while `cache.inFlightHit` is true.
+
+```json
+{
+  "cache": {
+    "hit": false,
+    "inFlightHit": true,
+    "inFlightHits": 1
+  }
+}
+```
+
 `POST /api/commit`, `POST /api/action`, and `POST /api/seed` clear this cache.
 
 The local SQLite core also exposes a process-local `suggestionCache` in `/api/health`. That cache stores final `InputSuggestion` lists for repeated equivalent `/api/suggest` or eval requests and is invalidated on commit/action/reset. It is separate from the short `/rime-suggest` TTL cache.

@@ -635,3 +635,22 @@ Verification:
 
 Next:
 - When a real WSL/Mac endpoint is available, compare no-cooldown endpoint debugging with default cooldown sidecar behavior.
+
+### 2026-07-01
+Topic:
+- Add VCP-style pending request dedupe for `/rime-suggest`.
+
+Changes:
+- Added in-flight dedupe for equivalent Rime sidecar cache keys.
+- Health now exposes `rimeSuggestCache.inFlight`, `inFlightHits`, and `inFlightErrors`.
+- Cache payloads expose `inFlightHit` separately from TTL `hit`.
+- Concurrent debug-server test proves overlapping equivalent requests call the predictor once.
+
+Verification:
+- Full suite passed: 92 tests.
+- Fixture acceptance passed.
+- Real 5000-record Codex-history eval still passed 34/34 with top1Accuracy=0.824, meanReciprocalRank=0.880, p95=32ms.
+- `git diff --check` passed.
+
+Next:
+- Continue toward real Squirrel/Xcode install and WSL/Mac model endpoint testing.

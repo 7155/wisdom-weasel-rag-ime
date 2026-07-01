@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 from typing import Any
 from urllib.parse import unquote, urlparse
 
@@ -53,6 +53,14 @@ class _RimeSuggestCacheEntry:
     response: dict[str, object]
 
 
+@dataclass
+class _RimeSuggestInflightEntry:
+    event: Event
+    response: dict[str, object] | None = None
+    error: BaseException | None = None
+    waiters: int = 0
+
+
 class DebugImeService:
     """Small local HTTP facade for browser-based IME debugging."""
 
@@ -62,9 +70,12 @@ class DebugImeService:
         self.predictor = config.predictor or prediction_provider_from_env()
         self.adapter = InputMethodAdapter(self.core, project=config.project)
         self._rime_cache: dict[str, _RimeSuggestCacheEntry] = {}
+        self._rime_inflight: dict[str, _RimeSuggestInflightEntry] = {}
         self._rime_cache_lock = RLock()
         self._rime_cache_hits = 0
         self._rime_cache_misses = 0
+        self._rime_inflight_hits = 0
+        self._rime_inflight_errors = 0
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
         if config.seed_if_empty and self._event_count() == 0:
@@ -83,6 +94,9 @@ class DebugImeService:
                 "size": self._rime_cache_size(),
                 "hits": self._rime_cache_hits,
                 "misses": self._rime_cache_misses,
+                "inFlight": self._rime_inflight_size(),
+                "inFlightHits": self._rime_inflight_hits,
+                "inFlightErrors": self._rime_inflight_errors,
             },
             "predictor": prediction_provider_status(self.predictor),
             "suggestionCache": self._suggestion_cache_stats(),
@@ -135,14 +149,22 @@ class DebugImeService:
         cached = self._get_cached_rime_response(cache_key, payload)
         if cached is not None:
             return cached
-        response = build_rime_sidecar_response(
-            payload=payload,
-            adapter=self.adapter,
-            core=self.core,
-            predictor=self.predictor,
-            default_project=self.config.project,
-        )
+        owner, inflight = self._begin_rime_inflight(cache_key)
+        if not owner:
+            return self._wait_for_rime_inflight(cache_key, inflight, payload)
+        try:
+            response = build_rime_sidecar_response(
+                payload=payload,
+                adapter=self.adapter,
+                core=self.core,
+                predictor=self.predictor,
+                default_project=self.config.project,
+            )
+        except BaseException as exc:
+            self._finish_rime_inflight(cache_key, error=exc)
+            raise
         self._store_rime_response(cache_key, response)
+        self._finish_rime_inflight(cache_key, response=response)
         response = copy.deepcopy(response)
         response["cache"] = self._cache_payload(hit=False, cache_key=cache_key)
         return response
@@ -217,6 +239,10 @@ class DebugImeService:
         with self._rime_cache_lock:
             self._prune_rime_cache()
             return len(self._rime_cache)
+
+    def _rime_inflight_size(self) -> int:
+        with self._rime_cache_lock:
+            return len(self._rime_inflight)
 
     def _rime_suggest_cache_key(self, payload: dict[str, Any]) -> str:
         snapshot = parse_rime_context_payload(payload, default_project=self.config.project)
@@ -340,12 +366,62 @@ class DebugImeService:
     def _cache_payload(self, *, hit: bool, cache_key: str) -> dict[str, object]:
         return {
             "hit": hit,
+            "inFlightHit": False,
             "key": cache_key[:16],
             "ttlMs": self._cache_ttl_ms(),
             "size": self._rime_cache_size(),
             "hits": self._rime_cache_hits,
             "misses": self._rime_cache_misses,
+            "inFlight": self._rime_inflight_size(),
+            "inFlightHits": self._rime_inflight_hits,
         }
+
+    def _begin_rime_inflight(self, cache_key: str) -> tuple[bool, _RimeSuggestInflightEntry]:
+        with self._rime_cache_lock:
+            entry = self._rime_inflight.get(cache_key)
+            if entry is not None:
+                entry.waiters += 1
+                self._rime_inflight_hits += 1
+                return False, entry
+            entry = _RimeSuggestInflightEntry(event=Event())
+            self._rime_inflight[cache_key] = entry
+            return True, entry
+
+    def _wait_for_rime_inflight(
+        self,
+        cache_key: str,
+        entry: _RimeSuggestInflightEntry,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        entry.event.wait()
+        if entry.error is not None:
+            raise entry.error
+        response = copy.deepcopy(entry.response or {})
+        self._refresh_cached_rime_response(response, payload)
+        response["sessionId"] = _string(payload.get("sessionId")) or str(response.get("sessionId") or "default")
+        response["requestSeq"] = _bounded_int(payload.get("requestSeq"), default=0, minimum=0, maximum=2**63 - 1)
+        response["cache"] = {
+            **self._cache_payload(hit=False, cache_key=cache_key),
+            "inFlightHit": True,
+        }
+        return response
+
+    def _finish_rime_inflight(
+        self,
+        cache_key: str,
+        *,
+        response: dict[str, object] | None = None,
+        error: BaseException | None = None,
+    ) -> None:
+        with self._rime_cache_lock:
+            entry = self._rime_inflight.pop(cache_key, None)
+            if entry is None:
+                return
+            if error is not None:
+                self._rime_inflight_errors += 1
+            entry.response = copy.deepcopy(response) if response is not None else None
+            entry.error = error
+            entry.event.set()
 
 
 class DebugRequestHandler(BaseHTTPRequestHandler):

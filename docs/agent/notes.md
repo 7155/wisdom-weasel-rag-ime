@@ -636,6 +636,35 @@ Findings:
 Next:
 - When a real WSL/Mac endpoint is available, compare no-cooldown debug mode vs default cooldown only for endpoint debugging.
 
+### 2026-07-01 09:01 CST
+Problem:
+- `/rime-suggest` had a semantic TTL cache, but concurrent equivalent requests arriving before the first response finished still duplicated model/RAG work.
+- This is exactly the VCP-style pending-request cache gap the project should handle for high-frequency IME refreshes.
+
+Changes:
+- Added in-flight dedupe for equivalent `/rime-suggest` cache keys in `DebugImeService`.
+- Added `rimeSuggestCache.inFlight`, `inFlightHits`, and `inFlightErrors` health stats.
+- Response cache payloads now include `inFlightHit`.
+- Added a concurrent test with a blocking predictor proving two overlapping equivalent requests call the predictor once, while the second response rewrites current `sessionId` and `requestSeq`.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_debug_server`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-inflight-dedupe-eval-20260701.sqlite import-codex-history --path /Users/undo/.codex/sessions --project wisdom-weasel-rag-ime --limit 5000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-inflight-dedupe-eval-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 1`
+- `git diff --check`
+
+Findings:
+- Debug-server tests pass with in-flight dedupe.
+- Full suite passed: 92 tests.
+- Fixture acceptance passed.
+- Real 5000-record Codex-history eval still passed 34/34, top1Accuracy=0.824, meanReciprocalRank=0.880, p95=32ms.
+- `git diff --check` passed.
+
+Next:
+- Continue toward real Squirrel/Xcode install and WSL/Mac model endpoint testing.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.

@@ -122,6 +122,8 @@ Only the latest debounced fingerprint is sent. Responses are dropped if request 
 
 The Python sidecar also keeps a short TTL cache for equivalent `/rime-suggest` payloads. The cache is process-local, excludes `requestSeq` and `sessionId`, and is invalidated by memory event/action counts plus commit/action/seed calls. The key is based on the semantic Rime snapshot, so raw pinyin/preedit edits are ignored when the semantic query is already supplied by commit preview or stable Rime candidates. Cached responses still rewrite current raw input/preedit metadata before returning. This catches repeated Squirrel refreshes that survive frontend debounce.
 
+There is also an in-flight dedupe layer for the same cache key. If two equivalent Squirrel refreshes arrive while the first one is still running model/RAG work, the second request waits for the first and returns the same response with refreshed request metadata. This matters because ThreadingHTTPServer can handle overlapping requests, and a TTL cache only helps after the first response has already finished.
+
 The Python sidecar now has a second guard before model/RAG work:
 
 ```text
