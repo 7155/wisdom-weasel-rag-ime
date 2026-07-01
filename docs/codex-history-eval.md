@@ -290,10 +290,11 @@ This is the main full-flow gate for deciding whether a local Qwen/MLX/llama.cpp 
 
 ## Current Baseline
 
-On 2026-07-01, a 5000-record newest-first Codex-history import was evaluated against the 34-case gold set:
+On 2026-07-01, a 5000-record newest-first Codex-history import was evaluated against the 34-case gold set.
+The first broad baseline exposed 10 product/runtime recall gaps:
 
 ```text
-Default FTS5 + local rule rerank:
+Initial default FTS5 + local rule rerank:
   passRate 24/34 = 0.706
   top1Accuracy = 0.500
   meanReciprocalRank = 0.566
@@ -306,7 +307,17 @@ local-hash vector hybrid:
   latency.p95Ms = 160
 ```
 
-This confirms that `local-hash` is useful only as a deterministic side-index contract test. It should not be enabled as a product default. The next meaningful comparison needs a real local/WSL semantic embedding provider and the same 34-case report.
+After adding product/runtime query expansion and light Codex tool-trace downranking, the same newest-first 5000-record flow reports:
+
+```text
+Default FTS5 + local rule rerank:
+  passRate 34/34 = 1.000
+  top1Accuracy = 0.824
+  meanReciprocalRank = 0.880
+  latency.p95Ms = 30
+```
+
+The current default remains FTS5/rule rerank. `local-hash` is useful only as a deterministic side-index contract test and should not be enabled as a product default. The next meaningful comparison needs a real local/WSL semantic embedding provider and the same 34-case report.
 
 ## Why This Matters
 

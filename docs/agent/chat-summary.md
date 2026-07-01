@@ -525,3 +525,23 @@ Verification:
 
 Next:
 - Use the failing 10 cases as the next retrieval/rerank target; do not enable local-hash by default.
+
+### 2026-07-01
+Topic:
+- Improve 34-case Codex-history retrieval quality.
+
+Changes:
+- Added product/runtime query expansion for side-candidate numbering, raw-pinyin fallback gating, local-first privacy, model side budget, history-context prediction, Wisdom-Weasel fast prediction, OpenAI-compatible predictor config, stale response guards, trigger decision, sidecar cache metrics, and runtime-noise filtering.
+- Added a light rerank penalty for raw Codex tool transcripts. Tool traces remain recallable for exact code identifiers, but natural-language summaries win when both are relevant.
+- Filtered the Codex approval-review transcript wrapper phrase during import.
+- Updated the runtime-noise eval case to match real imported evidence terms.
+- Added the read-only subagent optimization review under `docs/agent/subagents/`.
+
+Verification:
+- Fresh 5000-record Codex-history import passed 34/34 eval cases.
+- top1Accuracy improved from 0.500 to 0.824; meanReciprocalRank improved from 0.566 to 0.880; p95 latency was about 30ms.
+- Full suite now has 75 tests and passed.
+- Acceptance and `git diff --check` passed.
+
+Decision:
+- Do not delete all tool transcript memories yet. A trial hard filter dropped recall to 28/34 because several implementation identifiers currently exist only in tool traces. Keep them as downranked fallback until project docs/summaries cover those identifiers.

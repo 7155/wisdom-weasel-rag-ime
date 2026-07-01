@@ -461,6 +461,39 @@ Findings:
 Next:
 - Improve recall against the failing cases with field-aware boosts or a real semantic embedding provider, then rerun the same 34-case report.
 
+### 2026-07-01 08:45 CST
+Problem:
+- The expanded 34-case Codex-history eval exposed 10 product/runtime recall gaps.
+- Several failing queries used Chinese product language, while the implementation memories stored English identifiers such as `rawInputFallback`, `maxModelSideCandidates`, `requestSeq`, and `RAG_IME_PREDICTOR_BASE_URL`.
+- Raw Codex tool transcripts are noisy, but deleting them entirely also removes useful code identifiers that may not appear in assistant summaries yet.
+
+Changes:
+- Expanded local query rewriting for Rime/Squirrel side candidates, raw-pinyin gating, local-first privacy, model side budget, history-context prediction, Wisdom-Weasel speed terms, OpenAI-compatible predictor config, stale-response guards, trigger decisions, sidecar cache metrics, and Codex runtime-noise filtering.
+- Added light runtime-trace downranking for raw Codex tool transcript records, preserving code identifiers as fallback recall while preferring natural-language summaries.
+- Added importer filtering for the Codex approval-review transcript wrapper text.
+- Updated the `codex-history-noise-filter` gold case to verify real imported terms (`environment`, `tool-output`) instead of English phrases that were not present in the user history.
+- Added focused regression tests for product/runtime query expansion and tool-trace downranking.
+- Recorded the subagent read-only optimization review in `docs/agent/subagents/rag-ime-next-optimization-20260701.md`.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history tests.test_local_sqlite_core`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-expanded-eval-final-20260701.sqlite import-codex-history --path /Users/undo/.codex/sessions --project wisdom-weasel-rag-ime --limit 5000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-expanded-eval-final-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 1`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `git diff --check`
+
+Findings:
+- Fresh 5000-record newest-first Codex-history import now passes 34/34 cases.
+- top1Accuracy improved from 0.500 to 0.824.
+- meanReciprocalRank improved from 0.566 to 0.880.
+- latency.p95Ms stayed within the input-method refresh budget at about 30ms.
+- Over-filtering `[n] tool ...` records reduced recall to 28/34, so the chosen design is downranking rather than deletion.
+
+Next:
+- Use the subagent review to implement candidate-surface compression next; keep full `insert_text` but make `surface_text` smaller and cleaner for the real IME panel.
+- Add exact embedding cache / provider fingerprint cache before testing a real WSL embedding endpoint.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.

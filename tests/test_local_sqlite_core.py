@@ -111,6 +111,60 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertIn("tag:", suggestions[0].metadata["reason"])
         self.assertIn("raw:", suggestions[0].metadata["reason"])
 
+    def test_query_expansion_recalls_product_runtime_terms(self) -> None:
+        self.core.reset()
+        cases = [
+            (
+                "候选字和候选段如何共用数字键",
+                "Rime candidates share the number sequence with side candidates",
+            ),
+            (
+                "raw pinyin fallback 什么时候跳过 RAG side lane",
+                "triggerDecision sets sideCandidatesEnabled=false for rawInputFallback",
+            ),
+            (
+                "模型预测如何使用历史输入上下文",
+                "historyContext is built from recent_input_context before prediction",
+            ),
+            (
+                "本地小模型 predictor 怎么接 OpenAI compatible",
+                "Set RAG_IME_PREDICTOR_BASE_URL for the openai-compatible predictor",
+            ),
+            (
+                "Rime sidecar 重复刷新如何缓存命中",
+                "Debug health reports rimeSuggestCache and cacheStats for cache hit inspection",
+            ),
+        ]
+        for _, target in cases:
+            self.adapter.commit_text(target, recent_context="runtime term mapping", tags=("runtime",))
+        self.adapter.commit_text("普通中文候选调试", recent_context="无关记录")
+
+        for query, expected in cases:
+            with self.subTest(query=query):
+                suggestions = self.adapter.suggest(SuggestionRequest(current_input=query, top_k=1))
+                self.assertEqual(suggestions[0].metadata["insert_text"], expected)
+
+    def test_codex_tool_trace_is_downranked_but_still_recallable(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text(
+            "[327] tool apply_patch call: added rimeSuggestCache cacheStats wiring",
+            recent_context="codex_history:tool-trace",
+            tags=("codex-history",),
+        )
+        self.adapter.commit_text(
+            "Debug health now reports rimeSuggestCache and cacheStats for sidecar cache inspection.",
+            recent_context="codex_history:assistant-summary",
+            tags=("codex-history",),
+        )
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="rimeSuggestCache cacheStats", top_k=2))
+
+        self.assertEqual(
+            suggestions[0].metadata["insert_text"],
+            "Debug health now reports rimeSuggestCache and cacheStats for sidecar cache inspection.",
+        )
+        self.assertIn("runtime-trace", suggestions[1].metadata["reason"])
+
     def test_suggestion_cache_hits_and_invalidates_on_write(self) -> None:
         request = SuggestionRequest(
             current_input="SQLite 和 FTS5 第一版",

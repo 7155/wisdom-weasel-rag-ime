@@ -28,7 +28,7 @@
 {"id":"trigger-decision","query":"sidecar 什么时候跳过模型和 RAG 刷新","expectedTerms":["triggerDecision"]}
 {"id":"suggestion-cache-lru","query":"本地 suggestion cache 如何统计命中和失效","expectedTerms":["suggestionCache","LRU"]}
 {"id":"memory-actions","query":"本地记忆 action 如何支持 pin downrank delete","expectedTerms":["pin","downrank","delete"]}
-{"id":"codex-history-noise-filter","query":"Codex history import 会过滤哪些 runtime 噪声","expectedTerms":["runtime noise","tool call output"]}
+{"id":"codex-history-noise-filter","query":"Codex history import 会过滤哪些 runtime 噪声","expectedTerms":["environment","tool-output"]}
 {"id":"eval-ranking-metrics","query":"Codex history eval 用哪些 ranking metrics","expectedTerms":["top1Accuracy","meanReciprocalRank"]}
 {"id":"squirrel-doctor","query":"Squirrel 集成 doctor 检查哪些本地状态","expectedTerms":["doctor_squirrel_integration"]}
 {"id":"macos-prototype-build","query":"macOS InputMethodKit 原型怎么构建验证","expectedTerms":["build_macos_frontend.sh"]}

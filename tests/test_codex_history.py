@@ -174,6 +174,25 @@ class CodexHistoryTests(unittest.TestCase):
                             "payload": {
                                 "type": "message",
                                 "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": (
+                                            "The following is the Codex agent history added "
+                                            "since your last approval assessment."
+                                        ),
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "assistant",
                                 "content": [{"type": "output_text", "text": "最新 RAG-IME 记忆应该先导入"}],
                             },
                         },
