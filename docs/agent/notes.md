@@ -7,6 +7,26 @@
 
 ## Log
 
+### 2026-07-01 13:37 CST
+Problem:
+- 用户要求充分调研 Mac 上最快本地推理方案，用于 RAG 输入法首候选低延迟。
+
+Findings:
+- 当前已测最快 debug/smoke 路线仍是 Ollama `qwen3.5:0.8b-mlx` + native API + `think:false` + `keep_alive` + stream-first candidate；它证明本机 warm path 可接近/进入 200ms 内，但不是最终可控内核。
+- 最终产品内核应围绕 resident model、稳定 prompt/KV cache、首个可选候选流式返回、过期请求取消、多候选共享 prefill，而不是等待完整 JSON 列表。
+- MLX-LM 是下一步 Apple Silicon 实测路线，但 prompt cache 要隔离/复制/重载，不能过早等同于 llama.cpp 的 seq-copy KV。
+- Wisdom-Weasel 的核心可复用机制是后台线程 + request sequence 丢弃旧结果 + `PrepareSystemPrompt()` 缓存 system prompt state + `GenerateCandidatesBatch()` 多 sequence 复制 KV 生成多个候选。
+- MiniVLLM/vLLM 只借鉴 prefix cache、block table、prefill/decode 分离和指标；CUDA/Triton/连续批处理不适合 Mac 单用户输入法 MVP。
+
+Commands:
+- `rg` 检查本仓库推理文档与 provider 代码。
+- `rg` 检查本地 Wisdom-Weasel / MinivLLM 源码机制。
+- `ollama list` 当前失败，原因是本机 Ollama server 未运行；本次未重新跑 TTFC，只复核已有本机记录。
+
+Pitfalls:
+- 不要把“当前最快已测 smoke 路线”写成“最终产品内核”；Ollama 方便但无法证明 KV seq copy 和多候选批采样。
+- 产品指标是 `firstCandidateMs` / TTFC，不是 `firstChunkMs` 或完整响应耗时。
+
 ### 2026-07-01 10:51 CST
 Problem:
 - The user asked for a deeper Mac inference investigation before choosing the local model path.

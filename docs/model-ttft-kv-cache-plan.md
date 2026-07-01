@@ -334,8 +334,10 @@ python3 -m rag_ime.cli predictor-ttft \
 ```
 
 The command measures streaming first chunk, total response, parsed candidates,
-and over-budget count. It currently supports the native Ollama provider because
-that is the only local provider in the repo with a streaming path.
+and over-budget count. It supports the native Ollama path and the resident
+MLX-LM sidecar path; `firstCandidateMs` is the product metric, while
+`firstChunkMs` is diagnostic because raw chunks can be JSON punctuation or
+partial text that cannot be selected in an IME.
 
 ### Phase 2: Stop Treating Ollama As The Final Fast Path
 
@@ -364,9 +366,11 @@ Preferred implementation order:
 
 2. **MLX-LM experiment**
    - Use Apple Silicon-native MLX runtime.
-   - Test `mlx_lm.server` prompt cache and streaming.
-   - If server prompt cache is not enough, use Python `stream_generate` or a
-     small local service that owns the loaded model and cache.
+   - Test the resident RAG-IME MLX service with prompt cache off/on and
+     `/predict-stream` first-candidate timing.
+   - Keep stable-prefix cache isolated per request; MLX prompt cache reuse is
+     not equivalent to llama.cpp sequence-state copy until real-model TTFC,
+     cache-hit, and quality measurements prove it.
 
 3. **Speculative/MTP only after baseline**
    - Official Qwen3.5 material points to speculative decoding/MTP as an

@@ -2,6 +2,23 @@
 
 ### 2026-07-01
 Topic:
+- Mac 本地推理最快路线专项调研。
+
+Decisions:
+- 短期用 Ollama `qwen3.5:0.8b-mlx` 作为已测最快 debug/smoke 路线；最终产品路线仍要走 resident MLX-LM 实测和 native llama.cpp/Metal KV/seq-copy provider。
+- 输入法指标统一为 `firstCandidateMs` / TTFC；`firstChunkMs` 只用于诊断。
+- MiniVLLM/vLLM 借鉴缓存和调度思想，不作为 Mac 运行时依赖。
+
+Changes:
+- 更新 `docs/mac-local-inference-fast-path.md`，明确 smoke 路线与最终内核边界，并补充 MLX prompt cache 隔离 caveat。
+- 更新 `docs/model-ttft-kv-cache-plan.md`，修正过时的 Ollama-only TTFT 描述。
+
+Next:
+- 在 Ollama server 可用时重新跑 `bench-ime-ttfc` / `predictor-ttft`。
+- 实测 resident MLX-LM cached/uncached TTFC；随后决定是否实现 native llama.cpp/Metal provider。
+
+### 2026-07-01
+Topic:
 - Research the fastest Mac local inference path for RAG-IME TTFT.
 
 Findings:

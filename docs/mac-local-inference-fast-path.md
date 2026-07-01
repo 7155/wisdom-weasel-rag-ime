@@ -10,11 +10,14 @@ input method?
 
 Use a tiered path:
 
-1. **Current fastest smoke path**: Ollama `qwen3.5:0.8b-mlx`, native Ollama
-   API, `think:false`, `keep_alive`, streaming, and
-   `RAG_IME_PREDICTOR_STREAM_FIRST=1`.
+1. **Current fastest measured debug path**: Ollama `qwen3.5:0.8b-mlx`, native
+   Ollama API, `think:false`, `keep_alive`, streaming, and
+   `RAG_IME_PREDICTOR_STREAM_FIRST=1`. This is the fastest path already proven
+   on this Mac, but it is a smoke/debug route rather than the final inference
+   kernel.
 2. **Next product experiment**: direct resident MLX-LM service using
-   `stream_generate`, stable prompt cache, and first parsed candidate emission.
+   `stream_generate`, stable-prompt cache isolation, and first parsed candidate
+   emission.
 3. **Final Wisdom-Weasel parity path**: native `llama.cpp`/Metal provider with
    stable system-prompt KV reuse plus sequence-copy multi-candidate sampling.
 4. **Later research**: Core ML stateful KV and MLC LLM. They are promising but
@@ -23,6 +26,15 @@ Use a tiered path:
 Do not optimize for total response time first. The metric for an input method is
 **time to first useful parsed candidate** (`firstCandidateMs`), not first byte,
 first raw token, or complete JSON response.
+
+The final product should optimize two different things separately:
+
+- **model choice**: start with the smallest non-thinking model that can produce
+  useful short continuations (`qwen3.5:0.8b-mlx` for speed smoke; 2B/4B only if
+  quality needs it);
+- **runtime kernel**: keep the model resident, avoid cold load, reuse the stable
+  prompt/KV prefix, stream the first useful candidate, cancel stale requests,
+  and never wait for a complete JSON list in the active typing path.
 
 ## Local Evidence
 
@@ -165,6 +177,14 @@ python3 -m rag_ime.cli mlx-predictor-server \
   --port 8767 \
   --prompt-cache
 ```
+
+Important implementation caveat: MLX-LM prompt cache objects are used by the
+generation path and can be advanced/mutated during generation. RAG-IME therefore
+must treat the stable prefix cache as immutable product state: copy it, reload
+it from a cache file, or otherwise isolate it per request before appending
+dynamic Rime/RAG context. This is why the current capability reporting should
+not claim Wisdom-Weasel parity until real-model cached TTFC proves stable
+behavior.
 
 Next validation should compare:
 
