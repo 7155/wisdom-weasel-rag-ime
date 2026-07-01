@@ -134,6 +134,87 @@ class DebugImeService:
             "benchmark": report,
         }
 
+    def cache_probe(self, payload: dict[str, Any]) -> dict[str, object]:
+        current_input = _string(payload.get("currentInput")).strip() or "RAG 输入法"
+        recent_context = _string(payload.get("recentContext"))
+        project = _string(payload.get("project")) or self.config.project
+        repeat = _bounded_int(payload.get("repeat"), default=3, minimum=2, maximum=20)
+        top_k = _bounded_int(payload.get("topK"), default=5, minimum=1, maximum=10)
+        before = self.health()
+        suggest_samples: list[dict[str, object]] = []
+        for index in range(repeat):
+            response = self.suggest(
+                {
+                    "currentInput": current_input,
+                    "recentContext": recent_context,
+                    "project": project,
+                    "topK": top_k,
+                }
+            )
+            if index in (0, repeat - 1):
+                suggest_samples.append(
+                    {
+                        "iteration": index + 1,
+                        "suggestionCount": len(response.get("suggestions", [])),
+                        "modelPredictionCount": len(response.get("modelPredictions", [])),
+                        "topSuggestions": [
+                            str(item.get("surfaceText") or "")
+                            for item in response.get("suggestions", [])[:3]
+                            if isinstance(item, dict)
+                        ],
+                    }
+                )
+
+        rime_payload = self._cache_probe_rime_payload(
+            payload,
+            current_input=current_input,
+            recent_context=recent_context,
+            project=project,
+        )
+        rime_samples: list[dict[str, object]] = []
+        for index in range(repeat):
+            request_payload = copy.deepcopy(rime_payload)
+            request_payload["sessionId"] = f"cache-probe-{index + 1}"
+            request_payload["requestSeq"] = index + 1
+            response = self.rime_suggest(request_payload)
+            cache = response.get("cache") if isinstance(response.get("cache"), dict) else {}
+            rime_samples.append(
+                {
+                    "iteration": index + 1,
+                    "hit": bool(cache.get("hit")) if isinstance(cache, dict) else False,
+                    "inFlightHit": bool(cache.get("inFlightHit")) if isinstance(cache, dict) else False,
+                    "cacheKey": str(cache.get("key") or "") if isinstance(cache, dict) else "",
+                    "displayCandidateCount": len(response.get("displayCandidates", [])),
+                    "queryBasis": str(response.get("queryBasis") or ""),
+                }
+            )
+        after = self.health()
+        suggestion_delta = _cache_stats_delta(before.get("suggestionCache"), after.get("suggestionCache"))
+        rime_delta = _cache_stats_delta(before.get("rimeSuggestCache"), after.get("rimeSuggestCache"))
+        expected_warm_hits = repeat - 1
+        suggestion_hit_delta = int(suggestion_delta.get("hitsDelta") or 0)
+        rime_hit_delta = int(rime_delta.get("hitsDelta") or 0)
+        return {
+            "schemaVersion": "rag-ime.debug-cache-probe.v1",
+            "project": project,
+            "currentInput": current_input,
+            "recentContextLength": len(recent_context),
+            "repeat": repeat,
+            "expectedWarmHits": expected_warm_hits,
+            "suggestionCache": suggestion_delta,
+            "rimeSuggestCache": rime_delta,
+            "summary": {
+                "suggestionCacheHitDelta": suggestion_hit_delta,
+                "rimeCacheHitDelta": rime_hit_delta,
+                "suggestionCachePassed": _cache_delta_passed(suggestion_delta, expected_warm_hits),
+                "rimeCachePassed": _cache_delta_passed(rime_delta, expected_warm_hits),
+            },
+            "samples": {
+                "suggest": suggest_samples,
+                "rimeSuggest": rime_samples,
+            },
+        }
+
     def seed(self) -> dict[str, object]:
         event_ids = seed_demo_memories(self.adapter, default_fixture_memories())
         self._clear_rime_cache()
@@ -295,6 +376,49 @@ class DebugImeService:
         if not cases:
             raise ValueError("predictor TTFC probe needs at least one non-empty input case")
         return cases
+
+    def _cache_probe_rime_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        current_input: str,
+        recent_context: str,
+        project: str,
+    ) -> dict[str, object]:
+        raw_candidates = payload.get("rimeCandidates")
+        candidates: list[dict[str, object]] = []
+        if isinstance(raw_candidates, list):
+            for index, item in enumerate(raw_candidates[:6], start=1):
+                if isinstance(item, str):
+                    text = item
+                    comment = "cache-probe"
+                elif isinstance(item, dict):
+                    text = _string(item.get("text"))
+                    comment = _string(item.get("comment")) or "cache-probe"
+                else:
+                    continue
+                if text.strip():
+                    candidates.append({"label": str(index), "text": text.strip(), "comment": comment, "index": index - 1})
+        if not candidates:
+            candidates = [{"label": "1", "text": current_input, "comment": "cache-probe", "index": 0}]
+        return {
+            "sessionId": "cache-probe",
+            "requestSeq": 0,
+            "rawInput": _string(payload.get("rawInput")) or current_input,
+            "preedit": _string(payload.get("preedit")) or current_input,
+            "committedContext": recent_context,
+            "project": project,
+            "idleMs": _bounded_int(payload.get("idleMs"), default=200, minimum=0, maximum=60_000),
+            "maxVisibleCandidates": _bounded_int(payload.get("maxVisibleCandidates"), default=6, minimum=1, maximum=10),
+            "maxSideCandidates": _bounded_int(payload.get("maxSideCandidates"), default=2, minimum=0, maximum=5),
+            "forceSideCandidates": bool(payload.get("forceSideCandidates", False)),
+            "rimeContext": {
+                "candidates": candidates,
+                "highlightedIndex": 0,
+                "page": 0,
+                "isLastPage": True,
+            },
+        }
 
     def _event_count(self) -> int | None:
         count = getattr(self.core, "event_count", None)
@@ -527,6 +651,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
             elif path in ("/api/predictor-ttfc", "/predictor-ttfc"):
                 self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
+            elif path in ("/api/cache-probe", "/cache-probe"):
+                self._write_json(HTTPStatus.OK, self.service.cache_probe(payload))
             elif path in ("/api/commit", "/commit"):
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
             elif path in ("/api/action", "/action"):
@@ -621,6 +747,44 @@ def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> 
     if parsed is None:
         return default
     return max(minimum, min(maximum, parsed))
+
+
+def _cache_stats_delta(before: object, after: object) -> dict[str, object]:
+    if not isinstance(after, dict):
+        return {"available": False, "enabled": False}
+    before_stats = before if isinstance(before, dict) else {}
+    numeric_keys = ("hits", "misses", "inFlightHits", "evictions", "invalidations")
+    payload: dict[str, object] = {
+        "available": True,
+        "enabled": bool(after.get("enabled", True)),
+        "before": {
+            key: before_stats.get(key)
+            for key in ("hits", "misses", "hitRate", "size", "inFlightHits", "evictions", "invalidations")
+            if key in before_stats
+        },
+        "after": {
+            key: after.get(key)
+            for key in ("hits", "misses", "hitRate", "size", "inFlightHits", "evictions", "invalidations")
+            if key in after
+        },
+    }
+    for key in numeric_keys:
+        before_value = before_stats.get(key, 0)
+        after_value = after.get(key, 0)
+        if isinstance(before_value, int) and isinstance(after_value, int):
+            payload[f"{key}Delta"] = after_value - before_value
+    return payload
+
+
+def _cache_delta_passed(delta: dict[str, object], expected_warm_hits: int) -> bool | None:
+    if not delta.get("available"):
+        return None
+    if delta.get("enabled") is False:
+        return None
+    hits_delta = delta.get("hitsDelta")
+    if not isinstance(hits_delta, int):
+        return None
+    return hits_delta >= expected_warm_hits
 
 
 def _canonical_action(value: str) -> str:

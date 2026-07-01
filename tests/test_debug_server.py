@@ -367,6 +367,28 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(second["semanticQuery"], "RAG 输入法")
         self.assertEqual(second["queryBasis"], "rimeCandidates")
 
+    def test_cache_probe_reports_warm_suggestion_and_rime_hits(self) -> None:
+        report = self.service.cache_probe(
+            {
+                "currentInput": "RAG 输入法",
+                "recentContext": "用户正在调试缓存命中",
+                "repeat": 3,
+                "topK": 3,
+            }
+        )
+
+        self.assertEqual(report["schemaVersion"], "rag-ime.debug-cache-probe.v1")
+        self.assertEqual(report["repeat"], 3)
+        self.assertEqual(report["expectedWarmHits"], 2)
+        self.assertGreaterEqual(report["suggestionCache"]["hitsDelta"], 2)
+        self.assertGreaterEqual(report["rimeSuggestCache"]["hitsDelta"], 2)
+        self.assertTrue(report["summary"]["suggestionCachePassed"])
+        self.assertTrue(report["summary"]["rimeCachePassed"])
+        self.assertEqual(len(report["samples"]["rimeSuggest"]), 3)
+        self.assertFalse(report["samples"]["rimeSuggest"][0]["hit"])
+        self.assertTrue(report["samples"]["rimeSuggest"][1]["hit"])
+        self.assertTrue(report["samples"]["suggest"][0]["topSuggestions"])
+
     def test_commit_and_action_are_wired_for_debug_page(self) -> None:
         suggestion = self.service.suggest({"currentInput": "FTS5", "topK": 1})["suggestions"][0]
         action = self.service.action(
@@ -574,6 +596,40 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["benchmark"]["providerName"], "local-ollama")
         self.assertTrue(payload["benchmark"]["summary"]["hasFirstCandidate"])
         self.assertEqual(MockOllamaStreamingHandler.captured_payloads[0]["model"], "qwen3.5:0.8b-mlx")
+
+    def test_http_debug_server_exposes_cache_probe(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        debug_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        debug_thread = Thread(target=debug_server.serve_forever, daemon=True)
+        debug_thread.start()
+        try:
+            request = Request(
+                f"http://127.0.0.1:{debug_server.server_port}/api/cache-probe",
+                data=json.dumps(
+                    {
+                        "currentInput": "缓存命中",
+                        "recentContext": "HTTP debug cache probe",
+                        "repeat": 3,
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            debug_server.shutdown()
+            debug_thread.join(timeout=2)
+            debug_server.server_close()
+
+        self.assertEqual(payload["schemaVersion"], "rag-ime.debug-cache-probe.v1")
+        self.assertGreaterEqual(payload["summary"]["rimeCacheHitDelta"], 2)
+        self.assertIn("suggestionCache", payload)
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):

@@ -11,6 +11,7 @@ const state = {
   historyContext: "",
   rimeSidecar: null,
   predictorTtfc: null,
+  cacheProbe: null,
   health: null,
   lastPayload: null,
   timer: 0,
@@ -87,6 +88,10 @@ const elements = {
   ttfcP50: document.getElementById("ttfcP50"),
   ttfcP95: document.getElementById("ttfcP95"),
   ttfcBudget: document.getElementById("ttfcBudget"),
+  cacheButton: document.getElementById("cacheButton"),
+  cacheCore: document.getElementById("cacheCore"),
+  cacheRime: document.getElementById("cacheRime"),
+  cacheRepeat: document.getElementById("cacheRepeat"),
 };
 
 function keyNumber(event) {
@@ -190,12 +195,21 @@ function render() {
             provider: state.predictorTtfc.predictor,
           }
         : null,
+      cacheProbe: state.cacheProbe
+        ? {
+            summary: state.cacheProbe.summary,
+            suggestionCache: state.cacheProbe.suggestionCache,
+            rimeSuggestCache: state.cacheProbe.rimeSuggestCache,
+            samples: state.cacheProbe.samples,
+          }
+        : null,
     },
     null,
     2,
   );
 
   renderTtfc();
+  renderCacheProbe();
 }
 
 function escapeHtml(value) {
@@ -454,6 +468,19 @@ function renderTtfc() {
   elements.ttfcButton.classList.toggle("is-warn", supported === false || over > 0);
 }
 
+function renderCacheProbe() {
+  const summary = state.cacheProbe?.summary || {};
+  const coreHits = Number(summary.suggestionCacheHitDelta || 0);
+  const rimeHits = Number(summary.rimeCacheHitDelta || 0);
+  const repeat = Number(state.cacheProbe?.repeat || 0);
+  const corePassed = summary.suggestionCachePassed;
+  const rimePassed = summary.rimeCachePassed;
+  elements.cacheCore.textContent = repeat ? String(coreHits) : "--";
+  elements.cacheRime.textContent = repeat ? String(rimeHits) : "--";
+  elements.cacheRepeat.textContent = repeat ? String(repeat) : "--";
+  elements.cacheButton.classList.toggle("is-warn", corePassed === false || rimePassed === false);
+}
+
 async function probePredictorTtfc() {
   elements.ttfcButton.disabled = true;
   elements.ttfcButton.textContent = "probing";
@@ -488,6 +515,40 @@ async function probePredictorTtfc() {
   }
 }
 
+async function probeCache() {
+  elements.cacheButton.disabled = true;
+  elements.cacheButton.textContent = "probing";
+  try {
+    const response = await fetch("/api/cache-probe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        currentInput: state.query || "RAG 输入法",
+        recentContext: state.committed.slice(-220),
+        repeat: 3,
+        topK: 5,
+      }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    state.cacheProbe = await response.json();
+    state.apiOnline = true;
+  } catch (error) {
+    state.cacheProbe = {
+      repeat: 0,
+      summary: {
+        suggestionCachePassed: false,
+        rimeCachePassed: false,
+        error: String(error),
+      },
+    };
+    state.apiOnline = false;
+  } finally {
+    elements.cacheButton.disabled = false;
+    elements.cacheButton.textContent = "probe";
+    render();
+  }
+}
+
 elements.documentCard.addEventListener("click", () => elements.hiddenInput.focus());
 elements.hiddenInput.addEventListener("keydown", handleKeydown);
 elements.hiddenInput.addEventListener("input", handleInput);
@@ -505,6 +566,7 @@ elements.evidenceButton.addEventListener("click", () => {
   elements.hiddenInput.focus();
 });
 elements.ttfcButton.addEventListener("click", probePredictorTtfc);
+elements.cacheButton.addEventListener("click", probeCache);
 
 render();
 refreshHealth().then(render);
