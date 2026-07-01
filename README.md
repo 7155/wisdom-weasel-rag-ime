@@ -387,8 +387,9 @@ python3 -m rag_ime.cli predict-benchmark \
   --latency-budget-ms 150
 ```
 
-For input methods, also measure streaming first-chunk latency. This is the
-metric that approximates "when the first model-side candidate can appear":
+For input methods, also measure streaming first-candidate latency. This is the
+metric that approximates "when the first usable model-side candidate can
+appear":
 
 ```bash
 python3 -m rag_ime.cli predictor-ttft \
@@ -400,7 +401,9 @@ python3 -m rag_ime.cli predictor-ttft \
 
 `predictor-ttft` currently supports the native Ollama lane and the resident MLX
 service. It reports
-`firstChunkMs`, `totalMs`, parsed candidates, and over-budget counts. See
+`firstChunkMs`, `firstCandidateMs`, `totalMs`, parsed candidates, and
+over-budget counts. The latency budget is evaluated against the first parsed
+candidate, not against raw JSON/token chunks. See
 `docs/mac-local-inference-fast-path.md` and
 `docs/model-ttft-kv-cache-plan.md` for why Ollama is only the baseline and why
 the final low-latency path should copy Wisdom-Weasel's native llama.cpp

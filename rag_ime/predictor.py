@@ -804,6 +804,7 @@ def benchmark_streaming_ttft_provider(
 
     results: list[dict[str, Any]] = []
     first_chunk_latencies = []
+    first_candidate_latencies = []
     total_latencies = []
     repeat_count = max(1, int(repeat))
     for repeat_index in range(1, repeat_count + 1):
@@ -829,12 +830,16 @@ def benchmark_streaming_ttft_provider(
             first_ms = measured.get("firstChunkMs")
             if isinstance(first_ms, int):
                 first_chunk_latencies.append(first_ms)
+            first_candidate_ms = measured.get("firstCandidateMs")
+            if isinstance(first_candidate_ms, int):
+                first_candidate_latencies.append(first_candidate_ms)
             total_ms = measured.get("totalMs")
             if isinstance(total_ms, int):
                 total_latencies.append(total_ms)
-            measured["overBudget"] = not isinstance(first_ms, int) or first_ms > latency_budget_ms
+            measured["overBudget"] = not isinstance(first_candidate_ms, int) or first_candidate_ms > latency_budget_ms
             results.append(measured)
     first_chunk_missing_count = sum(1 for item in results if not isinstance(item.get("firstChunkMs"), int))
+    first_candidate_missing_count = sum(1 for item in results if not isinstance(item.get("firstCandidateMs"), int))
     over_budget_count = sum(1 for item in results if bool(item.get("overBudget")))
 
     return {
@@ -854,15 +859,21 @@ def benchmark_streaming_ttft_provider(
             "caseCount": len(cases),
             "sampleCount": len(results),
             "hasFirstChunk": bool(first_chunk_latencies),
+            "hasFirstCandidate": bool(first_candidate_latencies),
             "p50FirstChunkMs": _percentile_ms(first_chunk_latencies, 0.50),
             "p95FirstChunkMs": _percentile_ms(first_chunk_latencies, 0.95),
             "minFirstChunkMs": min(first_chunk_latencies) if first_chunk_latencies else 0,
             "maxFirstChunkMs": max(first_chunk_latencies) if first_chunk_latencies else 0,
+            "p50FirstCandidateMs": _percentile_ms(first_candidate_latencies, 0.50),
+            "p95FirstCandidateMs": _percentile_ms(first_candidate_latencies, 0.95),
+            "minFirstCandidateMs": min(first_candidate_latencies) if first_candidate_latencies else 0,
+            "maxFirstCandidateMs": max(first_candidate_latencies) if first_candidate_latencies else 0,
             "p50TotalMs": _percentile_ms(total_latencies, 0.50),
             "p95TotalMs": _percentile_ms(total_latencies, 0.95),
             "allWithinBudget": bool(results) and over_budget_count == 0,
             "overBudgetCount": over_budget_count,
             "firstChunkMissingCount": first_chunk_missing_count,
+            "firstCandidateMissingCount": first_candidate_missing_count,
             "failureCount": sum(1 for item in results if not bool(item.get("ok"))),
             "candidateSampleCount": sum(1 for item in results if int(item.get("candidateCount") or 0) > 0),
         },
