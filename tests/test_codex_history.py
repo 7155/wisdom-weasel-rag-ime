@@ -436,6 +436,67 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertIn("elapsedMs", report["cases"][0])
         self.assertIn("本地记忆", " ".join(report["cases"][0]["topSurfaces"]))
 
+    def test_cli_quality_gate_aggregates_eval_sidecar_acceptance_and_cache(self) -> None:
+        db_path = self.root / "quality-gate.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "quality-gate-cases.jsonl"
+        cases_file.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "id": "agent-hook",
+                            "query": "首次运行自动注入背景记忆",
+                            "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "id": "memory-actions",
+                            "query": "本地记忆 action 如何支持 pin downrank delete",
+                            "expectedTerms": ["pin", "downrank", "delete"],
+                        },
+                        ensure_ascii=False,
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        gate_stdout = io.StringIO()
+        with redirect_stdout(gate_stdout):
+            gate_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "quality-gate",
+                    "--cases-file",
+                    str(cases_file),
+                    "--min-rag-pass-rate",
+                    "1",
+                    "--min-sidecar-pass-rate",
+                    "1",
+                    "--force-side-candidates",
+                    "--require-suggestion-cache",
+                ]
+            )
+        self.assertEqual(gate_code, 0)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertEqual(report["schemaVersion"], "rag-ime.quality-gate.v1")
+        self.assertTrue(report["passed"])
+        self.assertTrue(all(item["passed"] for item in report["checks"]))
+        self.assertEqual(report["rag"]["passRate"], 1.0)
+        self.assertEqual(report["rimeSidecar"]["passRate"], 1.0)
+        self.assertNotIn("cases", report["rag"])
+        self.assertNotIn("cases", report["rimeSidecar"])
+        self.assertTrue(report["cacheProbe"]["summary"]["suggestionCachePassed"])
+        self.assertTrue(report["cacheProbe"]["summary"]["rimeCachePassed"])
+
     def test_cli_eval_comparison_runs_rag_and_model_on_same_cases(self) -> None:
         db_path = self.root / "comparison.sqlite"
         with redirect_stdout(io.StringIO()):

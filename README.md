@@ -260,6 +260,24 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --repeat 2
 ```
 
+Run the local aggregate quality gate:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  quality-gate \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --repeat 1 \
+  --force-side-candidates \
+  --require-suggestion-cache
+```
+
+`quality-gate` runs deterministic adapter acceptance, direct RAG eval,
+`/rime-suggest` sidecar eval, and repeated cache probing in one command. It
+returns exit code `0` only when every sub-gate passes. The default report is a
+summary; add `--include-cases` when debugging individual failed cases. For a
+real Codex-history DB, raise `--min-rag-pass-rate` and
+`--min-sidecar-pass-rate` as the benchmark improves.
+
 See `docs/codex-history-eval.md`.
 
 The report includes candidate-level ranking metrics such as `top1Accuracy`, `meanReciprocalRank`, `noiseRate`, end-to-end suggestion latency, and repeat/cache statistics, not just pass/fail recall.
