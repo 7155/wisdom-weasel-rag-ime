@@ -12,7 +12,7 @@ from rag_ime.adapter import InputMethodAdapter
 from rag_ime.cli import main
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.models import ModelPrediction
+from rag_ime.models import InputSuggestion, ModelPrediction
 from rag_ime.predictor import CooldownPredictionProvider, OpenAICompatiblePredictionConfig
 from rag_ime.rime_sidecar import (
     build_rime_sidecar_response,
@@ -65,6 +65,27 @@ class FailingPredictionProvider:
         self.calls += 1
         self.last_error = "timeout"
         return []
+
+
+class CapturingCore:
+    def __init__(self) -> None:
+        self.last_suggest_recent_context = ""
+
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", top_k: int = 5):
+        self.last_suggest_recent_context = recent_context
+        return [
+            InputSuggestion(
+                suggestion_id="spy:1",
+                surface_text="RAG 输入法本地记忆",
+                suggestion_type="rag_candidate",
+                source_event_id=1,
+                evidence_preview="spy",
+                confidence=0.9,
+            )
+        ][:top_k]
+
+    def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
+        return "历史输入会进入模型预测 但不能污染 RAG 检索"
 
 
 class RimeSidecarTests(unittest.TestCase):
@@ -135,6 +156,34 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[3]["selectionAction"], "commit_side_candidate")
         self.assertIsInstance(display[3]["sourceEventId"], int)
         self.assertEqual([item["label"] for item in display[:4]], ["1", "2", "3", "4"])
+
+    def test_history_context_is_only_used_for_model_not_rag_retrieval(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        predictor = FakePredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-context-boundary",
+                "requestSeq": 43,
+                "committedContext": "当前正在写 RAG 输入法 sidecar",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertIn("历史输入会进入模型预测", predictor.last_recent_context)
+        self.assertIn("当前上下文: 当前正在写 RAG 输入法 sidecar", predictor.last_recent_context)
+        self.assertEqual(core.last_suggest_recent_context, "当前正在写 RAG 输入法 sidecar")
+        self.assertNotIn("历史输入会进入模型预测", core.last_suggest_recent_context)
+        self.assertEqual(response["historyContext"], predictor.last_recent_context)
 
     def test_zero_side_candidates_does_not_call_model(self) -> None:
         response = build_rime_sidecar_response(

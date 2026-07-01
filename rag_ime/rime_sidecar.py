@@ -57,7 +57,7 @@ def build_rime_sidecar_response(
         suggestions = adapter.suggest(
             SuggestionRequest(
                 current_input=semantic_query,
-                recent_context=prediction_context,
+                recent_context=snapshot.committed_context,
                 project=snapshot.project or default_project,
                 top_k=snapshot.max_side_candidates,
             )

@@ -208,10 +208,21 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --repeat 3
 ```
 
+Evaluate the actual Rime sidecar display path:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-rime-sidecar \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --match any \
+  --repeat 2
+```
+
 See `docs/codex-history-eval.md`.
 
 The report includes candidate-level ranking metrics such as `top1Accuracy`, `meanReciprocalRank`, `noiseRate`, end-to-end suggestion latency, and repeat/cache statistics, not just pass/fail recall.
 When running against the local core, it also includes `cacheStats` so repeated-case evaluations can measure suggestion-cache hits. If optional vector recall is enabled, the same report includes `vectorStats`.
+`eval-rime-sidecar` uses the same case format but scores only model/RAG side candidates from the merged `/rime-suggest` display payload. Use it after `eval-codex-history` to catch failures in Rime-first merge, side-slot limits, trigger policy, and `/rime-suggest` cache behavior.
 
 Optional vector recall can be enabled without changing the input-method adapter. `local-hash` is a deterministic local baseline for testing the side-index contract, not a semantic model:
 
