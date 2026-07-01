@@ -2060,3 +2060,28 @@ Commands:
 Status:
 - Current active path is direct MLX service with local `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit`, `streamFirstCandidate=false`, `logitsTopK=true`, `batchCandidates=true`, `sequenceFork=false`.
 - Remaining uncompleted item in the Goal is the 3 downloaded safetensors model comparison plus final git sync.
+
+### 2026-07-01 23:59 CST
+Problem:
+- The product goal explicitly called out raw key noise such as `asdioj`: the IME must not ask an unconstrained LLM to decode it, but it also should not drop useful predictions immediately after the user has just committed Chinese text.
+
+Changes:
+- Updated the Squirrel patch to track `queryBasis`, display update time, and a 1.2s display holdover window.
+- If the current raw/preedit has no Rime fallback candidates and the previous sidecar response was based on `committedContext`, Squirrel briefly keeps those side candidates visible while the raw composition changes.
+- Kept fail-closed behavior for raw input with no Rime candidates and no recent committed context.
+- Updated README/debug/issue-map docs and the active Goal record.
+
+Verification:
+- Patch/prepare/sidecar tests passed: 27 tests.
+- `git diff --check` passed.
+- Re-prepared Squirrel workdir from the patch, rebuilt, and installed patched Squirrel.app.
+- Re-registered the input source after install; doctor passed with `failures=0 warnings=0`.
+- Manual `/rime-suggest` check: `asdioj` with no context skipped side lanes; `asdioj` with recent committed Chinese context returned model/RAG side candidates via `queryBasis=committedContext`.
+
+Commands:
+- `RAG_IME_SQUIRREL_RESET=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/prepare_squirrel_workspace.sh`
+- `RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/build_patched_squirrel.sh install`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/doctor_squirrel_integration.sh`
+
+Status:
+- Installed Squirrel is registered as `im.rime.inputmethod.Squirrel.Hans`, enabled and third-party-visible, but current source remains ABC until the user switches input source for foreground typing.

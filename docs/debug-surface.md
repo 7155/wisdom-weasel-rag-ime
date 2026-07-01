@@ -210,7 +210,15 @@ falling back to raw input.
 The response also includes `triggerDecision`. This is the backend guard that keeps the input method small and responsive:
 
 - Rime candidates are kept as fallback rows when side candidates do not fill the visible list.
-- Model/RAG side lanes are skipped for raw pinyin fallback, empty input, or composing updates without stable Rime candidates.
+- Model/RAG side lanes are skipped for empty input and for raw pinyin fallback
+  with no usable semantic signal. If raw composition has no Rime candidates but
+  recent committed Chinese context exists, `/rime-suggest` uses that
+  `committedContext` as a continuation signal instead of asking the model to
+  decode the raw key sequence.
+- The patched Squirrel frontend keeps `committedContext`-based side candidates
+  visible for a short holdover window while raw input changes and Rime has no
+  fallback candidates. This is the safe path for `asdioj`-style noise: continue
+  from recent Chinese text, do not infer Chinese directly from the raw letters.
 - `forceSideCandidates: true` can be used by debug tooling to force a refresh.
 - Skipped refreshes return empty `modelPredictions` / `ragCandidates` and `mergePolicy.sideCandidatesEnabled: false`.
 

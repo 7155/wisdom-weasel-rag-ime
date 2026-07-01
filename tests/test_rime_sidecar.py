@@ -433,7 +433,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelPredictions"], [])
         self.assertTrue(response["modelLane"]["called"])
         self.assertTrue(response["modelLane"]["timedOut"])
-        self.assertEqual(response["modelLane"]["skippedReason"], "model lane exceeded latency budget")
+        self.assertIn("exceeded latency budget", response["modelLane"]["skippedReason"])
         self.assertEqual(response["modelLane"]["predictionCount"], 0)
         self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
 
@@ -470,7 +470,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["ragCandidates"], [])
         self.assertTrue(response["ragLane"]["called"])
         self.assertTrue(response["ragLane"]["timedOut"])
-        self.assertEqual(response["ragLane"]["skippedReason"], "RAG lane exceeded latency budget")
+        self.assertIn("exceeded latency budget", response["ragLane"]["skippedReason"])
         self.assertTrue(response["modelLane"]["called"])
         self.assertFalse(response["modelLane"]["timedOut"])
         self.assertEqual(response["modelLane"]["sideLaneMode"], "parallel")

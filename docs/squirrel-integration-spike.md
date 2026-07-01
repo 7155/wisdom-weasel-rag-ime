@@ -130,7 +130,7 @@ The Python sidecar now has a second guard before model/RAG work:
 Rime context -> semantic query -> triggerDecision
 ```
 
-It returns Rime fallback candidates on every response, but skips model/RAG side lanes when the request is still raw pinyin fallback, lacks a stable semantic signal, or has only a one-character candidate before idle. A full Rime page no longer blocks side lanes because model/RAG candidates own the visible side budget first. The response exposes:
+It returns Rime fallback candidates on every response, but skips model/RAG side lanes when the request lacks a stable semantic signal or has only a one-character candidate before idle. Raw key sequences are not decoded directly by the model: Rime candidates are used when present; otherwise a recent committed Chinese context may drive continuation, and the Squirrel frontend briefly holds those committed-context side candidates while raw composition changes and Rime has no candidates. A full Rime page no longer blocks side lanes because model/RAG candidates own the visible side budget first. The response exposes:
 
 ```json
 {

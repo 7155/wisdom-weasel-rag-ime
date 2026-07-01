@@ -33,6 +33,7 @@
 - [x] 重启 LaunchAgent 并跑真实 doctor / sidecar payload。
 - [x] 接入 direct MLX `/predict` 的 `candidateMode: next-token-logits`，一次返回多个横向 LLM 候选。
 - [x] 固化候选布局：`model/inline` 横向 lane，`rag/block` 纵向句子行，Rime fallback。
+- [x] 补 raw 输入安全边界：`asdioj` 这类无 Rime 候选时不让 LLM 直接解码；有近期已提交中文时用 `committedContext` 继续预测，并让 Squirrel 短暂 holdover。
 - [ ] 完成 3 个 MLX 模型对比。
 - [ ] Git 同步。
 
@@ -58,7 +59,7 @@
 - direct MLX 的 prompt cache 仍是 prepared/observed 状态，尚未证明真实生成复用稳定 KV 前缀。
 - Rime fallback 后移会改变传统输入法肌肉记忆，需要真实连续输入测试确认是否可接受。
 - 3 个 safetensors 需要逐一识别 config/tokenizer，不能只按文件名假设模型。
-- `asdioj` 这类 raw key sequence 可能是误拼、双拼或英文缩写；没有 Rime 候选或拼音约束时，模型自由生成会产生噪声，必须 fail closed。
+- `asdioj` 这类 raw key sequence 可能是误拼、双拼或英文缩写；当前只允许 Rime 候选或近期 committedContext continuation，不允许模型自由解码。真正把 raw key sequence 变中文仍需要后续拼音约束 logits / beam search。
 
 ## 参考
 - `/Volumes/undo 4t/git/learnA/Wisdom-Weasel/WeaselServer/LlamaCppProvider.cpp`

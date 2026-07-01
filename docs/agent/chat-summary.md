@@ -1472,3 +1472,22 @@ Verification:
 
 Next:
 - Finish identifying and comparing the three downloaded safetensors models, then run continuous foreground typing verification with the user.
+
+### 2026-07-01
+Topic:
+- Add safe raw-input continuation behavior for `asdioj`-style noisy composition.
+
+Changes:
+- Patched Squirrel now stores sidecar `queryBasis` and display timestamp.
+- When raw/preedit changes and Rime has no candidates, Squirrel can briefly hold the previous `committedContext`-based side candidates for 1.2s.
+- Raw input with no Rime candidates and no committed context still fails closed; the model is not allowed to decode raw key sequences directly.
+- Docs and the Wisdom-Weasel issue map now describe this boundary.
+
+Verification:
+- Patch/prepare/sidecar tests passed, `git diff --check` passed.
+- Re-prepared, rebuilt, installed, and re-registered patched Squirrel.
+- Doctor passed with `failures=0 warnings=0`.
+- Manual sidecar payloads showed `asdioj` without context skips side lanes, while `asdioj` with recent committed context returns model/RAG candidates through `queryBasis=committedContext`.
+
+Next:
+- Switch to Squirrel in the menu bar and do foreground continuous typing verification; then continue the 3 downloaded safetensors model comparison.
