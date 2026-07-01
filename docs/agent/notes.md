@@ -2458,3 +2458,26 @@ Verification:
 - `bash -n scripts/doctor_squirrel_integration.sh` passed.
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_doctor_squirrel_integration` passed: 12 tests.
 - Real strict doctor now returns `display=8 model=5 rag=3 rime=0` under `doctor_latency_budget_ms: 180`; remaining failure is only stale `/Library/Input Methods/Squirrel.app`.
+
+### 2026-07-02 03:56 CST
+Problem:
+- User clarified again that LLM candidates should be horizontal, while sentence/RAG candidates should be vertical rows.
+- The backend candidate contract already returned `1-5 model/inline` and `6-8 rag/block`, but macOS could still load the stale root-owned `/Library/Input Methods/Squirrel.app` with the same bundle id, making the real panel look like the old vertical Squirrel UI.
+
+Changes:
+- Added a brandable install path for patched Squirrel: `RAG-IME.app` with bundle/input-source prefix `im.rag-ime.inputmethod.RagIme`.
+- `prepare_squirrel_workspace.sh` now rewrites Squirrel's input-source prefix usage to read `TISInputSourceID` from the app bundle instead of hardcoding `im.rime.inputmethod.Squirrel`.
+- Added `scripts/brand_squirrel_app.sh` to rewrite `Info.plist`, Hans/Hant input source IDs, connection name, and localized input-source names.
+- `build_patched_squirrel.sh` can now install a branded app while preserving the old default Squirrel path.
+- Doctor duplicate detection now compares against the configured app's bundle id, so the original system Squirrel no longer blocks an independent RAG-IME build.
+- Hardened `enable_squirrel_hitoolbox_input_source.sh` so it reports when macOS refuses to persist ThirdParty input-source preferences.
+
+Verification:
+- Built and installed `/Users/undo/Library/Input Methods/RAG-IME.app`.
+- Strict doctor passed for the branded app with `summary: failures=0 warnings=0`.
+- Doctor confirmed `display=8 model=5 rag=3 rime=0`, `model inline + rag block`, local MLX text-only model, prompt cache, and LaunchAgent config.
+- `python3 -m unittest discover -s tests` passed: 196 tests.
+
+Status:
+- `RAG-IME - Simplified` is installed and visible to macOS TIS as enabled/selectable.
+- Codex cannot persist `com.apple.inputsources` ThirdParty preferences from this process; macOS denied both `defaults write` and direct plist write. The remaining foreground step is adding/selecting `RAG-IME - Simplified` once in System Settings, or letting Codex do that via GUI after user confirmation.

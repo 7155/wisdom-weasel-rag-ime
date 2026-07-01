@@ -108,6 +108,38 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                 "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \"\\n\" }; func traceRagImePanelTextLayout() {} }\n",
                 encoding="utf-8",
             )
+            (upstream / "sources" / "InputSource.swift").write_text(
+                "\n".join(
+                    [
+                        "import Foundation",
+                        "final class SquirrelInstaller {",
+                        "  enum InputMode: String, CaseIterable {",
+                        "    static let primary = Self.hans",
+                        '    case hans = "im.rime.inputmethod.Squirrel.Hans"',
+                        '    case hant = "im.rime.inputmethod.Squirrel.Hant"',
+                        "  }",
+                        "}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (upstream / "sources" / "SquirrelApplicationDelegate.swift").write_text(
+                "\n".join(
+                    [
+                        "final class SquirrelApplicationDelegate {",
+                        "  func updateStatusItemVisibility(currentInputSourceID: String) -> Bool {",
+                        '    currentInputSourceID.hasPrefix("im.rime.inputmethod.Squirrel")',
+                        "  }",
+                        "  func finalizeStrandedComposition(currentInputSourceID: String) -> Bool {",
+                        '    currentInputSourceID.hasPrefix("im.rime.inputmethod.Squirrel")',
+                        "  }",
+                        "}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             subprocess.run(["git", "add", "sources"], cwd=upstream, check=True)
             subprocess.run(["git", "commit", "-m", "add source stubs"], cwd=upstream, check=True, capture_output=True, text=True)
 
@@ -161,6 +193,14 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             self.assertIn(
                 "static let appDir = Bundle.main.bundleURL",
                 (workdir / "sources" / "Main.swift").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "static var inputSourceIDPrefix: String",
+                (workdir / "sources" / "InputSource.swift").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "currentInputSourceID.hasPrefix(SquirrelInstaller.inputSourceIDPrefix)",
+                (workdir / "sources" / "SquirrelApplicationDelegate.swift").read_text(encoding="utf-8"),
             )
             config = (workdir / "rag-ime.squirrel.custom.yaml").read_text(encoding="utf-8")
             self.assertIn("sidecar_url: http://127.0.0.1:19866/api", config)

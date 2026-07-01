@@ -112,9 +112,14 @@ check_patched_squirrel_app() {
 check_duplicate_squirrel_apps() {
   local configured_app="$1"
   local candidate
+  local configured_bundle_id
   local bundle_id
   local found_stale=0
 
+  configured_bundle_id="$(app_bundle_id "$configured_app")"
+  if [[ -z "$configured_bundle_id" ]]; then
+    configured_bundle_id="im.rime.inputmethod.Squirrel"
+  fi
   IFS=':' read -r -a duplicate_candidates <<< "$SQUIRREL_DUPLICATE_APP_CANDIDATES"
   for candidate in "${duplicate_candidates[@]}"; do
     [[ -n "$candidate" && -d "$candidate" ]] || continue
@@ -122,7 +127,7 @@ check_duplicate_squirrel_apps() {
       continue
     fi
     bundle_id="$(app_bundle_id "$candidate")"
-    [[ "$bundle_id" == "im.rime.inputmethod.Squirrel" ]] || continue
+    [[ "$bundle_id" == "$configured_bundle_id" ]] || continue
     if ! squirrel_app_has_mixed_frontend_trace "$candidate"; then
       found_stale=1
       require_or_warn "$REQUIRE_PATCHED_APP" "stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace: $candidate"

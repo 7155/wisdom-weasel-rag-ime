@@ -68,6 +68,88 @@ git -C "$SQUIRREL_WORKDIR" reset --hard "$SQUIRREL_BASE_REF" --quiet
 git -C "$SQUIRREL_WORKDIR" clean -fd --quiet
 git -C "$SQUIRREL_WORKDIR" apply --check "$PATCH_FILE"
 git -C "$SQUIRREL_WORKDIR" apply "$PATCH_FILE"
+
+make_input_source_prefix_brandable() {
+  local input_source_file="$SQUIRREL_WORKDIR/sources/InputSource.swift"
+  local app_delegate_file="$SQUIRREL_WORKDIR/sources/SquirrelApplicationDelegate.swift"
+  if [[ ! -f "$input_source_file" || ! -f "$app_delegate_file" ]]; then
+    return 0
+  fi
+
+  "$PYTHON_EXECUTABLE" - "$input_source_file" "$app_delegate_file" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+input_source_path = Path(sys.argv[1])
+app_delegate_path = Path(sys.argv[2])
+
+input_source = input_source_path.read_text(encoding="utf-8")
+old_input_mode = """  enum InputMode: String, CaseIterable {
+    static let primary = Self.hans
+    case hans = "im.rime.inputmethod.Squirrel.Hans"
+    case hant = "im.rime.inputmethod.Squirrel.Hant"
+  }
+"""
+new_input_mode = r"""  enum InputMode: CaseIterable {
+    case hans
+    case hant
+
+    static let primary = Self.hans
+
+    init?(rawValue: String) {
+      switch rawValue {
+      case Self.hans.rawValue:
+        self = .hans
+      case Self.hant.rawValue:
+        self = .hant
+      default:
+        return nil
+      }
+    }
+
+    var rawValue: String {
+      switch self {
+      case .hans:
+        return "\(Self.inputSourceIDPrefix).Hans"
+      case .hant:
+        return "\(Self.inputSourceIDPrefix).Hant"
+      }
+    }
+
+    private static var inputSourceIDPrefix: String {
+      SquirrelInstaller.inputSourceIDPrefix
+    }
+  }
+
+  static var inputSourceIDPrefix: String {
+    if let id = Bundle.main.object(forInfoDictionaryKey: "TISInputSourceID") as? String, !id.isEmpty {
+      return id
+    }
+    if let id = Bundle.main.bundleIdentifier, !id.isEmpty {
+      return id
+    }
+    return "im.rime.inputmethod.Squirrel"
+  }
+"""
+if old_input_mode not in input_source:
+    if "static var inputSourceIDPrefix: String" not in input_source:
+        raise SystemExit("InputSource.swift did not match the expected Squirrel input mode block")
+else:
+    input_source = input_source.replace(old_input_mode, new_input_mode)
+    input_source_path.write_text(input_source, encoding="utf-8")
+
+app_delegate = app_delegate_path.read_text(encoding="utf-8")
+app_delegate = app_delegate.replace(
+    'currentInputSourceID.hasPrefix("im.rime.inputmethod.Squirrel")',
+    "currentInputSourceID.hasPrefix(SquirrelInstaller.inputSourceIDPrefix)",
+)
+app_delegate_path.write_text(app_delegate, encoding="utf-8")
+PY
+}
+
+make_input_source_prefix_brandable
 git -C "$SQUIRREL_WORKDIR" diff --check
 
 require_patch_file() {
@@ -106,6 +188,9 @@ require_patch_text "sources/SquirrelPanel.swift" "candidateSeparator" "mixed inl
 require_patch_text "sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal panel layout for LLM inline candidates"
 require_patch_text "sources/SquirrelPanel.swift" "traceRagImePanelTextLayout" "actual frontend mixed-layout trace"
 require_patch_text "sources/Main.swift" "static let appDir = Bundle.main.bundleURL" "dynamic input-source registration bundle path"
+if [[ -f "$SQUIRREL_WORKDIR/sources/InputSource.swift" ]]; then
+  require_patch_text "sources/InputSource.swift" "static var inputSourceIDPrefix: String" "brandable input-source prefix"
+fi
 
 CONFIG_PATH="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml"
 ROOT="$ROOT" \
