@@ -145,7 +145,18 @@ After Xcode is available:
 
 ```bash
 scripts/prepare_squirrel_workspace.sh
-RAG_IME_DOCTOR_REQUIRE_XCODE=1 scripts/doctor_squirrel_integration.sh
+RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
+scripts/build_patched_squirrel.sh list
+scripts/build_patched_squirrel.sh
 ```
 
-Then open the prepared Squirrel checkout in Xcode or build it with `xcodebuild`.
+`scripts/build_patched_squirrel.sh list` is the non-destructive project
+inspection gate. The default `build` action runs:
+
+```text
+xcodebuild -project <patched>/Squirrel.xcodeproj -scheme Squirrel -configuration Release -derivedDataPath /tmp/rag-ime-squirrel-derived-data CODE_SIGNING_ALLOWED=NO build
+```
+
+If the project opens in Xcode but the script fails, inspect the exact
+`xcodebuild` output first; the wrapper checks the patched files and config before
+entering Xcode build proper.

@@ -196,6 +196,14 @@ Check and configure the full Xcode requirement for patched Squirrel:
 scripts/setup_xcode_for_squirrel.sh
 ```
 
+After a full Xcode is available and the patched checkout is prepared, inspect
+and build patched Squirrel:
+
+```bash
+scripts/build_patched_squirrel.sh list
+scripts/build_patched_squirrel.sh
+```
+
 See `docs/xcode-squirrel-setup.md` for the external-disk install route and the `DEVELOPER_DIR`/`xcode-select` commands.
 
 Show memory action effects:

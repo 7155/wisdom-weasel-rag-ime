@@ -2,6 +2,22 @@
 
 ### 2026-07-01
 Topic:
+- Add a real patched Squirrel build gate.
+
+Changes:
+- Added `scripts/build_patched_squirrel.sh` with `list`/`build` actions, dry-run output, patched-file checks, and `CODE_SIGNING_ALLOWED=NO` default build.
+- Added offline tests with fake `xcodebuild` for dry-run, project inspection, build invocation, and missing-workdir failure.
+- Updated README, Squirrel patch pack, Xcode setup, and macOS adapter docs with the new validation path.
+
+Findings:
+- `/tmp/rag-ime-squirrel` is prepared and patched.
+- Current host still points `xcode-select` at `/Library/Developer/CommandLineTools`, so the real Squirrel build remains blocked until full Xcode is installed/selected.
+
+Next:
+- After full Xcode is available, run `scripts/build_patched_squirrel.sh list` and then `scripts/build_patched_squirrel.sh`.
+
+### 2026-07-01
+Topic:
 - Mac 本地推理最快路线专项调研。
 
 Decisions:

@@ -7,6 +7,28 @@
 
 ## Log
 
+### 2026-07-01 13:44 CST
+Problem:
+- RAG-IME 已有 patched Squirrel prepare/doctor，但缺少一个正式的 `xcodebuild` 构建入口；full Xcode 装好后无法一条命令验证真实 Squirrel 前端。
+
+Changes:
+- 新增 `scripts/build_patched_squirrel.sh`，支持 `list` 和 `build` action、dry-run、可配置 workdir/project/scheme/configuration/derived data。
+- 构建前检查 patched Squirrel checkout、`Squirrel.xcodeproj`、RAG-IME Swift sidecar 文件和 `rag-ime.squirrel.custom.yaml`。
+- 构建命令默认使用 `CODE_SIGNING_ALLOWED=NO` 和 `/tmp/rag-ime-squirrel-derived-data`，避免把签名问题混入编译验证。
+- 新增 `tests/test_build_patched_squirrel.py`，用 fake `xcodebuild` 离线覆盖 dry-run、`-list`、build 和 missing-workdir 错误提示。
+- 更新 README、Squirrel patch pack、Xcode setup、macOS adapter 文档的构建路径。
+
+Commands:
+- `bash -n scripts/build_patched_squirrel.sh`
+- `python3 -m unittest tests.test_build_patched_squirrel`
+- `RAG_IME_SQUIRREL_BUILD_DRY_RUN=1 scripts/build_patched_squirrel.sh list`
+- `scripts/build_patched_squirrel.sh list`
+
+Findings:
+- `/tmp/rag-ime-squirrel` 当前是已准备的 patched checkout。
+- 本机 `xcode-select -p` 仍为 `/Library/Developer/CommandLineTools`。
+- `scripts/build_patched_squirrel.sh list` 按预期失败在 `xcodebuild -version`，提示安装/选择 full Xcode。
+
 ### 2026-07-01 13:37 CST
 Problem:
 - 用户要求充分调研 Mac 上最快本地推理方案，用于 RAG 输入法首候选低延迟。
