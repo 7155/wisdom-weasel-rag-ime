@@ -1241,3 +1241,28 @@ Commands:
 - `bash -n scripts/prepare_squirrel_workspace.sh`
 - `python3 -m unittest tests.test_prepare_squirrel_workspace`
 - `python3 -m unittest discover -s tests`
+
+### 2026-07-01 13:13 CST
+Problem:
+- The Mac TTFC decision needed a reusable multi-case benchmark command, not just manual `predictor-ttft` one-offs.
+
+Changes:
+- Added `bench-ime-ttfc`, a streaming first parsed candidate benchmark for multiple model ids on the same IME case file.
+- Added `docs/eval/ime-ttfc-cases.example.jsonl` for speed-only cases that do not require `expectedTerms`.
+- Added model-level winner selection based on over-budget count, p95 TTFC, p50 TTFC, and failure count.
+- Preserved optional per-sample output behind `--include-cases`.
+
+Findings:
+- Real Ollama inventory contains `qwen3.5:0.8b-mlx` and `qwen3.5:0.8b` under `/Volumes/undo 4t/ollama-models`.
+- Short mixed-model run: `qwen3.5:0.8b-mlx` had p50 `firstCandidateMs=120` ms, p95 `969` ms with 1 over-budget sample; `qwen3.5:0.8b` had p50 `272` ms, p95 `2184` ms with all samples over budget.
+- Warm single-model run: `qwen3.5:0.8b-mlx` had p50 `102` ms, p95 `122` ms, but still 1/12 samples over 200 ms. `qwen3.5:0.8b` had p50 `241` ms, p95 `397` ms, 12/12 samples over budget.
+- This supports keeping Ollama MLX as the current smoke path and rejecting the GGUF/Q8 `0.8b` tag for per-keystroke prediction.
+
+Commands:
+- `python3 -m py_compile rag_ime/cli.py rag_ime/predictor.py tests/test_predictor.py`
+- `python3 -m unittest tests.test_predictor`
+- `ollama list`
+- `python3 -m rag_ime.cli --core-mode fixture bench-ime-ttfc --cases-file docs/eval/ime-ttfc-cases.example.jsonl --provider ollama --base-url http://127.0.0.1:11434 --models qwen3.5:0.8b-mlx,qwen3.5:0.8b --repeat 2 --latency-budget-ms 200`
+- `python3 -m rag_ime.cli --core-mode fixture bench-ime-ttfc --cases-file docs/eval/ime-ttfc-cases.example.jsonl --provider ollama --base-url http://127.0.0.1:11434 --models qwen3.5:0.8b-mlx --repeat 3 --latency-budget-ms 200`
+- `python3 -m rag_ime.cli --core-mode fixture bench-ime-ttfc --cases-file docs/eval/ime-ttfc-cases.example.jsonl --provider ollama --base-url http://127.0.0.1:11434 --models qwen3.5:0.8b --repeat 3 --latency-budget-ms 200`
+- `python3 -m unittest discover -s tests`

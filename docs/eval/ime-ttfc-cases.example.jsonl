@@ -1,0 +1,4 @@
+{"id":"short-rag-ime","currentInput":"RAG 输入法","recentContext":"用户正在讨论本地记忆、候选展示和输入法预测。"}
+{"id":"squirrel-side-candidate","currentInput":"Squirrel 候选","recentContext":"用户正在调试 Rime/Squirrel sidecar，要求 side candidates 不阻塞原候选。"}
+{"id":"agent-memory-block","currentInput":"PROJECT_MEMORY_BLOCK","recentContext":"用户希望首次运行 Agent 时自动注入项目背景和本地记忆。"}
+{"id":"wisdom-weasel-fast-path","currentInput":"Wisdom-Weasel 快速预测靠什么","recentContext":"用户正在比较 KV cache、sequence copy、batch candidates 和首候选延迟。"}

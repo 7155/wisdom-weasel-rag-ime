@@ -319,6 +319,19 @@ python3 -m rag_ime.cli predictor-ttft \
   --latency-budget-ms 200
 ```
 
+Multi-case model matrix:
+
+```bash
+python3 -m rag_ime.cli --core-mode fixture \
+  bench-ime-ttfc \
+  --cases-file docs/eval/ime-ttfc-cases.example.jsonl \
+  --provider ollama \
+  --base-url http://127.0.0.1:11434 \
+  --models qwen3.5:0.8b-mlx,qwen3.5:2b-mlx \
+  --repeat 20 \
+  --latency-budget-ms 200
+```
+
 Future backend matrix should keep the same cases and report the same metrics for:
 
 ```text

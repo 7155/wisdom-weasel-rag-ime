@@ -409,6 +409,25 @@ candidate, not against raw JSON/token chunks. See
 the final low-latency path should copy Wisdom-Weasel's native llama.cpp
 system-prompt KV cache plus multi-sequence batch sampling.
 
+Run the IME TTFC matrix after downloading candidate models. This is the
+speed-only gate for first parsed candidates; it accepts cases without
+`expectedTerms` because quality is evaluated separately:
+
+```bash
+python3 -m rag_ime.cli --core-mode fixture \
+  bench-ime-ttfc \
+  --cases-file docs/eval/ime-ttfc-cases.example.jsonl \
+  --provider ollama \
+  --base-url http://127.0.0.1:11434 \
+  --models qwen3.5:0.8b-mlx,qwen3.5:2b-mlx \
+  --repeat 20 \
+  --latency-budget-ms 200
+```
+
+`bench-ime-ttfc` reports one summary per model with `p50FirstCandidateMs`,
+`p95FirstCandidateMs`, `overBudgetCount`, `failureCount`, and a latency-only
+winner. Add `--include-cases` when debugging individual samples.
+
 Evaluate local model prediction quality against the same JSONL case format used by RAG evaluation:
 
 ```bash

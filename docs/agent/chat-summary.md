@@ -867,3 +867,18 @@ Verification:
 - `bash -n scripts/prepare_squirrel_workspace.sh`
 - `python3 -m unittest tests.test_prepare_squirrel_workspace`
 - `python3 -m unittest discover -s tests`
+
+### 2026-07-01
+Topic:
+- Add a reusable IME TTFC matrix benchmark and run real local Qwen checks.
+
+Changes:
+- Added `bench-ime-ttfc` for streaming first parsed candidate benchmarking across model ids.
+- Added `docs/eval/ime-ttfc-cases.example.jsonl` as the speed-only IME case file.
+- README and Mac inference docs now show the model matrix command separately from quality evals.
+
+Findings:
+- Real Ollama models available: `qwen3.5:0.8b-mlx` and `qwen3.5:0.8b`.
+- Warm `qwen3.5:0.8b-mlx` short run: p50 first candidate 102 ms, p95 122 ms, with one over-budget sample out of 12.
+- Warm `qwen3.5:0.8b` short run: p50 first candidate 241 ms, p95 397 ms, all 12 samples over budget.
+- The MLX tag remains the usable smoke baseline; ordinary `0.8b` should not be used for per-keystroke prediction.

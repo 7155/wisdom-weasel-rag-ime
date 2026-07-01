@@ -38,7 +38,7 @@ from .predictor import (
 from .renderer import render_agent_injection, render_terminal_panel
 from .rime_sidecar import build_rime_sidecar_response, record_rime_side_candidate_selection
 from .scenarios import SCENARIOS, get_scenario
-from .text_utils import now_ms
+from .text_utils import compact_whitespace, now_ms
 from .trigger_policy import TypingState, should_refresh_rag
 
 
@@ -224,6 +224,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     predictor_ttft.add_argument("--max-candidates", type=int, default=3)
     predictor_ttft.add_argument("--repeat", type=int, default=3)
     predictor_ttft.add_argument("--latency-budget-ms", type=int, default=200)
+
+    bench_ime_ttfc = subparsers.add_parser(
+        "bench-ime-ttfc",
+        help="Run a multi-case streaming TTFC benchmark for IME model candidates",
+    )
+    bench_ime_ttfc.add_argument("--cases-file", default="", help="JSONL cases with query/currentInput fields")
+    bench_ime_ttfc.add_argument("--case", action="append", default=[], help="Inline current input case. Can be repeated.")
+    bench_ime_ttfc.add_argument("--recent-context", default="")
+    bench_ime_ttfc.add_argument("--project", default="wisdom-weasel-rag-ime")
+    bench_ime_ttfc.add_argument(
+        "--base-url",
+        default=os.environ.get("RAG_IME_PREDICTOR_BASE_URL", "http://127.0.0.1:11434"),
+        help="Base URL shared by all model ids. Ollama uses the native /api endpoint.",
+    )
+    bench_ime_ttfc.add_argument(
+        "--models",
+        default=os.environ.get("RAG_IME_PREDICTOR_MODEL", "qwen3.5:0.8b-mlx"),
+        help="Comma-separated model ids to measure.",
+    )
+    bench_ime_ttfc.add_argument("--profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "instant"))
+    bench_ime_ttfc.add_argument("--provider", default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "ollama"))
+    bench_ime_ttfc.add_argument("--max-candidates", type=int, default=3)
+    bench_ime_ttfc.add_argument("--repeat", type=int, default=20)
+    bench_ime_ttfc.add_argument("--latency-budget-ms", type=int, default=200)
+    bench_ime_ttfc.add_argument(
+        "--failure-cooldown-ms",
+        type=int,
+        default=0,
+        help="Prediction failure cooldown during TTFC benchmark. Defaults to 0 so every sample is measured.",
+    )
+    bench_ime_ttfc.add_argument(
+        "--include-cases",
+        action="store_true",
+        help="Include full per-sample streaming measurements for every model.",
+    )
 
     subparsers.add_parser("predictor-status", help="Show local model prediction configuration without calling the model")
 
@@ -805,6 +840,45 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "bench-ime-ttfc":
+        cases = _load_ime_ttfc_benchmark_cases(args=args, core=core)
+        models = _parse_model_matrix_models(args.models)
+        reports = []
+        for model in models:
+            matrix_provider = _prediction_provider_for_model_matrix(args=args, model=model)
+            model_report = benchmark_streaming_ttft_provider(
+                matrix_provider,
+                cases,
+                max_candidates=max(1, min(10, args.max_candidates)),
+                repeat=max(1, args.repeat),
+                latency_budget_ms=max(1, args.latency_budget_ms),
+            )
+            model_report["model"] = model
+            if not args.include_cases:
+                model_report.pop("cases", None)
+            reports.append(model_report)
+        report = {
+            "schemaVersion": "rag-ime.ime-ttfc-benchmark.v1",
+            "casesFile": str(Path(args.cases_file)) if args.cases_file else "",
+            "project": args.project,
+            "provider": str(args.provider),
+            "baseUrl": args.base_url,
+            "profile": args.profile,
+            "repeat": {
+                "requested": max(1, args.repeat),
+                "baseCaseCount": len(cases),
+                "effectiveCaseCount": len(cases) * max(1, args.repeat),
+            },
+            "maxCandidates": max(1, min(10, args.max_candidates)),
+            "latencyBudgetMs": max(1, args.latency_budget_ms),
+            "failureCooldownMs": max(0, args.failure_cooldown_ms),
+            "localRunners": _local_model_runner_status(),
+            "models": reports,
+            "winner": _ttfc_matrix_winner(reports),
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "predictor-doctor":
         report = doctor_prediction_provider(
             predictor,
@@ -1287,6 +1361,69 @@ def _is_null_prediction_provider(predictor) -> bool:
     return predictor.__class__.__name__ == "NullPredictionProvider"
 
 
+def _load_ime_ttfc_benchmark_cases(*, args, core) -> list[PredictionBenchmarkCase]:
+    if args.cases_file:
+        cases: list[PredictionBenchmarkCase] = []
+        path = Path(args.cases_file)
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"invalid JSONL in {path}:{line_number}: {exc}") from exc
+            if not isinstance(obj, dict):
+                continue
+            current_input = compact_whitespace(
+                str(obj.get("query") or obj.get("currentInput") or obj.get("current_input") or obj.get("input") or "")
+            )
+            if not current_input:
+                continue
+            project = compact_whitespace(str(obj.get("project") or "")) or args.project
+            recent_context = compact_whitespace(str(obj.get("recentContext") or obj.get("recent_context") or ""))
+            prediction_context = build_prediction_context(
+                core,
+                explicit_recent_context=recent_context,
+                project=project,
+            )
+            case_id = compact_whitespace(str(obj.get("id") or obj.get("caseId") or f"case-{line_number}"))
+            cases.append(
+                PredictionBenchmarkCase(
+                    current_input=current_input,
+                    recent_context=prediction_context,
+                    case_id=case_id,
+                )
+            )
+        if not cases:
+            raise SystemExit(f"no TTFC benchmark cases found in {path}")
+        return cases
+
+    prediction_context = build_prediction_context(
+        core,
+        explicit_recent_context=args.recent_context,
+        project=args.project,
+    )
+    raw_cases = args.case or [
+        "RAG 输入法",
+        "Squirrel 候选",
+        "PROJECT_MEMORY_BLOCK",
+    ]
+    cases = []
+    for index, item in enumerate(raw_cases, start=1):
+        current_input = compact_whitespace(str(item))
+        if current_input:
+            cases.append(
+                PredictionBenchmarkCase(
+                    current_input=current_input,
+                    recent_context=prediction_context,
+                    case_id=f"inline-{index}",
+                )
+            )
+    if not cases:
+        raise SystemExit("bench-ime-ttfc needs at least one non-empty --case or --cases-file entry")
+    return cases
+
+
 def _parse_model_matrix_models(raw: str) -> list[str]:
     models: list[str] = []
     seen: set[str] = set()
@@ -1413,6 +1550,40 @@ def _model_matrix_winner(reports: list[dict[str, object]]) -> dict[str, object]:
         "meanReciprocalRank": float(metrics.get("meanReciprocalRank") or 0.0),
         "p95Ms": int(latency.get("p95Ms") or 0),
         "reason": "highest_pass_rate_top1_mrr_then_lowest_p95",
+    }
+
+
+def _ttfc_matrix_winner(reports: list[dict[str, object]]) -> dict[str, object]:
+    eligible = []
+    for item in reports:
+        summary = item.get("summary") if isinstance(item.get("summary"), dict) else {}
+        if bool(item.get("supported")) and bool(summary.get("hasFirstCandidate")):
+            eligible.append(item)
+    if not eligible:
+        return {
+            "model": "",
+            "reason": "no_supported_model_returned_first_candidate",
+        }
+
+    def sort_key(item: dict[str, object]) -> tuple[int, int, int, int, str]:
+        summary = item.get("summary") if isinstance(item.get("summary"), dict) else {}
+        return (
+            int(summary.get("overBudgetCount") or 0),
+            int(summary.get("p95FirstCandidateMs") or 0),
+            int(summary.get("p50FirstCandidateMs") or 0),
+            int(summary.get("failureCount") or 0),
+            str(item.get("model") or ""),
+        )
+
+    best = min(eligible, key=sort_key)
+    summary = best.get("summary") if isinstance(best.get("summary"), dict) else {}
+    return {
+        "model": str(best.get("model") or ""),
+        "p50FirstCandidateMs": int(summary.get("p50FirstCandidateMs") or 0),
+        "p95FirstCandidateMs": int(summary.get("p95FirstCandidateMs") or 0),
+        "overBudgetCount": int(summary.get("overBudgetCount") or 0),
+        "failureCount": int(summary.get("failureCount") or 0),
+        "reason": "lowest_over_budget_then_p95_ttfc_then_p50_ttfc",
     }
 
 
