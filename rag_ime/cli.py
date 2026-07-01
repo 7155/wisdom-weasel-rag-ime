@@ -343,6 +343,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     cache_probe.add_argument("--force-side-candidates", action="store_true")
     cache_probe.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
 
+    quality_gate = subparsers.add_parser(
+        "quality-gate",
+        help="Run the local acceptance, RAG eval, Rime sidecar eval, and cache-hit gates",
+    )
+    quality_gate.add_argument("--cases-file", default="docs/eval/codex-history-cases.example.jsonl")
+    quality_gate.add_argument("--project", default="wisdom-weasel-rag-ime")
+    quality_gate.add_argument("--top-k", type=int, default=5)
+    quality_gate.add_argument("--match", choices=("any", "all"), default="any")
+    quality_gate.add_argument("--repeat", type=int, default=1)
+    quality_gate.add_argument("--min-rag-pass-rate", type=float, default=0.1)
+    quality_gate.add_argument("--min-sidecar-pass-rate", type=float, default=0.1)
+    quality_gate.add_argument("--cache-repeat", type=int, default=3)
+    quality_gate.add_argument("--cache-current-input", default="RAG 输入法")
+    quality_gate.add_argument("--cache-recent-context", default="quality gate cache probe")
+    quality_gate.add_argument("--rime-candidate", action="append", default=[])
+    quality_gate.add_argument("--max-visible-candidates", type=int, default=6)
+    quality_gate.add_argument("--max-side-candidates", type=int, default=3)
+    quality_gate.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
+    quality_gate.add_argument("--force-side-candidates", action="store_true")
+    quality_gate.add_argument("--require-suggestion-cache", action="store_true")
+    quality_gate.add_argument("--include-cases", action="store_true", help="Include full per-case eval details in the quality-gate JSON")
+
     debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
     debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
     debug_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_DEBUG_PORT", "8765")))
@@ -694,110 +716,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "eval-codex-history":
-        cases = load_eval_cases(Path(args.cases_file))
-        repeat_count = max(1, args.repeat)
-        results = []
-        elapsed_ms_by_case: dict[str, int] = {}
-        for repeat_index in range(1, repeat_count + 1):
-            for case in cases:
-                eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat_count)
-                started = time.perf_counter()
-                suggestions = adapter.suggest(
-                    SuggestionRequest(
-                        current_input=eval_case.query,
-                        recent_context=eval_case.recent_context,
-                        project=eval_case.project or args.project,
-                        top_k=args.top_k,
-                    )
-                )
-                elapsed_ms_by_case[eval_case.case_id] = int((time.perf_counter() - started) * 1000)
-                results.append(evaluate_suggestions(eval_case, suggestions, match=args.match))
-        report = eval_report(results)
-        report["repeat"] = {
-            "requested": repeat_count,
-            "baseCaseCount": len(cases),
-            "effectiveCaseCount": len(results),
-        }
-        _attach_eval_latency(report, elapsed_ms_by_case)
-        cache_stats = getattr(core, "suggestion_cache_stats", None)
-        if callable(cache_stats):
-            report["cacheStats"] = cache_stats()
-        _attach_vector_stats(report, core)
+        report = run_codex_history_eval(
+            adapter,
+            core,
+            cases_file=Path(args.cases_file),
+            project=args.project,
+            top_k=max(1, args.top_k),
+            match=args.match,
+            repeat=max(1, args.repeat),
+        )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "eval-rime-sidecar":
-        from .debug_server import DebugImeService, DebugServerConfig
-
-        cases = load_eval_cases(Path(args.cases_file))
-        repeat_count = max(1, args.repeat)
-        max_visible_candidates = max(1, min(10, args.max_visible_candidates))
-        max_side_candidates = max(0, min(6, args.max_side_candidates))
-        service = DebugImeService(
-            DebugServerConfig(
-                db_path=Path(args.db_path),
-                project=args.project,
-                core=core,
-                predictor=predictor,
-                seed_if_empty=False,
-                rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
-            )
+        report = run_rime_sidecar_eval(
+            core,
+            predictor,
+            db_path=Path(args.db_path),
+            cases_file=Path(args.cases_file),
+            project=args.project,
+            match=args.match,
+            repeat=max(1, args.repeat),
+            max_visible_candidates=max(1, min(10, args.max_visible_candidates)),
+            max_side_candidates=max(0, min(6, args.max_side_candidates)),
+            rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
+            force_side_candidates=bool(args.force_side_candidates),
         )
-        results = []
-        elapsed_ms_by_case: dict[str, int] = {}
-        side_counts: list[int] = []
-        model_counts: list[int] = []
-        rag_counts: list[int] = []
-        trigger_refresh_count = 0
-        for repeat_index in range(1, repeat_count + 1):
-            for case_index, case in enumerate(cases, start=1):
-                eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat_count)
-                payload = _rime_eval_payload(
-                    eval_case,
-                    request_seq=(repeat_index - 1) * len(cases) + case_index,
-                    project=eval_case.project or args.project,
-                    max_visible_candidates=max_visible_candidates,
-                    max_side_candidates=max_side_candidates,
-                    force_side_candidates=bool(args.force_side_candidates),
-                )
-                started = time.perf_counter()
-                response = service.rime_suggest(payload)
-                elapsed_ms_by_case[eval_case.case_id] = int((time.perf_counter() - started) * 1000)
-                display_candidates = response.get("displayCandidates") if isinstance(response, dict) else []
-                side_suggestions = _rime_display_side_candidates_as_eval_suggestions(display_candidates)
-                side_counts.append(len(side_suggestions))
-                model_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "model_prediction"))
-                rag_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "rag_candidate"))
-                trigger = response.get("triggerDecision") if isinstance(response, dict) else {}
-                if isinstance(trigger, dict) and trigger.get("shouldRefresh"):
-                    trigger_refresh_count += 1
-                results.append(evaluate_suggestions(eval_case, side_suggestions, match=args.match))
-        report = eval_report(results)
-        report["schemaVersion"] = "rag-ime.rime-sidecar-eval.v1"
-        report["casesFile"] = str(Path(args.cases_file))
-        report["project"] = args.project
-        report["match"] = args.match
-        report["repeat"] = {
-            "requested": repeat_count,
-            "baseCaseCount": len(cases),
-            "effectiveCaseCount": len(results),
-        }
-        _attach_eval_latency(report, elapsed_ms_by_case)
-        health = service.health()
-        report["sidecar"] = {
-            "maxVisibleCandidates": max_visible_candidates,
-            "maxSideCandidates": max_side_candidates,
-            "forceSideCandidates": bool(args.force_side_candidates),
-            "triggerRefreshCount": trigger_refresh_count,
-            "totalSideCandidates": sum(side_counts),
-            "totalModelCandidates": sum(model_counts),
-            "totalRagCandidates": sum(rag_counts),
-            "hasSideCandidates": any(count > 0 for count in side_counts),
-            "rimeSuggestCache": health.get("rimeSuggestCache"),
-            "suggestionCache": health.get("suggestionCache"),
-            "predictor": health.get("predictor"),
-        }
-        _attach_vector_stats(report, core)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
@@ -1115,31 +1059,48 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "cache-probe":
-        from .debug_server import DebugImeService, DebugServerConfig
-
-        service = DebugImeService(
-            DebugServerConfig(
-                db_path=Path(args.db_path),
-                project=args.project,
-                seed_if_empty=False,
-                core=core,
-                predictor=predictor,
-                rime_cache_ttl_ms=args.rime_cache_ttl_ms,
-            )
-        )
-        report = service.cache_probe(
-            {
-                "currentInput": args.current_input,
-                "recentContext": args.recent_context,
-                "project": args.project,
-                "topK": args.top_k,
-                "repeat": args.repeat,
-                "rimeCandidates": args.rime_candidate,
-                "forceSideCandidates": args.force_side_candidates,
-            }
+        report = run_cache_probe(
+            core,
+            predictor,
+            db_path=Path(args.db_path),
+            project=args.project,
+            current_input=args.current_input,
+            recent_context=args.recent_context,
+            top_k=max(1, args.top_k),
+            repeat=max(1, args.repeat),
+            rime_candidates=list(args.rime_candidate) or ["RAG 输入法"],
+            rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
+            force_side_candidates=bool(args.force_side_candidates),
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "quality-gate":
+        report = run_quality_gate(
+            adapter,
+            core,
+            predictor,
+            db_path=Path(args.db_path),
+            cases_file=Path(args.cases_file),
+            project=args.project,
+            top_k=max(1, args.top_k),
+            match=args.match,
+            repeat=max(1, args.repeat),
+            min_rag_pass_rate=max(0.0, min(1.0, args.min_rag_pass_rate)),
+            min_sidecar_pass_rate=max(0.0, min(1.0, args.min_sidecar_pass_rate)),
+            cache_current_input=args.cache_current_input,
+            cache_recent_context=args.cache_recent_context,
+            cache_repeat=max(1, args.cache_repeat),
+            rime_candidates=list(args.rime_candidate),
+            max_visible_candidates=max(1, min(10, args.max_visible_candidates)),
+            max_side_candidates=max(0, min(6, args.max_side_candidates)),
+            rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
+            force_side_candidates=bool(args.force_side_candidates),
+            require_suggestion_cache=bool(args.require_suggestion_cache),
+            include_cases=bool(args.include_cases),
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if bool(report.get("passed")) else 1
 
     if args.command == "debug-server":
         from .debug_server import DebugServerConfig, run_debug_server
@@ -1207,6 +1168,372 @@ def seed_demo_memories(adapter: InputMethodAdapter, memories: list[CoreMemory]) 
             )
         )
     return event_ids
+
+
+def run_codex_history_eval(
+    adapter: InputMethodAdapter,
+    core,
+    *,
+    cases_file: Path,
+    project: str,
+    top_k: int,
+    match: str,
+    repeat: int,
+) -> dict[str, object]:
+    cases = load_eval_cases(cases_file)
+    repeat_count = max(1, repeat)
+    results = []
+    elapsed_ms_by_case: dict[str, int] = {}
+    for repeat_index in range(1, repeat_count + 1):
+        for case in cases:
+            eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat_count)
+            started = time.perf_counter()
+            suggestions = adapter.suggest(
+                SuggestionRequest(
+                    current_input=eval_case.query,
+                    recent_context=eval_case.recent_context,
+                    project=eval_case.project or project,
+                    top_k=top_k,
+                )
+            )
+            elapsed_ms_by_case[eval_case.case_id] = int((time.perf_counter() - started) * 1000)
+            results.append(evaluate_suggestions(eval_case, suggestions, match=match))
+    report = eval_report(results)
+    report["repeat"] = {
+        "requested": repeat_count,
+        "baseCaseCount": len(cases),
+        "effectiveCaseCount": len(results),
+    }
+    _attach_eval_latency(report, elapsed_ms_by_case)
+    cache_stats = getattr(core, "suggestion_cache_stats", None)
+    if callable(cache_stats):
+        report["cacheStats"] = cache_stats()
+    _attach_vector_stats(report, core)
+    return report
+
+
+def run_rime_sidecar_eval(
+    core,
+    predictor,
+    *,
+    db_path: Path,
+    cases_file: Path,
+    project: str,
+    match: str,
+    repeat: int,
+    max_visible_candidates: int,
+    max_side_candidates: int,
+    rime_cache_ttl_ms: int,
+    force_side_candidates: bool,
+) -> dict[str, object]:
+    from .debug_server import DebugImeService, DebugServerConfig
+
+    cases = load_eval_cases(cases_file)
+    repeat_count = max(1, repeat)
+    service = DebugImeService(
+        DebugServerConfig(
+            db_path=db_path,
+            project=project,
+            core=core,
+            predictor=predictor,
+            seed_if_empty=False,
+            rime_cache_ttl_ms=max(0, rime_cache_ttl_ms),
+        )
+    )
+    results = []
+    elapsed_ms_by_case: dict[str, int] = {}
+    side_counts: list[int] = []
+    model_counts: list[int] = []
+    rag_counts: list[int] = []
+    trigger_refresh_count = 0
+    for repeat_index in range(1, repeat_count + 1):
+        for case_index, case in enumerate(cases, start=1):
+            eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat_count)
+            payload = _rime_eval_payload(
+                eval_case,
+                request_seq=(repeat_index - 1) * len(cases) + case_index,
+                project=eval_case.project or project,
+                max_visible_candidates=max_visible_candidates,
+                max_side_candidates=max_side_candidates,
+                force_side_candidates=force_side_candidates,
+            )
+            started = time.perf_counter()
+            response = service.rime_suggest(payload)
+            elapsed_ms_by_case[eval_case.case_id] = int((time.perf_counter() - started) * 1000)
+            display_candidates = response.get("displayCandidates") if isinstance(response, dict) else []
+            side_suggestions = _rime_display_side_candidates_as_eval_suggestions(display_candidates)
+            side_counts.append(len(side_suggestions))
+            model_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "model_prediction"))
+            rag_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "rag_candidate"))
+            trigger = response.get("triggerDecision") if isinstance(response, dict) else {}
+            if isinstance(trigger, dict) and trigger.get("shouldRefresh"):
+                trigger_refresh_count += 1
+            results.append(evaluate_suggestions(eval_case, side_suggestions, match=match))
+    report = eval_report(results)
+    report["schemaVersion"] = "rag-ime.rime-sidecar-eval.v1"
+    report["casesFile"] = str(cases_file)
+    report["project"] = project
+    report["match"] = match
+    report["repeat"] = {
+        "requested": repeat_count,
+        "baseCaseCount": len(cases),
+        "effectiveCaseCount": len(results),
+    }
+    _attach_eval_latency(report, elapsed_ms_by_case)
+    health = service.health()
+    report["sidecar"] = {
+        "maxVisibleCandidates": max_visible_candidates,
+        "maxSideCandidates": max_side_candidates,
+        "forceSideCandidates": force_side_candidates,
+        "triggerRefreshCount": trigger_refresh_count,
+        "totalSideCandidates": sum(side_counts),
+        "totalModelCandidates": sum(model_counts),
+        "totalRagCandidates": sum(rag_counts),
+        "hasSideCandidates": any(count > 0 for count in side_counts),
+        "rimeSuggestCache": health.get("rimeSuggestCache"),
+        "suggestionCache": health.get("suggestionCache"),
+        "predictor": health.get("predictor"),
+    }
+    _attach_vector_stats(report, core)
+    return report
+
+
+def run_cache_probe(
+    core,
+    predictor,
+    *,
+    db_path: Path,
+    project: str,
+    current_input: str,
+    recent_context: str,
+    top_k: int,
+    repeat: int,
+    rime_candidates: list[str],
+    rime_cache_ttl_ms: int,
+    force_side_candidates: bool,
+) -> dict[str, object]:
+    from .debug_server import DebugImeService, DebugServerConfig
+
+    service = DebugImeService(
+        DebugServerConfig(
+            db_path=db_path,
+            project=project,
+            seed_if_empty=False,
+            core=core,
+            predictor=predictor,
+            rime_cache_ttl_ms=rime_cache_ttl_ms,
+        )
+    )
+    return service.cache_probe(
+        {
+            "currentInput": current_input,
+            "recentContext": recent_context,
+            "project": project,
+            "topK": top_k,
+            "repeat": repeat,
+            "rimeCandidates": rime_candidates,
+            "forceSideCandidates": force_side_candidates,
+        }
+    )
+
+
+def run_quality_gate(
+    adapter: InputMethodAdapter,
+    core,
+    predictor,
+    *,
+    db_path: Path,
+    cases_file: Path,
+    project: str,
+    top_k: int,
+    match: str,
+    repeat: int,
+    min_rag_pass_rate: float,
+    min_sidecar_pass_rate: float,
+    cache_current_input: str,
+    cache_recent_context: str,
+    cache_repeat: int,
+    rime_candidates: list[str],
+    max_visible_candidates: int,
+    max_side_candidates: int,
+    rime_cache_ttl_ms: int,
+    force_side_candidates: bool,
+    require_suggestion_cache: bool,
+    include_cases: bool,
+) -> dict[str, object]:
+    rag_report = run_codex_history_eval(
+        adapter,
+        core,
+        cases_file=cases_file,
+        project=project,
+        top_k=top_k,
+        match=match,
+        repeat=repeat,
+    )
+    rime_report = run_rime_sidecar_eval(
+        core,
+        predictor,
+        db_path=db_path,
+        cases_file=cases_file,
+        project=project,
+        match=match,
+        repeat=repeat,
+        max_visible_candidates=max_visible_candidates,
+        max_side_candidates=max_side_candidates,
+        rime_cache_ttl_ms=rime_cache_ttl_ms,
+        force_side_candidates=force_side_candidates,
+    )
+    cache_report = run_cache_probe(
+        core,
+        predictor,
+        db_path=db_path,
+        project=project,
+        current_input=cache_current_input,
+        recent_context=cache_recent_context,
+        top_k=top_k,
+        repeat=cache_repeat,
+        rime_candidates=rime_candidates,
+        rime_cache_ttl_ms=rime_cache_ttl_ms,
+        force_side_candidates=force_side_candidates,
+    )
+    acceptance_report = run_acceptance(adapter)
+    checks = _quality_gate_checks(
+        acceptance_report=acceptance_report,
+        rag_report=rag_report,
+        rime_report=rime_report,
+        cache_report=cache_report,
+        min_rag_pass_rate=min_rag_pass_rate,
+        min_sidecar_pass_rate=min_sidecar_pass_rate,
+        require_suggestion_cache=require_suggestion_cache,
+    )
+    rag_payload = rag_report if include_cases else _compact_eval_report(rag_report)
+    rime_payload = rime_report if include_cases else _compact_eval_report(rime_report)
+    return {
+        "schemaVersion": "rag-ime.quality-gate.v1",
+        "passed": all(bool(item["passed"]) for item in checks),
+        "casesFile": str(cases_file),
+        "project": project,
+        "thresholds": {
+            "minRagPassRate": min_rag_pass_rate,
+            "minSidecarPassRate": min_sidecar_pass_rate,
+            "requireSuggestionCache": require_suggestion_cache,
+            "cacheRepeat": cache_repeat,
+        },
+        "checks": checks,
+        "acceptance": acceptance_report,
+        "rag": rag_payload,
+        "rimeSidecar": rime_payload,
+        "cacheProbe": cache_report,
+    }
+
+
+def _compact_eval_report(report: dict[str, object]) -> dict[str, object]:
+    compact: dict[str, object] = {
+        "schemaVersion": report.get("schemaVersion"),
+        "total": report.get("total"),
+        "passed": report.get("passed"),
+        "failed": report.get("failed"),
+        "passRate": report.get("passRate"),
+        "metrics": report.get("metrics"),
+        "repeat": report.get("repeat"),
+        "latency": report.get("latency"),
+    }
+    for key in ("cacheStats", "vectorStats", "sidecar", "prediction", "comparison"):
+        if key in report:
+            compact[key] = report.get(key)
+    failed_cases = []
+    cases = report.get("cases")
+    if isinstance(cases, list):
+        for item in cases:
+            if isinstance(item, dict) and not bool(item.get("passed")):
+                failed_cases.append(
+                    {
+                        "caseId": item.get("caseId"),
+                        "query": item.get("query"),
+                        "expectedTerms": item.get("expectedTerms"),
+                        "topSurfaces": item.get("topSurfaces"),
+                    }
+                )
+    compact["failedCasesPreview"] = failed_cases[:8]
+    compact["failedCasesPreviewCount"] = len(failed_cases)
+    return compact
+
+
+def _quality_gate_checks(
+    *,
+    acceptance_report: dict[str, object],
+    rag_report: dict[str, object],
+    rime_report: dict[str, object],
+    cache_report: dict[str, object],
+    min_rag_pass_rate: float,
+    min_sidecar_pass_rate: float,
+    require_suggestion_cache: bool,
+) -> list[dict[str, object]]:
+    cache_summary = cache_report.get("summary") if isinstance(cache_report.get("summary"), dict) else {}
+    sidecar = rime_report.get("sidecar") if isinstance(rime_report.get("sidecar"), dict) else {}
+    suggestion_cache_pass = cache_summary.get("suggestionCachePassed")
+    suggestion_cache_required = require_suggestion_cache or suggestion_cache_pass is not None
+    checks = [
+        {
+            "name": "acceptance",
+            "passed": _acceptance_report_passed(acceptance_report),
+        },
+        {
+            "name": "rag-pass-rate",
+            "passed": float(rag_report.get("passRate") or 0.0) >= min_rag_pass_rate,
+            "actual": float(rag_report.get("passRate") or 0.0),
+            "expectedAtLeast": min_rag_pass_rate,
+        },
+        {
+            "name": "rime-sidecar-pass-rate",
+            "passed": float(rime_report.get("passRate") or 0.0) >= min_sidecar_pass_rate,
+            "actual": float(rime_report.get("passRate") or 0.0),
+            "expectedAtLeast": min_sidecar_pass_rate,
+        },
+        {
+            "name": "rime-sidecar-has-side-candidates",
+            "passed": bool(sidecar.get("hasSideCandidates")),
+        },
+        {
+            "name": "suggestion-cache-warm-hit",
+            "passed": (not suggestion_cache_required) or suggestion_cache_pass is True,
+            "required": suggestion_cache_required,
+            "actual": suggestion_cache_pass,
+        },
+        {
+            "name": "rime-cache-warm-hit",
+            "passed": cache_summary.get("rimeCachePassed") is True,
+            "actual": cache_summary.get("rimeCachePassed"),
+        },
+    ]
+    return checks
+
+
+def _acceptance_report_passed(report: dict[str, object]) -> bool:
+    scenarios = report.get("scenario_results")
+    if not isinstance(scenarios, list) or not scenarios:
+        return False
+    scenario_ok = all(
+        isinstance(item, dict)
+        and int(item.get("candidate_count") or 0) > 0
+        and bool(item.get("has_evidence_preview"))
+        and bool(item.get("has_actions"))
+        for item in scenarios
+    )
+    action = report.get("action_result") if isinstance(report.get("action_result"), dict) else {}
+    agent_hook = report.get("agent_hook") if isinstance(report.get("agent_hook"), dict) else {}
+    trigger = report.get("trigger_policy") if isinstance(report.get("trigger_policy"), dict) else {}
+    return (
+        bool(report.get("local_first"))
+        and not bool(report.get("cloud_default"))
+        and not bool(report.get("fine_tuning"))
+        and scenario_ok
+        and bool(action.get("deleted_removed"))
+        and bool(agent_hook.get("has_project_memory_block"))
+        and trigger.get("single_char") is False
+        and trigger.get("idle_semantic") is True
+        and trigger.get("sensitive") is False
+    )
 
 
 def run_acceptance(adapter: InputMethodAdapter) -> dict[str, object]:

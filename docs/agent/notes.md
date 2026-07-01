@@ -1392,3 +1392,19 @@ Commands:
 - `python3 -m unittest discover -s tests`
 - `RAG_IME_DOCTOR_CHECK_LAUNCHD=0 scripts/doctor_squirrel_integration.sh`
 - `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_DOCTOR_CHECK_LAUNCHD=0 scripts/doctor_squirrel_integration.sh`
+
+### 2026-07-01 13:55 CST
+Problem:
+- The long-term project is not complete yet: the remaining hard parts are real macOS input-source installation, sidecar-to-Squirrel behavior in daily typing, RAG/memory quality, local model first-candidate latency, and interview-ready difficulty records.
+- The project needed one command that fails when acceptance, RAG recall, sidecar candidate shaping, or cache reuse regresses.
+
+Changes:
+- Added `quality-gate`, an aggregate CLI gate that runs deterministic adapter acceptance, direct Codex-history RAG eval, `/rime-suggest` sidecar eval, and cache probing.
+- Refactored the eval and cache-probe paths into reusable helpers so future adapter/front-end work can reuse the same quality checks.
+- Added a regression test for the aggregate gate and documented the command in README.
+
+Commands:
+- `python3 -m py_compile rag_ime/cli.py tests/test_codex_history.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history tests.test_debug_server`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `git diff --check`

@@ -976,3 +976,15 @@ Changes:
 Findings:
 - Current default doctor path passes sidecar health/suggest/select and prepared Squirrel checks.
 - Strict tryout readiness fails only because the active developer directory is still CommandLineTools, so full Xcode remains the real blocker before patched Squirrel can be built and tried as an input source.
+
+### 2026-07-01
+Topic:
+- Add one aggregate local quality gate before moving deeper into full Xcode/Squirrel tryout work.
+
+Changes:
+- Added `quality-gate`, which combines deterministic acceptance, direct Codex-history RAG eval, `/rime-suggest` sidecar eval, and cache probing.
+- Refactored the CLI eval paths into reusable helpers.
+- Added a regression test and README command for the aggregate gate.
+
+Status:
+- The overall RAG-IME project is not done. Remaining acceptance requires real full-Xcode Squirrel build/install, system input-method use, RAG/memory quality tuning, local model latency work, and interview material updates.
