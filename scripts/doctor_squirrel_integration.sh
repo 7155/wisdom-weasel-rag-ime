@@ -28,6 +28,8 @@ SQUIRREL_DUPLICATE_APP_CANDIDATES="${RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES:-
 REQUIRE_FRONTEND_TRACE="${RAG_IME_DOCTOR_REQUIRE_FRONTEND_TRACE:-0}"
 FRONTEND_TRACE_WAIT="${RAG_IME_DOCTOR_FRONTEND_TRACE_WAIT:-0}"
 FRONTEND_TRACE_LOG="${RAG_IME_SQUIRREL_FRONTEND_TRACE_LOG:-$HOME/Library/Logs/RagIme/squirrel-frontend.jsonl}"
+REQUIRE_LOGITS_MODEL_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_LOGITS_MODEL:-}"
+REQUIRE_LOGITS_MODEL="${REQUIRE_LOGITS_MODEL_CONFIGURED:-0}"
 EXPECT_PREDICTOR_PROVIDER="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROVIDER:-${RAG_IME_PREDICTOR_PROVIDER:-}}"
 EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDICTOR_MODEL:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
@@ -209,6 +211,9 @@ if bool_true "$REQUIRE_TRYOUT"; then
   if [[ -z "$REQUIRE_PATCHED_APP_CONFIGURED" ]]; then
     REQUIRE_PATCHED_APP=1
   fi
+  if [[ -z "$REQUIRE_LOGITS_MODEL_CONFIGURED" ]]; then
+    REQUIRE_LOGITS_MODEL=1
+  fi
 fi
 
 printf 'RAG-IME Squirrel integration doctor\n'
@@ -222,6 +227,7 @@ printf 'require_hitoolbox_enabled: %s\n' "$REQUIRE_HITOOLBOX_ENABLED"
 printf 'require_mixed_layout: %s\n' "$REQUIRE_MIXED_LAYOUT"
 printf 'refresh_input_source: %s\n' "$REFRESH_INPUT_SOURCE"
 printf 'require_frontend_trace: %s\n' "$REQUIRE_FRONTEND_TRACE"
+printf 'require_logits_model: %s\n' "$REQUIRE_LOGITS_MODEL"
 printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
 printf 'DEVELOPER_DIR: %s\n\n' "${DEVELOPER_DIR:-<unset>}"
 
@@ -355,7 +361,7 @@ fi
 sidecar_out="$(mktemp /tmp/rag-ime-doctor-sidecar.out.XXXXXX)"
 sidecar_err="$(mktemp /tmp/rag-ime-doctor-sidecar.err.XXXXXX)"
 set +e
-"$PYTHON_EXECUTABLE" - "$SIDECAR_BASE_URL" "$EXPECT_PREDICTOR_PROVIDER" "$EXPECT_PREDICTOR_MODEL" "$EXPECT_STREAM_FIRST" "$REQUIRE_MIXED_LAYOUT" >"$sidecar_out" 2>"$sidecar_err" <<'PY'
+"$PYTHON_EXECUTABLE" - "$SIDECAR_BASE_URL" "$EXPECT_PREDICTOR_PROVIDER" "$EXPECT_PREDICTOR_MODEL" "$EXPECT_STREAM_FIRST" "$REQUIRE_MIXED_LAYOUT" "$REQUIRE_LOGITS_MODEL" >"$sidecar_out" 2>"$sidecar_err" <<'PY'
 import json
 import sys
 import urllib.error
@@ -382,6 +388,7 @@ def truthy(value):
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 require_mixed_layout = truthy(sys.argv[5].strip())
+require_logits_model = truthy(sys.argv[6].strip())
 
 def expected_rank_for_label(label):
     if label == "0":
@@ -552,6 +559,97 @@ def validate_raw_pinyin_guard():
         },
     }
 
+def validate_model_generation_path(result, health):
+    predictor = health.get("predictor") if isinstance(health.get("predictor"), dict) else {}
+    provider_name = str(predictor.get("providerName") or "")
+    is_mlx = provider_matches("mlx", provider_name)
+    if not require_logits_model and not is_mlx:
+        return {
+            "ok": True,
+            "checked": False,
+            "message": "model generation path: not required",
+        }
+
+    predictions = result.get("modelPredictions")
+    if not isinstance(predictions, list):
+        predictions = []
+    model_predictions = [
+        item for item in predictions
+        if isinstance(item, dict) and str(item.get("providerName") or "") == provider_name
+    ]
+    if not model_predictions:
+        display = result.get("displayCandidates")
+        if isinstance(display, list):
+            model_predictions = [
+                item for item in display
+                if isinstance(item, dict) and item.get("sourceType") == "model"
+            ]
+
+    capability_probe = predictor.get("capabilityProbe") if isinstance(predictor.get("capabilityProbe"), dict) else {}
+    capabilities = predictor.get("capabilities") if isinstance(predictor.get("capabilities"), dict) else {}
+    if not capabilities and isinstance(capability_probe.get("capabilities"), dict):
+        capabilities = capability_probe.get("capabilities")
+    prompt_cache = predictor.get("promptCache") if isinstance(predictor.get("promptCache"), dict) else {}
+    if not prompt_cache and isinstance(capability_probe.get("promptCache"), dict):
+        prompt_cache = capability_probe.get("promptCache")
+
+    errors = []
+    if require_logits_model and not is_mlx:
+        errors.append(f"expected MLX logits provider, got {provider_name or '<none>'}")
+    if is_mlx and capabilities.get("logitsTopK") is not True:
+        errors.append("MLX health does not advertise logitsTopK")
+    if is_mlx and not model_predictions:
+        errors.append("no MLX model predictions to validate")
+
+    modes = []
+    fallback_json_values = []
+    score_counts = []
+    prompt_cache_prepared = bool(prompt_cache.get("enabled")) and bool(prompt_cache.get("prepared"))
+    for item in model_predictions:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        mode = str(metadata.get("candidate_mode") or metadata.get("candidateMode") or "")
+        server_timing = metadata.get("server_timing") if isinstance(metadata.get("server_timing"), dict) else {}
+        if not mode and isinstance(server_timing, dict):
+            mode = str(server_timing.get("candidateMode") or "")
+        candidate_scores = metadata.get("candidate_scores")
+        if candidate_scores is None:
+            candidate_scores = metadata.get("candidateScores")
+        if isinstance(candidate_scores, list):
+            score_counts.append(len(candidate_scores))
+        else:
+            score_counts.append(0)
+        modes.append(mode)
+        fallback_json_values.append(server_timing.get("fallbackJson"))
+        item_prompt_cache = metadata.get("prompt_cache") if isinstance(metadata.get("prompt_cache"), dict) else {}
+        if bool(item_prompt_cache.get("enabled")) and bool(item_prompt_cache.get("prepared")):
+            prompt_cache_prepared = True
+
+    if is_mlx and any(mode != "next-token-logits" for mode in modes):
+        errors.append(f"MLX model candidate modes are not all next-token-logits: {modes}")
+    if is_mlx and any(value is not False for value in fallback_json_values):
+        errors.append(f"MLX model fell back to JSON generation: {fallback_json_values}")
+    if is_mlx and any(count <= 0 for count in score_counts):
+        errors.append("MLX logits candidates are missing candidate_scores")
+    if is_mlx and not prompt_cache_prepared:
+        errors.append("MLX prompt cache is not enabled/prepared")
+
+    ok = not errors
+    return {
+        "ok": ok,
+        "checked": True,
+        "message": (
+            "model generation path: MLX candidates use next-token logits/top-k with prepared prompt cache"
+            if ok
+            else "model generation path failed: " + "; ".join(errors[:5])
+        ),
+        "providerName": provider_name,
+        "candidateModes": modes,
+        "fallbackJson": fallback_json_values,
+        "candidateScoreCounts": score_counts,
+        "promptCachePrepared": prompt_cache_prepared,
+        "logitsTopK": capabilities.get("logitsTopK"),
+    }
+
 try:
     with urllib.request.urlopen(f"{base}/health", timeout=1.5) as response:
         health = json.loads(response.read().decode("utf-8"))
@@ -573,6 +671,7 @@ try:
     }
     result = post_rime_suggest(payload)
     raw_pinyin_guard = validate_raw_pinyin_guard()
+    model_generation_path = validate_model_generation_path(result, health)
     select_payload = {
         "dryRun": True,
         "candidate": {
@@ -633,6 +732,7 @@ try:
             "rimeSelectOk": True,
             "candidateContract": candidate_contract,
             "rawPinyinGuard": raw_pinyin_guard,
+            "modelGenerationPath": model_generation_path,
             "predictorCheck": {
                 "ok": predictor_ok,
                 "message": "; ".join(messages),
@@ -699,6 +799,33 @@ PY
     ok "$raw_pinyin_guard_message"
   else
     require_or_warn "$REQUIRE_SIDECAR" "$raw_pinyin_guard_message"
+  fi
+  model_generation_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+path = payload.get("modelGenerationPath") if isinstance(payload.get("modelGenerationPath"), dict) else {}
+if not path.get("checked"):
+    print("SKIP\tmodel generation path: not required")
+else:
+    level = "OK" if path.get("ok", False) else "WARN"
+    message = str(path.get("message") or "model generation path: status unavailable")
+    detail = (
+        f" modes={path.get('candidateModes')} "
+        f"fallbackJson={path.get('fallbackJson')} "
+        f"promptCachePrepared={path.get('promptCachePrepared')}"
+    )
+    print(f"{level}\t{message};{detail}")
+PY
+)"
+  model_generation_level="${model_generation_line%%	*}"
+  model_generation_message="${model_generation_line#*	}"
+  if [[ "$model_generation_level" == "OK" ]]; then
+    ok "$model_generation_message"
+  elif [[ "$model_generation_level" != "SKIP" ]]; then
+    require_or_warn "$REQUIRE_LOGITS_MODEL" "$model_generation_message"
   fi
   predictor_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
 import json

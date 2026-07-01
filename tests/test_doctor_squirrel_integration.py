@@ -14,6 +14,55 @@ from threading import Thread
 
 class _DoctorSidecarHandler(BaseHTTPRequestHandler):
     select_payloads: list[dict[str, object]] = []
+    provider_name = "local-ollama"
+    model = "qwen3.5:0.8b-mlx"
+    stream_first_candidate = True
+    capability_probe: dict[str, object] = {}
+    model_metadata: dict[str, object] = {}
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.select_payloads = []
+        cls.provider_name = "local-ollama"
+        cls.model = "qwen3.5:0.8b-mlx"
+        cls.stream_first_candidate = True
+        cls.capability_probe = {}
+        cls.model_metadata = {}
+
+    @classmethod
+    def use_mlx_logits(cls) -> None:
+        cls.provider_name = "local-mlx"
+        cls.model = "/tmp/qwen3.5-0.8b-text-4bit"
+        cls.stream_first_candidate = False
+        cls.capability_probe = {
+            "capabilities": {
+                "logitsTopK": True,
+                "batchCandidates": True,
+                "residentModel": True,
+            },
+            "promptCache": {
+                "enabled": True,
+                "prepared": True,
+            },
+            "modelInfo": {
+                "textOnly": True,
+                "hasVisionConfig": False,
+            },
+        }
+        cls.model_metadata = {
+            "candidate_mode": "next-token-logits",
+            "candidate_scores": [
+                {"text": "模型候选", "tokenId": 100, "logprob": -1.0, "probability": 0.36}
+            ],
+            "server_timing": {
+                "candidateMode": "next-token-logits",
+                "fallbackJson": False,
+            },
+            "prompt_cache": {
+                "enabled": True,
+                "prepared": True,
+            },
+        }
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -28,9 +77,10 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
                 "eventCount": 2,
                 "predictor": {
                     "configured": True,
-                    "providerName": "local-ollama",
-                    "model": "qwen3.5:0.8b-mlx",
-                    "streamFirstCandidate": True,
+                    "providerName": self.__class__.provider_name,
+                    "model": self.__class__.model,
+                    "streamFirstCandidate": self.__class__.stream_first_candidate,
+                    "capabilityProbe": self.__class__.capability_probe,
                 },
             }
         )
@@ -111,29 +161,32 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
                             "sourceIndex": 0,
                             "displayLayout": "inline",
                             "displayLane": "model",
+                            "metadata": dict(self.__class__.model_metadata),
                         }
                     ],
                 }
             )
             return
+        model_candidates = [
+            {
+                "label": str(index + 1),
+                "selectionKey": str(index + 1),
+                "selectionRank": index + 1,
+                "text": f"模型候选{index + 1}",
+                "insertText": f"模型候选{index + 1}",
+                "sourceType": "model",
+                "selectionAction": "commit_side_candidate",
+                "sourceIndex": index,
+                "displayLayout": "inline",
+                "displayLane": "model",
+                "metadata": dict(self.__class__.model_metadata),
+            }
+            for index in range(5)
+        ]
         self._send_json(
             {
                 "schemaVersion": "rag-ime.rime-sidecar.v1",
-                "displayCandidates": [
-                    {
-                        "label": str(index + 1),
-                        "selectionKey": str(index + 1),
-                        "selectionRank": index + 1,
-                        "text": f"模型候选{index + 1}",
-                        "insertText": f"模型候选{index + 1}",
-                        "sourceType": "model",
-                        "selectionAction": "commit_side_candidate",
-                        "sourceIndex": index,
-                        "displayLayout": "inline",
-                        "displayLane": "model",
-                    }
-                    for index in range(5)
-                ]
+                "displayCandidates": model_candidates
                 + [
                     {
                         "label": str(index + 6),
@@ -148,6 +201,17 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
                         "displayLane": "memory",
                     }
                     for index in range(3)
+                ],
+                "modelPredictions": [
+                    {
+                        "text": item["text"],
+                        "rank": index + 1,
+                        "providerName": self.__class__.provider_name,
+                        "latencyMs": 12,
+                        "confidence": 1.0,
+                        "metadata": dict(self.__class__.model_metadata),
+                    }
+                    for index, item in enumerate(model_candidates)
                 ],
                 "mergePolicy": {
                     "rimeFirst": False,
@@ -167,6 +231,9 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
 
 
 class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _DoctorSidecarHandler.reset()
+
     def test_doctor_default_mode_warns_without_sidecar_but_exits_zero(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-squirrel-") as tmp:
@@ -235,7 +302,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
 
     def test_doctor_tryout_mode_requires_prepared_squirrel_xcode_and_sidecar(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        _DoctorSidecarHandler.select_payloads = []
+        _DoctorSidecarHandler.use_mlx_logits()
         server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -308,6 +375,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[OK] HTTP sidecar health, rime-suggest, and rime-select passed", result.stdout)
         self.assertIn("[OK] candidate contract: model inline + rag block + shared selection keys passed", result.stdout)
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
+        self.assertIn("[OK] model generation path: MLX candidates use next-token logits/top-k", result.stdout)
         self.assertIn("[OK] tryout runtime path has launchd or healthy HTTP sidecar", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
