@@ -69,7 +69,9 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     mixed_panel = latest_matching(events, is_mixed_panel_event)
     mixed_text_layout = latest_matching(events, is_mixed_text_layout_event)
     side_commit = latest_matching(events, lambda event: event.get("event") == "side_candidate_commit")
+    valid_side_commit = latest_matching(events, is_valid_side_commit_event)
     number_route = latest_matching(events, lambda event: event.get("event") == "number_key_route")
+    number_key_side_commit = latest_number_key_side_commit(events)
     return {
         "schemaVersion": "rag-ime.squirrel-frontend-trace-check.v1",
         "logPath": str(log_path),
@@ -78,6 +80,8 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestMixedTextLayout": summarize_event(mixed_text_layout),
         "latestNumberKeyRoute": summarize_event(number_route),
         "latestSideCommit": summarize_event(side_commit),
+        "latestValidSideCommit": summarize_event(valid_side_commit),
+        "latestNumberKeySideCommit": summarize_number_key_side_commit(number_key_side_commit),
         "lastEvents": [summarize_event(event) for event in events[-print_last:]] if print_last else [],
     }
 
@@ -122,6 +126,62 @@ def is_mixed_text_layout_event(event: dict[str, Any]) -> bool:
     return str(separators[model_inline]) == "\n"
 
 
+def is_valid_side_commit_event(event: dict[str, Any]) -> bool:
+    if event.get("event") != "side_candidate_commit":
+        return False
+    candidate = event.get("candidate")
+    if not isinstance(candidate, dict):
+        return False
+    if str(candidate.get("selectionAction") or "") != "commit_side_candidate":
+        return False
+    if str(candidate.get("sourceType") or "") not in {"model", "rag"}:
+        return False
+    selection_key = str(candidate.get("selectionKey") or candidate.get("label") or "")
+    return bool(selection_key)
+
+
+def latest_number_key_side_commit(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    latest: dict[str, Any] | None = None
+    for route_index, route_event in enumerate(events):
+        if route_event.get("event") != "number_key_route":
+            continue
+        route_candidate = route_event.get("candidate")
+        if not isinstance(route_candidate, dict):
+            continue
+        key = str(route_event.get("key") or "")
+        if not key:
+            continue
+        for commit_event in events[route_index + 1 :]:
+            if not is_valid_side_commit_event(commit_event):
+                continue
+            if candidates_match_number_route(route_event, commit_event):
+                latest = {
+                    "route": route_event,
+                    "commit": commit_event,
+                    "key": key,
+                }
+            break
+    return latest
+
+
+def candidates_match_number_route(route_event: dict[str, Any], commit_event: dict[str, Any]) -> bool:
+    route_candidate = route_event.get("candidate")
+    commit_candidate = commit_event.get("candidate")
+    if not isinstance(route_candidate, dict) or not isinstance(commit_candidate, dict):
+        return False
+    route_key = str(route_event.get("key") or "")
+    route_candidate_key = str(route_candidate.get("selectionKey") or route_candidate.get("label") or "")
+    commit_candidate_key = str(commit_candidate.get("selectionKey") or commit_candidate.get("label") or "")
+    return (
+        bool(route_key)
+        and route_key == route_candidate_key
+        and route_key == commit_candidate_key
+        and str(route_candidate.get("sourceType") or "") == str(commit_candidate.get("sourceType") or "")
+        and str(route_candidate.get("selectionAction") or "") == "commit_side_candidate"
+        and str(commit_candidate.get("selectionAction") or "") == "commit_side_candidate"
+    )
+
+
 def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
     if not event:
         return None
@@ -147,12 +207,22 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
     return {key: value for key, value in result.items() if value is not None}
 
 
+def summarize_number_key_side_commit(match: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not match:
+        return None
+    return {
+        "key": match.get("key"),
+        "route": summarize_event(match.get("route")),
+        "commit": summarize_event(match.get("commit")),
+    }
+
+
 def report_passes(report: dict[str, Any], *, require_mixed_panel: bool, require_side_commit: bool) -> bool:
     if require_mixed_panel and not report.get("latestMixedPanel"):
         return False
     if require_mixed_panel and not report.get("latestMixedTextLayout"):
         return False
-    if require_side_commit and not report.get("latestSideCommit"):
+    if require_side_commit and not report.get("latestNumberKeySideCommit"):
         return False
     return True
 

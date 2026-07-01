@@ -2,6 +2,22 @@
 
 ### 2026-07-02
 Topic:
+- Tighten foreground number-key side-candidate trace verification.
+
+Changes:
+- `check_squirrel_frontend_trace.py --require-side-commit` now requires a matching `number_key_route` plus valid model/RAG `side_candidate_commit`.
+- Strict doctor frontend trace summary now reports the matched number key.
+- Added tests for missing route and Rime-route false positives.
+
+Verification:
+- Focused frontend/doctor trace tests passed: 18 tests.
+- Full test suite passed: 190 tests.
+
+Next:
+- After replacing the stale system Squirrel, rerun strict doctor with frontend trace and manually press 6/7/8 in a real editor.
+
+### 2026-07-02
+Topic:
 - Add a read-only default Rime contract gate for real Squirrel tryout.
 
 Changes:

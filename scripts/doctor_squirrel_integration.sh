@@ -160,7 +160,8 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
     payload = json.load(fh)
 panel = payload.get("latestMixedPanel") if isinstance(payload.get("latestMixedPanel"), dict) else {}
 layout = payload.get("latestMixedTextLayout") if isinstance(payload.get("latestMixedTextLayout"), dict) else {}
-commit = payload.get("latestSideCommit") if isinstance(payload.get("latestSideCommit"), dict) else {}
+number_key_commit = payload.get("latestNumberKeySideCommit") if isinstance(payload.get("latestNumberKeySideCommit"), dict) else {}
+commit = number_key_commit.get("commit") if isinstance(number_key_commit.get("commit"), dict) else {}
 counts = layout.get("candidateCounts") if isinstance(layout.get("candidateCounts"), dict) else panel.get("candidateCounts", {})
 candidate = commit.get("candidate") if isinstance(commit.get("candidate"), dict) else {}
 print(
@@ -168,6 +169,7 @@ print(
     f"events={payload.get('eventCount')} "
     f"modelInline={counts.get('modelInline')} "
     f"ragBlock={counts.get('ragBlock')} "
+    f"numberKey={number_key_commit.get('key')} "
     f"sideCommitLabel={candidate.get('label')}"
 )
 PY
@@ -185,11 +187,12 @@ except Exception:
     print("frontend trace checker did not return JSON")
     raise SystemExit(0)
 print(
-    "frontend trace missing mixed panel or side commit: "
+    "frontend trace missing mixed panel or number-key side commit: "
     f"events={payload.get('eventCount')} "
     f"latestMixedPanel={bool(payload.get('latestMixedPanel'))} "
     f"latestMixedTextLayout={bool(payload.get('latestMixedTextLayout'))} "
     f"latestSideCommit={bool(payload.get('latestSideCommit'))} "
+    f"latestNumberKeySideCommit={bool(payload.get('latestNumberKeySideCommit'))} "
     f"log={payload.get('logPath')}"
 )
 PY

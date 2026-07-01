@@ -286,8 +286,10 @@ candidates and forced horizontal layout for the mixed panel. A passing
 `latestMixedTextLayout` proves the rendered text separators are mixed correctly:
 LLM/model inline candidates stay on one horizontal row, then the first
 RAG/memory sentence starts a newline and later sentence candidates remain
-vertical rows. A passing `latestSideCommit` proves number-key selection
-committed a side candidate and triggered feedback recording.
+vertical rows. A passing `latestNumberKeySideCommit` proves the same visible
+number key first routed through `number_key_route`, then committed the matching
+model/RAG side candidate through `side_candidate_commit` and triggered feedback
+recording.
 
 The semantic query is built from commit preview or Rime candidates before
 falling back to raw input.

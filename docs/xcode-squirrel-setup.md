@@ -352,8 +352,9 @@ the sidecar display candidates: `panel_display_candidates` must show
 `modelInline > 0`, `ragBlock > 0`, and `forcesHorizontalLayout=true`, while
 `panel_text_layout` must show space separators between model candidates and a
 newline before the first sentence candidate. After a number-key accept,
-`side_candidate_commit` proves the visible key routed through RAG-IME rather
-than native Rime selection.
+`latestNumberKeySideCommit` must prove the visible key produced a
+`number_key_route` and then committed the matching model/RAG side candidate
+rather than native Rime selection.
 
 If the project opens in Xcode but the script fails, inspect the exact
 `xcodebuild` output first; the wrapper checks the patched files and config before

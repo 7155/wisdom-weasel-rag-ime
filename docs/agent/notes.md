@@ -7,6 +7,27 @@
 
 ## Log
 
+### 2026-07-02 04:12 CST
+Problem:
+- The foreground trace checker accepted any `side_candidate_commit` event.
+- That was weaker than the product requirement: 1-9/0 must route the visible key to a model/RAG side candidate, not accidentally select a native Rime row.
+
+Changes:
+- Tightened `scripts/check_squirrel_frontend_trace.py --require-side-commit`.
+- It now requires a matching `number_key_route` followed by a valid `side_candidate_commit` with `selectionAction=commit_side_candidate`, `sourceType=model|rag`, and the same `selectionKey`.
+- Updated strict doctor frontend-trace summary to report `numberKey` and `latestNumberKeySideCommit`.
+- Added regression tests for missing number-key route and Rime-route false positives.
+- Updated debug/Xcode docs to describe the stronger trace evidence.
+
+Commands:
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_squirrel_frontend_trace tests.test_doctor_squirrel_integration`
+- `python3 -m py_compile scripts/check_squirrel_frontend_trace.py`
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`
+
+Findings:
+- Focused frontend/doctor trace tests passed: 18 tests.
+- Full test suite passed: 190 tests.
+
 ### 2026-07-02 03:55 CST
 Problem:
 - The install script wrote default simplified Rime settings, but `squirrel-tryout-gate` only checked that build files existed.
