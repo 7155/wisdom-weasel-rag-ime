@@ -76,6 +76,7 @@ class MlxPredictionConfig:
 class PredictionBenchmarkCase:
     current_input: str
     recent_context: str = ""
+    case_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -825,6 +826,8 @@ def benchmark_streaming_ttft_provider(
                     keep_alive=keep_alive,
                 )
             measured["currentInput"] = case.current_input
+            if case.case_id:
+                measured["caseId"] = case.case_id
             if repeat_count > 1:
                 measured["repeatIndex"] = repeat_index
             first_ms = measured.get("firstChunkMs")

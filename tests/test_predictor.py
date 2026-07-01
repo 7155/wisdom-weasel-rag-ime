@@ -179,6 +179,37 @@ class _MockOllamaStreamingHandler(BaseHTTPRequestHandler):
         return
 
 
+class _MockOllamaStreamingMatrixHandler(BaseHTTPRequestHandler):
+    seen_models: list[str] = []
+    captured_payloads: list[dict[str, object]] = []
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        model = str(payload.get("model") or "")
+        _MockOllamaStreamingMatrixHandler.seen_models.append(model)
+        _MockOllamaStreamingMatrixHandler.captured_payloads.append(payload)
+        if model == "qwen3.5:0.8b-mlx":
+            chunks = [
+                {"message": {"role": "assistant", "content": '["本地记忆"'}},
+                {"message": {"role": "assistant", "content": ',"输入法候选"]'}, "done": True},
+            ]
+        else:
+            chunks = [
+                {"message": {"role": "assistant", "content": '["'}, "done": True},
+            ]
+        body = b"".join(json.dumps(item, ensure_ascii=False).encode("utf-8") + b"\n" for item in chunks)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
 class _MockOllamaEmptyStreamingHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
         length = int(self.headers.get("Content-Length") or "0")
@@ -1110,6 +1141,81 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(_MockOllamaStreamingHandler.captured_payload["stream"])
         self.assertFalse(_MockOllamaStreamingHandler.captured_payload["think"])
         self.assertEqual(_MockOllamaStreamingHandler.captured_payload["keep_alive"], -1)
+
+    def test_cli_bench_ime_ttfc_runs_streaming_model_matrix_from_cases_file(self) -> None:
+        _MockOllamaStreamingMatrixHandler.seen_models = []
+        _MockOllamaStreamingMatrixHandler.captured_payloads = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaStreamingMatrixHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-ttfc-cases-") as tmp:
+                cases_file = os.path.join(tmp, "ime-ttfc-cases.jsonl")
+                with open(cases_file, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "short-context",
+                                "currentInput": "RAG 输入法",
+                                "recentContext": "用户正在写本地记忆输入法",
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "no-expected-terms",
+                                "query": "Squirrel 候选",
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "--core-mode",
+                            "fixture",
+                            "bench-ime-ttfc",
+                            "--cases-file",
+                            cases_file,
+                            "--provider",
+                            "ollama",
+                            "--base-url",
+                            f"http://127.0.0.1:{server.server_port}",
+                            "--models",
+                            "qwen3.5:0.8b-mlx,qwen3.5:2b-mlx",
+                            "--repeat",
+                            "1",
+                            "--latency-budget-ms",
+                            "200",
+                            "--include-cases",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["schemaVersion"], "rag-ime.ime-ttfc-benchmark.v1")
+        self.assertEqual(report["repeat"]["baseCaseCount"], 2)
+        self.assertEqual(report["repeat"]["effectiveCaseCount"], 2)
+        self.assertEqual([item["model"] for item in report["models"]], ["qwen3.5:0.8b-mlx", "qwen3.5:2b-mlx"])
+        self.assertEqual(report["winner"]["model"], "qwen3.5:0.8b-mlx")
+        self.assertTrue(report["models"][0]["summary"]["hasFirstCandidate"])
+        self.assertEqual(report["models"][0]["cases"][0]["caseId"], "short-context")
+        self.assertEqual(report["models"][0]["cases"][1]["caseId"], "no-expected-terms")
+        self.assertEqual(
+            _MockOllamaStreamingMatrixHandler.seen_models,
+            ["qwen3.5:0.8b-mlx", "qwen3.5:0.8b-mlx", "qwen3.5:2b-mlx", "qwen3.5:2b-mlx"],
+        )
+        self.assertTrue(all(payload["stream"] for payload in _MockOllamaStreamingMatrixHandler.captured_payloads))
+        self.assertTrue(all(payload["think"] is False for payload in _MockOllamaStreamingMatrixHandler.captured_payloads))
 
     def test_cli_predictor_ttft_counts_missing_first_chunk_as_over_budget(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaEmptyStreamingHandler)
