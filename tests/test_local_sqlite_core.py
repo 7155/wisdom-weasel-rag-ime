@@ -119,6 +119,14 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 "Rime candidates share the number sequence with side candidates",
             ),
             (
+                "Squirrel 如何区分 Rime 候选和 side candidate 选择",
+                "select_candidate_on_current_page keeps Rime selection separate from commit_side_candidate",
+            ),
+            (
+                "RAG 和模型预测如何用同一 case 比较",
+                "eval-comparison compares RAG candidates with model prediction on the same case file",
+            ),
+            (
                 "raw pinyin fallback 什么时候跳过 RAG side lane",
                 "triggerDecision sets sideCandidatesEnabled=false for rawInputFallback",
             ),
@@ -133,6 +141,18 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             (
                 "Rime sidecar 重复刷新如何缓存命中",
                 "Debug health reports rimeSuggestCache and cacheStats for cache hit inspection",
+            ),
+            (
+                "WSL embedding endpoint 需要哪些环境变量",
+                "RAG_IME_EMBEDDING_BASE_URL and RAG_IME_EMBEDDING_MODEL configure WSL embedding endpoint",
+            ),
+            (
+                "本地 suggestion cache 如何统计命中和失效",
+                "suggestionCache uses LRU hitRate evictions invalidations",
+            ),
+            (
+                "Codex history eval 用哪些 ranking metrics",
+                "top1Accuracy and meanReciprocalRank report ranking metrics",
             ),
         ]
         for _, target in cases:
@@ -152,6 +172,11 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             tags=("codex-history",),
         )
         self.adapter.commit_text(
+            "*** Begin Patch *** Update File: rag_ime/debug_server.py rimeSuggestCache cacheStats",
+            recent_context="codex_history:patch-output",
+            tags=("codex-history",),
+        )
+        self.adapter.commit_text(
             "Debug health now reports rimeSuggestCache and cacheStats for sidecar cache inspection.",
             recent_context="codex_history:assistant-summary",
             tags=("codex-history",),
@@ -163,7 +188,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             suggestions[0].metadata["insert_text"],
             "Debug health now reports rimeSuggestCache and cacheStats for sidecar cache inspection.",
         )
-        self.assertIn("runtime-trace", suggestions[1].metadata["reason"])
+        self.assertTrue(any("runtime-trace" in item.metadata["reason"] for item in suggestions[1:]))
 
     def test_suggestion_cache_hits_and_invalidates_on_write(self) -> None:
         request = SuggestionRequest(

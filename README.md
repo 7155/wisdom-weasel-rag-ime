@@ -258,6 +258,18 @@ python3 -m rag_ime.cli suggest-json "输入法 个人记忆" --recent-context "l
 
 `RAG_IME_PREDICTOR_PROFILE=instant` is the recommended first profile for Qwen-style small instruct models. It uses chat mode, a 350 ms timeout, 8 output tokens, low sampling temperature, and `chat_template_kwargs.enable_thinking=false`. Individual env vars such as `RAG_IME_PREDICTOR_TIMEOUT_MS`, `RAG_IME_PREDICTOR_MAX_TOKENS`, or `RAG_IME_PREDICTOR_DISABLE_THINKING` can still override the profile. `RAG_IME_PREDICTOR_EXTRA_BODY_JSON` can add server-specific fields such as seeds or sampling controls.
 
+For Ollama `qwen3.5` small-model smoke tests, point the same OpenAI-compatible lane at Ollama's `/v1` endpoint:
+
+```bash
+ollama pull qwen3.5:0.8b
+ollama serve
+
+export RAG_IME_PREDICTOR_PROVIDER=openai-compatible
+export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434/v1
+export RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b
+export RAG_IME_PREDICTOR_PROFILE=instant
+```
+
 The model lane also has a default failure cooldown. If the configured endpoint times out or returns a slow empty result, subsequent prediction calls are skipped for a short window so composing refreshes do not pay one model timeout per key event:
 
 ```bash

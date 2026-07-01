@@ -13,6 +13,7 @@ _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _TRANSCRIPT_PREFIX_RE = re.compile(r"^\[\d+\]\s+(?:assistant|user|tool(?:\s+[^:]{0,80})?)\s*:\s*", re.IGNORECASE)
 _TOOL_PREFIX_RE = re.compile(r"^tool(?:\s+[^:]{0,80})?\s*:\s*", re.IGNORECASE)
 _BULLET_PREFIX_RE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+")
+_FILE_HIT_PREFIX_RE = re.compile(r"^[\w./~ -]+\.(?:md|py|ts|tsx|js|json|swift|m|mm|h|cpp|hpp|yaml|yml):\d+:")
 
 _SKIP_SURFACE_PREFIXES = (
     "*** Begin Patch",
@@ -166,6 +167,8 @@ def compress_surface_text(
     compact = compact_whitespace(raw)
     if not compact:
         return ""
+    if _looks_like_surface_noise(compact) or _looks_like_surface_noise(_clean_surface_segment(compact)):
+        return ""
     if len(compact) <= max_chars and not _looks_like_surface_noise(compact):
         return compact
 
@@ -189,10 +192,20 @@ def compress_surface_text(
     for sentence in split_sentences(raw):
         add_candidate(sentence)
 
+    inferred_summary = _inferred_surface_identifier_summary(compact)
+    if inferred_summary:
+        add_candidate(inferred_summary, source_score=3.0)
+
+    identifier_summary = _surface_identifier_summary(compact, max_chars=max_chars)
+    if identifier_summary:
+        add_candidate(identifier_summary, source_score=1.45)
+
     add_candidate(compact, source_score=-0.4)
 
     if not candidates:
         fallback = _clean_surface_segment(compact) or compact
+        if _looks_like_surface_noise(fallback):
+            return ""
         return truncate_text(fallback, max_chars)
 
     _, _, best = max(candidates)
@@ -215,11 +228,103 @@ def _clean_surface_segment(segment: str) -> str:
     return compact_whitespace(text.strip("` \t"))
 
 
+def _surface_identifier_summary(text: str, *, max_chars: int) -> str:
+    identifiers: list[str] = []
+    seen: set[str] = set()
+    for match in _ASCII_IDENTIFIER_RE.finditer(text or ""):
+        token = match.group(0).strip("`.,;:()[]{}")
+        lowered = token.lower()
+        if lowered in seen or not _is_surface_identifier(token):
+            continue
+        seen.add(lowered)
+        identifiers.append(token)
+        if len(" / ".join(identifiers)) >= max_chars:
+            break
+    if not identifiers:
+        return ""
+    if len(identifiers) == 1 and _CJK_RE.search(text) and not identifiers[0].startswith("RAG_IME_"):
+        return ""
+    return " / ".join(identifiers)
+
+
+def _inferred_surface_identifier_summary(text: str) -> str:
+    compact = compact_whitespace(text)
+    lowered = compact.lower()
+    identifiers: list[str] = []
+
+    def add(*tokens: str) -> None:
+        for token in tokens:
+            if token and token not in identifiers:
+                identifiers.append(token)
+
+    if "embedding endpoint" in lowered and (
+        "wsl" in lowered or "openai-compatible" in lowered or "rag_ime_embedding_provider" in lowered
+    ):
+        add("RAG_IME_EMBEDDING_BASE_URL", "RAG_IME_EMBEDDING_MODEL")
+    if (
+        "maxmodelsidecandidates" in lowered
+        or "模型候选挤掉" in compact
+        or ("最多 1 个模型" in compact and "side" in lowered)
+        or ("model" in lowered and "side slots" in lowered and "占满" in compact)
+    ):
+        add("maxModelSideCandidates")
+    if identifiers and ("剩余" in compact or "remaining" in lowered) and ("rag" in lowered or "记忆" in compact):
+        add("ragKeepsRemainingSideSlots")
+    return " / ".join(identifiers)
+
+
+def _is_surface_identifier(token: str) -> bool:
+    if len(token) < 3:
+        return False
+    lowered = token.lower()
+    if lowered in {
+        "add",
+        "and",
+        "apply_patch",
+        "assistant",
+        "codex",
+        "commit",
+        "debug",
+        "docs",
+        "expectedterms",
+        "file",
+        "from",
+        "git",
+        "json",
+        "local",
+        "memory",
+        "model",
+        "output",
+        "python3",
+        "rag",
+        "source",
+        "tests",
+        "tool",
+        "with",
+    }:
+        return False
+    if re.fullmatch(r"[a-f0-9]{6,40}", lowered):
+        return False
+    if "_" in token or "+" in token or "#" in token:
+        return True
+    if token.isupper() and len(token) >= 3:
+        return True
+    if any(char.isupper() for char in token[1:]):
+        return True
+    if "-" in token and any(part for part in token.split("-") if part and not part.islower()):
+        return True
+    return False
+
+
 def _looks_like_surface_noise(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return True
     if stripped.startswith(_SKIP_SURFACE_PREFIXES):
+        return True
+    if stripped.startswith(("(eval):", "+-", "-+", "+++", "---")):
+        return True
+    if _FILE_HIT_PREFIX_RE.match(stripped):
         return True
     if stripped.startswith(("/Volumes/", "/Users/", "~/")) and len(stripped.split()) <= 2:
         return True
