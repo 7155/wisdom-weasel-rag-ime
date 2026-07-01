@@ -22,6 +22,7 @@ from .text_utils import compact_whitespace, now_ms
 
 
 RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
+_RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 
 
@@ -48,27 +49,31 @@ def build_rime_sidecar_response(
     )
     if trigger_decision.should_refresh:
         started = time.perf_counter()
-        prediction_context = build_prediction_context(
-            core,
-            explicit_recent_context=snapshot.committed_context,
+        suggestions, rag_lane = suggest_rag_with_latency_budget(
+            adapter=adapter,
+            current_input=semantic_query,
+            recent_context=snapshot.committed_context,
             project=snapshot.project or default_project,
-        )
-        suggestions = adapter.suggest(
-            SuggestionRequest(
-                current_input=semantic_query,
-                recent_context=snapshot.committed_context,
-                project=snapshot.project or default_project,
-                top_k=snapshot.max_side_candidates,
-            )
+            top_k=snapshot.max_side_candidates,
+            latency_budget_ms=snapshot.latency_budget_ms,
         )
         elapsed_before_model_ms = int((time.perf_counter() - started) * 1000)
         model_budget_ms = max(0, snapshot.latency_budget_ms - elapsed_before_model_ms)
         model_predictions, model_lane = predict_model_with_latency_budget(
+            core=core,
             predictor=predictor,
             current_input=semantic_query,
-            recent_context=prediction_context,
+            explicit_recent_context=snapshot.committed_context,
+            project=snapshot.project or default_project,
             max_candidates=snapshot.max_side_candidates,
             latency_budget_ms=model_budget_ms,
+        )
+        prediction_context = _string(model_lane.get("historyContext"))
+        model_lane.pop("historyContext", None)
+        rag_lane.update(
+            {
+                "totalLatencyBudgetMs": snapshot.latency_budget_ms,
+            }
         )
         model_lane.update(
             {
@@ -80,6 +85,15 @@ def build_rime_sidecar_response(
         prediction_context = ""
         model_predictions = []
         suggestions = []
+        rag_lane = {
+            "called": False,
+            "timedOut": False,
+            "skippedReason": "side candidates disabled by trigger",
+            "suggestionCount": 0,
+            "latencyBudgetMs": 0,
+            "elapsedMs": 0,
+            "totalLatencyBudgetMs": snapshot.latency_budget_ms,
+        }
         model_lane = {
             "called": False,
             "timedOut": False,
@@ -116,6 +130,7 @@ def build_rime_sidecar_response(
         "historyContext": prediction_context,
         "historyContextMeta": prediction_context_metadata(prediction_context),
         "latencyBudgetMs": snapshot.latency_budget_ms,
+        "ragLane": rag_lane,
         "modelLane": model_lane,
         "rimeContext": rime_context_to_payload(snapshot),
         "modelPredictions": [model_prediction_to_payload(item) for item in model_predictions],
@@ -137,11 +152,89 @@ def build_rime_sidecar_response(
     }
 
 
-def predict_model_with_latency_budget(
+def suggest_rag_with_latency_budget(
     *,
-    predictor: PredictionProvider,
+    adapter: InputMethodAdapter,
     current_input: str,
     recent_context: str,
+    project: str,
+    top_k: int,
+    latency_budget_ms: int,
+) -> tuple[list[InputSuggestion], dict[str, object]]:
+    budget_ms = max(0, int(latency_budget_ms))
+    if budget_ms <= 0:
+        return [], _rag_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason="no latency budget remaining",
+            budget_ms=budget_ms,
+        )
+    if top_k <= 0:
+        return [], _rag_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason="no side candidate slot",
+            budget_ms=budget_ms,
+        )
+    if not _RAG_LANE_SEMAPHORE.acquire(blocking=False):
+        return [], _rag_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason="RAG lane already running",
+            budget_ms=budget_ms,
+        )
+
+    done = Event()
+    result: dict[str, object] = {"suggestions": []}
+
+    def run_suggest() -> None:
+        started = time.perf_counter()
+        try:
+            result["suggestions"] = adapter.suggest(
+                SuggestionRequest(
+                    current_input=current_input,
+                    recent_context=recent_context,
+                    project=project,
+                    top_k=top_k,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive fail-open guard
+            result["error"] = exc.__class__.__name__
+        finally:
+            result["elapsedMs"] = int((time.perf_counter() - started) * 1000)
+            done.set()
+            _RAG_LANE_SEMAPHORE.release()
+
+    Thread(target=run_suggest, name="rag-ime-rag-lane", daemon=True).start()
+    if not done.wait(timeout=budget_ms / 1000):
+        return [], _rag_lane_status(
+            called=True,
+            timed_out=True,
+            skipped_reason="RAG lane exceeded latency budget",
+            budget_ms=budget_ms,
+        )
+
+    suggestions = result.get("suggestions")
+    if not isinstance(suggestions, list):
+        suggestions = []
+    error = _string(result.get("error"))
+    return suggestions, _rag_lane_status(
+        called=True,
+        timed_out=False,
+        skipped_reason=f"error: {error}" if error else "",
+        budget_ms=budget_ms,
+        elapsed_ms=_optional_int(result.get("elapsedMs")) or 0,
+        suggestion_count=len(suggestions),
+    )
+
+
+def predict_model_with_latency_budget(
+    *,
+    core: CoreClient,
+    predictor: PredictionProvider,
+    current_input: str,
+    explicit_recent_context: str,
+    project: str,
     max_candidates: int,
     latency_budget_ms: int,
 ) -> tuple[list[ModelPrediction], dict[str, object]]:
@@ -174,6 +267,15 @@ def predict_model_with_latency_budget(
     def run_prediction() -> None:
         started = time.perf_counter()
         try:
+            recent_context = build_prediction_context(
+                core,
+                explicit_recent_context=explicit_recent_context,
+                project=project,
+            )
+            result["historyContext"] = recent_context
+            if int((time.perf_counter() - started) * 1000) >= budget_ms:
+                result["skippedReason"] = "history context exceeded latency budget"
+                return
             result["predictions"] = predictor.predict(
                 current_input=current_input,
                 recent_context=recent_context,
@@ -199,14 +301,35 @@ def predict_model_with_latency_budget(
     if not isinstance(predictions, list):
         predictions = []
     error = _string(result.get("error"))
+    skipped_reason = _string(result.get("skippedReason"))
     return predictions, _model_lane_status(
         called=True,
         timed_out=False,
-        skipped_reason=f"error: {error}" if error else "",
+        skipped_reason=f"error: {error}" if error else skipped_reason,
         budget_ms=budget_ms,
         elapsed_ms=_optional_int(result.get("elapsedMs")) or 0,
         prediction_count=len(predictions),
+        history_context=_string(result.get("historyContext")),
     )
+
+
+def _rag_lane_status(
+    *,
+    called: bool,
+    timed_out: bool,
+    skipped_reason: str,
+    budget_ms: int,
+    elapsed_ms: int = 0,
+    suggestion_count: int = 0,
+) -> dict[str, object]:
+    return {
+        "called": called,
+        "timedOut": timed_out,
+        "skippedReason": skipped_reason,
+        "suggestionCount": suggestion_count,
+        "latencyBudgetMs": budget_ms,
+        "elapsedMs": elapsed_ms,
+    }
 
 
 def _model_lane_status(
@@ -217,6 +340,7 @@ def _model_lane_status(
     budget_ms: int,
     elapsed_ms: int = 0,
     prediction_count: int = 0,
+    history_context: str = "",
 ) -> dict[str, object]:
     return {
         "called": called,
@@ -225,6 +349,7 @@ def _model_lane_status(
         "predictionCount": prediction_count,
         "latencyBudgetMs": budget_ms,
         "elapsedMs": elapsed_ms,
+        "historyContext": history_context,
     }
 
 

@@ -171,12 +171,18 @@ The response also includes `triggerDecision`. This is the backend guard that kee
 - `forceSideCandidates: true` can be used by debug tooling to force a refresh.
 - Skipped refreshes return empty `modelPredictions` / `ragCandidates` and `mergePolicy.sideCandidatesEnabled: false`.
 
-The response also includes `modelLane`. This records whether the optional model
-lane was allowed to run inside the request budget:
+The response also includes `ragLane` and `modelLane`. These record whether each
+side lane was allowed to run inside the request budget:
 
 ```json
 {
   "latencyBudgetMs": 150,
+  "ragLane": {
+    "called": true,
+    "timedOut": false,
+    "latencyBudgetMs": 150,
+    "suggestionCount": 2
+  },
   "modelLane": {
     "called": true,
     "timedOut": false,
@@ -187,10 +193,11 @@ lane was allowed to run inside the request budget:
 }
 ```
 
-If the model is too slow, `modelLane.timedOut` becomes true and
-`modelPredictions` is empty. Rime and RAG candidates still return. If a previous
-model request is still running, the sidecar skips the model lane with
-`skippedReason: "model lane already running"`.
+If RAG is too slow, `ragLane.timedOut` becomes true and the response falls back
+to Rime-only or Rime/model candidates. If the model is too slow,
+`modelLane.timedOut` becomes true and `modelPredictions` is empty while RAG
+candidates still return. If a previous side-lane request is still running, the
+sidecar skips that lane with `skippedReason`.
 
 The debug page probes `/api/rime-suggest` alongside `/api/suggest` and shows `queryBasis`, `triggerDecision`, `displayCandidates`, and cache metadata in the JSON panel. This is only for backend inspection; it does not change the browser prototype's visible candidate layout.
 

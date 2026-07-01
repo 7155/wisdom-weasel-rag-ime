@@ -1090,3 +1090,19 @@ Verification:
 
 Next:
 - Later native llama.cpp/Metal or stronger MLX provider should use real cancellation/sequence state, but the hot path now has fail-open behavior even before that provider exists.
+
+### 2026-07-01
+Topic:
+- Extend sidecar latency-budget enforcement to RAG and history-context loading.
+
+Changes:
+- Added `ragLane` budget/timeout observability around `adapter.suggest(...)`.
+- Slow RAG retrieval now fails open to the existing Rime candidates instead of blocking `/rime-suggest`.
+- Model history-context construction now happens inside the model budget thread; if it consumes the budget, the provider is not called.
+
+Verification:
+- Sidecar focused tests passed after adding slow-RAG and slow-history regressions.
+- Debug-server focused tests and full 135-test suite passed.
+
+Next:
+- Run debug-server/full-suite verification, then keep iterating toward shared-core latency gates and real native-provider cancellation.

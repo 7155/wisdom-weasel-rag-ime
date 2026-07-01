@@ -107,6 +107,33 @@ class CapturingCore:
         return "历史输入会进入模型预测 但不能污染 RAG 检索"
 
 
+class SlowSuggestionCore(CapturingCore):
+    def __init__(self, sleep_s: float = 0.1) -> None:
+        super().__init__()
+        self.sleep_s = sleep_s
+        self.calls = 0
+
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", top_k: int = 5):
+        self.calls += 1
+        time.sleep(self.sleep_s)
+        return super().suggest_for_input(
+            current_input=current_input,
+            recent_context=recent_context,
+            project=project,
+            top_k=top_k,
+        )
+
+
+class SlowHistoryCore(CapturingCore):
+    def __init__(self, sleep_s: float = 0.1) -> None:
+        super().__init__()
+        self.sleep_s = sleep_s
+
+    def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
+        time.sleep(self.sleep_s)
+        return super().recent_input_context(project=project, limit=limit, max_chars=max_chars)
+
+
 class RimeSidecarTests(unittest.TestCase):
     def setUp(self) -> None:
         self.core = FixtureCoreClient()
@@ -334,6 +361,77 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["modelLane"]["timedOut"])
         self.assertEqual(response["modelLane"]["skippedReason"], "model lane exceeded latency budget")
         self.assertEqual(response["modelLane"]["predictionCount"], 0)
+        self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
+
+    def test_rag_lane_timeout_returns_rime_without_waiting_for_rag_or_model(self) -> None:
+        core = SlowSuggestionCore(sleep_s=0.12)
+        adapter = InputMethodAdapter(core)
+        predictor = FakePredictionProvider()
+        started = time.perf_counter()
+        try:
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "squirrel-slow-rag",
+                    "requestSeq": 78,
+                    "latencyBudgetMs": 30,
+                    "maxVisibleCandidates": 5,
+                    "maxSideCandidates": 2,
+                    "rimeContext": {
+                        "candidates": [
+                            {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                        ]
+                    },
+                },
+                adapter=adapter,
+                core=core,
+                predictor=predictor,
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+        finally:
+            time.sleep(0.14)
+
+        self.assertLess(elapsed_ms, 100)
+        self.assertEqual(core.calls, 1)
+        self.assertEqual(predictor.last_current_input, "")
+        self.assertEqual(response["ragCandidates"], [])
+        self.assertTrue(response["ragLane"]["called"])
+        self.assertTrue(response["ragLane"]["timedOut"])
+        self.assertEqual(response["ragLane"]["skippedReason"], "RAG lane exceeded latency budget")
+        self.assertFalse(response["modelLane"]["called"])
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime"])
+
+    def test_slow_history_context_does_not_call_model_after_budget_timeout(self) -> None:
+        core = SlowHistoryCore(sleep_s=0.12)
+        adapter = InputMethodAdapter(core)
+        predictor = FakePredictionProvider()
+        started = time.perf_counter()
+        try:
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "squirrel-slow-history",
+                    "requestSeq": 79,
+                    "latencyBudgetMs": 40,
+                    "maxVisibleCandidates": 5,
+                    "maxSideCandidates": 2,
+                    "rimeContext": {
+                        "candidates": [
+                            {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                        ]
+                    },
+                },
+                adapter=adapter,
+                core=core,
+                predictor=predictor,
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+        finally:
+            time.sleep(0.14)
+
+        self.assertLess(elapsed_ms, 100)
+        self.assertEqual(predictor.last_current_input, "")
+        self.assertTrue(response["modelLane"]["called"])
+        self.assertTrue(response["modelLane"]["timedOut"])
+        self.assertEqual(response["modelPredictions"], [])
         self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
 
     def test_rag_display_text_is_compressed_but_insert_text_is_full(self) -> None:

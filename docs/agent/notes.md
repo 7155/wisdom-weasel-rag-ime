@@ -1581,3 +1581,27 @@ Verification:
 
 Status:
 - This enforces IME responsiveness for the sidecar hot path without claiming native cancellation. A timed-out provider call may still finish in the daemon guard thread, but subsequent requests do not wait for it.
+
+### 2026-07-01 15:59 CST
+Problem:
+- The previous hot-path budget guard covered the model lane, but RAG retrieval and model history-context construction could still block `/rime-suggest`.
+- This matters once the sidecar talks to a shared RAG core with embedding/rerank/WSL work instead of only fast local FTS5.
+
+Changes:
+- Added a bounded `ragLane` around `adapter.suggest(...)`.
+- `build_rime_sidecar_response()` now returns Rime candidates even when RAG retrieval exceeds `latencyBudgetMs`.
+- Moved `build_prediction_context()` into the model-lane budget thread, so slow history-context loading cannot block the main sidecar response.
+- Added a deadline check before calling the model provider; if history-context construction already consumed the model budget, the provider is not called.
+- Added tests for slow RAG fail-open and slow history-context fail-open.
+- Updated README, debug-surface docs, and local-model benchmark docs to describe `ragLane` and `modelLane`.
+
+Verification:
+- `python3 -m py_compile rag_ime/rime_sidecar.py tests/test_rime_sidecar.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_rime_sidecar`
+- `python3 -m py_compile rag_ime/rime_sidecar.py rag_ime/debug_server.py tests/test_rime_sidecar.py tests/test_debug_server.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_rime_sidecar tests.test_debug_server`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `git diff --check`
+
+Status:
+- This still does not provide real cancellation for an already-running RAG/core call; it bounds user-visible waiting and prevents immediate side-lane pileups with a single in-process guard.

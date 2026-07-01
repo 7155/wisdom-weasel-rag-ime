@@ -16,12 +16,13 @@ export RAG_IME_PREDICTOR_EXTRA_BODY_JSON='{"seed":7}'
 
 The prompt asks for short candidates only and the provider fails open on timeout. This carries forward the Wisdom-Weasel lesson we are using as a design constraint: typing must not block on model output.
 
-On the `/rime-suggest` hot path, the sidecar treats the model as budgeted and
-optional. It runs local RAG retrieval first, computes the remaining
-`latencyBudgetMs`, and only waits that long for the model lane. A slow model
-returns no `modelPredictions` for that request while Rime/RAG candidates still
-display. This is separate from the provider's static transport timeout, which
-remains useful for benchmark and doctor commands.
+On the `/rime-suggest` hot path, the sidecar treats both RAG and model work as
+budgeted optional side lanes. It budgets local RAG retrieval first, computes the
+remaining `latencyBudgetMs`, and only waits that long for the model lane. Slow
+RAG falls back to Rime-only or Rime/model display; a slow model returns no
+`modelPredictions` for that request while Rime/RAG candidates still display.
+This is separate from the provider's static transport timeout, which remains
+useful for benchmark and doctor commands.
 
 The provider is wrapped in a small failure cooldown by default:
 
