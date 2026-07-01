@@ -104,6 +104,9 @@ class MlxPredictorServerTests(unittest.TestCase):
                     "maxCandidates": 2,
                     "maxTokens": 8,
                     "stream": True,
+                    "contextFingerprint": "ctx123456789abcd",
+                    "currentInputFingerprint": "input1234567890",
+                    "stablePrefixHash": "prefix123456789",
                 },
                 ensure_ascii=False,
             ).encode("utf-8")
@@ -123,6 +126,8 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(events[-1]["candidates"], ["本地记忆", "输入法候选"])
         self.assertTrue(events[-1]["promptCache"]["prepared"])
         self.assertFalse(events[-1]["promptCache"]["usedForGeneration"])
+        self.assertEqual(events[-1]["requestMeta"]["contextFingerprint"], "ctx123456789abcd")
+        self.assertEqual(events[-1]["requestMeta"]["stablePrefixHash"], "prefix123456789")
 
 
 def _start_fake_server():

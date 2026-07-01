@@ -127,6 +127,27 @@ Rime/RAG tail and can route generation through a cached-prefix `generate_step`
 path. The remaining limitation is empirical: it still needs real-model TTFT and
 quality measurement before this becomes the accepted product fast lane.
 
+Every prediction response now also carries a stable request fingerprint:
+
+```json
+{
+  "requestMeta": {
+    "currentInputFingerprint": "6a8f...",
+    "contextFingerprint": "b904...",
+    "contextChars": 126,
+    "stablePrefixHash": "4d2c..."
+  }
+}
+```
+
+`historyContextMeta` is exposed on sidecar/debug payloads, and the local MLX
+service receives the same fingerprint fields. OpenAI-compatible and Ollama
+requests keep their existing external request shape, so strict servers do not
+break. The native fast lane should use these hashes as the guard for
+Wisdom-Weasel-style prompt/KV reuse: reuse only when the stable prefix and
+history-context fingerprint match, and treat the current input as the dynamic
+tail.
+
 The service can already be started with `--prompt-cache`. That prepares the
 stable system prompt at startup through MLX-LM's `make_prompt_cache` /
 `generate_step(..., prompt_cache=cache)` path, saves it locally, and loads a

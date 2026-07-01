@@ -184,6 +184,11 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(core.last_suggest_recent_context, "当前正在写 RAG 输入法 sidecar")
         self.assertNotIn("历史输入会进入模型预测", core.last_suggest_recent_context)
         self.assertEqual(response["historyContext"], predictor.last_recent_context)
+        history_meta = response["historyContextMeta"]
+        self.assertEqual(history_meta["chars"], len(predictor.last_recent_context))
+        self.assertEqual(len(history_meta["fingerprint"]), 16)
+        self.assertTrue(history_meta["hasHistory"])
+        self.assertTrue(history_meta["hasExplicitContext"])
 
     def test_zero_side_candidates_does_not_call_model(self) -> None:
         response = build_rime_sidecar_response(

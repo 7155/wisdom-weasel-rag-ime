@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Protocol
 
@@ -52,6 +53,23 @@ def build_prediction_context(
     else:
         merged = explicit
     return _tail_chars(compact_whitespace(merged), max(0, char_limit))
+
+
+def context_fingerprint(text: str, *, length: int = 16) -> str:
+    normalized = compact_whitespace(text)
+    if not normalized:
+        return ""
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[: max(1, int(length))]
+
+
+def prediction_context_metadata(text: str) -> dict[str, object]:
+    normalized = compact_whitespace(text)
+    return {
+        "chars": len(normalized),
+        "fingerprint": context_fingerprint(normalized),
+        "hasHistory": "历史输入:" in normalized,
+        "hasExplicitContext": "当前上下文:" in normalized or bool(normalized and "历史输入:" not in normalized),
+    }
 
 
 def _int_env(env: dict[str, str], name: str, fallback: int) -> int:

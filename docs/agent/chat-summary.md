@@ -1057,3 +1057,19 @@ Verification:
 Status:
 - RAG-IME product branch remains the main pushed branch for this work.
 - Full-Xcode Squirrel build/install/system-input-method continuous-use verification remains blocked until a real `Xcode.app` is installed and selected; current host only has Command Line Tools active.
+
+### 2026-07-01
+Topic:
+- Add stable history/context fingerprints for the local model lane.
+
+Changes:
+- Sidecar/debug responses now expose `historyContextMeta`.
+- Model predictions now include local `requestMeta` with current-input, context, and stable-prefix fingerprints.
+- The MLX service protocol receives and echoes these fingerprints so cached-prefix experiments can prove when the stable history prefix is reusable.
+- External OpenAI-compatible and Ollama request bodies were not changed.
+
+Verification:
+- Focused sidecar/predictor/MLX tests, `py_compile`, full 132-test suite, and `git diff --check` passed.
+
+Next:
+- Use these fields in the native llama.cpp/Metal or stronger MLX provider to guard prompt/KV cache reuse and later sequence-forked multi-candidate sampling.

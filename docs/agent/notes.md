@@ -1535,3 +1535,24 @@ Full-Xcode status:
 - `xcode-select -p` returns `/Library/Developer/CommandLineTools`.
 - `xcodebuild -version` fails with `tool 'xcodebuild' requires Xcode`.
 - `/Applications` and Spotlight lookup do not show `Xcode.app`.
+
+### 2026-07-01 15:42 CST
+Problem:
+- The local model lane needs to predict from historical input context, but a future native KV/prompt-cache provider needs a stable contract for deciding when context can be reused.
+- Without explicit fingerprints, debug output can show text, but cannot prove whether a request is cacheable in the Wisdom-Weasel sense: stable prompt/history prefix plus dynamic current input.
+
+Changes:
+- Added `historyContextMeta` to sidecar and debug suggestion payloads.
+- Added model `requestMeta` to prediction metadata with `currentInputFingerprint`, `contextFingerprint`, `contextChars`, and `stablePrefixHash`.
+- MLX local service requests now receive the same fingerprint fields and stream responses echo them as `requestMeta`.
+- OpenAI-compatible and Ollama external request bodies were kept unchanged; the metadata is local response/debug data only for those providers.
+- Documented the fingerprint contract in `docs/model-ttft-kv-cache-plan.md` and `docs/debug-surface.md`.
+
+Verification:
+- `python3 -m py_compile rag_ime/history_context.py rag_ime/rime_sidecar.py rag_ime/payloads.py rag_ime/predictor.py rag_ime/mlx_predictor_server.py tests/test_rime_sidecar.py tests/test_predictor.py tests/test_mlx_predictor_server.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_rime_sidecar tests.test_predictor tests.test_mlx_predictor_server`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `git diff --check`
+
+Status:
+- This is not native KV cache completion. It is the protocol gate needed before implementing a llama.cpp/Metal or stronger MLX provider that can safely reuse stable prefix state.

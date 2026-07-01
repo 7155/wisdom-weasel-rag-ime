@@ -213,6 +213,36 @@ The local SQLite core also exposes a process-local `suggestionCache` in `/api/he
 
 `/api/health` also exposes `predictor` status. This is a configuration check for the optional local model lane: it reports whether `RAG_IME_PREDICTOR_*` is configured, the active profile, prompt mode, endpoint, and model name. It does not call the model; use `predict-benchmark` or `eval-prediction` to prove the endpoint is alive and useful.
 
+Prediction and sidecar payloads expose `historyContextMeta` / `requestMeta`
+fingerprints. These are for debugging cacheability, not for user display:
+
+```json
+{
+  "historyContextMeta": {
+    "chars": 126,
+    "fingerprint": "b904...",
+    "hasHistory": true,
+    "hasExplicitContext": true
+  },
+  "modelPredictions": [
+    {
+      "metadata": {
+        "requestMeta": {
+          "currentInputFingerprint": "6a8f...",
+          "contextFingerprint": "b904...",
+          "stablePrefixHash": "4d2c..."
+        }
+      }
+    }
+  ]
+}
+```
+
+When testing a resident MLX or future llama.cpp provider, matching
+`contextFingerprint` plus `stablePrefixHash` is the signal that the stable
+history/context prefix can be reused; changing `currentInputFingerprint` should
+only invalidate the dynamic tail.
+
 `/api/rime-select` records a side-candidate acceptance with one stable payload:
 
 ```json
