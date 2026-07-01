@@ -1266,3 +1266,26 @@ Commands:
 - `python3 -m rag_ime.cli --core-mode fixture bench-ime-ttfc --cases-file docs/eval/ime-ttfc-cases.example.jsonl --provider ollama --base-url http://127.0.0.1:11434 --models qwen3.5:0.8b-mlx --repeat 3 --latency-budget-ms 200`
 - `python3 -m rag_ime.cli --core-mode fixture bench-ime-ttfc --cases-file docs/eval/ime-ttfc-cases.example.jsonl --provider ollama --base-url http://127.0.0.1:11434 --models qwen3.5:0.8b --repeat 3 --latency-budget-ms 200`
 - `python3 -m unittest discover -s tests`
+
+### 2026-07-01 13:32 CST
+Problem:
+- The browser debug surface showed predictor configuration, but not whether the configured local model could produce a first parsed candidate on demand.
+- The Squirrel doctor had useful diagnostics, but no single strict gate for "ready to try as a real macOS input source".
+
+Changes:
+- Added `POST /api/predictor-ttfc` to the debug server and a compact Model TTFC card to the browser debug page.
+- The debug TTFC probe reuses the same streaming first parsed candidate benchmark as the CLI and only runs when the user presses the probe button.
+- Added `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1` to `scripts/doctor_squirrel_integration.sh`.
+- Strict tryout mode requires a prepared patched Squirrel checkout, sidecar Swift files, generated config, Xcode project inspection with `xcodebuild -list`, and a working sidecar path.
+- Doctor sidecar probing now checks `/health`, `/rime-suggest`, and `/rime-select`, so accepted side-candidate writeback is part of readiness.
+
+Findings:
+- Default doctor mode still exits zero and reports the current state: patched Squirrel workdir OK, sidecar health/suggest/select OK, predictor not configured, full Xcode missing.
+- Strict tryout mode now fails non-zero with the real blocker: `active developer directory is CommandLineTools`; full Xcode must be installed/selected before patched Squirrel can be built and installed.
+
+Commands:
+- `python3 -m py_compile rag_ime/debug_server.py tests/test_debug_server.py`
+- `python3 -m unittest tests.test_debug_server tests.test_doctor_squirrel_integration`
+- `python3 -m unittest discover -s tests`
+- `RAG_IME_DOCTOR_CHECK_LAUNCHD=0 scripts/doctor_squirrel_integration.sh`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_DOCTOR_CHECK_LAUNCHD=0 scripts/doctor_squirrel_integration.sh`

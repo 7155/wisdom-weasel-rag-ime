@@ -33,6 +33,20 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        if self.path == "/rime-select":
+            length = int(self.headers.get("Content-Length", "0"))
+            if length:
+                self.rfile.read(length)
+            self._send_json(
+                {
+                    "schemaVersion": "rag-ime.rime-selection.v1",
+                    "ok": True,
+                    "eventId": "event:doctor",
+                    "recordedAction": False,
+                    "action": None,
+                }
+            )
+            return
         if self.path != "/rime-suggest":
             self.send_error(404)
             return
@@ -111,12 +125,106 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
-        self.assertIn("[OK] HTTP sidecar health and rime-suggest passed", result.stdout)
+        self.assertIn("[OK] HTTP sidecar health, rime-suggest, and rime-select passed", result.stdout)
         self.assertIn(
             "[OK] sidecar predictor: local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true",
             result.stdout,
         )
         self.assertIn("summary: failures=0", result.stdout)
+
+    def test_doctor_tryout_mode_requires_prepared_squirrel_xcode_and_sidecar(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-tryout-") as tmp:
+                tmp_path = Path(tmp)
+                workdir = tmp_path / "squirrel"
+                workdir.mkdir()
+                subprocess.run(["git", "init"], cwd=workdir, check=True, capture_output=True, text=True)
+                (workdir / "sources").mkdir()
+                (workdir / "sources" / "RagImeSidecarClient.swift").write_text("// client\n", encoding="utf-8")
+                (workdir / "sources" / "RagImeSidecarModels.swift").write_text("// models\n", encoding="utf-8")
+                (workdir / "Squirrel.xcodeproj").mkdir()
+                (workdir / "Squirrel.xcodeproj" / "project.pbxproj").write_text("// pbxproj\n", encoding="utf-8")
+                (workdir / "rag-ime.squirrel.custom.yaml").write_text("rag_ime:\n  enabled: true\n", encoding="utf-8")
+
+                fake_bin = tmp_path / "bin"
+                fake_bin.mkdir()
+                xcodebuild = fake_bin / "xcodebuild"
+                xcodebuild.write_text(
+                    "\n".join(
+                        [
+                            "#!/usr/bin/env bash",
+                            "if [[ \"$1\" == \"-version\" ]]; then",
+                            "  echo 'Xcode 16.0'",
+                            "  echo 'Build version 16A000'",
+                            "  exit 0",
+                            "fi",
+                            "if [[ \"$1\" == \"-project\" && \"$3\" == \"-list\" ]]; then",
+                            "  echo 'Targets:'",
+                            "  echo '  Squirrel'",
+                            "  exit 0",
+                            "fi",
+                            "exit 1",
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                xcodebuild.chmod(0o755)
+                env = {
+                    **os.environ,
+                    "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                    "RAG_IME_PYTHON": sys.executable,
+                    "RAG_IME_SQUIRREL_WORKDIR": str(workdir),
+                    "RAG_IME_SIDECAR_HOST": "127.0.0.1",
+                    "RAG_IME_SIDECAR_PORT": str(server.server_port),
+                    "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                    "RAG_IME_DOCTOR_REQUIRE_TRYOUT": "1",
+                }
+                result = subprocess.run(
+                    ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                    cwd="/tmp",
+                    env=env,
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertIn("tryout_readiness: 1", result.stdout)
+        self.assertIn("[OK] Squirrel workdir is a git checkout", result.stdout)
+        self.assertIn("[OK] xcodebuild can inspect patched Squirrel project", result.stdout)
+        self.assertIn("[OK] HTTP sidecar health, rime-suggest, and rime-select passed", result.stdout)
+        self.assertIn("[OK] tryout runtime path has launchd or healthy HTTP sidecar", result.stdout)
+        self.assertIn("summary: failures=0", result.stdout)
+
+    def test_doctor_tryout_mode_fails_when_squirrel_workdir_is_missing(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-tryout-") as tmp:
+            env = {
+                **os.environ,
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(Path(tmp) / "missing-squirrel"),
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_TRYOUT": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[FAIL] Squirrel workdir not prepared", result.stdout)
+        self.assertIn("summary: failures=", result.stdout)
 
 
 if __name__ == "__main__":

@@ -93,6 +93,7 @@ POST /api/seed
 POST /api/suggest
 POST /api/rime-suggest
 POST /api/rime-select
+POST /api/predictor-ttfc
 POST /api/action
 POST /api/commit
 ```
@@ -112,6 +113,13 @@ python3 -m rag_ime.cli predictor-doctor
 The browser debug page shows predictor configuration through `/api/health`, but it does not intentionally run model probes on page load. `predictor-doctor` is the safer place to test `/v1/models` and one short candidate request without adding latency to ordinary debug refreshes.
 
 `/api/health` also exposes predictor cooldown state when a local model is configured. A cooldown means the endpoint recently failed or returned a slow empty result; `/rime-suggest` will keep Rime and RAG candidates responsive while temporarily skipping model predictions.
+
+The debug page has a manual Model TTFC probe backed by `POST /api/predictor-ttfc`.
+It runs the same streaming first parsed candidate measurement as the CLI
+`bench-ime-ttfc` path, but only when the user presses the probe button. The
+visible card shows p50, p95, and over-budget count; the full JSON panel shows
+the predictor status and benchmark summary. This belongs in the debug surface,
+not the small IME panel.
 
 `/api/rime-suggest` returns the Squirrel/Rime side-candidate payload. It accepts structured Rime context:
 

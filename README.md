@@ -183,6 +183,13 @@ Check the Squirrel/sidecar integration state:
 scripts/doctor_squirrel_integration.sh
 ```
 
+Before trying patched Squirrel as a real input source, run the strict readiness
+gate:
+
+```bash
+RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
+```
+
 Check and configure the full Xcode requirement for patched Squirrel:
 
 ```bash

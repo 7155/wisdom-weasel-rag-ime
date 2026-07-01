@@ -264,6 +264,17 @@ Check the current Squirrel/sidecar state:
 scripts/doctor_squirrel_integration.sh
 ```
 
+Before switching to a patched Squirrel input source for real typing, use the
+strict readiness gate:
+
+```bash
+RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
+```
+
+This requires a prepared patched Squirrel checkout, `xcodebuild -list` support
+for `Squirrel.xcodeproj`, and a healthy sidecar path that can handle health,
+suggest, and select/writeback requests.
+
 Check the full Xcode requirement:
 
 ```bash

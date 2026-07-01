@@ -882,3 +882,17 @@ Findings:
 - Warm `qwen3.5:0.8b-mlx` short run: p50 first candidate 102 ms, p95 122 ms, with one over-budget sample out of 12.
 - Warm `qwen3.5:0.8b` short run: p50 first candidate 241 ms, p95 397 ms, all 12 samples over budget.
 - The MLX tag remains the usable smoke baseline; ordinary `0.8b` should not be used for per-keystroke prediction.
+
+### 2026-07-01
+Topic:
+- Add debug TTFC probe and strict Squirrel tryout readiness doctor.
+
+Changes:
+- Debug server now exposes `POST /api/predictor-ttfc`.
+- Browser debug page has a compact Model TTFC card showing p50, p95, and over-budget samples.
+- `scripts/doctor_squirrel_integration.sh` now supports `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1`.
+- Strict doctor mode checks prepared patched Squirrel files, generated config, `xcodebuild -list`, sidecar `/health`, `/rime-suggest`, and `/rime-select`.
+
+Findings:
+- Current default doctor path passes sidecar health/suggest/select and prepared Squirrel checks.
+- Strict tryout readiness fails only because the active developer directory is still CommandLineTools, so full Xcode remains the real blocker before patched Squirrel can be built and tried as an input source.
