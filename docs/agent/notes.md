@@ -7,6 +7,27 @@
 
 ## Log
 
+### 2026-07-02 03:32 CST
+Problem:
+- User clarified the panel rule again: LLM candidates should be horizontal; sentence/RAG candidates should be vertical.
+- Live sidecar already returned 1-5 as `model inline` and 6-8 as `rag block`, but the machine had two `Squirrel.app` bundles with the same bundle id.
+- The patched app was under `~/Library/Input Methods/Squirrel.app`; the stale system app under `/Library/Input Methods/Squirrel.app` did not contain the mixed-layout frontend trace.
+
+Changes:
+- Changed strict doctor behavior so a stale same-bundle Squirrel without the mixed-layout frontend trace becomes a failure when patched-app readiness is required.
+- Added `scripts/replace_system_squirrel_app.sh` to back up the old system Squirrel and copy the patched user-local app into `/Library/Input Methods/`.
+- Updated README, macOS frontend docs, and Xcode setup docs with the exact stale-app failure and repair path.
+
+Commands:
+- `scripts/select_macos_input_source.sh im.rime.inputmethod.Squirrel.Hans`
+- `python3 -m unittest tests.test_doctor_squirrel_integration tests.test_build_patched_squirrel tests.test_rime_sidecar`
+- `RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify scripts/doctor_squirrel_integration.sh`
+
+Findings:
+- Focused tests passed: 37 tests.
+- Real strict doctor now correctly fails with `stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace: /Library/Input Methods/Squirrel.app`.
+- The current account cannot write `/Library/Input Methods` without sudo, so the repair script requires an interactive administrator password.
+
 ### 2026-07-02 03:05 CST
 Problem:
 - Tried to automate the final foreground AppKit trace, but macOS rejected AppleScript key events with `osascript is not allowed to send keystrokes`; Computer Use also could not see a usable TextEdit window.

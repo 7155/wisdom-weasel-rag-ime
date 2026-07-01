@@ -117,7 +117,7 @@ check_duplicate_squirrel_apps() {
     [[ "$bundle_id" == "im.rime.inputmethod.Squirrel" ]] || continue
     if ! squirrel_app_has_mixed_frontend_trace "$candidate"; then
       found_stale=1
-      info "stale Squirrel.app with same bundle id exists outside target app: $candidate"
+      require_or_warn "$REQUIRE_PATCHED_APP" "stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace: $candidate"
     fi
   done
 

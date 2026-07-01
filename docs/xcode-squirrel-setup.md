@@ -211,11 +211,19 @@ enough to prove the input method is visible in System Settings. Before checking,
 the doctor refreshes the configured app with `--register-input-source` and
 `--enable-input-source`, which makes the gate less sensitive to macOS TIS cache
 timing immediately after install. It also verifies that the configured
-`Squirrel.app` contains the RAG-IME mixed-layout frontend trace; if another
-same-bundle `Squirrel.app` exists outside the configured target, the doctor
-prints it as an INFO line so stale machine-wide installs are visible while the
-target app can still pass. Add the HIToolbox gate when verifying installation on
-the user's machine:
+`Squirrel.app` contains the RAG-IME mixed-layout frontend trace. If another
+same-bundle `Squirrel.app` exists outside the configured target and does not
+contain that patch, normal doctor warns and strict tryout fails because macOS
+may load the stale frontend. The fix is to replace the system copy with the
+patched user-local app:
+
+```bash
+scripts/replace_system_squirrel_app.sh
+```
+
+The script backs up the old `/Library/Input Methods/Squirrel.app` before
+copying the patched app, then registers and selects the input source. Add the
+HIToolbox gate when verifying installation on the user's machine:
 
 ```bash
 RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 \

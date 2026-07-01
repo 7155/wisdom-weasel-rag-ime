@@ -348,6 +348,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
                     "RAG_IME_PYTHON": sys.executable,
                     "RAG_IME_SQUIRREL_WORKDIR": str(workdir),
+                    "RAG_IME_SQUIRREL_APP": str(tmp_path / "missing-app" / "Squirrel.app"),
+                    "RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES": "",
                     "RAG_IME_SIDECAR_HOST": "127.0.0.1",
                     "RAG_IME_SIDECAR_PORT": str(server.server_port),
                     "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
@@ -484,7 +486,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("[FAIL] installed Squirrel.app lacks RAG-IME mixed-layout frontend trace", result.stdout)
 
-    def test_doctor_reports_stale_duplicate_squirrel_app_as_info(self) -> None:
+    def test_doctor_reports_stale_duplicate_squirrel_app_as_warning(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-duplicate-app-") as tmp:
             tmp_path = Path(tmp)
@@ -521,8 +523,54 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             )
 
         self.assertIn("[OK] installed Squirrel.app contains RAG-IME mixed-layout frontend trace", result.stdout)
-        self.assertIn("[INFO] stale Squirrel.app with same bundle id exists outside target app", result.stdout)
+        self.assertIn(
+            "[WARN] stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace",
+            result.stdout,
+        )
         self.assertIn("summary: failures=0", result.stdout)
+
+    def test_doctor_fails_required_patched_app_when_stale_duplicate_exists(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-duplicate-app-") as tmp:
+            tmp_path = Path(tmp)
+            app = _write_fake_squirrel_app(
+                tmp_path / "Squirrel.app",
+                body=(
+                    "#!/usr/bin/env bash\n"
+                    "# rag-ime.squirrel-frontend-trace.v1\n"
+                    "# panel_text_layout\n"
+                    "exit 0\n"
+                ),
+            )
+            stale = _write_fake_squirrel_app(tmp_path / "StaleSquirrel.app", body="#!/usr/bin/env bash\nexit 0\n")
+            fake_bin = _write_fake_swift(tmp_path, enabled=True)
+
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                "RAG_IME_SQUIRREL_APP": str(app),
+                "RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES": f"{app}:{stale}",
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "1",
+                "RAG_IME_DOCTOR_REQUIRE_PATCHED_APP": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "[FAIL] stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace",
+            result.stdout,
+        )
+        self.assertIn("summary: failures=", result.stdout)
 
     def test_doctor_can_require_frontend_trace_gate(self) -> None:
         root = Path(__file__).resolve().parents[1]
