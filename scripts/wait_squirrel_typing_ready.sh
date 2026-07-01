@@ -13,6 +13,7 @@ if ! added_output="$("$CHECK_INPUT_SOURCE_SCRIPT" --require-hitoolbox-enabled "$
   echo "Squirrel is not fully added to the current user's macOS input-source lists." >&2
   echo "$added_output" >&2
   echo "Use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel." >&2
+  echo "Recommended helper: scripts/open_squirrel_input_source_settings.sh --wait" >&2
   echo "Then run scripts/wait_squirrel_input_source_added.sh before switching input sources." >&2
   exit 2
 fi

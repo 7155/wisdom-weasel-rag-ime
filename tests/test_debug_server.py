@@ -803,6 +803,7 @@ class DebugImeServiceTests(unittest.TestCase):
             status["manualAction"],
             "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel",
         )
+        self.assertEqual(status["helperCommand"], "scripts/open_squirrel_input_source_settings.sh --wait")
         self.assertEqual(status["verificationCommand"], "scripts/wait_squirrel_input_source_added.sh")
 
     def test_input_source_status_marks_missing_third_party_registration_as_install_needed(self) -> None:
@@ -838,6 +839,7 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertFalse(status["thirdPartyEnabled"])
         self.assertEqual(status["readinessState"], "install")
         self.assertEqual(status["nextAction"], "add Squirrel in System Settings, then wait for the add gate")
+        self.assertEqual(status["helperCommand"], "scripts/open_squirrel_input_source_settings.sh --wait")
         self.assertEqual(status["verificationCommand"], "scripts/wait_squirrel_input_source_added.sh")
         third_party_check = next(item for item in status["readinessChecks"] if item["name"] == "third-party-list")
         self.assertFalse(third_party_check["passed"])

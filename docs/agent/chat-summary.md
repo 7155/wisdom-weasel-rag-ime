@@ -1437,3 +1437,21 @@ Verification:
 
 Next:
 - Add Squirrel in System Settings, then run `scripts/wait_squirrel_input_source_added.sh` and `scripts/wait_squirrel_typing_ready.sh`.
+
+### 2026-07-01
+Topic:
+- Add a System Settings helper for the remaining Squirrel input-source blocker.
+
+Changes:
+- Added `scripts/open_squirrel_input_source_settings.sh`.
+- The helper opens the Keyboard settings pane, prints the exact Add flow, and supports `--wait` to run the strict source-list gate.
+- `/api/input-source` now includes `helperCommand=scripts/open_squirrel_input_source_settings.sh --wait` for install-state readiness.
+- README, Xcode setup, macOS adapter docs, debug surface docs, and wait-script errors now point to the helper.
+
+Verification:
+- Targeted wait/debug tests passed.
+- Real local smoke still reports `thirdPartyEnabled=false`, and the helper prints the expected Add flow.
+- Playwright verified the debug card shows `TIS=yes`, `3rd=no`, `selected=no`, `current=ABC`, and the helper command with 0 console errors.
+
+Next:
+- Run `scripts/open_squirrel_input_source_settings.sh --wait`, add Squirrel in System Settings, then run `scripts/wait_squirrel_typing_ready.sh`.

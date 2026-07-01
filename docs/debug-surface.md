@@ -129,12 +129,13 @@ selected Squirrel is the active menu-bar input source
 current  the active input-source id, shortened for scanning
 ```
 
-The same payload also includes `manualAction`, `verificationCommand`, and
-`readinessChecks`, so the page can say "add Squirrel in System Settings" when
-`thirdPartyEnabled=false` instead of incorrectly telling the user to switch to an
-input source that macOS has not fully enabled yet. This keeps the browser
-surface aligned with the manual System Settings and menu-bar steps without
-adding status text to the real compact IME candidate panel.
+The same payload also includes `manualAction`, `helperCommand`,
+`verificationCommand`, and `readinessChecks`, so the page can say "run
+`scripts/open_squirrel_input_source_settings.sh --wait` and add Squirrel in
+System Settings" when `thirdPartyEnabled=false` instead of incorrectly telling
+the user to switch to an input source that macOS has not fully enabled yet. This
+keeps the browser surface aligned with the manual System Settings and menu-bar
+steps without adding status text to the real compact IME candidate panel.
 
 For local model debugging, use the CLI doctor before opening the debug page:
 

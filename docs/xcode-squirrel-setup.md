@@ -236,15 +236,29 @@ reports Squirrel as registered/selectable.
 
 Terminal-based selection can still fail if macOS refuses to switch the active
 foreground input source from a background command; use the input menu for the
-continuous typing test. After switching from the input menu, use:
+continuous typing test. To open the Keyboard settings pane, use the System
+Settings Add flow, and wait until macOS has accepted Squirrel into the current
+user's third-party input-source list, use:
+
+```bash
+scripts/open_squirrel_input_source_settings.sh --wait
+```
+
+The helper only opens settings and waits; it does not click System Settings. If
+settings is already open, run the strict wait gate directly:
 
 ```bash
 scripts/wait_squirrel_input_source_added.sh
+```
+
+After switching from the input menu, use:
+
+```bash
 scripts/wait_squirrel_typing_ready.sh
 ```
 
-The first command waits until the current user's HIToolbox and third-party
-input-source lists both include Squirrel. The second waits until
+The source-added gate waits until the current user's HIToolbox and third-party
+input-source lists both include Squirrel. The typing-ready gate waits until
 `im.rime.inputmethod.Squirrel.Hans selected=true`, then confirms the sidecar
 health and configured local model lane.
 
@@ -266,8 +280,8 @@ It does not install, enable, switch, select a side candidate, or drive the GUI.
 
 Manual continuous-use verification:
 
-1. Open System Settings -> Keyboard -> Input Sources and add Squirrel from Chinese, Simplified if it is not present.
-2. Run `scripts/wait_squirrel_input_source_added.sh` until it passes.
+1. Run `scripts/open_squirrel_input_source_settings.sh --wait`.
+2. In System Settings, add Squirrel from Chinese, Simplified if it is not present.
 3. Select Squirrel from the macOS input menu and wait for `scripts/wait_squirrel_typing_ready.sh` to pass.
 4. Run `squirrel-tryout-gate` and keep `/tmp/rag-ime-squirrel-tryout-report.json`.
 5. Open a normal editor and type at least 20 mixed Chinese/English prompts.

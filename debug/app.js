@@ -226,6 +226,7 @@ function render() {
             readinessState: state.inputSource.readinessState,
             nextAction: state.inputSource.nextAction,
             manualAction: state.inputSource.manualAction,
+            helperCommand: state.inputSource.helperCommand,
             verificationCommand: state.inputSource.verificationCommand,
             readinessChecks: state.inputSource.readinessChecks,
           }
@@ -528,6 +529,7 @@ function compactBool(value) {
 function renderInputSource() {
   const status = state.inputSource || {};
   const readiness = status.readinessState || "check";
+  const nextCommand = status.helperCommand || status.verificationCommand;
   elements.inputInstalled.textContent =
     status.available === false ? "off" : compactBool(status.enabled === true && status.selectable === true);
   elements.inputThirdParty.textContent = compactBool(status.thirdPartyEnabled);
@@ -536,7 +538,7 @@ function renderInputSource() {
   elements.inputSourceHint.textContent = [
     status.readinessMessage || status.error || "waiting for status",
     status.nextAction,
-    status.verificationCommand,
+    nextCommand,
   ]
     .filter(Boolean)
     .join(" · ");

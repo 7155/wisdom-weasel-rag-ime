@@ -2014,3 +2014,24 @@ Verification:
 
 Status:
 - The debug surface now points directly to the System Settings Add step when macOS has not accepted Squirrel into the third-party input-source list.
+
+### 2026-07-01 20:56 CST
+Problem:
+- The remaining real-use blocker requires the user to open Keyboard settings and add Squirrel manually, but the repo only printed the path as text.
+- This still left unnecessary manual navigation friction when repeatedly testing the install flow.
+
+Changes:
+- Added `scripts/open_squirrel_input_source_settings.sh`.
+- The helper opens the macOS Keyboard settings pane when the settings URL is accepted, prints the exact Add flow, and can run the strict add gate with `--wait`.
+- `/api/input-source` install readiness now exposes `helperCommand=scripts/open_squirrel_input_source_settings.sh --wait`.
+- Debug page, README, Xcode setup, macOS adapter docs, and wait-script error messages now point to the same helper path.
+
+Verification:
+- Added shell tests for already-added and missing-source helper behavior.
+- Targeted wait/debug tests passed.
+- Real local smoke with `--no-open` printed `thirdPartyEnabled=false` and the strict wait gate.
+- Playwright snapshot showed the debug card recommending `scripts/open_squirrel_input_source_settings.sh --wait`; browser console had 0 errors.
+- Screenshot evidence: `output/playwright/rag-ime-debug-input-source-helper.png`.
+
+Status:
+- The repo still does not click System Settings automatically; the manual Add step remains required, but the setup flow now opens the right settings area and waits with a strict machine-verifiable gate.
