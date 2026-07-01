@@ -41,6 +41,20 @@ Run the doctor after preparing the checkout and starting the sidecar:
 scripts/doctor_squirrel_integration.sh
 ```
 
+Before trying the patched input method as a real macOS input source, run the
+strict readiness gate:
+
+```bash
+RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
+```
+
+This mode fails non-zero unless the patched Squirrel checkout is prepared, the
+RAG-IME Swift sidecar files and generated config are present, `xcodebuild` can
+inspect `Squirrel.xcodeproj`, and either the LaunchAgent is loaded or the HTTP
+sidecar is healthy. The sidecar probe checks `/health`, `/rime-suggest`, and
+`/rime-select`, so it verifies both candidate retrieval and accepted-candidate
+writeback.
+
 Manual apply:
 
 ```bash

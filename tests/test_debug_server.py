@@ -6,7 +6,7 @@ import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
 from urllib.request import Request, urlopen
@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.models import ModelPrediction
+from rag_ime.predictor import OllamaPredictionConfig, OllamaPredictionProvider
 
 
 class FakePredictionProvider:
@@ -57,6 +58,29 @@ class BlockingPredictionProvider:
                 confidence=0.9,
             )
         ][:max_candidates]
+
+
+class MockOllamaStreamingHandler(BaseHTTPRequestHandler):
+    captured_payloads: list[dict[str, object]] = []
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        MockOllamaStreamingHandler.captured_payloads.append(payload)
+        chunks = [
+            {"message": {"role": "assistant", "content": '["本地记忆"'}},
+            {"message": {"role": "assistant", "content": ',"输入法候选"]'}, "done": True},
+        ]
+        body = b"".join(json.dumps(item, ensure_ascii=False).encode("utf-8") + b"\n" for item in chunks)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
 
 
 class VectorAwareFixtureCore(FixtureCoreClient):
@@ -140,6 +164,48 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertIn("当前正在续写", predictor.last_recent_context)
         self.assertIn("historyContext", payload)
         self.assertIn("历史输入会进入模型预测", payload["historyContext"])
+
+    def test_predictor_ttfc_probe_uses_streaming_provider(self) -> None:
+        MockOllamaStreamingHandler.captured_payloads = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MockOllamaStreamingHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            self.service.predictor = OllamaPredictionProvider(
+                OllamaPredictionConfig(
+                    base_url=f"http://127.0.0.1:{server.server_port}",
+                    model="qwen3.5:0.8b-mlx",
+                    profile="instant",
+                    timeout_s=1.0,
+                )
+            )
+            report = self.service.predictor_ttfc(
+                {
+                    "cases": [
+                        {
+                            "id": "debug-case",
+                            "currentInput": "RAG 输入法",
+                            "recentContext": "用户正在调试模型首候选",
+                        }
+                    ],
+                    "repeat": 1,
+                    "latencyBudgetMs": 200,
+                }
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(report["schemaVersion"], "rag-ime.debug-predictor-ttfc.v1")
+        self.assertEqual(report["repeat"]["effectiveCaseCount"], 1)
+        benchmark = report["benchmark"]
+        self.assertTrue(benchmark["supported"])
+        self.assertTrue(benchmark["summary"]["hasFirstCandidate"])
+        self.assertEqual(benchmark["cases"][0]["caseId"], "debug-case")
+        self.assertEqual(benchmark["cases"][0]["candidates"][0], "本地记忆")
+        self.assertTrue(MockOllamaStreamingHandler.captured_payloads[0]["stream"])
+        self.assertFalse(MockOllamaStreamingHandler.captured_payloads[0]["think"])
 
     def test_rime_suggest_endpoint_uses_rime_candidates_for_side_query(self) -> None:
         predictor = FakePredictionProvider()
@@ -456,6 +522,58 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["sessionId"], "http-root")
         self.assertEqual(selection["schemaVersion"], "rag-ime.rime-selection.v1")
         self.assertTrue(str(selection["eventId"]).startswith("event:"))
+
+    def test_http_debug_server_exposes_predictor_ttfc_probe(self) -> None:
+        MockOllamaStreamingHandler.captured_payloads = []
+        model_server = ThreadingHTTPServer(("127.0.0.1", 0), MockOllamaStreamingHandler)
+        model_thread = Thread(target=model_server.serve_forever, daemon=True)
+        model_thread.start()
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        self.service.predictor = OllamaPredictionProvider(
+            OllamaPredictionConfig(
+                base_url=f"http://127.0.0.1:{model_server.server_port}",
+                model="qwen3.5:0.8b-mlx",
+                profile="instant",
+                timeout_s=1.0,
+            )
+        )
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        debug_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        debug_thread = Thread(target=debug_server.serve_forever, daemon=True)
+        debug_thread.start()
+        try:
+            request = Request(
+                f"http://127.0.0.1:{debug_server.server_port}/api/predictor-ttfc",
+                data=json.dumps(
+                    {
+                        "currentInput": "Squirrel 候选",
+                        "recentContext": "HTTP debug probe",
+                        "repeat": 1,
+                        "latencyBudgetMs": 200,
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            debug_server.shutdown()
+            debug_thread.join(timeout=2)
+            debug_server.server_close()
+            model_server.shutdown()
+            model_thread.join(timeout=2)
+            model_server.server_close()
+
+        self.assertEqual(payload["schemaVersion"], "rag-ime.debug-predictor-ttfc.v1")
+        self.assertEqual(payload["benchmark"]["providerName"], "local-ollama")
+        self.assertTrue(payload["benchmark"]["summary"]["hasFirstCandidate"])
+        self.assertEqual(MockOllamaStreamingHandler.captured_payloads[0]["model"], "qwen3.5:0.8b-mlx")
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):

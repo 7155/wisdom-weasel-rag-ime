@@ -20,7 +20,13 @@ from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
-from .predictor import PredictionProvider, prediction_provider_from_env, prediction_provider_status
+from .predictor import (
+    PredictionBenchmarkCase,
+    PredictionProvider,
+    benchmark_streaming_ttft_provider,
+    prediction_provider_from_env,
+    prediction_provider_status,
+)
 from .rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
@@ -101,6 +107,31 @@ class DebugImeService:
             "predictor": prediction_provider_status(self.predictor),
             "suggestionCache": self._suggestion_cache_stats(),
             "vectorStats": self._vector_index_stats(),
+        }
+
+    def predictor_ttfc(self, payload: dict[str, Any]) -> dict[str, object]:
+        cases = self._predictor_ttfc_cases(payload)
+        repeat = _bounded_int(payload.get("repeat"), default=3, minimum=1, maximum=50)
+        max_candidates = _bounded_int(payload.get("maxCandidates"), default=3, minimum=1, maximum=10)
+        latency_budget_ms = _bounded_int(payload.get("latencyBudgetMs"), default=200, minimum=1, maximum=10_000)
+        report = benchmark_streaming_ttft_provider(
+            self.predictor,
+            cases,
+            max_candidates=max_candidates,
+            repeat=repeat,
+            latency_budget_ms=latency_budget_ms,
+        )
+        return {
+            "schemaVersion": "rag-ime.debug-predictor-ttfc.v1",
+            "project": self.config.project,
+            "latencyBudgetMs": latency_budget_ms,
+            "repeat": {
+                "requested": repeat,
+                "baseCaseCount": len(cases),
+                "effectiveCaseCount": len(cases) * repeat,
+            },
+            "predictor": prediction_provider_status(self.predictor),
+            "benchmark": report,
         }
 
     def seed(self) -> dict[str, object]:
@@ -215,6 +246,55 @@ class DebugImeService:
         )
         self._clear_rime_cache()
         return action_response_payload(action)
+
+    def _predictor_ttfc_cases(self, payload: dict[str, Any]) -> list[PredictionBenchmarkCase]:
+        raw_cases = payload.get("cases")
+        case_items: list[object]
+        if isinstance(raw_cases, list) and raw_cases:
+            case_items = raw_cases
+        else:
+            case_items = [
+                {
+                    "id": "debug-current",
+                    "currentInput": _string(payload.get("currentInput")) or "RAG 输入法",
+                    "recentContext": _string(payload.get("recentContext")),
+                }
+            ]
+        cases: list[PredictionBenchmarkCase] = []
+        for index, item in enumerate(case_items, start=1):
+            if isinstance(item, str):
+                current_input = item
+                recent_context = _string(payload.get("recentContext"))
+                case_id = f"case-{index}"
+            elif isinstance(item, dict):
+                current_input = (
+                    _string(item.get("currentInput"))
+                    or _string(item.get("current_input"))
+                    or _string(item.get("query"))
+                    or _string(item.get("input"))
+                )
+                recent_context = _string(item.get("recentContext")) or _string(item.get("recent_context"))
+                case_id = _string(item.get("id")) or _string(item.get("caseId")) or f"case-{index}"
+            else:
+                continue
+            current_input = current_input.strip()
+            if not current_input:
+                continue
+            prediction_context = build_prediction_context(
+                self.core,
+                explicit_recent_context=recent_context,
+                project=self.config.project,
+            )
+            cases.append(
+                PredictionBenchmarkCase(
+                    current_input=current_input,
+                    recent_context=prediction_context,
+                    case_id=case_id,
+                )
+            )
+        if not cases:
+            raise ValueError("predictor TTFC probe needs at least one non-empty input case")
+        return cases
 
     def _event_count(self) -> int | None:
         count = getattr(self.core, "event_count", None)
@@ -445,6 +525,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.rime_suggest(payload))
             elif path in ("/api/rime-select", "/rime-select"):
                 self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
+            elif path in ("/api/predictor-ttfc", "/predictor-ttfc"):
+                self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
             elif path in ("/api/commit", "/commit"):
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
             elif path in ("/api/action", "/action"):

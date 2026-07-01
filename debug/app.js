@@ -10,6 +10,7 @@ const state = {
   modelPredictions: [],
   historyContext: "",
   rimeSidecar: null,
+  predictorTtfc: null,
   health: null,
   lastPayload: null,
   timer: 0,
@@ -82,6 +83,10 @@ const elements = {
   seedButton: document.getElementById("seedButton"),
   compactButton: document.getElementById("compactButton"),
   evidenceButton: document.getElementById("evidenceButton"),
+  ttfcButton: document.getElementById("ttfcButton"),
+  ttfcP50: document.getElementById("ttfcP50"),
+  ttfcP95: document.getElementById("ttfcP95"),
+  ttfcBudget: document.getElementById("ttfcBudget"),
 };
 
 function keyNumber(event) {
@@ -178,10 +183,19 @@ function render() {
       rimeSuggestCache: state.health?.rimeSuggestCache || null,
       suggestionCache: state.health?.suggestionCache || null,
       vectorStats: state.health?.vectorStats || null,
+      predictorTtfc: state.predictorTtfc
+        ? {
+            supported: state.predictorTtfc.benchmark?.supported,
+            summary: state.predictorTtfc.benchmark?.summary,
+            provider: state.predictorTtfc.predictor,
+          }
+        : null,
     },
     null,
     2,
   );
+
+  renderTtfc();
 }
 
 function escapeHtml(value) {
@@ -428,6 +442,52 @@ async function refreshHealth() {
   }
 }
 
+function renderTtfc() {
+  const summary = state.predictorTtfc?.benchmark?.summary || {};
+  const supported = state.predictorTtfc?.benchmark?.supported;
+  const p50 = Number(summary.p50FirstCandidateMs || 0);
+  const p95 = Number(summary.p95FirstCandidateMs || 0);
+  const over = Number(summary.overBudgetCount || 0);
+  elements.ttfcP50.textContent = p50 ? `${p50}ms` : "--";
+  elements.ttfcP95.textContent = p95 ? `${p95}ms` : "--";
+  elements.ttfcBudget.textContent = supported === false ? "off" : String(over || 0);
+  elements.ttfcButton.classList.toggle("is-warn", supported === false || over > 0);
+}
+
+async function probePredictorTtfc() {
+  elements.ttfcButton.disabled = true;
+  elements.ttfcButton.textContent = "probing";
+  try {
+    const response = await fetch("/api/predictor-ttfc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        currentInput: state.query || "RAG 输入法",
+        recentContext: state.committed.slice(-220),
+        repeat: 3,
+        maxCandidates: 3,
+        latencyBudgetMs: 200,
+      }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    state.predictorTtfc = await response.json();
+    state.apiOnline = true;
+  } catch (error) {
+    state.predictorTtfc = {
+      benchmark: {
+        supported: false,
+        summary: {},
+        error: String(error),
+      },
+    };
+    state.apiOnline = false;
+  } finally {
+    elements.ttfcButton.disabled = false;
+    elements.ttfcButton.textContent = "probe";
+    render();
+  }
+}
+
 elements.documentCard.addEventListener("click", () => elements.hiddenInput.focus());
 elements.hiddenInput.addEventListener("keydown", handleKeydown);
 elements.hiddenInput.addEventListener("input", handleInput);
@@ -444,6 +504,7 @@ elements.evidenceButton.addEventListener("click", () => {
   render();
   elements.hiddenInput.focus();
 });
+elements.ttfcButton.addEventListener("click", probePredictorTtfc);
 
 render();
 refreshHealth().then(render);

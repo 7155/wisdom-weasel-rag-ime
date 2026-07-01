@@ -12,6 +12,7 @@ LAUNCH_AGENT_LABEL="${RAG_IME_LAUNCH_AGENT_LABEL:-com.rag-ime.sidecar}"
 REQUIRE_SIDECAR="${RAG_IME_DOCTOR_REQUIRE_SIDECAR:-0}"
 REQUIRE_XCODE="${RAG_IME_DOCTOR_REQUIRE_XCODE:-0}"
 REQUIRE_PREDICTOR="${RAG_IME_DOCTOR_REQUIRE_PREDICTOR:-0}"
+REQUIRE_TRYOUT="${RAG_IME_DOCTOR_REQUIRE_TRYOUT:-0}"
 CHECK_LAUNCHD="${RAG_IME_DOCTOR_CHECK_LAUNCHD:-1}"
 EXPECT_PREDICTOR_PROVIDER="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROVIDER:-${RAG_IME_PREDICTOR_PROVIDER:-}}"
 EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDICTOR_MODEL:-}}"
@@ -19,6 +20,8 @@ EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_S
 
 failures=0
 warnings=0
+launchd_loaded=0
+sidecar_healthy=0
 
 ok() {
   printf '[OK] %s\n' "$1"
@@ -48,10 +51,16 @@ bool_true() {
   [[ "$1" == "1" || "$1" == "true" || "$1" == "TRUE" || "$1" == "yes" || "$1" == "YES" ]]
 }
 
+if bool_true "$REQUIRE_TRYOUT"; then
+  REQUIRE_SIDECAR=1
+  REQUIRE_XCODE=1
+fi
+
 printf 'RAG-IME Squirrel integration doctor\n'
 printf 'repo: %s\n' "$ROOT"
 printf 'squirrel_workdir: %s\n' "$SQUIRREL_WORKDIR"
 printf 'sidecar: %s\n' "$SIDECAR_BASE_URL"
+printf 'tryout_readiness: %s\n' "$REQUIRE_TRYOUT"
 printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
 printf 'DEVELOPER_DIR: %s\n\n' "${DEVELOPER_DIR:-<unset>}"
 
@@ -78,24 +87,35 @@ if [[ -d "$SQUIRREL_WORKDIR/.git" ]]; then
   if [[ -f "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" && -f "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" ]]; then
     ok "Squirrel workdir contains RAG-IME sidecar Swift files"
   else
-    warn "Squirrel workdir is missing RAG-IME Swift files; run scripts/prepare_squirrel_workspace.sh"
+    require_or_warn "$REQUIRE_TRYOUT" "Squirrel workdir is missing RAG-IME Swift files; run scripts/prepare_squirrel_workspace.sh"
   fi
   if [[ -f "$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" ]]; then
     ok "generated Squirrel config snippet exists"
   else
-    warn "generated config snippet missing: $SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml"
+    require_or_warn "$REQUIRE_TRYOUT" "generated config snippet missing: $SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml"
   fi
   if git -C "$SQUIRREL_WORKDIR" diff --check >/dev/null 2>&1; then
     ok "Squirrel workdir diff passes whitespace check"
   else
-    warn "Squirrel workdir diff has whitespace issues"
+    require_or_warn "$REQUIRE_TRYOUT" "Squirrel workdir diff has whitespace issues"
   fi
 else
-  warn "Squirrel workdir not prepared; run scripts/prepare_squirrel_workspace.sh"
+  require_or_warn "$REQUIRE_TRYOUT" "Squirrel workdir not prepared; run scripts/prepare_squirrel_workspace.sh"
 fi
 
 if command -v xcodebuild >/dev/null 2>&1 && xcodebuild_version="$(xcodebuild -version 2>/dev/null)"; then
   ok "xcodebuild is available: $(printf '%s' "$xcodebuild_version" | tr '\n' ' ')"
+  if bool_true "$REQUIRE_TRYOUT"; then
+    if [[ -d "$SQUIRREL_WORKDIR/Squirrel.xcodeproj" || -f "$SQUIRREL_WORKDIR/Squirrel.xcodeproj/project.pbxproj" ]]; then
+      if xcodebuild -project "$SQUIRREL_WORKDIR/Squirrel.xcodeproj" -list >/dev/null 2>&1; then
+        ok "xcodebuild can inspect patched Squirrel project"
+      else
+        fail "xcodebuild cannot inspect patched Squirrel project: $SQUIRREL_WORKDIR/Squirrel.xcodeproj"
+      fi
+    else
+      fail "patched Squirrel project missing: $SQUIRREL_WORKDIR/Squirrel.xcodeproj"
+    fi
+  fi
 else
   active_developer_dir="$(xcode-select -p 2>/dev/null || true)"
   if [[ "$active_developer_dir" == *CommandLineTools* ]]; then
@@ -113,6 +133,7 @@ fi
 
 if bool_true "$CHECK_LAUNCHD"; then
   if launchctl print "gui/$(id -u)/$LAUNCH_AGENT_LABEL" >/dev/null 2>&1; then
+    launchd_loaded=1
     ok "LaunchAgent loaded: $LAUNCH_AGENT_LABEL"
   else
     warn "LaunchAgent not loaded: run scripts/install_sidecar_launch_agent.sh"
@@ -166,7 +187,33 @@ try:
     )
     with urllib.request.urlopen(request, timeout=2.5) as response:
         result = json.loads(response.read().decode("utf-8"))
-    if health.get("ok") and result.get("schemaVersion") == "rag-ime.rime-sidecar.v1":
+    select_payload = {
+        "candidate": {
+            "label": "2",
+            "text": "doctor side candidate",
+            "insertText": "doctor side candidate",
+            "sourceType": "model",
+            "selectionAction": "commit_side_candidate",
+            "sourceIndex": 0,
+        },
+        "query": "doctor",
+        "recentContext": "Squirrel tryout readiness probe",
+        "preedit": "doctor",
+    }
+    select_request = urllib.request.Request(
+        f"{base}/rime-select",
+        data=json.dumps(select_payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(select_request, timeout=2.5) as response:
+        selection = json.loads(response.read().decode("utf-8"))
+    if (
+        health.get("ok")
+        and result.get("schemaVersion") == "rag-ime.rime-sidecar.v1"
+        and selection.get("schemaVersion") == "rag-ime.rime-selection.v1"
+        and selection.get("ok") is not False
+    ):
         predictor = health.get("predictor") if isinstance(health.get("predictor"), dict) else {}
         provider_name = str(predictor.get("providerName") or "")
         model = str(predictor.get("model") or "")
@@ -191,6 +238,7 @@ try:
             "ok": True,
             "eventCount": health.get("eventCount"),
             "displayCandidates": len(result.get("displayCandidates", [])),
+            "rimeSelectOk": True,
             "predictorCheck": {
                 "ok": predictor_ok,
                 "message": "; ".join(messages),
@@ -208,7 +256,8 @@ PY
 sidecar_status=$?
 set -e
 if [[ "$sidecar_status" == "0" ]]; then
-  ok "HTTP sidecar health and rime-suggest passed: $(cat "$sidecar_out")"
+  sidecar_healthy=1
+  ok "HTTP sidecar health, rime-suggest, and rime-select passed: $(cat "$sidecar_out")"
   predictor_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
 import json
 import sys
@@ -232,6 +281,14 @@ else
   require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; run scripts/install_sidecar_launch_agent.sh"
 fi
 rm -f "$sidecar_out" "$sidecar_err"
+
+if bool_true "$REQUIRE_TRYOUT"; then
+  if [[ "$launchd_loaded" == "1" || "$sidecar_healthy" == "1" ]]; then
+    ok "tryout runtime path has launchd or healthy HTTP sidecar"
+  else
+    fail "tryout runtime path has neither loaded LaunchAgent nor healthy HTTP sidecar"
+  fi
+fi
 
 printf '\nsummary: failures=%s warnings=%s\n' "$failures" "$warnings"
 
