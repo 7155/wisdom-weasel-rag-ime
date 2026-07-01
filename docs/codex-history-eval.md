@@ -148,6 +148,47 @@ When `--core-mode local` is used, the report also includes process-local cache s
 
 Use `RAG_IME_SUGGESTION_CACHE_SIZE=0` or `--suggestion-cache-size 0` to benchmark uncached retrieval.
 
+## Evaluate The Rime Sidecar Display Path
+
+`eval-codex-history` calls `InputMethodAdapter.suggest(...)` directly. That is the right gate for RAG quality, but it does not prove that the actual input method path works. The Squirrel/Rime path has extra product constraints:
+
+- Rime candidates must stay first.
+- Model/RAG candidates only use remaining side slots.
+- The trigger guard can skip side candidates on raw pinyin or unstable composing updates.
+- `/rime-suggest` has a short TTL cache and in-flight dedupe that should be measured separately from the core suggestion cache.
+
+Use `eval-rime-sidecar` after importing history:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-rime-sidecar \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --match any \
+  --repeat 2
+```
+
+This command uses the same JSONL cases, but it constructs a Rime-like payload, calls the same `DebugImeService.rime_suggest(...)` path used by the HTTP sidecar, and scores only non-Rime `displayCandidates`. This avoids false positives where the Rime candidate itself contains the query text.
+
+The report adds a `sidecar` block:
+
+```json
+{
+  "schemaVersion": "rag-ime.rime-sidecar-eval.v1",
+  "sidecar": {
+    "maxVisibleCandidates": 6,
+    "maxSideCandidates": 3,
+    "triggerRefreshCount": 40,
+    "totalSideCandidates": 80,
+    "totalModelCandidates": 0,
+    "totalRagCandidates": 80,
+    "hasSideCandidates": true,
+    "rimeSuggestCache": {"hits": 20, "misses": 20}
+  }
+}
+```
+
+Use this as the IME-facing gate. A case passing `eval-codex-history` but failing `eval-rime-sidecar` usually means the RAG material exists, but the candidate panel did not expose it because of side-slot limits, trigger policy, compact display text, or sidecar cache state.
+
 ## Optional Vector Side Index
 
 The local SQLite core can maintain a side table of vectors next to the FTS5 index. This is disabled by default so the real input-method path stays fast and dependency-free until an embedding provider is explicitly configured.
@@ -317,6 +358,25 @@ Default FTS5 + local rule rerank:
   meanReciprocalRank = 0.880
   latency.p95Ms = 30
 ```
+
+The first Rime-sidecar display-path baseline then exposed a separate IME product gap: direct RAG retrieval passed 34/34, but `/rime-suggest` passed only 13/34 because full `historyContext` was being reused as RAG `recentContext` and recent status text crowded out real memories in the three visible side slots.
+
+After separating model prediction context from RAG retrieval context, the same 5000-record temp DB reports:
+
+```text
+Rime sidecar display path:
+  passRate 31/34 = 0.912
+  top1Accuracy = 0.794
+  meanReciprocalRank = 0.843
+  latency.p95Ms = 34-49 across repeated local runs
+
+Rime sidecar display path, repeat 2 with --rime-cache-ttl-ms 5000:
+  passRate 62/68 = 0.912
+  rimeSuggestCache hits/misses = 34/34
+  latency.p95Ms = 32
+```
+
+The remaining failed sidecar cases are useful product work, not a core retrieval failure: with three visible side slots, some correct terms remain just outside the merged display payload or exist only in debug/model-context metadata. Treat this as the next candidate-compression/ranking target.
 
 The current default remains FTS5/rule rerank. `local-hash` is useful only as a deterministic side-index contract test and should not be enabled as a product default. The next meaningful comparison needs a real local/WSL semantic embedding provider and the same 34-case report.
 

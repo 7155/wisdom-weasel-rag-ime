@@ -654,3 +654,24 @@ Verification:
 
 Next:
 - Continue toward real Squirrel/Xcode install and WSL/Mac model endpoint testing.
+
+### 2026-07-01
+Topic:
+- Add real Rime sidecar display-path evaluation.
+
+Changes:
+- Added `eval-rime-sidecar` CLI.
+- It uses the same JSONL cases as `eval-codex-history`, calls `DebugImeService.rime_suggest(...)`, and scores only model/RAG side candidates from merged `displayCandidates`.
+- Sidecar eval report includes trigger refresh counts, side/model/RAG candidate counts, `/rime-suggest` cache stats, suggestion cache stats, predictor status, vector stats, and latency.
+- Fixed a sidecar context-boundary bug: model prediction still receives `historyContext`, but RAG retrieval now receives only explicit `committedContext`.
+
+Verification:
+- Sidecar eval test covers repeat/cache behavior.
+- Rime sidecar context-boundary test proves historical input context does not pollute RAG retrieval.
+- Direct 5000-record RAG eval still passes 34/34 with top1Accuracy=0.794, meanReciprocalRank=0.865, p95=32ms.
+- Real Rime sidecar eval improved from 13/34, p95=73ms before the split to 31/34, top1Accuracy=0.794, meanReciprocalRank=0.843, with p95 observed between 34ms and 49ms after the split.
+- Repeat sidecar eval with `--rime-cache-ttl-ms 5000` reports `rimeSuggestCache` hits/misses = 34/34.
+
+Next:
+- Improve remaining sidecar-only misses with candidate compression/ranking for three visible side slots.
+- Test a real local/WSL Qwen endpoint when available.

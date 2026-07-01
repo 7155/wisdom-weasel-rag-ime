@@ -376,6 +376,66 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertGreaterEqual(report["cacheStats"]["hits"], 2)
         self.assertIn("elapsedMs", report["cases"][2])
 
+    def test_cli_eval_rime_sidecar_scores_display_side_candidates_and_cache(self) -> None:
+        db_path = self.root / "rime-sidecar-eval.sqlite"
+        with redirect_stdout(io.StringIO()):
+            import_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "import-codex-history",
+                    "--path",
+                    str(self.history),
+                    "--project",
+                    "wisdom-weasel-rag-ime",
+                ]
+            )
+        self.assertEqual(import_code, 0)
+
+        cases_file = self.root / "rime-sidecar-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "squirrel-rag-sidecar",
+                    "query": "Squirrel RAG 输入法候选",
+                    "expectedTerms": ["Squirrel", "本地记忆"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        eval_stdout = io.StringIO()
+        with redirect_stdout(eval_stdout):
+            eval_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "eval-rime-sidecar",
+                    "--cases-file",
+                    str(cases_file),
+                    "--match",
+                    "all",
+                    "--repeat",
+                    "2",
+                ]
+            )
+        self.assertEqual(eval_code, 0)
+        report = json.loads(eval_stdout.getvalue())
+        self.assertEqual(report["schemaVersion"], "rag-ime.rime-sidecar-eval.v1")
+        self.assertEqual(report["repeat"]["effectiveCaseCount"], 2)
+        self.assertEqual(report["passed"], 2)
+        self.assertEqual(report["metrics"]["top1Accuracy"], 1.0)
+        self.assertEqual(report["sidecar"]["triggerRefreshCount"], 2)
+        self.assertGreaterEqual(report["sidecar"]["totalRagCandidates"], 1)
+        self.assertGreaterEqual(report["sidecar"]["totalSideCandidates"], 1)
+        self.assertEqual(report["sidecar"]["totalModelCandidates"], 0)
+        self.assertGreaterEqual(report["sidecar"]["rimeSuggestCache"]["hits"], 1)
+        self.assertEqual(report["sidecar"]["rimeSuggestCache"]["misses"], 1)
+        self.assertIn("elapsedMs", report["cases"][0])
+        self.assertIn("本地记忆", " ".join(report["cases"][0]["topSurfaces"]))
+
     def test_cli_eval_comparison_runs_rag_and_model_on_same_cases(self) -> None:
         db_path = self.root / "comparison.sqlite"
         with redirect_stdout(io.StringIO()):

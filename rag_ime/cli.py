@@ -14,6 +14,7 @@ from typing import Sequence
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .agent_hook import build_first_run_injection
 from .codex_history import (
+    CodexEvalCase,
     eval_report,
     evaluate_suggestions,
     input_event_from_codex_record,
@@ -191,6 +192,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=1,
         help="Repeat all cases to measure warm-cache latency and hit behavior.",
     )
+
+    eval_rime_sidecar = subparsers.add_parser(
+        "eval-rime-sidecar",
+        help="Evaluate Rime sidecar side candidates against explicit JSONL cases",
+    )
+    eval_rime_sidecar.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
+    eval_rime_sidecar.add_argument("--project", default="wisdom-weasel-rag-ime")
+    eval_rime_sidecar.add_argument("--match", choices=("any", "all"), default="any")
+    eval_rime_sidecar.add_argument("--repeat", type=int, default=1)
+    eval_rime_sidecar.add_argument("--max-visible-candidates", type=int, default=6)
+    eval_rime_sidecar.add_argument("--max-side-candidates", type=int, default=3)
+    eval_rime_sidecar.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
+    eval_rime_sidecar.add_argument("--force-side-candidates", action="store_true")
 
     predict_benchmark = subparsers.add_parser("predict-benchmark", help="Measure local model prediction latency")
     predict_benchmark.add_argument("--case", action="append", default=[], help="Input case to predict. Can be repeated.")
@@ -572,6 +586,81 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
+    if args.command == "eval-rime-sidecar":
+        from .debug_server import DebugImeService, DebugServerConfig
+
+        cases = load_eval_cases(Path(args.cases_file))
+        repeat_count = max(1, args.repeat)
+        max_visible_candidates = max(1, min(10, args.max_visible_candidates))
+        max_side_candidates = max(0, min(6, args.max_side_candidates))
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(args.db_path),
+                project=args.project,
+                core=core,
+                predictor=predictor,
+                seed_if_empty=False,
+                rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
+            )
+        )
+        results = []
+        elapsed_ms_by_case: dict[str, int] = {}
+        side_counts: list[int] = []
+        model_counts: list[int] = []
+        rag_counts: list[int] = []
+        trigger_refresh_count = 0
+        for repeat_index in range(1, repeat_count + 1):
+            for case_index, case in enumerate(cases, start=1):
+                eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat_count)
+                payload = _rime_eval_payload(
+                    eval_case,
+                    request_seq=(repeat_index - 1) * len(cases) + case_index,
+                    project=eval_case.project or args.project,
+                    max_visible_candidates=max_visible_candidates,
+                    max_side_candidates=max_side_candidates,
+                    force_side_candidates=bool(args.force_side_candidates),
+                )
+                started = time.perf_counter()
+                response = service.rime_suggest(payload)
+                elapsed_ms_by_case[eval_case.case_id] = int((time.perf_counter() - started) * 1000)
+                display_candidates = response.get("displayCandidates") if isinstance(response, dict) else []
+                side_suggestions = _rime_display_side_candidates_as_eval_suggestions(display_candidates)
+                side_counts.append(len(side_suggestions))
+                model_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "model_prediction"))
+                rag_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "rag_candidate"))
+                trigger = response.get("triggerDecision") if isinstance(response, dict) else {}
+                if isinstance(trigger, dict) and trigger.get("shouldRefresh"):
+                    trigger_refresh_count += 1
+                results.append(evaluate_suggestions(eval_case, side_suggestions, match=args.match))
+        report = eval_report(results)
+        report["schemaVersion"] = "rag-ime.rime-sidecar-eval.v1"
+        report["casesFile"] = str(Path(args.cases_file))
+        report["project"] = args.project
+        report["match"] = args.match
+        report["repeat"] = {
+            "requested": repeat_count,
+            "baseCaseCount": len(cases),
+            "effectiveCaseCount": len(results),
+        }
+        _attach_eval_latency(report, elapsed_ms_by_case)
+        health = service.health()
+        report["sidecar"] = {
+            "maxVisibleCandidates": max_visible_candidates,
+            "maxSideCandidates": max_side_candidates,
+            "forceSideCandidates": bool(args.force_side_candidates),
+            "triggerRefreshCount": trigger_refresh_count,
+            "totalSideCandidates": sum(side_counts),
+            "totalModelCandidates": sum(model_counts),
+            "totalRagCandidates": sum(rag_counts),
+            "hasSideCandidates": any(count > 0 for count in side_counts),
+            "rimeSuggestCache": health.get("rimeSuggestCache"),
+            "suggestionCache": health.get("suggestionCache"),
+            "predictor": health.get("predictor"),
+        }
+        _attach_vector_stats(report, core)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "predict-benchmark":
         prediction_context = build_prediction_context(
             core,
@@ -920,7 +1009,7 @@ def _embedding_provider_from_args(args):
     return embedding_provider_from_env(env)
 
 
-def _case_for_eval_repeat(case, *, repeat_index: int, repeat_count: int):
+def _case_for_eval_repeat(case: CodexEvalCase, *, repeat_index: int, repeat_count: int) -> CodexEvalCase:
     if repeat_count <= 1:
         return case
     return replace(case, case_id=f"{case.case_id}#r{repeat_index}")
@@ -943,6 +1032,81 @@ def _predictions_as_eval_suggestions(predictions: list[ModelPrediction]) -> list
         )
         for prediction in predictions
     ]
+
+
+def _rime_eval_payload(
+    case: CodexEvalCase,
+    *,
+    request_seq: int,
+    project: str,
+    max_visible_candidates: int,
+    max_side_candidates: int,
+    force_side_candidates: bool,
+) -> dict[str, object]:
+    return {
+        "sessionId": f"eval-rime-sidecar:{case.case_id}",
+        "requestSeq": request_seq,
+        "rawInput": case.query,
+        "preedit": case.query,
+        "committedContext": case.recent_context,
+        "project": project,
+        "maxVisibleCandidates": max_visible_candidates,
+        "maxSideCandidates": max_side_candidates,
+        "forceSideCandidates": force_side_candidates,
+        "rimeContext": {
+            "candidates": [
+                {
+                    "label": "1",
+                    "text": case.query,
+                    "comment": "eval-rime",
+                }
+            ],
+            "highlightedIndex": 0,
+            "page": 0,
+            "isLastPage": True,
+        },
+    }
+
+
+def _rime_display_side_candidates_as_eval_suggestions(display_candidates: object) -> list[InputSuggestion]:
+    if not isinstance(display_candidates, list):
+        return []
+    suggestions: list[InputSuggestion] = []
+    for index, item in enumerate(display_candidates, start=1):
+        if not isinstance(item, dict):
+            continue
+        source_type = str(item.get("sourceType") or "")
+        if source_type == "rime":
+            continue
+        surface_text = str(item.get("text") or item.get("insertText") or "")
+        insert_text = str(item.get("insertText") or surface_text)
+        if not surface_text and not insert_text:
+            continue
+        suggestion_type = "model_prediction" if source_type == "model" else "rag_candidate"
+        source_event_id = item.get("sourceEventId")
+        source_event_id = source_event_id if isinstance(source_event_id, int) else 0
+        metadata = dict(item)
+        metadata["insert_text"] = insert_text
+        suggestions.append(
+            InputSuggestion(
+                suggestion_id=str(item.get("suggestionId") or f"rime-side:{index}"),
+                surface_text=surface_text or insert_text,
+                suggestion_type=suggestion_type,
+                source_event_id=source_event_id,
+                evidence_preview=str(item.get("evidencePreview") or item.get("comment") or source_type),
+                confidence=_safe_float(metadata.get("confidence")),
+                expanded_evidence=insert_text,
+                metadata=metadata,
+            )
+        )
+    return suggestions
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
 
 
 def _prediction_provider_name(predictor) -> str:

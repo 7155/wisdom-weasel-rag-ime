@@ -665,6 +665,36 @@ Findings:
 Next:
 - Continue toward real Squirrel/Xcode install and WSL/Mac model endpoint testing.
 
+### 2026-07-01 09:17 CST
+Problem:
+- `eval-codex-history` proved core RAG quality, but it did not verify the real `/rime-suggest` path: Rime-first merge, visible side slots, trigger policy, compact display text, and sidecar cache.
+- First real 5000-record sidecar eval passed only 13/34 because `historyContext` for model prediction was also passed into RAG retrieval, so recent status text crowded out relevant memories in the three side slots.
+
+Changes:
+- Added `eval-rime-sidecar` CLI using the same JSONL case format.
+- The command calls `DebugImeService.rime_suggest(...)` and scores only non-Rime `displayCandidates`, avoiding false positives from the Rime candidate itself.
+- Added report fields for side-candidate counts, trigger refreshes, `/rime-suggest` cache stats, suggestion cache stats, predictor status, vector stats, and per-case latency.
+- Split sidecar context boundaries: local model prediction still receives `historyContext`, while RAG retrieval receives only the explicit `committedContext`.
+- Added tests for sidecar eval, cache hits, and the model-vs-RAG context boundary.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history.CodexHistoryTests.test_cli_eval_rime_sidecar_scores_display_side_candidates_and_cache`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_rime_sidecar tests.test_codex_history.CodexHistoryTests.test_cli_eval_rime_sidecar_scores_display_side_candidates_and_cache`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-rime-sidecar-eval-20260701.sqlite import-codex-history --path /Users/undo/.codex/sessions --project wisdom-weasel-rag-ime --limit 5000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-rime-sidecar-eval-20260701.sqlite eval-rime-sidecar --cases-file docs/eval/codex-history-cases.example.jsonl --match any --repeat 1`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-rime-sidecar-eval-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 1`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-rime-sidecar-eval-20260701.sqlite eval-rime-sidecar --cases-file docs/eval/codex-history-cases.example.jsonl --match any --repeat 2 --rime-cache-ttl-ms 5000`
+
+Findings:
+- Direct RAG eval on the 5000-record temp DB still passes 34/34, top1Accuracy=0.794, meanReciprocalRank=0.865, p95=32ms.
+- Before the context split, Rime sidecar display-path eval passed 13/34, p95=73ms.
+- After the context split, Rime sidecar display-path eval passes 31/34, top1Accuracy=0.794, meanReciprocalRank=0.843, with p95 observed between 34ms and 49ms across local runs.
+- With `--repeat 2 --rime-cache-ttl-ms 5000`, Rime sidecar eval passes 62/68 and reports `rimeSuggestCache` hits/misses = 34/34.
+
+Next:
+- Improve the remaining sidecar-only misses with candidate compression/ranking for three visible side slots.
+- Run the same sidecar eval with a real local/WSL Qwen endpoint once available.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.

@@ -142,6 +142,17 @@ The response also includes `triggerDecision`. This is the backend guard that kee
 
 The debug page probes `/api/rime-suggest` alongside `/api/suggest` and shows `queryBasis`, `triggerDecision`, `displayCandidates`, and cache metadata in the JSON panel. This is only for backend inspection; it does not change the browser prototype's visible candidate layout.
 
+For repeatable CLI checks of the same path, use:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-rime-sidecar \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --repeat 2
+```
+
+This scores only model/RAG side candidates from the merged `displayCandidates` payload, so it catches failures that direct `eval-codex-history` cannot see: side-slot exhaustion, skipped trigger decisions, compact display text, and `/rime-suggest` cache misses.
+
 The local HTTP server keeps a short TTL cache for repeated equivalent `/rime-suggest` payloads. The cache key is built from the parsed Rime snapshot, semantic query, trigger decision, memory event/action counts, project, and predictor configuration. It excludes `requestSeq` and `sessionId`, and it also ignores raw pinyin/preedit changes when the semantic query already comes from commit preview or stable Rime candidates. Cached responses rewrite `requestSeq`, `sessionId`, `rawInput`, `preedit`, and current Rime metadata before returning:
 
 ```json
