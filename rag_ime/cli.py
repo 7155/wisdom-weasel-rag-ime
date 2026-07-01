@@ -232,6 +232,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_prediction.add_argument("--repeat", type=int, default=1)
     eval_prediction.add_argument("--latency-budget-ms", type=int, default=150)
 
+    eval_model_matrix = subparsers.add_parser(
+        "eval-model-matrix",
+        help="Evaluate multiple local model ids on the same prediction cases",
+    )
+    eval_model_matrix.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
+    eval_model_matrix.add_argument("--project", default="wisdom-weasel-rag-ime")
+    eval_model_matrix.add_argument(
+        "--base-url",
+        default=os.environ.get("RAG_IME_PREDICTOR_BASE_URL", "http://127.0.0.1:11434/v1"),
+        help="OpenAI-compatible base URL shared by all model ids. Defaults to Ollama /v1.",
+    )
+    eval_model_matrix.add_argument(
+        "--models",
+        default="qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b",
+        help="Comma-separated model ids. Defaults to small Ollama qwen3.5 tags.",
+    )
+    eval_model_matrix.add_argument("--profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "instant"))
+    eval_model_matrix.add_argument("--provider", default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "openai-compatible"))
+    eval_model_matrix.add_argument("--max-candidates", type=int, default=3)
+    eval_model_matrix.add_argument("--match", choices=("any", "all"), default="any")
+    eval_model_matrix.add_argument("--repeat", type=int, default=1)
+    eval_model_matrix.add_argument("--latency-budget-ms", type=int, default=150)
+    eval_model_matrix.add_argument(
+        "--failure-cooldown-ms",
+        type=int,
+        default=0,
+        help="Prediction failure cooldown during matrix eval. Defaults to 0 so latency is measured per case.",
+    )
+    eval_model_matrix.add_argument(
+        "--include-cases",
+        action="store_true",
+        help="Include full per-case evaluation details for every model.",
+    )
+
     eval_comparison = subparsers.add_parser(
         "eval-comparison",
         help="Evaluate RAG suggestions and local model predictions on the same JSONL cases",
@@ -761,6 +795,53 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
+    if args.command == "eval-model-matrix":
+        cases = load_eval_cases(Path(args.cases_file))
+        models = _parse_model_matrix_models(args.models)
+        reports = []
+        for model in models:
+            matrix_provider = _prediction_provider_for_model_matrix(args=args, model=model)
+            model_report = _eval_prediction_provider_on_cases(
+                provider=matrix_provider,
+                core=core,
+                cases=cases,
+                project=args.project,
+                max_candidates=max(1, min(10, args.max_candidates)),
+                match=args.match,
+                repeat=max(1, args.repeat),
+                latency_budget_ms=max(1, args.latency_budget_ms),
+            )
+            model_report["model"] = model
+            if not args.include_cases:
+                model_report["failedCaseIds"] = [
+                    str(item.get("caseId"))
+                    for item in model_report.get("cases", [])
+                    if isinstance(item, dict) and not item.get("passed")
+                ]
+                model_report.pop("cases", None)
+            reports.append(model_report)
+        report = {
+            "schemaVersion": "rag-ime.model-matrix-eval.v1",
+            "casesFile": str(Path(args.cases_file)),
+            "project": args.project,
+            "baseUrl": args.base_url,
+            "profile": args.profile,
+            "match": args.match,
+            "repeat": {
+                "requested": max(1, args.repeat),
+                "baseCaseCount": len(cases),
+                "effectiveCaseCount": len(cases) * max(1, args.repeat),
+            },
+            "maxCandidates": max(1, min(10, args.max_candidates)),
+            "latencyBudgetMs": max(1, args.latency_budget_ms),
+            "failureCooldownMs": max(0, args.failure_cooldown_ms),
+            "localRunners": _local_model_runner_status(),
+            "models": reports,
+            "winner": _model_matrix_winner(reports),
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "eval-comparison":
         cases = load_eval_cases(Path(args.cases_file))
         repeat_count = max(1, args.repeat)
@@ -1123,6 +1204,135 @@ def _prediction_provider_profile(predictor) -> str:
 
 def _is_null_prediction_provider(predictor) -> bool:
     return predictor.__class__.__name__ == "NullPredictionProvider"
+
+
+def _parse_model_matrix_models(raw: str) -> list[str]:
+    models: list[str] = []
+    seen: set[str] = set()
+    for item in (raw or "").replace("\n", ",").split(","):
+        model = item.strip()
+        if not model or model in seen:
+            continue
+        seen.add(model)
+        models.append(model)
+    if not models:
+        raise SystemExit("--models must contain at least one model id")
+    return models
+
+
+def _prediction_provider_for_model_matrix(*, args, model: str):
+    env = dict(os.environ)
+    env["RAG_IME_PREDICTOR_PROVIDER"] = str(args.provider)
+    env["RAG_IME_PREDICTOR_BASE_URL"] = str(args.base_url)
+    env["RAG_IME_PREDICTOR_MODEL"] = model
+    env["RAG_IME_PREDICTOR_PROFILE"] = str(args.profile)
+    env["RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS"] = str(max(0, int(args.failure_cooldown_ms)))
+    return prediction_provider_from_env(env)
+
+
+def _eval_prediction_provider_on_cases(
+    *,
+    provider,
+    core,
+    cases: list[CodexEvalCase],
+    project: str,
+    max_candidates: int,
+    match: str,
+    repeat: int,
+    latency_budget_ms: int,
+) -> dict[str, object]:
+    results = []
+    elapsed_ms_by_case: dict[str, int] = {}
+    candidate_counts: list[int] = []
+    over_budget_count = 0
+    provider_name = _prediction_provider_name(provider)
+    provider_configured = not _is_null_prediction_provider(provider)
+
+    for repeat_index in range(1, repeat + 1):
+        for case in cases:
+            eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=repeat)
+            prediction_context = build_prediction_context(
+                core,
+                explicit_recent_context=eval_case.recent_context,
+                project=eval_case.project or project,
+            )
+            started = time.perf_counter()
+            predictions = provider.predict(
+                current_input=eval_case.query,
+                recent_context=prediction_context,
+                max_candidates=max_candidates,
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            elapsed_ms_by_case[eval_case.case_id] = elapsed_ms
+            if predictions:
+                provider_name = predictions[0].provider_name
+            candidate_counts.append(len(predictions))
+            if elapsed_ms > latency_budget_ms:
+                over_budget_count += 1
+            results.append(
+                evaluate_suggestions(
+                    eval_case,
+                    _predictions_as_eval_suggestions(predictions),
+                    match=match,
+                )
+            )
+
+    report = eval_report(results)
+    report["repeat"] = {
+        "requested": repeat,
+        "baseCaseCount": len(cases),
+        "effectiveCaseCount": len(results),
+    }
+    _attach_eval_latency(report, elapsed_ms_by_case)
+    status = prediction_provider_status(provider)
+    report["prediction"] = {
+        "providerName": provider_name,
+        "providerProfile": _prediction_provider_profile(provider),
+        "providerConfigured": provider_configured,
+        "status": status,
+        "maxCandidates": max_candidates,
+        "latencyBudgetMs": latency_budget_ms,
+        "overBudgetCount": over_budget_count,
+        "allWithinBudget": over_budget_count == 0,
+        "totalCandidates": sum(candidate_counts),
+        "hasCandidates": any(count > 0 for count in candidate_counts),
+    }
+    return report
+
+
+def _model_matrix_winner(reports: list[dict[str, object]]) -> dict[str, object]:
+    eligible = [
+        item
+        for item in reports
+        if isinstance(item.get("prediction"), dict) and bool(item["prediction"].get("hasCandidates"))
+    ]
+    if not eligible:
+        return {
+            "model": "",
+            "reason": "no_model_returned_candidates",
+        }
+
+    def sort_key(item: dict[str, object]) -> tuple[float, float, float, int]:
+        metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+        latency = item.get("latency") if isinstance(item.get("latency"), dict) else {}
+        return (
+            float(item.get("passRate") or 0.0),
+            float(metrics.get("top1Accuracy") or 0.0),
+            float(metrics.get("meanReciprocalRank") or 0.0),
+            -int(latency.get("p95Ms") or 0),
+        )
+
+    best = max(eligible, key=sort_key)
+    metrics = best.get("metrics") if isinstance(best.get("metrics"), dict) else {}
+    latency = best.get("latency") if isinstance(best.get("latency"), dict) else {}
+    return {
+        "model": str(best.get("model") or ""),
+        "passRate": float(best.get("passRate") or 0.0),
+        "top1Accuracy": float(metrics.get("top1Accuracy") or 0.0),
+        "meanReciprocalRank": float(metrics.get("meanReciprocalRank") or 0.0),
+        "p95Ms": int(latency.get("p95Ms") or 0),
+        "reason": "highest_pass_rate_top1_mrr_then_lowest_p95",
+    }
 
 
 def _comparison_summary(

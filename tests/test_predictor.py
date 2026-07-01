@@ -96,6 +96,29 @@ class _MockCompletionHandler(BaseHTTPRequestHandler):
         return
 
 
+class _MockModelMatrixHandler(BaseHTTPRequestHandler):
+    seen_models: list[str] = []
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        model = str(payload.get("model") or "")
+        _MockModelMatrixHandler.seen_models.append(model)
+        content = "本地记忆 输入法候选" if model == "qwen3.5:0.8b" else "无关候选"
+        body = json.dumps(
+            {"choices": [{"message": {"content": content}}]},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
 class PredictionProviderTests(unittest.TestCase):
     def test_parse_prediction_candidates_deduplicates_and_limits(self) -> None:
         parsed = parse_prediction_candidates("1. 本地记忆  本地记忆，RAG候选 / 输出法; 这是一个非常非常非常长的候选短语", max_candidates=3)
@@ -513,6 +536,61 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(report["prediction"]["totalCandidates"], 3)
         self.assertEqual(report["latency"]["caseCount"], 1)
         self.assertEqual(report["cases"][0]["topSurfaces"][0], "本地记忆")
+
+    def test_cli_eval_model_matrix_compares_qwen_tags(self) -> None:
+        _MockModelMatrixHandler.seen_models = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockModelMatrixHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-model-matrix-") as tmp:
+                cases_file = f"{tmp}/cases.jsonl"
+                with open(cases_file, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "local-memory-prediction",
+                                "query": "RAG 输入法",
+                                "recentContext": "用户正在写本地记忆输入法",
+                                "expectedTerms": ["本地记忆"],
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                stdout = io.StringIO()
+                with patch.dict(os.environ, {"RAG_IME_PREDICTOR_TIMEOUT_MS": "1000"}, clear=False):
+                    with redirect_stdout(stdout):
+                        code = main(
+                            [
+                                "--db-path",
+                                f"{tmp}/matrix.sqlite",
+                                "eval-model-matrix",
+                                "--cases-file",
+                                cases_file,
+                                "--base-url",
+                                f"http://127.0.0.1:{server.server_port}",
+                                "--models",
+                                "qwen3.5:0.8b,qwen3.5:2b",
+                                "--latency-budget-ms",
+                                "1000",
+                            ]
+                        )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["schemaVersion"], "rag-ime.model-matrix-eval.v1")
+        self.assertEqual([item["model"] for item in report["models"]], ["qwen3.5:0.8b", "qwen3.5:2b"])
+        self.assertEqual(report["models"][0]["passed"], 1)
+        self.assertEqual(report["models"][1]["passed"], 0)
+        self.assertNotIn("cases", report["models"][0])
+        self.assertEqual(report["models"][1]["failedCaseIds"], ["local-memory-prediction"])
+        self.assertEqual(report["winner"]["model"], "qwen3.5:0.8b")
+        self.assertEqual(_MockModelMatrixHandler.seen_models, ["qwen3.5:0.8b", "qwen3.5:2b"])
 
 
 if __name__ == "__main__":

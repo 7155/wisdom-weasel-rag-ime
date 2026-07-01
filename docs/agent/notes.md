@@ -397,6 +397,26 @@ Next:
 - Run full suite, fixture acceptance, direct Codex-history eval, and `git diff --check`, then push if clean.
 - Start a real Ollama/WSL endpoint later and run `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and `eval-rime-sidecar`.
 
+### 2026-07-01
+Topic:
+- Add a concrete local model matrix gate for Qwen3.5 candidates.
+
+Changes:
+- Added `eval-model-matrix` CLI to evaluate multiple OpenAI-compatible model ids on the same prediction case file.
+- Default matrix is `qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b` against Ollama's `http://127.0.0.1:11434/v1`.
+- Matrix output reports per-model pass rate, ranking metrics, latency, candidate availability, local runner availability, and a winner summary.
+- Full per-case details are hidden by default to keep output readable; use `--include-cases` for debugging.
+- Updated README and local model benchmark docs.
+
+Verification:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+- `python3 -m rag_ime.cli --core-mode fixture eval-model-matrix --cases-file docs/eval/codex-history-cases.example.jsonl --models qwen3.5:0.8b,qwen3.5:2b --latency-budget-ms 150`
+- The local matrix command reports both qwen3.5 models configured but `hasCandidates=false`.
+- `localRunners.available` is empty and `missing` includes `ollama`, `llama-server`, `lmstudio`, and `mlx_lm.server`; no model was downloaded or run in this Mac session.
+
+Next:
+- Install/start Ollama or a WSL OpenAI-compatible endpoint, pull `qwen3.5:0.8b` first, then rerun `eval-model-matrix`.
+
 ### 2026-07-01 07:39 CST
 Problem:
 - FTS5/rerank can handle many exact project-history cases, but the core did not yet have a pluggable vector side-index for true semantic recall experiments.

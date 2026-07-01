@@ -64,6 +64,20 @@ The current Mac session does not have `ollama` in `PATH`, so this remains a prep
 
 The stable rule for this project is: configure any candidate through the same OpenAI-compatible lane, then accept it only if `predictor-doctor`, `predict-benchmark`, `eval-prediction`, `eval-comparison`, and the Rime sidecar latency budget pass.
 
+Run the small-model matrix after the models are actually downloaded and the endpoint is serving:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-model-matrix \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --base-url http://127.0.0.1:11434/v1 \
+  --models qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b \
+  --max-candidates 3 \
+  --latency-budget-ms 150
+```
+
+The command evaluates all listed models on the same cases and reports pass rate, `top1Accuracy`, `meanReciprocalRank`, p95 latency, candidate availability, local runner availability, and the current winner. It does not download models; use `ollama pull ...` or the equivalent WSL/MLX setup first. Add `--include-cases` when you need the full per-case failure list.
+
 Some OpenAI-compatible servers need custom request fields or headers. Use:
 
 ```bash

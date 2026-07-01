@@ -682,3 +682,9 @@ Next:
 - Expanded local rerank mappings for selection routing, RAG/model comparison, WSL embedding env vars, suggestion-cache metrics, and Codex-history ranking metrics.
 - Rime sidecar display-path eval on the same temp DB now passes 34/34 with top1Accuracy=0.765, meanReciprocalRank=0.868, p95=46ms, and noiseRate=0.
 - Updated README and model benchmark docs for Ollama `qwen3.5:0.8b`, `2b`, `4b`, and MLX variants; this Mac still has no visible `ollama`, so real inference is pending.
+
+### 2026-07-01
+- Added `eval-model-matrix` for concrete small-model comparison across multiple OpenAI-compatible model ids.
+- Default model matrix is `qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b` against Ollama `/v1`.
+- The command reports per-model pass rate, ranking metrics, p95 latency, candidate availability, local runner availability, and a winner summary; full per-case output is opt-in via `--include-cases`.
+- Local smoke confirms the command works but no real model is downloaded or running here: `ollama`, `llama-server`, `lmstudio`, and `mlx_lm.server` are all missing, and qwen3.5 matrix candidates are empty.

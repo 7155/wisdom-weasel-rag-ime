@@ -322,6 +322,20 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
 
 Use this before switching between Qwen, MLX, llama.cpp, or other local OpenAI-compatible servers. It reports the same `top1Accuracy`, `meanReciprocalRank`, forbidden-term noise checks, and per-case `elapsedMs` as the RAG eval, plus a `prediction` block for provider and latency-budget status.
 
+Compare several local model ids on the same cases:
+
+```bash
+python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
+  eval-model-matrix \
+  --cases-file docs/eval/codex-history-cases.example.jsonl \
+  --base-url http://127.0.0.1:11434/v1 \
+  --models qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b \
+  --max-candidates 3 \
+  --latency-budget-ms 150
+```
+
+This is the preferred gate after downloading candidate models. It reports pass rate, `top1Accuracy`, `meanReciprocalRank`, p95 latency, candidate availability, local runner availability, and a winner summary. Add `--include-cases` only when debugging individual failures.
+
 Compare local RAG suggestions and model predictions on the same cases:
 
 ```bash
