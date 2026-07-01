@@ -86,7 +86,36 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            (upstream / "sources" / "Main.swift").write_text(
+                "\n".join(
+                    [
+                        "import Foundation",
+                        "struct SquirrelApp {",
+                        '  static let appDir = "/Library/Input Library/Squirrel.app".withCString { dir in',
+                        "    URL(fileURLWithFileSystemRepresentation: dir, isDirectory: false, relativeTo: nil)",
+                        "  }",
+                        "}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             subprocess.run(["git", "add", "sources"], cwd=upstream, check=True)
+            subprocess.run(["git", "commit", "-m", "add source stubs"], cwd=upstream, check=True, capture_output=True, text=True)
+
+            (upstream / "sources" / "Main.swift").write_text(
+                "\n".join(
+                    [
+                        "import Foundation",
+                        "struct SquirrelApp {",
+                        "  static let appDir = Bundle.main.bundleURL",
+                        "}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "sources/Main.swift"], cwd=upstream, check=True)
             patch = subprocess.run(
                 ["git", "diff", "--cached", "--binary"],
                 cwd=upstream,
@@ -121,6 +150,10 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             self.assertTrue((workdir / "sources" / "RagImeSidecarModels.swift").is_file())
             self.assertTrue((workdir / "sources" / "RagImeSidecarClient.swift").is_file())
             self.assertTrue((workdir / "sources" / "SquirrelInputController.swift").is_file())
+            self.assertIn(
+                "static let appDir = Bundle.main.bundleURL",
+                (workdir / "sources" / "Main.swift").read_text(encoding="utf-8"),
+            )
             config = (workdir / "rag-ime.squirrel.custom.yaml").read_text(encoding="utf-8")
             self.assertIn("sidecar_url: http://127.0.0.1:19866/api", config)
             self.assertIn("project: offline-test", config)

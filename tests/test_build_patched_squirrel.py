@@ -145,6 +145,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
                     "RAG_IME_SQUIRREL_DERIVED_DATA": str(tmp_path / "derived-data"),
                     "RAG_IME_SQUIRREL_INSTALL_DIR": str(install_dir),
                     "RAG_IME_RIME_USER_DIR": str(rime_dir),
+                    "RAG_IME_SQUIRREL_SKIP_CODESIGN": "1",
                     "RAG_IME_SQUIRREL_SKIP_POSTINSTALL": "1",
                 },
                 check=True,

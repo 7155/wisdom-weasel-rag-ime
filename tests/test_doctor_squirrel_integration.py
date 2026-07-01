@@ -183,6 +183,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "RAG_IME_SIDECAR_PORT": str(server.server_port),
                     "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
                     "RAG_IME_DOCTOR_REQUIRE_TRYOUT": "1",
+                    "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "0",
                 }
                 result = subprocess.run(
                     ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
@@ -214,6 +215,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 "RAG_IME_SIDECAR_PORT": "19876",
                 "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
                 "RAG_IME_DOCTOR_REQUIRE_TRYOUT": "1",
+                "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "0",
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
@@ -225,6 +227,100 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("[FAIL] Squirrel workdir not prepared", result.stdout)
         self.assertIn("summary: failures=", result.stdout)
+
+    def test_doctor_can_require_enabled_macos_input_source(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-input-source-") as tmp:
+            tmp_path = Path(tmp)
+            app = tmp_path / "Squirrel.app"
+            executable = app / "Contents" / "MacOS" / "Squirrel"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+
+            fake_bin = tmp_path / "bin"
+            fake_bin.mkdir()
+            swift = fake_bin / "swift"
+            swift.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=false'",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            swift.chmod(0o755)
+
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                "RAG_IME_SQUIRREL_APP": str(app),
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertIn("[OK] installed Squirrel.app executable exists", result.stdout)
+        self.assertIn("[OK] macOS input source enabled", result.stdout)
+        self.assertIn("summary: failures=0", result.stdout)
+
+    def test_doctor_fails_required_macos_input_source_when_not_enabled(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-input-source-") as tmp:
+            tmp_path = Path(tmp)
+            app = tmp_path / "Squirrel.app"
+            executable = app / "Contents" / "MacOS" / "Squirrel"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+
+            fake_bin = tmp_path / "bin"
+            fake_bin.mkdir()
+            swift = fake_bin / "swift"
+            swift.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=false selectable=true selected=false'",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            swift.chmod(0o755)
+
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                "RAG_IME_SQUIRREL_APP": str(app),
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[FAIL] macOS input source is registered but not enabled/selectable", result.stdout)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,9 @@ XCODEBUILD="${RAG_IME_XCODEBUILD:-$(command -v xcodebuild || true)}"
 PREINSTALL="${RAG_IME_SQUIRREL_PREINSTALL:-auto}"
 NO_DOWNLOAD="${RAG_IME_SQUIRREL_NO_DOWNLOAD:-0}"
 SKIP_POSTINSTALL="${RAG_IME_SQUIRREL_SKIP_POSTINSTALL:-0}"
+SKIP_CODESIGN="${RAG_IME_SQUIRREL_SKIP_CODESIGN:-0}"
+CODESIGN_IDENTITY="${RAG_IME_SQUIRREL_CODESIGN_IDENTITY:--}"
+INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
 BUILD_SETTINGS_EXTRA="${RAG_IME_SQUIRREL_BUILD_SETTINGS:-CODE_SIGNING_ALLOWED=NO}"
 
 extra_build_settings=()
@@ -39,7 +42,10 @@ Environment:
   RAG_IME_SQUIRREL_PREINSTALL    auto|1|0, run Squirrel action-install when dependencies are missing
   RAG_IME_SQUIRREL_NO_DOWNLOAD   set no_download=1 for action-install
   RAG_IME_SQUIRREL_BUILD_SETTINGS extra xcodebuild settings (default: CODE_SIGNING_ALLOWED=NO)
+  RAG_IME_SQUIRREL_CODESIGN_IDENTITY codesign identity after copy (default: - for ad-hoc)
+  RAG_IME_SQUIRREL_SKIP_CODESIGN skip post-copy codesign
   RAG_IME_SQUIRREL_SKIP_POSTINSTALL skip Squirrel scripts/postinstall after install
+  RAG_IME_SQUIRREL_INPUT_SOURCE_ID input source checked after install
   RAG_IME_XCODEBUILD             xcodebuild executable override
   RAG_IME_SQUIRREL_BUILD_DRY_RUN print resolved commands without requiring Xcode/workdir
 EOF
@@ -81,6 +87,9 @@ xcodebuild=${XCODEBUILD:-<not-found>}
 preinstall=$PREINSTALL
 no_download=$NO_DOWNLOAD
 build_settings=$BUILD_SETTINGS_EXTRA
+codesign_identity=$CODESIGN_IDENTITY
+skip_codesign=$SKIP_CODESIGN
+input_source_id=$INPUT_SOURCE_ID
 list_command=${XCODEBUILD:-xcodebuild} ${xcodebuild_base_args[*]} -list
 build_command=${XCODEBUILD:-xcodebuild} ${xcodebuild_build_args[*]}
 install_command=$0 install
@@ -151,6 +160,28 @@ prepare_squirrel_dependencies() {
   fi
 }
 
+ensure_squirrel_input_source_enabled() {
+  local app="$1"
+  local attempt
+  local output
+
+  if [[ ! -x "$app/Contents/MacOS/Squirrel" ]]; then
+    printf '[WARN] Squirrel executable missing; cannot verify input source: %s\n' "$app" >&2
+    return 0
+  fi
+  for attempt in 1 2 3 4 5; do
+    "$app/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
+    sleep 0.5
+    "$app/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 || true
+    if output="$("$ROOT/scripts/check_macos_input_source.sh" "$INPUT_SOURCE_ID" 2>&1)"; then
+      printf '[OK] macOS input source enabled: %s\n' "$output"
+      return 0
+    fi
+    sleep 0.5
+  done
+  printf '[WARN] macOS input source not confirmed after install: %s\n' "$output" >&2
+}
+
 install_squirrel_app() {
   if [[ ! -d "$PRODUCT_APP" ]]; then
     echo "built Squirrel.app not found: $PRODUCT_APP" >&2
@@ -160,6 +191,15 @@ install_squirrel_app() {
   rm -rf "$INSTALL_DIR/Squirrel.app"
   cp -R "$PRODUCT_APP" "$INSTALL_DIR/Squirrel.app"
   printf '[OK] installed patched Squirrel.app: %s\n' "$INSTALL_DIR/Squirrel.app"
+
+  if bool_true "$SKIP_CODESIGN"; then
+    printf '[WARN] skipped Squirrel codesign; input source registration may fail\n' >&2
+  elif command -v codesign >/dev/null 2>&1; then
+    codesign --force --deep --sign "$CODESIGN_IDENTITY" "$INSTALL_DIR/Squirrel.app"
+    printf '[OK] signed patched Squirrel.app with identity: %s\n' "$CODESIGN_IDENTITY"
+  else
+    printf '[WARN] codesign not found; input source registration may fail\n' >&2
+  fi
 
   RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
     RAG_IME_SQUIRREL_CONFIG_SNIPPET="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" \
@@ -175,6 +215,7 @@ install_squirrel_app() {
   if [[ -f "$SQUIRREL_WORKDIR/scripts/postinstall" ]]; then
     (cd "$SQUIRREL_WORKDIR" && DSTROOT="$INSTALL_DIR" bash scripts/postinstall)
     printf '[OK] Squirrel postinstall completed\n'
+    ensure_squirrel_input_source_enabled "$INSTALL_DIR/Squirrel.app"
   else
     printf '[WARN] Squirrel postinstall script not found; input source may need manual registration\n' >&2
   fi
