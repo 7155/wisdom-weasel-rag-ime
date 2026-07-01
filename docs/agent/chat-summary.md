@@ -2,6 +2,23 @@
 
 ### 2026-07-01
 Topic:
+- Filter remaining Codex runtime context from imported RAG-IME memories.
+
+Changes:
+- Extended Codex-history import filtering for `skills_instructions`, `apps_instructions`, `plugins_instructions`, and `collaboration_mode` blocks.
+- Added regression fixtures proving those user-role runtime-injection blocks are skipped.
+- Updated the Codex-history evaluation doc to mention app/skill/collaboration context filtering.
+
+Verification:
+- Focused Codex-history tests passed.
+- 500-record real Codex import/eval reported `10/34` pass rate and `noiseRate=0.0`.
+
+Next:
+- Keep the 34-case gold set intact; improve recall with hybrid/vector search and larger-window evaluation rather than shrinking the benchmark.
+- Full Squirrel build/install/system input-method continuous use still waits for full Xcode.
+
+### 2026-07-01
+Topic:
 - Refresh Mac local inference fast-path research.
 
 Decisions:

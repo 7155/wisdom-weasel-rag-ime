@@ -7,6 +7,27 @@
 
 ## Log
 
+### 2026-07-01 16:35 CST
+Problem:
+- Real Codex-history import still admitted some Codex runtime context blocks (`skills_instructions`, `apps_instructions`, `collaboration_mode`) as candidate memory.
+- Those blocks are especially harmful for RAG-IME because they contain tool/plugin/runtime vocabulary that can outrank actual user project decisions.
+
+Changes:
+- Extended the Codex-history runtime-noise filter to reject app, skill, plugin, and collaboration-mode context blocks.
+- Added regression coverage that user-role runtime-injection blocks do not become imported memory.
+- Updated Codex-history eval docs to describe app/skill/collaboration context filtering.
+
+Commands:
+- `python3 -m py_compile rag_ime/codex_history.py tests/test_codex_history.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-codex-eval-filtered.sqlite import-codex-history --path /Users/undo/.codex --project wisdom-weasel-rag-ime --limit 500 --min-chars 12 --max-chars 1600 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-codex-eval-filtered.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --match any --repeat 1`
+
+Findings:
+- 500-record import/eval after filtering: `passed=10/34`, `passRate=0.2941`, `top1Accuracy=0.2353`, `MRR=0.2647`, `noiseRate=0.0`.
+- The filter improves source quality but does not solve the broader 34-case recall gap; the next quality work remains hybrid/vector recall and larger-window Codex-history evaluation.
+- Full Squirrel/Xcode build remains blocked on this host because `xcode-select` points to Command Line Tools, not full Xcode.
+
 ### 2026-07-01 14:10 CST
 Problem:
 - 用户要求充分调研 Mac 上本地推理最快方案，尤其是输入法首候选 <200 ms 的可落地路径。

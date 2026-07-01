@@ -44,7 +44,7 @@ When the path is a directory, the CLI reads newest modified session files first 
 --path-order mtime-desc
 ```
 
-Use `--path-order path` only when you need deterministic path-sorted replay. The importer also filters common Codex runtime noise before records become memories: developer/system prompts, `AGENTS.md` injections, environment/sandbox blocks, tool call output, token-count events, and encrypted reasoning payloads are not treated as user memory. The goal is to learn user requirements, project decisions, assistant summaries, and final explanations, not shell transcripts or system context.
+Use `--path-order path` only when you need deterministic path-sorted replay. The importer also filters common Codex runtime noise before records become memories: developer/system prompts, `AGENTS.md` injections, environment/sandbox blocks, app/skill/collaboration context blocks, tool call output, token-count events, and encrypted reasoning payloads are not treated as user memory. The goal is to learn user requirements, project decisions, assistant summaries, and final explanations, not shell transcripts or system context.
 
 The output includes only short samples so private logs are not dumped into the terminal.
 
