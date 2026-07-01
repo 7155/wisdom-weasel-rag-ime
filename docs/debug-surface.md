@@ -249,6 +249,15 @@ The response also includes `triggerDecision`. This is the backend guard that kee
 - `forceSideCandidates: true` can be used by debug tooling to force a refresh.
 - Skipped refreshes return empty `modelPredictions` / `ragCandidates` and `mergePolicy.sideCandidatesEnabled: false`.
 
+The strict Squirrel doctor now includes this raw-input safety check. It sends
+one dirty raw-pinyin payload without context and expects `queryBasis:
+rawInputFallback`, `shouldRefresh=false`, and no display candidates; then it
+sends `asdioj` with recent committed Chinese context and expects
+`queryBasis: committedContext` plus at least one model/RAG side candidate. This
+keeps the project aligned with the current design: do not ask the LLM to decode
+arbitrary key noise, but keep short continuation predictions alive from the
+confirmed text the user just committed.
+
 The response also includes `ragLane` and `modelLane`. These record whether each
 side lane was allowed to run inside the request budget:
 

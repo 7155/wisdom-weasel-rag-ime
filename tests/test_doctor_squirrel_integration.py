@@ -55,8 +55,67 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", "0"))
-        if length:
-            self.rfile.read(length)
+        payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        raw_input = str(payload.get("rawInput") or "") if isinstance(payload, dict) else ""
+        committed_context = str(payload.get("committedContext") or "") if isinstance(payload, dict) else ""
+        if raw_input == "jiubiruwopinshishur":
+            self._send_json(
+                {
+                    "schemaVersion": "rag-ime.rime-sidecar.v1",
+                    "rawInput": raw_input,
+                    "preedit": raw_input,
+                    "queryBasis": "rawInputFallback",
+                    "triggerDecision": {
+                        "shouldRefresh": False,
+                        "reason": "skip: raw pinyin fallback",
+                    },
+                    "mergePolicy": {
+                        "sideCandidatesEnabled": False,
+                        "rawPinyinFallback": True,
+                        "sideFirst": True,
+                        "rimeFirst": False,
+                        "fallbackOrder": ["model", "rag", "rime"],
+                    },
+                    "displayCandidates": [],
+                }
+            )
+            return
+        if raw_input == "asdioj" and committed_context:
+            self._send_json(
+                {
+                    "schemaVersion": "rag-ime.rime-sidecar.v1",
+                    "rawInput": raw_input,
+                    "preedit": raw_input,
+                    "committedContext": committed_context,
+                    "queryBasis": "committedContext",
+                    "triggerDecision": {
+                        "shouldRefresh": True,
+                        "reason": "refresh: recent committed context fallback",
+                    },
+                    "mergePolicy": {
+                        "sideCandidatesEnabled": True,
+                        "rawPinyinFallback": False,
+                        "sideFirst": True,
+                        "rimeFirst": False,
+                        "fallbackOrder": ["model", "rag", "rime"],
+                    },
+                    "displayCandidates": [
+                        {
+                            "label": "1",
+                            "selectionKey": "1",
+                            "selectionRank": 1,
+                            "text": "继续预测",
+                            "insertText": "继续预测",
+                            "sourceType": "model",
+                            "selectionAction": "commit_side_candidate",
+                            "sourceIndex": 0,
+                            "displayLayout": "inline",
+                            "displayLane": "model",
+                        }
+                    ],
+                }
+            )
+            return
         self._send_json(
             {
                 "schemaVersion": "rag-ime.rime-sidecar.v1",
@@ -171,6 +230,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             "[OK] sidecar predictor: local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true",
             result.stdout,
         )
+        self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_tryout_mode_requires_prepared_squirrel_xcode_and_sidecar(self) -> None:
@@ -247,6 +307,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[OK] xcodebuild can inspect patched Squirrel project", result.stdout)
         self.assertIn("[OK] HTTP sidecar health, rime-suggest, and rime-select passed", result.stdout)
         self.assertIn("[OK] candidate contract: model inline + rag block + shared selection keys passed", result.stdout)
+        self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("[OK] tryout runtime path has launchd or healthy HTTP sidecar", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
