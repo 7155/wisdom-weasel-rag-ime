@@ -13,6 +13,7 @@ from rag_ime.cli import main
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import ModelPrediction
+from rag_ime.predictor import CooldownPredictionProvider, OpenAICompatiblePredictionConfig
 from rag_ime.rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
@@ -46,6 +47,24 @@ class MultiPredictionProvider:
             ModelPrediction(text=f"{current_input}模型{i}", rank=i, provider_name="multi-model", latency_ms=8)
             for i in range(1, max_candidates + 1)
         ]
+
+
+class FailingPredictionProvider:
+    config = OpenAICompatiblePredictionConfig(
+        base_url="http://127.0.0.1:9",
+        model="Qwen3-0.6B",
+        provider_name="failing-rime-model",
+        profile="instant",
+    )
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.last_error = ""
+
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.calls += 1
+        self.last_error = "timeout"
+        return []
 
 
 class RimeSidecarTests(unittest.TestCase):
@@ -181,6 +200,30 @@ class RimeSidecarTests(unittest.TestCase):
         side_items = [item for item in response["displayCandidates"] if item["sourceType"] != "rime"]
         self.assertEqual([item["sourceType"] for item in side_items], ["model", "rag", "rag"])
         self.assertEqual(len(response["modelPredictions"]), 3)
+
+    def test_predictor_cooldown_skips_second_rime_refresh_but_keeps_rag(self) -> None:
+        delegate = FailingPredictionProvider()
+        predictor = CooldownPredictionProvider(delegate, cooldown_ms=1000, failure_latency_ms=1)
+        payload = {
+            "sessionId": "squirrel-model-down",
+            "requestSeq": 1,
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 2,
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                ]
+            },
+        }
+
+        first = build_rime_sidecar_response(payload=payload, adapter=self.adapter, core=self.core, predictor=predictor)
+        second = build_rime_sidecar_response(payload={**payload, "requestSeq": 2}, adapter=self.adapter, core=self.core, predictor=predictor)
+
+        self.assertEqual(delegate.calls, 1)
+        self.assertEqual(first["modelPredictions"], [])
+        self.assertEqual(second["modelPredictions"], [])
+        self.assertTrue(any(item["sourceType"] == "rag" for item in first["displayCandidates"]))
+        self.assertTrue(any(item["sourceType"] == "rag" for item in second["displayCandidates"]))
 
     def test_rag_display_text_is_compressed_but_insert_text_is_full(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-sidecar-surface-") as tmp:

@@ -245,6 +245,15 @@ python3 -m rag_ime.cli suggest-json "输入法 个人记忆" --recent-context "l
 
 `RAG_IME_PREDICTOR_PROFILE=instant` is the recommended first profile for Qwen-style small instruct models. It uses chat mode, a 350 ms timeout, 8 output tokens, low sampling temperature, and `chat_template_kwargs.enable_thinking=false`. Individual env vars such as `RAG_IME_PREDICTOR_TIMEOUT_MS`, `RAG_IME_PREDICTOR_MAX_TOKENS`, or `RAG_IME_PREDICTOR_DISABLE_THINKING` can still override the profile. `RAG_IME_PREDICTOR_EXTRA_BODY_JSON` can add server-specific fields such as seeds or sampling controls.
 
+The model lane also has a default failure cooldown. If the configured endpoint times out or returns a slow empty result, subsequent prediction calls are skipped for a short window so composing refreshes do not pay one model timeout per key event:
+
+```bash
+export RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=5000
+export RAG_IME_PREDICTOR_FAILURE_LATENCY_MS=250
+```
+
+Set `RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=0` only for endpoint debugging when you intentionally want every request to hit the model server.
+
 Use `RAG_IME_PREDICTOR_PROFILE=completion-instant` for base-model or llama.cpp-style `/v1/completions` servers. That mode sends `history + current_input` as a prefix and requests multiple candidates with `n`, matching Wisdom-Weasel's faster base-completion direction more closely than chat prompting. It is still an OpenAI-compatible baseline; native llama.cpp KV-cache/batch sampling remains a later provider.
 
 Check whether the model lane is configured without calling the model:
