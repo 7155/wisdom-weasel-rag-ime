@@ -25,6 +25,9 @@ REFRESH_INPUT_SOURCE="${RAG_IME_DOCTOR_REFRESH_INPUT_SOURCE:-1}"
 REQUIRE_PATCHED_APP_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_PATCHED_APP:-}"
 REQUIRE_PATCHED_APP="${REQUIRE_PATCHED_APP_CONFIGURED:-0}"
 SQUIRREL_DUPLICATE_APP_CANDIDATES="${RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES:-$HOME/Library/Input Methods/Squirrel.app:/Library/Input Methods/Squirrel.app}"
+REQUIRE_FRONTEND_TRACE="${RAG_IME_DOCTOR_REQUIRE_FRONTEND_TRACE:-0}"
+FRONTEND_TRACE_WAIT="${RAG_IME_DOCTOR_FRONTEND_TRACE_WAIT:-0}"
+FRONTEND_TRACE_LOG="${RAG_IME_SQUIRREL_FRONTEND_TRACE_LOG:-$HOME/Library/Logs/RagIme/squirrel-frontend.jsonl}"
 EXPECT_PREDICTOR_PROVIDER="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROVIDER:-${RAG_IME_PREDICTOR_PROVIDER:-}}"
 EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDICTOR_MODEL:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
@@ -121,6 +124,79 @@ check_duplicate_squirrel_apps() {
   fi
 }
 
+check_frontend_trace() {
+  local out
+  local status
+  local wait_seconds
+
+  if ! bool_true "$REQUIRE_FRONTEND_TRACE"; then
+    return 0
+  fi
+  if [[ ! -f "$ROOT/scripts/check_squirrel_frontend_trace.py" ]]; then
+    fail "frontend trace checker missing: $ROOT/scripts/check_squirrel_frontend_trace.py"
+    return 0
+  fi
+
+  out="$(mktemp /tmp/rag-ime-frontend-trace.out.XXXXXX)"
+  wait_seconds="$FRONTEND_TRACE_WAIT"
+  set +e
+  "$PYTHON_EXECUTABLE" "$ROOT/scripts/check_squirrel_frontend_trace.py" \
+    --log-path "$FRONTEND_TRACE_LOG" \
+    --require-mixed-panel \
+    --require-side-commit \
+    --wait "$wait_seconds" \
+    --print-last 4 >"$out" 2>&1
+  status=$?
+  set -e
+
+  if [[ "$status" == "0" ]]; then
+    trace_line="$("$PYTHON_EXECUTABLE" - "$out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+panel = payload.get("latestMixedPanel") if isinstance(payload.get("latestMixedPanel"), dict) else {}
+layout = payload.get("latestMixedTextLayout") if isinstance(payload.get("latestMixedTextLayout"), dict) else {}
+commit = payload.get("latestSideCommit") if isinstance(payload.get("latestSideCommit"), dict) else {}
+counts = layout.get("candidateCounts") if isinstance(layout.get("candidateCounts"), dict) else panel.get("candidateCounts", {})
+candidate = commit.get("candidate") if isinstance(commit.get("candidate"), dict) else {}
+print(
+    "frontend trace passed: "
+    f"events={payload.get('eventCount')} "
+    f"modelInline={counts.get('modelInline')} "
+    f"ragBlock={counts.get('ragBlock')} "
+    f"sideCommitLabel={candidate.get('label')}"
+)
+PY
+)"
+    ok "$trace_line"
+  else
+    trace_summary="$("$PYTHON_EXECUTABLE" - "$out" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+except Exception:
+    print("frontend trace checker did not return JSON")
+    raise SystemExit(0)
+print(
+    "frontend trace missing mixed panel or side commit: "
+    f"events={payload.get('eventCount')} "
+    f"latestMixedPanel={bool(payload.get('latestMixedPanel'))} "
+    f"latestMixedTextLayout={bool(payload.get('latestMixedTextLayout'))} "
+    f"latestSideCommit={bool(payload.get('latestSideCommit'))} "
+    f"log={payload.get('logPath')}"
+)
+PY
+)"
+    require_or_warn "$REQUIRE_FRONTEND_TRACE" "$trace_summary"
+  fi
+  rm -f "$out"
+}
+
 if bool_true "$REQUIRE_TRYOUT"; then
   REQUIRE_SIDECAR=1
   REQUIRE_XCODE=1
@@ -145,6 +221,7 @@ printf 'tryout_readiness: %s\n' "$REQUIRE_TRYOUT"
 printf 'require_hitoolbox_enabled: %s\n' "$REQUIRE_HITOOLBOX_ENABLED"
 printf 'require_mixed_layout: %s\n' "$REQUIRE_MIXED_LAYOUT"
 printf 'refresh_input_source: %s\n' "$REFRESH_INPUT_SOURCE"
+printf 'require_frontend_trace: %s\n' "$REQUIRE_FRONTEND_TRACE"
 printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
 printf 'DEVELOPER_DIR: %s\n\n' "${DEVELOPER_DIR:-<unset>}"
 
@@ -646,6 +723,8 @@ else
   require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; run scripts/install_sidecar_launch_agent.sh"
 fi
 rm -f "$sidecar_out" "$sidecar_err"
+
+check_frontend_trace
 
 if bool_true "$REQUIRE_TRYOUT"; then
   if [[ "$launchd_loaded" == "1" || "$sidecar_healthy" == "1" ]]; then

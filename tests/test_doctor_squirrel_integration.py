@@ -456,6 +456,61 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[INFO] stale Squirrel.app with same bundle id exists outside target app", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
+    def test_doctor_can_require_frontend_trace_gate(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-frontend-trace-") as tmp:
+            tmp_path = Path(tmp)
+            trace_log = tmp_path / "squirrel-frontend.jsonl"
+            _write_frontend_trace_log(trace_log)
+            env = {
+                **os.environ,
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_FRONTEND_TRACE": "1",
+                "RAG_IME_SQUIRREL_FRONTEND_TRACE_LOG": str(trace_log),
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertIn("require_frontend_trace: 1", result.stdout)
+        self.assertIn("[OK] frontend trace passed: events=3 modelInline=5 ragBlock=3 sideCommitLabel=6", result.stdout)
+        self.assertIn("summary: failures=0", result.stdout)
+
+    def test_doctor_fails_required_frontend_trace_without_events(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-frontend-trace-") as tmp:
+            tmp_path = Path(tmp)
+            trace_log = tmp_path / "missing.jsonl"
+            env = {
+                **os.environ,
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_FRONTEND_TRACE": "1",
+                "RAG_IME_SQUIRREL_FRONTEND_TRACE_LOG": str(trace_log),
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[FAIL] frontend trace missing mixed panel or side commit", result.stdout)
+        self.assertIn("latestMixedPanel=False", result.stdout)
+        self.assertIn("latestSideCommit=False", result.stdout)
+
     def test_doctor_fails_required_macos_input_source_when_not_enabled(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-input-source-") as tmp:
@@ -534,6 +589,44 @@ def _write_fake_squirrel_app(path: Path, *, body: str) -> Path:
     with info_plist.open("wb") as handle:
         plistlib.dump({"CFBundleIdentifier": "im.rime.inputmethod.Squirrel"}, handle)
     return path
+
+
+def _write_frontend_trace_log(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "event": "panel_display_candidates",
+                "timestampMs": 1,
+                "forcesHorizontalLayout": True,
+                "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "event": "panel_text_layout",
+                "timestampMs": 2,
+                "forcesHorizontalLayout": True,
+                "linear": True,
+                "vertical": False,
+                "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                "separators": ["", "  ", "  ", "  ", "  ", "\n", "\n", "\n"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "event": "side_candidate_commit",
+                "timestampMs": 3,
+                "candidate": {"label": "6", "sourceType": "rag", "displayLayout": "block"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":
