@@ -339,6 +339,7 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --max-sidecar-noise-rate 0.05 \
   --max-sidecar-rag-timeout-rate 0 \
   --max-sidecar-model-timeout-rate 0 \
+  --require-input-source-ready \
   --require-model-ttfc \
   --model-ttfc-cases-file docs/eval/ime-ttfc-cases.example.jsonl \
   --model-ttfc-provider ollama \
@@ -355,6 +356,10 @@ This matters for an IME because a hit at rank 5 still slows typing, and a
 forbidden/noisy candidate is worse than a missed side candidate. The sidecar
 timeout gates make the display-path contract stricter: RAG/model side lanes must
 fit the IME budget instead of silently falling back on most requests.
+`--require-input-source-ready` is the real macOS typing gate: it checks that
+Squirrel is installed in the current user's input-source list and is the selected
+active input source. Leave it off in non-macOS CI or when you are evaluating only
+the backend RAG/model path.
 `--require-model-ttfc` adds the local-model speed contract: the selected model
 must produce a first parsed candidate within the configured p95 and over-budget
 thresholds. `--model-ttfc-warmup-runs` separates cold model load from the

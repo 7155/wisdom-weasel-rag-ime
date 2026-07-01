@@ -411,6 +411,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--force-side-candidates", action="store_true")
     quality_gate.add_argument("--require-suggestion-cache", action="store_true")
     quality_gate.add_argument(
+        "--require-input-source-ready",
+        action="store_true",
+        help="Require the macOS Squirrel input source to be installed, enabled, and currently selected.",
+    )
+    quality_gate.add_argument(
+        "--input-source-id",
+        default=os.environ.get("RAG_IME_SQUIRREL_INPUT_SOURCE_ID", "im.rime.inputmethod.Squirrel.Hans"),
+        help="macOS input source id checked by --require-input-source-ready.",
+    )
+    quality_gate.add_argument(
+        "--input-source-check-script",
+        default=os.environ.get("RAG_IME_INPUT_SOURCE_CHECK_SCRIPT", ""),
+        help="Override scripts/check_macos_input_source.sh for input-source readiness checks.",
+    )
+    quality_gate.add_argument(
         "--require-predictor-capability",
         action="append",
         default=[],
@@ -1158,6 +1173,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
             force_side_candidates=bool(args.force_side_candidates),
             require_suggestion_cache=bool(args.require_suggestion_cache),
+            require_input_source_ready=bool(args.require_input_source_ready),
+            input_source_id=args.input_source_id,
+            input_source_check_script=Path(args.input_source_check_script) if args.input_source_check_script else None,
             required_predictor_capabilities=tuple(args.require_predictor_capability),
             include_cases=bool(args.include_cases),
         )
@@ -1462,9 +1480,14 @@ def run_quality_gate(
     rime_cache_ttl_ms: int,
     force_side_candidates: bool,
     require_suggestion_cache: bool,
+    require_input_source_ready: bool,
+    input_source_id: str,
+    input_source_check_script: Path | None,
     required_predictor_capabilities: tuple[str, ...],
     include_cases: bool,
 ) -> dict[str, object]:
+    from .debug_server import DebugImeService, DebugServerConfig
+
     rag_report = run_codex_history_eval(
         adapter,
         core,
@@ -1501,6 +1524,20 @@ def run_quality_gate(
         force_side_candidates=force_side_candidates,
     )
     acceptance_report = run_acceptance(adapter)
+    input_source_report: dict[str, object] | None = None
+    if require_input_source_ready:
+        input_source_report = DebugImeService(
+            DebugServerConfig(
+                db_path=db_path,
+                project=project,
+                seed_if_empty=False,
+                core=core,
+                predictor=predictor,
+                input_source_id=input_source_id,
+                input_source_check_script=input_source_check_script,
+                input_source_require_hitoolbox=True,
+            )
+        ).input_source_status()
     predictor_status = prediction_provider_status(
         predictor,
         probe_capabilities=bool(required_predictor_capabilities),
@@ -1531,6 +1568,7 @@ def run_quality_gate(
         cache_report=cache_report,
         predictor_status=predictor_status,
         model_ttfc_report=model_ttfc_report,
+        input_source_report=input_source_report,
         min_rag_pass_rate=min_rag_pass_rate,
         min_sidecar_pass_rate=min_sidecar_pass_rate,
         min_rag_top1_accuracy=min_rag_top1_accuracy,
@@ -1545,6 +1583,7 @@ def run_quality_gate(
         max_model_ttfc_p95_ms=max_model_ttfc_p95_ms,
         max_model_ttfc_over_budget_rate=max_model_ttfc_over_budget_rate,
         require_suggestion_cache=require_suggestion_cache,
+        require_input_source_ready=require_input_source_ready,
         required_predictor_capabilities=required_predictor_capabilities,
     )
     rag_payload = rag_report if include_cases else _compact_eval_report(rag_report)
@@ -1576,6 +1615,8 @@ def run_quality_gate(
             "maxModelTtfcP95Ms": max_model_ttfc_p95_ms,
             "maxModelTtfcOverBudgetRate": max_model_ttfc_over_budget_rate,
             "requireSuggestionCache": require_suggestion_cache,
+            "requireInputSourceReady": require_input_source_ready,
+            "inputSourceId": input_source_id,
             "requiredPredictorCapabilities": list(required_predictor_capabilities),
             "probePredictorCapabilities": bool(required_predictor_capabilities),
             "cacheRepeat": cache_repeat,
@@ -1586,6 +1627,7 @@ def run_quality_gate(
         "rag": rag_payload,
         "rimeSidecar": rime_payload,
         "modelTtfc": model_ttfc_report,
+        "inputSource": input_source_report,
         "cacheProbe": cache_report,
     }
 
@@ -1630,6 +1672,7 @@ def _quality_gate_checks(
     cache_report: dict[str, object],
     predictor_status: dict[str, object],
     model_ttfc_report: dict[str, object] | None,
+    input_source_report: dict[str, object] | None,
     min_rag_pass_rate: float,
     min_sidecar_pass_rate: float,
     min_rag_top1_accuracy: float,
@@ -1644,6 +1687,7 @@ def _quality_gate_checks(
     max_model_ttfc_p95_ms: int,
     max_model_ttfc_over_budget_rate: float,
     require_suggestion_cache: bool,
+    require_input_source_ready: bool,
     required_predictor_capabilities: tuple[str, ...],
 ) -> list[dict[str, object]]:
     cache_summary = cache_report.get("summary") if isinstance(cache_report.get("summary"), dict) else {}
@@ -1710,8 +1754,32 @@ def _quality_gate_checks(
                 max_over_budget_rate=max_model_ttfc_over_budget_rate,
             )
         )
+    if require_input_source_ready:
+        checks.extend(_input_source_ready_checks(input_source_report or {}))
     checks.extend(_predictor_capability_checks(predictor_status, required_predictor_capabilities))
     return checks
+
+
+def _input_source_ready_checks(report: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        {
+            "name": "input-source-installed",
+            "passed": bool(report.get("ok")),
+            "inputSourceId": report.get("inputSourceId") or report.get("id"),
+            "enabled": report.get("enabled"),
+            "selectable": report.get("selectable"),
+            "hitoolboxEnabled": report.get("hitoolboxEnabled"),
+            "current": report.get("current"),
+            "exitCode": report.get("exitCode"),
+        },
+        {
+            "name": "input-source-selected",
+            "passed": bool(report.get("typingReady")),
+            "inputSourceId": report.get("inputSourceId") or report.get("id"),
+            "selected": report.get("selected"),
+            "current": report.get("current"),
+        },
+    ]
 
 
 def _quality_metric_checks(
