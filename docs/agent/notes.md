@@ -1605,3 +1605,20 @@ Verification:
 
 Status:
 - This still does not provide real cancellation for an already-running RAG/core call; it bounds user-visible waiting and prevents immediate side-lane pileups with a single in-process guard.
+
+### 2026-07-01 16:14 CST
+Problem:
+- After adding `ragLane` and `modelLane` fail-open behavior, a regression could still look healthy if the candidate panel renders easy cases while one side lane silently times out under the IME latency budget.
+
+Changes:
+- `eval-rime-sidecar` now reports RAG/model lane called counts, timeout counts, and timeout rates.
+- `quality-gate` now accepts `--max-sidecar-rag-timeout-rate` and `--max-sidecar-model-timeout-rate`.
+- Added regression coverage for the sidecar timeout-rate checks and documented strict mature-goldset usage in README and Codex-history eval docs.
+
+Verification:
+- `python3 -m py_compile rag_ime/cli.py tests/test_codex_history.py`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_codex_history`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+
+Status:
+- Full-Xcode Squirrel build/install/system-input-method continuous-use verification is still blocked on this host because only Command Line Tools are selected.

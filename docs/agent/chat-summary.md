@@ -1106,3 +1106,19 @@ Verification:
 
 Next:
 - Run debug-server/full-suite verification, then keep iterating toward shared-core latency gates and real native-provider cancellation.
+
+### 2026-07-01
+Topic:
+- Add quality gates for sidecar RAG/model lane timeouts.
+
+Changes:
+- `eval-rime-sidecar` records `ragLane` and `modelLane` called/timeout counts and timeout rates.
+- `quality-gate` can now fail when RAG or model side lanes exceed configured timeout-rate thresholds.
+- README and Codex-history eval docs show strict mature-goldset flags for zero tolerated side-lane timeouts.
+
+Verification:
+- `py_compile`, focused Codex-history tests, and full 136-test suite passed.
+
+Status:
+- Product repo work is ready to commit/push.
+- Full Xcode real build/install/system input-method verification remains a separate blocker until `Xcode.app` is installed and selected.

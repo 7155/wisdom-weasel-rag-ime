@@ -307,13 +307,17 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --min-sidecar-pass-rate 0.9 \
   --min-sidecar-top1-accuracy 0.75 \
   --min-sidecar-mrr 0.8 \
-  --max-sidecar-noise-rate 0.05
+  --max-sidecar-noise-rate 0.05 \
+  --max-sidecar-rag-timeout-rate 0 \
+  --max-sidecar-model-timeout-rate 0
 ```
 
 The direct RAG and sidecar gates are intentionally separate. Direct RAG catches
 retrieval/ranking regressions in the core. Sidecar eval catches display-path
 problems such as Rime-first merge, side-slot limits, trigger policy, and
-sidecar cache behavior.
+sidecar cache behavior. The timeout gates catch a separate failure mode: the
+candidate panel looks correct in easy cases but the RAG/model side lanes are
+falling open under the real IME latency budget.
 
 ## Compare RAG Against Model Prediction
 
