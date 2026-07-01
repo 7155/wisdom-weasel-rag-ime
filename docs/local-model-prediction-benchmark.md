@@ -206,9 +206,10 @@ python3 -m rag_ime.cli predictor-ttft \
 This service is the first concrete MLX adapter for the project. It loads MLX-LM
 once, serves `/predict` and `/predict-stream`, and exposes `/v1/models` for the
 existing doctor flow. `--prompt-cache` prepares the stable system-prompt cache
-and returns `promptCache.prepared=true`, but responses still report
-`usedForGeneration=false`. Real cached-prefix generation remains a follow-up
-optimization instead of being hidden behind the protocol.
+and stores it as a local safetensors file. Each request loads a fresh cache copy
+before `generate_step` streaming, so `promptCache.usedForGeneration=true` means
+the cached path was actually used for that request without polluting the shared
+stable prefix.
 
 Run the small-model matrix after the models are actually downloaded and the endpoint is serving:
 

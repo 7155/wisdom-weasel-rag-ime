@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import tempfile
 import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -122,6 +124,24 @@ class MlxLmEngine:
             recent_context=recent_context,
             max_candidates=max_candidates,
         )
+        if self._prompt_cache.ready_for_generation():
+            try:
+                for text in self._stream_text_with_prompt_cache(
+                    current_input=current_input,
+                    recent_context=recent_context,
+                    max_candidates=max_candidates,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                ):
+                    yield text
+                return
+            except Exception as exc:  # pragma: no cover - depends on local MLX-LM internals
+                self._prompt_cache.miss_count += 1
+                self._prompt_cache.error = f"cached_generation:{exc.__class__.__name__}"
+
+        if self._prompt_cache.enabled:
+            self._prompt_cache.miss_count += 1
         for response in self._stream_generate(
             self.model,
             self.tokenizer,
@@ -134,11 +154,58 @@ class MlxLmEngine:
             if isinstance(text, str) and text:
                 yield text
 
+    def _stream_text_with_prompt_cache(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_candidates: int,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+    ) -> Iterable[str]:
+        from mlx_lm.generate import generate_step  # type: ignore
+        from mlx_lm.models.cache import load_prompt_cache  # type: ignore
+        from mlx_lm.sample_utils import make_sampler  # type: ignore
+        import mlx.core as mx  # type: ignore
+
+        cache = load_prompt_cache(str(self._prompt_cache.cache_file))
+        dynamic_prompt = _build_mlx_dynamic_prompt(
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidates=max_candidates,
+        )
+        tokens = self.tokenizer.encode(dynamic_prompt)
+        sampler = make_sampler(temp=float(temperature), top_p=float(top_p))
+        emitted = ""
+        generated_tokens: list[int] = []
+        self._prompt_cache.used_for_generation = True
+        self._prompt_cache.hit_count += 1
+        self._prompt_cache.error = ""
+        for token, _logprobs in generate_step(
+            mx.array(tokens),
+            self.model,
+            max_tokens=max(1, min(64, int(max_tokens))),
+            prompt_cache=cache,
+            sampler=sampler,
+        ):
+            token_id = _token_to_int(token)
+            generated_tokens.append(token_id)
+            decoded = self.tokenizer.decode(generated_tokens)
+            if isinstance(decoded, bytes):
+                decoded = decoded.decode("utf-8", errors="ignore")
+            if not isinstance(decoded, str):
+                decoded = str(decoded)
+            delta = decoded[len(emitted) :]
+            emitted = decoded
+            if delta:
+                yield delta
+
     def _prepare_prompt_cache(self) -> None:
         started = time.perf_counter()
         try:
             from mlx_lm.generate import generate_step  # type: ignore
-            from mlx_lm.models.cache import make_prompt_cache  # type: ignore
+            from mlx_lm.models.cache import make_prompt_cache, save_prompt_cache  # type: ignore
             import mlx.core as mx  # type: ignore
 
             tokens = self.tokenizer.encode(self._prompt_cache.stable_prefix)
@@ -149,6 +216,17 @@ class MlxLmEngine:
             cache = make_prompt_cache(self.model, **kwargs)
             for _ in generate_step(mx.array(tokens), self.model, max_tokens=1, prompt_cache=cache):
                 break
+            handle = tempfile.NamedTemporaryFile(prefix="rag-ime-mlx-prefix-", suffix=".safetensors", delete=False)
+            handle.close()
+            save_prompt_cache(
+                handle.name,
+                cache,
+                metadata={
+                    "model": self.model_id,
+                    "stablePrefixHash": self._prompt_cache.stable_prefix_hash(),
+                },
+            )
+            self._prompt_cache.cache_file = handle.name
             self._prompt_cache.prepared = True
             self._prompt_cache.error = ""
         except Exception as exc:  # pragma: no cover - depends on local MLX-LM internals
@@ -271,9 +349,7 @@ def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str
 def _build_mlx_prompt(*, current_input: str, recent_context: str, max_candidates: int) -> str:
     return (
         f"{_stable_prompt_prefix()}"
-        f"上下文: {recent_context}\n"
-        f"当前输入: {current_input}\n"
-        f"输出 {max_candidates} 个最可能的短候选。"
+        f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates)}"
     )
 
 
@@ -281,11 +357,20 @@ def _stable_prompt_prefix() -> str:
     return f"{SYSTEM_PROMPT}\n"
 
 
+def _build_mlx_dynamic_prompt(*, current_input: str, recent_context: str, max_candidates: int) -> str:
+    return (
+        f"上下文: {recent_context}\n"
+        f"当前输入: {current_input}\n"
+        f"输出 {max_candidates} 个最可能的短候选。"
+    )
+
+
 @dataclass
 class _PromptCacheState:
     enabled: bool
     stable_prefix: str
     max_kv_size: int = 0
+    cache_file: str = ""
     prepared: bool = False
     stable_prefix_tokens: int = 0
     prepare_ms: int = 0
@@ -294,15 +379,22 @@ class _PromptCacheState:
     miss_count: int = 0
     error: str = ""
 
+    def stable_prefix_hash(self) -> str:
+        return hashlib.sha256(self.stable_prefix.encode("utf-8")).hexdigest()[:16]
+
+    def ready_for_generation(self) -> bool:
+        return self.enabled and self.prepared and bool(self.cache_file) and os.path.exists(self.cache_file)
+
     def to_payload(self) -> dict[str, Any]:
         payload = {
             "enabled": self.enabled,
             "prepared": self.prepared,
             "usedForGeneration": self.used_for_generation,
-            "stablePrefixHash": hashlib.sha256(self.stable_prefix.encode("utf-8")).hexdigest()[:16],
+            "stablePrefixHash": self.stable_prefix_hash(),
             "stablePrefixTokens": self.stable_prefix_tokens,
             "prepareMs": self.prepare_ms,
             "maxKvSize": self.max_kv_size,
+            "cacheFileReady": bool(self.cache_file) and os.path.exists(self.cache_file),
             "hits": self.hit_count,
             "misses": self.miss_count,
         }
@@ -313,6 +405,13 @@ class _PromptCacheState:
         elif not self.enabled:
             payload["reason"] = "disabled"
         return payload
+
+
+def _token_to_int(token: object) -> int:
+    item = getattr(token, "item", None)
+    if callable(item):
+        return int(item())
+    return int(token)  # type: ignore[arg-type]
 
 
 def _int_payload(value: object, fallback: int) -> int:

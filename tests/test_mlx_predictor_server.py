@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
+import types
 import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
+from unittest.mock import patch
 
-from rag_ime.mlx_predictor_server import _PromptCacheState, make_mlx_predictor_handler
+from rag_ime.mlx_predictor_server import MlxLmEngine, _PromptCacheState, make_mlx_predictor_handler
 
 
 class _FakeMlxEngine:
@@ -48,6 +51,33 @@ class _FakeMlxEngine:
 
 
 class MlxPredictorServerTests(unittest.TestCase):
+    def test_engine_uses_loaded_prompt_cache_for_streaming_generation(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text='["缓存候选","输入法"]')
+        with patch.dict(sys.modules, modules):
+            engine = MlxLmEngine("fake-qwen", enable_prompt_cache=True, prompt_cache_max_kv_size=4096)
+            text = "".join(
+                engine.stream_text(
+                    current_input="RAG 输入法",
+                    recent_context="本地记忆",
+                    max_candidates=2,
+                    max_tokens=8,
+                    temperature=0.15,
+                    top_p=0.85,
+                )
+            )
+
+        status = engine.prompt_cache_status()
+        self.assertEqual(text, '["缓存候选","输入法"]')
+        self.assertTrue(status["prepared"])
+        self.assertTrue(status["usedForGeneration"])
+        self.assertTrue(status["cacheFileReady"])
+        self.assertEqual(status["maxKvSize"], 4096)
+        self.assertEqual(status["hits"], 1)
+        self.assertEqual(status["misses"], 0)
+        self.assertEqual(calls["load_prompt_cache"], 1)
+        self.assertEqual(calls["stream_generate"], 0)
+        self.assertGreaterEqual(calls["generate_step"], 2)
+
     def test_health_reports_prepared_prompt_cache_without_claiming_generation_use(self) -> None:
         server, thread = _start_fake_server()
         try:
@@ -107,6 +137,105 @@ def _stop_server(server, thread) -> None:
     server.shutdown()
     thread.join(timeout=2)
     server.server_close()
+
+
+class _FakeToken:
+    def __init__(self, value: int):
+        self.value = value
+
+    def item(self) -> int:
+        return self.value
+
+
+class _FakeTokenizer:
+    def encode(self, text: str):
+        return [ord(char) for char in text]
+
+    def decode(self, tokens):
+        return "".join(chr(int(token)) for token in tokens)
+
+
+class _FakeStreamResponse:
+    def __init__(self, text: str):
+        self.text = text
+
+
+def _fake_mlx_modules(*, generated_text: str):
+    calls = {
+        "generate_step": 0,
+        "load_prompt_cache": 0,
+        "stream_generate": 0,
+    }
+    tokenizer = _FakeTokenizer()
+
+    mlx_lm = types.ModuleType("mlx_lm")
+
+    def load(model_id: str):
+        return {"model_id": model_id}, tokenizer
+
+    def stream_generate(*args, **kwargs):
+        calls["stream_generate"] += 1
+        yield _FakeStreamResponse("fallback")
+
+    mlx_lm.load = load
+    mlx_lm.stream_generate = stream_generate
+
+    generate = types.ModuleType("mlx_lm.generate")
+
+    def generate_step(prompt, model, max_tokens: int, prompt_cache=None, sampler=None):
+        calls["generate_step"] += 1
+        if sampler is None:
+            yield _FakeToken(0), None
+            return
+        for char in generated_text:
+            yield _FakeToken(ord(char)), None
+
+    generate.generate_step = generate_step
+
+    cache = types.ModuleType("mlx_lm.models.cache")
+
+    def make_prompt_cache(model, **kwargs):
+        return {"model": model, "kwargs": kwargs}
+
+    def save_prompt_cache(file_name: str, cache_obj, metadata=None):
+        with open(file_name, "wb") as handle:
+            handle.write(b"fake-cache")
+
+    def load_prompt_cache(file_name: str):
+        calls["load_prompt_cache"] += 1
+        return {"loaded": file_name}
+
+    cache.make_prompt_cache = make_prompt_cache
+    cache.save_prompt_cache = save_prompt_cache
+    cache.load_prompt_cache = load_prompt_cache
+
+    models = types.ModuleType("mlx_lm.models")
+    models.cache = cache
+
+    sample_utils = types.ModuleType("mlx_lm.sample_utils")
+
+    def make_sampler(temp: float, top_p: float):
+        return {"temp": temp, "top_p": top_p}
+
+    sample_utils.make_sampler = make_sampler
+
+    mlx = types.ModuleType("mlx")
+    core = types.ModuleType("mlx.core")
+    core.array = lambda tokens: list(tokens)
+    mlx.core = core
+
+    return (
+        {
+            "mlx_lm": mlx_lm,
+            "mlx_lm.generate": generate,
+            "mlx_lm.models": models,
+            "mlx_lm.models.cache": cache,
+            "mlx_lm.sample_utils": sample_utils,
+            "mlx": mlx,
+            "mlx.core": core,
+        },
+        calls,
+    )
 
 
 if __name__ == "__main__":

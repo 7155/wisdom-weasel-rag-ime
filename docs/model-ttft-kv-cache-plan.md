@@ -118,29 +118,35 @@ rag-ime mlx-predictor-server
   -> /v1/models for existing predictor-doctor checks
 ```
 
-Current limitation: the protocol exposes prompt-cache metadata, but does not yet
-wire MLX-LM prompt-cache reuse. The next MLX-specific task is to split the
-stable instruction/schema prefix from the dynamic Rime/RAG tail and measure
-prompt-cache hit vs. miss TTFT.
+The protocol now splits the stable instruction/schema prefix from the dynamic
+Rime/RAG tail and can route generation through a cached-prefix `generate_step`
+path. The remaining limitation is empirical: it still needs real-model TTFT and
+quality measurement before this becomes the accepted product fast lane.
 
 The service can already be started with `--prompt-cache`. That prepares the
 stable system prompt at startup through MLX-LM's `make_prompt_cache` /
-`generate_step(..., prompt_cache=cache)` path and reports:
+`generate_step(..., prompt_cache=cache)` path, saves it locally, and loads a
+fresh prompt-cache copy for each cached streaming request. A successful cached
+request reports:
 
 ```json
 {
   "promptCache": {
     "enabled": true,
     "prepared": true,
-    "usedForGeneration": false,
-    "reason": "prepared_only_streaming_generation_not_cached_yet"
+    "usedForGeneration": true,
+    "hits": 1,
+    "misses": 0
   }
 }
 ```
 
-This is an intentional intermediate state: it proves the stable prefix can be
-prepared and observed, while keeping `capabilities.promptCache=false` until
-generation actually reuses the cached prefix.
+The cache is loaded per request instead of reusing the same mutable cache object.
+That is slower than a native sequence-copy implementation, but it avoids
+polluting the stable prefix cache while still letting us measure cached-prefix
+TTFT on a real MLX model. Keep `capabilities.promptCache=false` until real-model
+`predictor-ttft` and `eval-prediction` prove this path beats the uncached MLX
+and Ollama baselines.
 
 Provider status now reports explicit capability flags:
 
@@ -157,8 +163,9 @@ Provider status now reports explicit capability flags:
 ```
 
 This prevents accidental overclaiming. The current MLX service has a resident
-model and streaming TTFT path. It does not yet have prompt-cache reuse,
-llama.cpp-style sequence fork, or true batch-candidate sampling.
+model, streaming TTFT path, and a conservative prompt-cache generation path.
+It does not yet have real-model validation, llama.cpp-style sequence fork, or
+true batch-candidate sampling.
 
 ### Why llama.cpp Native Still Matters
 

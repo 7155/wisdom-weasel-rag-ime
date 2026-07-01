@@ -316,9 +316,10 @@ The MLX service exposes `/predict`, `/predict-stream`, `/health`, and
 `/v1/models`. It loads the model once and lets `predictor-ttft` measure the
 first streamed candidate without going through an OpenAI-compatible chat layer.
 With `--prompt-cache`, it prepares the stable system-prompt cache at startup and
-reports `promptCache.prepared`. Current streaming generation still reports
-`usedForGeneration=false`; using that cached prefix inside generation is the
-next optimization step, not a completed claim.
+uses a fresh loaded prompt-cache copy for each `generate_step` streaming
+request, so `promptCache.usedForGeneration` can turn true without mutating the
+shared stable-prefix cache file. This still needs real-model TTFT and quality
+verification before enabling the MLX lane by default.
 
 The model lane also has a default failure cooldown. If the configured endpoint times out or returns a slow empty result, subsequent prediction calls are skipped for a short window so composing refreshes do not pay one model timeout per key event:
 

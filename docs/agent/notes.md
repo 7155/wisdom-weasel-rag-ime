@@ -1106,3 +1106,24 @@ Commands:
 - `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor tests.test_mlx_predictor_server`
 - `python3 -m py_compile rag_ime/mlx_predictor_server.py rag_ime/cli.py rag_ime/predictor.py tests/test_mlx_predictor_server.py`
 - `python3 -m rag_ime.cli mlx-predictor-server --help`
+
+### 2026-07-01 11:51 CST
+Problem:
+- `--prompt-cache` could prepare a stable prefix cache but did not yet use that cache during streaming generation.
+- Reusing a single mutable MLX prompt-cache object across requests risks polluting the stable prefix.
+
+Changes:
+- Changed the MLX service to save the prepared stable-prefix cache to a local safetensors file.
+- Added a cached streaming path that loads a fresh prompt-cache copy per request and calls `generate_step(..., prompt_cache=cache)`.
+- Added `promptCache.cacheFileReady`, `hits`, `misses`, and `usedForGeneration=true` when the cached path is actually used.
+- Kept fallback to normal `stream_generate` if cached generation fails.
+- Added a fake MLX-LM module test proving `MlxLmEngine` uses `load_prompt_cache` and does not fall back to `stream_generate` on the cached path.
+- Updated docs to remove the old `usedForGeneration=false` boundary.
+
+Findings:
+- This is safer than sharing one cache object, but likely slower than llama.cpp sequence-copy KV fork because it reloads a cache file per request.
+- Capability flags still stay conservative until real-model `predictor-ttft` and `eval-prediction` prove this path beats the uncached/Ollama baselines.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_mlx_predictor_server tests.test_predictor`
+- `python3 -m py_compile rag_ime/mlx_predictor_server.py tests/test_mlx_predictor_server.py`

@@ -766,3 +766,20 @@ Boundary:
 
 Next:
 - With `mlx-lm` installed, validate cache preparation on a real Qwen-compatible MLX model, then implement a safe cached streaming path before changing the capability flag.
+
+### 2026-07-01
+Topic:
+- Add conservative MLX cached streaming path.
+
+Changes:
+- `mlx-predictor-server --prompt-cache` now saves the prepared stable prefix cache to a local safetensors file.
+- Streaming generation loads a fresh cache copy per request and uses `generate_step(..., prompt_cache=cache)`.
+- Prompt-cache status now reports `cacheFileReady`, `usedForGeneration`, `hits`, and `misses`.
+- Added fake MLX-LM tests so the cached path is covered without installing `mlx_lm`.
+
+Boundary:
+- This avoids mutating the shared stable-prefix cache, but still needs real-model TTFT and quality evaluation.
+- It is not a replacement for Wisdom-Weasel-style llama.cpp sequence-copy candidate batching.
+
+Next:
+- Install/verify `mlx-lm`, run cached vs uncached MLX TTFT on a concrete Qwen-compatible model, then decide whether `capabilities.promptCache` can be set true.
