@@ -485,6 +485,50 @@ class MlxPredictionServiceProvider:
             headers.update(self.config.extra_headers)
         return headers
 
+    def capability_probe(self) -> dict[str, Any]:
+        request = urllib.request.Request(
+            f"{self.config.base_url.rstrip('/')}/health",
+            headers=self._headers(),
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=min(max(self.config.timeout_s, 0.05), 1.0)) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
+            return {
+                "ok": False,
+                "error": _prediction_error_name(exc),
+                "providerName": self.config.provider_name,
+            }
+        if not isinstance(payload, dict):
+            return {
+                "ok": False,
+                "error": "invalid_health_payload",
+                "providerName": self.config.provider_name,
+            }
+        prompt_cache = payload.get("promptCache") if isinstance(payload.get("promptCache"), dict) else {}
+        health_capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {}
+        capabilities = _prediction_provider_capabilities(self.config.provider_name)
+        capabilities.update(
+            {
+                "streaming": bool(health_capabilities.get("streaming", capabilities["streaming"])),
+                "residentModel": bool(payload.get("modelLoaded")),
+                "promptCache": _prompt_cache_used_for_generation(prompt_cache),
+                "sequenceFork": bool(health_capabilities.get("sequenceFork")),
+                "batchCandidates": bool(health_capabilities.get("batchCandidates")),
+                "serverTiming": bool(health_capabilities.get("serverTiming", capabilities["serverTiming"])),
+            }
+        )
+        return {
+            "ok": bool(payload.get("ok")),
+            "providerName": self.config.provider_name,
+            "provider": payload.get("provider"),
+            "model": payload.get("model"),
+            "modelLoaded": bool(payload.get("modelLoaded")),
+            "promptCache": prompt_cache,
+            "capabilities": capabilities,
+        }
+
 
 class CooldownPredictionProvider:
     """Circuit breaker for the IME model lane.
@@ -560,6 +604,16 @@ class CooldownPredictionProvider:
             "lastFailureElapsedMs": self._state.last_failure_elapsed_ms,
         }
 
+    def capability_probe(self) -> dict[str, Any]:
+        capability_probe = getattr(self.delegate, "capability_probe", None)
+        if not callable(capability_probe):
+            return {
+                "ok": False,
+                "error": "capability_probe_not_supported",
+                "providerName": getattr(self.config, "provider_name", self.delegate.__class__.__name__),
+            }
+        return capability_probe()
+
 
 def prediction_provider_from_env(env: dict[str, str] | None = None) -> PredictionProvider:
     source = env or os.environ
@@ -633,7 +687,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
     )
 
 
-def prediction_provider_status(provider: PredictionProvider) -> dict[str, object]:
+def prediction_provider_status(provider: PredictionProvider, *, probe_capabilities: bool = False) -> dict[str, object]:
     config = getattr(provider, "config", None)
     configured = provider.__class__.__name__ != "NullPredictionProvider"
     if config is None:
@@ -663,6 +717,26 @@ def prediction_provider_status(provider: PredictionProvider) -> dict[str, object
         "streamFirstCandidate": bool(getattr(config, "stream_first_candidate", False)),
     }
     status["capabilities"] = _prediction_provider_capabilities(str(status["providerName"]))
+    if probe_capabilities:
+        capability_probe = getattr(provider, "capability_probe", None)
+        if callable(capability_probe):
+            probe = capability_probe()
+            if not isinstance(probe, dict):
+                probe = {
+                    "ok": False,
+                    "error": "invalid_capability_probe_payload",
+                    "providerName": status["providerName"],
+                }
+            status["capabilityProbe"] = probe
+            probe_capabilities_payload = probe.get("capabilities") if isinstance(probe, dict) else None
+            if bool(probe.get("ok")) and isinstance(probe_capabilities_payload, dict):
+                merged = dict(status["capabilities"]) if isinstance(status["capabilities"], dict) else {}
+                for key, value in probe_capabilities_payload.items():
+                    if key in merged:
+                        merged[key] = bool(value)
+                status["capabilities"] = merged
+            elif isinstance(status["capabilities"], dict):
+                status["capabilities"] = {str(key): False for key in status["capabilities"]}
     cooldown_status = getattr(provider, "cooldown_status", None)
     if callable(cooldown_status):
         status["cooldown"] = cooldown_status()
@@ -1452,6 +1526,15 @@ def _prediction_provider_capabilities(provider_name: str) -> dict[str, bool]:
         "batchCandidates": False,
         "serverTiming": False,
     }
+
+
+def _prompt_cache_used_for_generation(prompt_cache: dict[str, Any]) -> bool:
+    return (
+        bool(prompt_cache.get("enabled"))
+        and bool(prompt_cache.get("prepared"))
+        and bool(prompt_cache.get("cacheFileReady"))
+        and bool(prompt_cache.get("usedForGeneration"))
+    )
 
 
 def _prediction_error_name(exc: BaseException) -> str:
