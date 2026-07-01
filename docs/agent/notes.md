@@ -526,6 +526,44 @@ Next:
 - Use the sidecar display/insert split when implementing the native candidate panel.
 - Test a real WSL/local embedding endpoint with `RAG_IME_EMBEDDING_CACHE_SIZE` enabled and compare repeated-case latency.
 
+### 2026-07-01 08:31 CST
+Problem:
+- The project had an optional local model provider, but it was easy to confuse "provider code exists" with "a real local Qwen/MLX/llama.cpp model is currently running and useful".
+- The updated goal explicitly requires concrete small-model testing, preferably instant/no-thinking style.
+
+Changes:
+- Added shared `prediction_provider_status()` for model-lane observability.
+- Added `rag-ime predictor-status` CLI to show model configuration without calling the model.
+- Added `predictor` status to `/api/health` so the debug page can show whether the optional model lane is configured.
+- Normalized `predict-benchmark` provider naming so configured-but-empty providers still report the configured provider name.
+- Documented that `predictor-status` is only a config check; `predict-benchmark` / `eval-prediction` are the real liveness and quality gates.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `python3 -m rag_ime.cli --core-mode fixture predictor-status`
+- `RAG_IME_PREDICTOR_PROVIDER=openai-compatible RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000 RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B RAG_IME_PREDICTOR_PROFILE=instant python3 -m rag_ime.cli --core-mode fixture predictor-status`
+- `RAG_IME_PREDICTOR_PROVIDER=openai-compatible RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000 RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B RAG_IME_PREDICTOR_PROFILE=instant python3 -m rag_ime.cli --core-mode fixture predict-benchmark --case "RAG 输入法" --recent-context "用户正在写本地记忆输入法" --max-candidates 3 --latency-budget-ms 150`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-model-status-eval-20260701-0840.sqlite import-codex-history --path /Users/undo/.codex/sessions --project wisdom-weasel-rag-ime --limit 5000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-model-status-eval-20260701-0840.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 1`
+- `git diff --check`
+- Local endpoint probe for `127.0.0.1:8000/v1/models`, `127.0.0.1:8080/v1/models`, `127.0.0.1:1234/v1/models`, and `127.0.0.1:11434/api/tags`.
+
+Findings:
+- Full unit suite passed: 85 tests.
+- Fixture acceptance passed.
+- Real 5000-record Codex-history eval still passed 34/34, with top1Accuracy=0.824, meanReciprocalRank=0.880, p95=34ms.
+- `git diff --check` passed.
+- Default current machine status: `configured=false`, `providerName=NullPredictionProvider`.
+- With Qwen instant env set, config status becomes `configured=true`, `providerProfile=instant`, `promptMode=chat`, `model=Qwen3-0.6B`, `timeoutMs=350`, `maxTokens=8`.
+- Real benchmark against `127.0.0.1:8000` returned `hasCandidates=false`, so no usable local model server is currently running there.
+- Common local endpoints `8000`, `8080`, `1234`, and `11434` all returned connection refused in this session.
+- Qwen3.5 exists as a later family, but the first IME test should prefer verified small/non-thinking Qwen3 checkpoints unless a small Qwen3.5 local checkpoint is confirmed.
+
+Next:
+- Start a real local/WSL OpenAI-compatible Qwen/llama.cpp/MLX endpoint, then run `predictor-status`, `predict-benchmark`, and `eval-prediction`.
+- Prefer Qwen instant/no-thinking first; compare chat `instant` against completion `completion-instant` before building a native KV-cache provider.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.

@@ -569,3 +569,27 @@ Verification:
 Next:
 - Use the sidecar display/insert split when implementing the native candidate panel.
 - Test a real WSL/local embedding endpoint with cache enabled and compare repeated-case latency.
+
+### 2026-07-01
+Topic:
+- Make local model lane status explicit.
+
+Changes:
+- Added `prediction_provider_status()` and `rag-ime predictor-status`.
+- `/api/health` now includes `predictor` status for the debug page.
+- `predict-benchmark` now reports configured provider names even when the endpoint returns no candidates.
+- README, debug docs, and local-model benchmark docs clarify that `predictor-status` checks config only; `predict-benchmark` / `eval-prediction` prove liveness and quality.
+
+Verification:
+- Full unit suite passed: 85 tests.
+- Fixture acceptance passed.
+- `git diff --check` passed.
+- Default status on this machine: `configured=false`, `providerName=NullPredictionProvider`.
+- With Qwen instant env set, status reports `configured=true`, `model=Qwen3-0.6B`, `profile=instant`, `timeoutMs=350`, `maxTokens=8`.
+- Actual benchmark against `127.0.0.1:8000` returned no candidates, so no real model is currently running there.
+- Probed common local endpoints `8000`, `8080`, `1234`, and `11434`; all refused connection.
+- Real 5000-record Codex-history eval still passed 34/34 with top1Accuracy=0.824, meanReciprocalRank=0.880, p95=34ms.
+- Model choice note: Qwen3.5 exists, but first IME latency tests should use verified small/non-thinking Qwen3 checkpoints unless a compact Qwen3.5 local checkpoint is confirmed.
+
+Next:
+- Start a real local or WSL OpenAI-compatible model endpoint, then run `predictor-status`, `predict-benchmark`, `eval-prediction`, and `eval-comparison`.

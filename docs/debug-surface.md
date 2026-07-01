@@ -147,6 +147,8 @@ The local HTTP server keeps a short TTL cache for repeated equivalent `/rime-sug
 
 The local SQLite core also exposes a process-local `suggestionCache` in `/api/health`. That cache stores final `InputSuggestion` lists for repeated equivalent `/api/suggest` or eval requests and is invalidated on commit/action/reset. It is separate from the short `/rime-suggest` TTL cache.
 
+`/api/health` also exposes `predictor` status. This is a configuration check for the optional local model lane: it reports whether `RAG_IME_PREDICTOR_*` is configured, the active profile, prompt mode, endpoint, and model name. It does not call the model; use `predict-benchmark` or `eval-prediction` to prove the endpoint is alive and useful.
+
 `/api/rime-select` records a side-candidate acceptance with one stable payload:
 
 ```json

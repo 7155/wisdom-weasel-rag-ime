@@ -18,6 +18,7 @@ from rag_ime.predictor import (
     benchmark_prediction_provider,
     parse_prediction_candidates,
     prediction_provider_from_env,
+    prediction_provider_status,
 )
 
 
@@ -212,6 +213,53 @@ class PredictionProviderTests(unittest.TestCase):
             },
         )
 
+    def test_prediction_provider_status_reports_configured_model_lane(self) -> None:
+        null_status = prediction_provider_status(prediction_provider_from_env({}))
+        self.assertFalse(null_status["configured"])
+        self.assertEqual(null_status["providerName"], "NullPredictionProvider")
+
+        provider = prediction_provider_from_env(
+            {
+                "RAG_IME_PREDICTOR_PROVIDER": "openai-compatible",
+                "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:8000",
+                "RAG_IME_PREDICTOR_MODEL": "Qwen3-0.6B",
+                "RAG_IME_PREDICTOR_PROFILE": "instant",
+                "RAG_IME_PREDICTOR_EXTRA_BODY_JSON": '{"seed":7}',
+            }
+        )
+        status = prediction_provider_status(provider)
+
+        self.assertTrue(status["configured"])
+        self.assertEqual(status["providerName"], "local-openai-compatible")
+        self.assertEqual(status["providerProfile"], "instant")
+        self.assertEqual(status["promptMode"], "chat")
+        self.assertEqual(status["baseUrl"], "http://127.0.0.1:8000")
+        self.assertEqual(status["model"], "Qwen3-0.6B")
+        self.assertEqual(status["timeoutMs"], 350)
+        self.assertIn("chat_template_kwargs", status["extraBodyKeys"])
+        self.assertIn("seed", status["extraBodyKeys"])
+
+    def test_cli_predictor_status_reports_env_configuration(self) -> None:
+        stdout = io.StringIO()
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_PREDICTOR_PROVIDER": "openai-compatible",
+                "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:8000",
+                "RAG_IME_PREDICTOR_MODEL": "Qwen3-0.6B",
+                "RAG_IME_PREDICTOR_PROFILE": "instant",
+            },
+            clear=False,
+        ):
+            with redirect_stdout(stdout):
+                code = main(["--core-mode", "fixture", "predictor-status"])
+
+        self.assertEqual(code, 0)
+        status = json.loads(stdout.getvalue())
+        self.assertTrue(status["configured"])
+        self.assertEqual(status["providerProfile"], "instant")
+        self.assertEqual(status["model"], "Qwen3-0.6B")
+
     def test_prediction_benchmark_reports_latency_budget(self) -> None:
         class FakeProvider:
             def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
@@ -241,6 +289,30 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(report["summary"]["allWithinBudget"])
         self.assertTrue(report["summary"]["hasCandidates"])
         self.assertEqual(report["cases"][0]["candidates"], ["RAG 输入法候选"])
+
+    def test_prediction_benchmark_uses_configured_name_without_candidates(self) -> None:
+        class EmptyConfiguredProvider:
+            config = OpenAICompatiblePredictionConfig(
+                base_url="http://127.0.0.1:9",
+                model="Qwen3-0.6B",
+                provider_name="configured-empty",
+                profile="instant",
+            )
+
+            def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+                return []
+
+        report = benchmark_prediction_provider(
+            EmptyConfiguredProvider(),
+            [PredictionBenchmarkCase(current_input="RAG 输入法")],
+            max_candidates=2,
+            latency_budget_ms=50,
+        )
+
+        self.assertEqual(report["providerName"], "configured-empty")
+        self.assertEqual(report["providerProfile"], "instant")
+        self.assertTrue(report["providerConfigured"])
+        self.assertFalse(report["summary"]["hasCandidates"])
 
     def test_cli_eval_prediction_reports_quality_and_latency(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)

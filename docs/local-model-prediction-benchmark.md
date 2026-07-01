@@ -28,6 +28,15 @@ thinking: disabled through chat_template_kwargs.enable_thinking=false
 
 `RAG_IME_PREDICTOR_DISABLE_THINKING=1` can be used separately when you want custom profile settings. The parser still strips `<think>` output as a fallback, but disabling thinking at the server is faster and cleaner.
 
+## Model Choice Note
+
+As of 2026-07-01, the first local IME test should optimize for latency, not the newest model-family name. The official Qwen3 README lists small dense checkpoints such as 0.6B, 1.7B, and 4B, plus Qwen3-Instruct-2507 non-thinking variants; those are the practical first candidates for a local typing predictor. Qwen3.5 exists as a later family, but the public Qwen3.5-Omni technical report describes a much larger multimodal model, so it is not the first target for a compact macOS IME lane unless a small local checkpoint is verified separately.
+
+- Qwen3 reference: https://github.com/QwenLM/Qwen3
+- Qwen3.5-Omni reference: https://arxiv.org/abs/2604.15804
+
+The stable rule for this project is therefore: configure any candidate through the same OpenAI-compatible lane, then accept it only if `predict-benchmark`, `eval-prediction`, and the Rime sidecar latency budget pass.
+
 Some OpenAI-compatible servers need custom request fields or headers. Use:
 
 ```bash
@@ -44,6 +53,42 @@ export RAG_IME_PREDICTOR_PROFILE=completion-instant
 ```
 
 In this mode the provider sends `recent_context + current_input` as the prompt and requests `n=max_candidates` completions. That is closer to Wisdom-Weasel's fast base-model path than chat prompting because it avoids a repeated system instruction. It is not the same as a native llama.cpp provider with KV cache reuse; it is the portable OpenAI-compatible step before that provider exists.
+
+## Check Model-Lane Status
+
+Before benchmarking, check whether the model lane is configured:
+
+```bash
+python3 -m rag_ime.cli predictor-status
+```
+
+Example when no local model endpoint is configured:
+
+```json
+{
+  "configured": false,
+  "providerName": "NullPredictionProvider",
+  "providerProfile": "none",
+  "promptMode": "none"
+}
+```
+
+Example after setting a Qwen-style instant profile:
+
+```json
+{
+  "configured": true,
+  "providerName": "local-openai-compatible",
+  "providerProfile": "instant",
+  "promptMode": "chat",
+  "baseUrl": "http://127.0.0.1:8000",
+  "model": "Qwen3-0.6B",
+  "timeoutMs": 350,
+  "maxTokens": 8
+}
+```
+
+This command only checks local configuration. It does not prove that the model server is alive or returning useful candidates. Use `predict-benchmark` and `eval-prediction` for that.
 
 ## Run The Benchmark
 

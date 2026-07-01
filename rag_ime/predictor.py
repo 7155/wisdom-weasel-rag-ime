@@ -221,6 +221,34 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
     )
 
 
+def prediction_provider_status(provider: PredictionProvider) -> dict[str, object]:
+    config = getattr(provider, "config", None)
+    configured = provider.__class__.__name__ != "NullPredictionProvider"
+    if config is None:
+        return {
+            "configured": configured,
+            "providerName": provider.__class__.__name__,
+            "providerProfile": "none",
+            "promptMode": "none",
+        }
+    extra_body = getattr(config, "extra_body", None) or {}
+    extra_headers = getattr(config, "extra_headers", None) or {}
+    return {
+        "configured": configured,
+        "providerName": getattr(config, "provider_name", "") or provider.__class__.__name__,
+        "providerProfile": getattr(config, "profile", "") or "custom",
+        "promptMode": _normalized_prompt_mode(str(getattr(config, "prompt_mode", ""))),
+        "baseUrl": getattr(config, "base_url", ""),
+        "model": getattr(config, "model", ""),
+        "timeoutMs": int(float(getattr(config, "timeout_s", 0.0)) * 1000),
+        "maxTokens": int(getattr(config, "max_tokens", 0)),
+        "temperature": float(getattr(config, "temperature", 0.0)),
+        "topP": float(getattr(config, "top_p", 0.0)),
+        "extraBodyKeys": sorted(str(key) for key in extra_body.keys()) if isinstance(extra_body, dict) else [],
+        "extraHeaderKeys": sorted(str(key) for key in extra_headers.keys()) if isinstance(extra_headers, dict) else [],
+    }
+
+
 def benchmark_prediction_provider(
     provider: PredictionProvider,
     cases: list[PredictionBenchmarkCase],
@@ -230,7 +258,8 @@ def benchmark_prediction_provider(
 ) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     latencies: list[int] = []
-    provider_name = provider.__class__.__name__
+    status = prediction_provider_status(provider)
+    provider_name = str(status["providerName"])
     for case in cases:
         started = time.perf_counter()
         predictions = provider.predict(
@@ -260,7 +289,7 @@ def benchmark_prediction_provider(
         "schemaVersion": "rag-ime.predict-benchmark.v1",
         "providerName": provider_name,
         "providerProfile": _prediction_provider_profile(provider),
-        "providerConfigured": provider_name != "NullPredictionProvider",
+        "providerConfigured": bool(status["configured"]),
         "maxCandidates": max_candidates,
         "latencyBudgetMs": latency_budget_ms,
         "summary": {
