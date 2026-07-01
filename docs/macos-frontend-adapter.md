@@ -385,7 +385,13 @@ machine-wide install is required. If strict doctor fails with
 there is an older system Squirrel with the same bundle id. It can make the real
 candidate panel use the old vertical list even though the sidecar payload is
 already `model/inline` plus `rag/block`. Replace it with the patched user-local
-app:
+app after a no-op preflight:
+
+```bash
+scripts/replace_system_squirrel_app.sh --preflight
+```
+
+If the preflight prints `replacement_required=true`, run:
 
 ```bash
 scripts/replace_system_squirrel_app.sh

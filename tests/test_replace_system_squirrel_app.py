@@ -8,6 +8,44 @@ from pathlib import Path
 
 
 class ReplaceSystemSquirrelAppScriptTests(unittest.TestCase):
+    def test_replace_script_preflight_reports_stale_target_without_replacing(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-replace-squirrel-") as tmp:
+            tmp_path = Path(tmp)
+            source_app = _write_fake_squirrel_app(tmp_path / "User Squirrel.app", patched=True)
+            target_app = _write_fake_squirrel_app(tmp_path / "System Squirrel.app", patched=False)
+            fake_bin = _write_fake_system_tools(tmp_path)
+            check_script = _write_logger_script(tmp_path / "check.sh", "check")
+            calls_log = tmp_path / "calls.log"
+
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "replace_system_squirrel_app.sh"), "--preflight"],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                    "RAG_IME_SQUIRREL_SOURCE_APP": str(source_app),
+                    "RAG_IME_SQUIRREL_SYSTEM_APP": str(target_app),
+                    "RAG_IME_CHECK_INPUT_SOURCE_SCRIPT": str(check_script),
+                    "RAG_IME_TEST_CALLS_LOG": str(calls_log),
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+            target_text = (target_app / "Contents" / "MacOS" / "Squirrel").read_text(encoding="utf-8")
+            calls = calls_log.read_text(encoding="utf-8")
+
+        self.assertIn("mode=preflight", result.stdout)
+        self.assertIn("source_patch=true", result.stdout)
+        self.assertIn("target_exists=true", result.stdout)
+        self.assertIn("target_patch=false", result.stdout)
+        self.assertIn("replacement_required=true", result.stdout)
+        self.assertIn("next_command=scripts/replace_system_squirrel_app.sh", result.stdout)
+        self.assertIn("check im.rime.inputmethod.Squirrel.Hans", calls)
+        self.assertNotIn("rag-ime.squirrel-frontend-trace.v1", target_text)
+
     def test_replace_script_copies_patched_app_and_runs_post_doctor(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-replace-squirrel-") as tmp:
@@ -107,6 +145,7 @@ def _write_fake_system_tools(tmp_path: Path, *, strip_patch_on_ditto: bool = Fal
     fake_bin.mkdir()
     (fake_bin / "sudo").write_text(
         "#!/usr/bin/env bash\n"
+        "if [[ \"${1:-}\" == \"-n\" ]]; then exit 1; fi\n"
         "if [[ \"${1:-}\" == \"chown\" ]]; then exit 0; fi\n"
         "exec \"$@\"\n",
         encoding="utf-8",

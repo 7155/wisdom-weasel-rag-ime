@@ -284,7 +284,14 @@ For a machine-wide install, set `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Me
 If the strict doctor reports
 `stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace`,
 macOS may be loading an older `/Library/Input Methods/Squirrel.app` instead of
-the patched user-local app. Replace the machine-wide copy with the patched app:
+the patched user-local app. First run the no-op preflight:
+
+```bash
+scripts/replace_system_squirrel_app.sh --preflight
+```
+
+If it prints `replacement_required=true`, replace the machine-wide copy with
+the patched app:
 
 ```bash
 scripts/replace_system_squirrel_app.sh

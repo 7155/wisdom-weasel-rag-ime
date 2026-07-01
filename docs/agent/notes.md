@@ -2519,9 +2519,12 @@ Problem:
 Changes:
 - Clarified doctor stale-duplicate output so it points directly to `scripts/replace_system_squirrel_app.sh`.
 - Added test assertions that stale duplicate warnings/failures include the replacement command.
+- Added `scripts/replace_system_squirrel_app.sh --preflight`, a no-op diagnostic mode that reports source/target patch markers, input-source status, sudo cache status, and whether system replacement is still required.
 
 Verification:
 - `scripts/check_macos_input_source.sh --require-selected im.rime.inputmethod.Squirrel.Hans` passed.
+- Real `scripts/replace_system_squirrel_app.sh --preflight` returned `source_patch=true`, `target_patch=false`, `replacement_required=true`, `sudo_cached=false`.
+- Real strict doctor now fails with the stale-system-app message plus `scripts/replace_system_squirrel_app.sh`, while still proving `display=8 model=5 rag=3 rime=0`, MLX logits/top-k, prompt cache, and LaunchAgent config.
 - Branded `RAG-IME` input source remains enabled/selectable but not selected and `thirdPartyEnabled=false`.
 - User-local patched Squirrel passed runtime sidecar checks, but doctor fails when duplicate stale `/Library/Input Methods/Squirrel.app` is treated as required.
 

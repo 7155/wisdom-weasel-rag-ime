@@ -1761,6 +1761,7 @@ Findings:
 
 Changes:
 - Doctor stale duplicate message now tells the user to run `scripts/replace_system_squirrel_app.sh`.
+- `scripts/replace_system_squirrel_app.sh --preflight` now reports no-op source/target patch status; current machine shows `replacement_required=true` and `sudo_cached=false`.
 
 Next:
 - Replace the root-owned system Squirrel with the patched app using admin credentials, then rerun foreground trace and number-key commit validation.
