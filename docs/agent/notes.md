@@ -7,6 +7,26 @@
 
 ## Log
 
+### 2026-07-02 04:27 CST
+Problem:
+- The frontend trace checker still accepted mixed-panel events based mainly on counts and separators.
+- That could miss a real visible-order regression where native Rime fallback appears before MLX/RAG side candidates.
+
+Changes:
+- Added visible candidate order validation to `scripts/check_squirrel_frontend_trace.py`.
+- When trace events include candidate summaries, the checker now requires model `inline/model` candidates before RAG `block/memory` rows, and any Rime fallback only after side candidates.
+- Added a regression test where a Rime candidate at visible label 2 makes the mixed-panel gate fail.
+- Updated debug and Xcode setup docs to describe the side-first frontend trace requirement.
+
+Commands:
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_squirrel_frontend_trace`
+- `python3 -m py_compile scripts/check_squirrel_frontend_trace.py`
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`
+
+Findings:
+- Focused frontend trace tests passed: 8 tests.
+- Full test suite passed: 191 tests.
+
 ### 2026-07-02 04:12 CST
 Problem:
 - The foreground trace checker accepted any `side_candidate_commit` event.

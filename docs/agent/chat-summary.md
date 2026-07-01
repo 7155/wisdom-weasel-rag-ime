@@ -2,6 +2,22 @@
 
 ### 2026-07-02
 Topic:
+- Tighten foreground trace side-first visible ordering.
+
+Changes:
+- `check_squirrel_frontend_trace.py` now validates candidate summaries when present.
+- The foreground mixed-panel gate requires model inline candidates before RAG block rows, with Rime fallback only after side candidates.
+- Added a regression case for Rime appearing at visible label 2.
+
+Verification:
+- Focused frontend trace tests passed: 8 tests.
+- Full test suite passed: 191 tests.
+
+Next:
+- Replace the stale system Squirrel, then rerun strict doctor and foreground manual trace.
+
+### 2026-07-02
+Topic:
 - Tighten foreground number-key side-candidate trace verification.
 
 Changes:

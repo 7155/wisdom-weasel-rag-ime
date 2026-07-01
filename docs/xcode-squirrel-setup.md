@@ -351,10 +351,12 @@ It is the repeatable evidence that the installed AppKit frontend actually used
 the sidecar display candidates: `panel_display_candidates` must show
 `modelInline > 0`, `ragBlock > 0`, and `forcesHorizontalLayout=true`, while
 `panel_text_layout` must show space separators between model candidates and a
-newline before the first sentence candidate. After a number-key accept,
-`latestNumberKeySideCommit` must prove the visible key produced a
-`number_key_route` and then committed the matching model/RAG side candidate
-rather than native Rime selection.
+newline before the first sentence candidate. When trace candidate summaries are
+present, the checker also requires visible side-first ordering: model candidates
+first, RAG/memory rows next, and native Rime fallback only after the side
+candidates. After a number-key accept, `latestNumberKeySideCommit` must prove
+the visible key produced a `number_key_route` and then committed the matching
+model/RAG side candidate rather than native Rime selection.
 
 If the project opens in Xcode but the script fails, inspect the exact
 `xcodebuild` output first; the wrapper checks the patched files and config before

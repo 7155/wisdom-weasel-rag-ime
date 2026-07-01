@@ -286,8 +286,11 @@ candidates and forced horizontal layout for the mixed panel. A passing
 `latestMixedTextLayout` proves the rendered text separators are mixed correctly:
 LLM/model inline candidates stay on one horizontal row, then the first
 RAG/memory sentence starts a newline and later sentence candidates remain
-vertical rows. A passing `latestNumberKeySideCommit` proves the same visible
-number key first routed through `number_key_route`, then committed the matching
+vertical rows. When candidate summaries are present, both events also verify the
+visible side-first order: model `inline/model` candidates precede RAG
+`block/memory` rows, and any Rime fallback row can only appear after side
+candidates. A passing `latestNumberKeySideCommit` proves the same visible number
+key first routed through `number_key_route`, then committed the matching
 model/RAG side candidate through `side_candidate_commit` and triggered feedback
 recording.
 
