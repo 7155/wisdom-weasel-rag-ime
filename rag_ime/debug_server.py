@@ -124,6 +124,8 @@ class DebugImeService:
             "available": False,
             "ok": False,
             "typingReady": False,
+            "readinessState": "unavailable",
+            "readinessMessage": "input source check script is not available",
         }
         if script is None or not script.exists():
             return {**payload, "error": "input source check script is not available"}
@@ -140,16 +142,24 @@ class DebugImeService:
                 timeout=5,
             )
         except Exception as exc:
-            return {**payload, "available": True, "error": str(exc)}
+            return {
+                **payload,
+                "available": True,
+                "readinessState": "error",
+                "readinessMessage": "input source check failed",
+                "error": str(exc),
+            }
         output = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
         parsed = _parse_input_source_check_output(output)
         ok = completed.returncode == 0
         typing_ready = bool(parsed.get("selected"))
+        readiness = _input_source_readiness(parsed, ok=ok, typing_ready=typing_ready)
         return {
             **payload,
             "available": True,
             "ok": ok,
             "typingReady": ok and typing_ready,
+            **readiness,
             "exitCode": completed.returncode,
             "rawOutput": output,
             **parsed,
@@ -825,6 +835,43 @@ def _parse_input_source_check_output(output: str) -> dict[str, object]:
     if current_match:
         parsed["current"] = current_match.group(1)
     return parsed
+
+
+def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready: bool) -> dict[str, object]:
+    enabled = parsed.get("enabled") is True
+    selectable = parsed.get("selectable") is True
+    hitoolbox_enabled = parsed.get("hitoolboxEnabled") is not False
+    current = _string(parsed.get("current"))
+    target = _string(parsed.get("id")) or "Squirrel"
+    if ok and typing_ready:
+        return {
+            "readinessState": "ready",
+            "readinessMessage": "Squirrel is the active input source",
+            "nextAction": "start typing with Squirrel",
+        }
+    if enabled and selectable and hitoolbox_enabled:
+        return {
+            "readinessState": "switch",
+            "readinessMessage": "Squirrel is installed; switch the menu bar input source",
+            "nextAction": "select Squirrel from the macOS input menu",
+            "expectedInputSourceId": target,
+            "currentInputSourceId": current,
+        }
+    if not enabled or not selectable:
+        return {
+            "readinessState": "install",
+            "readinessMessage": "Squirrel is not enabled in the macOS input-source list",
+            "nextAction": "run the Squirrel install and input-source enable scripts",
+            "expectedInputSourceId": target,
+            "currentInputSourceId": current,
+        }
+    return {
+        "readinessState": "error" if not ok else "waiting",
+        "readinessMessage": "input source state is incomplete",
+        "nextAction": "run doctor_squirrel_integration.sh",
+        "expectedInputSourceId": target,
+        "currentInputSourceId": current,
+    }
 
 
 def _cache_stats_delta(before: object, after: object) -> dict[str, object]:

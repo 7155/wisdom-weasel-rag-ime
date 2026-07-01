@@ -1263,3 +1263,19 @@ Verification:
 
 Next:
 - Use the gate after switching to `鼠须管`; until then it should fail specifically on `input-source-selected`.
+
+### 2026-07-01
+Topic:
+- Make the debug input-source card live and readiness-oriented.
+
+Changes:
+- `/api/input-source` now returns `readinessState`, `readinessMessage`, and `nextAction`.
+- Debug UI polls input-source status every 2.5 seconds and shows `ready`, `switch`, `install`, or `error`.
+- README/debug docs now state that `switch` means Squirrel is visible/enabled but not the current active input source; `ready` is required before real typing validation.
+
+Verification:
+- Tests cover ready, switch, and install-needed states.
+- Current machine still reports installed/HIToolbox-enabled but selected=false with current ABC.
+
+Next:
+- After the user switches the macOS menu-bar input source to `鼠须管`, rerun `scripts/wait_squirrel_typing_ready.sh` and then the quality gate with `--require-input-source-ready`.

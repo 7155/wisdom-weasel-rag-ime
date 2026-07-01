@@ -1813,3 +1813,22 @@ Verification:
 Status:
 - Backend quality gates can now include active Squirrel selection when doing real macOS tryout.
 - The current machine still reports Squirrel installed but not selected until the user switches from the menu bar.
+
+### 2026-07-01 19:45 CST
+Problem:
+- The user confirmed the visible `鼠须管` entry in System Settings, but the real input-source check still reported `selected=false` and `current=com.apple.keylayout.ABC`.
+- The debug page showed raw installed/selected/current metrics, but it did not provide a stable readiness state that could distinguish "installed but switch needed" from "ready for typing validation".
+
+Changes:
+- Added `readinessState`, `readinessMessage`, and `nextAction` to `/api/input-source`.
+- The readiness states are `ready`, `switch`, `install`, and `error`; the current machine maps to `switch` until the active macOS input menu is changed to Squirrel.
+- Updated the browser debug page to poll `/api/input-source` every 2.5 seconds and show the compact readiness state without enlarging the actual IME candidate overlay.
+- Updated README and debug-surface docs with the `switch` vs `ready` distinction.
+
+Verification:
+- Added debug-server tests for `switch`, `ready`, and `install` readiness states.
+- Real local check still reports Squirrel installed and HIToolbox-enabled but not active: `current=com.apple.keylayout.ABC`.
+
+Status:
+- Debug/debug-gate now gives live feedback while the user switches input sources.
+- Continuous real typing validation is still pending until the active source becomes Squirrel.

@@ -89,6 +89,7 @@ Endpoints:
 
 ```text
 GET  /api/health
+GET  /api/input-source
 POST /api/seed
 POST /api/suggest
 POST /api/rime-suggest
@@ -104,6 +105,22 @@ POST /api/commit
 ```bash
 python3 -m rag_ime.cli suggest-json ...
 ```
+
+`/api/input-source` is the browser-facing readiness check for real macOS
+typing. It wraps `scripts/check_macos_input_source.sh --require-hitoolbox-enabled`
+and returns both raw facts (`enabled`, `selectable`, `selected`, `current`) and a
+compact `readinessState`:
+
+- `ready`: Squirrel is installed and currently selected;
+- `switch`: Squirrel is installed but the active input source is still another
+  input method such as ABC or Doubao;
+- `install`: Squirrel is not enabled in the current user's input-source list;
+- `unavailable`: the local checker script is missing;
+- `error`: the checker itself failed.
+
+The debug page polls this endpoint every few seconds. This keeps the browser
+surface aligned with the manual macOS menu-bar switch without adding status text
+to the real compact IME candidate panel.
 
 For local model debugging, use the CLI doctor before opening the debug page:
 
