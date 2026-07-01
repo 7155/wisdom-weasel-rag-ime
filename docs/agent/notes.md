@@ -7,6 +7,26 @@
 
 ## Log
 
+### 2026-07-01 13:58 CST
+Problem:
+- Cache probe 只有 debug HTTP 页面入口，不利于 CI/终端自动验收，也不方便 shared-core adapter 做无浏览器缓存命中测试。
+
+Changes:
+- 新增 `python3 -m rag_ime.cli cache-probe`，复用 `DebugImeService.cache_probe()`。
+- CLI 支持 `current_input`、`--recent-context`、`--repeat`、`--top-k`、`--rime-candidate`、`--force-side-candidates`、`--rime-cache-ttl-ms`。
+- 更新 README 和 `docs/debug-surface.md`，给出终端 cache-probe 命令。
+- 新增端到端测试：seed 本地 DB 后直接跑 CLI cache-probe，验证 suggestion cache 和 rimeSuggestCache 都有 warm hits。
+
+Commands:
+- `python3 -m unittest tests.test_debug_server`
+- `python3 -m rag_ime.cli --help | rg "cache-probe"`
+- `python3 -m rag_ime.cli --db-path /tmp/rag-ime-cache-probe-cli.sqlite cache-probe "RAG 输入法" --recent-context "manual cache probe" --repeat 3 --rime-candidate "RAG 输入法"`
+- `python3 -m py_compile rag_ime/cli.py rag_ime/debug_server.py`
+- `git diff --check`
+
+Findings:
+- 临时 DB 实测 repeat=3 时 `suggestionCache.hitsDelta=2`、`rimeSuggestCache.hitsDelta=2`，两层 cache gate 都通过。
+
 ### 2026-07-01 13:53 CST
 Problem:
 - 用户强调 VCP 缓存命中和输入法高频 refresh 很关键；debug 页面虽然显示 cache stats，但缺少一个主动重复请求并验证 warm hit 的诊断入口。

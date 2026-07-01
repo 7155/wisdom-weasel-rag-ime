@@ -2,6 +2,19 @@
 
 ### 2026-07-01
 Topic:
+- Promote cache probe to a CLI gate.
+
+Changes:
+- Added `python3 -m rag_ime.cli cache-probe` using the same backend as `POST /api/cache-probe`.
+- CLI output includes suggestion-cache and Rime semantic-cache warm-hit deltas and pass flags.
+- Added an end-to-end CLI test and documented the command in README/debug docs.
+
+Verification:
+- Focused debug tests passed.
+- Manual temporary-DB probe showed `suggestionCache.hitsDelta=2` and `rimeSuggestCache.hitsDelta=2` for `repeat=3`.
+
+### 2026-07-01
+Topic:
 - Add debug cache-hit probe for IME refresh behavior.
 
 Changes:

@@ -150,6 +150,19 @@ export RAG_IME_SUGGESTION_CACHE_SIZE=128
 
 Set it to `0` to measure uncached retrieval in evaluations.
 
+Probe both warm caches without opening the browser debug page:
+
+```bash
+python3 -m rag_ime.cli cache-probe "RAG 输入法" \
+  --recent-context "用户正在调试输入法缓存" \
+  --repeat 3 \
+  --rime-candidate "RAG 输入法"
+```
+
+The report includes `suggestionCache` and `rimeSuggestCache` hit deltas. This is
+the terminal gate for the VCP-style cache-hit concern: equivalent IME refreshes
+should warm-hit instead of re-running retrieval/model work.
+
 Install it as a user LaunchAgent so it starts at login:
 
 ```bash

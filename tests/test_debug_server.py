@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -630,6 +632,54 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["schemaVersion"], "rag-ime.debug-cache-probe.v1")
         self.assertGreaterEqual(payload["summary"]["rimeCacheHitDelta"], 2)
         self.assertIn("suggestionCache", payload)
+
+    def test_cli_cache_probe_runs_without_debug_server(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-cli-cache-probe-") as tmp:
+            db_path = Path(tmp) / "rag-ime.sqlite"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "rag_ime.cli",
+                    "--db-path",
+                    str(db_path),
+                    "seed-demo",
+                    "--reset",
+                ],
+                cwd=root,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "rag_ime.cli",
+                    "--db-path",
+                    str(db_path),
+                    "cache-probe",
+                    "RAG 输入法",
+                    "--recent-context",
+                    "CLI cache probe",
+                    "--repeat",
+                    "3",
+                    "--rime-candidate",
+                    "RAG 输入法",
+                ],
+                cwd=root,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["schemaVersion"], "rag-ime.debug-cache-probe.v1")
+        self.assertEqual(payload["repeat"], 3)
+        self.assertGreaterEqual(payload["suggestionCache"]["hitsDelta"], 2)
+        self.assertGreaterEqual(payload["rimeSuggestCache"]["hitsDelta"], 2)
+        self.assertTrue(payload["summary"]["suggestionCachePassed"])
+        self.assertTrue(payload["summary"]["rimeCachePassed"])
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):

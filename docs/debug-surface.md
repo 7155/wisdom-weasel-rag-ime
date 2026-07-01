@@ -135,6 +135,15 @@ retrieval and local model work on every equivalent key event. The visible card
 only shows core hits, Rime hits, and repeat count; the JSON panel keeps the full
 before/after stats and samples.
 
+The same probe is available without the browser:
+
+```bash
+python3 -m rag_ime.cli cache-probe "RAG 输入法" \
+  --recent-context "用户正在调试输入法缓存" \
+  --repeat 3 \
+  --rime-candidate "RAG 输入法"
+```
+
 `/api/rime-suggest` returns the Squirrel/Rime side-candidate payload. It accepts structured Rime context:
 
 ```json
