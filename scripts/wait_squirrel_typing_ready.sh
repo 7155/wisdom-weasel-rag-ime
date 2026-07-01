@@ -3,10 +3,19 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
+CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/check_macos_input_source.sh}"
 SIDECAR_URL="${RAG_IME_SIDECAR_URL:-http://127.0.0.1:8766}"
 TIMEOUT_SECONDS="${RAG_IME_TYPING_READY_TIMEOUT_SECONDS:-60}"
 POLL_SECONDS="${RAG_IME_TYPING_READY_POLL_SECONDS:-1}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
+
+if ! added_output="$("$CHECK_INPUT_SOURCE_SCRIPT" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
+  echo "Squirrel is not fully added to the current user's macOS input-source lists." >&2
+  echo "$added_output" >&2
+  echo "Use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel." >&2
+  echo "Then run scripts/wait_squirrel_input_source_added.sh before switching input sources." >&2
+  exit 2
+fi
 
 deadline=$((SECONDS + TIMEOUT_SECONDS))
 
@@ -15,7 +24,7 @@ echo "Use the macOS input menu to switch to Squirrel - Simplified."
 
 last_output=""
 while [[ "$SECONDS" -le "$deadline" ]]; do
-  if last_output="$("$ROOT/scripts/check_macos_input_source.sh" --require-selected "$INPUT_SOURCE_ID" 2>&1)"; then
+  if last_output="$("$CHECK_INPUT_SOURCE_SCRIPT" --require-selected "$INPUT_SOURCE_ID" 2>&1)"; then
     echo "input-source: $last_output"
     break
   fi

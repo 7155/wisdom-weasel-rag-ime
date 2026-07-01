@@ -1405,3 +1405,18 @@ Verification:
 
 Next:
 - After adding `鼠须管` in System Settings, rerun `squirrel-tryout-gate`; it will now also prove the local Rime build is usable.
+
+### 2026-07-01
+Topic:
+- Add a wait gate for System Settings input-source addition.
+
+Changes:
+- Added `scripts/wait_squirrel_input_source_added.sh`.
+- `scripts/wait_squirrel_typing_ready.sh` now fails fast when Squirrel is not fully added to current-user input-source lists.
+- Docs split the flow into source-list add, menu-bar switch, tryout gate, and foreground typing.
+
+Verification:
+- Added wait-script tests for success and fast failure.
+
+Next:
+- Run `scripts/wait_squirrel_input_source_added.sh` while adding Squirrel in System Settings, then switch the input menu and run `scripts/wait_squirrel_typing_ready.sh`.

@@ -1978,3 +1978,20 @@ Verification:
 
 Status:
 - Read-only tryout evidence now covers the Squirrel app, RAG config, compiled Rime data, input-source readiness, LaunchAgent, and sidecar payload.
+
+### 2026-07-01 20:31 CST
+Problem:
+- `scripts/wait_squirrel_typing_ready.sh` waited for selected input source even when Squirrel was not fully present in the current user's HIToolbox/third-party input-source lists.
+- On macOS 27 this made the user wait for a menu-bar switch that could not appear until System Settings added Squirrel.
+
+Changes:
+- Added `scripts/wait_squirrel_input_source_added.sh`.
+- The new gate waits for `check_macos_input_source.sh --require-hitoolbox-enabled` and prints the exact System Settings Add path while waiting.
+- `wait_squirrel_typing_ready.sh` now fails fast with the add-gate instruction if `thirdPartyEnabled=false`.
+- Updated README, Xcode setup, and macOS adapter docs to split "add source" from "select source".
+
+Verification:
+- Added tests for successful source-list detection and fast failure when Squirrel is not fully added.
+
+Status:
+- Manual next step is now operationally clean: run the add gate while adding Squirrel in System Settings, then run typing-ready after switching to Squirrel.

@@ -354,11 +354,12 @@ Settings "+" flow for a distributable product; on macOS 27 the
 `com.apple.inputsources` third-party list may still require that UI route. If
 the check prints `thirdPartyEnabled=false`, add Squirrel from System Settings.
 
-The active selected source may still need to be changed from the macOS input
-menu before the real continuous typing test. Use this wait gate after switching
-from the input menu:
+The active selected source still needs to be changed from the macOS input menu
+before the real continuous typing test. Use the add gate first, then the selected
+source gate after switching from the input menu:
 
 ```bash
+scripts/wait_squirrel_input_source_added.sh
 scripts/wait_squirrel_typing_ready.sh
 ```
 

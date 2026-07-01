@@ -239,11 +239,14 @@ foreground input source from a background command; use the input menu for the
 continuous typing test. After switching from the input menu, use:
 
 ```bash
+scripts/wait_squirrel_input_source_added.sh
 scripts/wait_squirrel_typing_ready.sh
 ```
 
-It waits until `im.rime.inputmethod.Squirrel.Hans selected=true`, then confirms
-the sidecar health and configured local model lane.
+The first command waits until the current user's HIToolbox and third-party
+input-source lists both include Squirrel. The second waits until
+`im.rime.inputmethod.Squirrel.Hans selected=true`, then confirms the sidecar
+health and configured local model lane.
 
 After that, run the combined machine gate:
 
@@ -263,13 +266,14 @@ It does not install, enable, switch, select a side candidate, or drive the GUI.
 
 Manual continuous-use verification:
 
-1. Open System Settings -> Keyboard -> Input Sources and confirm Squirrel is present.
-2. Select Squirrel from the macOS input menu and wait for `scripts/wait_squirrel_typing_ready.sh` to pass.
-3. Run `squirrel-tryout-gate` and keep `/tmp/rag-ime-squirrel-tryout-report.json`.
-4. Open a normal editor and type at least 20 mixed Chinese/English prompts.
-5. Confirm normal Rime candidates still occupy the primary candidate slots.
-6. Confirm RAG/model side candidates appear only after stable Rime candidates or idle semantic input.
-7. Select at least one side candidate by number key and confirm `/rime-select` records the commit in the sidecar logs.
+1. Open System Settings -> Keyboard -> Input Sources and add Squirrel from Chinese, Simplified if it is not present.
+2. Run `scripts/wait_squirrel_input_source_added.sh` until it passes.
+3. Select Squirrel from the macOS input menu and wait for `scripts/wait_squirrel_typing_ready.sh` to pass.
+4. Run `squirrel-tryout-gate` and keep `/tmp/rag-ime-squirrel-tryout-report.json`.
+5. Open a normal editor and type at least 20 mixed Chinese/English prompts.
+6. Confirm normal Rime candidates still occupy the primary candidate slots.
+7. Confirm RAG/model side candidates appear only after stable Rime candidates or idle semantic input.
+8. Select at least one side candidate by number key and confirm `/rime-select` records the commit in the sidecar logs.
 
 If the project opens in Xcode but the script fails, inspect the exact
 `xcodebuild` output first; the wrapper checks the patched files and config before

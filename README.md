@@ -266,6 +266,12 @@ input-source list: Keyboard -> Input Sources -> Add -> Chinese, Simplified ->
 Squirrel. If the check prints `thirdPartyEnabled=false`, the command-line helper
 could not make System Settings show Squirrel and the UI Add path is required.
 
+After using the System Settings Add flow, wait for the strict source-list check:
+
+```bash
+scripts/wait_squirrel_input_source_added.sh
+```
+
 Before a real typing test, switch to `Squirrel - Simplified` from the macOS input
 menu and wait for the selected-source plus sidecar check:
 
