@@ -7,6 +7,37 @@
 
 ## Log
 
+### 2026-07-01 17:33 CST
+Problem:
+- Full Xcode CLI was available, but the first patched Squirrel build failed because `Frameworks/Sparkle.framework` and other Squirrel binary dependencies were not prepared.
+- The earlier model TTFC smoke was too optimistic because it could count raw first text, half tokens, or echoes of the current input.
+- User's macOS is 27.0; Xcode 26.6 CLI can build, but the GUI is not supported on this OS, so final GUI work should use Xcode 27 beta 2.
+
+Changes:
+- Forced Squirrel dependency preparation with proxy variables unset, then built the patched Squirrel Release app successfully.
+- Added warmup-run support for IME TTFC and quality-gate model TTFC so cold model load is separated from resident sidecar latency.
+- Changed Ollama stream-first prompting to single-candidate continuation mode and stopped measuring full JSON/list latency for TTFC.
+- Added strict first-candidate filtering: single half tokens and repeated current-input tokens no longer count as valid TTFC.
+- Updated `docs/eval/ime-ttfc-cases.example.jsonl` to use continuation-style input prefixes instead of complete topic labels.
+
+Commands:
+- `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy RAG_IME_SQUIRREL_PREINSTALL=1 scripts/build_patched_squirrel.sh build`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor.PredictionProviderTests.test_ollama_provider_can_return_first_streamed_candidate tests.test_predictor.PredictionProviderTests.test_streaming_plain_text_parser_waits_for_usable_candidate tests.test_predictor.PredictionProviderTests.test_prediction_filter_removes_repeated_current_input_tokens tests.test_predictor.PredictionProviderTests.test_cli_bench_ime_ttfc_can_warm_model_without_scoring_warmup`
+- `python3 -m rag_ime.cli --core-mode fixture bench-ime-ttfc --cases-file docs/eval/ime-ttfc-cases.example.jsonl --provider ollama --base-url http://127.0.0.1:11434 --models qwen3.5:0.8b-mlx --warmup-runs 1 --repeat 5 --max-candidates 1 --latency-budget-ms 200 --include-cases`
+- `python3 -m rag_ime.cli --core-mode fixture bench-ime-ttfc --cases-file docs/eval/ime-ttfc-cases.example.jsonl --provider ollama --base-url http://127.0.0.1:11434 --models qwen3.5:0.8b-mlx,qwen3.5:0.8b --warmup-runs 1 --repeat 3 --max-candidates 1 --latency-budget-ms 200 --include-cases`
+
+Findings:
+- Patched Squirrel built successfully at `/tmp/rag-ime-squirrel-derived-data/Build/Products/Release/Squirrel.app`.
+- `qwen3.5:0.8b-mlx` can stream raw text quickly, but strict TTFC on mixed English/Chinese technical prefixes produced many missing valid candidates because the model repeated `RAG`, `Squirrel`, `PROJECT`, or `Wisdom-Weasel`.
+- With strict filtering, `qwen3.5:0.8b-mlx` had fast valid samples (`p50=44 ms`, `p95=62 ms`) but missed 14/20 valid candidates on the current TTFC case set.
+- `qwen3.5:0.8b` GGUF/Q8 timed out under the 350 ms instant profile, so it is not a first-token path on this Mac.
+- Low temperature did not solve current-input repetition. `/api/generate raw` looked more autocomplete-like on one Chinese case but still emitted questions or `<think>` fragments on mixed technical input.
+
+Next:
+- Install Xcode 27 beta 2 for GUI project work on macOS 27, then run Squirrel install and system input-method continuous-use validation together.
+- Keep Rime/RAG as the primary candidate lane; treat Qwen3.5 0.8B MLX as a speed smoke model until 2B/4B, Qwen2.5 small non-thinking, or a dedicated completion/base model passes strict TTFC and quality evals.
+- Later provider work should prioritize resident MLX-LM or native llama.cpp/Metal with explicit prompt/KV reuse, candidate filtering, and stale response cancellation.
+
 ### 2026-07-01 16:35 CST
 Problem:
 - Real Codex-history import still admitted some Codex runtime context blocks (`skills_instructions`, `apps_instructions`, `collaboration_mode`) as candidate memory.

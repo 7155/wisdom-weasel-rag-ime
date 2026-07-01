@@ -247,6 +247,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     bench_ime_ttfc.add_argument("--provider", default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "ollama"))
     bench_ime_ttfc.add_argument("--max-candidates", type=int, default=3)
     bench_ime_ttfc.add_argument("--repeat", type=int, default=20)
+    bench_ime_ttfc.add_argument(
+        "--warmup-runs",
+        type=int,
+        default=0,
+        help="Run and discard this many full case passes before scoring TTFC. Use this to separate cold load from resident IME latency.",
+    )
     bench_ime_ttfc.add_argument("--latency-budget-ms", type=int, default=200)
     bench_ime_ttfc.add_argument(
         "--failure-cooldown-ms",
@@ -386,6 +392,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     quality_gate.add_argument("--model-ttfc-profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "instant"))
     quality_gate.add_argument("--model-ttfc-repeat", type=int, default=3)
+    quality_gate.add_argument(
+        "--model-ttfc-warmup-runs",
+        type=int,
+        default=0,
+        help="Warm the model with this many TTFC case passes before scoring the optional model gate.",
+    )
     quality_gate.add_argument("--model-ttfc-latency-budget-ms", type=int, default=200)
     quality_gate.add_argument("--max-model-ttfc-p95-ms", type=int, default=200)
     quality_gate.add_argument("--max-model-ttfc-over-budget-rate", type=float, default=0.0)
@@ -863,6 +875,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             profile=args.profile,
             max_candidates=max(1, min(10, args.max_candidates)),
             repeat=max(1, args.repeat),
+            warmup_runs=max(0, args.warmup_runs),
             latency_budget_ms=max(1, args.latency_budget_ms),
             failure_cooldown_ms=max(0, args.failure_cooldown_ms),
             include_cases=bool(args.include_cases),
@@ -1132,6 +1145,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             model_ttfc_models=args.model_ttfc_models,
             model_ttfc_profile=args.model_ttfc_profile,
             model_ttfc_repeat=max(1, args.model_ttfc_repeat),
+            model_ttfc_warmup_runs=max(0, args.model_ttfc_warmup_runs),
             model_ttfc_latency_budget_ms=max(1, args.model_ttfc_latency_budget_ms),
             max_model_ttfc_p95_ms=max(1, args.max_model_ttfc_p95_ms),
             max_model_ttfc_over_budget_rate=max(0.0, min(1.0, args.max_model_ttfc_over_budget_rate)),
@@ -1435,6 +1449,7 @@ def run_quality_gate(
     model_ttfc_models: str,
     model_ttfc_profile: str,
     model_ttfc_repeat: int,
+    model_ttfc_warmup_runs: int,
     model_ttfc_latency_budget_ms: int,
     max_model_ttfc_p95_ms: int,
     max_model_ttfc_over_budget_rate: float,
@@ -1504,6 +1519,7 @@ def run_quality_gate(
             profile=model_ttfc_profile,
             max_candidates=3,
             repeat=max(1, model_ttfc_repeat),
+            warmup_runs=max(0, model_ttfc_warmup_runs),
             latency_budget_ms=max(1, model_ttfc_latency_budget_ms),
             failure_cooldown_ms=0,
             include_cases=False,
@@ -1555,6 +1571,7 @@ def run_quality_gate(
             "modelTtfcModels": model_ttfc_models,
             "modelTtfcCasesFile": str(model_ttfc_cases_file),
             "modelTtfcRepeat": max(1, model_ttfc_repeat),
+            "modelTtfcWarmupRuns": max(0, model_ttfc_warmup_runs),
             "modelTtfcLatencyBudgetMs": max(1, model_ttfc_latency_budget_ms),
             "maxModelTtfcP95Ms": max_model_ttfc_p95_ms,
             "maxModelTtfcOverBudgetRate": max_model_ttfc_over_budget_rate,
@@ -2083,6 +2100,7 @@ def run_ime_ttfc_benchmark(
     profile: str,
     max_candidates: int,
     repeat: int,
+    warmup_runs: int,
     latency_budget_ms: int,
     failure_cooldown_ms: int,
     include_cases: bool,
@@ -2098,6 +2116,7 @@ def run_ime_ttfc_benchmark(
         profile=profile,
         max_candidates=max_candidates,
         repeat=repeat,
+        warmup_runs=warmup_runs,
         latency_budget_ms=latency_budget_ms,
         failure_cooldown_ms=failure_cooldown_ms,
         include_cases=include_cases,
@@ -2112,6 +2131,7 @@ def run_ime_ttfc_benchmark(
             cases,
             max_candidates=max(1, min(10, max_candidates)),
             repeat=max(1, repeat),
+            warmup_runs=max(0, warmup_runs),
             latency_budget_ms=max(1, latency_budget_ms),
         )
         model_report["model"] = model
@@ -2130,6 +2150,7 @@ def run_ime_ttfc_benchmark(
             "baseCaseCount": len(cases),
             "effectiveCaseCount": len(cases) * max(1, repeat),
         },
+        "warmupRuns": max(0, warmup_runs),
         "maxCandidates": max(1, min(10, max_candidates)),
         "latencyBudgetMs": max(1, latency_budget_ms),
         "failureCooldownMs": max(0, failure_cooldown_ms),

@@ -35,8 +35,12 @@ class SetupXcodeForSquirrelScriptTests(unittest.TestCase):
         self.assertIn("== Disk Space ==", result.stdout)
         self.assertIn("minimum_free_gib:", result.stdout)
         self.assertIn("== Installed Xcodes ==", result.stdout)
-        self.assertIn("== Install Help ==", result.stdout)
-        self.assertIn("RAG_IME_INSTALL_XCODE", result.stdout)
+        if "== Install Help ==" in result.stdout:
+            self.assertIn("RAG_IME_INSTALL_XCODE", result.stdout)
+        else:
+            self.assertIn("== Detected Xcode ==", result.stdout)
+            self.assertIn("project-local xcodebuild check:", result.stdout)
+            self.assertIn("== System Configuration ==", result.stdout)
 
 
 if __name__ == "__main__":

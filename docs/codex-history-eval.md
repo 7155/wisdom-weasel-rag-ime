@@ -315,6 +315,7 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --model-ttfc-provider ollama \
   --model-ttfc-base-url http://127.0.0.1:11434 \
   --model-ttfc-models qwen3.5:0.8b-mlx \
+  --model-ttfc-warmup-runs 1 \
   --model-ttfc-repeat 20 \
   --model-ttfc-latency-budget-ms 200 \
   --max-model-ttfc-p95-ms 200 \
@@ -329,6 +330,8 @@ candidate panel looks correct in easy cases but the RAG/model side lanes are
 falling open under the real IME latency budget. `--require-model-ttfc` catches
 the model-specific latency failure: the model may be configured and reachable
 but still too slow to produce the first selectable side candidate.
+Use `--model-ttfc-warmup-runs` for the resident sidecar path only; cold-load
+measurements should stay visible in the model benchmark notes.
 
 ## Compare RAG Against Model Prediction
 

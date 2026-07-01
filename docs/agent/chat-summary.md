@@ -2,6 +2,26 @@
 
 ### 2026-07-01
 Topic:
+- Full Xcode/Squirrel build and strict local-model TTFC validation.
+
+Changes:
+- Prepared Squirrel binary dependencies without proxy variables and built patched `Squirrel.app` successfully with full Xcode CLI.
+- Added stricter stream-first candidate handling: warmup runs are separate, TTFC stops on the first usable candidate, half tokens are ignored, and current-input echoes are filtered.
+- Changed Ollama stream-first prompt to continuation-style single-candidate output.
+- Updated TTFC example cases to be composing prefixes, not complete topic labels.
+- Documented that `qwen3.5:0.8b-mlx` is a fast smoke path but not yet a production-quality candidate source.
+
+Verification:
+- Patched Squirrel Release build succeeded at `/tmp/rag-ime-squirrel-derived-data/Build/Products/Release/Squirrel.app`.
+- Focused predictor tests for stream-first, warmup, and repeated-input filtering passed.
+- Real local Ollama benchmark showed `qwen3.5:0.8b-mlx` valid samples at `p50=44 ms`, `p95=62 ms`, but 14/20 samples had no valid candidate after strict filtering.
+
+Next:
+- Install/select Xcode 27 beta 2 for GUI compatibility on macOS 27, then do install + system input-method continuous-use validation.
+- Test larger or completion-oriented local models before enabling model side candidates by default.
+
+### 2026-07-01
+Topic:
 - Filter remaining Codex runtime context from imported RAG-IME memories.
 
 Changes:

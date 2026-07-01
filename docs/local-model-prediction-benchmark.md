@@ -216,6 +216,7 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
   --model-ttfc-provider ollama \
   --model-ttfc-base-url http://127.0.0.1:11434 \
   --model-ttfc-models qwen3.5:0.8b-mlx \
+  --model-ttfc-warmup-runs 1 \
   --model-ttfc-repeat 20 \
   --model-ttfc-latency-budget-ms 200 \
   --max-model-ttfc-p95-ms 200 \
@@ -225,6 +226,39 @@ python3 -m rag_ime.cli --db-path .rag-ime-data/rag-ime.sqlite \
 This gate reuses `bench-ime-ttfc` logic and fails if the winning model has no
 first parsed candidate, p95 first-candidate latency exceeds the threshold, or
 any sample is over budget when the over-budget rate is set to zero.
+Use `--model-ttfc-warmup-runs` only for the resident input-method path; cold
+load remains a separate diagnostic because a login-started sidecar should warm
+the model before per-keystroke prediction is enabled.
+
+### 2026-07-01 Strict TTFC Follow-up
+
+The first raw-token measurements were too optimistic for product acceptance:
+they counted first model text even when the text was a JSON prefix, a half
+token, or a repeat of the current input. The current TTFC path now measures the
+first usable side candidate:
+
+- non-JSON streaming text must be candidate-shaped, not a single Chinese
+  character or one ASCII letter;
+- candidates equal to or contained in the current input are filtered;
+- missing candidates count as over-budget samples.
+
+On the local Mac with `qwen3.5:0.8b-mlx`, this made the result more honest:
+
+| Cases | Model | Warmup | Repeat | p50 valid candidate | p95 valid candidate | Missing valid candidates | Result |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `docs/eval/ime-ttfc-cases.example.jsonl` | `qwen3.5:0.8b-mlx` | 1 | 5 | 44 ms | 62 ms | 14/20 | Fast when it produces a valid candidate, but usually repeats mixed English/Chinese input. |
+
+Low temperature did not fix the issue. A direct `/api/generate` raw-prefix probe
+was more autocomplete-like for one Chinese case, but still produced questions or
+`<think>` fragments on mixed technical inputs. The engineering conclusion is:
+
+- keep `qwen3.5:0.8b-mlx` as a Mac speed smoke model only;
+- do not enable the model lane by default until candidate quality passes the
+  same strict TTFC and eval gates;
+- next test should compare `qwen3.5:2b-mlx` / `4b-mlx`, Qwen2.5 small
+  non-thinking models, or a dedicated completion/base model;
+- the final low-latency provider still needs resident prompt/KV reuse and
+  stale-cancel semantics, not just prompt wording.
 
 ## Mac Runtime Order
 
@@ -264,14 +298,29 @@ python3 -m rag_ime.cli predictor-ttft \
   --latency-budget-ms 200
 ```
 
-If this still has p50 first chunk above 200 ms, the next work item is not more
-prompt tuning. It is a resident MLX-LM or native llama.cpp provider that can
-reuse prompt/KV state explicitly.
+For multi-case model comparison, prefer the TTFC matrix and score only after an
+explicit warmup pass:
 
-Current result: `qwen3.5:0.8b-mlx` reached 46 ms p50 first chunk on the short
-prompt, so the next work item is not "find any model that can stream quickly".
-It is to keep that first-visible behavior while improving candidate quality and
-removing the wait for complete JSON output.
+```bash
+python3 -m rag_ime.cli --core-mode fixture bench-ime-ttfc \
+  --cases-file docs/eval/ime-ttfc-cases.example.jsonl \
+  --provider ollama \
+  --base-url http://127.0.0.1:11434 \
+  --models qwen3.5:0.8b-mlx,qwen3.5:0.8b \
+  --warmup-runs 1 \
+  --repeat 20 \
+  --latency-budget-ms 200
+```
+
+If this still has p50 first candidate above 200 ms, the next work item is not
+more prompt tuning. It is a resident MLX-LM or native llama.cpp provider that
+can reuse prompt/KV state explicitly.
+
+Current result: `qwen3.5:0.8b-mlx` can produce raw first text quickly, but after
+strict usable-candidate filtering it misses many mixed English/Chinese technical
+cases by repeating the current input. The next work item is not "find any model
+that can stream quickly"; it is to keep the fast path while improving candidate
+quality and avoiding current-input echoes.
 
 Resident MLX service route:
 
