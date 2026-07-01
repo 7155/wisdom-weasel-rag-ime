@@ -103,6 +103,14 @@ POST /api/commit
 python3 -m rag_ime.cli suggest-json ...
 ```
 
+For local model debugging, use the CLI doctor before opening the debug page:
+
+```bash
+python3 -m rag_ime.cli predictor-doctor
+```
+
+The browser debug page shows predictor configuration through `/api/health`, but it does not intentionally run model probes on page load. `predictor-doctor` is the safer place to test `/v1/models` and one short candidate request without adding latency to ordinary debug refreshes.
+
 `/api/rime-suggest` returns the Squirrel/Rime side-candidate payload. It accepts structured Rime context:
 
 ```json

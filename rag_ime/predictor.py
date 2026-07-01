@@ -304,6 +304,54 @@ def benchmark_prediction_provider(
     }
 
 
+def doctor_prediction_provider(
+    provider: PredictionProvider,
+    *,
+    sample_input: str = "RAG 输入法",
+    recent_context: str = "",
+    max_candidates: int = 3,
+    latency_budget_ms: int = 150,
+) -> dict[str, Any]:
+    status = prediction_provider_status(provider)
+    model_probe = _probe_openai_compatible_models(provider)
+    benchmark = benchmark_prediction_provider(
+        provider,
+        [PredictionBenchmarkCase(current_input=sample_input, recent_context=recent_context)],
+        max_candidates=max_candidates,
+        latency_budget_ms=latency_budget_ms,
+    )
+    has_candidates = bool(benchmark["summary"]["hasCandidates"])
+    within_budget = bool(benchmark["summary"]["allWithinBudget"])
+    model_probe_ok = bool(model_probe["ok"])
+    ready = bool(status["configured"]) and has_candidates and within_budget
+    checks = {
+        "configured": bool(status["configured"]),
+        "modelsEndpoint": model_probe,
+        "prediction": {
+            "ok": has_candidates and within_budget,
+            "hasCandidates": has_candidates,
+            "withinBudget": within_budget,
+            "latencyMs": benchmark["summary"]["maxLatencyMs"],
+            "candidateCount": benchmark["summary"]["totalCandidates"],
+            "candidates": benchmark["cases"][0]["candidates"] if benchmark["cases"] else [],
+        },
+    }
+    return {
+        "schemaVersion": "rag-ime.predictor-doctor.v1",
+        "ready": ready,
+        "status": status,
+        "checks": checks,
+        "summary": {
+            "configured": bool(status["configured"]),
+            "endpointReachable": model_probe_ok,
+            "hasCandidates": has_candidates,
+            "withinBudget": within_budget,
+            "readyForSidecar": ready,
+        },
+        "nextActions": _prediction_doctor_next_actions(status=status, checks=checks),
+    }
+
+
 def extract_openai_content(payload: dict[str, Any]) -> str:
     return "\n".join(extract_openai_contents(payload))
 
@@ -484,6 +532,116 @@ def _prediction_provider_profile(provider: PredictionProvider) -> str:
     config = getattr(provider, "config", None)
     profile = getattr(config, "profile", "")
     return profile if isinstance(profile, str) and profile else "none"
+
+
+def _probe_openai_compatible_models(provider: PredictionProvider) -> dict[str, Any]:
+    config = getattr(provider, "config", None)
+    if config is None:
+        return {
+            "ok": False,
+            "skipped": True,
+            "reason": "not_configured",
+            "modelIds": [],
+            "configuredModelFound": False,
+        }
+    url = f"{str(getattr(config, 'base_url', '')).rstrip('/')}/v1/models"
+    started = time.perf_counter()
+    request = urllib.request.Request(
+        url,
+        headers=_headers_from_prediction_config(config),
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            status_code = getattr(response, "status", 200)
+    except urllib.error.HTTPError as exc:
+        return _prediction_probe_error(url=url, started=started, error=f"http_{exc.code}", status_code=exc.code)
+    except TimeoutError:
+        return _prediction_probe_error(url=url, started=started, error="timeout")
+    except (urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
+        return _prediction_probe_error(url=url, started=started, error=str(exc))
+
+    model_ids = _model_ids_from_models_payload(payload)
+    configured_model = str(getattr(config, "model", ""))
+    return {
+        "ok": True,
+        "skipped": False,
+        "url": url,
+        "statusCode": status_code,
+        "elapsedMs": int((time.perf_counter() - started) * 1000),
+        "modelCount": len(model_ids),
+        "modelIds": model_ids[:20],
+        "configuredModel": configured_model,
+        "configuredModelFound": configured_model in model_ids if model_ids else False,
+    }
+
+
+def _prediction_probe_error(
+    *,
+    url: str,
+    started: float,
+    error: str,
+    status_code: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": False,
+        "skipped": False,
+        "url": url,
+        "elapsedMs": int((time.perf_counter() - started) * 1000),
+        "error": error,
+        "modelIds": [],
+        "configuredModelFound": False,
+    }
+    if status_code is not None:
+        payload["statusCode"] = status_code
+    return payload
+
+
+def _model_ids_from_models_payload(payload: dict[str, Any]) -> list[str]:
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return []
+    ids: list[str] = []
+    for item in data:
+        if isinstance(item, dict) and isinstance(item.get("id"), str):
+            ids.append(item["id"])
+    return ids
+
+
+def _headers_from_prediction_config(config: Any) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    api_key = getattr(config, "api_key", "")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    extra_headers = getattr(config, "extra_headers", None)
+    if isinstance(extra_headers, dict):
+        headers.update({str(key): str(value) for key, value in extra_headers.items()})
+    return headers
+
+
+def _prediction_doctor_next_actions(*, status: dict[str, object], checks: dict[str, Any]) -> list[str]:
+    if not status.get("configured"):
+        return [
+            "Set RAG_IME_PREDICTOR_PROVIDER=openai-compatible.",
+            "Set RAG_IME_PREDICTOR_BASE_URL and RAG_IME_PREDICTOR_MODEL.",
+            "Use RAG_IME_PREDICTOR_PROFILE=instant for the first Qwen-style test.",
+        ]
+    model_probe = checks["modelsEndpoint"]
+    prediction = checks["prediction"]
+    actions: list[str] = []
+    if not model_probe.get("ok"):
+        if prediction.get("hasCandidates"):
+            actions.append("The prediction endpoint works, but /v1/models failed; verify the model id manually.")
+        else:
+            actions.append("Start the local or WSL OpenAI-compatible model server and verify /v1/models.")
+    elif not model_probe.get("configuredModelFound") and model_probe.get("modelIds"):
+        actions.append("Set RAG_IME_PREDICTOR_MODEL to one of the model ids returned by /v1/models.")
+    if not prediction.get("hasCandidates"):
+        actions.append("Run predict-benchmark with a simple case and inspect model output or parser cleanup.")
+    if not prediction.get("withinBudget"):
+        actions.append("Use a smaller/non-thinking model, reduce max tokens, or switch to completion-instant/KV-cache serving.")
+    return actions or ["Run eval-prediction and eval-comparison before enabling model side candidates by default."]
 
 
 def _json_string_map_env(env: dict[str, str], name: str) -> dict[str, str]:

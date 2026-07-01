@@ -16,6 +16,7 @@ from rag_ime.predictor import (
     OpenAICompatiblePredictionProvider,
     PredictionBenchmarkCase,
     benchmark_prediction_provider,
+    doctor_prediction_provider,
     parse_prediction_candidates,
     prediction_provider_from_env,
     prediction_provider_status,
@@ -25,6 +26,20 @@ from rag_ime.predictor import (
 class _MockOpenAIHandler(BaseHTTPRequestHandler):
     captured_payload: dict[str, object] = {}
     captured_headers: dict[str, str] = {}
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib API
+        if self.path != "/v1/models":
+            self.send_error(404)
+            return
+        body = json.dumps(
+            {"data": [{"id": "Qwen3-0.6B"}, {"id": "Qwen3-1.7B"}]},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
         length = int(self.headers.get("Content-Length") or "0")
@@ -259,6 +274,61 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(status["configured"])
         self.assertEqual(status["providerProfile"], "instant")
         self.assertEqual(status["model"], "Qwen3-0.6B")
+
+    def test_predictor_doctor_reports_unconfigured_lane(self) -> None:
+        report = doctor_prediction_provider(prediction_provider_from_env({}))
+
+        self.assertEqual(report["schemaVersion"], "rag-ime.predictor-doctor.v1")
+        self.assertFalse(report["ready"])
+        self.assertFalse(report["summary"]["endpointReachable"])
+        self.assertFalse(report["status"]["configured"])
+        self.assertEqual(report["checks"]["modelsEndpoint"]["reason"], "not_configured")
+        self.assertFalse(report["checks"]["prediction"]["hasCandidates"])
+        self.assertIn("RAG_IME_PREDICTOR_PROVIDER", report["nextActions"][0])
+
+    def test_cli_predictor_doctor_checks_models_and_short_prediction(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            stdout = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "openai-compatible",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "Qwen3-0.6B",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "--core-mode",
+                            "fixture",
+                            "predictor-doctor",
+                            "--case",
+                            "RAG 输入法",
+                            "--latency-budget-ms",
+                            "1000",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["checks"]["modelsEndpoint"]["ok"])
+        self.assertTrue(report["checks"]["modelsEndpoint"]["configuredModelFound"])
+        self.assertEqual(report["checks"]["modelsEndpoint"]["modelCount"], 2)
+        self.assertTrue(report["checks"]["prediction"]["hasCandidates"])
+        self.assertEqual(report["checks"]["prediction"]["candidates"][0], "本地记忆")
+        self.assertIn("localRunners", report)
 
     def test_prediction_benchmark_reports_latency_budget(self) -> None:
         class FakeProvider:

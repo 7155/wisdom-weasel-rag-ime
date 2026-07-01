@@ -90,6 +90,42 @@ Example after setting a Qwen-style instant profile:
 
 This command only checks local configuration. It does not prove that the model server is alive or returning useful candidates. Use `predict-benchmark` and `eval-prediction` for that.
 
+## Diagnose The Endpoint
+
+After `predictor-status` shows `configured: true`, run:
+
+```bash
+python3 -m rag_ime.cli predictor-doctor \
+  --case "RAG 输入法" \
+  --recent-context "用户正在写本地记忆和候选预测" \
+  --latency-budget-ms 150
+```
+
+The doctor performs the checks needed before using the model in an IME side lane:
+
+- config: whether `RAG_IME_PREDICTOR_*` is set;
+- models endpoint: whether `/v1/models` responds, which ids it lists, and whether the configured model id is present;
+- prediction: whether one short request returns parsed candidates within the budget;
+- local runners: whether `ollama`, `llama-server`, `lmstudio`, or `mlx_lm.server` are visible in `PATH`.
+
+Example failure on a machine with no configured model:
+
+```json
+{
+  "schemaVersion": "rag-ime.predictor-doctor.v1",
+  "ready": false,
+  "summary": {
+    "configured": false,
+    "endpointReachable": false,
+    "hasCandidates": false,
+    "withinBudget": true,
+    "readyForSidecar": false
+  }
+}
+```
+
+`ready: true` is still not enough to enable model candidates by default. It only means the endpoint is reachable and one short request succeeded. Follow with `predict-benchmark`, `eval-prediction`, and `eval-comparison`.
+
 ## Run The Benchmark
 
 ```bash

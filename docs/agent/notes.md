@@ -564,6 +564,43 @@ Next:
 - Start a real local/WSL OpenAI-compatible Qwen/llama.cpp/MLX endpoint, then run `predictor-status`, `predict-benchmark`, and `eval-prediction`.
 - Prefer Qwen instant/no-thinking first; compare chat `instant` against completion `completion-instant` before building a native KV-cache provider.
 
+### 2026-07-01 08:46 CST
+Problem:
+- `predictor-status` showed whether env vars were set, but it did not explain why a configured model endpoint still returned no candidates.
+- This made the next real Qwen/WSL test harder to debug.
+
+Changes:
+- Added `doctor_prediction_provider()` and `rag-ime predictor-doctor`.
+- The doctor probes `/v1/models`, checks whether the configured model id is listed, runs one short prediction, reports latency budget status, and shows local runner commands visible in `PATH`.
+- README, debug docs, and local-model benchmark docs now use the sequence: `predictor-status` -> `predictor-doctor` -> `predict-benchmark` -> `eval-prediction` / `eval-comparison`.
+
+Commands:
+- `command -v ollama || true`
+- `command -v llama-server || true`
+- `command -v lmstudio || true`
+- `command -v mlx_lm.server || true`
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+- `python3 -m rag_ime.cli --core-mode fixture predictor-doctor`
+- `RAG_IME_PREDICTOR_PROVIDER=openai-compatible RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8000 RAG_IME_PREDICTOR_MODEL=Qwen3-0.6B RAG_IME_PREDICTOR_PROFILE=instant python3 -m rag_ime.cli --core-mode fixture predictor-doctor --case "RAG 输入法" --recent-context "用户正在写本地记忆输入法" --latency-budget-ms 150`
+- `python3 -W ignore::ResourceWarning -m unittest discover -s tests`
+- `python3 -m rag_ime.cli --core-mode fixture acceptance`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-predictor-doctor-eval-20260701.sqlite import-codex-history --path /Users/undo/.codex/sessions --project wisdom-weasel-rag-ime --limit 5000 --sample-size 0`
+- `python3 -m rag_ime.cli --db-path /private/tmp/rag-ime-predictor-doctor-eval-20260701.sqlite eval-codex-history --cases-file docs/eval/codex-history-cases.example.jsonl --top-k 5 --match any --repeat 1`
+- `git diff --check`
+
+Findings:
+- This Mac currently has none of `ollama`, `llama-server`, `lmstudio`, or `mlx_lm.server` in `PATH`.
+- Default `predictor-doctor` correctly reports `ready=false`, `configured=false`, `endpointReachable=false`, and missing local runners.
+- With Qwen instant env pointed at `127.0.0.1:8000`, doctor reports `configured=true` but `/v1/models` connection refused, so the current blocker is no running local/WSL OpenAI-compatible server.
+- Full unit suite passed: 87 tests.
+- Fixture acceptance passed.
+- Real 5000-record Codex-history eval still passed 34/34, top1Accuracy=0.824, meanReciprocalRank=0.880, p95=35ms.
+- `git diff --check` passed.
+
+Next:
+- Use `predictor-doctor` as the first command after starting a WSL or Mac OpenAI-compatible Qwen endpoint.
+- Only run the heavier 34-case `eval-prediction` after doctor reports reachable endpoint and parsed candidates.
+
 ### 2026-06-30 23:15 CST
 Problem:
 - Applying the Squirrel patch still required several manual commands, which is brittle when moving to a full Xcode machine.

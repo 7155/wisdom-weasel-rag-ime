@@ -593,3 +593,25 @@ Verification:
 
 Next:
 - Start a real local or WSL OpenAI-compatible model endpoint, then run `predictor-status`, `predict-benchmark`, `eval-prediction`, and `eval-comparison`.
+
+### 2026-07-01
+Topic:
+- Add local model endpoint doctor.
+
+Changes:
+- Added `doctor_prediction_provider()` and `rag-ime predictor-doctor`.
+- Doctor checks config, `/v1/models`, configured model id presence, one short prediction, latency budget, and local runner commands in `PATH`.
+- Docs now separate config check, endpoint doctor, benchmark, and quality eval.
+
+Verification:
+- Predictor tests pass.
+- Full unit suite passed: 87 tests.
+- Fixture acceptance passed.
+- Real 5000-record Codex-history eval still passed 34/34 with top1Accuracy=0.824, meanReciprocalRank=0.880, p95=35ms.
+- `git diff --check` passed.
+- This Mac has no visible `ollama`, `llama-server`, `lmstudio`, or `mlx_lm.server`.
+- Default doctor reports not configured and not ready, which matches the current machine state.
+- With Qwen instant env pointed at `127.0.0.1:8000`, doctor reports env configured but `/v1/models` connection refused.
+
+Next:
+- Start a WSL or Mac OpenAI-compatible Qwen endpoint and run `predictor-doctor` before `predict-benchmark` / `eval-prediction`.
