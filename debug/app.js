@@ -97,6 +97,7 @@ const elements = {
   cacheRepeat: document.getElementById("cacheRepeat"),
   inputSourceButton: document.getElementById("inputSourceButton"),
   inputInstalled: document.getElementById("inputInstalled"),
+  inputThirdParty: document.getElementById("inputThirdParty"),
   inputSelected: document.getElementById("inputSelected"),
   inputCurrent: document.getElementById("inputCurrent"),
   inputSourceHint: document.getElementById("inputSourceHint"),
@@ -221,6 +222,12 @@ function render() {
             selectable: state.inputSource.selectable,
             selected: state.inputSource.selected,
             hitoolboxEnabled: state.inputSource.hitoolboxEnabled,
+            thirdPartyEnabled: state.inputSource.thirdPartyEnabled,
+            readinessState: state.inputSource.readinessState,
+            nextAction: state.inputSource.nextAction,
+            manualAction: state.inputSource.manualAction,
+            verificationCommand: state.inputSource.verificationCommand,
+            readinessChecks: state.inputSource.readinessChecks,
           }
         : null,
     },
@@ -512,13 +519,27 @@ function compactInputSourceId(value) {
   return text.split(".").at(-1) || text;
 }
 
+function compactBool(value) {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  return "--";
+}
+
 function renderInputSource() {
   const status = state.inputSource || {};
   const readiness = status.readinessState || "check";
-  elements.inputInstalled.textContent = status.ok ? "ok" : status.available === false ? "off" : "--";
+  elements.inputInstalled.textContent =
+    status.available === false ? "off" : compactBool(status.enabled === true && status.selectable === true);
+  elements.inputThirdParty.textContent = compactBool(status.thirdPartyEnabled);
   elements.inputSelected.textContent = status.typingReady ? "yes" : status.selected === false ? "no" : "--";
   elements.inputCurrent.textContent = compactInputSourceId(status.current);
-  elements.inputSourceHint.textContent = status.readinessMessage || status.error || "waiting for status";
+  elements.inputSourceHint.textContent = [
+    status.readinessMessage || status.error || "waiting for status",
+    status.nextAction,
+    status.verificationCommand,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   elements.inputSourceButton.textContent = state.inputSourceChecking ? "checking" : readiness;
   elements.inputSourceButton.disabled = state.inputSourceChecking;
   elements.inputSourceButton.classList.toggle("is-good", status.typingReady === true);

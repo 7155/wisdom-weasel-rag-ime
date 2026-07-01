@@ -295,7 +295,7 @@ button {
 
 .rag-card {
   display: grid;
-  grid-template-columns: 24px 1fr auto;
+  grid-template-columns: 24px minmax(0, 1fr) minmax(78px, auto);
   gap: 9px;
   align-items: start;
   padding: 7px;
@@ -337,9 +337,12 @@ button {
 }
 
 .rag-source {
+  max-width: 118px;
+  overflow: hidden;
   color: var(--ink-3);
   font-family: var(--font-mono);
   font-size: 10px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -452,6 +455,10 @@ button {
   grid-template-columns: repeat(3, 1fr);
   gap: 7px;
   margin-bottom: 10px;
+}
+
+.input-source-readout {
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .metric {
