@@ -288,6 +288,11 @@ strict check expects the sidecar plist to point at the active `local-mlx`
 text-only model, and the MLX predictor plist to start `mlx-predictor-server`
 with `--prompt-cache` and empty proxy variables.
 
+The strict doctor sends `latencyBudgetMs=180` by default, matching the managed
+Squirrel config. This avoids testing a stricter 150 ms fallback path that the
+real patched frontend does not use. Set `RAG_IME_DOCTOR_LATENCY_BUDGET_MS` to
+stress a different budget.
+
 The trace is written by the patched Squirrel app itself, not by the sidecar. A
 passing `latestMixedPanel` proves the actual frontend used sidecar display
 candidates and forced horizontal layout for the mixed panel. A passing

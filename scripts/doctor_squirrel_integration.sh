@@ -40,6 +40,7 @@ EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDI
 EXPECT_PREDICTOR_BASE_URL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_BASE_URL:-${RAG_IME_PREDICTOR_BASE_URL:-}}"
 EXPECT_PREDICTOR_PROFILE="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
+DOCTOR_LATENCY_BUDGET_MS="${RAG_IME_DOCTOR_LATENCY_BUDGET_MS:-180}"
 
 failures=0
 warnings=0
@@ -476,6 +477,7 @@ printf 'refresh_input_source: %s\n' "$REFRESH_INPUT_SOURCE"
 printf 'require_frontend_trace: %s\n' "$REQUIRE_FRONTEND_TRACE"
 printf 'require_logits_model: %s\n' "$REQUIRE_LOGITS_MODEL"
 printf 'require_launch_agent_plist: %s\n' "$REQUIRE_LAUNCH_AGENT_PLIST"
+printf 'doctor_latency_budget_ms: %s\n' "$DOCTOR_LATENCY_BUDGET_MS"
 printf 'sidecar_launch_agent_plist: %s\n' "$SIDECAR_LAUNCH_AGENT_PLIST"
 printf 'mlx_launch_agent_plist: %s\n' "$MLX_LAUNCH_AGENT_PLIST"
 printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
@@ -611,7 +613,7 @@ fi
 sidecar_out="$(mktemp /tmp/rag-ime-doctor-sidecar.out.XXXXXX)"
 sidecar_err="$(mktemp /tmp/rag-ime-doctor-sidecar.err.XXXXXX)"
 set +e
-"$PYTHON_EXECUTABLE" - "$SIDECAR_BASE_URL" "$EXPECT_PREDICTOR_PROVIDER" "$EXPECT_PREDICTOR_MODEL" "$EXPECT_STREAM_FIRST" "$REQUIRE_MIXED_LAYOUT" "$REQUIRE_LOGITS_MODEL" >"$sidecar_out" 2>"$sidecar_err" <<'PY'
+"$PYTHON_EXECUTABLE" - "$SIDECAR_BASE_URL" "$EXPECT_PREDICTOR_PROVIDER" "$EXPECT_PREDICTOR_MODEL" "$EXPECT_STREAM_FIRST" "$REQUIRE_MIXED_LAYOUT" "$REQUIRE_LOGITS_MODEL" "$DOCTOR_LATENCY_BUDGET_MS" >"$sidecar_out" 2>"$sidecar_err" <<'PY'
 import json
 import sys
 import urllib.error
@@ -639,6 +641,7 @@ def truthy(value):
 
 require_mixed_layout = truthy(sys.argv[5].strip())
 require_logits_model = truthy(sys.argv[6].strip())
+latency_budget_ms = int(sys.argv[7].strip() or "180")
 
 def expected_rank_for_label(label):
     if label == "0":
@@ -748,6 +751,7 @@ def validate_raw_pinyin_guard():
         "preedit": "jiubiruwopinshishur",
         "maxVisibleCandidates": 6,
         "maxSideCandidates": 3,
+        "latencyBudgetMs": latency_budget_ms,
         "rimeContext": {"candidates": []},
     })
     fallback = post_rime_suggest({
@@ -758,6 +762,7 @@ def validate_raw_pinyin_guard():
         "committedContext": "刚刚输入了 RAG 输入法的候选布局，需要继续预测下一句",
         "maxVisibleCandidates": 6,
         "maxSideCandidates": 3,
+        "latencyBudgetMs": latency_budget_ms,
         "rimeContext": {"candidates": []},
     })
 
@@ -911,6 +916,7 @@ try:
         "committedContext": "用户正在验证 RAG 输入法候选布局和数字键选择",
         "maxVisibleCandidates": 8 if require_mixed_layout else 3,
         "maxSideCandidates": 8 if require_mixed_layout else 1,
+        "latencyBudgetMs": latency_budget_ms,
         "forceSideCandidates": require_mixed_layout,
         "rimeContext": {
             "candidates": [

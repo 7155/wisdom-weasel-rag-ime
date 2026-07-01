@@ -13,6 +13,7 @@ from threading import Thread
 
 
 class _DoctorSidecarHandler(BaseHTTPRequestHandler):
+    suggest_payloads: list[dict[str, object]] = []
     select_payloads: list[dict[str, object]] = []
     provider_name = "local-ollama"
     model = "qwen3.5:0.8b-mlx"
@@ -22,6 +23,7 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
 
     @classmethod
     def reset(cls) -> None:
+        cls.suggest_payloads = []
         cls.select_payloads = []
         cls.provider_name = "local-ollama"
         cls.model = "qwen3.5:0.8b-mlx"
@@ -106,6 +108,7 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
             return
         length = int(self.headers.get("Content-Length", "0"))
         payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        self.__class__.suggest_payloads.append(payload if isinstance(payload, dict) else {})
         raw_input = str(payload.get("rawInput") or "") if isinstance(payload, dict) else ""
         committed_context = str(payload.get("committedContext") or "") if isinstance(payload, dict) else ""
         if raw_input == "jiubiruwopinshishur":
@@ -297,6 +300,9 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             "[OK] sidecar predictor: local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true",
             result.stdout,
         )
+        self.assertIn("doctor_latency_budget_ms: 180", result.stdout)
+        self.assertTrue(_DoctorSidecarHandler.suggest_payloads)
+        self.assertTrue(all(payload.get("latencyBudgetMs") == 180 for payload in _DoctorSidecarHandler.suggest_payloads))
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 

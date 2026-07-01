@@ -2442,3 +2442,19 @@ Verification:
 
 Status:
 - User still needs to run `scripts/replace_system_squirrel_app.sh` with admin password; after this change, that single command also performs the non-foreground strict runtime gate.
+
+### 2026-07-02 03:38 CST
+Problem:
+- A strict doctor run briefly failed the model lane with no `model/inline` candidates even though direct `/rime-suggest` immediately returned MLX logits candidates.
+- Root cause: doctor omitted `latencyBudgetMs`, so sidecar used its 150 ms fallback. The real patched Squirrel config sends 180 ms, and the local MLX logits path is currently close to that edge.
+
+Changes:
+- Added `RAG_IME_DOCTOR_LATENCY_BUDGET_MS`, defaulting to 180, and included it in all doctor `/rime-suggest` probes.
+- Doctor output now prints `doctor_latency_budget_ms`.
+- Added doctor test coverage proving the default 180 ms budget is sent to the fake sidecar.
+- Updated debug/Xcode docs to explain the budget alignment.
+
+Verification:
+- `bash -n scripts/doctor_squirrel_integration.sh` passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_doctor_squirrel_integration` passed: 12 tests.
+- Real strict doctor now returns `display=8 model=5 rag=3 rime=0` under `doctor_latency_budget_ms: 180`; remaining failure is only stale `/Library/Input Methods/Squirrel.app`.

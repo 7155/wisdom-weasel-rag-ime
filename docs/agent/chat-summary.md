@@ -1732,3 +1732,19 @@ Verification:
 
 Next:
 - User can run `scripts/replace_system_squirrel_app.sh` once with admin password; the script will now perform the non-foreground strict gate automatically.
+
+### 2026-07-02
+Topic:
+- Align strict doctor model-lane budget with real Squirrel config.
+
+Changes:
+- Strict doctor now sends `latencyBudgetMs=180` by default instead of relying on the sidecar's 150 ms fallback.
+- Added `RAG_IME_DOCTOR_LATENCY_BUDGET_MS` override and test coverage for the default budget.
+- Docs now state that doctor budget matches managed Squirrel config.
+
+Verification:
+- Doctor tests passed: 12 tests.
+- Real strict doctor returns `display=8 model=5 rag=3 rime=0` again under the 180 ms probe budget.
+
+Next:
+- Remaining runtime blocker is still the stale root-owned system Squirrel app; run the replacement script with admin password.

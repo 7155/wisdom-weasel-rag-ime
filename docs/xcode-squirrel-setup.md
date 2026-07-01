@@ -305,8 +305,11 @@ Strict Squirrel doctor mode also checks the mixed candidate contract. With
 shared selection keys/ranks and a side-first display list where LLM candidates
 use `displayLayout=inline` and RAG/memory sentence candidates use
 `displayLayout=block`. This proves the backend/native payload contract before
-manual foreground typing; it still does not prove that the visible AppKit panel
-looked correct in a real editor.
+manual foreground typing. The doctor probe uses a 180 ms latency budget by
+default, matching the Squirrel managed config; override it with
+`RAG_IME_DOCTOR_LATENCY_BUDGET_MS` when intentionally testing tighter or looser
+budgets. It still does not prove that the visible AppKit panel looked correct
+in a real editor.
 
 The same strict mode also validates LaunchAgent plist drift. It reads
 `~/Library/LaunchAgents/com.rag-ime.sidecar.plist` and
