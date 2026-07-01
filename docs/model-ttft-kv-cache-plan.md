@@ -6,8 +6,9 @@ and how RAG-IME should turn that into a measurable local-Mac plan.
 ## Current Finding
 
 The product goal is not just "fast total response". For an input method, the
-important metric is TTFT: time to first visible candidate. The target worth
-presenting in interviews is:
+important metric is first usable candidate latency. Raw TTFT is still useful for
+runtime debugging, but JSON prefix chunks and unfinished tokens are not visible
+IME candidates. The target worth presenting in interviews is:
 
 - first visible model-side candidate under 200 ms on a warm local Mac path;
 - no UI blocking while the model is slow;

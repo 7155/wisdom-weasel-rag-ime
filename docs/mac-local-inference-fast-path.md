@@ -21,8 +21,8 @@ Use a tiered path:
    add conversion or compile complexity before the input method loop is stable.
 
 Do not optimize for total response time first. The metric for an input method is
-**time to first useful parsed candidate**, not first byte, first raw token, or
-complete JSON response.
+**time to first useful parsed candidate** (`firstCandidateMs`), not first byte,
+first raw token, or complete JSON response.
 
 ## Local Evidence
 

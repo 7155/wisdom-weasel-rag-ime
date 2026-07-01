@@ -1204,3 +1204,18 @@ Changes:
 - Added `docs/mac-local-inference-fast-path.md` with the runtime ranking, commands, acceptance gates, Wisdom-Weasel/MiniVLLM lessons, and source links.
 - Linked the new document from the README and `docs/model-ttft-kv-cache-plan.md`.
 - Folded in subagent findings about Wisdom-Weasel being Windows Weasel-only, native llama context concurrency risk, and the need to track first parsed candidate time separately from raw token TTFT.
+
+### 2026-07-01 14:12 CST
+Problem:
+- `predictor-ttft` already recorded `firstCandidateMs` in individual measurements, but the summary and over-budget decision still used raw `firstChunkMs`.
+- Raw chunks can be JSON syntax such as `["`, which is not a usable IME candidate.
+
+Changes:
+- Changed `benchmark_streaming_ttft_provider()` to evaluate the latency budget against `firstCandidateMs`.
+- Added `hasFirstCandidate`, `p50FirstCandidateMs`, `p95FirstCandidateMs`, min/max first-candidate latency, and `firstCandidateMissingCount` to the summary.
+- Added a regression test where a stream emits a raw chunk but no parsed candidate; it now counts as over budget.
+- Updated README and model-latency docs to distinguish raw first chunk from first parsed candidate.
+
+Commands:
+- `python3 -m py_compile rag_ime/predictor.py tests/test_predictor.py`
+- `python3 -m unittest tests.test_predictor`

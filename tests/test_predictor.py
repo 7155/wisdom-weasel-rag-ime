@@ -195,6 +195,26 @@ class _MockOllamaEmptyStreamingHandler(BaseHTTPRequestHandler):
         return
 
 
+class _MockOllamaUnparsedStreamingHandler(BaseHTTPRequestHandler):
+    def do_POST(self) -> None:  # noqa: N802 - stdlib API
+        length = int(self.headers.get("Content-Length") or "0")
+        self.rfile.read(length)
+        chunks = [
+            {"message": {"role": "assistant", "content": '["'}},
+            {"message": {"role": "assistant", "content": ""}, "done": True},
+        ]
+        body = b"".join(json.dumps(item, ensure_ascii=False).encode("utf-8") + b"\n" for item in chunks)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
 class _MockMlxHandler(BaseHTTPRequestHandler):
     captured_path = ""
     captured_payload: dict[str, object] = {}
@@ -1080,9 +1100,13 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(report["schemaVersion"], "rag-ime.predictor-ttft.v1")
         self.assertTrue(report["supported"])
         self.assertTrue(report["summary"]["hasFirstChunk"])
+        self.assertTrue(report["summary"]["hasFirstCandidate"])
         self.assertEqual(report["cases"][0]["candidateCount"], 2)
         self.assertEqual(report["cases"][0]["candidates"][0], "本地记忆")
         self.assertIsInstance(report["cases"][0]["firstChunkMs"], int)
+        self.assertIsInstance(report["cases"][0]["firstCandidateMs"], int)
+        self.assertIsInstance(report["summary"]["p50FirstCandidateMs"], int)
+        self.assertEqual(report["summary"]["firstCandidateMissingCount"], 0)
         self.assertTrue(_MockOllamaStreamingHandler.captured_payload["stream"])
         self.assertFalse(_MockOllamaStreamingHandler.captured_payload["think"])
         self.assertEqual(_MockOllamaStreamingHandler.captured_payload["keep_alive"], -1)
@@ -1128,7 +1152,53 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertFalse(report["summary"]["hasFirstChunk"])
         self.assertFalse(report["summary"]["allWithinBudget"])
         self.assertEqual(report["summary"]["firstChunkMissingCount"], 1)
+        self.assertEqual(report["summary"]["firstCandidateMissingCount"], 1)
         self.assertEqual(report["summary"]["failureCount"], 1)
+        self.assertEqual(report["summary"]["overBudgetCount"], 1)
+        self.assertTrue(report["cases"][0]["overBudget"])
+
+    def test_cli_predictor_ttft_uses_first_parsed_candidate_for_budget(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaUnparsedStreamingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            stdout = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "ollama",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "qwen3.5:0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                },
+                clear=False,
+            ):
+                with redirect_stdout(stdout):
+                    code = main(
+                        [
+                            "--core-mode",
+                            "fixture",
+                            "predictor-ttft",
+                            "--case",
+                            "RAG 输入法",
+                            "--repeat",
+                            "1",
+                            "--latency-budget-ms",
+                            "200",
+                        ]
+                    )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertTrue(report["summary"]["hasFirstChunk"])
+        self.assertFalse(report["summary"]["hasFirstCandidate"])
+        self.assertEqual(report["summary"]["firstChunkMissingCount"], 0)
+        self.assertEqual(report["summary"]["firstCandidateMissingCount"], 1)
         self.assertEqual(report["summary"]["overBudgetCount"], 1)
         self.assertTrue(report["cases"][0]["overBudget"])
 
@@ -1175,7 +1245,9 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(report["supported"])
         self.assertEqual(report["providerName"], "local-mlx")
         self.assertTrue(report["summary"]["hasFirstChunk"])
+        self.assertTrue(report["summary"]["hasFirstCandidate"])
         self.assertEqual(report["summary"]["firstChunkMissingCount"], 0)
+        self.assertEqual(report["summary"]["firstCandidateMissingCount"], 0)
         self.assertEqual(report["cases"][0]["candidateCount"], 2)
         self.assertEqual(report["cases"][0]["candidates"][0], "本地记忆")
         self.assertEqual(_MockMlxHandler.captured_path, "/predict-stream")

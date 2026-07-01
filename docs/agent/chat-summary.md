@@ -840,3 +840,15 @@ Conclusion:
 - Keep Ollama `qwen3.5:0.8b-mlx` as the current fastest Mac TTFT smoke baseline.
 - Next validate a direct resident MLX-LM service with streaming and prompt cache.
 - Keep native llama.cpp/Metal as the final Wisdom-Weasel parity route because it can own prompt KV reuse, sequence fork, and batch candidate generation.
+
+### 2026-07-01
+Topic:
+- Make predictor TTFT budget use first parsed candidate latency.
+
+Changes:
+- `predictor-ttft` summary now includes `firstCandidateMs` aggregate metrics.
+- Over-budget decisions now use first parsed candidate latency instead of raw first chunk latency.
+- Added a regression test for streams that emit raw JSON prefix chunks without a usable candidate.
+
+Conclusion:
+- This aligns the latency gate with the actual input-method UI: raw streamed bytes are diagnostic only; the product budget is for a candidate the user could select.

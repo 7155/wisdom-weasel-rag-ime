@@ -416,7 +416,7 @@ Output shape:
 ## Measure Streaming TTFT
 
 For an input method, total response latency is not enough. The user feels the
-delay until the first visible model-side candidate. Use:
+delay until the first usable model-side candidate. Use:
 
 ```bash
 python3 -m rag_ime.cli predictor-ttft \
@@ -436,11 +436,17 @@ Output shape:
   "summary": {
     "p50FirstChunkMs": 240,
     "p95FirstChunkMs": 408,
+    "p50FirstCandidateMs": 255,
+    "p95FirstCandidateMs": 430,
     "allWithinBudget": false,
     "overBudgetCount": 8
   }
 }
 ```
+
+The latency budget is evaluated against `firstCandidateMs`. `firstChunkMs`
+remains useful for diagnosing transport and raw streaming behavior, but raw JSON
+prefixes such as `["` do not count as usable IME candidates.
 
 The current Ollama `qwen3.5:0.8b` baseline can approach but does not reliably
 meet the 200 ms target. It is useful for install smoke and TTFT measurement,
