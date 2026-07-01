@@ -283,10 +283,11 @@ python3 -m rag_ime.cli \
   --report-path /tmp/rag-ime-squirrel-tryout-report.json
 ```
 
-`squirrel-tryout-gate` first checks the installed `Squirrel.app` bundle and the
-actual `~/Library/Rime/squirrel.custom.yaml` managed block, then checks
-`readinessState=ready` for the active macOS input source, then checks the user
-LaunchAgent and the running sidecar `/health` plus a safe `/rime-suggest`
+`squirrel-tryout-gate` first checks the installed `Squirrel.app` bundle, the
+actual `~/Library/Rime/squirrel.custom.yaml` managed block, and required
+`~/Library/Rime/build` artifacts, then checks `readinessState=ready` for the
+active macOS input source, then checks the user LaunchAgent and the running
+sidecar `/health` plus a safe `/rime-suggest`
 candidate probe, then runs the existing backend `quality-gate` with
 `--require-input-source-ready`. If the input source is still `switch`, it fails
 fast and skips the expensive quality gate. It does not install Squirrel, modify

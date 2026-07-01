@@ -1961,3 +1961,20 @@ Verification:
 Status:
 - The project no longer treats TIS registration alone as real input-method readiness.
 - Real local machine still requires the System Settings UI Add path before foreground Squirrel typing can be verified.
+
+### 2026-07-01 20:25 CST
+Problem:
+- `squirrel-tryout-gate` checked the installed Squirrel bundle and managed Rime config, but not the compiled user Rime build artifacts.
+- This left a gap where input-source/config checks could pass even if `~/Library/Rime/build` was missing and Squirrel could not produce normal candidates.
+
+Changes:
+- Added `installedRimeBuild` to `squirrel-tryout-gate`.
+- The gate now checks `build/default.yaml`, `build/luna_pinyin.schema.yaml`, and `build/luna_pinyin.table.bin` under the same directory as `squirrel.custom.yaml`.
+- Backend `quality-gate` only runs after bundle, config, Rime build, input-source, LaunchAgent, and sidecar checks pass.
+
+Verification:
+- Added a missing-build tryout test that fails fast and skips quality-gate.
+- Updated README and Xcode setup docs to mention the build-artifact check.
+
+Status:
+- Read-only tryout evidence now covers the Squirrel app, RAG config, compiled Rime data, input-source readiness, LaunchAgent, and sidecar payload.

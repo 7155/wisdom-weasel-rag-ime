@@ -233,8 +233,11 @@ class CodexHistoryTests(unittest.TestCase):
         db_path: Path,
         project: str,
         sidecar_url: str = "http://127.0.0.1:8766/api",
+        create_build: bool = True,
     ) -> Path:
-        config = self.root / f"{name}.squirrel.custom.yaml"
+        rime_dir = self.root / f"{name}-rime"
+        rime_dir.mkdir(parents=True, exist_ok=True)
+        config = rime_dir / "squirrel.custom.yaml"
         config.write_text(
             "\n".join(
                 [
@@ -250,6 +253,12 @@ class CodexHistoryTests(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
+        if create_build:
+            build_dir = rime_dir / "build"
+            build_dir.mkdir()
+            (build_dir / "default.yaml").write_text("schema_list:\n  - schema: luna_pinyin\n", encoding="utf-8")
+            (build_dir / "luna_pinyin.schema.yaml").write_text("schema:\n  schema_id: luna_pinyin\n", encoding="utf-8")
+            (build_dir / "luna_pinyin.table.bin").write_bytes(b"table")
         return config
 
     def test_load_codex_history_records_skips_invalid_jsonl_and_extracts_text(self) -> None:
@@ -1067,11 +1076,13 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(report["inputSource"]["readinessState"], "switch")
         self.assertTrue(report["installedBundle"]["ok"])
         self.assertTrue(report["installedRimeConfig"]["ok"])
+        self.assertTrue(report["installedRimeBuild"]["ok"])
         self.assertIsNone(report["qualityGate"])
         self.assertIn("foreground editor typing verification", report["manualRequired"])
         checks = {item["name"]: item for item in report["checks"]}
         self.assertTrue(checks["installed-bundle"]["passed"])
         self.assertTrue(checks["installed-rime-config"]["passed"])
+        self.assertTrue(checks["installed-rime-build"]["passed"])
         self.assertFalse(checks["input-source-ready"]["passed"])
         self.assertTrue(checks["launch-agent"]["passed"])
         self.assertTrue(checks["launch-agent"]["skipped"])
@@ -1148,12 +1159,82 @@ class CodexHistoryTests(unittest.TestCase):
         checks = {item["name"]: item for item in report["checks"]}
         self.assertTrue(checks["installed-bundle"]["passed"])
         self.assertTrue(checks["installed-rime-config"]["passed"])
+        self.assertTrue(checks["installed-rime-build"]["passed"])
         self.assertTrue(checks["input-source-ready"]["passed"])
         self.assertTrue(checks["launch-agent"]["passed"])
         self.assertTrue(checks["launch-agent"]["skipped"])
         self.assertTrue(checks["quality-gate"]["passed"])
         self.assertEqual(report["qualityGate"]["schemaVersion"], "rag-ime.quality-gate.v1")
         self.assertTrue(report["qualityGate"]["thresholds"]["requireInputSourceReady"])
+
+    def test_cli_squirrel_tryout_gate_fails_fast_when_rime_build_is_missing(self) -> None:
+        db_path = self.root / "squirrel-tryout-missing-build.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "squirrel-tryout-missing-build-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "agent-hook",
+                    "query": "首次运行自动注入背景记忆",
+                    "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script = self.root / "tryout-selected-missing-build-input-source.sh"
+        check_script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=true current=im.rime.inputmethod.Squirrel.Hans hitoolboxEnabled=true thirdPartyEnabled=true'",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        check_script.chmod(0o755)
+        fake_app = self._write_fake_squirrel_app("tryout-missing-build")
+        config_path = self._write_fake_squirrel_config(
+            "tryout-missing-build",
+            db_path=db_path,
+            project="wisdom-weasel-rag-ime",
+            create_build=False,
+        )
+
+        gate_stdout = io.StringIO()
+        with redirect_stdout(gate_stdout):
+            gate_code = main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "squirrel-tryout-gate",
+                    "--cases-file",
+                    str(cases_file),
+                    "--input-source-check-script",
+                    str(check_script),
+                    "--squirrel-app",
+                    str(fake_app),
+                    "--squirrel-config-path",
+                    str(config_path),
+                    "--skip-launch-agent",
+                    "--skip-sidecar-health",
+                ]
+            )
+
+        self.assertEqual(gate_code, 1)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["installedRimeBuild"]["ok"])
+        self.assertIn("build/default.yaml", report["installedRimeBuild"]["missingFiles"])
+        self.assertIsNone(report["qualityGate"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertFalse(checks["installed-rime-build"]["passed"])
+        self.assertTrue(checks["quality-gate"]["skipped"])
 
     def test_cli_squirrel_tryout_gate_probes_sidecar_rime_suggest(self) -> None:
         db_path = self.root / "squirrel-tryout-sidecar.sqlite"

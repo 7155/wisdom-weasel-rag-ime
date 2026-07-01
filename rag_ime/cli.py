@@ -1642,6 +1642,7 @@ def run_squirrel_tryout_gate(
         expected_project=project,
         expected_sidecar_url=sidecar_url,
     )
+    build_report = _tryout_installed_rime_build(squirrel_config_path)
     input_source_report = DebugImeService(
         DebugServerConfig(
             db_path=db_path,
@@ -1667,10 +1668,11 @@ def run_squirrel_tryout_gate(
     )
     bundle_ok = bool(bundle_report.get("ok"))
     config_ok = bool(config_report.get("ok"))
+    build_ok = bool(build_report.get("ok"))
     launch_agent_ok = bool(launch_agent_report.get("ok"))
     sidecar_ok = bool(sidecar_report.get("ok"))
     quality_report: dict[str, object] | None = None
-    if bundle_ok and config_ok and launch_agent_ok and input_ready and sidecar_ok:
+    if bundle_ok and config_ok and build_ok and launch_agent_ok and input_ready and sidecar_ok:
         quality_report = run_quality_gate(
             adapter,
             core,
@@ -1734,6 +1736,12 @@ def run_squirrel_tryout_gate(
             "projectMatches": config_report.get("projectMatches"),
         },
         {
+            "name": "installed-rime-build",
+            "passed": build_ok,
+            "rimeDir": build_report.get("rimeDir"),
+            "missingFiles": build_report.get("missingFiles"),
+        },
+        {
             "name": "input-source-ready",
             "passed": input_ready,
             "readinessState": input_source_report.get("readinessState"),
@@ -1774,6 +1782,7 @@ def run_squirrel_tryout_gate(
         ],
         "installedBundle": bundle_report,
         "installedRimeConfig": config_report,
+        "installedRimeBuild": build_report,
         "inputSource": input_source_report,
         "launchAgent": launch_agent_report,
         "sidecar": sidecar_report,
@@ -1860,6 +1869,31 @@ def _tryout_installed_rime_config(
         "project": project,
         "expectedProject": expected_project,
         "projectMatches": project_matches,
+    }
+
+
+def _tryout_installed_rime_build(config_path: Path) -> dict[str, object]:
+    rime_dir = config_path.expanduser().parent
+    expected_files = (
+        "build/default.yaml",
+        "build/luna_pinyin.schema.yaml",
+        "build/luna_pinyin.table.bin",
+    )
+    files = [
+        {
+            "path": str(rime_dir / relative_path),
+            "relativePath": relative_path,
+            "exists": (rime_dir / relative_path).is_file(),
+        }
+        for relative_path in expected_files
+    ]
+    missing = [item["relativePath"] for item in files if not item["exists"]]
+    return {
+        "schemaVersion": "rag-ime.tryout-installed-rime-build.v1",
+        "ok": not missing,
+        "rimeDir": str(rime_dir),
+        "expectedFiles": files,
+        "missingFiles": missing,
     }
 
 

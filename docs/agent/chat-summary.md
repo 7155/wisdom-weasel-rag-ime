@@ -1391,3 +1391,17 @@ Verification:
 
 Next:
 - Use System Settings UI to add `鼠须管`, then rerun the strict input-source check and foreground typing test.
+
+### 2026-07-01
+Topic:
+- Add compiled Rime build artifacts to Squirrel tryout evidence.
+
+Changes:
+- `squirrel-tryout-gate` now reports `installedRimeBuild` and checks `build/default.yaml`, `build/luna_pinyin.schema.yaml`, and `build/luna_pinyin.table.bin`.
+- Quality-gate only runs after the Squirrel bundle, managed config, compiled Rime data, input-source readiness, LaunchAgent, and sidecar checks all pass.
+
+Verification:
+- Added a missing-build tryout test that fails fast and skips quality-gate.
+
+Next:
+- After adding `鼠须管` in System Settings, rerun `squirrel-tryout-gate`; it will now also prove the local Rime build is usable.
