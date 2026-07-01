@@ -1,10 +1,50 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
 from .models import InputSuggestion
 from .text_utils import compact_whitespace, split_sentences, truncate_text
+
+
+_ASCII_IDENTIFIER_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+#.\-]{3,}")
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+_TRANSCRIPT_PREFIX_RE = re.compile(r"^\[\d+\]\s+(?:assistant|user|tool(?:\s+[^:]{0,80})?)\s*:\s*", re.IGNORECASE)
+_TOOL_PREFIX_RE = re.compile(r"^tool(?:\s+[^:]{0,80})?\s*:\s*", re.IGNORECASE)
+_BULLET_PREFIX_RE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+")
+
+_SKIP_SURFACE_PREFIXES = (
+    "*** Begin Patch",
+    "*** End Patch",
+    "*** Update File:",
+    "*** Add File:",
+    "diff --git",
+    "index ",
+    "@@",
+    "+++ ",
+    "--- ",
+    "Chunk ID:",
+    "Wall time:",
+    "Process exited",
+    "Original token count:",
+    "Output:",
+    "# Files mentioned",
+    "<subagent_notification>",
+    "<codex_internal_context",
+)
+
+_GENERIC_STATUS_PREFIXES = (
+    "已完成这一步 git 同步",
+    "已完成 git 同步",
+    "已经完成 git 同步",
+    "本轮继续推进",
+    "继续推进了一轮",
+    "提交完成",
+    "忽略规则已补",
+    "**只读结论**",
+    "只读结论",
+)
 
 
 class MemoryLike(Protocol):
@@ -48,15 +88,17 @@ class SuggestionCompiler:
         suggestions: list[InputSuggestion] = []
         for item in ranked_memories:
             memory = item.memory
-            source_text = compact_whitespace(memory.text)
+            raw_source_text = memory.text or ""
+            source_text = compact_whitespace(raw_source_text)
             if not source_text:
                 continue
             suggestion_type = classify_suggestion(source_text, memory.tags)
-            if suggestion_type == "paragraph" and not self.options.include_writing_panel_candidates:
-                surface = first_sentence(source_text)
-            else:
-                surface = source_text
-            surface = truncate_text(surface, self.options.max_surface_chars)
+            surface = compress_surface_text(
+                raw_source_text,
+                tags=memory.tags,
+                suggestion_type=suggestion_type,
+                max_chars=self.options.max_surface_chars,
+            )
             if not surface:
                 continue
             suggestion = InputSuggestion(
@@ -109,6 +151,112 @@ def classify_suggestion(text: str, tags: tuple[str, ...] = ()) -> str:
 def first_sentence(text: str) -> str:
     sentences = split_sentences(text)
     return sentences[0] if sentences else text
+
+
+def compress_surface_text(
+    text: str,
+    *,
+    tags: tuple[str, ...] = (),
+    suggestion_type: str = "",
+    max_chars: int = 42,
+) -> str:
+    """Return compact candidate-bar text while preserving full insert text elsewhere."""
+
+    raw = text or ""
+    compact = compact_whitespace(raw)
+    if not compact:
+        return ""
+    if len(compact) <= max_chars and not _looks_like_surface_noise(compact):
+        return compact
+
+    candidates: list[tuple[float, int, str]] = []
+    index = 0
+
+    def add_candidate(segment: str, *, source_score: float = 0.0) -> None:
+        nonlocal index
+        cleaned = _clean_surface_segment(segment)
+        if not cleaned or _looks_like_surface_noise(cleaned):
+            return
+        candidates.append((_surface_candidate_score(cleaned, tags, suggestion_type) + source_score, -index, cleaned))
+        index += 1
+
+    for line in raw.splitlines():
+        if _BULLET_PREFIX_RE.match(line):
+            add_candidate(line, source_score=1.1)
+        else:
+            add_candidate(line)
+
+    for sentence in split_sentences(raw):
+        add_candidate(sentence)
+
+    add_candidate(compact, source_score=-0.4)
+
+    if not candidates:
+        fallback = _clean_surface_segment(compact) or compact
+        return truncate_text(fallback, max_chars)
+
+    _, _, best = max(candidates)
+    return truncate_text(best, max_chars)
+
+
+def _clean_surface_segment(segment: str) -> str:
+    text = compact_whitespace(segment)
+    if not text:
+        return ""
+    text = _TRANSCRIPT_PREFIX_RE.sub("", text)
+    text = _TOOL_PREFIX_RE.sub("", text)
+    text = _BULLET_PREFIX_RE.sub("", text)
+    text = re.sub(r"^#+\s*", "", text)
+    text = re.sub(r"^>\s*", "", text)
+    text = re.sub(r"^\*\*(只读结论|结论|建议|问题|变化|验证)\*\*\s*[:：]?\s*", "", text)
+    text = re.sub(r"^(问题|结论|建议|变化|验证|Changes|Findings|Next|Decision)\s*[:：]\s*", "", text, flags=re.IGNORECASE)
+    if text.startswith("Chunk ID:") and " Output:" in text:
+        text = text.split(" Output:", 1)[1]
+    return compact_whitespace(text.strip("` \t"))
+
+
+def _looks_like_surface_noise(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if stripped.startswith(_SKIP_SURFACE_PREFIXES):
+        return True
+    if stripped.startswith(("/Volumes/", "/Users/", "~/")) and len(stripped.split()) <= 2:
+        return True
+    if stripped in {"{", "}", "[", "]"}:
+        return True
+    return False
+
+
+def _surface_candidate_score(text: str, tags: tuple[str, ...], suggestion_type: str) -> float:
+    length = len(text)
+    score = 0.0
+    if 8 <= length <= 32:
+        score += 3.0
+    elif 4 <= length <= 48:
+        score += 2.0
+    elif length > 48:
+        score += 0.8
+    else:
+        score -= 1.0
+
+    if _CJK_RE.search(text):
+        score += 0.7
+    if _ASCII_IDENTIFIER_RE.search(text):
+        score += 0.35
+    if suggestion_type in {"structure", "template", "style_hint"}:
+        score += 0.25
+
+    lowered = text.lower()
+    for tag in tags:
+        if tag and str(tag).lower() in lowered:
+            score += 0.2
+
+    if text.startswith(_GENERIC_STATUS_PREFIXES):
+        score -= 2.5
+    if _TRANSCRIPT_PREFIX_RE.match(text) or _TOOL_PREFIX_RE.match(text):
+        score -= 1.0
+    return score
 
 
 def expanded_evidence(memory: MemoryLike, source_text: str) -> str:

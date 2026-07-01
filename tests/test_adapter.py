@@ -5,12 +5,12 @@ import unittest
 from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.agent_hook import build_first_run_injection
 from rag_ime.cli import run_acceptance
-from rag_ime.core_client import FixtureCoreClient
+from rag_ime.core_client import CoreMemory, FixtureCoreClient
 from rag_ime.models import ModelPrediction
 from rag_ime.payloads import suggestions_response_payload
 from rag_ime.renderer import render_candidate_bar, render_expanded_evidence, render_terminal_panel
 from rag_ime.scenarios import SCENARIOS, get_scenario
-from rag_ime.suggestion_compiler import classify_suggestion
+from rag_ime.suggestion_compiler import RankedMemory, SuggestionCompiler, classify_suggestion
 from rag_ime.trigger_policy import TypingState, should_refresh_rag
 
 
@@ -124,6 +124,50 @@ class InputMethodAdapterTests(unittest.TestCase):
         self.assertIn("insert_text", structure.metadata)
         self.assertIn("sources", structure.metadata)
         self.assertLessEqual(len(structure.surface_text), 42)
+
+    def test_candidate_surface_prefers_useful_bullet_without_truncating_insert_text(self) -> None:
+        memory = CoreMemory(
+            memory_id="mem-long-rag",
+            source_event_id="501",
+            text=(
+                "背景说明这一句不是候选重点。\n"
+                "- 候选面板只显示压缩标题，完整段落放 insert_text。\n"
+                "- evidence preview 放到展开面板。"
+            ),
+            source_ref="memory:501#candidate",
+            score=0.9,
+            reason="fixture:surface-compress",
+            evidence_preview="输入法真实面板必须小，debug page 才显示完整证据。",
+            tags=("structure",),
+        )
+
+        suggestion = SuggestionCompiler().compile([RankedMemory(memory=memory, score=0.9, rank=1)])[0]
+
+        self.assertEqual(suggestion.surface_text, "候选面板只显示压缩标题，完整段落放 insert_text。")
+        self.assertIn("背景说明这一句不是候选重点", suggestion.metadata["insert_text"])
+        self.assertIn("evidence preview 放到展开面板", suggestion.metadata["insert_text"])
+
+    def test_candidate_surface_strips_tool_trace_prefix_but_keeps_identifier(self) -> None:
+        memory = CoreMemory(
+            memory_id="mem-tool-trace",
+            source_event_id="502",
+            text=(
+                "[327] tool exec_command result: Chunk ID: abc Output: "
+                "RAG_IME_PREDICTOR_BASE_URL configures the local predictor endpoint"
+            ),
+            source_ref="memory:502#tool",
+            score=0.8,
+            reason="fixture:tool-trace",
+            evidence_preview="tool trace should be fallback evidence, not raw candidate UI text.",
+            tags=("codex-history",),
+        )
+
+        suggestion = SuggestionCompiler().compile([RankedMemory(memory=memory, score=0.8, rank=1)])[0]
+
+        self.assertNotIn("tool exec_command", suggestion.surface_text)
+        self.assertNotIn("Chunk ID", suggestion.surface_text)
+        self.assertIn("RAG_IME_PREDICTOR_BASE_URL", suggestion.surface_text)
+        self.assertIn("tool exec_command", suggestion.metadata["insert_text"])
 
     def test_native_frontend_payload_is_stable_json_shape(self) -> None:
         scenario = get_scenario("technical-plan")

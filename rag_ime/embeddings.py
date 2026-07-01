@@ -6,6 +6,7 @@ import math
 import os
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -61,6 +62,7 @@ class OpenAICompatibleEmbeddingConfig:
     api_key: str = ""
     timeout_s: float = 0.8
     dimensions: int = 0
+    cache_size: int = 256
     extra_body: dict[str, Any] = field(default_factory=dict)
     extra_headers: dict[str, str] = field(default_factory=dict)
 
@@ -69,15 +71,48 @@ class OpenAICompatibleEmbeddingConfig:
 class OpenAICompatibleEmbeddingProvider:
     config: OpenAICompatibleEmbeddingConfig
     fingerprint: str = field(init=False)
+    _cache: OrderedDict[tuple[str, str], list[float]] = field(
+        default_factory=OrderedDict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
-        suffix = f":{self.config.dimensions}" if self.config.dimensions else ""
-        object.__setattr__(self, "fingerprint", f"openai-compatible:{self.config.model}{suffix}")
+        object.__setattr__(
+            self,
+            "fingerprint",
+            _openai_embedding_fingerprint(
+                base_url=self.config.base_url,
+                model=self.config.model,
+                dimensions=self.config.dimensions,
+                extra_body=self.config.extra_body,
+            ),
+        )
 
     def embed(self, text: str) -> list[float]:
+        normalized_text = compact_whitespace(text)
+        if not normalized_text:
+            return []
+        cache_key = (self.fingerprint, normalized_text)
+        cache_limit = max(0, int(self.config.cache_size))
+        if cache_limit > 0:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                self._cache.move_to_end(cache_key)
+                return list(cached)
+        vector = self._embed_uncached(normalized_text)
+        if vector and cache_limit > 0:
+            self._cache[cache_key] = list(vector)
+            self._cache.move_to_end(cache_key)
+            while len(self._cache) > cache_limit:
+                self._cache.popitem(last=False)
+        return vector
+
+    def _embed_uncached(self, normalized_text: str) -> list[float]:
         payload = {
             "model": self.config.model,
-            "input": compact_whitespace(text),
+            "input": normalized_text,
             **dict(self.config.extra_body),
         }
         if self.config.dimensions > 0:
@@ -123,6 +158,7 @@ def embedding_provider_from_env(env: dict[str, str] | None = None) -> EmbeddingP
                 api_key=source.get("RAG_IME_EMBEDDING_API_KEY", "").strip(),
                 timeout_s=_float_env(source, "RAG_IME_EMBEDDING_TIMEOUT_MS", 800) / 1000,
                 dimensions=int(_float_env(source, "RAG_IME_EMBEDDING_DIMENSIONS", 0)),
+                cache_size=int(_float_env(source, "RAG_IME_EMBEDDING_CACHE_SIZE", 256)),
                 extra_body=_json_object_env(source, "RAG_IME_EMBEDDING_EXTRA_BODY_JSON"),
                 extra_headers=_json_string_map_env(source, "RAG_IME_EMBEDDING_EXTRA_HEADERS_JSON"),
             )
@@ -149,6 +185,31 @@ def normalize_vector(vector: list[float]) -> list[float]:
     if norm <= 0:
         return []
     return [value / norm for value in vector]
+
+
+def _openai_embedding_fingerprint(
+    *,
+    base_url: str,
+    model: str,
+    dimensions: int,
+    extra_body: dict[str, Any],
+) -> str:
+    endpoint = base_url.rstrip("/")
+    endpoint_hash = hashlib.sha256(endpoint.encode("utf-8", errors="ignore")).hexdigest()[:10] if endpoint else "none"
+    suffix = f":endpoint-{endpoint_hash}"
+    if dimensions:
+        suffix += f":{dimensions}"
+    if extra_body:
+        material = json.dumps(
+            extra_body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        body_hash = hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
+        suffix += f":body-{body_hash}"
+    return f"openai-compatible:{model}{suffix}"
 
 
 def _float_env(env: dict[str, str], name: str, default: float) -> float:
