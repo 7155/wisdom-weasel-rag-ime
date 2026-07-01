@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime.cli import _sidecar_lane_timeout_checks, main
+from rag_ime.cli import _launchctl_field, _sidecar_lane_timeout_checks, main
 from rag_ime.codex_history import (
     evaluate_suggestions,
     input_event_from_codex_record,
@@ -765,6 +765,23 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(by_name["rime-sidecar-rag-timeout-rate"]["timeoutCount"], 1)
         self.assertEqual(by_name["rime-sidecar-rag-timeout-rate"]["calledCount"], 3)
 
+    def test_launchctl_field_parses_running_launch_agent_status(self) -> None:
+        output = """
+        path = /Users/undo/Library/LaunchAgents/com.rag-ime.sidecar.plist
+        state = running
+        pid = 13454
+        program = /usr/local/bin/python3
+        """
+
+        self.assertEqual(_launchctl_field(output, "state"), "running")
+        self.assertEqual(_launchctl_field(output, "pid"), "13454")
+        self.assertEqual(
+            _launchctl_field(output, "path"),
+            "/Users/undo/Library/LaunchAgents/com.rag-ime.sidecar.plist",
+        )
+        self.assertEqual(_launchctl_field(output, "program"), "/usr/local/bin/python3")
+        self.assertEqual(_launchctl_field(output, "missing"), "")
+
     def test_cli_quality_gate_can_enforce_noise_thresholds(self) -> None:
         db_path = self.root / "quality-gate-noise.sqlite"
         with redirect_stdout(io.StringIO()):
@@ -1036,6 +1053,7 @@ class CodexHistoryTests(unittest.TestCase):
                     str(fake_app),
                     "--squirrel-config-path",
                     str(config_path),
+                    "--skip-launch-agent",
                     "--skip-sidecar-health",
                     "--report-path",
                     str(report_path),
@@ -1055,6 +1073,8 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertTrue(checks["installed-bundle"]["passed"])
         self.assertTrue(checks["installed-rime-config"]["passed"])
         self.assertFalse(checks["input-source-ready"]["passed"])
+        self.assertTrue(checks["launch-agent"]["passed"])
+        self.assertTrue(checks["launch-agent"]["skipped"])
         self.assertTrue(checks["sidecar-health"]["passed"])
         self.assertTrue(checks["sidecar-health"]["skipped"])
         self.assertTrue(checks["quality-gate"]["skipped"])
@@ -1117,6 +1137,7 @@ class CodexHistoryTests(unittest.TestCase):
                     str(fake_app),
                     "--squirrel-config-path",
                     str(config_path),
+                    "--skip-launch-agent",
                     "--skip-sidecar-health",
                 ]
             )
@@ -1128,6 +1149,8 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertTrue(checks["installed-bundle"]["passed"])
         self.assertTrue(checks["installed-rime-config"]["passed"])
         self.assertTrue(checks["input-source-ready"]["passed"])
+        self.assertTrue(checks["launch-agent"]["passed"])
+        self.assertTrue(checks["launch-agent"]["skipped"])
         self.assertTrue(checks["quality-gate"]["passed"])
         self.assertEqual(report["qualityGate"]["schemaVersion"], "rag-ime.quality-gate.v1")
         self.assertTrue(report["qualityGate"]["thresholds"]["requireInputSourceReady"])
@@ -1195,6 +1218,7 @@ class CodexHistoryTests(unittest.TestCase):
                         str(fake_app),
                         "--squirrel-config-path",
                         str(config_path),
+                        "--skip-launch-agent",
                         "--sidecar-url",
                         sidecar_base,
                     ]
@@ -1207,6 +1231,8 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(gate_code, 0)
         report = json.loads(gate_stdout.getvalue())
         self.assertTrue(report["passed"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertTrue(checks["launch-agent"]["skipped"])
         self.assertTrue(report["sidecar"]["healthOk"])
         self.assertEqual(report["sidecar"]["rimeSuggest"]["schemaVersion"], "rag-ime.rime-sidecar.v1")
         self.assertEqual(report["sidecar"]["rimeSuggest"]["displayCandidateCount"], 1)
