@@ -597,7 +597,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             )
 
         self.assertIn("require_frontend_trace: 1", result.stdout)
-        self.assertIn("[OK] frontend trace passed: events=3 modelInline=5 ragBlock=3 sideCommitLabel=6", result.stdout)
+        self.assertIn("[OK] frontend trace passed: events=4 modelInline=5 ragBlock=3 numberKey=6 sideCommitLabel=6", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_fails_required_frontend_trace_without_events(self) -> None:
@@ -623,9 +623,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("[FAIL] frontend trace missing mixed panel or side commit", result.stdout)
+        self.assertIn("[FAIL] frontend trace missing mixed panel or number-key side commit", result.stdout)
         self.assertIn("latestMixedPanel=False", result.stdout)
         self.assertIn("latestSideCommit=False", result.stdout)
+        self.assertIn("latestNumberKeySideCommit=False", result.stdout)
 
     def test_doctor_fails_required_macos_input_source_when_not_enabled(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -734,9 +735,33 @@ def _write_frontend_trace_log(path: Path) -> None:
         + "\n"
         + json.dumps(
             {
-                "event": "side_candidate_commit",
+                "event": "number_key_route",
                 "timestampMs": 3,
-                "candidate": {"label": "6", "sourceType": "rag", "displayLayout": "block"},
+                "key": "6",
+                "candidate": {
+                    "label": "6",
+                    "selectionKey": "6",
+                    "selectionRank": 6,
+                    "sourceType": "rag",
+                    "selectionAction": "commit_side_candidate",
+                    "displayLayout": "block",
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "event": "side_candidate_commit",
+                "timestampMs": 4,
+                "candidate": {
+                    "label": "6",
+                    "selectionKey": "6",
+                    "selectionRank": 6,
+                    "sourceType": "rag",
+                    "selectionAction": "commit_side_candidate",
+                    "displayLayout": "block",
+                },
             },
             ensure_ascii=False,
         )
