@@ -2,6 +2,22 @@
 
 ### 2026-07-01
 Topic:
+- Add debug cache-hit probe for IME refresh behavior.
+
+Changes:
+- Added `POST /api/cache-probe` to repeat the same semantic input through `/api/suggest` and `/api/rime-suggest`.
+- The report includes local/shared core suggestion-cache deltas, Rime semantic-cache deltas, pass flags, and compact samples.
+- Added a small Cache card to the browser debug page; the real IME panel remains unchanged.
+- Updated debug-surface docs and debug-server tests.
+
+Verification:
+- `python3 -m unittest tests.test_debug_server`
+- `python3 -m py_compile rag_ime/debug_server.py`
+- `node --check debug/app.js`
+- `git diff --check`
+
+### 2026-07-01
+Topic:
 - Add a real patched Squirrel build gate.
 
 Changes:

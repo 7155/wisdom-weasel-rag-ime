@@ -94,6 +94,7 @@ POST /api/suggest
 POST /api/rime-suggest
 POST /api/rime-select
 POST /api/predictor-ttfc
+POST /api/cache-probe
 POST /api/action
 POST /api/commit
 ```
@@ -120,6 +121,19 @@ It runs the same streaming first parsed candidate measurement as the CLI
 visible card shows p50, p95, and over-budget count; the full JSON panel shows
 the predictor status and benchmark summary. This belongs in the debug surface,
 not the small IME panel.
+
+The debug page also has a manual Cache probe backed by `POST /api/cache-probe`.
+It repeats the same semantic request through both `/api/suggest` and
+`/api/rime-suggest`, then reports warm-hit deltas for:
+
+- the local/shared core suggestion cache;
+- the Squirrel/Rime semantic `/rime-suggest` cache.
+
+This is the IME-specific version of the VCP cache-hit concern: repeated
+composition refreshes should be absorbed by semantic cache keys, not re-run
+retrieval and local model work on every equivalent key event. The visible card
+only shows core hits, Rime hits, and repeat count; the JSON panel keeps the full
+before/after stats and samples.
 
 `/api/rime-suggest` returns the Squirrel/Rime side-candidate payload. It accepts structured Rime context:
 

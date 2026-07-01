@@ -7,6 +7,27 @@
 
 ## Log
 
+### 2026-07-01 13:53 CST
+Problem:
+- 用户强调 VCP 缓存命中和输入法高频 refresh 很关键；debug 页面虽然显示 cache stats，但缺少一个主动重复请求并验证 warm hit 的诊断入口。
+
+Changes:
+- 新增 `DebugImeService.cache_probe()` 和 `POST /api/cache-probe`。
+- Cache probe 会重复同一语义输入，通过 `/api/suggest` 测 local/shared core suggestion cache，通过 `/api/rime-suggest` 测 Squirrel/Rime semantic cache。
+- Debug 页面新增小型 Cache 卡片，只显示 core hits、rime hits、repeat count；完整 before/after stats 和 samples 留在 JSON 面板。
+- 更新 `docs/debug-surface.md`，说明 cache probe 是输入法版 VCP cache-hit 诊断。
+- 新增 debug server 测试覆盖直接 service 调用和 HTTP `/api/cache-probe`。
+
+Commands:
+- `python3 -m unittest tests.test_debug_server`
+- `python3 -m py_compile rag_ime/debug_server.py`
+- `node --check debug/app.js`
+- `git diff --check`
+
+Findings:
+- 直接 probe 在 repeat=3 时能看到 suggestion cache 和 rimeSuggestCache 的 warm hits。
+- 这个 probe 不会塞进真实输入法候选框；它只属于 debug surface，用于调缓存命中和重复 composing refresh。
+
 ### 2026-07-01 13:44 CST
 Problem:
 - RAG-IME 已有 patched Squirrel prepare/doctor，但缺少一个正式的 `xcodebuild` 构建入口；full Xcode 装好后无法一条命令验证真实 Squirrel 前端。
