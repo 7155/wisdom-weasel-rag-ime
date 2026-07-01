@@ -106,7 +106,30 @@ rag_ime:
 
 ## Build And Verify
 
-This machine currently has Command Line Tools but not full Xcode, so `xcodebuild -project Squirrel.xcodeproj -list` fails before project compilation with:
+Use the build wrapper after preparing the checkout:
+
+```bash
+scripts/build_patched_squirrel.sh list
+scripts/build_patched_squirrel.sh
+```
+
+The wrapper verifies that the patched Swift files, generated config snippet,
+and `Squirrel.xcodeproj` are present. It runs `xcodebuild -project ... -list`
+before build, then builds the `Squirrel` scheme with `CODE_SIGNING_ALLOWED=NO`
+and a disposable derived-data directory. Override the checkout, scheme, or
+configuration with:
+
+```bash
+RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel \
+RAG_IME_SQUIRREL_SCHEME=Squirrel \
+RAG_IME_SQUIRREL_CONFIGURATION=Release \
+scripts/build_patched_squirrel.sh
+```
+
+This machine currently has Command Line Tools but not full Xcode, so the wrapper
+is expected to fail before project compilation until full Xcode is installed or
+selected. The underlying `xcodebuild -project Squirrel.xcodeproj -list` failure
+is:
 
 ```text
 xcode-select: error: tool 'xcodebuild' requires Xcode
@@ -117,6 +140,8 @@ Local checks that were run for this patch:
 ```bash
 git -C /tmp/rag-ime-research/squirrel diff --check
 swiftc -typecheck /tmp/rag-ime-research/squirrel/sources/RagImeSidecarModels.swift
+bash -n scripts/build_patched_squirrel.sh
+python3 -m unittest tests.test_build_patched_squirrel
 ```
 
 The sidecar client was also typechecked with a temporary `SquirrelConfig` stub to verify its standalone Swift syntax. The Python HTTP sidecar endpoints are covered by unit tests. A full integration build still needs to be run in a macOS environment with Xcode installed.
