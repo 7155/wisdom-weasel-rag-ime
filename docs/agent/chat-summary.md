@@ -730,3 +730,21 @@ Findings:
 
 Next:
 - Add resident MLX-LM or native llama.cpp/Metal provider experiments after the Squirrel/Rime product loop remains stable.
+
+### 2026-07-01
+Topic:
+- Add resident MLX predictor service interface.
+
+Changes:
+- Added `local-mlx` predictor provider selected by `RAG_IME_PREDICTOR_PROVIDER=mlx`.
+- Added `rag-ime mlx-predictor-server` with `/predict`, `/predict-stream`, `/health`, and `/v1/models`.
+- `predictor-ttft` now supports resident MLX streaming in addition to native Ollama.
+- Predictor status now reports capability flags so prompt cache / sequence fork / batch candidates are not overclaimed.
+- Documented Wisdom-Weasel's relevant llama.cpp mechanism: cached system prompt state, sequence-copy KV fork, and batch candidate decode.
+
+Findings:
+- Current environment has `mlx` but not `mlx_lm`; real MLX server startup is pending dependency install and a concrete MLX model id.
+- The new MLX provider is a resident streaming adapter, not yet a prompt-cache or sequence-fork implementation.
+
+Next:
+- Install/verify `mlx-lm`, run `mlx-predictor-server` against a concrete small Qwen-compatible MLX model, then compare `predictor-ttft` and `eval-prediction` with the Ollama MLX baseline.

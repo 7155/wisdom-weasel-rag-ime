@@ -182,6 +182,32 @@ prompt, so the next work item is not "find any model that can stream quickly".
 It is to keep that first-visible behavior while improving candidate quality and
 removing the wait for complete JSON output.
 
+Resident MLX service route:
+
+```bash
+python3 -m rag_ime.cli mlx-predictor-server \
+  --model <mlx-compatible-qwen-model-id> \
+  --host 127.0.0.1 \
+  --port 8767
+
+export RAG_IME_PREDICTOR_PROVIDER=mlx
+export RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767
+export RAG_IME_PREDICTOR_MODEL=<same-model-id>
+export RAG_IME_PREDICTOR_PROFILE=instant
+
+python3 -m rag_ime.cli predictor-ttft \
+  --case "RAG 输入法" \
+  --recent-context "用户正在写本地记忆和候选预测" \
+  --repeat 8 \
+  --latency-budget-ms 200
+```
+
+This service is the first concrete MLX adapter for the project. It loads MLX-LM
+once, serves `/predict` and `/predict-stream`, and exposes `/v1/models` for the
+existing doctor flow. Prompt-cache metadata is included in responses, but real
+MLX prompt-cache reuse is intentionally called out as a follow-up optimization
+instead of being hidden behind the protocol.
+
 Run the small-model matrix after the models are actually downloaded and the endpoint is serving:
 
 ```bash

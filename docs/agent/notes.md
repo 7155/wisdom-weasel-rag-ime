@@ -1059,3 +1059,28 @@ Commands:
 - `python3 -m rag_ime.cli --core-mode fixture predictor-ttft --case "RAG 输入法" --recent-context "用户正在写本地记忆和候选预测" --repeat 8 --max-candidates 3 --latency-budget-ms 200`
 - `python3 -m rag_ime.cli --core-mode fixture eval-prediction --cases-file docs/eval/codex-history-cases.example.jsonl --max-candidates 3 --latency-budget-ms 500 --match any`
 - `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+
+### 2026-07-01 11:37 CST
+Problem:
+- The previous Mac TTFT result proved Ollama `qwen3.5:0.8b-mlx` can stream first chunks quickly, but RAG-IME still lacked a first-class resident MLX provider.
+- Wisdom-Weasel's fastest path depends on provider capabilities, especially prompt cache, sequence fork, and batch candidate sampling, not just a smaller model.
+
+Changes:
+- Added `RAG_IME_PREDICTOR_PROVIDER=mlx` and `MlxPredictionServiceProvider`.
+- Added `rag_ime/mlx_predictor_server.py` with `/predict`, `/predict-stream`, `/health`, and `/v1/models`.
+- Added `rag-ime mlx-predictor-server --model ...` CLI command that starts before any SQLite/core initialization.
+- Extended `predictor-ttft` to support resident MLX streaming, not only native Ollama.
+- Added provider capability flags: `streaming`, `residentModel`, `promptCache`, `sequenceFork`, `batchCandidates`, and `serverTiming`.
+- Added mock MLX provider and streaming TTFT tests.
+- Updated README and TTFT/KV-cache docs with the MLX service route and Wisdom-Weasel read-code checkpoint.
+
+Findings:
+- Current Python environment has `mlx` but not `mlx_lm`, so the real MLX-LM server was not started in this turn.
+- The current MLX service honestly reports `streaming=true` and `residentModel=true`, but `promptCache=false`, `sequenceFork=false`, and `batchCandidates=false`.
+- Wisdom-Weasel HEAD `64ba2fd` uses `LlamaCppProvider::GenerateCandidatesBatch()` with sequence-copy KV fork via `llama_memory_seq_cp`, so the future native llama.cpp provider should be accepted only when those capability flags turn true.
+
+Commands:
+- `python3 -W ignore::ResourceWarning -m unittest tests.test_predictor`
+- `python3 -m py_compile rag_ime/predictor.py rag_ime/mlx_predictor_server.py rag_ime/cli.py`
+- `env RAG_IME_PREDICTOR_PROVIDER=mlx RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767 RAG_IME_PREDICTOR_MODEL=mlx-qwen3.5-0.8b RAG_IME_PREDICTOR_PROFILE=instant python3 -m rag_ime.cli --core-mode fixture predictor-status`
+- `python3 -c "import importlib.util; print('mlx_lm', bool(importlib.util.find_spec('mlx_lm'))); print('mlx', bool(importlib.util.find_spec('mlx')))"`

@@ -80,7 +80,7 @@ prompt tuning:
 | Experiment | What To Measure | Accept / Reject Signal |
 | --- | --- | --- |
 | Ollama MLX baseline | `stream:true`, `keep_alive`, `think:false`; record first chunk plus Ollama timing fields | Keep only as baseline if p50 first chunk stays near 50 ms but full JSON remains slow. |
-| MLX-LM resident Python service | Load once, use `stream_generate`, compare prompt-cache on/off, emit first candidate text directly | Accept if first useful candidate stays under 200 ms and output quality improves over Ollama JSON prompting. |
+| MLX-LM resident Python service | Load once, use `stream_generate`, compare prompt-cache on/off, emit first candidate text directly | Adapter/protocol now exists as `mlx-predictor-server`; accept for product only after real MLX TTFT and quality beat the Ollama baseline. |
 | llama.cpp/Metal server/native provider | Metal backend, streaming, stable prompt state, eventually sequence-copy multi-candidate sampling | Accept if it can match Wisdom-Weasel-style prompt/KV reuse and produce 3-5 candidates without repeated prefill. |
 | MLC/Core ML | Model conversion/server setup cost vs. TTFT gain | Defer unless MLX-LM and llama.cpp fail the 200 ms warm target. |
 | MiniVLLM/vLLM concepts | Prefix cache, paged KV, scheduler metrics | Use as design reference only; do not port CUDA/Triton runtime to the Mac IME MVP. |
@@ -107,6 +107,39 @@ Official MLX-LM docs describe:
 This is closer to input-method needs than a generic OpenAI-compatible HTTP
 server because we can measure first emitted text precisely and can separate the
 stable prompt from the dynamic composition tail.
+
+RAG-IME now has a minimal resident MLX protocol:
+
+```text
+rag-ime mlx-predictor-server
+  -> loads MLX-LM model once
+  -> /predict for complete candidate sets
+  -> /predict-stream for TTFT measurement and first visible candidate
+  -> /v1/models for existing predictor-doctor checks
+```
+
+Current limitation: the protocol exposes prompt-cache metadata, but does not yet
+wire MLX-LM prompt-cache reuse. The next MLX-specific task is to split the
+stable instruction/schema prefix from the dynamic Rime/RAG tail and measure
+prompt-cache hit vs. miss TTFT.
+
+Provider status now reports explicit capability flags:
+
+```json
+{
+  "capabilities": {
+    "streaming": true,
+    "residentModel": true,
+    "promptCache": false,
+    "sequenceFork": false,
+    "batchCandidates": false
+  }
+}
+```
+
+This prevents accidental overclaiming. The current MLX service has a resident
+model and streaming TTFT path. It does not yet have prompt-cache reuse,
+llama.cpp-style sequence fork, or true batch-candidate sampling.
 
 ### Why llama.cpp Native Still Matters
 
@@ -228,6 +261,22 @@ The function:
 
 The effect is "five short candidates" with shared prefill cost instead of five
 separate calls.
+
+Read-code checkpoint:
+
+- `RimeWithWeasel.cpp::_TriggerLLMPrediction()` uses a background thread and
+  `m_llm_request_seq` to drop stale prediction results.
+- `LLMProvider::PredictCandidates(context, current_input, max_candidates)` is
+  the upstream provider boundary worth preserving.
+- `LlamaCppProvider::PrepareSystemPrompt()` prefills the system prompt and saves
+  seq-0 state.
+- `LlamaCppProvider::GenerateCandidatesBatch()` restores the cached state,
+  prefills the user prompt once, copies seq-0 memory to parallel sequence ids
+  with `llama_memory_seq_cp`, then decodes multiple sampled tokens in one batch.
+
+So the native llama.cpp provider should not merely ask a chat model to output a
+JSON list. Its acceptance bar is capability-level: `promptCache=true`,
+`sequenceFork=true`, and `batchCandidates=true`.
 
 ## What Not To Copy
 
