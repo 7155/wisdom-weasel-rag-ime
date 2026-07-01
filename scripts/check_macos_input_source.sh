@@ -90,6 +90,7 @@ fi
 
 tis_ok=0
 hitoolbox_ok=0
+third_party_ok=1
 if grep -Fq "enabled=true" "$out" && grep -Fq "selectable=true" "$out"; then
   tis_ok=1
 fi
@@ -101,11 +102,25 @@ if plutil -extract AppleEnabledInputSources xml1 -o "$tmpdir/hitoolbox-enabled.p
   fi
 fi
 
+if [[ "$INPUT_SOURCE_BUNDLE_ID" != com.apple.* ]]; then
+  third_party_ok=0
+  if plutil -extract AppleEnabledThirdPartyInputSources xml1 -o "$tmpdir/third-party-enabled.plist" "$HOME/Library/Preferences/com.apple.inputsources.plist" >/dev/null 2>&1; then
+    if grep -Fq "<string>$INPUT_SOURCE_ID</string>" "$tmpdir/third-party-enabled.plist" ||
+      grep -Fq "<string>$INPUT_SOURCE_BUNDLE_ID</string>" "$tmpdir/third-party-enabled.plist"; then
+      third_party_ok=1
+    fi
+  fi
+fi
+
 hitoolbox_value=false
-if [[ "$hitoolbox_ok" == "1" ]]; then
+if [[ "$hitoolbox_ok" == "1" && "$third_party_ok" == "1" ]]; then
   hitoolbox_value=true
 fi
-sed "s/$/ hitoolboxEnabled=$hitoolbox_value/" "$out"
+third_party_value=false
+if [[ "$third_party_ok" == "1" ]]; then
+  third_party_value=true
+fi
+sed "s/$/ hitoolboxEnabled=$hitoolbox_value thirdPartyEnabled=$third_party_value/" "$out"
 if [[ "$tis_ok" == "1" ]]; then
   if [[ "$REQUIRE_SELECTED" == "1" || "$REQUIRE_SELECTED" == "true" || "$REQUIRE_SELECTED" == "TRUE" ]]; then
     set +e
@@ -117,7 +132,7 @@ if [[ "$tis_ok" == "1" ]]; then
     fi
   fi
   if [[ "$REQUIRE_HITOOLBOX_ENABLED" == "1" || "$REQUIRE_HITOOLBOX_ENABLED" == "true" || "$REQUIRE_HITOOLBOX_ENABLED" == "TRUE" ]]; then
-    [[ "$hitoolbox_ok" == "1" ]]
+    [[ "$hitoolbox_ok" == "1" && "$third_party_ok" == "1" ]]
     exit $?
   fi
   exit 0

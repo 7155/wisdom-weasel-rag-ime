@@ -122,7 +122,23 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
                         "done",
                         "if [[ \"$*\" == *' CODE_SIGNING_ALLOWED=NO build'* ]]; then",
                         "  mkdir -p \"$derived/Build/Products/Release/Squirrel.app/Contents/MacOS\"",
-                        "  printf '#!/usr/bin/env bash\\n' > \"$derived/Build/Products/Release/Squirrel.app/Contents/MacOS/Squirrel\"",
+                        "  mkdir -p \"$derived/Build/Products/Release/Squirrel.app/Contents/SharedSupport\"",
+                        "  printf 'schema_list:\\n  - schema: luna_pinyin\\n' > \"$derived/Build/Products/Release/Squirrel.app/Contents/SharedSupport/default.yaml\"",
+                        "  printf 'schema:\\n  schema_id: luna_pinyin\\n' > \"$derived/Build/Products/Release/Squirrel.app/Contents/SharedSupport/luna_pinyin.schema.yaml\"",
+                        "  printf -- '---\\nname: luna_pinyin\\n...\\n' > \"$derived/Build/Products/Release/Squirrel.app/Contents/SharedSupport/luna_pinyin.dict.yaml\"",
+                        "  cat > \"$derived/Build/Products/Release/Squirrel.app/Contents/MacOS/Squirrel\" <<'SH'",
+                        "#!/usr/bin/env bash",
+                        "set -euo pipefail",
+                        "if [[ \"${1:-}\" == \"--build\" ]]; then",
+                        "  mkdir -p build",
+                        "  printf 'default\\n' > build/default.yaml",
+                        "  printf 'schema\\n' > build/luna_pinyin.schema.yaml",
+                        "  printf 'table\\n' > build/luna_pinyin.table.bin",
+                        "  exit 0",
+                        "fi",
+                        "if [[ \"${1:-}\" == \"--reload\" ]]; then exit 0; fi",
+                        "exit 0",
+                        "SH",
                         "  chmod +x \"$derived/Build/Products/Release/Squirrel.app/Contents/MacOS/Squirrel\"",
                         "  exit 0",
                         "fi",
@@ -158,6 +174,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             config = (rime_dir / "squirrel.custom.yaml").read_text(encoding="utf-8")
             self.assertIn('"rag_ime/enabled": true', config)
             self.assertIn('"rag_ime/sidecar_url": "http://127.0.0.1:19866/api"', config)
+            self.assertTrue((rime_dir / "build" / "luna_pinyin.table.bin").is_file())
 
     def test_build_script_fails_clearly_when_workdir_is_missing(self) -> None:
         root = Path(__file__).resolve().parents[1]

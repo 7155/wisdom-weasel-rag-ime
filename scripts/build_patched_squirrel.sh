@@ -208,6 +208,10 @@ install_squirrel_app() {
     "$ROOT/scripts/install_squirrel_rag_config.sh"
   printf '[OK] installed RAG-IME Squirrel config\n'
 
+  RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
+    RAG_IME_SQUIRREL_APP="$INSTALL_DIR/Squirrel.app" \
+    "$ROOT/scripts/bootstrap_squirrel_user_data.sh"
+
   if bool_true "$SKIP_POSTINSTALL"; then
     printf '[WARN] skipped Squirrel postinstall; input source may need manual registration\n' >&2
     return 0
