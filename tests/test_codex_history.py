@@ -218,6 +218,67 @@ class CodexHistoryTests(unittest.TestCase):
                                 "content": [
                                     {
                                         "type": "input_text",
+                                        "text": (
+                                            "<skills_instructions>\n"
+                                            "## Skills\n"
+                                            "skills_instructions / SKILL.md / tool_search "
+                                            "这些是运行时技能清单, 不应该成为用户记忆。"
+                                        ),
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "<apps_instructions>\n"
+                                            "apps_instructions / connector_id / codex_apps "
+                                            "这些 connector 上下文也不应该被导入。"
+                                        ),
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "<collaboration_mode>\n"
+                                            "collaboration_mode / request_user_input "
+                                            "这是 Codex 运行模式注入, 不是项目记忆。"
+                                        ),
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
                                         "text": "# AGENTS.md instructions for /Volumes/undo 4t/git/learnA",
                                     }
                                 ],

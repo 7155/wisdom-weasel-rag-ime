@@ -463,8 +463,13 @@ def _looks_like_runtime_context(text: str) -> bool:
     prefixes = (
         "# AGENTS.md instructions",
         "<INSTRUCTIONS>",
+        "<app-context>",
+        "<apps_instructions>",
+        "<collaboration_mode>",
         "<environment_context>",
+        "<plugins_instructions>",
         "<permissions instructions>",
+        "<skills_instructions>",
         "<codex_internal_context",
         "Knowledge cutoff:",
         "You are Codex,",
@@ -486,5 +491,10 @@ def _looks_like_runtime_context(text: str) -> bool:
         "encrypted_content",
         "call_id",
         "function_call_output",
+        "apps_instructions",
+        "codex_apps",
+        "collaboration_mode",
+        "plugins_instructions",
+        "skills_instructions",
     )
     return any(marker in stripped for marker in markers)
