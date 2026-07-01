@@ -576,16 +576,17 @@ index 0000000..a837039
 +  }
 +}
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..d144a8a 100644
+index c2adf74..e63b851 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
-@@ -27,6 +27,19 @@ final class SquirrelInputController: IMKInputController {
+@@ -27,6 +27,20 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
 +  private var ragImeSidecarClient: RagImeSidecarClient?
 +  private var ragImeRequestSeq: Int = 0
 +  private var ragImeDisplayCandidates: [RagImeDisplayCandidate] = []
++  private var ragImePanelUsesDisplayCandidates: Bool = false
 +  private var ragImeDisplayRawInput: String = ""
 +  private var ragImeDisplayPreedit: String = ""
 +  private var ragImeDisplaySemanticQuery: String = ""
@@ -599,7 +600,7 @@ index c2adf74..d144a8a 100644
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -106,6 +119,9 @@ final class SquirrelInputController: IMKInputController {
+@@ -106,6 +120,9 @@ final class SquirrelInputController: IMKInputController {
          keyChars = event.characters
        }
        if let char = keyChars?.first {
@@ -609,11 +610,11 @@ index c2adf74..d144a8a 100644
          let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
                                                             shift: modifiers.contains(.shift),
                                                             caps: modifiers.contains(.capsLock))
-@@ -124,6 +140,33 @@ final class SquirrelInputController: IMKInputController {
+@@ -124,6 +141,33 @@ final class SquirrelInputController: IMKInputController {
    }
  
    func selectCandidate(_ index: Int) -> Bool {
-+    if index >= 0 && index < ragImeDisplayCandidates.count {
++    if ragImePanelUsesDisplayCandidates && index >= 0 && index < ragImeDisplayCandidates.count {
 +      let candidate = ragImeDisplayCandidates[index]
 +      if candidate.selectionAction == "commit_side_candidate" {
 +        let insertText = candidate.insertText.isEmpty ? candidate.text : candidate.insertText
@@ -643,11 +644,14 @@ index c2adf74..d144a8a 100644
      let success = rimeAPI.select_candidate_on_current_page(session, index)
      if success {
        rimeUpdate()
-@@ -131,6 +174,14 @@ final class SquirrelInputController: IMKInputController {
+@@ -131,6 +175,28 @@ final class SquirrelInputController: IMKInputController {
      return success
    }
  
 +  func ragImeDisplayLayout(at index: Int) -> String? {
++    guard ragImePanelUsesDisplayCandidates else {
++      return nil
++    }
 +    guard index >= 0 && index < ragImeDisplayCandidates.count else {
 +      return nil
 +    }
@@ -655,10 +659,21 @@ index c2adf74..d144a8a 100644
 +    return layout.isEmpty ? nil : layout
 +  }
 +
++  func ragImePanelForcesHorizontalLayout() -> Bool {
++    guard ragImePanelUsesDisplayCandidates else {
++      return false
++    }
++    return ragImeDisplayCandidates.contains { candidate in
++      let layout = candidate.displayLayout ?? ""
++      let lane = candidate.displayLane ?? candidate.sourceType
++      return layout == "inline" && (lane == "model" || candidate.sourceType == "model")
++    }
++  }
++
    // swiftlint:disable:next identifier_name
    func page(up: Bool) -> Bool {
      var handled = false
-@@ -301,6 +352,295 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,6 +367,302 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
@@ -668,6 +683,9 @@ index c2adf74..d144a8a 100644
 +  }
 +
 +  func selectRagImeSideCandidate(forKey key: String) -> Bool {
++    guard ragImePanelUsesDisplayCandidates else {
++      return false
++    }
 +    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {
 +      return false
 +    }
@@ -781,6 +799,7 @@ index c2adf74..d144a8a 100644
 +    guard currentRagImeContextMatches(request) else { return }
 +
 +    ragImeDisplayCandidates = response.displayCandidates
++    ragImePanelUsesDisplayCandidates = false
 +    ragImeDisplayRawInput = response.rawInput
 +    ragImeDisplayPreedit = response.preedit
 +    ragImeDisplaySemanticQuery = response.semanticQuery
@@ -830,6 +849,7 @@ index c2adf74..d144a8a 100644
 +    fallbackComments: [String],
 +    fallbackLabels: [String]
 +  ) -> (candidates: [String], comments: [String], labels: [String]) {
++    ragImePanelUsesDisplayCandidates = false
 +    guard !ragImeDisplayCandidates.isEmpty else {
 +      return (fallbackCandidates, fallbackComments, fallbackLabels)
 +    }
@@ -842,6 +862,7 @@ index c2adf74..d144a8a 100644
 +    guard exactMatch || canHold else {
 +      return (fallbackCandidates, fallbackComments, fallbackLabels)
 +    }
++    ragImePanelUsesDisplayCandidates = true
 +    return ragImeDisplayPanelPayload(fallbackLabels: fallbackLabels)
 +  }
 +
@@ -899,6 +920,7 @@ index c2adf74..d144a8a 100644
 +
 +  func clearRagImeDisplayCandidates() {
 +    ragImeDisplayCandidates = []
++    ragImePanelUsesDisplayCandidates = false
 +    ragImeDisplayRawInput = ""
 +    ragImeDisplayPreedit = ""
 +    ragImeDisplaySemanticQuery = ""
@@ -954,7 +976,7 @@ index c2adf74..d144a8a 100644
    func onChordTimer(_: Timer) {
      var processedKeys = false
      if chordKeyCount > 0 && session != 0 {
-@@ -360,6 +700,7 @@ private extension SquirrelInputController {
+@@ -360,6 +722,7 @@ private extension SquirrelInputController {
  
      if session != 0 {
        updateAppOptions()
@@ -962,7 +984,7 @@ index c2adf74..d144a8a 100644
      }
    }
  
-@@ -434,7 +775,7 @@ private extension SquirrelInputController {
+@@ -434,7 +797,7 @@ private extension SquirrelInputController {
    }
  
    // Preserve reserved comment marks when librime requests a UI-only refresh.
@@ -971,7 +993,7 @@ index c2adf74..d144a8a 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +787,7 @@ private extension SquirrelInputController {
+@@ -446,6 +809,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -979,7 +1001,7 @@ index c2adf74..d144a8a 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +800,14 @@ private extension SquirrelInputController {
+@@ -458,13 +822,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -995,7 +1017,7 @@ index c2adf74..d144a8a 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -537,13 +880,35 @@ private extension SquirrelInputController {
+@@ -537,13 +902,35 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -1032,7 +1054,7 @@ index c2adf74..d144a8a 100644
        hidePalettes()
      }
    }
-@@ -551,6 +916,7 @@ private extension SquirrelInputController {
+@@ -551,6 +938,7 @@ private extension SquirrelInputController {
    func commit(string: String) {
      guard let client = client else { return }
      client.insertText(string, replacementRange: .empty)
@@ -1041,10 +1063,23 @@ index c2adf74..d144a8a 100644
      hidePalettes()
    }
 diff --git a/sources/SquirrelPanel.swift b/sources/SquirrelPanel.swift
-index a9e2dae..2db75fc 100644
+index a9e2dae..657f886 100644
 --- a/sources/SquirrelPanel.swift
 +++ b/sources/SquirrelPanel.swift
-@@ -256,7 +256,7 @@ final class SquirrelPanel: NSPanel {
+@@ -57,6 +57,12 @@ final class SquirrelPanel: NSPanel {
+   var vertical: Bool {
+     view.currentTheme.vertical
+   }
++  var ragImePanelLinear: Bool {
++    inputController?.ragImePanelForcesHorizontalLayout() == true ? true : linear
++  }
++  var ragImePanelVertical: Bool {
++    inputController?.ragImePanelForcesHorizontalLayout() == true ? false : vertical
++  }
+   var inlinePreedit: Bool {
+     view.currentTheme.inlinePreedit
+   }
+@@ -256,22 +262,22 @@ final class SquirrelPanel: NSPanel {
          line.addAttribute(.noBreak, value: true, range: NSRange(location: 1, length: line.length-1))
        }
  
@@ -1053,14 +1088,50 @@ index a9e2dae..2db75fc 100644
        if i > 0 {
          text.append(lineSeparator)
        }
-@@ -550,6 +550,18 @@ private extension SquirrelPanel {
+       let str = lineSeparator.mutableCopy() as! NSMutableAttributedString
+-      if vertical {
++      if ragImePanelVertical {
+         str.addAttribute(.verticalGlyphForm, value: 1, range: NSRange(location: 0, length: str.length))
+       }
+       view.separatorWidth = str.boundingRect(with: .zero).width
+ 
+       let paragraphStyleCandidate = (i == 0 ? theme.firstParagraphStyle : theme.paragraphStyle).mutableCopy() as! NSMutableParagraphStyle
+-      if linear {
++      if ragImePanelLinear {
+         paragraphStyleCandidate.paragraphSpacingBefore -= theme.linespace
+         paragraphStyleCandidate.lineSpacing = theme.linespace
+       }
+-      if !linear, let labelEnd = labeledLine.string.firstMatch(of: /\[(candidate|comment)\]/)?.range.lowerBound {
++      if !ragImePanelLinear, let labelEnd = labeledLine.string.firstMatch(of: /\[(candidate|comment)\]/)?.range.lowerBound {
+         let labelString = labeledLine.attributedSubstring(from: NSRange(location: 0, length: labelEnd.utf16Offset(in: labeledLine.string)))
+         let labelWidth = labelString.boundingRect(with: .zero, options: [.usesLineFragmentOrigin]).width
+         paragraphStyleCandidate.headIndent = labelWidth
+@@ -283,7 +289,7 @@ final class SquirrelPanel: NSPanel {
+     }
+ 
+     view.textView.textContentStorage?.attributedString = text
+-    view.textView.setLayoutOrientation(vertical ? .vertical : .horizontal)
++    view.textView.setLayoutOrientation(ragImePanelVertical ? .vertical : .horizontal)
+ 
+     // Force TextKit 2 layout before measuring wrapped text and highlight bounds.
+     let textWidth = maxTextWidth()
+@@ -533,7 +539,7 @@ private extension SquirrelPanel {
+     let text = NSMutableAttributedString(string: message, attributes: theme.attrs)
+     text.addAttribute(.paragraphStyle, value: theme.paragraphStyle, range: NSRange(location: 0, length: text.length))
+     view.textContentStorage.attributedString = text
+-    view.textView.setLayoutOrientation(vertical ? .vertical : .horizontal)
++    view.textView.setLayoutOrientation(ragImePanelVertical ? .vertical : .horizontal)
+     view.drawView(candidateRanges: [NSRange(location: 0, length: text.length)], hilightedIndex: -1,
+                   preeditRange: .empty, highlightedPreeditRange: .empty, canPageUp: false, canPageDown: false)
+     show()
+@@ -550,6 +556,18 @@ private extension SquirrelPanel {
      return NSRange(location: startPos, length: endPos - startPos)
    }
  
 +  func candidateSeparator(before index: Int) -> String {
 +    guard index > 0 else { return "" }
 +    guard let currentLayout = inputController?.ragImeDisplayLayout(at: index) else {
-+      return linear ? "  " : "\n"
++      return ragImePanelLinear ? "  " : "\n"
 +    }
 +    let previousLayout = inputController?.ragImeDisplayLayout(at: index - 1)
 +    if currentLayout == "inline", previousLayout == "inline" {
