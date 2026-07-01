@@ -829,7 +829,7 @@ def _parse_input_source_check_output(output: str) -> dict[str, object]:
     name_match = re.search(r"\bname=(.*?)\s+enabled=", output)
     if name_match:
         parsed["name"] = name_match.group(1)
-    for key, value in re.findall(r"\b(enabled|selectable|selected|hitoolboxEnabled)=([^\s]+)", output):
+    for key, value in re.findall(r"\b(enabled|selectable|selected|hitoolboxEnabled|thirdPartyEnabled)=([^\s]+)", output):
         parsed[key] = value.lower() == "true"
     current_match = re.search(r"\bcurrent=([^\s]+)", output)
     if current_match:
@@ -841,6 +841,7 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
     enabled = parsed.get("enabled") is True
     selectable = parsed.get("selectable") is True
     hitoolbox_enabled = parsed.get("hitoolboxEnabled") is not False
+    third_party_enabled = parsed.get("thirdPartyEnabled") is not False
     current = _string(parsed.get("current"))
     target = _string(parsed.get("id")) or "Squirrel"
     if ok and typing_ready:
@@ -849,7 +850,7 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
             "readinessMessage": "Squirrel is the active input source",
             "nextAction": "start typing with Squirrel",
         }
-    if enabled and selectable and hitoolbox_enabled:
+    if enabled and selectable and hitoolbox_enabled and third_party_enabled:
         return {
             "readinessState": "switch",
             "readinessMessage": "Squirrel is installed; switch the menu bar input source",
@@ -857,11 +858,11 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
             "expectedInputSourceId": target,
             "currentInputSourceId": current,
         }
-    if not enabled or not selectable:
+    if not enabled or not selectable or not hitoolbox_enabled or not third_party_enabled:
         return {
             "readinessState": "install",
-            "readinessMessage": "Squirrel is not enabled in the macOS input-source list",
-            "nextAction": "run the Squirrel install and input-source enable scripts",
+            "readinessMessage": "Squirrel is not enabled in every macOS input-source list",
+            "nextAction": "add Squirrel in System Settings or run the input-source enable helper",
             "expectedInputSourceId": target,
             "currentInputSourceId": current,
         }

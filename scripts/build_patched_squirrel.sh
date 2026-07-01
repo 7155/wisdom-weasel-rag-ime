@@ -173,13 +173,14 @@ ensure_squirrel_input_source_enabled() {
     "$app/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
     sleep 0.5
     "$app/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 || true
-    if output="$("$ROOT/scripts/check_macos_input_source.sh" "$INPUT_SOURCE_ID" 2>&1)"; then
-      printf '[OK] macOS input source enabled: %s\n' "$output"
+    if output="$("$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
+      printf '[OK] macOS input source enabled for real use: %s\n' "$output"
       return 0
     fi
     sleep 0.5
   done
-  printf '[WARN] macOS input source not confirmed after install: %s\n' "$output" >&2
+  printf '[WARN] macOS input source not confirmed for real use after install: %s\n' "$output" >&2
+  printf '[WARN] If thirdPartyEnabled=false, add Squirrel from System Settings -> Keyboard -> Input Sources.\n' >&2
 }
 
 install_squirrel_app() {

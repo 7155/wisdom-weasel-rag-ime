@@ -1375,3 +1375,19 @@ Verification:
 
 Next:
 - Confirm or manually perform System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel, then rerun `scripts/check_macos_input_source.sh`.
+
+### 2026-07-01
+Topic:
+- Remove false-positive input-source readiness after macOS 27 third-party-source finding.
+
+Changes:
+- Install postcheck now requires `check_macos_input_source.sh --require-hitoolbox-enabled`.
+- Debug readiness parses `thirdPartyEnabled`; missing HIToolbox or third-party source now returns `install`, not `switch`.
+- Quality-gate input-source checks include `thirdPartyEnabled`.
+- Added isolated shell-script tests for third-party input-source preference handling.
+
+Verification:
+- Full 156-test suite passed.
+
+Next:
+- Use System Settings UI to add `鼠须管`, then rerun the strict input-source check and foreground typing test.

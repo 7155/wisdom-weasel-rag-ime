@@ -790,7 +790,41 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertFalse(status["ok"])
         self.assertFalse(status["typingReady"])
         self.assertEqual(status["readinessState"], "install")
-        self.assertEqual(status["nextAction"], "run the Squirrel install and input-source enable scripts")
+        self.assertEqual(status["nextAction"], "add Squirrel in System Settings or run the input-source enable helper")
+
+    def test_input_source_status_marks_missing_third_party_registration_as_install_needed(self) -> None:
+        script = Path(self.tmp.name) / "check-input-source-third-party-missing.sh"
+        script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=false current=com.apple.keylayout.ABC hitoolboxEnabled=false thirdPartyEnabled=false'",
+                    "exit 1",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "input-source-third-party-missing.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                input_source_check_script=script,
+            )
+        )
+
+        status = service.input_source_status()
+
+        self.assertFalse(status["ok"])
+        self.assertFalse(status["typingReady"])
+        self.assertTrue(status["enabled"])
+        self.assertTrue(status["selectable"])
+        self.assertFalse(status["hitoolboxEnabled"])
+        self.assertFalse(status["thirdPartyEnabled"])
+        self.assertEqual(status["readinessState"], "install")
+        self.assertEqual(status["nextAction"], "add Squirrel in System Settings or run the input-source enable helper")
 
     def test_rejects_empty_commit_and_bad_action(self) -> None:
         with self.assertRaises(ValueError):

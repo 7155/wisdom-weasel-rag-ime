@@ -2357,6 +2357,7 @@ def _input_source_ready_checks(report: dict[str, object]) -> list[dict[str, obje
             "enabled": report.get("enabled"),
             "selectable": report.get("selectable"),
             "hitoolboxEnabled": report.get("hitoolboxEnabled"),
+            "thirdPartyEnabled": report.get("thirdPartyEnabled"),
             "current": report.get("current"),
             "exitCode": report.get("exitCode"),
         },

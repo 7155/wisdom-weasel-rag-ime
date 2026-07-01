@@ -1942,3 +1942,22 @@ Changes:
 Findings:
 - `defaults write/import com.apple.inputsources` may not persist command-line changes on this host, while the System Settings UI can still add the source.
 - Real current state after tightening the check: Squirrel is TIS-registered/selectable but `thirdPartyEnabled=false`, so the remaining required step is UI Add -> Chinese, Simplified -> Squirrel.
+
+### 2026-07-01 20:20 CST
+Problem:
+- `scripts/build_patched_squirrel.sh install` still used the loose TIS-only input-source check after postinstall.
+- Debug readiness parsed `hitoolboxEnabled` but ignored the new `thirdPartyEnabled` field, so the UI could still say "switch input source" when System Settings had not actually added Squirrel.
+
+Changes:
+- `build_patched_squirrel.sh` now calls `check_macos_input_source.sh --require-hitoolbox-enabled` after postinstall and only prints OK when the real-use preference gates pass.
+- `rag_ime.debug_server` parses `thirdPartyEnabled`; if HIToolbox or the third-party input-source list is missing, readiness becomes `install` with an add/enable action.
+- `quality-gate` input-source checks now include `thirdPartyEnabled`.
+- Added isolated tests for `check_macos_input_source.sh` with fake `swift` and temporary preference plists.
+
+Verification:
+- Targeted checker/debug tests passed.
+- Full test suite passed: 156 tests.
+
+Status:
+- The project no longer treats TIS registration alone as real input-method readiness.
+- Real local machine still requires the System Settings UI Add path before foreground Squirrel typing can be verified.
