@@ -1193,3 +1193,21 @@ Verification:
 
 Next:
 - Enable Squirrel/Rime in macOS System Settings and do continuous real typing validation with the installed input source.
+
+### 2026-07-01
+Topic:
+- Make user-level Squirrel registration verifiable through macOS TIS.
+
+Changes:
+- Patched Squirrel to register `Bundle.main.bundleURL` instead of the upstream hardcoded `/Library/Input Library/Squirrel.app`.
+- Added default ad-hoc deep signing after copying `Squirrel.app` into the user input-method directory.
+- Added a shared TIS probe and install-time register/enable retry loop.
+- Strict doctor now verifies `im.rime.inputmethod.Squirrel.Hans enabled=true selectable=true`.
+
+Verification:
+- Reinstall registered `file:///Users/undo/Library/Input%20Methods/Squirrel.app/`.
+- Install script itself confirmed `macOS input source enabled`.
+- Strict doctor passed with the macOS input-source check enabled.
+
+Next:
+- Use the macOS input menu to switch to Squirrel and run continuous typing validation in a normal text app.

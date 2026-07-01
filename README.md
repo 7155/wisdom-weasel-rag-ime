@@ -226,9 +226,11 @@ scripts/build_patched_squirrel.sh install
 
 The `install` action copies `Squirrel.app` into `~/Library/Input Methods` by
 default, writes the managed RAG-IME block into
-`~/Library/Rime/squirrel.custom.yaml`, and runs Squirrel postinstall unless
-`RAG_IME_SQUIRREL_SKIP_POSTINSTALL=1` is set. For a machine-wide install, set
-`RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"`.
+`~/Library/Rime/squirrel.custom.yaml`, ad-hoc signs the copied bundle for local
+use, and runs Squirrel postinstall unless `RAG_IME_SQUIRREL_SKIP_POSTINSTALL=1`
+is set. The strict doctor verifies that the macOS TIS source
+`im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. For
+a machine-wide install, set `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"`.
 
 See `docs/xcode-squirrel-setup.md` for the external-disk install route and the `DEVELOPER_DIR`/`xcode-select` commands.
 

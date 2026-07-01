@@ -14,6 +14,10 @@ REQUIRE_XCODE="${RAG_IME_DOCTOR_REQUIRE_XCODE:-0}"
 REQUIRE_PREDICTOR="${RAG_IME_DOCTOR_REQUIRE_PREDICTOR:-0}"
 REQUIRE_TRYOUT="${RAG_IME_DOCTOR_REQUIRE_TRYOUT:-0}"
 CHECK_LAUNCHD="${RAG_IME_DOCTOR_CHECK_LAUNCHD:-1}"
+REQUIRE_INPUT_SOURCE_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE:-}"
+REQUIRE_INPUT_SOURCE="${REQUIRE_INPUT_SOURCE_CONFIGURED:-0}"
+SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
+SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
 EXPECT_PREDICTOR_PROVIDER="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROVIDER:-${RAG_IME_PREDICTOR_PROVIDER:-}}"
 EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDICTOR_MODEL:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
@@ -54,12 +58,17 @@ bool_true() {
 if bool_true "$REQUIRE_TRYOUT"; then
   REQUIRE_SIDECAR=1
   REQUIRE_XCODE=1
+  if [[ -z "$REQUIRE_INPUT_SOURCE_CONFIGURED" ]]; then
+    REQUIRE_INPUT_SOURCE=1
+  fi
 fi
 
 printf 'RAG-IME Squirrel integration doctor\n'
 printf 'repo: %s\n' "$ROOT"
 printf 'squirrel_workdir: %s\n' "$SQUIRREL_WORKDIR"
 printf 'sidecar: %s\n' "$SIDECAR_BASE_URL"
+printf 'squirrel_app: %s\n' "$SQUIRREL_APP"
+printf 'squirrel_input_source: %s\n' "$SQUIRREL_INPUT_SOURCE_ID"
 printf 'tryout_readiness: %s\n' "$REQUIRE_TRYOUT"
 printf 'active_developer_dir: %s\n' "$(xcode-select -p 2>/dev/null || printf '<none>')"
 printf 'DEVELOPER_DIR: %s\n\n' "${DEVELOPER_DIR:-<unset>}"
@@ -129,6 +138,39 @@ if command -v swiftc >/dev/null 2>&1; then
   ok "swiftc is available"
 else
   warn "swiftc is not available; sidecar Swift typecheck cannot run"
+fi
+
+check_macos_input_source() {
+  local app="$1"
+  local input_source_id="$2"
+  local out
+  local status
+
+  if [[ -x "$app/Contents/MacOS/Squirrel" ]]; then
+    ok "installed Squirrel.app executable exists: $app"
+  else
+    require_or_warn "$REQUIRE_INPUT_SOURCE" "installed Squirrel.app executable missing: $app"
+    return
+  fi
+
+  out="$(mktemp /tmp/rag-ime-tis-input-source.out.XXXXXX)"
+  set +e
+  "$ROOT/scripts/check_macos_input_source.sh" "$input_source_id" >"$out" 2>&1
+  status=$?
+  set -e
+
+  if [[ "$status" == "0" ]]; then
+    ok "macOS input source enabled: $(cat "$out")"
+  elif grep -Fq "id=$input_source_id" "$out"; then
+    require_or_warn "$REQUIRE_INPUT_SOURCE" "macOS input source is registered but not enabled/selectable: $(cat "$out")"
+  else
+    require_or_warn "$REQUIRE_INPUT_SOURCE" "macOS input source is not registered: $(cat "$out")"
+  fi
+  rm -f "$out"
+}
+
+if bool_true "$REQUIRE_INPUT_SOURCE" || [[ -d "$SQUIRREL_APP" ]]; then
+  check_macos_input_source "$SQUIRREL_APP" "$SQUIRREL_INPUT_SOURCE_ID"
 fi
 
 if bool_true "$CHECK_LAUNCHD"; then

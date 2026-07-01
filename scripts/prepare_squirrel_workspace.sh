@@ -84,6 +84,7 @@ require_patch_text "sources/RagImeSidecarClient.swift" "rime-select" "side candi
 require_patch_text "sources/SquirrelInputController.swift" "selectRagImeSideCandidate" "number-key side-candidate routing"
 require_patch_text "sources/SquirrelInputController.swift" "ragImeRequestFingerprint" "stale response fingerprint guard"
 require_patch_text "sources/SquirrelInputController.swift" "mergedRagImePanelCandidates" "Rime and side candidate display merge"
+require_patch_text "sources/Main.swift" "static let appDir = Bundle.main.bundleURL" "dynamic input-source registration bundle path"
 
 CONFIG_PATH="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml"
 ROOT="$ROOT" \

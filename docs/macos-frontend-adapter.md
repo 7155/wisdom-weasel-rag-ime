@@ -312,7 +312,8 @@ scripts/build_patched_squirrel.sh install
 ```
 
 The install action copies `Squirrel.app` into `~/Library/Input Methods` by
-default and writes the managed RAG-IME patch block into:
+default, ad-hoc signs the copied bundle for local Text Input Services
+registration, and writes the managed RAG-IME patch block into:
 
 ```text
 ~/Library/Rime/squirrel.custom.yaml
@@ -320,6 +321,11 @@ default and writes the managed RAG-IME patch block into:
 
 Use `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"` only when a
 machine-wide install is required.
+
+The strict doctor verifies that the installed macOS input source
+`im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. The
+active selected source may still need to be changed from the macOS input menu
+before the real continuous typing test.
 
 ## Environment
 

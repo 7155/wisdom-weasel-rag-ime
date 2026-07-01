@@ -163,8 +163,9 @@ xcodebuild -project <patched>/Squirrel.xcodeproj -scheme Squirrel -configuration
 The `install` action then:
 
 - copies the built `Squirrel.app` to `~/Library/Input Methods` by default;
+- ad-hoc signs the copied app with `codesign --force --deep --sign -` unless `RAG_IME_SQUIRREL_SKIP_CODESIGN=1` is set;
 - writes a managed `rag_ime/*` patch block into `~/Library/Rime/squirrel.custom.yaml`;
-- runs Squirrel `scripts/postinstall` so the input source is registered, built, enabled, and selected.
+- runs Squirrel `scripts/postinstall` so the input source is registered, built, and enabled.
 
 Useful switches:
 
@@ -177,6 +178,9 @@ RAG_IME_SQUIRREL_NO_DOWNLOAD=1 scripts/build_patched_squirrel.sh
 
 # Copy/install without running Squirrel postinstall.
 RAG_IME_SQUIRREL_SKIP_POSTINSTALL=1 scripts/build_patched_squirrel.sh install
+
+# Copy/install without local ad-hoc signing. This is mainly for tests.
+RAG_IME_SQUIRREL_SKIP_CODESIGN=1 scripts/build_patched_squirrel.sh install
 ```
 
 After install, keep the sidecar running and run the strict gate again:
@@ -185,6 +189,12 @@ After install, keep the sidecar running and run the strict gate again:
 scripts/install_sidecar_launch_agent.sh
 RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
 ```
+
+In strict mode the doctor also checks macOS Text Input Services and should report
+`im.rime.inputmethod.Squirrel.Hans enabled=true selectable=true`. Terminal-based
+selection can still fail if macOS refuses to switch the active foreground input
+source from a background command; use the input menu for the continuous typing
+test.
 
 Manual continuous-use verification:
 

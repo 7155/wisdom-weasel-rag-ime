@@ -1719,3 +1719,29 @@ Verification:
 
 Status:
 - The project is now installed as a user-level macOS input method bundle; remaining validation is manual System Settings enablement and continuous typing in the real input source.
+
+### 2026-07-01 18:07 CST
+Problem:
+- The installed `Squirrel.app` existed under `~/Library/Input Methods`, but macOS TIS initially did not expose it as an enabled input source.
+- Upstream Squirrel's `SquirrelApp.appDir` was hardcoded to `/Library/Input Library/Squirrel.app`, so `--register-input-source` registered the wrong path for user-level installs.
+- With `CODE_SIGNING_ALLOWED=NO`, the copied app only had a linker ad-hoc signature and no sealed resources; TIS registration became unreliable.
+
+Changes:
+- Patched Squirrel `Main.swift` so registration uses `Bundle.main.bundleURL`.
+- Added a prepare-time guard requiring the dynamic bundle path patch.
+- Added post-copy `codesign --force --deep --sign -` to `scripts/build_patched_squirrel.sh` by default.
+- Added `scripts/check_macos_input_source.sh` as the shared TIS probe.
+- Added postinstall register/enable retries until TIS confirms the input source is enabled/selectable.
+- Extended strict doctor to check the installed macOS TIS source `im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable.
+- Documented the signing/TIS behavior and the fact that active source selection may still need manual input-menu switching.
+
+Verification:
+- Rebuilt and installed patched Squirrel.
+- `Squirrel --register-input-source` now reports `file:///Users/undo/Library/Input%20Methods/Squirrel.app/`.
+- The updated install script now reports `macOS input source enabled` after its own retry loop.
+- TIS reports `im.rime.inputmethod.Squirrel.Hans enabled=true selectable=true selected=false`.
+- Strict doctor passed with `failures=0 warnings=0`.
+- Focused prepare/build/doctor tests passed.
+
+Status:
+- System input-source enablement is now machine-verifiable. Remaining real-use validation is switching to Squirrel from the macOS input menu and typing continuously in a normal app.

@@ -38,6 +38,21 @@ index 813deae..1bec8e3 100644
  				B35D2FE82BF00839009D156B /* BridgingFunctions.swift in Sources */,
  				B3A001022F260100009D156B /* ReservedProperty.swift in Sources */,
  			);
+diff --git a/sources/Main.swift b/sources/Main.swift
+index f998248..a0bf7bd 100644
+--- a/sources/Main.swift
++++ b/sources/Main.swift
+@@ -15,9 +15,7 @@ struct SquirrelApp {
+   } else {
+     try! FileManager.default.url(for: .libraryDirectory, in: .userDomainMask, appropriateFor: nil, create: false).appendingPathComponent("Rime", isDirectory: true)
+   }
+-  static let appDir = "/Library/Input Library/Squirrel.app".withCString { dir in
+-    URL(fileURLWithFileSystemRepresentation: dir, isDirectory: false, relativeTo: nil)
+-  }
++  static let appDir = Bundle.main.bundleURL
+   static let logDir = FileManager.default.temporaryDirectory.appending(component: "rime.squirrel", directoryHint: .isDirectory)
+ 
+   // swiftlint:disable:next cyclomatic_complexity
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
 index 0000000..96828e6
