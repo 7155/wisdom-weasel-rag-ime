@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -11,6 +12,19 @@ from typing import Any, Protocol
 
 from .models import ModelPrediction
 from .text_utils import compact_whitespace
+
+
+OPENAI_CHAT_SYSTEM_PROMPT = (
+    "你是一个本地中文输入法预测器。只输出候选词或短语, "
+    "候选之间用单个空格分隔, 不要解释, 不要编号。"
+)
+
+OLLAMA_CHAT_SYSTEM_PROMPT = (
+    "你是中文输入法候选预测器。只输出 JSON 字符串数组, "
+    '例如 ["本地记忆输入法","RAG候选","历史上下文"], 不要解释。'
+)
+
+MLX_STABLE_PREFIX = f"{OLLAMA_CHAT_SYSTEM_PROMPT}\n"
 
 
 class PredictionProvider(Protocol):
@@ -132,6 +146,13 @@ class OpenAICompatiblePredictionProvider:
         if not query and not context:
             return []
         max_items = max(1, min(10, int(max_candidates)))
+        request_meta = _prediction_request_metadata(
+            context=context,
+            query=query,
+            stable_prefix=OPENAI_CHAT_SYSTEM_PROMPT
+            if _normalized_prompt_mode(self.config.prompt_mode) == "chat"
+            else "",
+        )
         self.last_error = ""
         started = time.perf_counter()
         raw_texts = self._complete(context=context, query=query, max_candidates=max_items)
@@ -151,6 +172,7 @@ class OpenAICompatiblePredictionProvider:
                     "profile": self.config.profile,
                     "prompt_mode": _normalized_prompt_mode(self.config.prompt_mode),
                     "raw_text": raw_text,
+                    "requestMeta": request_meta,
                 },
             )
             for index, item in enumerate(candidates, start=1)
@@ -167,10 +189,7 @@ class OpenAICompatiblePredictionProvider:
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        "你是一个本地中文输入法预测器。只输出候选词或短语, "
-                        "候选之间用单个空格分隔, 不要解释, 不要编号。"
-                    ),
+                    "content": OPENAI_CHAT_SYSTEM_PROMPT,
                 },
                 {
                     "role": "user",
@@ -264,6 +283,11 @@ class OllamaPredictionProvider:
         if not query and not context:
             return []
         max_items = max(1, min(10, int(max_candidates)))
+        request_meta = _prediction_request_metadata(
+            context=context,
+            query=query,
+            stable_prefix=OLLAMA_CHAT_SYSTEM_PROMPT,
+        )
         self.last_error = ""
         started = time.perf_counter()
         if self.config.stream_first_candidate:
@@ -285,6 +309,7 @@ class OllamaPredictionProvider:
                             "raw_text": streamed["raw_text"],
                             "stream_first_candidate": True,
                             "first_candidate_ms": streamed["first_candidate_ms"],
+                            "requestMeta": request_meta,
                         },
                     )
                 ]
@@ -305,6 +330,7 @@ class OllamaPredictionProvider:
                     "profile": self.config.profile,
                     "prompt_mode": self.config.prompt_mode,
                     "raw_text": raw_text,
+                    "requestMeta": request_meta,
                 },
             )
             for index, item in enumerate(candidates, start=1)
@@ -382,6 +408,11 @@ class MlxPredictionServiceProvider:
         if not query and not context:
             return []
         max_items = max(1, min(10, int(max_candidates)))
+        request_meta = _prediction_request_metadata(
+            context=context,
+            query=query,
+            stable_prefix=MLX_STABLE_PREFIX,
+        )
         self.last_error = ""
         started = time.perf_counter()
         if self.config.stream_first_candidate:
@@ -405,6 +436,7 @@ class MlxPredictionServiceProvider:
                             "first_candidate_ms": streamed["first_candidate_ms"],
                             "prompt_cache": streamed.get("prompt_cache", {}),
                             "server_timing": streamed.get("server_timing", {}),
+                            "requestMeta": request_meta,
                         },
                     )
                 ]
@@ -433,6 +465,7 @@ class MlxPredictionServiceProvider:
                     "raw_text": "\n".join(raw_texts),
                     "prompt_cache": payload.get("promptCache", {}),
                     "server_timing": payload.get("timing", {}),
+                    "requestMeta": request_meta,
                 },
             )
             for index, item in enumerate(candidates, start=1)
@@ -1313,10 +1346,7 @@ def _ollama_chat_body(
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    "你是中文输入法候选预测器。只输出 JSON 字符串数组, "
-                    '例如 ["本地记忆输入法","RAG候选","历史上下文"], 不要解释。'
-                ),
+                "content": OLLAMA_CHAT_SYSTEM_PROMPT,
             },
             {
                 "role": "user",
@@ -1359,6 +1389,11 @@ def _mlx_predict_body(
         "topP": float(getattr(config, "top_p", 0.85)),
         "stream": stream,
         "profile": str(getattr(config, "profile", "custom")),
+        **_prediction_request_metadata(
+            context=context,
+            query=query,
+            stable_prefix=MLX_STABLE_PREFIX,
+        ),
     }
     extra_body = getattr(config, "extra_body", None)
     if isinstance(extra_body, dict) and extra_body:
@@ -1383,6 +1418,21 @@ def _mlx_stream_text_delta(payload: dict[str, Any]) -> str:
         if isinstance(value, str):
             return value
     return ""
+
+
+def _prediction_request_metadata(*, context: str, query: str, stable_prefix: str = "") -> dict[str, object]:
+    return {
+        "currentInputFingerprint": _short_hash(compact_whitespace(query)),
+        "contextFingerprint": _short_hash(compact_whitespace(context)),
+        "contextChars": len(compact_whitespace(context)),
+        "stablePrefixHash": _short_hash(stable_prefix),
+    }
+
+
+def _short_hash(text: str) -> str:
+    if not text:
+        return ""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def _int_from_payload(value: object, fallback: int) -> int:

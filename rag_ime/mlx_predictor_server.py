@@ -95,6 +95,7 @@ class MlxLmEngine:
         max_tokens: int,
         temperature: float,
         top_p: float,
+        request_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
         raw_text = "".join(
@@ -105,6 +106,7 @@ class MlxLmEngine:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
+                request_metadata=request_metadata,
             )
         )
         total_ms = int((time.perf_counter() - started) * 1000)
@@ -116,6 +118,7 @@ class MlxLmEngine:
             "candidates": candidates,
             "totalMs": total_ms,
             "promptCache": self.prompt_cache_status(),
+            "requestMeta": dict(request_metadata or {}),
         }
 
     def stream_text(
@@ -127,7 +130,9 @@ class MlxLmEngine:
         max_tokens: int,
         temperature: float,
         top_p: float,
+        request_metadata: dict[str, Any] | None = None,
     ) -> Iterable[str]:
+        _ = request_metadata
         prompt = _build_mlx_prompt(
             current_input=current_input,
             recent_context=recent_context,
@@ -296,6 +301,7 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
                     "candidates": candidates,
                     "totalMs": int((time.perf_counter() - started) * 1000),
                     "promptCache": engine.prompt_cache_status(),
+                    "requestMeta": dict(request.get("request_metadata") or {}),
                 }
             )
 
@@ -352,6 +358,7 @@ def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str
         "max_tokens": max(1, min(64, _int_payload(payload.get("maxTokens"), 8))),
         "temperature": _float_payload(payload.get("temperature"), 0.15),
         "top_p": _float_payload(payload.get("topP"), 0.85),
+        "request_metadata": _request_metadata_from_payload(payload),
     }
 
 
@@ -372,6 +379,15 @@ def _build_mlx_dynamic_prompt(*, current_input: str, recent_context: str, max_ca
         f"当前输入: {current_input}\n"
         f"输出 {max_candidates} 个最可能的短候选。"
     )
+
+
+def _request_metadata_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in ("currentInputFingerprint", "contextFingerprint", "contextChars", "stablePrefixHash"):
+        value = payload.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            result[key] = value
+    return result
 
 
 @dataclass

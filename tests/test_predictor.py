@@ -412,6 +412,12 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertIn("只输出候选词", messages[0]["content"])
         self.assertLessEqual(_MockOpenAIHandler.captured_payload["max_tokens"], 8)
         self.assertEqual(predictions[0].metadata["profile"], "custom")
+        request_meta = predictions[0].metadata["requestMeta"]
+        self.assertEqual(request_meta["contextChars"], len("输入法需要本地记忆和候选预测"))
+        self.assertEqual(len(request_meta["contextFingerprint"]), 16)
+        self.assertEqual(len(request_meta["currentInputFingerprint"]), 16)
+        self.assertEqual(len(request_meta["stablePrefixHash"]), 16)
+        self.assertNotIn("contextFingerprint", _MockOpenAIHandler.captured_payload)
 
     def test_completion_prompt_mode_uses_prefix_completion_endpoint(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockCompletionHandler)
@@ -444,6 +450,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(_MockCompletionHandler.captured_payload["n"], 3)
         self.assertNotIn("messages", _MockCompletionHandler.captured_payload)
         self.assertEqual(predictions[0].metadata["prompt_mode"], "completion")
+        self.assertEqual(predictions[0].metadata["requestMeta"]["stablePrefixHash"], "")
 
     def test_env_can_disable_qwen_thinking_without_hand_written_json(self) -> None:
         provider = prediction_provider_from_env(
@@ -570,6 +577,10 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(_MockOllamaHandler.captured_payload["options"]["num_predict"], 24)
         self.assertEqual(predictions[0].text, "本地记忆")
         self.assertEqual(predictions[0].provider_name, "local-ollama")
+        request_meta = predictions[0].metadata["requestMeta"]
+        self.assertEqual(request_meta["contextChars"], len("用户正在写本地记忆输入法"))
+        self.assertEqual(len(request_meta["contextFingerprint"]), 16)
+        self.assertEqual(len(request_meta["stablePrefixHash"]), 16)
 
     def test_ollama_provider_can_return_first_streamed_candidate(self) -> None:
         _MockOllamaStreamingHandler.captured_payload = {}
@@ -603,6 +614,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(_MockOllamaStreamingHandler.captured_payload["keep_alive"], -1)
         self.assertTrue(predictions[0].metadata["stream_first_candidate"])
         self.assertIsInstance(predictions[0].metadata["first_candidate_ms"], int)
+        self.assertEqual(len(predictions[0].metadata["requestMeta"]["contextFingerprint"]), 16)
         status = prediction_provider_status(provider)
         self.assertTrue(status["streamFirstCandidate"])
 
@@ -639,10 +651,17 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(_MockMlxHandler.captured_payload["model"], "mlx-qwen3.5-0.8b")
         self.assertEqual(_MockMlxHandler.captured_payload["maxCandidates"], 3)
         self.assertEqual(_MockMlxHandler.captured_payload["maxTokens"], 8)
+        self.assertEqual(_MockMlxHandler.captured_payload["contextChars"], len("用户正在写本地记忆输入法"))
+        self.assertEqual(len(_MockMlxHandler.captured_payload["contextFingerprint"]), 16)
+        self.assertEqual(len(_MockMlxHandler.captured_payload["stablePrefixHash"]), 16)
         self.assertEqual([item.text for item in predictions], ["本地记忆", "输入法候选", "RAG上下文"])
         self.assertEqual(predictions[0].provider_name, "local-mlx")
         self.assertEqual(predictions[0].latency_ms, 17)
         self.assertEqual(predictions[0].metadata["prompt_cache"], {"enabled": False})
+        self.assertEqual(
+            predictions[0].metadata["requestMeta"]["contextFingerprint"],
+            _MockMlxHandler.captured_payload["contextFingerprint"],
+        )
         status = prediction_provider_status(provider)
         self.assertTrue(status["capabilities"]["streaming"])
         self.assertTrue(status["capabilities"]["residentModel"])
@@ -796,9 +815,14 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertEqual(_MockMlxHandler.captured_path, "/predict-stream")
         self.assertTrue(_MockMlxHandler.captured_payload["stream"])
+        self.assertEqual(len(_MockMlxHandler.captured_payload["contextFingerprint"]), 16)
         self.assertEqual([item.text for item in predictions], ["本地记忆"])
         self.assertTrue(predictions[0].metadata["stream_first_candidate"])
         self.assertIsInstance(predictions[0].metadata["first_candidate_ms"], int)
+        self.assertEqual(
+            predictions[0].metadata["requestMeta"]["contextFingerprint"],
+            _MockMlxHandler.captured_payload["contextFingerprint"],
+        )
         status = prediction_provider_status(provider)
         self.assertTrue(status["streamFirstCandidate"])
 

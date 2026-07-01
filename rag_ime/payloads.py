@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .history_context import prediction_context_metadata
 from .models import InputSuggestion, MemoryAction, ModelPrediction
 
 
@@ -40,6 +41,7 @@ def suggestions_response_payload(
         "currentInput": current_input,
         "recentContext": recent_context,
         "historyContext": history_context,
+        "historyContextMeta": prediction_context_metadata(history_context),
         "project": project,
         "modelPredictions": [model_prediction_to_payload(item) for item in (model_predictions or [])],
         "suggestions": [suggestion_to_payload(item) for item in suggestions],

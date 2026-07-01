@@ -5,7 +5,7 @@ from typing import Any
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .core_client import CoreClient
-from .history_context import build_prediction_context
+from .history_context import build_prediction_context, prediction_context_metadata
 from .models import (
     InputSuggestion,
     MemoryAction,
@@ -90,6 +90,7 @@ def build_rime_sidecar_response(
             "forceSideCandidates": snapshot.force_side_candidates,
         },
         "historyContext": prediction_context,
+        "historyContextMeta": prediction_context_metadata(prediction_context),
         "latencyBudgetMs": snapshot.latency_budget_ms,
         "rimeContext": rime_context_to_payload(snapshot),
         "modelPredictions": [model_prediction_to_payload(item) for item in model_predictions],
