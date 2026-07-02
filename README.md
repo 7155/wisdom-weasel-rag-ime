@@ -846,7 +846,7 @@ Install the local input method app:
 scripts/install_macos_frontend.sh
 ```
 
-The installer writes a user-level bridge config at `~/Library/Application Support/RagImeMac/bridge-config.json` so the installed input method can find this checkout, the local SQLite DB, and the Python executable.
+The installer writes a user-level bridge config at `~/Library/Application Support/RagImeMac/bridge-config.json` so the installed input method can find this checkout, the shared runtime SQLite DB at `~/Library/Application Support/RagIme/rag-ime.sqlite`, and the Python executable. Override with `RAG_IME_DB_PATH=/path/to/rag-ime.sqlite scripts/build_macos_frontend.sh` only for isolated debug runs.
 
 Use the shared-core JSON command from `pi-rag-memory-extension`:
 

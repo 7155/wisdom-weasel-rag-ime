@@ -212,6 +212,37 @@ class InputMethodAdapterTests(unittest.TestCase):
         self.assertEqual(len(suggestions), 1)
         self.assertEqual(suggestions[0].surface_text, "rimeSuggestCache / cacheStats")
 
+    def test_candidate_surface_skips_low_value_short_words(self) -> None:
+        memories = [
+            CoreMemory(
+                memory_id=f"mem-low-{index}",
+                source_event_id=str(530 + index),
+                text=text,
+                source_ref=f"memory:{530 + index}#low",
+                score=1.0 - index * 0.01,
+                reason="fixture:low-value-short",
+                evidence_preview="short filler should not occupy IME candidate slots",
+                tags=("codex-history",),
+            )
+            for index, text in enumerate(("加油", "深度", "基于", "或者"))
+        ]
+        useful = CoreMemory(
+            memory_id="mem-useful-after-low",
+            source_event_id="540",
+            text="输入法候选应该围绕当前上下文生成",
+            source_ref="memory:540#useful",
+            score=0.7,
+            reason="fixture:useful",
+            evidence_preview="useful current-context candidate",
+            tags=("codex-history",),
+        )
+
+        suggestions = SuggestionCompiler().compile(
+            [RankedMemory(memory=memory, score=memory.score, rank=index + 1) for index, memory in enumerate((*memories, useful))]
+        )
+
+        self.assertEqual([item.surface_text for item in suggestions], ["输入法候选应该围绕当前上下文生成"])
+
     def test_candidate_surface_infers_project_config_keys(self) -> None:
         embedding_memory = CoreMemory(
             memory_id="mem-embedding-config",

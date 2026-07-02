@@ -65,7 +65,6 @@ enum RagImeMacMain {
         do {
             let bridge = RagBridgeClient()
             try bridge.initializeDatabase()
-            try bridge.seedDemo(reset: true)
             let response = try bridge.suggest(currentInput: "SQLite 和 FTS5 第一版", recentContext: "MVP 先 local-first")
             let data = try JSONEncoder.pretty.encode(response)
             FileHandle.standardOutput.write(data)
@@ -80,7 +79,6 @@ enum RagImeMacMain {
         do {
             let bridge = RagBridgeClient()
             try bridge.initializeDatabase()
-            try bridge.seedDemo(reset: true)
             let request = RimeSidecarRequest(
                 sessionId: "squirrel-preview",
                 requestSeq: 1,
@@ -117,7 +115,6 @@ enum RagImeMacMain {
         do {
             let bridge = RagBridgeClient()
             try bridge.initializeDatabase()
-            try bridge.seedDemo(reset: true)
             let response = try bridge.suggest(currentInput: "SQLite 和 FTS5 第一版", recentContext: "MVP 先 local-first")
             let anchor = NSScreen.main.map { screen in
                 NSPoint(x: screen.visibleFrame.midX - 320, y: screen.visibleFrame.midY + 140)
