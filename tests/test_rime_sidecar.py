@@ -640,6 +640,62 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(first["insertText"], "model_prediction")
         self.assertEqual(first["selectionAction"], "commit_side_candidate")
 
+    def test_shell_command_raw_input_stays_first_candidate(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-shell-command",
+                "requestSeq": 2,
+                "rawInput": "git status",
+                "preedit": "git status",
+                "committedContext": "正在写 Codex 输入法调试记录",
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "给他", "comment": "wanxiang"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+
+        first = response["displayCandidates"][0]
+        self.assertEqual(response["queryBasis"], "rawSemanticInput")
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
+        self.assertEqual(first["sourceType"], "raw_english")
+        self.assertEqual(first["insertText"], "git status")
+        self.assertEqual(first["selectionAction"], "commit_side_candidate")
+        self.assertTrue(any(item["sourceType"] == "model" for item in response["displayCandidates"][1:]))
+
+    def test_prediction_first_code_like_anchor_keeps_raw_commit_first(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-prediction-first-code",
+                "requestSeq": 3,
+                "rawInput": "model_prediction",
+                "preedit": "model_prediction",
+                "predictionFirstMerge": True,
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "某地", "comment": "wanxiang"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+
+        first = response["displayCandidates"][0]
+        self.assertEqual(first["sourceType"], "raw_english")
+        self.assertEqual(first["insertText"], "model_prediction")
+        self.assertEqual(response["predictionFirst"]["policy"]["rawCommitInserted"], 1)
+        self.assertEqual(response["displayCandidates"][1]["sourceType"], "rime")
+
     def test_short_technical_raw_input_refreshes_llm_and_rag_before_rime_noise(self) -> None:
         response = build_rime_sidecar_response(
             payload={

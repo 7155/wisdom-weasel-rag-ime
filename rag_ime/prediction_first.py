@@ -90,6 +90,7 @@ def merge_prediction_first_candidates(
     model_predictions: list[ModelPrediction] | tuple[ModelPrediction, ...] = (),
     suggestions: list[InputSuggestion] | tuple[InputSuggestion, ...] = (),
     mode: InputMode | None = None,
+    raw_commit_text: str = "",
 ) -> PredictionFirstMergeResult:
     resolved_mode = mode or infer_input_mode(snapshot)
     prefix = active_pinyin_prefix(snapshot)
@@ -99,14 +100,28 @@ def merge_prediction_first_candidates(
     seen: set[str] = set()
 
     if resolved_mode in (InputMode.RAW_INPUT, InputMode.ANCHOR_COMPOSING):
+        raw_inserted = _append_raw_commit_candidate(
+            display,
+            seen,
+            raw_commit_text=raw_commit_text,
+            mode=resolved_mode,
+            prefix=prefix,
+            max_visible=max_visible,
+        )
+        before_rime = len(display)
         _append_rime_candidates(display, seen, snapshot, max_visible=max_visible)
         return _merge_result(
             mode=resolved_mode,
             pinyin_prefix=prefix,
             display=display,
             side_inserted=0,
-            rime_fallback_count=len(display),
-            reason="wanxiang/rime owns active anchor composition",
+            rime_fallback_count=len(display) - before_rime,
+            reason=(
+                "raw ascii/code input is directly commit-able; wanxiang/rime still owns active composition"
+                if raw_inserted
+                else "wanxiang/rime owns active anchor composition"
+            ),
+            raw_commit_inserted=raw_inserted,
         )
 
     prediction_candidates = pool.prediction_order()
@@ -262,6 +277,42 @@ def _append_rime_candidates(
         )
 
 
+def _append_raw_commit_candidate(
+    display: list[SideCandidateDisplayItem],
+    seen: set[str],
+    *,
+    raw_commit_text: str,
+    mode: InputMode,
+    prefix: str,
+    max_visible: int,
+) -> int:
+    text = compact_whitespace(raw_commit_text)
+    normalized = _display_norm(text)
+    if not text or not normalized or normalized in seen or len(display) >= max_visible:
+        return 0
+    seen.add(normalized)
+    display.append(
+        SideCandidateDisplayItem(
+            label=_display_label(len(display)),
+            text=text,
+            insert_text=text,
+            source_type="raw_english",
+            selection_action="commit_side_candidate",
+            source_index=0,
+            comment="input",
+            display_layout="inline",
+            display_lane="input",
+            metadata={
+                "candidate_mode": mode.value,
+                "pinyin_prefix": prefix,
+                "prediction_first": True,
+                "raw_commit": True,
+            },
+        )
+    )
+    return 1
+
+
 def _merge_result(
     *,
     mode: InputMode,
@@ -270,6 +321,7 @@ def _merge_result(
     side_inserted: int,
     rime_fallback_count: int,
     reason: str,
+    raw_commit_inserted: int = 0,
 ) -> PredictionFirstMergeResult:
     return PredictionFirstMergeResult(
         mode=mode,
@@ -280,6 +332,7 @@ def _merge_result(
             "mode": mode.value,
             "reason": reason,
             "sideInserted": side_inserted,
+            "rawCommitInserted": raw_commit_inserted,
             "wanxiangFallbackCount": rime_fallback_count,
             "rimeCompositionOwnedByRime": mode in {InputMode.ANCHOR_COMPOSING, InputMode.PREFIX_CONSTRAINED_COMPOSING},
         },

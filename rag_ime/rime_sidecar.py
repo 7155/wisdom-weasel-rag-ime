@@ -26,19 +26,62 @@ RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
 _SEMANTIC_ASCII_TERMS = {
     "agent",
     "bm25",
+    "brew",
+    "cargo",
     "codex",
+    "curl",
     "fts5",
+    "git",
+    "github",
     "kv",
     "llm",
     "mlx",
+    "npm",
     "pi",
+    "pip",
+    "python",
     "qwen",
     "rag",
     "rime",
+    "rust",
     "sqlite",
     "squirrel",
+    "swift",
+    "uv",
     "vcp",
     "xcode",
+    "xcodebuild",
+}
+_RAW_COMMIT_ASCII_TERMS = {
+    "brew",
+    "cargo",
+    "codex",
+    "curl",
+    "git",
+    "github",
+    "npm",
+    "pip",
+    "python",
+    "pytest",
+    "rust",
+    "swift",
+    "uv",
+    "xcodebuild",
+}
+_SHELL_COMMAND_PREFIXES = _RAW_COMMIT_ASCII_TERMS | {
+    "cat",
+    "cd",
+    "cp",
+    "grep",
+    "head",
+    "less",
+    "ls",
+    "mkdir",
+    "mv",
+    "open",
+    "rg",
+    "sed",
+    "tail",
 }
 _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
@@ -138,6 +181,7 @@ def build_rime_sidecar_response(
             snapshot=snapshot,
             model_predictions=model_predictions,
             suggestions=suggestions,
+            raw_commit_text=raw_english_candidate_text(snapshot),
         )
         display_candidates = list(prediction_first_result.display_candidates)
         prediction_first_payload: dict[str, object] = {
@@ -986,18 +1030,30 @@ def looks_like_semantic_ascii_input(raw: str) -> bool:
 def looks_like_raw_commit_ascii_input(raw: str) -> bool:
     if not _is_ascii_text_input(raw):
         return False
+    parts = raw.split()
+    if parts and parts[0].lower() in _SHELL_COMMAND_PREFIXES:
+        return True
+    if raw.lower() in _RAW_COMMIT_ASCII_TERMS:
+        return True
     code_delimiters = set("_./:-+=<>[]{}()$@#\\|")
     has_code_delimiter = any(char in code_delimiters for char in raw)
     has_upper = any(char.isupper() for char in raw)
     has_lower = any(char.islower() for char in raw)
     has_digit = any(char.isdigit() for char in raw)
-    return has_code_delimiter or (has_upper and has_lower) or (has_upper and len(raw) >= 2) or (has_digit and len(raw) >= 2)
+    has_space = any(char.isspace() for char in raw)
+    return (
+        has_code_delimiter
+        or (has_space and len(parts) >= 2)
+        or (has_upper and has_lower)
+        or (has_upper and len(raw) >= 2)
+        or (has_digit and len(raw) >= 2)
+    )
 
 
 def _is_ascii_text_input(raw: str) -> bool:
     if not raw or len(raw) > 80:
         return False
-    if any(char.isspace() for char in raw):
+    if raw != compact_whitespace(raw):
         return False
     if not all(32 <= ord(char) <= 126 for char in raw):
         return False
