@@ -54,7 +54,7 @@ index 0000000..cc2e30b
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 8
-+  latency_budget_ms: 300
++  latency_budget_ms: 350
 +  debounce_ms: 40
 +  timeout_ms: 1200
 +  frontend_trace: true
@@ -170,7 +170,7 @@ index 0000000..e716f28
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 8, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 300, range: 30...2000)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 350, range: 30...2000)
 +    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 40, range: 0...500)
 +    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 100...5000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
@@ -779,7 +779,7 @@ index c2adf74..20bc671 100644
    // swiftlint:disable:next identifier_name
    func page(up: Bool) -> Bool {
      var handled = false
-@@ -301,6 +394,492 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,6 +394,496 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
@@ -951,7 +951,11 @@ index c2adf74..20bc671 100644
 +      return
 +    }
 +    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
-+    guard currentRawInput == request.rawInput else { return }
++    guard currentRawInput == request.rawInput else {
++      clearRagImeDisplayCandidates()
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
 +    guard response.preedit == request.preedit else {
 +      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
 +      return
@@ -977,7 +981,8 @@ index c2adf74..20bc671 100644
 +      return
 +    }
 +    guard !response.displayCandidates.isEmpty else {
-+      traceRagImeFrontendEvent("sidecar_empty_response_ignored", fields: [
++      clearRagImeDisplayCandidates()
++      traceRagImeFrontendEvent("sidecar_empty_response_cleared", fields: [
 +        "requestSeq": response.requestSeq,
 +        "rawInput": response.rawInput,
 +        "preedit": response.preedit,
@@ -1067,6 +1072,24 @@ index c2adf74..20bc671 100644
 +    guard !ragImeDisplayCandidates.isEmpty else {
 +      return (fallbackCandidates, fallbackComments, fallbackLabels)
 +    }
++    if rawInput.isEmpty && preedit.isEmpty {
++      guard canUseRagImePostCommitDisplayHoldover(fallbackCandidates: fallbackCandidates) else {
++        clearRagImeDisplayCandidates()
++        return (fallbackCandidates, fallbackComments, fallbackLabels)
++      }
++      ragImePanelUsesDisplayCandidates = true
++      traceRagImeFrontendEvent("panel_display_candidates", fields: [
++        "rawInput": rawInput,
++        "preedit": preedit,
++        "exactMatch": true,
++        "holdover": true,
++        "postCommitHoldover": true,
++        "forcesHorizontalLayout": ragImePanelForcesHorizontalLayout(),
++        "candidateCounts": ragImeTraceCandidateCounts(),
++        "candidates": ragImeTraceCandidateSummaries(),
++      ])
++      return ragImeDisplayPanelPayload(fallbackLabels: fallbackLabels)
++    }
 +    let exactMatch = ragImeDisplayRawInput == rawInput && ragImeDisplayPreedit == preedit
 +    let canHold = canUseRagImeDisplayHoldover(
 +      rawInput: rawInput,
@@ -1074,9 +1097,11 @@ index c2adf74..20bc671 100644
 +      fallbackCandidates: fallbackCandidates
 +    )
 +    if !rawInput.isEmpty && !ragImeDisplayCandidates.contains(where: { $0.sourceType == "raw_english" }) {
++      clearRagImeDisplayCandidates()
 +      return (fallbackCandidates, fallbackComments, fallbackLabels)
 +    }
 +    guard exactMatch || canHold else {
++      clearRagImeDisplayCandidates()
 +      return (fallbackCandidates, fallbackComments, fallbackLabels)
 +    }
 +    ragImePanelUsesDisplayCandidates = true
@@ -1102,6 +1127,16 @@ index c2adf74..20bc671 100644
 +    guard !rawInput.isEmpty || !preedit.isEmpty else { return false }
 +    guard ragImeDisplayRawInput == rawInput && ragImeDisplayPreedit == preedit else { return false }
 +    return now.timeIntervalSince(ragImeDisplayUpdatedAt) <= ragImeDisplayHoldoverDuration
++  }
++
++  func canUseRagImePostCommitDisplayHoldover(
++    fallbackCandidates: [String],
++    now: Date = Date()
++  ) -> Bool {
++    guard !ragImeDisplayCandidates.isEmpty else { return false }
++    guard ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty else { return false }
++    guard fallbackCandidates.isEmpty else { return false }
++    return now.timeIntervalSince(ragImeDisplayUpdatedAt) <= min(ragImeDisplayHoldoverDuration, 1.2)
 +  }
 +
 +  func ragImeDisplayPanelPayload(fallbackLabels: [String]) -> (candidates: [String], comments: [String], labels: [String]) {

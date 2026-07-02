@@ -11,6 +11,7 @@ from .text_utils import compact_whitespace
 _LOW_VALUE_WANXIANG_FALLBACK = {
     "测试",
     "分析",
+    "验证",
     "并且",
     "但是",
     "或者",

@@ -13,7 +13,7 @@ SIDECAR_HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
 SIDECAR_PORT="${RAG_IME_SIDECAR_PORT:-8766}"
 MAX_VISIBLE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_VISIBLE_CANDIDATES:-8}"
 MAX_SIDE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_SIDE_CANDIDATES:-8}"
-LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-300}"
+LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-350}"
 DEBOUNCE_MS="${RAG_IME_SQUIRREL_DEBOUNCE_MS:-40}"
 TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-1200}"
 FRONTEND_TRACE="${RAG_IME_SQUIRREL_FRONTEND_TRACE:-true}"
@@ -66,8 +66,8 @@ git -C "$SQUIRREL_WORKDIR" fetch --tags --quiet origin || true
 git -C "$SQUIRREL_WORKDIR" checkout "$SQUIRREL_BASE_REF" --quiet
 git -C "$SQUIRREL_WORKDIR" reset --hard "$SQUIRREL_BASE_REF" --quiet
 git -C "$SQUIRREL_WORKDIR" clean -fd --quiet
-git -C "$SQUIRREL_WORKDIR" apply --check "$PATCH_FILE"
-git -C "$SQUIRREL_WORKDIR" apply "$PATCH_FILE"
+git -C "$SQUIRREL_WORKDIR" apply --recount --check "$PATCH_FILE"
+git -C "$SQUIRREL_WORKDIR" apply --recount "$PATCH_FILE"
 
 make_input_source_prefix_brandable() {
   local input_source_file="$SQUIRREL_WORKDIR/sources/InputSource.swift"
@@ -184,7 +184,7 @@ require_patch_text "sources/SquirrelInputController.swift" "ragImePanelForcesHor
 require_patch_text "sources/SquirrelInputController.swift" "traceRagImeFrontendEvent" "foreground frontend trace hook"
 require_patch_text "sources/SquirrelInputController.swift" "panel_text_layout" "actual frontend mixed-layout trace event"
 require_patch_text "sources/SquirrelInputController.swift" "sidecar_request_scheduled" "real foreground sidecar request trace event"
-require_patch_text "sources/SquirrelInputController.swift" "sidecar_empty_response_ignored" "empty sidecar response guard"
+require_patch_text "sources/SquirrelInputController.swift" "sidecar_empty_response_cleared" "empty sidecar response guard"
 require_patch_text "sources/SquirrelInputController.swift" "rag-ime.foreground-trace.v2" "foreground trace v2 marker"
 require_patch_text "sources/SquirrelInputController.swift" "forceSideCandidates: true" "foreground forced LLM/RAG candidate request"
 require_patch_text "sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"

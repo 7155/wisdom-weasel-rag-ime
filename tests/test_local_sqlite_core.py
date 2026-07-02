@@ -28,6 +28,19 @@ class SemanticTestEmbeddingProvider:
         return [0.0, 1.0]
 
 
+class CapturingEmbeddingProvider:
+    fingerprint = "test-capturing:v1"
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def embed(self, text: str) -> list[float]:
+        self.calls.append(text)
+        if "embedding 检索" in text or "上下文窗口" in text:
+            return [1.0, 0.0]
+        return [0.0, 1.0]
+
+
 class LocalSqliteCoreClientTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-core-test-")
@@ -599,7 +612,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             ).fetchone()
         self.assertIsNone(gone)
 
-    def test_codex_tool_trace_is_downranked_but_still_recallable(self) -> None:
+    def test_codex_tool_trace_is_filtered_from_input_candidates(self) -> None:
         self.core.reset()
         self.adapter.commit_text(
             "[327] tool apply_patch call: added rimeSuggestCache cacheStats wiring",
@@ -619,11 +632,46 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
         suggestions = self.adapter.suggest(SuggestionRequest(current_input="rimeSuggestCache cacheStats", top_k=2))
 
-        self.assertEqual(
-            suggestions[0].metadata["insert_text"],
-            "Debug health now reports rimeSuggestCache and cacheStats for sidecar cache inspection.",
+        blob = "\n".join(item.surface_text for item in suggestions)
+        self.assertNotIn("apply_patch", blob)
+        self.assertNotIn("*** Begin Patch", blob)
+
+    def test_runtime_memory_summary_rows_are_filtered_from_retrieval(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text(
+            "## Memory You have access to a memory folder with guidance from prior runs. MEMORY_SUMMARY memory_summary.md",
+            recent_context="codex_history:rollout role:user",
+            tags=("codex-history", "role:user"),
         )
-        self.assertTrue(any("runtime-trace" in item.metadata["reason"] for item in suggestions[1:]))
+        self.adapter.commit_text(
+            "index.ts 先改成依赖 core。",
+            recent_context="已读取 Read implementation-goal.md Read index.ts",
+            tags=("codex-history", "role:user"),
+        )
+        self.adapter.commit_text(
+            "installation.yaml 仍未跟踪 py 通过",
+            recent_context="git diff --check 管理员密码",
+            tags=("codex-history", "role:user"),
+        )
+        self.adapter.commit_text(
+            "embedding 检索应该结合当前输入和上下文窗口",
+            recent_context="用户反馈：RAG query 要包含当前输入、上屏锚点和最近上下文。",
+            tags=("curated", "rag", "embedding"),
+        )
+
+        suggestions = self.adapter.suggest(
+            SuggestionRequest(
+                current_input="rag embedding 怎么调用",
+                recent_context="检索都是出问题的，需要检查 embedding query",
+                top_k=5,
+            )
+        )
+
+        blob = "\n".join(item.surface_text for item in suggestions)
+        self.assertIn("embedding 检索应该结合当前输入和上下文窗口", blob)
+        self.assertNotIn("MEMORY_SUMMARY", blob)
+        self.assertNotIn("index.ts", blob)
+        self.assertNotIn("installation.yaml", blob)
 
     def test_suggestion_cache_hits_and_invalidates_on_write(self) -> None:
         request = SuggestionRequest(
@@ -792,6 +840,49 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
         self.assertEqual(report["indexed"], 1)
         self.assertEqual(suggestions[0].surface_text, "赤色星球探索计划")
+        self.assertIn("vector:", suggestions[0].metadata["reason"])
+
+    def test_retrieval_does_not_fill_candidates_with_recent_runtime_noise(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text("py 通过", recent_context="git diff --check 通过", tags=("runtime-noise",))
+        self.adapter.commit_text("installation yaml 仍未跟踪", recent_context="运行安装脚本后输出", tags=("runtime-noise",))
+
+        suggestions = self.adapter.suggest(
+            SuggestionRequest(
+                current_input="RAG embedding 应该怎么检索",
+                recent_context="用户在问 embedding query 需要上下文窗口",
+                top_k=5,
+            )
+        )
+
+        self.assertEqual(suggestions, [])
+
+    def test_embedding_query_uses_clean_current_input_and_context_window(self) -> None:
+        provider = CapturingEmbeddingProvider()
+        db_path = Path(self.tmp.name) / "embedding-query.sqlite"
+        core = LocalSqliteCoreClient(db_path, embedding_provider=provider, vector_weight=2.0)
+        adapter = InputMethodAdapter(core)
+        adapter.commit_text("embedding 检索应该使用上下文窗口", recent_context="RAG 输入法 query 构造")
+        provider.calls.clear()
+
+        suggestions = adapter.suggest(
+            SuggestionRequest(
+                current_input="怎么调用 embedding",
+                recent_context=(
+                    "你rag到底是怎么调用embedding，应该输入一些内容再调用embedding。"
+                    "```bash\npython3 -m unittest discover -s tests\n```"
+                    "检索应该包含上下文窗口。"
+                ),
+                project="wisdom-weasel-rag-ime",
+                top_k=1,
+            )
+        )
+
+        self.assertEqual(suggestions[0].surface_text, "embedding 检索应该使用上下文窗口")
+        query_call = provider.calls[-1]
+        self.assertIn("怎么调用 embedding", query_call)
+        self.assertIn("上下文窗口", query_call)
+        self.assertNotIn("python3 -m unittest", query_call)
         self.assertIn("vector:", suggestions[0].metadata["reason"])
 
 

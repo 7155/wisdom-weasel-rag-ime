@@ -163,7 +163,7 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePa
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "traceRagImeFrontendEvent" "foreground frontend trace hook"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "panel_text_layout" "actual frontend mixed-layout trace event"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "sidecar_request_scheduled" "real foreground sidecar request trace event"
-require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "sidecar_empty_response_ignored" "empty sidecar response guard"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "sidecar_empty_response_cleared" "empty sidecar response guard"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rag-ime.foreground-trace.v2" "foreground trace v2 marker"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "forceSideCandidates: true" "foreground forced LLM/RAG candidate request"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
@@ -178,6 +178,42 @@ deps_ready() {
   [[ -f "$SQUIRREL_WORKDIR/lib/librime.1.dylib" ]] &&
     [[ -d "$SQUIRREL_WORKDIR/Frameworks/Sparkle.framework" ]] &&
     [[ -f "$SQUIRREL_WORKDIR/bin/rime-install" ]]
+}
+
+sync_librime_headers() {
+  local source_dir="$SQUIRREL_WORKDIR/librime/dist/include"
+  local target_dir="$SQUIRREL_WORKDIR/librime/include"
+  if [[ ! -d "$source_dir" ]]; then
+    return 0
+  fi
+  mkdir -p "$target_dir"
+  cp -R "$source_dir"/. "$target_dir"/
+}
+
+ensure_librime_source_headers() {
+  if [[ -f "$SQUIRREL_WORKDIR/librime/src/rime/key_table.h" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$SQUIRREL_WORKDIR/.gitmodules" ]] || ! grep -Fq 'path = librime' "$SQUIRREL_WORKDIR/.gitmodules"; then
+    return 0
+  fi
+
+  local restore_dir
+  restore_dir="$(mktemp -d /tmp/rag-ime-librime-restore.XXXXXX)"
+  for name in dist share include; do
+    if [[ -e "$SQUIRREL_WORKDIR/librime/$name" ]]; then
+      mv "$SQUIRREL_WORKDIR/librime/$name" "$restore_dir/$name"
+    fi
+  done
+  rm -rf "$SQUIRREL_WORKDIR/librime"
+  git -C "$SQUIRREL_WORKDIR" submodule update --init librime
+  for name in dist share include; do
+    if [[ -e "$restore_dir/$name" ]]; then
+      rm -rf "$SQUIRREL_WORKDIR/librime/$name"
+      mv "$restore_dir/$name" "$SQUIRREL_WORKDIR/librime/$name"
+    fi
+  done
+  rm -rf "$restore_dir"
 }
 
 prepare_squirrel_dependencies() {
@@ -209,6 +245,9 @@ prepare_squirrel_dependencies() {
     printf '[INFO] refreshing Squirrel bundled data files\n'
     (cd "$SQUIRREL_WORKDIR" && bash package/add_data_files)
   fi
+
+  sync_librime_headers
+  ensure_librime_source_headers
 }
 
 ensure_squirrel_input_source_enabled() {
