@@ -143,6 +143,7 @@ class SuggestionCompiler:
                     "insert_text": source_text,
                     "preview_text": memory.evidence_preview or source_text,
                     "sources": [memory.source_ref],
+                    "state": dict(getattr(memory, "state", {}) or {}),
                     **build_pinyin_metadata(surface),
                 },
             )

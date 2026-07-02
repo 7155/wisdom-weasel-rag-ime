@@ -245,6 +245,18 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(suggestions[0].surface_text, "高频候选方案")
         self.assertIn("accepted:4", suggestions[0].metadata["reason"])
 
+    def test_repeated_committed_text_boosts_input_frequency(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text("高频候选方案", recent_context="输入法 词频 候选方案")
+        self.adapter.commit_text("高频候选方案", recent_context="输入法 词频 候选方案 第二次")
+        self.adapter.commit_text("普通候选方案", recent_context="输入法 词频 候选方案 最新")
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="输入法 词频 候选方案", top_k=2))
+
+        self.assertEqual(suggestions[0].surface_text, "高频候选方案")
+        self.assertIn("frequency:2", suggestions[0].metadata["reason"])
+        self.assertEqual(suggestions[0].metadata["state"]["input_frequency"], 2)
+
     def test_codex_tool_trace_is_downranked_but_still_recallable(self) -> None:
         self.core.reset()
         self.adapter.commit_text(
