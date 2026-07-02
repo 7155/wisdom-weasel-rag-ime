@@ -671,7 +671,8 @@ index c2adf74..20bc671 100644
 +  private var ragImeDisplaySemanticQuery: String = ""
 +  private var ragImeDisplayQueryBasis: String = ""
 +  private var ragImeDisplayUpdatedAt: Date = .distantPast
-+  private let ragImeDisplayHoldoverDuration: TimeInterval = 2.5
++  private let ragImeDisplayHoldoverDuration: TimeInterval = 0.9
++  private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 0.9
 +  private var ragImeCommittedContext: String = ""
 +  private var ragImeCommittedContextUpdatedAt: Date = .distantPast
 +  private var ragImeLastRequestFingerprint: String = ""
@@ -804,6 +805,10 @@ index c2adf74..20bc671 100644
 +
 +  func selectRagImeSideCandidate(forKey key: String) -> Bool {
 +    guard ragImePanelUsesDisplayCandidates else {
++      return false
++    }
++    guard canSelectCurrentRagImeDisplayCandidates() else {
++      clearRagImeDisplayCandidates()
 +      return false
 +    }
 +    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {
@@ -1136,7 +1141,17 @@ index c2adf74..20bc671 100644
 +    guard !ragImeDisplayCandidates.isEmpty else { return false }
 +    guard ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty else { return false }
 +    guard fallbackCandidates.isEmpty else { return false }
-+    return now.timeIntervalSince(ragImeDisplayUpdatedAt) <= min(ragImeDisplayHoldoverDuration, 1.2)
++    return now.timeIntervalSince(ragImeDisplayUpdatedAt) <= ragImePostCommitDisplayHoldoverDuration
++  }
++
++  func canSelectCurrentRagImeDisplayCandidates(now: Date = Date()) -> Bool {
++    guard !ragImeDisplayCandidates.isEmpty else { return false }
++    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
++    if currentRawInput.isEmpty && ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty {
++      return now.timeIntervalSince(ragImeDisplayUpdatedAt) <= ragImePostCommitDisplayHoldoverDuration
++    }
++    guard !currentRawInput.isEmpty else { return false }
++    return currentRawInput == ragImeDisplayRawInput
 +  }
 +
 +  func ragImeDisplayPanelPayload(fallbackLabels: [String]) -> (candidates: [String], comments: [String], labels: [String]) {

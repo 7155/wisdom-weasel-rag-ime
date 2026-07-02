@@ -581,6 +581,67 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertIsNone(selection["action"])
         self.assertEqual(self.service.core.action_count(), before_actions)
 
+    def test_rime_select_records_memory_candidate_action(self) -> None:
+        committed = self.service.commit(
+            {
+                "text": "用户选择候选会反向校准记忆源",
+                "recentContext": "memory candidate feedback",
+                "tags": ["memory"],
+            }
+        )
+        memory_id = str(committed["eventId"])
+        source_event_id = int(memory_id.split(":", 1)[1])
+        before_actions = self.service.core.action_count()
+        selection = self.service.rime_select(
+            {
+                "candidate": {
+                    "label": "4",
+                    "text": "用户选择候选会反向校准记忆源",
+                    "insertText": "用户选择候选会反向校准记忆源",
+                    "sourceType": "memory",
+                    "selectionAction": "commit_side_candidate",
+                    "sourceIndex": 0,
+                    "suggestionId": "sug-mem-feedback",
+                    "memoryId": memory_id,
+                    "sourceEventId": source_event_id,
+                },
+                "query": "记忆候选反馈",
+                "recentContext": "用户正在选择 memory candidate",
+                "preedit": "jiyi",
+            }
+        )
+
+        self.assertTrue(str(selection["eventId"]).startswith("event:"))
+        self.assertTrue(selection["recordedAction"])
+        self.assertEqual(selection["action"]["actionType"], "accepted")
+        self.assertEqual(self.service.core.action_count(), before_actions + 1)
+
+    def test_rime_select_does_not_record_recent_context_memory_without_source_event(self) -> None:
+        before_actions = self.service.core.action_count()
+        selection = self.service.rime_select(
+            {
+                "candidate": {
+                    "label": "5",
+                    "text": "最近上下文切片",
+                    "insertText": "最近上下文切片",
+                    "sourceType": "memory",
+                    "selectionAction": "commit_side_candidate",
+                    "sourceIndex": 0,
+                    "suggestionId": "recent-context-memory:0",
+                    "memoryId": "recent-context:0",
+                    "sourceEventId": 0,
+                },
+                "query": "recent",
+                "recentContext": "debug-only recent context fallback",
+                "preedit": "recent",
+            }
+        )
+
+        self.assertTrue(str(selection["eventId"]).startswith("event:"))
+        self.assertFalse(selection["recordedAction"])
+        self.assertIsNone(selection["action"])
+        self.assertEqual(self.service.core.action_count(), before_actions)
+
     def test_rime_select_dry_run_does_not_record_model_candidate(self) -> None:
         before_events = self.service.core.event_count()
         before_actions = self.service.core.action_count()

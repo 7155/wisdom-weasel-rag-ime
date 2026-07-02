@@ -120,20 +120,7 @@ final class RagInputController: IMKInputController {
             return true
         }
 
-        let totalCount = latestModelPredictions.count + latestSuggestions.count
-        guard let number = Int(string), number >= 1, number <= totalCount else {
-            return false
-        }
-        let predictionIndex = number - 1
-        if predictionIndex < latestModelPredictions.count {
-            let prediction = latestModelPredictions[predictionIndex]
-            commit(text: prediction.text, client: client, selectedSuggestion: nil, rank: number)
-            return true
-        }
-        let suggestionIndex = predictionIndex - latestModelPredictions.count
-        let suggestion = latestSuggestions[suggestionIndex]
-        commit(text: suggestion.insertText, client: client, selectedSuggestion: suggestion, rank: number)
-        return true
+        return false
     }
 
     private func commit(
@@ -375,7 +362,7 @@ final class RagInputController: IMKInputController {
     }
 
     private func panelExpirationDate(phase: String, postCommit: Bool) -> Date? {
-        if postCommit || phase == "post_commit" {
+        if postCommit || phase == "post_commit" || composition.isEmpty || phase.isEmpty {
             return Date().addingTimeInterval(postCommitPanelTtlSeconds)
         }
         return nil
@@ -386,7 +373,7 @@ final class RagInputController: IMKInputController {
             return false
         }
         guard let session = response.predictionSession else {
-            return true
+            return !composition.isEmpty
         }
         switch session.phase {
         case "post_commit":

@@ -115,6 +115,7 @@ struct RimeDisplayCandidate: Codable, Hashable {
     let sourceIndex: Int
     let comment: String
     let evidencePreview: String
+    let expandedEvidence: String?
     let suggestionId: String
     let memoryId: String
     let sourceEventId: Int?

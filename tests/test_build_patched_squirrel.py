@@ -28,11 +28,13 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('if candidate.sourceType == "model" && layout == "inline" && lane == "model"', patch_text)
         self.assertIn("let maxTextHeight = ragImePanelVertical", patch_text)
         self.assertIn("let maxWidth = if ragImePanelVertical", patch_text)
-        self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 2.5", patch_text)
+        self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 0.9", patch_text)
+        self.assertIn("private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 0.9", patch_text)
         self.assertIn("func canUseRagImeDisplayHoldover(", patch_text)
         self.assertIn("func canUseRagImePostCommitDisplayHoldover(", patch_text)
+        self.assertIn("func canSelectCurrentRagImeDisplayCandidates(", patch_text)
         self.assertIn("postCommitHoldover", patch_text)
-        self.assertIn("min(ragImeDisplayHoldoverDuration, 1.2)", patch_text)
+        self.assertIn("ragImePostCommitDisplayHoldoverDuration", patch_text)
         self.assertIn("guard !ragImeDisplayCandidates.isEmpty else { return false }", patch_text)
         self.assertNotIn('ragImeDisplayQueryBasis == "committedContext"', patch_text)
         self.assertIn("forceSideCandidates: true", patch_text)
@@ -69,6 +71,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn(
             "+  func selectRagImeSideCandidate(forKey key: String) -> Bool {\n"
             "+    guard ragImePanelUsesDisplayCandidates else {\n"
+            "+      return false\n"
+            "+    }\n"
+            "+    guard canSelectCurrentRagImeDisplayCandidates() else {\n"
+            "+      clearRagImeDisplayCandidates()\n"
             "+      return false\n"
             "+    }\n"
             "+    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {\n"

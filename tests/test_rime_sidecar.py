@@ -1417,6 +1417,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(rag_item["text"], "候选面板只显示压缩标题，完整段落放 insert_text。")
         self.assertEqual(rag_item["insertText"], rag_item["text"])
         self.assertIn("背景说明这一句不是候选重点", rag_item["metadata"]["preview_text"])
+        self.assertIn("背景说明这一句不是候选重点", rag_item["expandedEvidence"])
 
     def test_dirty_raw_pinyin_without_rime_candidates_skips_side_lanes(self) -> None:
         response = build_rime_sidecar_response(

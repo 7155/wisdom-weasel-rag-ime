@@ -114,6 +114,7 @@ class SideCandidateDisplayItem:
     source_index: int
     comment: str = ""
     evidence_preview: str = ""
+    expanded_evidence: str = ""
     suggestion_id: str = ""
     memory_id: str = ""
     source_event_id: int | None = None

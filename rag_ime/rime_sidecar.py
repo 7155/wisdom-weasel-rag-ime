@@ -94,7 +94,7 @@ _SHELL_COMMAND_PREFIXES = _RAW_COMMIT_ASCII_TERMS | {
 _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_HOLDOVER_TTL_MS = 900
-_POST_COMMIT_PANEL_TTL_MS = 1200
+_POST_COMMIT_PANEL_TTL_MS = 900
 _MODEL_HOLDOVER_LOCK = RLock()
 _MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
 _PREDICTION_MANAGER_LOCK = RLock()
@@ -1090,7 +1090,14 @@ def record_rime_side_candidate_selection(
     memory_id = _string(candidate.get("memoryId") or candidate.get("memory_id"))
     suggestion_id = _string(candidate.get("suggestionId") or candidate.get("suggestion_id"))
     source_event_id = _optional_int(candidate.get("sourceEventId") or candidate.get("source_event_id"))
-    if not dry_run and source_type == "rag" and memory_id and suggestion_id and source_event_id is not None:
+    if (
+        not dry_run
+        and source_type in {"rag", "memory"}
+        and memory_id
+        and suggestion_id
+        and source_event_id is not None
+        and source_event_id > 0
+    ):
         action = core.apply_action(
             MemoryAction(
                 action_id=None,
@@ -1368,6 +1375,7 @@ def merge_display_candidates(
                 source_index=rag_count,
                 comment=suggestion.suggestion_type,
                 evidence_preview=suggestion.evidence_preview,
+                expanded_evidence=suggestion.expanded_evidence,
                 suggestion_id=suggestion.suggestion_id,
                 memory_id=str(metadata.get("memory_id") or suggestion.suggestion_id),
                 source_event_id=suggestion.source_event_id,
@@ -1508,6 +1516,7 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "sourceIndex": item.source_index,
         "comment": item.comment,
         "evidencePreview": item.evidence_preview,
+        "expandedEvidence": item.expanded_evidence,
         "suggestionId": item.suggestion_id,
         "memoryId": item.memory_id,
         "sourceEventId": item.source_event_id,
