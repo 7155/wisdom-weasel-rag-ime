@@ -66,3 +66,10 @@
 - README 已改成当前产品路线优先验证 `scripts/doctor_macos_frontend.sh`；Squirrel patch 只作为历史 spike 和对照路径保留。
 - `verify_prediction_first_sidecar.py` 也加入 post-commit 模型 busy 重试，避免 MLX 正在运行时把“瞬时 busy”误判成没有模型候选。
 - live native doctor 已通过；下一步真实验收应走 `scripts/install_macos_frontend.sh` -> 系统输入源添加 `RAG IME` -> `RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 scripts/doctor_macos_frontend.sh` -> Edge/TextEdit/Codex App 连续输入。
+
+## 2026-07-02 19:20 修复记录
+
+- native `RagImeMac` 修复 Space 行为：候选面板可见时 Space 选择第一候选；没有 side panel 时 Space 选择万象/Rime 首词候选。
+- raw 英文、代码、路径、命令类 composition 如果没有词库候选，Space 会直接原文上屏并保留空格，不进入 post-commit AI 预测，避免 AI 抢断基础输入。
+- native 前端现在显式执行 `predictionSession.shouldClearPredictionPanel`，sidecar 判定弱上下文、空候选、过期候选时会清空面板。
+- 新增 `tests/test_native_input_controller.py` 固定上述契约，防止后续又把 Space 当作普通字符追加到 preedit。

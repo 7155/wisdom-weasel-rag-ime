@@ -2095,3 +2095,18 @@ Changes:
 Verification:
 - Native doctor passed against live build and sidecar.
 - Full suite passed: 288.
+
+### 2026-07-02
+Topic:
+- Fix native RagImeMac Space/English behavior.
+
+Changes:
+- Space in native `RagImeMac` now accepts the first active Prediction-first candidate, or the top Wanxiang/Rime dictionary candidate when composing pinyin.
+- Raw English/code/path-like composition with no dictionary candidate commits directly with the trailing Space and does not trigger post-commit AI prediction.
+- Native rendering now obeys `predictionSession.shouldClearPredictionPanel`, so weak/empty/stale responses clear the panel instead of keeping a stale overlay alive.
+- Added native input-controller contract tests for these behaviors.
+
+Verification:
+- Native build passed.
+- Native doctor passed against live sidecar.
+- Sidecar verifier passed with weak-context clear and raw English/code/path cases.

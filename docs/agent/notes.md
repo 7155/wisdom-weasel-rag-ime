@@ -2929,3 +2929,22 @@ Verification:
 - `scripts/build_macos_frontend.sh`: passed.
 - `bash -n scripts/doctor_macos_frontend.sh scripts/doctor_squirrel_integration.sh && python3 -m py_compile scripts/verify_prediction_first_sidecar.py`: passed.
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 288 tests passed.
+
+### 2026-07-02 19:20 CST
+Problem:
+- Native `RagImeMac` still treated Space as normal printable text. That made first-word pinyin anchoring awkward and made English/code input feel trapped in composition.
+- Swift frontend did not explicitly obey `predictionSession.shouldClearPredictionPanel`, even though the sidecar contract already uses it for stale/empty/weak-context responses.
+
+Changes:
+- Space now selects the first visible Prediction-first candidate when the panel is active.
+- If no side panel is active, Space selects the top Wanxiang/Rime dictionary candidate for normal pinyin composition.
+- If the composition looks like raw English/code/path/command text and has no dictionary candidate, Space commits the raw text plus the trailing space and does not trigger post-commit AI prediction.
+- Native panel rendering now hides immediately when sidecar says `shouldClearPredictionPanel=true`.
+- Added static native input-controller contract tests for Space routing, raw passthrough, and sidecar clear policy.
+
+Verification:
+- `python3 -m unittest tests.test_native_input_controller tests.test_macos_dictionary_provider`: 4 tests passed.
+- `scripts/build_macos_frontend.sh`: passed.
+- `scripts/doctor_macos_frontend.sh`: passed; only warning is optional input-source registration gate not required.
+- `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650`: passed, including weak-context panel clear and raw English/code/path protection.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 291 tests passed.
