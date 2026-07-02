@@ -645,6 +645,7 @@ set +e
 "$PYTHON_EXECUTABLE" - "$SIDECAR_BASE_URL" "$EXPECT_PREDICTOR_PROVIDER" "$EXPECT_PREDICTOR_MODEL" "$EXPECT_STREAM_FIRST" "$REQUIRE_MIXED_LAYOUT" "$REQUIRE_LOGITS_MODEL" "$DOCTOR_LATENCY_BUDGET_MS" >"$sidecar_out" 2>"$sidecar_err" <<'PY'
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -772,6 +773,65 @@ def post_rime_suggest(payload):
     with urllib.request.urlopen(request, timeout=2.5) as response:
         return json.loads(response.read().decode("utf-8"))
 
+def doctor_prediction_payload(*, session_id="doctor", request_seq=1, latency_ms=None):
+    effective_latency_ms = latency_budget_ms if latency_ms is None else latency_ms
+    return {
+        "sessionId": session_id,
+        "requestSeq": request_seq,
+        "rawInput": "",
+        "preedit": "",
+        "commitTextPreview": "",
+        "idleMs": 80,
+        "committedContext": "用户正在验证 Prediction-first RAG 输入法，需要 LLM RAG 记忆候选同时可见",
+        "maxVisibleCandidates": 8,
+        "maxSideCandidates": 8,
+        "latencyBudgetMs": effective_latency_ms,
+        "forceSideCandidates": require_mixed_layout,
+        "rimeContext": {"candidates": []},
+    }
+
+def extract_model_predictions(result, provider_name):
+    predictions = result.get("modelPredictions")
+    if not isinstance(predictions, list):
+        predictions = []
+    model_predictions = [
+        item for item in predictions
+        if isinstance(item, dict) and str(item.get("providerName") or "") == provider_name
+    ]
+    if model_predictions:
+        return model_predictions
+    display = result.get("displayCandidates")
+    if isinstance(display, list):
+        return [
+            item for item in display
+            if isinstance(item, dict) and item.get("sourceType") == "model"
+        ]
+    return []
+
+def retry_model_probe_if_needed(result, provider_name):
+    model_predictions = extract_model_predictions(result, provider_name)
+    if model_predictions:
+        return result, model_predictions, ""
+    model_lane = result.get("modelLane") if isinstance(result.get("modelLane"), dict) else {}
+    skipped_reason = str(model_lane.get("skippedReason") or "")
+    if skipped_reason not in {"model lane already running", "model lane exceeded latency budget"}:
+        return result, model_predictions, skipped_reason
+    last_result = result
+    for attempt in range(2):
+        time.sleep(0.18 * (attempt + 1))
+        probe = post_rime_suggest(
+            doctor_prediction_payload(
+                session_id="doctor-model-validation",
+                request_seq=20 + attempt,
+                latency_ms=max(latency_budget_ms, 1200),
+            )
+        )
+        model_predictions = extract_model_predictions(probe, provider_name)
+        last_result = probe
+        if model_predictions:
+            return probe, model_predictions, skipped_reason
+    return last_result, model_predictions, skipped_reason
+
 def validate_raw_pinyin_guard():
     dirty = post_rime_suggest({
         "sessionId": "doctor-raw-pinyin",
@@ -854,20 +914,7 @@ def validate_model_generation_path(result, health):
             "message": "model generation path: not required",
         }
 
-    predictions = result.get("modelPredictions")
-    if not isinstance(predictions, list):
-        predictions = []
-    model_predictions = [
-        item for item in predictions
-        if isinstance(item, dict) and str(item.get("providerName") or "") == provider_name
-    ]
-    if not model_predictions:
-        display = result.get("displayCandidates")
-        if isinstance(display, list):
-            model_predictions = [
-                item for item in display
-                if isinstance(item, dict) and item.get("sourceType") == "model"
-            ]
+    result, model_predictions, retry_reason = retry_model_probe_if_needed(result, provider_name)
 
     capability_probe = predictor.get("capabilityProbe") if isinstance(predictor.get("capabilityProbe"), dict) else {}
     capabilities = predictor.get("capabilities") if isinstance(predictor.get("capabilities"), dict) else {}
@@ -883,7 +930,10 @@ def validate_model_generation_path(result, health):
     if require_logits_model and is_mlx and capabilities.get("logitsTopK") is not True:
         errors.append("MLX health does not advertise logitsTopK")
     if is_mlx and not model_predictions:
-        errors.append("no MLX model predictions to validate")
+        if retry_reason:
+            errors.append(f"no MLX model predictions to validate after retry; initial skip={retry_reason}")
+        else:
+            errors.append("no MLX model predictions to validate")
 
     modes = []
     fallback_json_values = []
@@ -942,24 +992,7 @@ def validate_model_generation_path(result, health):
 try:
     with urllib.request.urlopen(f"{base}/health", timeout=1.5) as response:
         health = json.loads(response.read().decode("utf-8"))
-    payload = {
-        "sessionId": "doctor",
-        "requestSeq": 1,
-        "rawInput": "ragshurufa",
-        "preedit": "ragshurufa",
-        "committedContext": "用户正在验证 RAG 输入法候选布局和数字键选择",
-        "maxVisibleCandidates": 8 if require_mixed_layout else 3,
-        "maxSideCandidates": 8 if require_mixed_layout else 1,
-        "latencyBudgetMs": latency_budget_ms,
-        "forceSideCandidates": require_mixed_layout,
-        "rimeContext": {
-            "candidates": [
-                {"label": "1", "text": "RAG 输入法", "comment": "rime"},
-                {"label": "2", "text": "RAG 记忆", "comment": "rime"},
-            ]
-        },
-    }
-    result = post_rime_suggest(payload)
+    result = post_rime_suggest(doctor_prediction_payload())
     raw_pinyin_guard = validate_raw_pinyin_guard()
     model_generation_path = validate_model_generation_path(result, health)
     select_payload = {

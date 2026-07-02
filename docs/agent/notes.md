@@ -2884,3 +2884,24 @@ Commands:
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 285 tests passed.
 - `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650`: passed; side candidates no longer mix Rime, weak context clears low-value fallback, raw English/code/path stay first.
 - `scripts/build_macos_frontend.sh`: passed.
+
+### 2026-07-02 19:02 CST
+Problem:
+- `doctor_squirrel_integration.sh` could still warn `no MLX model predictions to validate` even when live `/rime-suggest` returned model candidates in real post-commit scenarios.
+
+Findings:
+- The doctor main probe used active pinyin `ragshurufa`, so Prediction-first prefix constraints could filter or starve model candidates.
+- In non-mixed-layout mode the probe only requested one side candidate, which could let RAG/memory occupy the only slot before model validation inspected the result.
+
+Changes:
+- Doctor main/model probe now uses a post-commit Prediction-first payload with no active pinyin.
+- Model validation requests 8 visible/side candidate slots so RAG/memory cannot hide a valid model candidate.
+- If the first model probe reports `model lane already running` or exceeds budget, doctor retries with a wider 1200ms validation budget.
+- Added a regression test that simulates a busy first model lane and verifies the retry path.
+
+Verification:
+- `python3 -m unittest tests.test_doctor_squirrel_integration`: 15 tests passed.
+- Real `bash scripts/doctor_squirrel_integration.sh` with live MLX sidecar now reports `model generation path: MLX model candidates available`; remaining warning is only the stale system `/Library/Input Methods/Squirrel.app`.
+- `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650`: passed.
+- `scripts/build_macos_frontend.sh`: passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 286 tests passed.

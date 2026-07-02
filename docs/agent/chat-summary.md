@@ -2062,3 +2062,17 @@ Verification:
 - Full Python suite passed: 285 tests.
 - Live sidecar verifier passed with 650ms budget.
 - macOS frontend build passed.
+
+### 2026-07-02
+Topic:
+- Fix doctor model-path false warning for live MLX sidecar.
+
+Change:
+- `doctor_squirrel_integration.sh` now validates model generation with a post-commit Prediction-first payload instead of active raw pinyin.
+- The doctor model probe always requests enough visible/side slots for model candidates, and retries once with a wider budget if the model lane is already running or timed out.
+- Added a regression test for the busy-model-lane retry path.
+
+Verification:
+- Doctor unit tests passed: 15.
+- Live doctor now reports `model generation path: MLX model candidates available`.
+- Full suite passed: 286.

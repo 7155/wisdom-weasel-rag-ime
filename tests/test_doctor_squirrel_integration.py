@@ -20,6 +20,8 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
     stream_first_candidate = True
     capability_probe: dict[str, object] = {}
     model_metadata: dict[str, object] = {}
+    busy_first_prediction_probe = False
+    busy_probe_seen = False
 
     @classmethod
     def reset(cls) -> None:
@@ -30,6 +32,8 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
         cls.stream_first_candidate = True
         cls.capability_probe = {}
         cls.model_metadata = {}
+        cls.busy_first_prediction_probe = False
+        cls.busy_probe_seen = False
 
     @classmethod
     def use_mlx_logits(cls) -> None:
@@ -111,6 +115,7 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
         self.__class__.suggest_payloads.append(payload if isinstance(payload, dict) else {})
         raw_input = str(payload.get("rawInput") or "") if isinstance(payload, dict) else ""
         committed_context = str(payload.get("committedContext") or "") if isinstance(payload, dict) else ""
+        session_id = str(payload.get("sessionId") or "") if isinstance(payload, dict) else ""
         if raw_input == "jiubiruwopinshishur":
             self._send_json(
                 {
@@ -167,6 +172,32 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
                             "metadata": dict(self.__class__.model_metadata),
                         }
                     ],
+                }
+            )
+            return
+        if (
+            self.__class__.busy_first_prediction_probe
+            and not self.__class__.busy_probe_seen
+            and raw_input == ""
+            and session_id == "doctor"
+        ):
+            self.__class__.busy_probe_seen = True
+            self._send_json(
+                {
+                    "schemaVersion": "rag-ime.rime-sidecar.v1",
+                    "displayCandidates": [],
+                    "modelPredictions": [],
+                    "modelLane": {
+                        "called": False,
+                        "timedOut": False,
+                        "skippedReason": "model lane already running",
+                        "predictionCount": 0,
+                    },
+                    "mergePolicy": {
+                        "rimeFirst": False,
+                        "sideFirst": True,
+                        "fallbackOrder": ["model", "rag", "rime"],
+                    },
                 }
             )
             return
@@ -263,6 +294,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
 
     def test_doctor_can_require_matching_predictor_configuration(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        _DoctorSidecarHandler.reset()
         _DoctorSidecarHandler.select_payloads = []
         server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
         thread = Thread(target=server.serve_forever, daemon=True)
@@ -303,11 +335,62 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("doctor_latency_budget_ms: 350", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.suggest_payloads)
         self.assertTrue(all(payload.get("latencyBudgetMs") == 350 for payload in _DoctorSidecarHandler.suggest_payloads))
+        main_probe = _DoctorSidecarHandler.suggest_payloads[0]
+        self.assertEqual(main_probe.get("rawInput"), "")
+        self.assertEqual(main_probe.get("queryBasis"), None)
+        self.assertIn("Prediction-first RAG 输入法", str(main_probe.get("committedContext") or ""))
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
+        self.assertIn("summary: failures=0", result.stdout)
+
+    def test_doctor_retries_post_commit_model_probe_when_model_lane_is_busy(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        _DoctorSidecarHandler.reset()
+        _DoctorSidecarHandler.use_mlx_logits()
+        _DoctorSidecarHandler.busy_first_prediction_probe = True
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-model-retry-") as tmp:
+                env = {
+                    **os.environ,
+                    "RAG_IME_PYTHON": sys.executable,
+                    "RAG_IME_SQUIRREL_WORKDIR": str(Path(tmp) / "missing-squirrel"),
+                    "RAG_IME_SIDECAR_HOST": "127.0.0.1",
+                    "RAG_IME_SIDECAR_PORT": str(server.server_port),
+                    "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                    "RAG_IME_DOCTOR_REQUIRE_PREDICTOR": "1",
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_MODEL": _DoctorSidecarHandler.model,
+                    "RAG_IME_PREDICTOR_STREAM_FIRST": "0",
+                }
+                result = subprocess.run(
+                    ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                    cwd="/tmp",
+                    env=env,
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertTrue(_DoctorSidecarHandler.busy_probe_seen)
+        self.assertGreaterEqual(len(_DoctorSidecarHandler.suggest_payloads), 4)
+        self.assertEqual(_DoctorSidecarHandler.suggest_payloads[0].get("sessionId"), "doctor")
+        self.assertTrue(
+            any(payload.get("sessionId") == "doctor-model-validation" for payload in _DoctorSidecarHandler.suggest_payloads),
+            _DoctorSidecarHandler.suggest_payloads,
+        )
+        self.assertIn("[OK] model generation path: MLX model candidates available", result.stdout)
+        self.assertNotIn("no MLX model predictions to validate", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_tryout_mode_requires_prepared_squirrel_xcode_and_sidecar(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        _DoctorSidecarHandler.reset()
         _DoctorSidecarHandler.use_mlx_logits()
         server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
         thread = Thread(target=server.serve_forever, daemon=True)

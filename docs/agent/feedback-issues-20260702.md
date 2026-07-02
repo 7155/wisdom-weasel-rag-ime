@@ -39,7 +39,7 @@
 ## 剩余风险
 
 - `/Library/Input Methods/Squirrel.app` 仍有同 bundle id 的旧系统版 Squirrel；当前用户目录 `/Users/undo/Library/Input Methods/Squirrel.app` 已安装 patched app，但 macOS 可能因重复 app 加载旧版本。需要管理员权限运行 `scripts/replace_system_squirrel_app.sh` 或手动移除系统旧版。
-- doctor 的模型专项 case 仍提示 “no MLX model predictions to validate”，但手动 `/api/rime-suggest` 已验证 650ms 内可返回 `sourceType=model`。后续应把 doctor 的模型专项 case 改成与真实 post-commit demo 一致。
+- 系统目录 `/Library/Input Methods/Squirrel.app` 仍有一个同 bundle id 的旧版应用；live doctor 会把它作为 stale duplicate warning 报出。
 
 ## 2026-07-02 18:51 修复记录
 
@@ -51,3 +51,10 @@
 - 有 prefix-matching 的 LLM/RAG/记忆候选时，不再混入 Rime/Wanxiang 候选；Rime 只在无匹配、无上下文首词、raw 输入兜底时出现。
 - 弱上下文下会过滤 `根据`、`基于`、`和`、`测试` 等低价值 Rime 泛词；没有好候选时清空面板，不继续吃数字键。
 - live sidecar 验证已通过：`python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650` 覆盖 prefix RAG 命中、post-commit LLM/RAG/记忆、弱上下文清空、英文/代码/路径 raw 保护、无上下文 Rime 首词兜底。
+
+## 2026-07-02 19:02 修复记录
+
+- doctor 模型专项误报已修复：主探针不再用 active pinyin `ragshurufa` 验证模型，而是用 post-commit Prediction-first payload。
+- doctor 模型验证现在固定请求 8 个候选位，避免 RAG/记忆占据唯一候选位后误判 “no MLX model predictions”。
+- 如果模型通道第一次返回 `model lane already running` 或超时，doctor 会用更宽的 1200ms 预算做一次模型专项重试。
+- live doctor 现在输出 `[OK] model generation path: MLX model candidates available (...)`；当前只剩 stale system Squirrel.app 这个安装环境 warning。
