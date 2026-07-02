@@ -350,6 +350,111 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             ).fetchone()
         self.assertIsNone(gone)
 
+    def test_project_phrase_frequency_does_not_leak_between_projects(self) -> None:
+        self.core.reset()
+        now = now_ms()
+        for index in range(8):
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now - 10_000 + index,
+                    source="test",
+                    committed_text="npm run dev",
+                    recent_context="vibe coding command",
+                    app="codex",
+                    project="project-b",
+                )
+            )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now,
+                source="test",
+                committed_text="npm run dev",
+                recent_context="vibe coding command",
+                app="codex",
+                project="project-a",
+            )
+        )
+        for index in range(3):
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now + index + 1,
+                    source="test",
+                    committed_text="npm run test",
+                    recent_context="vibe coding command",
+                    app="codex",
+                    project="project-a",
+                )
+            )
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="npm run", project="project-a", top_k=3))
+
+        self.assertEqual(suggestions[0].surface_text, "npm run test")
+        self.assertIn("project-frequency:3", suggestions[0].metadata["reason"])
+        dev = next(item for item in suggestions if item.surface_text == "npm run dev")
+        self.assertEqual(dev.metadata["state"]["input_frequency"], 9)
+        self.assertEqual(dev.metadata["state"]["project_input_frequency"], 1)
+        self.assertEqual(dev.metadata["state"]["effective_frequency"], 1)
+        self.assertEqual(dev.metadata["state"]["effective_frequency_scope"], "project")
+        self.assertNotIn("frequency:9", dev.metadata["reason"])
+
+    def test_project_phrase_stats_refreshes_after_delete(self) -> None:
+        self.core.reset()
+        first_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now_ms(),
+                source="test",
+                committed_text="项目内高频命令",
+                recent_context="vibe coding command",
+                project="project-a",
+            )
+        )
+        second_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now_ms() + 1,
+                source="test",
+                committed_text="项目内高频命令",
+                recent_context="vibe coding command",
+                project="project-a",
+            )
+        )
+
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=0,
+                memory_id=first_id,
+                action_type="delete",
+                query="项目内高频命令",
+            )
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            remaining = conn.execute(
+                "SELECT input_frequency FROM phrase_project_stats WHERE committed_text = ? AND project = ?",
+                ("项目内高频命令", "project-a"),
+            ).fetchone()[0]
+        self.assertEqual(remaining, 1)
+
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=0,
+                memory_id=second_id,
+                action_type="delete",
+                query="项目内高频命令",
+            )
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            gone = conn.execute(
+                "SELECT input_frequency FROM phrase_project_stats WHERE committed_text = ? AND project = ?",
+                ("项目内高频命令", "project-a"),
+            ).fetchone()
+        self.assertIsNone(gone)
+
     def test_codex_tool_trace_is_downranked_but_still_recallable(self) -> None:
         self.core.reset()
         self.adapter.commit_text(

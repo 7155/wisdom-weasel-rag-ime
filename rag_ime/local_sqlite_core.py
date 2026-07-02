@@ -96,6 +96,15 @@ class LocalSqliteCoreClient:
                     last_seen_ms INTEGER NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS phrase_project_stats (
+                    committed_text TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    input_frequency INTEGER NOT NULL DEFAULT 0,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    PRIMARY KEY(committed_text, project)
+                );
+
                 CREATE TABLE IF NOT EXISTS memory_actions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at_ms INTEGER NOT NULL,
@@ -138,9 +147,23 @@ class LocalSqliteCoreClient:
                 WHERE s.deleted = 0
                 GROUP BY e.committed_text
                 ON CONFLICT(committed_text) DO UPDATE SET
-                    input_frequency = MAX(phrase_stats.input_frequency, excluded.input_frequency),
-                    first_seen_ms = MIN(phrase_stats.first_seen_ms, excluded.first_seen_ms),
-                    last_seen_ms = MAX(phrase_stats.last_seen_ms, excluded.last_seen_ms)
+                    input_frequency = excluded.input_frequency,
+                    first_seen_ms = excluded.first_seen_ms,
+                    last_seen_ms = excluded.last_seen_ms
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO phrase_project_stats(committed_text, project, input_frequency, first_seen_ms, last_seen_ms)
+                SELECT e.committed_text, e.project, COUNT(*), MIN(e.created_at_ms), MAX(e.created_at_ms)
+                FROM input_events e
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE s.deleted = 0 AND e.project != ''
+                GROUP BY e.committed_text, e.project
+                ON CONFLICT(committed_text, project) DO UPDATE SET
+                    input_frequency = excluded.input_frequency,
+                    first_seen_ms = excluded.first_seen_ms,
+                    last_seen_ms = excluded.last_seen_ms
                 """
             )
 
@@ -154,6 +177,7 @@ class LocalSqliteCoreClient:
                 DROP TABLE IF EXISTS input_events;
                 DROP TABLE IF EXISTS memory_fts;
                 DROP TABLE IF EXISTS phrase_stats;
+                DROP TABLE IF EXISTS phrase_project_stats;
                 """
             )
         self.initialize()
@@ -204,6 +228,17 @@ class LocalSqliteCoreClient:
                 """,
                 (text, created_at, created_at),
             )
+            if event.project:
+                conn.execute(
+                    """
+                    INSERT INTO phrase_project_stats(committed_text, project, input_frequency, first_seen_ms, last_seen_ms)
+                    VALUES (?, ?, 1, ?, ?)
+                    ON CONFLICT(committed_text, project) DO UPDATE SET
+                        input_frequency = phrase_project_stats.input_frequency + 1,
+                        last_seen_ms = excluded.last_seen_ms
+                    """,
+                    (text, event.project, created_at, created_at),
+                )
             document = _event_fts_document(
                 text,
                 event.recent_context,
@@ -322,6 +357,7 @@ class LocalSqliteCoreClient:
             self._apply_state_update(conn, event_id, action.action_type, created_at)
             if action.action_type in ("delete", "hide", "restore"):
                 self._refresh_phrase_stats_for_event(conn, event_id)
+                self._refresh_phrase_project_stats_for_event(conn, event_id)
             action_id = int(cur.lastrowid)
         self._clear_suggestion_cache()
         return MemoryAction(
@@ -604,26 +640,30 @@ class LocalSqliteCoreClient:
             self._suggestion_cache.clear()
 
     def _search_rows(self, *, fts_query: str, project: str, limit: int) -> list[sqlite3.Row]:
-        params: list[Any] = [fts_query]
+        where_params: list[Any] = [fts_query]
         where = ["memory_fts MATCH ?", "s.deleted = 0"]
         if project:
             where.append("(e.project = ? OR e.project = '')")
-            params.append(project)
+            where_params.append(project)
         sql = f"""
             SELECT
                 e.*, s.*, bm25(memory_fts) AS bm25_score,
                 COALESCE(ps.input_frequency, 1) AS input_frequency,
                 COALESCE(ps.first_seen_ms, e.created_at_ms) AS phrase_first_seen_ms,
-                COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms
+                COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms,
+                COALESCE(pps.input_frequency, 0) AS project_input_frequency,
+                COALESCE(pps.first_seen_ms, e.created_at_ms) AS project_phrase_first_seen_ms,
+                COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms
             FROM memory_fts
             JOIN input_events e ON e.id = memory_fts.rowid
             JOIN memory_state s ON s.event_id = e.id
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
+            LEFT JOIN phrase_project_stats pps ON pps.committed_text = e.committed_text AND pps.project = ?
             WHERE {' AND '.join(where)}
             ORDER BY s.pinned DESC, bm25(memory_fts) ASC, e.created_at_ms DESC
             LIMIT ?
         """
-        params.append(limit)
+        params = [project, *where_params, limit]
         with self._connect() as conn:
             return list(conn.execute(sql, params).fetchall())
 
@@ -633,24 +673,29 @@ class LocalSqliteCoreClient:
         query_vector = self.embedding_provider.embed(query)
         if not query_vector:
             return [], {}
-        params: list[Any] = [self.embedding_provider.fingerprint]
+        where_params: list[Any] = [self.embedding_provider.fingerprint]
         where = ["v.provider_fingerprint = ?", "s.deleted = 0"]
         if project:
             where.append("(e.project = ? OR e.project = '')")
-            params.append(project)
+            where_params.append(project)
         sql = f"""
             SELECT
                 e.*, s.*, 99.0 AS bm25_score,
                 COALESCE(ps.input_frequency, 1) AS input_frequency,
                 COALESCE(ps.first_seen_ms, e.created_at_ms) AS phrase_first_seen_ms,
                 COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms,
+                COALESCE(pps.input_frequency, 0) AS project_input_frequency,
+                COALESCE(pps.first_seen_ms, e.created_at_ms) AS project_phrase_first_seen_ms,
+                COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms,
                 v.vector_json
             FROM memory_vectors v
             JOIN input_events e ON e.id = v.event_id
             JOIN memory_state s ON s.event_id = e.id
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
+            LEFT JOIN phrase_project_stats pps ON pps.committed_text = e.committed_text AND pps.project = ?
             WHERE {' AND '.join(where)}
         """
+        params = [project, *where_params]
         candidates: list[tuple[float, sqlite3.Row]] = []
         with self._connect() as conn:
             rows = list(conn.execute(sql, params).fetchall())
@@ -670,25 +715,29 @@ class LocalSqliteCoreClient:
         return [row for _, row in selected], {int(row["id"]): score for score, row in selected}
 
     def _recent_rows(self, *, project: str, limit: int) -> list[sqlite3.Row]:
-        params: list[Any] = []
+        where_params: list[Any] = []
         where = ["s.deleted = 0"]
         if project:
             where.append("(e.project = ? OR e.project = '')")
-            params.append(project)
+            where_params.append(project)
         sql = f"""
             SELECT
                 e.*, s.*, 99.0 AS bm25_score,
                 COALESCE(ps.input_frequency, 1) AS input_frequency,
                 COALESCE(ps.first_seen_ms, e.created_at_ms) AS phrase_first_seen_ms,
-                COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms
+                COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms,
+                COALESCE(pps.input_frequency, 0) AS project_input_frequency,
+                COALESCE(pps.first_seen_ms, e.created_at_ms) AS project_phrase_first_seen_ms,
+                COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms
             FROM input_events e
             JOIN memory_state s ON s.event_id = e.id
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
+            LEFT JOIN phrase_project_stats pps ON pps.committed_text = e.committed_text AND pps.project = ?
             WHERE {' AND '.join(where)}
             ORDER BY s.pinned DESC, e.created_at_ms DESC
             LIMIT ?
         """
-        params.append(limit)
+        params = [project, *where_params, limit]
         with self._connect() as conn:
             return list(conn.execute(sql, params).fetchall())
 
@@ -737,9 +786,18 @@ class LocalSqliteCoreClient:
         input_frequency = _row_int(row, "input_frequency", default=1)
         phrase_first_seen_ms = _row_int(row, "phrase_first_seen_ms", default=int(row["created_at_ms"]))
         phrase_last_seen_ms = _row_int(row, "phrase_last_seen_ms", default=int(row["created_at_ms"]))
-        frequency_boost = _input_frequency_boost(input_frequency, phrase_last_seen_ms, present_ms=present_ms)
-        recent_boost = _last_seen_recency_boost(phrase_last_seen_ms, present_ms=present_ms)
-        age_days = _age_days(phrase_last_seen_ms, present_ms)
+        project_input_frequency = _row_int(row, "project_input_frequency", default=0)
+        project_phrase_first_seen_ms = _row_int(row, "project_phrase_first_seen_ms", default=int(row["created_at_ms"]))
+        project_phrase_last_seen_ms = _row_int(row, "project_phrase_last_seen_ms", default=int(row["created_at_ms"]))
+        event_project = str(row["project"])
+        use_project_frequency = bool(project and event_project == project and project_input_frequency > 0)
+        effective_frequency = project_input_frequency if use_project_frequency else input_frequency
+        effective_first_seen_ms = project_phrase_first_seen_ms if use_project_frequency else phrase_first_seen_ms
+        effective_last_seen_ms = project_phrase_last_seen_ms if use_project_frequency else phrase_last_seen_ms
+        frequency_scope = "project" if use_project_frequency else "global"
+        frequency_boost = _input_frequency_boost(effective_frequency, effective_last_seen_ms, present_ms=present_ms)
+        recent_boost = _last_seen_recency_boost(effective_last_seen_ms, present_ms=present_ms)
+        age_days = _age_days(effective_last_seen_ms, present_ms)
         accepted = int(row["accepted_count"])
         skipped = int(row["skipped_count"])
         downranked = int(row["downranked"])
@@ -771,7 +829,10 @@ class LocalSqliteCoreClient:
                 reason.append(f"{label}:{boost:.2f}")
         if pinyin_boost:
             reason.append(f"pinyin:{pinyin_boost:.2f}")
-        if input_frequency > 1:
+        if use_project_frequency:
+            if project_input_frequency > 1:
+                reason.append(f"project-frequency:{project_input_frequency}")
+        elif input_frequency > 1:
             reason.append(f"frequency:{input_frequency}")
         if recent_boost:
             reason.append(f"recent:{recent_boost:.2f}")
@@ -795,7 +856,7 @@ class LocalSqliteCoreClient:
             score=score,
             reason=";".join(reason),
             evidence_preview=evidence,
-            project=str(row["project"]),
+            project=event_project,
             tags=tags,
             created_at_ms=int(row["created_at_ms"]),
             state={
@@ -805,8 +866,15 @@ class LocalSqliteCoreClient:
                 "downranked": downranked,
                 "deleted": bool(row["deleted"]),
                 "input_frequency": input_frequency,
+                "project_input_frequency": project_input_frequency,
+                "effective_frequency": effective_frequency,
+                "effective_frequency_scope": frequency_scope,
                 "phrase_first_seen_ms": phrase_first_seen_ms,
                 "phrase_last_seen_ms": phrase_last_seen_ms,
+                "project_phrase_first_seen_ms": project_phrase_first_seen_ms,
+                "project_phrase_last_seen_ms": project_phrase_last_seen_ms,
+                "effective_phrase_first_seen_ms": effective_first_seen_ms,
+                "effective_phrase_last_seen_ms": effective_last_seen_ms,
                 "phrase_age_days": round(age_days, 2),
                 "frequency_boost": round(frequency_boost, 3),
                 "recent_boost": round(recent_boost, 3),
@@ -878,6 +946,40 @@ class LocalSqliteCoreClient:
                 last_seen_ms = excluded.last_seen_ms
             """,
             (committed_text, input_frequency, int(stats["first_seen_ms"]), int(stats["last_seen_ms"])),
+        )
+
+    @staticmethod
+    def _refresh_phrase_project_stats_for_event(conn: sqlite3.Connection, event_id: int) -> None:
+        row = conn.execute("SELECT committed_text, project FROM input_events WHERE id = ?", (event_id,)).fetchone()
+        if row is None:
+            return
+        committed_text = str(row["committed_text"])
+        project = str(row["project"])
+        if not project:
+            return
+        stats = conn.execute(
+            """
+            SELECT COUNT(*) AS input_frequency, MIN(e.created_at_ms) AS first_seen_ms, MAX(e.created_at_ms) AS last_seen_ms
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE e.committed_text = ? AND e.project = ? AND s.deleted = 0
+            """,
+            (committed_text, project),
+        ).fetchone()
+        input_frequency = int(stats["input_frequency"] or 0) if stats else 0
+        if input_frequency <= 0:
+            conn.execute("DELETE FROM phrase_project_stats WHERE committed_text = ? AND project = ?", (committed_text, project))
+            return
+        conn.execute(
+            """
+            INSERT INTO phrase_project_stats(committed_text, project, input_frequency, first_seen_ms, last_seen_ms)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(committed_text, project) DO UPDATE SET
+                input_frequency = excluded.input_frequency,
+                first_seen_ms = excluded.first_seen_ms,
+                last_seen_ms = excluded.last_seen_ms
+            """,
+            (committed_text, project, input_frequency, int(stats["first_seen_ms"]), int(stats["last_seen_ms"])),
         )
 
 
