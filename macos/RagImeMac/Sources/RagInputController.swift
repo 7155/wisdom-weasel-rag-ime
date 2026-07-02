@@ -48,6 +48,16 @@ final class RagInputController: IMKInputController {
             return true
         }
 
+        if string == " " {
+            if selectFirstCandidateIfAvailable(client: client) {
+                return true
+            }
+            if isLikelyRawPassthroughComposition(composition) {
+                commitRawText(text: "\(composition) ", preedit: composition, client: client)
+                return true
+            }
+        }
+
         if isPrintableInput(string) {
             if composition.isEmpty && latestDisplayCandidates.isEmpty && isDigit(string) {
                 return false
@@ -123,6 +133,23 @@ final class RagInputController: IMKInputController {
         return false
     }
 
+    private func selectFirstCandidateIfAvailable(client: IMKTextInput) -> Bool {
+        clearExpiredPanelIfNeeded()
+        if canRouteNumberToVisiblePanel(), let candidate = latestDisplayCandidates.first {
+            let query = composition.isEmpty ? candidate.text : composition
+            commit(text: candidate.insertText, client: client, selectedDisplayCandidate: candidate, selectedSuggestion: nil, rank: 1, queryOverride: query)
+            return true
+        }
+        guard !composition.isEmpty else {
+            return false
+        }
+        if let candidate = rimeCandidateProvider.candidates(for: composition, maxCount: 1).first {
+            commit(text: candidate.text, client: client, selectedSuggestion: nil, rank: 1, queryOverride: composition)
+            return true
+        }
+        return false
+    }
+
     private func commit(
         text: String,
         client: IMKTextInput,
@@ -176,6 +203,27 @@ final class RagInputController: IMKInputController {
         }
 
         schedulePostCommitPrediction(client: client, committedText: finalText)
+    }
+
+    private func commitRawText(text: String, preedit: String, client: IMKTextInput) {
+        guard !text.isEmpty else {
+            cancelCurrentComposition(client: client)
+            return
+        }
+
+        let previousContext = committedContext
+        client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
+        clearMarkedText(client: client)
+        committedContext = appendingContext(previousContext, text.trimmingCharacters(in: .whitespacesAndNewlines))
+        composition = ""
+        clearCandidateState()
+        pendingRefresh?.cancel()
+        clearVisiblePredictionPanel()
+
+        let bridge = self.bridge
+        DispatchQueue.global(qos: .utility).async {
+            try? bridge.recordCommit(text: text.trimmingCharacters(in: .whitespacesAndNewlines), recentContext: previousContext, preedit: preedit, source: "macos_inputmethod_raw")
+        }
     }
 
     private func cancelCurrentComposition(client: IMKTextInput) {
@@ -375,6 +423,9 @@ final class RagInputController: IMKInputController {
         guard let session = response.predictionSession else {
             return !composition.isEmpty
         }
+        if session.shouldClearPredictionPanel {
+            return false
+        }
         switch session.phase {
         case "post_commit":
             return session.predictionPanelVisible && composition.isEmpty
@@ -387,6 +438,28 @@ final class RagInputController: IMKInputController {
         default:
             return session.candidatePanelVisible || session.predictionPanelVisible
         }
+    }
+
+    private func isLikelyRawPassthroughComposition(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return false
+        }
+        guard trimmed.unicodeScalars.allSatisfy({ scalar in
+            scalar.isASCII && !CharacterSet.controlCharacters.contains(scalar)
+        }) else {
+            return false
+        }
+        if trimmed.contains("/") || trimmed.contains(".") || trimmed.contains("_") || trimmed.contains("-") {
+            return true
+        }
+        if trimmed.rangeOfCharacter(from: .decimalDigits) != nil {
+            return true
+        }
+        if trimmed.count >= 4, rimeCandidateProvider.candidates(for: trimmed, maxCount: 1).isEmpty {
+            return true
+        }
+        return false
     }
 
     private func handlePanelAction(_ action: String, suggestion: RagSuggestion, query: String) {
