@@ -188,9 +188,11 @@ def _prefix_lane_order(candidates: tuple[PredictionCandidate, ...], prefix: str)
     memory_candidates = tuple(item for item in candidates if item.source_type != "model")
     matched_model, unmatched_model = _split_prefix_matches(model_candidates, prefix)
     matched_memory, unmatched_memory = _split_prefix_matches(memory_candidates, prefix)
+    if matched_model:
+        return matched_model + matched_memory + unmatched_model + unmatched_memory
     visible_unmatched_model = unmatched_model[:1]
     deferred_unmatched_model = unmatched_model[1:]
-    return matched_model + matched_memory + visible_unmatched_model + unmatched_memory + deferred_unmatched_model
+    return visible_unmatched_model + matched_memory + unmatched_memory + deferred_unmatched_model
 
 
 def _split_prefix_matches(
