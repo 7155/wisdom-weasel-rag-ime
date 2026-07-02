@@ -2765,3 +2765,25 @@ Verification:
 - `scripts/build_macos_frontend.sh`: passed.
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 274 tests passed.
 - `git diff --check`: passed.
+
+### 2026-07-02 18:35 CST
+Problem:
+- The native `RimeDictionaryCandidateProvider` only looked for a single `wanxiang.dict.yaml` file, but the referenced `7155/rime-wanxiang` repository uses a main dictionary with `import_tables` pointing at child dictionaries under `dicts/`.
+- Wanxiang dictionary rows use tone marks such as `nǐ`, so plain user input like `ni` must be matched after tone folding.
+
+Changes:
+- Added `RAG_IME_RIME_DICT_DIR` and `RAG_IME_RIME_DICT_PATHS` support for the native debug provider.
+- The provider now expands Wanxiang `import_tables`, including child dictionaries such as `dicts/jichu.dict.yaml`.
+- Added diacritic-insensitive pinyin normalization so tone-marked rows match normal keyboard pinyin.
+- Added a small bucket index by the first two pinyin/initial characters to avoid scanning every loaded entry on every query.
+- Added a compile-level Swift provider test with a temporary Wanxiang-style fixture.
+
+Verification:
+- `scripts/build_macos_frontend.sh`: passed.
+- `python3 -m unittest tests.test_macos_dictionary_provider`: 1 test passed.
+- Temporary Wanxiang fixture preview passed: `ni -> 你`, `shijie -> 世界`, `sj -> 世界/设计`, while `git status` and `/Volumes/undo` returned no Chinese candidates.
+- Real `7155/rime-wanxiang` clone smoke passed with `RAG_IME_RIME_DICT_DIR=/tmp/rime-wanxiang-inspect`: `ni`, `wo`, `xian`, `sj`, `shijie` all returned Wanxiang candidates; cold YAML load took about 16s, confirming this remains a debug bridge rather than the final librime path.
+- Default local preview still returns Luna/Rime candidates because Wanxiang is not installed in `~/Library/Rime`.
+- `python3 -m unittest tests.test_macos_dictionary_provider tests.test_prediction_first tests.test_rime_sidecar tests.test_prediction_manager`: 59 tests passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 275 tests passed.
+- `git diff --check`: passed.

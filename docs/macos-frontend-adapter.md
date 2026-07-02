@@ -148,12 +148,20 @@ Rime candidate layer; the InputMethodKit harness remains a JSON contract and UI
 debug surface.
 
 The native harness also has a temporary `RimeDictionaryCandidateProvider`.
-It reads `RAG_IME_RIME_DICT_PATH` when set, otherwise tries
-`~/Library/Rime/wanxiang.dict.yaml` and then `~/Library/Rime/luna_pinyin.dict.yaml`.
-It also reads `RAG_IME_RIME_ESSAY_PATH` or `~/Library/Rime/essay.txt` to avoid
-rare dictionary entries outranking common words. This is only a bridge for
-debugging the `/rime-suggest` contract; production should still get candidates
-from a real librime session.
+It reads dictionaries in this order:
+
+- `RAG_IME_RIME_DICT_PATHS`, a colon-separated list of `.dict.yaml` files;
+- `RAG_IME_RIME_DICT_PATH`, a single `.dict.yaml` file;
+- `RAG_IME_RIME_DICT_DIR`, a Rime/Wanxiang directory;
+- `~/Library/Rime`.
+
+When it finds a Wanxiang entrypoint such as `wanxiang.dict.yaml`, it expands
+`import_tables` and reads the referenced child dictionaries such as
+`dicts/jichu.dict.yaml`. It folds tone marks, so Wanxiang rows like `nǐ` still
+match user input `ni`. It also reads `RAG_IME_RIME_ESSAY_PATH` or
+`~/Library/Rime/essay.txt` to avoid rare dictionary entries outranking common
+words. This is only a bridge for debugging the `/rime-suggest` contract;
+production should still get candidates from a real librime session.
 
 For the Squirrel/Rime path, side selection feedback should use the unified `/rime-select` contract. It records the inserted side candidate and, for RAG candidates, the accepted memory action in one local request. The prototype AppKit harness may still issue separate action/commit calls while it remains a debug surface.
 

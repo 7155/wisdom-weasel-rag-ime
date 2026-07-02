@@ -1980,3 +1980,20 @@ Verification:
 - macOS frontend build passed.
 - Focused lifecycle/selection tests passed: 104.
 - Full suite passed: 274.
+
+### 2026-07-02
+Topic:
+- Strengthen the native Wanxiang/Rime dictionary bridge used by RagImeMac debug previews.
+
+Changes:
+- `RimeDictionaryCandidateProvider` now accepts `RAG_IME_RIME_DICT_PATHS`, `RAG_IME_RIME_DICT_PATH`, and `RAG_IME_RIME_DICT_DIR`.
+- Wanxiang `import_tables` are expanded so a real `7155/rime-wanxiang` checkout loads child dictionaries under `dicts/`.
+- Tone-marked pinyin is folded, so rows like `nǐ` match normal `ni`.
+- The provider uses a small pinyin/initials bucket index to avoid full-table scanning per key.
+- Added a compile-level Swift test with a temporary Wanxiang-style fixture.
+
+Verification:
+- macOS frontend build passed.
+- Wanxiang fixture preview passed for `ni`, `shijie`, `sj`, and rejected command/path input.
+- Real `7155/rime-wanxiang` smoke passed via `RAG_IME_RIME_DICT_DIR=/tmp/rime-wanxiang-inspect`; cold YAML load was about 16s, so this stays a debug bridge until a real librime/native index path replaces it.
+- Full suite passed: 275.

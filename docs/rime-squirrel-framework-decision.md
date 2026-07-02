@@ -154,10 +154,12 @@ flow, not because a detached panel stays open.
 
 For local macOS debugging before a full librime adapter is available, the native
 harness includes `RimeDictionaryCandidateProvider`. It reads a user-provided
-Rime/Wanxiang dictionary via `RAG_IME_RIME_DICT_PATH`, then falls back to
-`~/Library/Rime/wanxiang.dict.yaml` or `~/Library/Rime/luna_pinyin.dict.yaml`,
-and uses `essay.txt` weights to keep common entries first. This is deliberately
-a bridge, not a replacement for real Squirrel/librime context.
+Rime/Wanxiang dictionary via `RAG_IME_RIME_DICT_PATHS`,
+`RAG_IME_RIME_DICT_PATH`, or `RAG_IME_RIME_DICT_DIR`, then falls back to
+`~/Library/Rime`. For Wanxiang-style entrypoints, it expands `import_tables`
+and folds tone marks so rows like `nǐ` match `ni`. It also uses `essay.txt`
+weights to keep common entries first. This is deliberately a bridge, not a
+replacement for real Squirrel/librime context.
 
 Do not extend it into a full pinyin engine.
 
