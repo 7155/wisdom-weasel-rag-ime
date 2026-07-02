@@ -162,9 +162,10 @@
   - 当前本地 SQLite 先实现两个稳定信号：`accepted_count` 表示用户主动接受该候选；同一 `committed_text` 反复上屏会增量写入 `phrase_stats.input_frequency`，查询时直接 join 进入排序分数，避免输入过程中反复全表聚合。
   - 已加入 Rime 式时间衰减的本地版本：`input_frequency` 会按 `phrase_last_seen_ms` 衰减，另有 `recent_boost` 让近期表达自然上浮，避免旧高频短语永久霸榜。
   - delete/hide/restore 会刷新对应 `phrase_stats`，被隐藏的输入不继续贡献词频。
-  - `SuggestionCompiler` 会把 `state.input_frequency / project_input_frequency / effective_frequency_scope / phrase_age_days / frequency_boost / recent_boost / accepted_count / pinned / downranked` 透传到候选 metadata，便于 debug 页面和后续管理面板解释“为什么这个候选靠前”。
+  - `SuggestionCompiler` 会把 `state.input_frequency / project_input_frequency / app_input_frequency / effective_frequency_scope / phrase_age_days / frequency_boost / recent_boost / accepted_count / pinned / downranked` 透传到候选 metadata，便于 debug 页面和后续管理面板解释“为什么这个候选靠前”。
   - 已增加项目维度词频：`phrase_project_stats` 记录 `(committed_text, project)` 频次；当前项目内事件优先使用项目词频，避免另一个项目里的同名命令、路径、代码短语污染本项目排序。
-  - 应用维度词频暂缓到 macOS adapter 能稳定提供前台 bundle id 后接入；目标是让 Codex/IDE/浏览器里的命令、路径和英文标识符只在对应应用里强升权。
+  - 已增加应用维度词频：`phrase_app_stats` 记录 `(committed_text, app)` 频次；Rime sidecar payload 支持 `app/frontmostApp`，debug API 也支持 `app`，同一短语在浏览器高频不会污染 Codex/IDE 场景。
+  - 当前有效频率优先级为 `project > app > global`；后续 macOS native adapter 需要稳定传前台 bundle id，才能让 Codex/IDE/浏览器里的命令、路径和英文标识符自动按应用升权。
 - Python 使用边界:
   - Python 适合作为常驻 sidecar，负责 SQLite/RAG、候选排序、MLX 调用、debug server 和管理面板 API。
   - Python 不适合作为 macOS 前台输入法事件链和候选框渲染层；按键、composition、候选窗口应使用原生 Swift/ObjC/Rime 路线，避免阻塞基础输入。

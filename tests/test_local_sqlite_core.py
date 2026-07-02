@@ -455,6 +455,150 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             ).fetchone()
         self.assertIsNone(gone)
 
+    def test_app_phrase_frequency_does_not_leak_between_apps(self) -> None:
+        self.core.reset()
+        now = now_ms()
+        for index in range(7):
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now - 20_000 + index,
+                    source="test",
+                    committed_text="打开开发者工具",
+                    recent_context="浏览器 调试 快捷操作",
+                    app="browser",
+                    project="",
+                )
+            )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now,
+                source="test",
+                committed_text="打开开发者工具",
+                recent_context="浏览器 调试 快捷操作",
+                app="codex",
+                project="",
+            )
+        )
+        for index in range(3):
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now + index + 1,
+                    source="test",
+                    committed_text="打开代码上下文",
+                    recent_context="codex 调试 快捷操作",
+                    app="codex",
+                    project="",
+                )
+            )
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="打开 调试", app="codex", project="", top_k=3))
+
+        self.assertEqual(suggestions[0].surface_text, "打开代码上下文")
+        self.assertIn("app-frequency:3", suggestions[0].metadata["reason"])
+        browser_phrase = next(item for item in suggestions if item.surface_text == "打开开发者工具")
+        self.assertEqual(browser_phrase.metadata["state"]["input_frequency"], 8)
+        self.assertEqual(browser_phrase.metadata["state"]["app_input_frequency"], 1)
+        self.assertEqual(browser_phrase.metadata["state"]["effective_frequency"], 1)
+        self.assertEqual(browser_phrase.metadata["state"]["effective_frequency_scope"], "app")
+        self.assertNotIn("frequency:8", browser_phrase.metadata["reason"])
+
+    def test_project_frequency_takes_precedence_over_app_frequency(self) -> None:
+        self.core.reset()
+        now = now_ms()
+        for index in range(5):
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now + index,
+                    source="test",
+                    committed_text="npm run dev",
+                    recent_context="vibe coding command",
+                    app="codex",
+                    project="project-b",
+                )
+            )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now + 10,
+                source="test",
+                committed_text="npm run dev",
+                recent_context="vibe coding command",
+                app="codex",
+                project="project-a",
+            )
+        )
+
+        suggestions = self.adapter.suggest(
+            SuggestionRequest(current_input="npm run", app="codex", project="project-a", top_k=1)
+        )
+
+        self.assertEqual(suggestions[0].surface_text, "npm run dev")
+        self.assertEqual(suggestions[0].metadata["state"]["input_frequency"], 6)
+        self.assertEqual(suggestions[0].metadata["state"]["app_input_frequency"], 6)
+        self.assertEqual(suggestions[0].metadata["state"]["project_input_frequency"], 1)
+        self.assertEqual(suggestions[0].metadata["state"]["effective_frequency"], 1)
+        self.assertEqual(suggestions[0].metadata["state"]["effective_frequency_scope"], "project")
+        self.assertNotIn("app-frequency:6", suggestions[0].metadata["reason"])
+
+    def test_app_phrase_stats_refreshes_after_delete(self) -> None:
+        self.core.reset()
+        first_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now_ms(),
+                source="test",
+                committed_text="应用内高频短语",
+                recent_context="codex app phrase",
+                app="codex",
+            )
+        )
+        second_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now_ms() + 1,
+                source="test",
+                committed_text="应用内高频短语",
+                recent_context="codex app phrase",
+                app="codex",
+            )
+        )
+
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=0,
+                memory_id=first_id,
+                action_type="delete",
+                query="应用内高频短语",
+            )
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            remaining = conn.execute(
+                "SELECT input_frequency FROM phrase_app_stats WHERE committed_text = ? AND app = ?",
+                ("应用内高频短语", "codex"),
+            ).fetchone()[0]
+        self.assertEqual(remaining, 1)
+
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=0,
+                memory_id=second_id,
+                action_type="delete",
+                query="应用内高频短语",
+            )
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            gone = conn.execute(
+                "SELECT input_frequency FROM phrase_app_stats WHERE committed_text = ? AND app = ?",
+                ("应用内高频短语", "codex"),
+            ).fetchone()
+        self.assertIsNone(gone)
+
     def test_codex_tool_trace_is_downranked_but_still_recallable(self) -> None:
         self.core.reset()
         self.adapter.commit_text(

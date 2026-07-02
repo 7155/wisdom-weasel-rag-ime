@@ -86,6 +86,7 @@ def build_rime_sidecar_response(
             recent_context=snapshot.committed_context,
             explicit_recent_context=snapshot.committed_context,
             project=snapshot.project or default_project,
+            app=snapshot.app,
             top_k=snapshot.max_side_candidates,
             max_candidates=snapshot.max_side_candidates,
             latency_budget_ms=snapshot.latency_budget_ms,
@@ -216,6 +217,7 @@ def suggest_rag_with_latency_budget(
     current_input: str,
     recent_context: str,
     project: str,
+    app: str,
     top_k: int,
     latency_budget_ms: int,
 ) -> tuple[list[InputSuggestion], dict[str, object]]:
@@ -253,6 +255,7 @@ def suggest_rag_with_latency_budget(
                     current_input=current_input,
                     recent_context=recent_context,
                     project=project,
+                    app=app,
                     top_k=top_k,
                 )
             )
@@ -295,6 +298,7 @@ def run_side_lanes_with_latency_budget(
     recent_context: str,
     explicit_recent_context: str,
     project: str,
+    app: str,
     top_k: int,
     max_candidates: int,
     latency_budget_ms: int,
@@ -308,6 +312,7 @@ def run_side_lanes_with_latency_budget(
             current_input=current_input,
             recent_context=recent_context,
             project=project,
+            app=app,
             top_k=top_k,
             latency_budget_ms=latency_budget_ms,
         )
@@ -733,6 +738,7 @@ def parse_rime_context_payload(payload: dict[str, Any], *, default_project: str)
         commit_text_preview=_string(payload.get("commitTextPreview") or rime_context.get("commitTextPreview")),
         committed_context=_string(payload.get("committedContext") or payload.get("recentContext")),
         project=_string(payload.get("project")) or default_project,
+        app=_string(payload.get("app") or payload.get("frontmostApp") or rime_context.get("app") or rime_context.get("frontmostApp")),
         candidates=candidates,
         highlighted_index=_bounded_int(
             rime_context.get("highlightedIndex", payload.get("highlightedIndex")),
@@ -1028,6 +1034,7 @@ def rime_context_to_payload(snapshot: RimeContextSnapshot) -> dict[str, object]:
         "highlightedIndex": snapshot.highlighted_index,
         "page": snapshot.page,
         "isLastPage": snapshot.is_last_page,
+        "app": snapshot.app,
     }
 
 

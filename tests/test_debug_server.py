@@ -127,7 +127,7 @@ class VectorAwareFixtureCore(FixtureCoreClient):
 
 
 class PrefixFixtureCore(FixtureCoreClient):
-    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", top_k: int = 5):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
         return [
             InputSuggestion(
                 suggestion_id="prefix:1",
