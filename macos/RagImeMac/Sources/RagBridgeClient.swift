@@ -136,6 +136,10 @@ final class RagBridgeClient {
         self.config = config
     }
 
+    var project: String {
+        config.project
+    }
+
     func initializeDatabase() throws {
         _ = try runCli(["init-db"])
     }
@@ -178,6 +182,24 @@ final class RagBridgeClient {
             payloadURL.path,
         ])
         return try decoder.decode(RimeSidecarResponse.self, from: data)
+    }
+
+    func rimeSelect(request: RimeSelectRequest) throws -> RimeSelectResponse {
+        let payloadURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rag-ime-rime-select-\(UUID().uuidString).json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let payload = try encoder.encode(request)
+        try payload.write(to: payloadURL, options: .atomic)
+        defer {
+            try? FileManager.default.removeItem(at: payloadURL)
+        }
+        let data = try runCli([
+            "rime-select-json",
+            "--payload-file",
+            payloadURL.path,
+        ])
+        return try decoder.decode(RimeSelectResponse.self, from: data)
     }
 
     func recordCommit(text: String, recentContext: String = "", preedit: String = "", source: String = "macos_inputmethod") throws {

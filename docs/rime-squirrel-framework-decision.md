@@ -144,6 +144,13 @@ Keep `macos/RagImeMac` as:
 - an installer and bridge-config experiment;
 - a fallback if Squirrel integration takes longer.
 
+The native harness now consumes the same `/rime-suggest` `displayCandidates`
+and `predictionSession` payload as the Squirrel path, and side-candidate
+acceptance uses `/rime-select`. This keeps debug behavior aligned with the real
+contract, but it does not change the framework decision: Wisdom-Weasel feels
+natural because LLM candidates live in the structured Rime/Weasel candidate
+flow, not because a detached panel stays open.
+
 Do not extend it into a full pinyin engine.
 
 ### Phase 1: Squirrel Fork / Patch Exploration

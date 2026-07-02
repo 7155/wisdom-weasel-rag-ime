@@ -124,6 +124,29 @@ sessionBound   candidates belong to the active request/session only
 
 Post-commit prediction has a short holdover window, currently 1.2 seconds. This preserves visual continuity after a user commits a word, but prevents old LLM/RAG/memory candidates from blocking number keys, English input, URLs, paths, or code. Model holdover is also tied to the current semantic input state, so changing the active pinyin prefix invalidates the old model row.
 
+The native `RagImeMac` debug harness now consumes the same `/rime-suggest`
+`displayCandidates` and `predictionSession` contract as the Squirrel path. It no
+longer keeps the old `/suggest-json` panel open as a detached RAG popup:
+
+```text
+commit text
+  -> /rime-suggest predictionFirstMerge=true
+  -> predictionSession.phase=post_commit
+  -> show displayCandidates only while predictionPanelVisible=true
+  -> local 1.15s post-commit expiry as frontend safety
+
+continued pinyin
+  -> /rime-suggest with rawInput/preedit
+  -> prefix_constrained displayCandidates
+  -> stale post-commit panel is cleared before new composition owns the keys
+```
+
+This matches the useful Wisdom-Weasel lesson: LLM candidates should feel like a
+short-lived continuation of the IME candidate flow, not a persistent clipboard
+or history panel. The production route should still integrate at the Squirrel /
+Rime candidate layer; the InputMethodKit harness remains a JSON contract and UI
+debug surface.
+
 For the Squirrel/Rime path, side selection feedback should use the unified `/rime-select` contract. It records the inserted side candidate and, for RAG candidates, the accepted memory action in one local request. The prototype AppKit harness may still issue separate action/commit calls while it remains a debug surface.
 
 ## UI Shape

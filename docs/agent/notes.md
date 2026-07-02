@@ -7,6 +7,26 @@
 
 ## Log
 
+### 2026-07-02 15:56 CST
+Problem:
+- User pointed out that the current LLM/RAG/memory candidate panel still felt stiff: when no input is active, the prediction panel can linger for seconds and look like a detached clipboard/history popup.
+- The desired behavior should follow Wisdom-Weasel's demo more closely: LLM candidates feel like a natural continuation of the normal IME candidate flow and disappear when the prediction session is no longer live.
+
+Findings:
+- Direct source check confirmed Wisdom-Weasel records committed text, enters `m_llm_prediction_mode`, runs async `PredictCandidates`, drops stale results through `m_llm_request_seq`, injects LLM candidates into Weasel candidate info, and clears `m_current_llm_candidates` when exiting prediction mode.
+- The natural UX comes from short-lived candidate-flow integration, not from a persistent floating panel.
+
+Changes:
+- Extended Swift sidecar models to decode `predictionFirst`, `predictionSession`, `commitTextPreview`, and to encode `/rime-select` selection feedback.
+- Changed `RagInputController` to call `/rime-suggest` with `predictionFirstMerge=true`, maintain a native session/request sequence, render only `displayCandidates`, clear stale post-commit candidates before new composition, and expire post-commit prediction after 1.15s.
+- Changed `RagCandidatePanel` to render sidecar `displayCandidates` directly: inline/model candidates can occupy a compact horizontal row, while RAG/memory sentence candidates render as vertical rows with one-line evidence.
+- Changed `--preview-panel` to use `/rime-suggest` display candidates instead of old `/suggest-json`.
+
+Verification:
+- `scripts/build_macos_frontend.sh` passed and rebuilt `build/RagImeMac.app`.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_prediction_first tests.test_rime_sidecar tests.test_debug_server`: 79 tests passed.
+- `build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-sidecar-json` decoded `predictionSession` and returned `prefix_constrained` with `predictionPanelVisible=true`.
+
 ### 2026-07-02 14:10 CST
 Problem:
 - User reported the IME still looked like clipboard/Rime fallback: LLM/RAG/memory were not reliably visible, Codex history noise appeared as candidates, and the panel stayed visible even with no input.

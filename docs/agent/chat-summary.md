@@ -2,6 +2,28 @@
 
 ### 2026-07-02
 Topic:
+- Align native macOS candidate appearance with Wisdom-Weasel's short-lived LLM candidate flow.
+
+Findings:
+- Wisdom-Weasel's natural demo comes from candidate-flow integration: commit text enters LLM prediction mode, async prediction is request-seq guarded, LLM candidates are injected into Weasel candidate info, and exiting prediction clears the candidates.
+- A persistent detached panel feels like clipboard/history, which is not the target interaction.
+
+Changes:
+- `RagImeMac` now consumes `/rime-suggest` `displayCandidates` and `predictionSession` instead of keeping the old `/suggest-json` panel open.
+- Native post-commit prediction expires after 1.15s and clears when the user starts new composition, so stale AI candidates stop intercepting number keys.
+- Side-candidate selection now has a Swift `/rime-select` bridge; the panel renders inline/model candidates horizontally and RAG/memory rows vertically from one display payload.
+- `--preview-panel` now shows the same sidecar payload as the real adapter.
+
+Verification:
+- Swift frontend build passed.
+- Prediction/session sidecar tests passed: 79 focused tests.
+- Native JSON preview decoded `predictionSession` and returned visible prediction candidates.
+
+Next:
+- Keep the real production typing path on Squirrel/Rime, because the AppKit harness still does not own true Wanxiang/Rime composition.
+
+### 2026-07-02
+Topic:
 - Make Prediction-first RAG IME demo usable after user reported clipboard-like candidates and stale panels.
 
 Changes:
