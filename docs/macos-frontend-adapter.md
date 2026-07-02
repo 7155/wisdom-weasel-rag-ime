@@ -122,7 +122,7 @@ hideWhenEmpty  frontend must hide on empty candidates
 sessionBound   candidates belong to the active request/session only
 ```
 
-Post-commit prediction has a short holdover window, currently 1.2 seconds. This preserves visual continuity after a user commits a word, but prevents old LLM/RAG/memory candidates from blocking number keys, English input, URLs, paths, or code. Model holdover is also tied to the current semantic input state, so changing the active pinyin prefix invalidates the old model row.
+Post-commit prediction has a short holdover window, currently 0.85 seconds in the native harness. This preserves visual continuity after a user commits a word, but prevents old LLM/RAG/memory candidates from blocking number keys, English input, URLs, paths, or code. Model holdover is also tied to the current semantic input state, so changing the active pinyin prefix invalidates the old model row.
 
 The native `RagImeMac` debug harness now consumes the same `/rime-suggest`
 `displayCandidates` and `predictionSession` contract as the Squirrel path. It no
@@ -133,7 +133,7 @@ commit text
   -> /rime-suggest predictionFirstMerge=true
   -> predictionSession.phase=post_commit
   -> show displayCandidates only while predictionPanelVisible=true
-  -> local 1.15s post-commit expiry as frontend safety
+  -> local 0.85s post-commit expiry as frontend safety
 
 continued pinyin
   -> /rime-suggest with rawInput/preedit
@@ -146,6 +146,14 @@ short-lived continuation of the IME candidate flow, not a persistent clipboard
 or history panel. The production route should still integrate at the Squirrel /
 Rime candidate layer; the InputMethodKit harness remains a JSON contract and UI
 debug surface.
+
+The native harness also has a temporary `RimeDictionaryCandidateProvider`.
+It reads `RAG_IME_RIME_DICT_PATH` when set, otherwise tries
+`~/Library/Rime/wanxiang.dict.yaml` and then `~/Library/Rime/luna_pinyin.dict.yaml`.
+It also reads `RAG_IME_RIME_ESSAY_PATH` or `~/Library/Rime/essay.txt` to avoid
+rare dictionary entries outranking common words. This is only a bridge for
+debugging the `/rime-suggest` contract; production should still get candidates
+from a real librime session.
 
 For the Squirrel/Rime path, side selection feedback should use the unified `/rime-select` contract. It records the inserted side candidate and, for RAG candidates, the accepted memory action in one local request. The prototype AppKit harness may still issue separate action/commit calls while it remains a debug surface.
 
@@ -209,6 +217,16 @@ build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-sidecar-json
 ```
 
 This initializes the configured DB, calls `rime-suggest-json`, and verifies that Swift can decode the merged `displayCandidates` payload. The preview intentionally includes dirty raw pinyin plus Rime candidates; the response should use `queryBasis: "rimeCandidates"` instead of asking the model to decode raw input.
+
+Inspect the native dictionary bridge:
+
+```bash
+build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-dictionary-json
+```
+
+Expected behavior: short pinyin such as `ni` and `wo` should produce common
+Rime/Wanxiang-style Chinese candidates, while raw code or paths such as
+`git status` and `/Volumes/undo` should return no Chinese candidates.
 
 Open the native panel preview:
 

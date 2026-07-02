@@ -3,23 +3,36 @@ import InputMethodKit
 
 @objc(RagInputController)
 final class RagInputController: IMKInputController {
+    private struct ActivePanelSession {
+        let requestSeq: Int
+        let phase: String
+        let committedContext: String
+        let composition: String
+        let expiresAt: Date?
+    }
+
     private var composition = ""
     private var latestModelPredictions: [ModelPrediction] = []
     private var latestSuggestions: [RagSuggestion] = []
     private var latestDisplayCandidates: [RimeDisplayCandidate] = []
     private var latestPredictionSession: RimePredictionSessionPayload?
+    private var activePanelSession: ActivePanelSession?
     private var committedContext = ""
     private let bridge = RagBridgeClient()
+    private let rimeCandidateProvider = RimeDictionaryCandidateProvider()
     private let sessionId = "rag-ime-mac-\(UUID().uuidString)"
     private var requestSeq = 0
+    private var lastRenderedRequestSeq = 0
     private var pendingRefresh: DispatchWorkItem?
     private var panelExpiration: DispatchWorkItem?
-    private let postCommitPanelTtlSeconds: TimeInterval = 1.15
+    private let postCommitPanelTtlSeconds: TimeInterval = 0.85
 
     override func inputText(_ string: String!, client sender: Any!) -> Bool {
         guard let string, let client = sender as? IMKTextInput else {
             return false
         }
+
+        clearExpiredPanelIfNeeded()
 
         if selectCandidateIfNeeded(string, client: client) {
             return true
@@ -39,10 +52,7 @@ final class RagInputController: IMKInputController {
             if composition.isEmpty && latestDisplayCandidates.isEmpty && isDigit(string) {
                 return false
             }
-            if latestPredictionSession?.phase == "post_commit" {
-                clearCandidateState()
-                clearVisiblePredictionPanel()
-            }
+            clearPostCommitPredictionPanelBeforeTyping()
             composition += string
             updateMarkedText(client: client)
             scheduleSuggestionRefresh(client: client)
@@ -100,7 +110,7 @@ final class RagInputController: IMKInputController {
     }
 
     private func selectCandidateIfNeeded(_ string: String, client: IMKTextInput) -> Bool {
-        if RagCandidatePanel.shared.isVisible,
+        if canRouteNumberToVisiblePanel(),
            let number = Int(string),
            number >= 1,
            number <= latestDisplayCandidates.count {
@@ -148,8 +158,7 @@ final class RagInputController: IMKInputController {
         composition = ""
         clearCandidateState()
         pendingRefresh?.cancel()
-        panelExpiration?.cancel()
-        RagCandidatePanel.shared.hide()
+        clearVisiblePredictionPanel()
 
         let bridge = self.bridge
         let sessionId = self.sessionId
@@ -298,8 +307,12 @@ final class RagInputController: IMKInputController {
         guard response.sessionId == sessionId else {
             return
         }
+        guard response.requestSeq >= lastRenderedRequestSeq else {
+            return
+        }
+        lastRenderedRequestSeq = response.requestSeq
         latestPredictionSession = response.predictionSession
-        if response.predictionSession?.shouldClearPredictionPanel == true || response.displayCandidates.isEmpty {
+        if !shouldShowCandidatePanel(response) {
             clearCandidateState()
             clearVisiblePredictionPanel()
             return
@@ -320,25 +333,73 @@ final class RagInputController: IMKInputController {
                 self.commit(text: candidate.insertText, client: client, selectedDisplayCandidate: candidate, selectedSuggestion: nil, rank: index + 1, queryOverride: query)
             }
         )
-        if postCommit || response.predictionSession?.phase == "post_commit" {
-            schedulePanelExpiration(expectedContext: committedContext)
-        }
+        activatePanelSession(response: response, postCommit: postCommit)
     }
 
-    private func schedulePanelExpiration(expectedContext: String) {
+    private func activatePanelSession(response: RimeSidecarResponse, postCommit: Bool) {
+        let phase = response.predictionSession?.phase ?? ""
+        activePanelSession = ActivePanelSession(
+            requestSeq: response.requestSeq,
+            phase: phase,
+            committedContext: committedContext,
+            composition: composition,
+            expiresAt: panelExpirationDate(phase: phase, postCommit: postCommit)
+        )
+        schedulePanelExpiration()
+    }
+
+    private func schedulePanelExpiration() {
         panelExpiration?.cancel()
+        guard let session = activePanelSession, let expiresAt = session.expiresAt else {
+            panelExpiration = nil
+            return
+        }
         let work = DispatchWorkItem { [weak self] in
             guard let self else {
                 return
             }
-            guard self.composition.isEmpty, self.committedContext == expectedContext else {
+            guard
+                let current = self.activePanelSession,
+                current.requestSeq == session.requestSeq,
+                current.phase == session.phase,
+                current.committedContext == session.committedContext,
+                current.composition == session.composition
+            else {
                 return
             }
             self.clearCandidateState()
             self.clearVisiblePredictionPanel()
         }
         panelExpiration = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + postCommitPanelTtlSeconds, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.05, expiresAt.timeIntervalSinceNow), execute: work)
+    }
+
+    private func panelExpirationDate(phase: String, postCommit: Bool) -> Date? {
+        if postCommit || phase == "post_commit" {
+            return Date().addingTimeInterval(postCommitPanelTtlSeconds)
+        }
+        return nil
+    }
+
+    private func shouldShowCandidatePanel(_ response: RimeSidecarResponse) -> Bool {
+        guard !response.displayCandidates.isEmpty else {
+            return false
+        }
+        guard let session = response.predictionSession else {
+            return true
+        }
+        switch session.phase {
+        case "post_commit":
+            return session.predictionPanelVisible && composition.isEmpty
+        case "prefix_constrained":
+            return session.candidatePanelVisible && !composition.isEmpty
+        case "anchor_composing":
+            return session.candidatePanelVisible && !composition.isEmpty
+        case "raw_passthrough", "hidden":
+            return false
+        default:
+            return session.candidatePanelVisible || session.predictionPanelVisible
+        }
     }
 
     private func handlePanelAction(_ action: String, suggestion: RagSuggestion, query: String) {
@@ -365,7 +426,8 @@ final class RagInputController: IMKInputController {
         idleMs: Int,
         forceSideCandidates: Bool
     ) -> RimeSidecarRequest {
-        RimeSidecarRequest(
+        let rimeCandidates = rimeCandidateProvider.candidates(for: preedit.isEmpty ? rawInput : preedit, maxCount: 8)
+        return RimeSidecarRequest(
             sessionId: sessionId,
             requestSeq: requestSeq,
             rawInput: rawInput,
@@ -380,13 +442,53 @@ final class RagInputController: IMKInputController {
             predictionFirstMerge: true,
             maxVisibleCandidates: 8,
             maxSideCandidates: 8,
-            rimeContext: RimeContextPayload(candidates: [], highlightedIndex: 0, page: 0, isLastPage: true)
+            rimeContext: RimeContextPayload(candidates: rimeCandidates, highlightedIndex: 0, page: 0, isLastPage: true)
         )
     }
 
     private func nextRequestSeq() -> Int {
         requestSeq += 1
         return requestSeq
+    }
+
+    private func canRouteNumberToVisiblePanel() -> Bool {
+        guard RagCandidatePanel.shared.isVisible, let session = activePanelSession else {
+            return false
+        }
+        if let expiresAt = session.expiresAt, expiresAt <= Date() {
+            clearCandidateState()
+            clearVisiblePredictionPanel()
+            return false
+        }
+        guard session.committedContext == committedContext else {
+            clearCandidateState()
+            clearVisiblePredictionPanel()
+            return false
+        }
+        switch session.phase {
+        case "post_commit":
+            return composition.isEmpty
+        case "prefix_constrained", "anchor_composing":
+            return !composition.isEmpty && session.composition == composition
+        default:
+            return false
+        }
+    }
+
+    private func clearExpiredPanelIfNeeded() {
+        guard let session = activePanelSession, let expiresAt = session.expiresAt, expiresAt <= Date() else {
+            return
+        }
+        clearCandidateState()
+        clearVisiblePredictionPanel()
+    }
+
+    private func clearPostCommitPredictionPanelBeforeTyping() {
+        guard activePanelSession?.phase == "post_commit" || latestPredictionSession?.phase == "post_commit" else {
+            return
+        }
+        clearCandidateState()
+        clearVisiblePredictionPanel()
     }
 
     private func clearMarkedText(client: IMKTextInput) {
@@ -406,6 +508,8 @@ final class RagInputController: IMKInputController {
 
     private func clearVisiblePredictionPanel() {
         panelExpiration?.cancel()
+        panelExpiration = nil
+        activePanelSession = nil
         RagCandidatePanel.shared.hide()
     }
 

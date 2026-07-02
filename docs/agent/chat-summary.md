@@ -1916,3 +1916,28 @@ Verification:
 - `py_compile` passed for sidecar/prediction modules.
 - Focused sidecar + prediction-manager tests passed: 8 tests.
 - Full suite passed: 271 tests.
+
+### 2026-07-02
+Topic:
+- Native candidate panel lifecycle aligned with Wisdom-Weasel-style candidate flow.
+
+Decisions:
+- Keep LLM/RAG/memory candidates as short-lived IME sessions, not a persistent clipboard/history popup.
+- A visible native panel can route number keys only when it belongs to the current valid requestSeq/context/composition session.
+- Post-commit prediction uses a 0.85s frontend expiry; continued pinyin keeps Rime/Wanxiang composition in charge.
+
+Changes:
+- Added native `ActivePanelSession` and stricter stale-response rejection.
+- Native panel hides on raw passthrough/hidden sessions, stale request, expired post-commit session, or resumed typing.
+- Added `RimeDictionaryCandidateProvider` for local debug previews from Rime/Wanxiang dictionaries plus `essay.txt` weights.
+- Updated macOS frontend and Rime/Squirrel decision docs.
+
+Verification:
+- macOS frontend build passed.
+- Rime dictionary preview passed: `ni -> 你`, `wo -> 我`, code/path return no candidates.
+- Rime sidecar preview decoded `displayCandidates` and `predictionSession`.
+- Focused tests passed: 84.
+- Full suite passed: 271.
+
+Open issue:
+- Candidate quality still needs a separate pass: short prefixes like `ni` can recall long RAG history snippets instead of concise, prefix-constrained continuation candidates.

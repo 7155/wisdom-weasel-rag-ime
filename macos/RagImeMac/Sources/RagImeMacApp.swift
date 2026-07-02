@@ -34,6 +34,10 @@ enum RagImeMacMain {
             runPreviewRimeSidecarJSON()
             return
         }
+        if arguments.contains("--preview-rime-dictionary-json") {
+            runPreviewRimeDictionaryJSON()
+            return
+        }
         if arguments.contains("--preview-panel") {
             runPreviewPanel()
             return
@@ -78,20 +82,19 @@ enum RagImeMacMain {
     private static func runPreviewRimeSidecarJSON() {
         do {
             let bridge = RagBridgeClient()
+            let rimeProvider = RimeDictionaryCandidateProvider()
             try bridge.initializeDatabase()
+            let rawInput = "ni"
             let request = RimeSidecarRequest(
                 sessionId: "squirrel-preview",
                 requestSeq: 1,
-                rawInput: "jiubiruwopinshishur",
-                preedit: "jiubiruwopinshishur",
+                rawInput: rawInput,
+                preedit: rawInput,
                 committedContext: "用户正在写 RAG 输入法设计",
                 maxVisibleCandidates: 5,
                 maxSideCandidates: 2,
                 rimeContext: RimeContextPayload(
-                    candidates: [
-                        RimeCandidatePayload(label: "1", text: "就比如", comment: "rime", index: 0),
-                        RimeCandidatePayload(label: "2", text: "我平时输入", comment: "rime", index: 1),
-                    ],
+                    candidates: rimeProvider.candidates(for: rawInput, maxCount: 5),
                     highlightedIndex: 0,
                     page: 0,
                     isLastPage: true
@@ -103,6 +106,22 @@ enum RagImeMacMain {
             FileHandle.standardOutput.write(Data("\n".utf8))
         } catch {
             FileHandle.standardError.write(Data("RagImeMac Rime sidecar preview failed: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+    }
+
+    private static func runPreviewRimeDictionaryJSON() {
+        let provider = RimeDictionaryCandidateProvider()
+        let queries = ["ni", "wo", "xian", "sj", "shijie", "git status", "/Volumes/undo"]
+        do {
+            let data = try JSONSerialization.data(
+                withJSONObject: provider.diagnosticPayload(for: queries),
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            )
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        } catch {
+            FileHandle.standardError.write(Data("RagImeMac Rime dictionary preview failed: \(error.localizedDescription)\n".utf8))
             exit(1)
         }
     }

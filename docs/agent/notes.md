@@ -2694,3 +2694,28 @@ Commands:
 
 Follow-up fix:
 - Raw English/code/command input clears stale cached predictions, but fresh same-request model/RAG candidates can still appear after the raw commit candidate. This keeps `git status` style input usable without turning off AI help when the backend has a current result.
+
+### 2026-07-02 16:19 CST
+Problem:
+- User feedback: LLM/RAG/memory candidates still felt like a hard persistent popup; after a few seconds it was strange and could block number input.
+- Need to reference Wisdom-Weasel's natural demo behavior: candidates should continue the IME candidate flow, not behave like a clipboard/history panel.
+
+Findings:
+- Wisdom-Weasel binds candidate visibility to Rime context/UI refresh: composition, live LLM prediction mode, non-empty candidates, request sequence, and focus.
+- Its key lesson for the native harness is session-bound visibility. Empty/stale response, raw passthrough, focus hide, or normal typing must clear the AI layer.
+- Native preview exposed another quality issue for later: short prefix `ni` can still trigger long RAG history snippets; lifecycle is fixed here, candidate quality still needs follow-up filtering.
+
+Changes:
+- Added native `ActivePanelSession` with requestSeq, phase, committed context, composition, and expiry.
+- Native panel now rejects older sidecar responses, only routes digits when the visible panel belongs to the current valid session, and uses a 0.85s post-commit expiry.
+- Post-commit prediction clears immediately when the user resumes typing.
+- Raw passthrough / hidden sessions no longer display the native prediction panel.
+- Added `RimeDictionaryCandidateProvider` to feed native `/rime-suggest` previews from local Rime/Wanxiang dictionaries and `essay.txt` frequency weights.
+
+Commands:
+- `scripts/build_macos_frontend.sh`: passed.
+- `build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-dictionary-json`: passed; `ni -> 你`, `wo -> 我`, raw code/path return no candidates.
+- `build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-sidecar-json`: passed; decoded `displayCandidates` and `predictionSession`.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_prediction_first tests.test_prediction_manager tests.test_rime_sidecar tests.test_debug_server`: 84 tests passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 271 tests passed.
+- `git diff --check`: passed.

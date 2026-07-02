@@ -61,6 +61,7 @@ swiftc \
   -framework InputMethodKit \
   "$SRC_DIR/RagModels.swift" \
   "$SRC_DIR/RimeSidecarModels.swift" \
+  "$SRC_DIR/RimeDictionaryCandidateProvider.swift" \
   "$SRC_DIR/RagBridgeClient.swift" \
   "$SRC_DIR/RagCandidatePanel.swift" \
   "$SRC_DIR/RagInputController.swift" \

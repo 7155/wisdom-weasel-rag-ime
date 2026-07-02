@@ -122,7 +122,8 @@ After a commit, the prediction-only panel is allowed to replace the Rime list
 briefly, but it must be session-bound. It is not a clipboard/history panel: if
 no model/RAG/memory candidate is ready, or the post-commit window has gone
 stale, the panel should disappear so digits and English/code input stay normal.
-The practical default is a roughly 0.8-1.2s post-commit window; any longer
+The practical default is a roughly 0.8-1.2s post-commit window; the current
+native harness uses 0.85s. Any longer
 continuation should require an active prefix, a fresh model/RAG response, or an
 explicit expand action.
 
@@ -150,6 +151,13 @@ acceptance uses `/rime-select`. This keeps debug behavior aligned with the real
 contract, but it does not change the framework decision: Wisdom-Weasel feels
 natural because LLM candidates live in the structured Rime/Weasel candidate
 flow, not because a detached panel stays open.
+
+For local macOS debugging before a full librime adapter is available, the native
+harness includes `RimeDictionaryCandidateProvider`. It reads a user-provided
+Rime/Wanxiang dictionary via `RAG_IME_RIME_DICT_PATH`, then falls back to
+`~/Library/Rime/wanxiang.dict.yaml` or `~/Library/Rime/luna_pinyin.dict.yaml`,
+and uses `essay.txt` weights to keep common entries first. This is deliberately
+a bridge, not a replacement for real Squirrel/librime context.
 
 Do not extend it into a full pinyin engine.
 
