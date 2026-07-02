@@ -391,6 +391,25 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertTrue(prediction_candidate_matches_prefix(candidate, "sheji"))
         self.assertFalse(prediction_candidate_matches_prefix(candidate, "wx"))
 
+    def test_prefix_match_does_not_use_middle_sliding_window_keys(self) -> None:
+        pool = build_candidate_pool(
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="sug-1",
+                    surface_text="我rag和记忆系统有很多数据诶",
+                    suggestion_type="rag",
+                    source_event_id=1,
+                    evidence_preview="",
+                    confidence=0.8,
+                    metadata={"initials": "wraghjyxtyhdsje", "pinyin_prefixes": ["sj", "jy", "xt"]},
+                )
+            ]
+        )
+
+        candidate = pool.rag[0]
+        self.assertFalse(prediction_candidate_matches_prefix(candidate, "sj"))
+        self.assertTrue(prediction_candidate_matches_prefix(candidate, "wrag"))
+
 
 if __name__ == "__main__":
     unittest.main()

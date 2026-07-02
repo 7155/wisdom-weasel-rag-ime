@@ -2854,3 +2854,33 @@ Commands:
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 279 tests passed.
 - `scripts/build_macos_frontend.sh`: passed.
 - `git diff --check`: passed.
+
+### 2026-07-02 18:51 CST
+Problem:
+- User feedback: the live IME still looked like a clipboard/history surface; RAG was recalling Codex status/tool logs instead of useful user-intent candidates, and Rime candidates were filling visible slots even when an AI/RAG candidate existed.
+- Branch clarification: `codex/wisdom-weasel-rag-ime-mvp` is a branch namespace prefix on `git@github.com:7155/wisdom-weasel-rag-ime.git`, not a separate GitHub account or folder.
+
+Decisions:
+- Codex history memory should default to real `role:user` messages only; old non-user imported rows should be hidden, not displayed.
+- Prefix-constrained mode should not mix Rime/Wanxiang into the visible list once any LLM/RAG/memory candidate matches the user's pinyin. Rime remains only for no-match fallback and no-context anchor input.
+- Weak-context low-value Rime words such as `根据` / `基于` / `和` / `测试` should be filtered instead of occupying the panel.
+
+Changes:
+- Added `import-codex-history --roles` with default `user` and `prune-codex-history-noise`.
+- Added SQLite role-prune logic that marks non-user Codex history rows deleted and rebuilds phrase stats.
+- Improved `SuggestionCompiler` noise filtering and extraction of numbered IME candidate examples from design/history text.
+- Tightened prefix matching to primary candidate pinyin keys instead of middle sliding-window matches.
+- Updated Prediction-first merge policy so matched AI/RAG/memory candidates do not get Rime fillers.
+
+Live data:
+- Backed up the live DB before mutation.
+- Imported 4896 additional user Codex-history records from `$HOME/.codex`; live active user rows are about 4999.
+- Rebuilt the local vector side-index; live active provider vectors are 5023 using `local-hash:96:v1`.
+- Reinstalled sidecar with MLX Qwen3.5 0.8B text 4bit and local-hash vector baseline.
+
+Commands:
+- `python3 -m rag_ime.cli --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" import-codex-history --path "$HOME/.codex" --project wisdom-weasel-rag-ime --limit 5000 --sample-size 0`: imported user history.
+- `curl -s http://127.0.0.1:8766/rebuild-vector-index -d '{"project":"wisdom-weasel-rag-ime","limit":5000}'`: rebuilt live vector index.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 285 tests passed.
+- `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650`: passed; side candidates no longer mix Rime, weak context clears low-value fallback, raw English/code/path stay first.
+- `scripts/build_macos_frontend.sh`: passed.

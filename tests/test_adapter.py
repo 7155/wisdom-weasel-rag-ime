@@ -171,6 +171,45 @@ class InputMethodAdapterTests(unittest.TestCase):
         self.assertEqual(suggestion.metadata["insert_text"], suggestion.surface_text)
         self.assertIn("tool exec_command", suggestion.expanded_evidence)
 
+    def test_candidate_surface_strips_markdown_quote_noise(self) -> None:
+        memory = CoreMemory(
+            memory_id="mem-markdown-quote",
+            source_event_id="5021",
+            text="** > 也就是：**首词靠拼音，后文靠预测；预测不准，继续拼音约束。",
+            source_ref="memory:5021#quote",
+            score=0.8,
+            reason="fixture:markdown-quote",
+            evidence_preview="markdown pasted proposal",
+            tags=("codex-history", "product-idea"),
+        )
+
+        suggestion = SuggestionCompiler().compile([RankedMemory(memory=memory, score=0.8, rank=1)])[0]
+
+        self.assertNotIn("**", suggestion.surface_text)
+        self.assertNotIn(">", suggestion.surface_text)
+        self.assertIn("首词靠拼音", suggestion.surface_text)
+
+    def test_candidate_surface_extracts_ime_candidate_examples(self) -> None:
+        memory = CoreMemory(
+            memory_id="mem-ime-examples",
+            source_event_id="5022",
+            text=(
+                "用户继续输入 sj 后，候选变成："
+                "1 设计一个候选展示方式 [预测 + 拼音匹配] "
+                "2 设计输入法的三层候选面板 [RAG + 拼音匹配] "
+                "3 设计一个预测优先的状态机 [记忆 + 拼音匹配]"
+            ),
+            source_ref="memory:5022#examples",
+            score=0.9,
+            reason="fixture:ime-examples",
+            evidence_preview="prefix constrained IME candidate examples",
+            tags=("codex-history", "product-idea"),
+        )
+
+        suggestion = SuggestionCompiler().compile([RankedMemory(memory=memory, score=0.9, rank=1)])[0]
+
+        self.assertEqual(suggestion.surface_text, "设计一个候选展示方式")
+
     def test_candidate_surface_skips_patch_and_file_hit_noise(self) -> None:
         patch_memory = CoreMemory(
             memory_id="mem-patch-noise",
@@ -268,10 +307,43 @@ class InputMethodAdapterTests(unittest.TestCase):
                 tags=("codex-history",),
             ),
             CoreMemory(
-                memory_id="mem-validation-noise",
+                memory_id="mem-short-file-instruction",
                 source_event_id="562",
+                text=(
+                    "请继续做一个窄任务：调研 Wisdom-Weasel 如何降低输入法 LLM 预测延迟。"
+                    "不要改文件。"
+                ),
+                source_ref="memory:562#instruction",
+                score=0.935,
+                reason="fixture:file-instruction",
+                evidence_preview="agent instruction should stay evidence-only",
+                tags=("codex-history",),
+            ),
+            CoreMemory(
+                memory_id="mem-readonly-status",
+                source_event_id="563",
+                text="已按只读方式调研，未修改文件。",
+                source_ref="memory:563#readonly",
+                score=0.932,
+                reason="fixture:readonly-status",
+                evidence_preview="readonly status should stay out of candidates",
+                tags=("codex-history",),
+            ),
+            CoreMemory(
+                memory_id="mem-research-acceptance",
+                source_event_id="564",
+                text="要求：1) 优先官方文档/源码结论；2) 给出推荐排序和下一步可验证命令/实验；",
+                source_ref="memory:564#acceptance",
+                score=0.931,
+                reason="fixture:acceptance-criteria",
+                evidence_preview="agent acceptance criteria should stay out of candidates",
+                tags=("codex-history",),
+            ),
+            CoreMemory(
+                memory_id="mem-validation-noise",
+                source_event_id="566",
                 text="好像 rag 没有 生效 验证模型指令 这个 不是 目的",
-                source_ref="memory:562#validation",
+                source_ref="memory:566#validation",
                 score=0.93,
                 reason="fixture:validation",
                 evidence_preview="debug validation phrase",
@@ -279,9 +351,9 @@ class InputMethodAdapterTests(unittest.TestCase):
             ),
             CoreMemory(
                 memory_id="mem-useful-product-idea",
-                source_event_id="563",
+                source_event_id="567",
                 text="我的判断是：输入法应该预测用户接下来想表达的短语，而不是复读最近上下文。",
-                source_ref="memory:563#idea",
+                source_ref="memory:567#idea",
                 score=0.8,
                 reason="fixture:idea",
                 evidence_preview="prediction-first product idea",

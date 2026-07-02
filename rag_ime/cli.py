@@ -182,9 +182,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         default="mtime-desc",
         help="Order JSONL files when --path is a directory. Defaults to newest modified sessions first.",
     )
+    import_codex.add_argument(
+        "--roles",
+        default="user",
+        help="Comma-separated Codex roles to import. Defaults to user; use 'any' to keep all parsed roles.",
+    )
     import_codex.add_argument("--sample-size", type=int, default=3)
     import_codex.add_argument("--dry-run", action="store_true", help="Parse and summarize without writing memory")
     import_codex.add_argument("--allow-duplicates", action="store_true", help="Import records even if their stable record tag already exists")
+
+    prune_codex = subparsers.add_parser(
+        "prune-codex-history-noise",
+        help="Hide imported Codex history rows that are not useful user-memory candidates",
+    )
+    prune_codex.add_argument("--project", default="wisdom-weasel-rag-ime")
+    prune_codex.add_argument(
+        "--keep-roles",
+        default="user",
+        help="Comma-separated Codex roles to keep active. Defaults to user.",
+    )
+    prune_codex.add_argument("--dry-run", action="store_true", help="Report rows that would be hidden without changing the database")
 
     eval_codex = subparsers.add_parser("eval-codex-history", help="Evaluate retrieval against explicit JSONL cases")
     eval_codex.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
@@ -844,12 +861,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "import-codex-history":
+        role_filter = _parse_codex_role_filter(args.roles)
         records = load_codex_history_records(
             Path(args.path),
             limit=max(0, args.limit),
             min_chars=max(1, args.min_chars),
             max_chars=max(16, args.max_chars),
             path_order=args.path_order,
+            roles=role_filter,
         )
         event_ids: list[str] = []
         duplicate_skipped = 0
@@ -867,6 +886,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "path": str(Path(args.path)),
                     "project": args.project,
                     "dryRun": args.dry_run,
+                    "roles": "any" if role_filter is None else list(role_filter),
                     "records": len(records),
                     "imported": 0 if args.dry_run else len(event_ids),
                     "duplicateSkipped": duplicate_skipped,
@@ -886,6 +906,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+
+    if args.command == "prune-codex-history-noise":
+        pruner = getattr(core, "hide_codex_history_noise", None)
+        if not callable(pruner):
+            print(json.dumps({"ok": False, "error": "core does not support Codex history pruning"}, ensure_ascii=False, indent=2))
+            return 2
+        keep_roles = _parse_codex_role_filter(args.keep_roles)
+        if keep_roles is None:
+            keep_roles = ("user",)
+        report = pruner(project=args.project, keep_roles=keep_roles, dry_run=bool(args.dry_run))
+        print(json.dumps({"schemaVersion": "rag-ime.codex-history-prune.v1", **report}, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "eval-codex-history":
@@ -3351,6 +3383,20 @@ def _core_has_event_tag(core, tag: str) -> bool:
     if not callable(checker):
         return False
     return bool(checker(tag))
+
+
+def _parse_codex_role_filter(value: str) -> tuple[str, ...] | None:
+    raw = compact_whitespace(value or "")
+    if not raw or raw.lower() in {"any", "all", "*"}:
+        return None
+    roles = tuple(
+        dict.fromkeys(
+            item.strip().lower()
+            for item in raw.replace(";", ",").split(",")
+            if item.strip()
+        )
+    )
+    return roles or None
 
 
 def _local_model_runner_status() -> dict[str, object]:

@@ -626,6 +626,87 @@ class LocalSqliteCoreClient:
                 return True
         return False
 
+    def hide_codex_history_noise(
+        self,
+        *,
+        project: str = "",
+        keep_roles: tuple[str, ...] = ("user",),
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        self.initialize()
+        keep_role_tags = {f"role:{compact_whitespace(role).lower()}" for role in keep_roles if compact_whitespace(role)}
+        params: list[Any] = ["codex_history"]
+        where = ["e.source = ?"]
+        if project:
+            where.append("e.project = ?")
+            params.append(project)
+        sql = f"""
+            SELECT e.id, e.tags_json, s.deleted
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE {' AND '.join(where)}
+        """
+        with self._connect() as conn:
+            rows = list(conn.execute(sql, params).fetchall())
+            matched = 0
+            already_deleted = 0
+            role_counts: dict[str, int] = {}
+            event_ids_to_hide: list[int] = []
+            for row in rows:
+                tags = _row_tags(row)
+                role_tags = {tag.lower() for tag in tags if tag.lower().startswith("role:")}
+                if role_tags:
+                    for tag in sorted(role_tags):
+                        role_counts[tag.removeprefix("role:")] = role_counts.get(tag.removeprefix("role:"), 0) + 1
+                else:
+                    role_counts["unlabeled"] = role_counts.get("unlabeled", 0) + 1
+                should_keep = bool(keep_role_tags and role_tags.intersection(keep_role_tags))
+                if should_keep:
+                    continue
+                matched += 1
+                if int(row["deleted"]):
+                    already_deleted += 1
+                    continue
+                event_ids_to_hide.append(int(row["id"]))
+            if event_ids_to_hide and not dry_run:
+                updated_at = now_ms()
+                conn.executemany(
+                    "UPDATE memory_state SET deleted = 1, updated_at_ms = ? WHERE event_id = ?",
+                    [(updated_at, event_id) for event_id in event_ids_to_hide],
+                )
+                metadata_json = json.dumps(
+                    {
+                        "reason": "codex-history-role-prune",
+                        "keepRoles": sorted(role.removeprefix("role:") for role in keep_role_tags),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO memory_actions (
+                        created_at_ms, memory_id, event_id, action_type, query, suggestion_id, metadata_json
+                    )
+                    VALUES (?, ?, ?, 'hide', 'codex-history-noise-prune', '', ?)
+                    """,
+                    [(updated_at, f"event:{event_id}", event_id, metadata_json) for event_id in event_ids_to_hide],
+                )
+                self._rebuild_all_phrase_stats(conn)
+        if event_ids_to_hide and not dry_run:
+            self._clear_suggestion_cache()
+        return {
+            "source": "codex_history",
+            "project": project,
+            "keepRoles": sorted(role.removeprefix("role:") for role in keep_role_tags),
+            "dryRun": dry_run,
+            "scanned": len(rows),
+            "matchedNoise": matched,
+            "alreadyDeleted": already_deleted,
+            "hidden": 0 if dry_run else len(event_ids_to_hide),
+            "wouldHide": len(event_ids_to_hide),
+            "roleCounts": role_counts,
+        }
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1137,6 +1218,42 @@ class LocalSqliteCoreClient:
                 last_seen_ms = excluded.last_seen_ms
             """,
             (committed_text, app, input_frequency, int(stats["first_seen_ms"]), int(stats["last_seen_ms"])),
+        )
+
+    @staticmethod
+    def _rebuild_all_phrase_stats(conn: sqlite3.Connection) -> None:
+        conn.execute("DELETE FROM phrase_stats")
+        conn.execute("DELETE FROM phrase_project_stats")
+        conn.execute("DELETE FROM phrase_app_stats")
+        conn.execute(
+            """
+            INSERT INTO phrase_stats(committed_text, input_frequency, first_seen_ms, last_seen_ms)
+            SELECT e.committed_text, COUNT(*), MIN(e.created_at_ms), MAX(e.created_at_ms)
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE s.deleted = 0
+            GROUP BY e.committed_text
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO phrase_project_stats(committed_text, project, input_frequency, first_seen_ms, last_seen_ms)
+            SELECT e.committed_text, e.project, COUNT(*), MIN(e.created_at_ms), MAX(e.created_at_ms)
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE s.deleted = 0 AND e.project != ''
+            GROUP BY e.committed_text, e.project
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO phrase_app_stats(committed_text, app, input_frequency, first_seen_ms, last_seen_ms)
+            SELECT e.committed_text, e.app, COUNT(*), MIN(e.created_at_ms), MAX(e.created_at_ms)
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE s.deleted = 0 AND e.app != ''
+            GROUP BY e.committed_text, e.app
+            """
         )
 
 

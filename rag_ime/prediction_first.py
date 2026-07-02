@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any
 
 from .models import InputSuggestion, ModelPrediction, RimeContextSnapshot, SideCandidateDisplayItem
+from .pinyin_index import text_initials
 from .text_utils import compact_whitespace
 
 
@@ -389,7 +390,7 @@ def prediction_candidate_matches_prefix(candidate: PredictionCandidate, prefix: 
     prefix_norm = _pinyin_norm(prefix)
     if not prefix_norm:
         return True
-    keys = _candidate_pinyin_keys(candidate)
+    keys = _candidate_primary_pinyin_keys(candidate)
     if not keys:
         return False
     return any(key.startswith(prefix_norm) for key in keys)
@@ -610,7 +611,7 @@ def _merge_result(
     )
 
 
-def _candidate_pinyin_keys(candidate: PredictionCandidate) -> tuple[str, ...]:
+def _candidate_primary_pinyin_keys(candidate: PredictionCandidate) -> tuple[str, ...]:
     keys: list[str] = []
     if candidate.initials:
         keys.append(_pinyin_norm(candidate.initials))
@@ -618,11 +619,9 @@ def _candidate_pinyin_keys(candidate: PredictionCandidate) -> tuple[str, ...]:
         joined = "".join(candidate.full_pinyin)
         keys.append(_pinyin_norm(joined))
         keys.extend(_pinyin_norm(item) for item in candidate.full_pinyin)
-    extra = candidate.metadata.get("pinyin_prefixes")
-    if isinstance(extra, (list, tuple)):
-        keys.extend(_pinyin_norm(str(item)) for item in extra)
-    elif isinstance(extra, str):
-        keys.append(_pinyin_norm(extra))
+    for text in (candidate.display_text, candidate.insert_text):
+        if text:
+            keys.append(_pinyin_norm(text_initials(text)))
     return tuple(item for item in dict.fromkeys(keys) if item)
 
 

@@ -2039,3 +2039,26 @@ Verification:
 - Manual `/rebuild-vector-index` indexed 124 active vectors.
 - Live Prediction-first verifier passed with RAG, memory, model, raw English/code/path protection, and Rime fallback.
 - Full suite passed: 279.
+
+### 2026-07-02
+Topic:
+- Make Prediction-first RAG IME use real Codex user history and stop mixing Rime into AI-hit candidates.
+
+User feedback captured:
+- Candidates must predict what the user is trying to say, not show Codex tool/status fragments.
+- RAG and memory should use the user's long Codex/input history, not recent clipboard-like context.
+- If an AI/RAG/memory candidate is available, Rime should not fill the panel; Rime is only first-word/no-match fallback.
+- Weak/noisy contexts should not leave a panel full of generic words like `根据` / `基于` / `和` / `测试`.
+- The branch prefix `codex/...` is only a Git branch namespace on the `7155/wisdom-weasel-rag-ime` repo.
+
+Changes:
+- `import-codex-history` now defaults to `--roles user`; a new `prune-codex-history-noise` command hides previously imported non-user roles.
+- Live DB was backed up, then re-imported from `$HOME/.codex`, adding 4896 user records and rebuilding a 5023-row local vector side-index.
+- `SuggestionCompiler` filters Codex status/tool-log surfaces and extracts usable short IME candidates from numbered design examples.
+- Prefix matching now uses primary pinyin keys only, so a prefix like `sj` no longer matches unrelated middle words.
+- Prediction-first merge now hides Rime/Wanxiang when a prefix-matching side candidate exists, and filters low-value Rime fallback in weak context.
+
+Verification:
+- Full Python suite passed: 285 tests.
+- Live sidecar verifier passed with 650ms budget.
+- macOS frontend build passed.

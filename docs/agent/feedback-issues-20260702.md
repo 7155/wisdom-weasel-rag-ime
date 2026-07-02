@@ -40,3 +40,14 @@
 
 - `/Library/Input Methods/Squirrel.app` 仍有同 bundle id 的旧系统版 Squirrel；当前用户目录 `/Users/undo/Library/Input Methods/Squirrel.app` 已安装 patched app，但 macOS 可能因重复 app 加载旧版本。需要管理员权限运行 `scripts/replace_system_squirrel_app.sh` 或手动移除系统旧版。
 - doctor 的模型专项 case 仍提示 “no MLX model predictions to validate”，但手动 `/api/rime-suggest` 已验证 650ms 内可返回 `sourceType=model`。后续应把 doctor 的模型专项 case 改成与真实 post-commit demo 一致。
+
+## 2026-07-02 18:51 修复记录
+
+- 重新导入 Codex 历史：默认只导入 `role=user`，并在 live DB 备份后新增 4896 条真实用户输入记录。
+- 新增 `prune-codex-history-noise`：旧库里已经导入的非用户 Codex 进度流、工具日志、系统注入和状态片段会被隐藏，并重建短语统计。
+- live vector side-index 已重建到 5023 条 active provider vectors；当前仍是 `local-hash:96:v1` 本地基线，用于验证向量链路，不声称语义效果等同真实 embedding。
+- `SuggestionCompiler` 新增对 Wisdom-Weasel/RAG IME 设计样例的结构化提取：从“候选变成 / 拼音匹配 / [RAG] / [记忆] / [LLM]”等上下文里提取可上屏短候选，而不是把整段对话原文丢进候选栏。
+- prefix 匹配不再用滑动窗口匹配候选中间词，避免 `sj` 命中“数据/系统”这类中间词造成错误召回。
+- 有 prefix-matching 的 LLM/RAG/记忆候选时，不再混入 Rime/Wanxiang 候选；Rime 只在无匹配、无上下文首词、raw 输入兜底时出现。
+- 弱上下文下会过滤 `根据`、`基于`、`和`、`测试` 等低价值 Rime 泛词；没有好候选时清空面板，不继续吃数字键。
+- live sidecar 验证已通过：`python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650` 覆盖 prefix RAG 命中、post-commit LLM/RAG/记忆、弱上下文清空、英文/代码/路径 raw 保护、无上下文 Rime 首词兜底。
