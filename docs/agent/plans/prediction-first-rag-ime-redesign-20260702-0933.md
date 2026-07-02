@@ -169,6 +169,10 @@
 - Python 使用边界:
   - Python 适合作为常驻 sidecar，负责 SQLite/RAG、候选排序、MLX 调用、debug server 和管理面板 API。
   - Python 不适合作为 macOS 前台输入法事件链和候选框渲染层；按键、composition、候选窗口应使用原生 Swift/ObjC/Rime 路线，避免阻塞基础输入。
+- 基础输入保护:
+  - 已补强英文/代码/路径/命令输入兜底：`model_prediction`、`git status`、`/Users/...`、`python`、`npm`、`curl` 等 raw ASCII 输入会生成可直接提交的原文候选。
+  - 在 legacy sidecar merge 和 `predictionFirstMerge` 两条路径中，raw commit candidate 都排在第 1 位；LLM/RAG 可以继续作为辅助候选，但不能抢断代码、路径和命令输入。
+  - 普通纯小写长拼音如 `shuoyihenduoshihou` 仍不会被误判为英文原文候选，避免把错误拼音直接上屏。
 - 当前仍未完成真实 macOS adapter 验收；debug 页面只用于观察候选来源、mode、prefix、sideInserted、wanxiangFallbackCount。
 
 ## 验收 / 退出条件
