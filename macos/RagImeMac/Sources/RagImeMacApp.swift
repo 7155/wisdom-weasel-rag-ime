@@ -115,16 +115,26 @@ enum RagImeMacMain {
         do {
             let bridge = RagBridgeClient()
             try bridge.initializeDatabase()
-            let response = try bridge.suggest(currentInput: "SQLite 和 FTS5 第一版", recentContext: "MVP 先 local-first")
+            let request = RimeSidecarRequest(
+                sessionId: "rag-ime-mac-preview-panel",
+                requestSeq: 1,
+                rawInput: "",
+                preedit: "",
+                commitTextPreview: "我想",
+                committedContext: "我想做一个预测优先的本地 RAG 输入法",
+                idleMs: 80,
+                maxVisibleCandidates: 8,
+                maxSideCandidates: 8,
+                rimeContext: RimeContextPayload(candidates: [], highlightedIndex: 0, page: 0, isLastPage: true)
+            )
+            let response = try bridge.rimeSuggest(request: request)
             let anchor = NSScreen.main.map { screen in
                 NSPoint(x: screen.visibleFrame.midX - 320, y: screen.visibleFrame.midY + 140)
             }
             RagCandidatePanel.shared.show(
-                modelPredictions: response.modelPredictions ?? [],
-                suggestions: response.suggestions,
-                currentInput: response.currentInput,
+                displayCandidates: response.displayCandidates,
+                currentInput: response.semanticQuery,
                 anchor: anchor,
-                onSelectModel: { _, _ in },
                 onSelect: { _, _ in },
                 onAction: { _, _ in }
             )
