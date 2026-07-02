@@ -10,7 +10,9 @@ from typing import Any, Mapping
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .core_client import CoreClient
+from .embeddings import NullEmbeddingProvider
 from .history_context import build_prediction_context, model_prediction_context_limits, prediction_context_metadata
+from .local_sqlite_core import LocalSqliteCoreClient
 from .models import (
     InputSuggestion,
     MemoryAction,
@@ -93,7 +95,8 @@ _SHELL_COMMAND_PREFIXES = _RAW_COMMIT_ASCII_TERMS | {
 }
 _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
-_MODEL_HOLDOVER_TTL_MS = 900
+_REALTIME_MODEL_CONTEXT_BUDGET_MS = 500
+_MODEL_HOLDOVER_TTL_MS = 5000
 _POST_COMMIT_PANEL_TTL_MS = 900
 _MODEL_HOLDOVER_LOCK = RLock()
 _MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
@@ -339,6 +342,7 @@ def build_rime_sidecar_response(
 def suggest_rag_with_latency_budget(
     *,
     adapter: InputMethodAdapter,
+    core: CoreClient,
     current_input: str,
     recent_context: str,
     project: str,
@@ -375,7 +379,8 @@ def suggest_rag_with_latency_budget(
     def run_suggest() -> None:
         started = time.perf_counter()
         try:
-            result["suggestions"] = adapter.suggest(
+            realtime_adapter = _realtime_rag_adapter(adapter=adapter, core=core, budget_ms=budget_ms)
+            result["suggestions"] = realtime_adapter.suggest(
                 SuggestionRequest(
                     current_input=current_input,
                     recent_context=recent_context,
@@ -414,6 +419,21 @@ def suggest_rag_with_latency_budget(
     )
 
 
+def _realtime_rag_adapter(*, adapter: InputMethodAdapter, core: CoreClient, budget_ms: int) -> InputMethodAdapter:
+    if budget_ms > 180 or not isinstance(core, LocalSqliteCoreClient):
+        return adapter
+    return InputMethodAdapter(
+        LocalSqliteCoreClient(
+            core.db_path,
+            suggestion_cache_size=core.suggestion_cache_size,
+            embedding_provider=NullEmbeddingProvider(),
+            vector_candidate_limit=0,
+            vector_weight=0.0,
+        ),
+        project=str(getattr(adapter, "project", "wisdom-weasel-rag-ime")),
+    )
+
+
 def run_side_lanes_with_latency_budget(
     *,
     adapter: InputMethodAdapter,
@@ -430,16 +450,18 @@ def run_side_lanes_with_latency_budget(
 ) -> tuple[list[InputSuggestion], dict[str, object], list[ModelPrediction], dict[str, object]]:
     rag_result: dict[str, object] = {}
     model_result: dict[str, object] = {}
+    rag_budget_ms = _rag_lane_budget_for_request(latency_budget_ms)
 
     def run_rag() -> None:
         suggestions, lane = suggest_rag_with_latency_budget(
             adapter=adapter,
+            core=core,
             current_input=current_input,
             recent_context=recent_context,
             project=project,
             app=app,
             top_k=top_k,
-            latency_budget_ms=latency_budget_ms,
+            latency_budget_ms=rag_budget_ms,
         )
         rag_result["suggestions"] = suggestions
         rag_result["lane"] = lane
@@ -463,8 +485,9 @@ def run_side_lanes_with_latency_budget(
     ]
     for thread in threads:
         thread.start()
+    deadline = time.perf_counter() + max(0, latency_budget_ms) / 1000
     for thread in threads:
-        thread.join(timeout=max(0, latency_budget_ms) / 1000)
+        thread.join(timeout=max(0.0, deadline - time.perf_counter()))
 
     suggestions = rag_result.get("suggestions")
     if not isinstance(suggestions, list):
@@ -474,8 +497,8 @@ def run_side_lanes_with_latency_budget(
         rag_lane = _rag_lane_status(
             called=True,
             timed_out=True,
-            skipped_reason="RAG dispatch exceeded latency budget",
-            budget_ms=max(0, int(latency_budget_ms)),
+                skipped_reason="RAG dispatch exceeded latency budget",
+                budget_ms=rag_budget_ms,
         )
     if recent_context_candidate_fallback_enabled():
         recent_fallback = recent_context_memory_suggestions(
@@ -521,6 +544,13 @@ def run_side_lanes_with_latency_budget(
             )
 
     return suggestions, rag_lane, predictions, model_lane
+
+
+def _rag_lane_budget_for_request(latency_budget_ms: int) -> int:
+    budget = max(0, int(latency_budget_ms))
+    if budget <= _REALTIME_MODEL_CONTEXT_BUDGET_MS:
+        return min(budget, 100)
+    return budget
 
 
 def recent_context_memory_suggestions(
@@ -714,14 +744,19 @@ def predict_model_with_latency_budget(
     def run_prediction() -> None:
         started = time.perf_counter()
         try:
-            context_event_limit, context_char_limit = model_prediction_context_limits()
-            recent_context = build_prediction_context(
-                core,
-                explicit_recent_context=explicit_recent_context,
-                project=project,
-                limit=context_event_limit,
-                max_chars=context_char_limit,
-            )
+            if budget_ms <= _REALTIME_MODEL_CONTEXT_BUDGET_MS:
+                recent_context = compact_whitespace(explicit_recent_context)[-420:]
+                result["contextMode"] = "explicit-realtime"
+            else:
+                context_event_limit, context_char_limit = model_prediction_context_limits()
+                recent_context = build_prediction_context(
+                    core,
+                    explicit_recent_context=explicit_recent_context,
+                    project=project,
+                    limit=context_event_limit,
+                    max_chars=context_char_limit,
+                )
+                result["contextMode"] = "history-expanded"
             result["historyContext"] = recent_context
             if int((time.perf_counter() - started) * 1000) >= budget_ms:
                 result["skippedReason"] = "history context exceeded latency budget"
@@ -792,6 +827,7 @@ def predict_model_with_latency_budget(
         elapsed_ms=_optional_int(result.get("elapsedMs")) or 0,
         prediction_count=len(predictions),
         history_context=_string(result.get("historyContext")),
+        context_mode=_string(result.get("contextMode")),
     )
 
 
@@ -893,6 +929,7 @@ def _model_lane_status(
     prediction_count: int = 0,
     history_context: str = "",
     holdover_hit: bool = False,
+    context_mode: str = "",
 ) -> dict[str, object]:
     return {
         "called": called,
@@ -903,6 +940,7 @@ def _model_lane_status(
         "elapsedMs": elapsed_ms,
         "historyContext": history_context,
         "holdoverHit": holdover_hit,
+        "contextMode": context_mode,
     }
 
 
@@ -1240,8 +1278,6 @@ def decide_side_candidate_refresh(
 
     composing_without_rime_candidate = bool(compact_whitespace(snapshot.raw_input)) and not snapshot.candidates
     if composing_without_rime_candidate and query_basis == "committedContext":
-        if signal_len >= 4:
-            return RimeSideCandidateTriggerDecision(True, "refresh: recent committed context fallback")
         return RimeSideCandidateTriggerDecision(False, "skip: composing without stable Rime candidate")
 
     if query_basis == "commitTextPreview" and signal_len >= 2:

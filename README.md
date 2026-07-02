@@ -906,7 +906,22 @@ Install the local input method app:
 scripts/install_macos_frontend.sh
 ```
 
-The installer writes a user-level bridge config at `~/Library/Application Support/RagImeMac/bridge-config.json` so the installed input method can find this checkout, the shared runtime SQLite DB at `~/Library/Application Support/RagIme/rag-ime.sqlite`, and the Python executable. Override with `RAG_IME_DB_PATH=/path/to/rag-ime.sqlite scripts/build_macos_frontend.sh` only for isolated debug runs.
+The installer copies `RagImeMac.app` to `~/Library/Input Methods/`, writes a
+user-level bridge config at `~/Library/Application Support/RagImeMac/bridge-config.json`,
+and checks whether macOS can see the native input source. To install and select
+the input source in one step, use:
+
+```bash
+scripts/install_macos_frontend.sh --select
+```
+
+If macOS has not enabled the third-party input source yet, the installer prints
+the exact warning and exits successfully unless `--require-input-source` is
+used. You can still add it manually from System Settings -> Keyboard -> Input
+Sources -> Chinese, Simplified -> `RAG IME`.
+
+Override with `RAG_IME_DB_PATH=/path/to/rag-ime.sqlite scripts/build_macos_frontend.sh`
+only for isolated debug runs.
 
 Run the native frontend doctor before a real typing session:
 
@@ -916,6 +931,12 @@ scripts/doctor_macos_frontend.sh
 
 If you have already added `RAG IME` in System Settings -> Keyboard -> Input
 Sources and want the doctor to enforce registration, use:
+
+```bash
+RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 \
+RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE=1 \
+  scripts/doctor_macos_frontend.sh
+```
 
 ```bash
 RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 scripts/doctor_macos_frontend.sh

@@ -162,17 +162,18 @@ final class RagCandidatePanel {
             return
         }
 
-        let inlineCount = visible.prefix(while: { isInlineCandidate($0) }).count
-        if inlineCount > 0 {
-            let inlineCandidates = Array(visible.prefix(min(5, inlineCount)))
+        let inlineCandidates = Array(visible.filter { isInlineCandidate($0) }.prefix(5))
+        if !inlineCandidates.isEmpty {
             contentStack.addArrangedSubview(displayInlineRow(candidates: inlineCandidates) { candidate, index in
                 onSelect(candidate, index)
             })
         }
 
-        for (index, candidate) in visible.enumerated().dropFirst(min(5, inlineCount)) {
-            contentStack.addArrangedSubview(displayCandidateRow(candidate: candidate, number: index + 1) {
-                onSelect(candidate, index)
+        let blockCandidates = visible.filter { !isInlineCandidate($0) }
+        for candidate in blockCandidates {
+            let rank = candidate.selectionRank ?? (Int(candidate.selectionKey ?? "") ?? (visible.firstIndex(of: candidate) ?? 0) + 1)
+            contentStack.addArrangedSubview(displayCandidateRow(candidate: candidate, number: rank) {
+                onSelect(candidate, rank - 1)
             })
         }
 
@@ -426,7 +427,7 @@ final class RagCandidatePanel {
 
     private func fittingSize(displayCandidates: [RimeDisplayCandidate]) -> NSSize {
         let visible = Array(displayCandidates.prefix(8))
-        let inlineCount = min(5, visible.prefix(while: { isInlineCandidate($0) }).count)
+        let inlineCount = min(5, visible.filter { isInlineCandidate($0) }.count)
         let blockRows = max(0, visible.count - inlineCount)
         let inlineHeight = inlineCount > 0 ? 32 : 0
         let rowHeight = min(5, blockRows) * 36

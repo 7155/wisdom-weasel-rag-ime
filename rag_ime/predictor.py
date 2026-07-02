@@ -49,6 +49,11 @@ _LOW_VALUE_IME_CANDIDATES = {
     "根据",
     "生成",
     "假设",
+    "接入",
+    "记忆",
+    "模型",
+    "需要",
+    "输入法",
     "呐",
     "然后",
     "现在",
@@ -56,10 +61,23 @@ _LOW_VALUE_IME_CANDIDATES = {
     "当前",
     "当前问题",
     "当前流程",
+    "直接输出",
     "的",
     "了",
     "和",
     "是",
+    "候选",
+    "后文候选",
+    "输入法候选",
+    "模型候选",
+    "记忆候选",
+    "RAG候选",
+    "LLM候选",
+    "预测",
+    "RAG",
+    "rag",
+    "LLM",
+    "llm",
 }
 
 
@@ -113,7 +131,7 @@ class MlxPredictionConfig:
     profile: str = "custom"
     prompt_mode: str = "mlx-service"
     timeout_s: float = 0.8
-    max_tokens: int = 8
+    max_tokens: int = 24
     temperature: float = 0.15
     top_p: float = 0.85
     provider_name: str = "local-mlx"
@@ -734,7 +752,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
                 model=model,
                 profile=profile,
                 timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", defaults.timeout_ms) / 1000,
-                max_tokens=int(_float_env(source, "RAG_IME_PREDICTOR_MAX_TOKENS", defaults.max_tokens)),
+                max_tokens=int(_float_env(source, "RAG_IME_PREDICTOR_MAX_TOKENS", max(24, defaults.max_tokens))),
                 temperature=_float_env(source, "RAG_IME_PREDICTOR_TEMPERATURE", defaults.temperature),
                 top_p=_float_env(source, "RAG_IME_PREDICTOR_TOP_P", defaults.top_p),
                 provider_name="local-mlx",
@@ -1182,6 +1200,9 @@ def _measure_mlx_stream_ttft(
     query = compact_whitespace(current_input)
     context = compact_whitespace(recent_context)[-420:]
     body = _mlx_predict_body(config, context=context, query=query, max_candidates=max_candidates, stream=True)
+    if stop_after_first_candidate:
+        body["streamFirstCandidate"] = True
+        body["maxCandidates"] = 1
     request = urllib.request.Request(
         f"{str(getattr(config, 'base_url', '')).rstrip('/')}/predict-stream",
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -1367,7 +1388,13 @@ def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
             continue
         if len(normalized) <= 1:
             continue
+        if re.fullmatch(r"[A-Za-z0-9_./:-]{1,8}", normalized):
+            continue
+        if _cjk_char_count(normalized) < 2 and len(normalized) <= 4:
+            continue
         if normalized in _LOW_VALUE_IME_CANDIDATES:
+            continue
+        if normalized.endswith("候选") and _cjk_char_count(normalized) <= 4:
             continue
         if any(normalized.startswith(prefix) for prefix in ("测试", "分析")) and len(normalized) <= 4:
             continue
@@ -1380,6 +1407,10 @@ def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def _cjk_char_count(text: str) -> int:
+    return len(re.findall(r"[\u3400-\u9fff]", text))
 
 
 def _candidate_repeat_norm(text: str) -> str:
@@ -1441,7 +1472,7 @@ def _plain_streaming_candidate_ready(text: str) -> bool:
         return False
     cjk_count = len(re.findall(r"[\u3400-\u9fff]", compacted))
     visible_len = len(re.sub(r"\s+", "", compacted))
-    if cjk_count >= 2:
+    if cjk_count >= 4:
         return True
     if cjk_count == 0:
         return visible_len >= 3
@@ -1449,6 +1480,7 @@ def _plain_streaming_candidate_ready(text: str) -> bool:
 
 
 def _clean_prediction_output(text: str) -> str:
+    text = re.split(r"<\|(?:im_end|endoftext|im_start)\|>", text, maxsplit=1)[0]
     cleaned = re.sub(r"(?is)<think>.*?</think>", " ", text)
     cleaned = re.sub(r"(?is)<think>.*", " ", cleaned)
     cleaned = re.sub(r"(?is)<analysis>.*?</analysis>", " ", cleaned)
@@ -1468,9 +1500,18 @@ def _candidate_parts_from_json_text(text: str) -> list[str]:
 
 def _candidate_parts_from_json_fragment(text: str) -> list[str]:
     match = re.search(r"\[[^\[\]]{1,512}\]", text, flags=re.DOTALL)
-    if not match:
+    if match:
+        return _candidate_parts_from_json_text(match.group(0))
+
+    # Small local Qwen models often return a useful but unfinished JSON array
+    # before the IME timeout, for example:
+    #   ["接入本地记忆","验证 LLM 候选","预测流程完成"
+    # Treat closed string elements as candidates instead of falling through to
+    # whitespace splitting, which would turn "验证 LLM 候选" into noisy tokens.
+    if "[" not in text:
         return []
-    return _candidate_parts_from_json_text(match.group(0))
+    quoted = [match.strip() for match in re.findall(r'"([^"\n\r]{1,48})"', text)]
+    return [item for item in quoted if item]
 
 
 def _candidate_parts_from_json_value(value: Any) -> list[str]:

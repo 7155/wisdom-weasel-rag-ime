@@ -980,6 +980,29 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertNotIn("python3 -m unittest", query_call)
         self.assertIn("vector:", suggestions[0].metadata["reason"])
 
+    def test_retrieval_falls_back_when_request_project_has_no_history(self) -> None:
+        provider = CapturingEmbeddingProvider()
+        db_path = Path(self.tmp.name) / "project-fallback.sqlite"
+        core = LocalSqliteCoreClient(db_path, embedding_provider=provider, vector_weight=2.0)
+        adapter = InputMethodAdapter(core)
+        adapter.commit_text(
+            "embedding 检索应该使用上下文窗口",
+            recent_context="RAG 输入法 query 构造",
+            project="wisdom-weasel-rag-ime",
+        )
+
+        suggestions = adapter.suggest(
+            SuggestionRequest(
+                current_input="怎么调用 embedding",
+                recent_context="检索应该包含上下文窗口",
+                project="learnA",
+                top_k=1,
+            )
+        )
+
+        self.assertEqual(suggestions[0].surface_text, "embedding 检索应该使用上下文窗口")
+        self.assertIn("vector:", suggestions[0].metadata["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()
