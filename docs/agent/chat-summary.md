@@ -1765,3 +1765,24 @@ Changes:
 
 Next:
 - Replace the root-owned system Squirrel with the patched app using admin credentials, then rerun foreground trace and number-key commit validation.
+
+### 2026-07-02
+Topic:
+- Run through the Prediction-first service flow after user reported that LLM/RAG/memory candidates were not visible.
+
+Findings:
+- Live `/rime-suggest` showed the post-commit state existed but side lanes were skipped when only `committedContext` was present and idle was below 300 ms.
+- This made the post-commit continuation panel empty even though prefix-constrained cases could show model/memory.
+
+Changes:
+- Post-commit committed-context refresh now fires immediately when there is no active composition.
+- Prediction modes now filter weak low-value wanxiang fallback terms and short model noise like `测试流程`.
+- Live verifier now covers post-commit continuation plus raw command/code/path protection.
+
+Verification:
+- 88 focused tests passed.
+- MLX predictor and sidecar LaunchAgents were restarted and health-checked.
+- Live sidecar verifier passed all seven flow cases.
+
+Next:
+- Continue with native foreground validation in Codex App, Edge, and TextEdit; if the front panel still shows old candidates, inspect whether the patched Squirrel frontend is sending fresh context and applying the sidecar response.

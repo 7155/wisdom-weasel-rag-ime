@@ -2531,3 +2531,25 @@ Verification:
 Status:
 - The next real unblock is replacing `/Library/Input Methods/Squirrel.app` with the patched app using admin credentials, or manually removing the stale system Squirrel app.
 - After that, rerun foreground trace with either manual typing or Accessibility permission for Codex/Terminal automation.
+
+### 2026-07-02 12:44 CST
+Problem:
+- User reported that the visible flow still looked like traditional Rime/wanxiang candidates and that LLM/RAG/memory output was not reliably visible.
+- Live sidecar probing found the concrete service-layer bug: `post_commit_predicting` was inferred, but when `rawInput/preedit` were empty and only `committedContext` existed, `decide_side_candidate_refresh()` skipped side lanes until an idle delay, leaving the post-commit panel empty.
+
+Changes:
+- `committedContext` with no active composition now refreshes immediately as `refresh: post-commit continuation`.
+- Prediction-first fallback filters low-value wanxiang/Rime terms in prediction modes, so weak contexts do not fall back to `根据/基于/和/测试`.
+- MLX/provider low-value filters now also remove short phrase noise such as `测试流程`, `分析问题`, and `当前问题`.
+- `scripts/verify_prediction_first_sidecar.py` now live-checks seven flows: prefix-constrained model+memory, post-commit model+memory, weak-context filtering, raw command, code identifier, path input, and plain Rime anchor fallback.
+
+Commands:
+- `git status -sb`: branch `codex/wisdom-weasel-rag-ime-mvp`; modified prediction/sidecar/test files; untracked `installation.yaml` left untouched.
+- `git diff --stat`: 7 files, 158 insertions, 3 deletions before commit.
+- `python3 -m unittest tests.test_prediction_first tests.test_rime_sidecar tests.test_predictor tests.test_pinyin_index`: 88 tests passed.
+- Restarted MLX predictor LaunchAgent and sidecar LaunchAgent; both health checks passed.
+- `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 350`: live sidecar verification passed with all seven cases.
+
+Findings:
+- Backend service flow is now genuinely Prediction-first for the tested paths: post-commit returns `model + memory` with no Rime fallback, prefix-constrained returns model/memory before fallback, and code/path/command input keeps raw English first.
+- Remaining foreground validation is still native macOS/Squirrel panel behavior in real editors.

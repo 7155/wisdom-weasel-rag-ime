@@ -656,7 +656,7 @@ class PredictionProviderTests(unittest.TestCase):
 
     def test_prediction_filter_removes_low_value_filler_candidates(self) -> None:
         self.assertEqual(
-            _filter_low_value_ime_candidates(["嗯", "推荐", "啊", "呃", "和", "嗯嗯", "当前"]),
+            _filter_low_value_ime_candidates(["嗯", "推荐", "啊", "呃", "和", "嗯嗯", "当前", "测试流程", "当前问题"]),
             ["推荐"],
         )
 

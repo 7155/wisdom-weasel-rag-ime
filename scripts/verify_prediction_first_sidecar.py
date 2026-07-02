@@ -22,8 +22,11 @@ def main() -> int:
     base_url = args.base_url.rstrip("/")
     cases = [
         prediction_first_payload(args.latency_budget_ms),
+        post_commit_payload(args.latency_budget_ms),
         weak_context_payload(args.latency_budget_ms),
         raw_command_payload(args.latency_budget_ms),
+        raw_code_identifier_payload(args.latency_budget_ms),
+        raw_path_payload(args.latency_budget_ms),
         rime_fallback_payload(args.latency_budget_ms),
     ]
     report: dict[str, Any] = {
@@ -115,6 +118,22 @@ def weak_context_payload(latency_budget_ms: int) -> dict[str, Any]:
     return {"caseId": "weak-context-no-low-value-model", "payload": payload}
 
 
+def post_commit_payload(latency_budget_ms: int) -> dict[str, Any]:
+    payload = patched_frontend_base("post-commit", latency_budget_ms)
+    payload.update(
+        {
+            "rawInput": "",
+            "preedit": "",
+            "commitTextPreview": "",
+            "idleMs": 80,
+            "forceSideCandidates": False,
+            "committedContext": "我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+            "rimeContext": {"candidates": []},
+        }
+    )
+    return {"caseId": "post-commit-model-memory-panel", "payload": payload}
+
+
 def raw_command_payload(latency_budget_ms: int) -> dict[str, Any]:
     payload = patched_frontend_base("raw-command", latency_budget_ms)
     payload.update(
@@ -126,6 +145,32 @@ def raw_command_payload(latency_budget_ms: int) -> dict[str, Any]:
         }
     )
     return {"caseId": "raw-command-keeps-english-first", "payload": payload}
+
+
+def raw_code_identifier_payload(latency_budget_ms: int) -> dict[str, Any]:
+    payload = patched_frontend_base("raw-code", latency_budget_ms)
+    payload.update(
+        {
+            "rawInput": "model_prediction",
+            "preedit": "model_prediction",
+            "committedContext": "正在调试输入法英文和代码输入保护",
+            "rimeContext": {"candidates": [{"label": "1", "text": "模型", "comment": "wanxiang", "index": 0}]},
+        }
+    )
+    return {"caseId": "raw-code-identifier-keeps-english-first", "payload": payload}
+
+
+def raw_path_payload(latency_budget_ms: int) -> dict[str, Any]:
+    payload = patched_frontend_base("raw-path", latency_budget_ms)
+    payload.update(
+        {
+            "rawInput": "/Volumes/undo 4t/git/learnA",
+            "preedit": "/Volumes/undo 4t/git/learnA",
+            "committedContext": "正在调试 Codex 项目路径输入保护",
+            "rimeContext": {"candidates": [{"label": "1", "text": "路径", "comment": "wanxiang", "index": 0}]},
+        }
+    )
+    return {"caseId": "raw-path-keeps-english-first", "payload": payload}
 
 
 def rime_fallback_payload(latency_budget_ms: int) -> dict[str, Any]:
@@ -181,6 +226,14 @@ def check_case(case: dict[str, Any], response: dict[str, Any], *, elapsed_ms: in
         require(int(policy.get("wanxiangFallbackCount") or 0) == 0, case_id, "wanxiang fallback count must be 0", failures)
         require(int(policy.get("prefixMatchedSideInserted") or 0) > 0, case_id, "pinyin prefix must match at least one side candidate", failures)
         require(not (LOW_VALUE & set(texts)), case_id, "low-value words must be filtered", failures)
+    elif case_id == "post-commit-model-memory-panel":
+        require(prediction_first.get("enabled") is True, case_id, "prediction-first must be enabled", failures)
+        require(prediction_first.get("mode") == "post_commit_predicting", case_id, "must enter post-commit mode", failures)
+        require("model" in source_types, case_id, "must show model continuation", failures)
+        require(any(source in {"memory", "rag"} for source in source_types), case_id, "must show memory/RAG continuation", failures)
+        require("rime" not in source_types, case_id, "post-commit panel must not show Rime fallback", failures)
+        require(int(policy.get("sideInserted") or 0) > 0, case_id, "must insert side candidates", failures)
+        require(policy.get("rimeCompositionOwnedByRime") is False, case_id, "post-commit panel is not Rime composition", failures)
     elif case_id == "weak-context-no-low-value-model":
         require(prediction_first.get("enabled") is True, case_id, "prediction-first must be enabled", failures)
         require(not (LOW_VALUE & set(texts)), case_id, "weak context must not surface low-value words", failures)
@@ -190,6 +243,14 @@ def check_case(case: dict[str, Any], response: dict[str, Any], *, elapsed_ms: in
         first = display[0] if display and isinstance(display[0], dict) else {}
         require(first.get("sourceType") == "raw_english", case_id, "raw command must stay first", failures)
         require(first.get("insertText") == "git status", case_id, "raw command insert text mismatch", failures)
+    elif case_id == "raw-code-identifier-keeps-english-first":
+        first = display[0] if display and isinstance(display[0], dict) else {}
+        require(first.get("sourceType") == "raw_english", case_id, "raw code identifier must stay first", failures)
+        require(first.get("insertText") == "model_prediction", case_id, "raw code identifier insert text mismatch", failures)
+    elif case_id == "raw-path-keeps-english-first":
+        first = display[0] if display and isinstance(display[0], dict) else {}
+        require(first.get("sourceType") == "raw_english", case_id, "raw path must stay first", failures)
+        require(first.get("insertText") == "/Volumes/undo 4t/git/learnA", case_id, "raw path insert text mismatch", failures)
     elif case_id == "rime-fallback-when-no-context":
         require(source_types[:2] == ["rime", "rime"], case_id, "plain anchor should keep Rime fallback", failures)
     return report, failures

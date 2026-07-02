@@ -1013,6 +1013,9 @@ def decide_side_candidate_refresh(
         return RimeSideCandidateTriggerDecision(False, "skip: preedit not stable enough")
 
     if query_basis == "committedContext":
+        no_active_composition = not compact_whitespace(snapshot.raw_input) and not compact_whitespace(snapshot.preedit)
+        if no_active_composition and signal_len >= 4:
+            return RimeSideCandidateTriggerDecision(True, "refresh: post-commit continuation")
         if snapshot.idle_ms >= 300 and signal_len >= 4:
             return RimeSideCandidateTriggerDecision(True, "refresh: idle committed context")
         return RimeSideCandidateTriggerDecision(False, "skip: waiting for active composition signal")
