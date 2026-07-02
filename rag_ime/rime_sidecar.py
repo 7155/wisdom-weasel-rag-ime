@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import re
 import time
 from dataclasses import dataclass
 from threading import BoundedSemaphore, Event, RLock, Thread
-from typing import Any
+from typing import Any, Mapping
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .core_client import CoreClient
@@ -88,6 +90,32 @@ _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_HOLDOVER_TTL_MS = 900
 _MODEL_HOLDOVER_LOCK = RLock()
 _MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
+_RECENT_MEMORY_KEYWORDS = (
+    "输入法",
+    "RAG",
+    "rag",
+    "LLM",
+    "llm",
+    "记忆",
+    "模型",
+    "候选",
+    "预测",
+    "调试",
+    "流程",
+    "Codex",
+    "Agent",
+    "agent",
+)
+_RECENT_MEMORY_LOW_VALUE = {
+    "根据",
+    "基于",
+    "测试",
+    "分析",
+    "假设",
+    "或者",
+    "现在",
+    "目前",
+}
 
 
 @dataclass(frozen=True)
@@ -175,7 +203,7 @@ def build_rime_sidecar_response(
             "totalLatencyBudgetMs": snapshot.latency_budget_ms,
             "elapsedBeforeModelMs": 0,
         }
-    prediction_first_enabled = _bool(payload.get("predictionFirstMerge"), default=False)
+    prediction_first_enabled = prediction_first_merge_enabled(payload)
     if prediction_first_enabled:
         prediction_first_result = merge_prediction_first_candidates(
             snapshot=snapshot,
@@ -396,6 +424,19 @@ def run_side_lanes_with_latency_budget(
             skipped_reason="RAG dispatch exceeded latency budget",
             budget_ms=max(0, int(latency_budget_ms)),
         )
+    recent_fallback = recent_context_memory_suggestions(
+        recent_context=explicit_recent_context or recent_context,
+        current_input=current_input,
+        top_k=max(0, int(top_k) - len(suggestions)),
+    )
+    if recent_fallback:
+        seen_surfaces = {compact_whitespace(item.surface_text) for item in suggestions}
+        for item in recent_fallback:
+            if compact_whitespace(item.surface_text) not in seen_surfaces:
+                suggestions.append(item)
+                seen_surfaces.add(compact_whitespace(item.surface_text))
+        rag_lane["recentContextFallbackCount"] = len(recent_fallback)
+        rag_lane["suggestionCount"] = len(suggestions)
 
     predictions = model_result.get("predictions")
     if not isinstance(predictions, list):
@@ -425,6 +466,79 @@ def run_side_lanes_with_latency_budget(
             )
 
     return suggestions, rag_lane, predictions, model_lane
+
+
+def recent_context_memory_suggestions(
+    *,
+    recent_context: str,
+    current_input: str,
+    top_k: int,
+) -> list[InputSuggestion]:
+    if top_k <= 0:
+        return []
+    context = compact_whitespace(recent_context)
+    if len(context) < 12:
+        return []
+    if not any(keyword in context for keyword in _RECENT_MEMORY_KEYWORDS):
+        return []
+    current = compact_whitespace(current_input)
+    candidates: list[str] = []
+    for segment in re.split(r"[，。！？；;,.!?、\n\r]+", context):
+        text = compact_whitespace(segment)
+        if 4 <= len(text) <= 28:
+            candidates.append(text)
+        for keyword in _RECENT_MEMORY_KEYWORDS:
+            pos = text.find(keyword)
+            if pos < 0:
+                continue
+            start = max(0, pos - 6)
+            end = min(len(text), pos + len(keyword) + 12)
+            phrase = compact_whitespace(text[start:end])
+            if 4 <= len(phrase) <= 24:
+                candidates.append(phrase)
+    result: list[InputSuggestion] = []
+    seen: set[str] = set()
+    for text in candidates:
+        text = _normalize_recent_memory_surface(text)
+        if not text or text in seen or text == current:
+            continue
+        if text in _RECENT_MEMORY_LOW_VALUE:
+            continue
+        seen.add(text)
+        index = len(result)
+        result.append(
+            InputSuggestion(
+                suggestion_id=f"recent-context-memory:{index}:{_short_stable_id(context[-80:], text)}",
+                surface_text=text,
+                suggestion_type="memory",
+                source_event_id=0,
+                evidence_preview=context[-160:],
+                confidence=0.72 - (index * 0.02),
+                expanded_evidence=context,
+                metadata={
+                    "source_type": "memory",
+                    "memory_id": f"recent-context:{index}",
+                    "insert_text": text,
+                    "fallback": "recent_context",
+                },
+            )
+        )
+        if len(result) >= top_k:
+            break
+    return result
+
+
+def _normalize_recent_memory_surface(text: str) -> str:
+    text = compact_whitespace(text)
+    text = re.sub(r"^[,，。！？；;、\s]+|[,，。！？；;、\s]+$", "", text)
+    text = re.sub(r"^(的|和|与|及|或|把|再|先|然后)\s*(?=[A-Za-z0-9\u3400-\u9fff])", "", text)
+    text = compact_whitespace(text)
+    return text
+
+
+def _short_stable_id(*parts: str) -> str:
+    material = "\x1f".join(parts)
+    return hashlib.sha1(material.encode("utf-8")).hexdigest()[:10]
 
 
 def predict_model_with_latency_budget(
@@ -812,6 +926,9 @@ def choose_semantic_query(snapshot: RimeContextSnapshot) -> tuple[str, str]:
         return raw_semantic_input, "rawSemanticInput"
     candidate_text = compact_whitespace(" ".join(item.text for item in snapshot.candidates[:3] if item.text))
     if candidate_text:
+        context = compact_whitespace(snapshot.committed_context)
+        if context:
+            return compact_whitespace(f"{context[-160:]} {candidate_text}"), "rimeCandidates"
         return candidate_text, "rimeCandidates"
     preedit = compact_whitespace(snapshot.preedit)
     raw_input = compact_whitespace(snapshot.raw_input)
@@ -821,6 +938,14 @@ def choose_semantic_query(snapshot: RimeContextSnapshot) -> tuple[str, str]:
     if context:
         return context[-240:], "committedContext"
     return raw_input, "rawInputFallback"
+
+
+def prediction_first_merge_enabled(payload: Mapping[str, object]) -> bool:
+    if "predictionFirstMerge" in payload:
+        return _bool(payload.get("predictionFirstMerge"), default=False)
+    frontend_build = compact_whitespace(str(payload.get("frontendBuild") or ""))
+    schema_version = compact_whitespace(str(payload.get("schemaVersion") or ""))
+    return frontend_build.startswith("rag-ime.") or schema_version.startswith("rag-ime.squirrel")
 
 
 def decide_side_candidate_refresh(

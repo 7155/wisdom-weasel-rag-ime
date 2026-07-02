@@ -51,7 +51,7 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual([item.source_type for item in result.display_candidates], ["rime", "rime"])
         self.assertEqual(result.policy["sideInserted"], 0)
 
-    def test_prefix_constrained_composition_inserts_matching_predictions_before_wanxiang_fallback(self) -> None:
+    def test_prefix_constrained_composition_keeps_llm_rag_before_wanxiang_fallback(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",
             request_seq=2,
@@ -117,20 +117,21 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertTrue(result.policy["rimeCompositionOwnedByRime"])
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["设计一个候选展示方式", "设计输入法状态机", "手机", "世界"],
+            ["设计一个候选展示方式", "设计输入法状态机", "把本地记忆注入 Agent 首次运行上下文"],
         )
         self.assertEqual(
             [item.source_type for item in result.display_candidates],
-            ["rag", "model", "rime", "rime"],
+            ["rag", "model", "rag"],
         )
-        self.assertEqual([item.label for item in result.display_candidates], ["1", "2", "3", "4"])
-        self.assertEqual(result.policy["sideInserted"], 2)
-        self.assertEqual(result.policy["wanxiangFallbackCount"], 2)
+        self.assertEqual([item.label for item in result.display_candidates], ["1", "2", "3"])
+        self.assertEqual(result.policy["sideInserted"], 3)
+        self.assertEqual(result.policy["prefixMatchedSideInserted"], 2)
+        self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
         self.assertEqual(result.display_candidates[0].display_lane, "memory")
-        self.assertEqual(result.display_candidates[2].display_lane, "wanxiang")
+        self.assertEqual(result.display_candidates[2].display_lane, "memory")
         self.assertEqual(result.display_candidates[0].metadata["candidate_mode"], "prefix_constrained_composing")
 
-    def test_prefix_constrained_composition_falls_back_to_wanxiang_when_prediction_does_not_match(self) -> None:
+    def test_prefix_constrained_composition_uses_unmatched_llm_before_wanxiang_when_available(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",
             request_seq=3,
@@ -155,6 +156,26 @@ class PredictionFirstTests(unittest.TestCase):
             ],
             suggestions=[],
         )
+
+        self.assertEqual([item.text for item in result.display_candidates], ["把这个项目整理成面试亮点"])
+        self.assertEqual([item.source_type for item in result.display_candidates], ["model"])
+        self.assertEqual(result.policy["sideInserted"], 1)
+        self.assertEqual(result.policy["prefixMatchedSideInserted"], 0)
+        self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
+
+    def test_prefix_constrained_composition_falls_back_to_wanxiang_only_when_side_empty(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=3,
+            raw_input="sj",
+            preedit="sj",
+            committed_context="我想",
+            candidates=(RimeCandidate(text="手机", comment="wanxiang", index=0),),
+            max_visible_candidates=5,
+            max_side_candidates=3,
+        )
+
+        result = merge_prediction_first_candidates(snapshot=snapshot, model_predictions=[], suggestions=[])
 
         self.assertEqual([item.text for item in result.display_candidates], ["手机"])
         self.assertEqual([item.source_type for item in result.display_candidates], ["rime"])

@@ -126,12 +126,13 @@ def merge_prediction_first_candidates(
 
     prediction_candidates = pool.prediction_order()
     if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING:
-        prediction_candidates = tuple(
-            item for item in prediction_candidates if prediction_candidate_matches_prefix(item, prefix)
-        )
+        matched = tuple(item for item in prediction_candidates if prediction_candidate_matches_prefix(item, prefix))
+        unmatched = tuple(item for item in prediction_candidates if item not in matched)
+        prediction_candidates = matched + unmatched
 
     side_budget = min(snapshot.max_side_candidates, max_visible)
     side_inserted = 0
+    prefix_matched_side_inserted = 0
     for candidate in prediction_candidates:
         if len(display) >= max_visible or side_inserted >= side_budget:
             break
@@ -141,9 +142,12 @@ def merge_prediction_first_candidates(
         seen.add(normalized)
         display.append(_side_display_item(candidate, len(display), resolved_mode, prefix))
         side_inserted += 1
+        if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING and prediction_candidate_matches_prefix(candidate, prefix):
+            prefix_matched_side_inserted += 1
 
     before_rime = len(display)
-    _append_rime_candidates(display, seen, snapshot, max_visible=max_visible)
+    if side_inserted == 0:
+        _append_rime_candidates(display, seen, snapshot, max_visible=max_visible)
     rime_count = len(display) - before_rime
 
     return _merge_result(
@@ -153,10 +157,11 @@ def merge_prediction_first_candidates(
         side_inserted=side_inserted,
         rime_fallback_count=rime_count,
         reason=(
-            "prefix-constrained predictions inserted before wanxiang/rime fallback"
+            "prefix-constrained predictions sorted first; remaining LLM/RAG candidates fill before wanxiang/rime fallback"
             if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING
             else "post-commit predictions shown before fallback candidates"
         ),
+        prefix_matched_side_inserted=prefix_matched_side_inserted,
     )
 
 
@@ -177,6 +182,8 @@ def _candidate_from_suggestion(suggestion: InputSuggestion, index: int) -> Predi
     if source_type not in {"rag", "memory"}:
         source_type = "rag"
     source_weight = 2.0 if source_type == "rag" else 1.8
+    if metadata.get("fallback") == "recent_context":
+        source_weight = 0.75
     return PredictionCandidate(
         display_text=suggestion.surface_text,
         insert_text=insert_text,
@@ -322,6 +329,7 @@ def _merge_result(
     rime_fallback_count: int,
     reason: str,
     raw_commit_inserted: int = 0,
+    prefix_matched_side_inserted: int = 0,
 ) -> PredictionFirstMergeResult:
     return PredictionFirstMergeResult(
         mode=mode,
@@ -332,6 +340,7 @@ def _merge_result(
             "mode": mode.value,
             "reason": reason,
             "sideInserted": side_inserted,
+            "prefixMatchedSideInserted": prefix_matched_side_inserted,
             "rawCommitInserted": raw_commit_inserted,
             "wanxiangFallbackCount": rime_fallback_count,
             "rimeCompositionOwnedByRime": mode in {InputMode.ANCHOR_COMPOSING, InputMode.PREFIX_CONSTRAINED_COMPOSING},

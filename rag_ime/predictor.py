@@ -33,10 +33,26 @@ MLX_STABLE_PREFIX = f"{OLLAMA_CHAT_SYSTEM_PROMPT}\n"
 _LOW_VALUE_IME_CANDIDATES = {
     "啊",
     "阿",
+    "测试",
+    "分析",
+    "并且",
+    "但是",
     "呃",
     "嗯",
     "额",
+    "或者",
+    "基于",
+    "根据",
+    "生成",
+    "假设",
     "呐",
+    "然后",
+    "现在",
+    "目前",
+    "的",
+    "了",
+    "和",
+    "是",
 }
 
 
@@ -1336,6 +1352,8 @@ def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
     for candidate in candidates:
         normalized = compact_whitespace(candidate)
         if not normalized:
+            continue
+        if len(normalized) <= 1:
             continue
         if normalized in _LOW_VALUE_IME_CANDIDATES:
             continue

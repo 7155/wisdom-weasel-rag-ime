@@ -18,17 +18,38 @@ from .text_utils import compact_whitespace
 
 
 SYSTEM_PROMPT = (
-    "你是中文输入法候选预测器。只输出可以直接上屏的中文候选短语。"
-    '返回 JSON 字符串数组, 例如 ["现在","现状"], 不要解释, 不要编号, '
-    "不要输出拼音, 不要输出<think>。"
+    "你是 Prediction-first 中文输入法的本地续写模型。任务是根据用户已经上屏的上下文, "
+    "输出可以直接接在光标后的中文短语或短句。"
+    '只返回 JSON 字符串数组, 例如 ["把流程跑通","接入本地记忆","验证 LLM 候选"], '
+    "不要解释, 不要编号, 不要输出拼音, 不要输出<think>。"
+    "不要输出泛词或传统词库噪声: 根据、基于、和、测试、分析、假设、或者、现在、目前、然后。"
 )
 
 LOGITS_SYSTEM_PROMPT = (
-    "你是中文输入法候选预测器。根据上下文和当前输入, 直接给出最可能上屏的中文候选文本。"
-    "不要解释, 不要编号, 不要 JSON, 不要拼音。"
+    "你是 Prediction-first 中文输入法的本地续写模型。根据用户已经上屏的上下文, "
+    "直接给出最可能接在光标后的中文短语。不要解释, 不要编号, 不要 JSON, 不要拼音。"
+    "不要输出泛词: 根据、基于、和、测试、分析、假设、或者、现在、目前、然后。"
 )
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_LOW_VALUE_LOGITS_CANDIDATES = {
+    "测试",
+    "分析",
+    "并且",
+    "但是",
+    "或者",
+    "基于",
+    "根据",
+    "生成",
+    "假设",
+    "然后",
+    "现在",
+    "目前",
+    "的",
+    "了",
+    "和",
+    "是",
+}
 
 
 @dataclass(frozen=True)
@@ -118,7 +139,7 @@ class MlxLmEngine:
             max_candidates=max_candidates,
             request_metadata=request_metadata,
         )
-        if logits_candidates["candidates"]:
+        if _logits_candidates_are_ime_quality(logits_candidates["candidates"], max_candidates=max_candidates):
             total_ms = int((time.perf_counter() - started) * 1000)
             return {
                 "ok": True,
@@ -160,7 +181,9 @@ class MlxLmEngine:
             "promptCache": self.prompt_cache_status(),
             "timing": {
                 "candidateMode": "json-generation",
+                "logitsMs": logits_candidates.get("elapsedMs", 0),
                 "fallbackJson": True,
+                "fallbackReason": logits_candidates.get("qualityReason") or "logits_candidates_not_phrase_quality",
             },
             "requestMeta": dict(request_metadata or {}),
         }
@@ -217,6 +240,8 @@ class MlxLmEngine:
         for token_id in _top_logprob_indices(logprobs, limit=max(1, int(scan_limit))):
             text = _normalize_logits_candidate_text(self.tokenizer.decode([int(token_id)]))
             if not text or text in seen:
+                continue
+            if text in _LOW_VALUE_LOGITS_CANDIDATES:
                 continue
             if len(text) > 8 or not _CJK_RE.search(text):
                 continue
@@ -614,9 +639,14 @@ def _stable_prompt_prefix() -> str:
 
 def _build_mlx_dynamic_prompt(*, current_input: str, recent_context: str, max_candidates: int) -> str:
     return (
-        f"上下文: {recent_context}\n"
-        f"当前输入: {current_input}\n"
-        f"输出 {max_candidates} 个最可能的短候选。"
+        f"已上屏上下文: {recent_context}\n"
+        f"当前拼音或参考候选: {current_input}\n"
+        "要求:\n"
+        "- 输出能直接接在已上屏上下文后面的候选, 每个 2 到 16 个汉字为主。\n"
+        "- 当前输入如果是拼音、英文串或 Rime 候选列表, 只把它当作约束, 不要复述这些词。\n"
+        "- 候选要像用户下一步真的会输入的内容, 优先项目、输入法、RAG、记忆、调试、模型相关表达。\n"
+        "- 不要输出单字、语气词、连接词、泛词、重复词。\n"
+        f"输出 {max_candidates} 个候选 JSON 数组。"
     )
 
 
@@ -725,6 +755,27 @@ def _normalize_logits_candidate_text(value: Any) -> str:
     if "<|" in text or "�" in text:
         return ""
     return text
+
+
+def _logits_candidates_are_ime_quality(candidates: Any, *, max_candidates: int) -> bool:
+    if not isinstance(candidates, list):
+        return False
+    texts = [compact_whitespace(str(item)) for item in candidates if compact_whitespace(str(item))]
+    if not texts:
+        return False
+    if len(texts) < max(3, min(5, int(max_candidates))):
+        return False
+    phrase_like = [
+        text
+        for text in texts
+        if len(text) >= 3 and text not in _LOW_VALUE_LOGITS_CANDIDATES and not re.fullmatch(r"[嗯啊呃额哦噢唔]{1,4}", text)
+    ]
+    if len(phrase_like) < max(3, min(5, int(max_candidates))):
+        return False
+    single_char_count = sum(1 for text in phrase_like if len(text) == 1)
+    if single_char_count > len(phrase_like) // 2:
+        return False
+    return True
 
 
 def _prompt_cache_used_for_generation(prompt_cache: dict[str, Any]) -> bool:
