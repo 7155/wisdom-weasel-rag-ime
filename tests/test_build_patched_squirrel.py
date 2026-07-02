@@ -108,6 +108,19 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("list_command=", result.stdout)
         self.assertIn("build_command=", result.stdout)
         self.assertIn("CODE_SIGNING_ALLOWED=NO build", result.stdout)
+        self.assertIn("enable_pref_repair=0", result.stdout)
+        self.assertIn("auto_select=0", result.stdout)
+
+    def test_branded_install_pref_repair_and_auto_select_are_explicit(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "build_patched_squirrel.sh").read_text(encoding="utf-8")
+
+        self.assertIn("RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR", source)
+        self.assertIn("RAG_IME_SQUIRREL_AUTO_SELECT", source)
+        self.assertIn('if bool_true "$ENABLE_PREF_REPAIR"', source)
+        self.assertIn('if bool_true "$AUTO_SELECT"', source)
+        self.assertIn("preference repair is disabled", source)
+        self.assertIn("not selecting branded input source automatically", source)
 
     def test_build_script_uses_xcodebuild_list_and_build(self) -> None:
         root = Path(__file__).resolve().parents[1]

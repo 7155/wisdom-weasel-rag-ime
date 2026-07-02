@@ -314,6 +314,17 @@ RAG_IME_INPUT_SOURCE_BUNDLE_ID=im.rag-ime.inputmethod.RagIme \
   scripts/check_macos_input_source.sh im.rag-ime.inputmethod.RagIme.Hans
 ```
 
+The branded install does not directly repair macOS input-source preference
+plists or auto-select the input source by default. Add `RAG-IME - Simplified`
+from System Settings, then switch from the macOS input menu. The old direct
+preference repair and automatic selection paths are opt-in debug actions:
+
+```bash
+RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR=1 \
+RAG_IME_SQUIRREL_AUTO_SELECT=1 \
+  scripts/build_patched_squirrel.sh install
+```
+
 For a machine-wide install, set `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"`.
 If the strict doctor reports
 `stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch`,
