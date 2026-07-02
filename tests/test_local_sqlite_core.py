@@ -12,7 +12,11 @@ from rag_ime.agent_hook import build_first_run_injection
 from rag_ime.cli import main, run_acceptance, seed_demo_memories
 from rag_ime.core_client import default_fixture_memories
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.models import MemoryAction
+from rag_ime.models import InputEvent, MemoryAction
+from rag_ime.text_utils import now_ms
+
+
+DAY_MS = 24 * 60 * 60 * 1000
 
 
 class SemanticTestEmbeddingProvider:
@@ -256,6 +260,95 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(suggestions[0].surface_text, "高频候选方案")
         self.assertIn("frequency:2", suggestions[0].metadata["reason"])
         self.assertEqual(suggestions[0].metadata["state"]["input_frequency"], 2)
+
+    def test_phrase_frequency_uses_recentness_decay(self) -> None:
+        self.core.reset()
+        now = now_ms()
+        for index in range(8):
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now - 120 * DAY_MS + index,
+                    source="test",
+                    committed_text="旧高频候选方案",
+                    recent_context="输入法 词频 候选方案",
+                    project="wisdom-weasel-rag-ime",
+                )
+            )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now,
+                source="test",
+                committed_text="近期候选方案",
+                recent_context="输入法 词频 候选方案",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="输入法 词频 候选方案", top_k=2))
+
+        self.assertEqual(suggestions[0].surface_text, "近期候选方案")
+        self.assertIn("recent:", suggestions[0].metadata["reason"])
+        self.assertGreater(suggestions[0].metadata["state"]["recent_boost"], 0)
+        self.assertEqual(suggestions[1].surface_text, "旧高频候选方案")
+        self.assertIn("frequency:8", suggestions[1].metadata["reason"])
+        self.assertGreater(suggestions[1].metadata["state"]["phrase_age_days"], 100)
+
+    def test_phrase_stats_refreshes_after_delete(self) -> None:
+        self.core.reset()
+        first_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_000_000,
+                source="test",
+                committed_text="可删除高频候选",
+                recent_context="输入法 词频 候选方案",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        second_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_001_000,
+                source="test",
+                committed_text="可删除高频候选",
+                recent_context="输入法 词频 候选方案",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=0,
+                memory_id=first_id,
+                action_type="delete",
+                query="输入法 词频 候选方案",
+            )
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            remaining = conn.execute(
+                "SELECT input_frequency FROM phrase_stats WHERE committed_text = ?",
+                ("可删除高频候选",),
+            ).fetchone()[0]
+        self.assertEqual(remaining, 1)
+
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=0,
+                memory_id=second_id,
+                action_type="delete",
+                query="输入法 词频 候选方案",
+            )
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            gone = conn.execute(
+                "SELECT input_frequency FROM phrase_stats WHERE committed_text = ?",
+                ("可删除高频候选",),
+            ).fetchone()
+        self.assertIsNone(gone)
 
     def test_codex_tool_trace_is_downranked_but_still_recallable(self) -> None:
         self.core.reset()

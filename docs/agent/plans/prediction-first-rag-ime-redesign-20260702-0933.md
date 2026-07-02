@@ -160,8 +160,10 @@
 - 频率排序已有基础:
   - 参考 Rime/librime 用户词典的公开实现：候选上屏后更新 userdb entry 的 `commits`，并结合 tick/衰减值计算候选权重。
   - 当前本地 SQLite 先实现两个稳定信号：`accepted_count` 表示用户主动接受该候选；同一 `committed_text` 反复上屏会增量写入 `phrase_stats.input_frequency`，查询时直接 join 进入排序分数，避免输入过程中反复全表聚合。
-  - `SuggestionCompiler` 会把 `state.input_frequency / accepted_count / pinned / downranked` 透传到候选 metadata，便于 debug 页面和后续管理面板解释“为什么这个候选靠前”。
-  - 下一步补齐 Rime 式时间衰减：近期高频更强，长期不用的短语自然降权，避免旧噪声永久霸榜。
+  - 已加入 Rime 式时间衰减的本地版本：`input_frequency` 会按 `phrase_last_seen_ms` 衰减，另有 `recent_boost` 让近期表达自然上浮，避免旧高频短语永久霸榜。
+  - delete/hide/restore 会刷新对应 `phrase_stats`，被隐藏的输入不继续贡献词频。
+  - `SuggestionCompiler` 会把 `state.input_frequency / phrase_age_days / frequency_boost / recent_boost / accepted_count / pinned / downranked` 透传到候选 metadata，便于 debug 页面和后续管理面板解释“为什么这个候选靠前”。
+  - 下一步频率排序方向：增加项目/应用维度词频，让 vibe coding 场景里的代码短语、路径、命令只在相关应用或项目里强升权。
 - 当前仍未完成真实 macOS adapter 验收；debug 页面只用于观察候选来源、mode、prefix、sideInserted、wanxiangFallbackCount。
 
 ## 验收 / 退出条件
