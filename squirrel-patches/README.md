@@ -99,7 +99,7 @@ rag_ime:
   project: wisdom-weasel-rag-ime
   max_visible_candidates: 8
   max_side_candidates: 8
-  latency_budget_ms: 180
+  latency_budget_ms: 250
   timeout_ms: 1200
 ```
 

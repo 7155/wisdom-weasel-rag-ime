@@ -7,7 +7,7 @@ from typing import Any
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .core_client import CoreClient
-from .history_context import build_prediction_context, prediction_context_metadata
+from .history_context import build_prediction_context, model_prediction_context_limits, prediction_context_metadata
 from .models import (
     InputSuggestion,
     MemoryAction,
@@ -372,20 +372,28 @@ def predict_model_with_latency_budget(
     def run_prediction() -> None:
         started = time.perf_counter()
         try:
+            context_event_limit, context_char_limit = model_prediction_context_limits()
             recent_context = build_prediction_context(
                 core,
                 explicit_recent_context=explicit_recent_context,
                 project=project,
+                limit=context_event_limit,
+                max_chars=context_char_limit,
             )
             result["historyContext"] = recent_context
             if int((time.perf_counter() - started) * 1000) >= budget_ms:
                 result["skippedReason"] = "history context exceeded latency budget"
                 return
-            result["predictions"] = predictor.predict(
+            predictions = predictor.predict(
                 current_input=current_input,
                 recent_context=recent_context,
                 max_candidates=max_candidates,
             )
+            result["predictions"] = predictions
+            if not predictions:
+                predictor_error = _predictor_last_error(predictor)
+                if predictor_error:
+                    result["error"] = predictor_error
             if isinstance(result["predictions"], list) and result["predictions"]:
                 _store_model_holdover_predictions(
                     project=project,
@@ -530,6 +538,21 @@ def _get_model_holdover_predictions(
 
 def _holdover_context_fingerprint(text: str) -> str:
     return compact_whitespace(text)[-420:]
+
+
+def _predictor_last_error(predictor: PredictionProvider) -> str:
+    direct_error = _string(getattr(predictor, "last_error", ""))
+    if direct_error:
+        return direct_error
+    cooldown_status = getattr(predictor, "cooldown_status", None)
+    if callable(cooldown_status):
+        try:
+            status = cooldown_status()
+        except Exception:  # pragma: no cover - defensive debug-only guard
+            return ""
+        if isinstance(status, dict):
+            return _string(status.get("lastError"))
+    return ""
 
 
 def record_rime_side_candidate_selection(

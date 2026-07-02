@@ -81,8 +81,11 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func ragImeRequestFingerprint() {}",
                         "  func mergedRagImePanelCandidates() {}",
                         "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
+                        "  func forceSideCandidates() { _ = \"forceSideCandidates: true\" }",
                         "  func traceRagImeFrontendEvent() {}",
                         '  func traceRagImePanelTextLayout() { _ = "panel_text_layout" }',
+                        '  func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }',
+                        '  func traceSidecarEmptyResponseIgnored() { _ = "sidecar_empty_response_ignored" }',
                         '  func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" }',
                         "}",
                     ]

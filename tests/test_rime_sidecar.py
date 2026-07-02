@@ -9,6 +9,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from threading import Event, Thread
+from unittest.mock import patch
 
 from rag_ime.adapter import InputMethodAdapter
 from rag_ime.cli import main
@@ -336,6 +337,44 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(history_meta["hasHistory"])
         self.assertTrue(history_meta["hasExplicitContext"])
 
+    def test_model_history_context_uses_low_latency_context_cap(self) -> None:
+        class LongHistoryCore(CapturingCore):
+            def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
+                return "很长的历史输入上下文" * 40
+
+        core = LongHistoryCore()
+        adapter = InputMethodAdapter(core)
+        predictor = FakePredictionProvider()
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_MODEL_CONTEXT_EVENTS": "2",
+                "RAG_IME_MODEL_CONTEXT_CHARS": "48",
+            },
+        ):
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "squirrel-model-context-cap",
+                    "requestSeq": 46,
+                    "committedContext": "当前正在写 RAG 输入法 sidecar",
+                    "maxVisibleCandidates": 4,
+                    "maxSideCandidates": 2,
+                    "rimeContext": {
+                        "candidates": [
+                            {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                        ]
+                    },
+                },
+                adapter=adapter,
+                core=core,
+                predictor=predictor,
+            )
+
+        self.assertLessEqual(len(predictor.last_recent_context), 48)
+        self.assertEqual(response["historyContext"], predictor.last_recent_context)
+        self.assertEqual(core.last_suggest_recent_context, "当前正在写 RAG 输入法 sidecar")
+        self.assertNotIn("很长的历史输入上下文" * 3, predictor.last_recent_context)
+
     def test_zero_side_candidates_does_not_call_model(self) -> None:
         response = build_rime_sidecar_response(
             payload={
@@ -458,6 +497,8 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(delegate.calls, 1)
         self.assertEqual(first["modelPredictions"], [])
         self.assertEqual(second["modelPredictions"], [])
+        self.assertEqual(first["modelLane"]["skippedReason"], "error: timeout")
+        self.assertEqual(second["modelLane"]["skippedReason"], "error: timeout")
         self.assertTrue(any(item["sourceType"] == "rag" for item in first["displayCandidates"]))
         self.assertTrue(any(item["sourceType"] == "rag" for item in second["displayCandidates"]))
 

@@ -85,6 +85,8 @@ class ReplaceSystemSquirrelAppScriptTests(unittest.TestCase):
         self.assertIn("backing up existing system Squirrel.app", result.stdout)
         self.assertIn("rag-ime.squirrel-frontend-trace.v1", target_text)
         self.assertIn("panel_text_layout", target_text)
+        self.assertIn("sidecar_request_scheduled", target_text)
+        self.assertIn("sidecar_empty_response_ignored", target_text)
         self.assertIn("select im.rime.inputmethod.Squirrel.Hans", calls)
         self.assertIn("check --require-selected im.rime.inputmethod.Squirrel.Hans", calls)
         self.assertIn("doctor", calls)
@@ -118,7 +120,7 @@ class ReplaceSystemSquirrelAppScriptTests(unittest.TestCase):
             )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("target Squirrel.app does not contain the RAG-IME mixed-layout patch", result.stderr)
+        self.assertIn("target Squirrel.app does not contain the current RAG-IME frontend patch", result.stderr)
 
 
 def _write_fake_squirrel_app(path: Path, *, patched: bool) -> Path:
@@ -126,7 +128,14 @@ def _write_fake_squirrel_app(path: Path, *, patched: bool) -> Path:
     executable.parent.mkdir(parents=True)
     lines = ["#!/usr/bin/env bash"]
     if patched:
-        lines.extend(["# rag-ime.squirrel-frontend-trace.v1", "# panel_text_layout"])
+        lines.extend(
+            [
+                "# rag-ime.squirrel-frontend-trace.v1",
+                "# panel_text_layout",
+                "# sidecar_request_scheduled",
+                "# sidecar_empty_response_ignored",
+            ]
+        )
     lines.extend(
         [
             "if [[ \"${RAG_IME_TEST_CALLS_LOG:-}\" != \"\" ]]; then",
@@ -167,6 +176,8 @@ def _write_fake_system_tools(tmp_path: Path, *, strip_patch_on_ditto: bool = Fal
                 "text = path.read_text(encoding='utf-8')",
                 "text = text.replace('# rag-ime.squirrel-frontend-trace.v1\\n', '')",
                 "text = text.replace('# panel_text_layout\\n', '')",
+                "text = text.replace('# sidecar_request_scheduled\\n', '')",
+                "text = text.replace('# sidecar_empty_response_ignored\\n', '')",
                 "path.write_text(text, encoding='utf-8')",
                 "PY",
             ]

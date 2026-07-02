@@ -25,12 +25,14 @@ Options:
 USAGE
 }
 
-has_mixed_layout_patch() {
+has_current_rag_ime_frontend_patch() {
   local app="$1"
   local executable="$app/Contents/MacOS/Squirrel"
   [[ -x "$executable" ]] || return 1
   strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
-    strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout"
+    strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
+    strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
+    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_ignored"
 }
 
 bool_true() {
@@ -77,8 +79,8 @@ if [[ "$(canonical_path "$SOURCE_APP")" == "$(canonical_path "$TARGET_APP")" ]];
   exit 1
 fi
 
-if ! has_mixed_layout_patch "$SOURCE_APP"; then
-  echo "source Squirrel.app does not contain the RAG-IME mixed-layout patch: $SOURCE_APP" >&2
+if ! has_current_rag_ime_frontend_patch "$SOURCE_APP"; then
+  echo "source Squirrel.app does not contain the current RAG-IME frontend patch: $SOURCE_APP" >&2
   exit 1
 fi
 
@@ -89,7 +91,7 @@ if [[ "$PREFLIGHT" == "1" ]]; then
   sudo_cached=false
   if [[ -d "$TARGET_APP" ]]; then
     target_exists=true
-    if has_mixed_layout_patch "$TARGET_APP"; then
+    if has_current_rag_ime_frontend_patch "$TARGET_APP"; then
       target_patch=true
       replacement_required=false
     fi
@@ -140,8 +142,8 @@ if command -v codesign >/dev/null 2>&1; then
   sudo codesign --force --deep --sign - "$TARGET_APP"
 fi
 
-if ! has_mixed_layout_patch "$TARGET_APP"; then
-  echo "target Squirrel.app does not contain the RAG-IME mixed-layout patch after copy: $TARGET_APP" >&2
+if ! has_current_rag_ime_frontend_patch "$TARGET_APP"; then
+  echo "target Squirrel.app does not contain the current RAG-IME frontend patch after copy: $TARGET_APP" >&2
   exit 1
 fi
 

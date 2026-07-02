@@ -40,7 +40,7 @@ EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDI
 EXPECT_PREDICTOR_BASE_URL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_BASE_URL:-${RAG_IME_PREDICTOR_BASE_URL:-}}"
 EXPECT_PREDICTOR_PROFILE="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
-DOCTOR_LATENCY_BUDGET_MS="${RAG_IME_DOCTOR_LATENCY_BUDGET_MS:-180}"
+DOCTOR_LATENCY_BUDGET_MS="${RAG_IME_DOCTOR_LATENCY_BUDGET_MS:-250}"
 
 failures=0
 warnings=0
@@ -95,7 +95,9 @@ squirrel_app_has_mixed_frontend_trace() {
   local executable="$app/Contents/MacOS/Squirrel"
   [[ -x "$executable" ]] || return 1
   strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
-    strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout"
+    strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
+    strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
+    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_ignored"
 }
 
 check_patched_squirrel_app() {
@@ -103,9 +105,9 @@ check_patched_squirrel_app() {
   local required="$2"
 
   if squirrel_app_has_mixed_frontend_trace "$app"; then
-    ok "installed Squirrel.app contains RAG-IME mixed-layout frontend trace"
+    ok "installed Squirrel.app contains current RAG-IME frontend patch"
   else
-    require_or_warn "$required" "installed Squirrel.app lacks RAG-IME mixed-layout frontend trace; rebuild/install patched Squirrel: $app"
+    require_or_warn "$required" "installed Squirrel.app lacks current RAG-IME frontend patch; rebuild/install patched Squirrel: $app"
   fi
 }
 
@@ -130,7 +132,7 @@ check_duplicate_squirrel_apps() {
     [[ "$bundle_id" == "$configured_bundle_id" ]] || continue
     if ! squirrel_app_has_mixed_frontend_trace "$candidate"; then
       found_stale=1
-      require_or_warn "$REQUIRE_PATCHED_APP" "stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace: $candidate; replace it with the patched user app using scripts/replace_system_squirrel_app.sh"
+      require_or_warn "$REQUIRE_PATCHED_APP" "stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch: $candidate; replace it with the patched user app using scripts/replace_system_squirrel_app.sh"
     fi
   done
 
@@ -646,7 +648,7 @@ def truthy(value):
 
 require_mixed_layout = truthy(sys.argv[5].strip())
 require_logits_model = truthy(sys.argv[6].strip())
-latency_budget_ms = int(sys.argv[7].strip() or "180")
+latency_budget_ms = int(sys.argv[7].strip() or "250")
 
 def expected_rank_for_label(label):
     if label == "0":

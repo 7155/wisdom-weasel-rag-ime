@@ -26,6 +26,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_PREDICTOR_STREAM_FIRST": "1",
                 "RAG_IME_PREDICTOR_TIMEOUT_MS": "350",
                 "RAG_IME_HISTORY_CONTEXT_EVENTS": "6",
+                "RAG_IME_MODEL_CONTEXT_CHARS": "120",
                 "RAG_IME_RIME_CACHE_TTL_MS": "400",
             }
             result = subprocess.run(
@@ -55,6 +56,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PREDICTOR_MODEL"], "qwen3.5:0.8b-mlx")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PREDICTOR_STREAM_FIRST"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_HISTORY_CONTEXT_EVENTS"], "6")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_MODEL_CONTEXT_CHARS"], "120")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_RIME_CACHE_TTL_MS"], "400")
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
         self.assertIn("sidecar-server", payload["ProgramArguments"])
