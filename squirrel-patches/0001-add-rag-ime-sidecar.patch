@@ -40,7 +40,7 @@ index 813deae..1bec8e3 100644
  			);
 diff --git a/rag-ime.squirrel.custom.yaml b/rag-ime.squirrel.custom.yaml
 new file mode 100644
-index 0000000..d69ca16
+index 0000000..0c47f59
 --- /dev/null
 +++ b/rag-ime.squirrel.custom.yaml
 @@ -0,0 +1,14 @@
@@ -54,10 +54,63 @@ index 0000000..d69ca16
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 8
-+  latency_budget_ms: 180
++  latency_budget_ms: 250
 +  debounce_ms: 40
 +  timeout_ms: 1200
 +  frontend_trace: true
+diff --git a/sources/InputSource.swift b/sources/InputSource.swift
+index 89c1214..a240173 100644
+--- a/sources/InputSource.swift
++++ b/sources/InputSource.swift
+@@ -9,10 +9,45 @@ import Foundation
+ import InputMethodKit
+ 
+ final class SquirrelInstaller {
+-  enum InputMode: String, CaseIterable {
++  enum InputMode: CaseIterable {
++    case hans
++    case hant
++
+     static let primary = Self.hans
+-    case hans = "im.rime.inputmethod.Squirrel.Hans"
+-    case hant = "im.rime.inputmethod.Squirrel.Hant"
++
++    init?(rawValue: String) {
++      switch rawValue {
++      case Self.hans.rawValue:
++        self = .hans
++      case Self.hant.rawValue:
++        self = .hant
++      default:
++        return nil
++      }
++    }
++
++    var rawValue: String {
++      switch self {
++      case .hans:
++        return "\(Self.inputSourceIDPrefix).Hans"
++      case .hant:
++        return "\(Self.inputSourceIDPrefix).Hant"
++      }
++    }
++
++    private static var inputSourceIDPrefix: String {
++      SquirrelInstaller.inputSourceIDPrefix
++    }
++  }
++
++  static var inputSourceIDPrefix: String {
++    if let id = Bundle.main.object(forInfoDictionaryKey: "TISInputSourceID") as? String, !id.isEmpty {
++      return id
++    }
++    if let id = Bundle.main.bundleIdentifier, !id.isEmpty {
++      return id
++    }
++    return "im.rime.inputmethod.Squirrel"
+   }
+   private lazy var inputSources: [String: TISInputSource] = {
+     var inputSources = [String: TISInputSource]()
 diff --git a/sources/Main.swift b/sources/Main.swift
 index f998248..a0bf7bd 100644
 --- a/sources/Main.swift
@@ -75,7 +128,7 @@ index f998248..a0bf7bd 100644
    // swiftlint:disable:next cyclomatic_complexity
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000..110c0d5
+index 0000000..0924908
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
 @@ -0,0 +1,328 @@
@@ -117,7 +170,7 @@ index 0000000..110c0d5
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 8, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 180, range: 30...2000)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 250, range: 30...2000)
 +    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 40, range: 0...500)
 +    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 100...5000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
@@ -409,10 +462,10 @@ index 0000000..110c0d5
 +}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
-index 0000000..a837039
+index 0000000..6a50e72
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,166 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
@@ -431,6 +484,7 @@ index 0000000..a837039
 +  let latencyBudgetMs: Int
 +  let maxVisibleCandidates: Int
 +  let maxSideCandidates: Int
++  let forceSideCandidates: Bool
 +  let rimeContext: RagImeRimeContextPayload
 +}
 +
@@ -578,8 +632,30 @@ index 0000000..a837039
 +    }
 +  }
 +}
+diff --git a/sources/SquirrelApplicationDelegate.swift b/sources/SquirrelApplicationDelegate.swift
+index 124ef7b..52c6983 100644
+--- a/sources/SquirrelApplicationDelegate.swift
++++ b/sources/SquirrelApplicationDelegate.swift
+@@ -364,7 +364,7 @@ private extension SquirrelApplicationDelegate {
+   func updateStatusItemVisibility() {
+     guard let statusItem = statusItem else { return }
+     let currentInputSourceID = SquirrelInstaller.currentInputSourceID() ?? ""
+-    statusItem.isVisible = currentInputSourceID.hasPrefix("im.rime.inputmethod.Squirrel")
++    statusItem.isVisible = currentInputSourceID.hasPrefix(SquirrelInstaller.inputSourceIDPrefix)
+   }
+ 
+   // macOS 26 does not call deactivateServer when the input source is switched
+@@ -376,7 +376,7 @@ private extension SquirrelApplicationDelegate {
+   // no-op.
+   func finalizeStrandedComposition() {
+     let currentInputSourceID = SquirrelInstaller.currentInputSourceID() ?? ""
+-    guard !currentInputSourceID.hasPrefix("im.rime.inputmethod.Squirrel") else { return }
++    guard !currentInputSourceID.hasPrefix(SquirrelInstaller.inputSourceIDPrefix) else { return }
+     if let inputController = panel?.inputController {
+       inputController.deactivateServer(inputController.client())
+     }
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..e0b62ea 100644
+index c2adf74..e1a9e05 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
 @@ -27,6 +27,21 @@ final class SquirrelInputController: IMKInputController {
@@ -595,7 +671,7 @@ index c2adf74..e0b62ea 100644
 +  private var ragImeDisplaySemanticQuery: String = ""
 +  private var ragImeDisplayQueryBasis: String = ""
 +  private var ragImeDisplayUpdatedAt: Date = .distantPast
-+  private let ragImeDisplayHoldoverDuration: TimeInterval = 1.2
++  private let ragImeDisplayHoldoverDuration: TimeInterval = 2.5
 +  private var ragImeCommittedContext: String = ""
 +  private var ragImeCommittedContextUpdatedAt: Date = .distantPast
 +  private var ragImeLastRequestFingerprint: String = ""
@@ -703,7 +779,7 @@ index c2adf74..e0b62ea 100644
    // swiftlint:disable:next identifier_name
    func page(up: Bool) -> Bool {
      var handled = false
-@@ -301,6 +394,444 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,6 +394,471 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
@@ -784,6 +860,7 @@ index c2adf74..e0b62ea 100644
 +      latencyBudgetMs: sidecarClient.latencyBudgetMs,
 +      maxVisibleCandidates: sidecarClient.maxVisibleCandidates,
 +      maxSideCandidates: sidecarClient.maxSideCandidates,
++      forceSideCandidates: true,
 +      rimeContext: RagImeRimeContextPayload(
 +        candidates: rimeCandidates,
 +        highlightedIndex: highlighted,
@@ -794,6 +871,21 @@ index c2adf74..e0b62ea 100644
 +    let workItem = DispatchWorkItem { [weak self] in
 +      self?.sendRagImeSidecarRequest(request, fingerprint: fingerprint, sidecarClient: sidecarClient)
 +    }
++    traceRagImeFrontendEvent("sidecar_request_scheduled", fields: [
++      "requestSeq": requestSeq,
++      "rawInput": rawInput,
++      "preedit": preedit,
++      "committedContextChars": ragImeCommittedContext.count,
++      "candidateCount": rimeCandidates.count,
++      "candidates": rimeCandidates.prefix(8).map { item in
++        [
++          "label": item.label,
++          "text": item.text,
++          "comment": item.comment,
++          "index": item.index ?? -1,
++        ] as [String: Any]
++      },
++    ])
 +    ragImeLastRequestFingerprint = fingerprint
 +    ragImePendingRequestFingerprint = fingerprint
 +    ragImePendingRequestWorkItem = workItem
@@ -863,6 +955,18 @@ index c2adf74..e0b62ea 100644
 +      return
 +    }
 +    guard currentRagImeContextMatches(request) else {
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
++    guard !response.displayCandidates.isEmpty else {
++      traceRagImeFrontendEvent("sidecar_empty_response_ignored", fields: [
++        "requestSeq": response.requestSeq,
++        "rawInput": response.rawInput,
++        "preedit": response.preedit,
++        "semanticQuery": response.semanticQuery,
++        "queryBasis": response.queryBasis,
++        "triggerReason": response.triggerDecision?.reason ?? "",
++      ])
 +      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
 +      return
 +    }
@@ -971,9 +1075,8 @@ index c2adf74..e0b62ea 100644
 +    fallbackCandidates: [String],
 +    now: Date = Date()
 +  ) -> Bool {
-+    guard fallbackCandidates.isEmpty else { return false }
++    guard !ragImeDisplayCandidates.isEmpty else { return false }
 +    guard !rawInput.isEmpty || !preedit.isEmpty else { return false }
-+    guard ragImeDisplayQueryBasis == "committedContext" else { return false }
 +    return now.timeIntervalSince(ragImeDisplayUpdatedAt) <= ragImeDisplayHoldoverDuration
 +  }
 +
@@ -1148,7 +1251,7 @@ index c2adf74..e0b62ea 100644
    func onChordTimer(_: Timer) {
      var processedKeys = false
      if chordKeyCount > 0 && session != 0 {
-@@ -360,6 +891,7 @@ private extension SquirrelInputController {
+@@ -360,6 +918,7 @@ private extension SquirrelInputController {
  
      if session != 0 {
        updateAppOptions()
@@ -1156,7 +1259,7 @@ index c2adf74..e0b62ea 100644
      }
    }
  
-@@ -434,7 +966,7 @@ private extension SquirrelInputController {
+@@ -434,7 +993,7 @@ private extension SquirrelInputController {
    }
  
    // Preserve reserved comment marks when librime requests a UI-only refresh.
@@ -1165,7 +1268,7 @@ index c2adf74..e0b62ea 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +978,7 @@ private extension SquirrelInputController {
+@@ -446,6 +1005,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -1173,7 +1276,7 @@ index c2adf74..e0b62ea 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +991,14 @@ private extension SquirrelInputController {
+@@ -458,13 +1018,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -1189,7 +1292,7 @@ index c2adf74..e0b62ea 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -537,13 +1071,35 @@ private extension SquirrelInputController {
+@@ -537,13 +1098,35 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -1226,7 +1329,7 @@ index c2adf74..e0b62ea 100644
        hidePalettes()
      }
    }
-@@ -551,6 +1107,7 @@ private extension SquirrelInputController {
+@@ -551,6 +1134,7 @@ private extension SquirrelInputController {
    func commit(string: String) {
      guard let client = client else { return }
      client.insertText(string, replacementRange: .empty)

@@ -300,9 +300,9 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             "[OK] sidecar predictor: local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true",
             result.stdout,
         )
-        self.assertIn("doctor_latency_budget_ms: 180", result.stdout)
+        self.assertIn("doctor_latency_budget_ms: 250", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.suggest_payloads)
-        self.assertTrue(all(payload.get("latencyBudgetMs") == 180 for payload in _DoctorSidecarHandler.suggest_payloads))
+        self.assertTrue(all(payload.get("latencyBudgetMs") == 250 for payload in _DoctorSidecarHandler.suggest_payloads))
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
@@ -556,7 +556,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("[FAIL] installed Squirrel.app lacks RAG-IME mixed-layout frontend trace", result.stdout)
+        self.assertIn("[FAIL] installed Squirrel.app lacks current RAG-IME frontend patch", result.stdout)
 
     def test_doctor_reports_stale_duplicate_squirrel_app_as_warning(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -568,6 +568,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
                     "# panel_text_layout\n"
+                    "# sidecar_request_scheduled\n"
+                    "# sidecar_empty_response_ignored\n"
                     "exit 0\n"
                 ),
             )
@@ -594,9 +596,9 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 capture_output=True,
             )
 
-        self.assertIn("[OK] installed Squirrel.app contains RAG-IME mixed-layout frontend trace", result.stdout)
+        self.assertIn("[OK] installed Squirrel.app contains current RAG-IME frontend patch", result.stdout)
         self.assertIn(
-            "[WARN] stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace",
+            "[WARN] stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch",
             result.stdout,
         )
         self.assertIn("scripts/replace_system_squirrel_app.sh", result.stdout)
@@ -612,6 +614,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
                     "# panel_text_layout\n"
+                    "# sidecar_request_scheduled\n"
+                    "# sidecar_empty_response_ignored\n"
                     "exit 0\n"
                 ),
             )
@@ -640,7 +644,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "[FAIL] stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace",
+            "[FAIL] stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch",
             result.stdout,
         )
         self.assertIn("scripts/replace_system_squirrel_app.sh", result.stdout)
@@ -656,6 +660,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
                     "# panel_text_layout\n"
+                    "# sidecar_request_scheduled\n"
+                    "# sidecar_empty_response_ignored\n"
                     "exit 0\n"
                 ),
                 bundle_id="im.rag-ime.inputmethod.RagIme",

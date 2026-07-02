@@ -282,7 +282,7 @@ RAG_IME_INPUT_SOURCE_BUNDLE_ID=im.rag-ime.inputmethod.RagIme \
 
 For a machine-wide install, set `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"`.
 If the strict doctor reports
-`stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace`,
+`stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch`,
 macOS may be loading an older `/Library/Input Methods/Squirrel.app` instead of
 the patched user-local app. First run the no-op preflight:
 

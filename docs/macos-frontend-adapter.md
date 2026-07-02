@@ -381,7 +381,7 @@ first typing test.
 
 Use `RAG_IME_SQUIRREL_INSTALL_DIR="/Library/Input Methods"` only when a
 machine-wide install is required. If strict doctor fails with
-`stale Squirrel.app with same bundle id lacks RAG-IME mixed-layout frontend trace`,
+`stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch`,
 there is an older system Squirrel with the same bundle id. It can make the real
 candidate panel use the old vertical list even though the sidecar payload is
 already `model/inline` plus `rag/block`. Replace it with the patched user-local
@@ -400,7 +400,7 @@ scripts/replace_system_squirrel_app.sh
 The script keeps a timestamped backup under `/Library/Input Methods/` and
 restarts `Squirrel` after copying so the next panel uses the patched frontend.
 It also runs strict doctor without the foreground trace gate by default. That
-post-check proves the system copy has the mixed-layout patch, the stale duplicate
+post-check proves the system copy has the current frontend patch, the stale duplicate
 is gone, and launchd will restart the same sidecar/MLX model configuration.
 
 For product testing, prefer the independent branded install so the original

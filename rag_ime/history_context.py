@@ -9,6 +9,8 @@ from .text_utils import compact_whitespace
 
 DEFAULT_HISTORY_CONTEXT_EVENTS = 6
 DEFAULT_HISTORY_CONTEXT_CHARS = 420
+DEFAULT_MODEL_PREDICTION_CONTEXT_EVENTS = 4
+DEFAULT_MODEL_PREDICTION_CONTEXT_CHARS = 120
 
 
 class HistoryContextCore(Protocol):
@@ -21,6 +23,14 @@ def history_context_limits(env: dict[str, str] | None = None) -> tuple[int, int]
     return (
         _int_env(source, "RAG_IME_HISTORY_CONTEXT_EVENTS", DEFAULT_HISTORY_CONTEXT_EVENTS),
         _int_env(source, "RAG_IME_HISTORY_CONTEXT_CHARS", DEFAULT_HISTORY_CONTEXT_CHARS),
+    )
+
+
+def model_prediction_context_limits(env: dict[str, str] | None = None) -> tuple[int, int]:
+    source = env or os.environ
+    return (
+        _int_env(source, "RAG_IME_MODEL_CONTEXT_EVENTS", DEFAULT_MODEL_PREDICTION_CONTEXT_EVENTS),
+        _int_env(source, "RAG_IME_MODEL_CONTEXT_CHARS", DEFAULT_MODEL_PREDICTION_CONTEXT_CHARS),
     )
 
 

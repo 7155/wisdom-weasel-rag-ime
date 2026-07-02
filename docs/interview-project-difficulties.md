@@ -183,6 +183,36 @@ sidecar、缓存和候选展示；最终模型 lane gate 还必须显式通过 `
 capability probe；`promptCache=true` 要求缓存已经被生成路径实际使用，不能只靠
 “启动时准备了缓存”来算通过。
 
+### 10. 后端有候选不等于系统输入法真的显示了候选
+
+这次真实集成里踩到的一个关键坑是：sidecar、RAG、MLX 模型都可以在 HTTP/doctor
+里返回候选，但用户看到的候选框仍然可能是纯 Rime。原因不是 RAG 没有返回，而是
+macOS 实际运行的 `/Library/Input Methods/Squirrel.app` 还是旧系统 bundle；用户
+目录里的新版 `Squirrel.app` 已经有补丁，但系统输入源加载的是同 bundle id 的旧前台。
+
+为了解这个问题，我把验收从“接口能返回”升级成三层：
+
+```text
+backend contract:
+  /api/rime-suggest 返回 displayCandidates
+  -> model/inline + rag/block + shared selectionKey
+
+installed app contract:
+  Squirrel 二进制必须包含 sidecar_request_scheduled
+  + sidecar_empty_response_ignored
+  + panel_text_layout
+
+system runtime contract:
+  macOS 当前 selected input source
+  -> /Library/Input Methods/Squirrel.app 是新版
+  -> strict doctor 无 stale same-bundle app
+```
+
+这个点的面试表达是：输入法项目不能只测后端 API，因为用户路径在系统输入法前台。
+我最后把“系统正在运行哪个 app bundle、前台是否真的 apply sidecar 候选、空响应是否
+覆盖旧候选”都变成了可检查的工程 gate。它解释了为什么这个项目比普通 RAG demo 难：
+它既有模型/RAG 排序问题，也有 macOS 输入法生命周期、bundle 注册和前台实时渲染问题。
+
 ## 我已经落地的工程点
 
 - macOS `InputMethodKit` 前端壳；
@@ -198,6 +228,8 @@ capability probe；`promptCache=true` 要求缓存已经被生成路径实际使
 - 单测和 macOS app 构建验证；
 - Rime/Squirrel 正式前端路线 ADR；
 - Squirrel patch pack：在 Rime 候选生成后调用本地 sidecar，异步合并 side candidates，按显示候选路由数字键，并在用户接受 RAG 候选后回写 commit/action。
+- 系统级 patched Squirrel 安装 gate：检测新版前台标记，避免 macOS 加载同 bundle id 的旧系统 app 后继续显示纯 Rime 候选。
+- strict doctor 现在能验收 `display=8 model=5 rag=3 rime=0`、MLX next-token logits/top-k、本地 LaunchAgent、系统输入源 selected=true，以及 stale same-bundle app 检测。
 - `predictor-ttft` 首 chunk 和 first parsed candidate 延迟测量；
 - Mac 本地推理路线调研：Ollama MLX tag、MLX-LM prompt cache、llama.cpp/Metal KV cache、Core ML stateful KV、MiniVLLM/vLLM 取舍。
 - 实测 `qwen3.5:0.8b-mlx` 在 Mac warm path 上达到 46ms p50 first chunk，同时用质量评测证明 0.8B 模型不能替代本地 RAG 记忆。

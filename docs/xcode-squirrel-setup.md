@@ -211,7 +211,7 @@ enough to prove the input method is visible in System Settings. Before checking,
 the doctor refreshes the configured app with `--register-input-source` and
 `--enable-input-source`, which makes the gate less sensitive to macOS TIS cache
 timing immediately after install. It also verifies that the configured
-`Squirrel.app` contains the RAG-IME mixed-layout frontend trace. If another
+`Squirrel.app` contains the current RAG-IME frontend patch markers. If another
 same-bundle `Squirrel.app` exists outside the configured target and does not
 contain that patch, normal doctor warns and strict tryout fails because macOS
 may load the stale frontend. The fix is to replace the system copy with the
@@ -306,7 +306,7 @@ Strict Squirrel doctor mode also checks the mixed candidate contract. With
 shared selection keys/ranks and a side-first display list where LLM candidates
 use `displayLayout=inline` and RAG/memory sentence candidates use
 `displayLayout=block`. This proves the backend/native payload contract before
-manual foreground typing. The doctor probe uses a 180 ms latency budget by
+manual foreground typing. The doctor probe uses a 250 ms latency budget by
 default, matching the Squirrel managed config; override it with
 `RAG_IME_DOCTOR_LATENCY_BUDGET_MS` when intentionally testing tighter or looser
 budgets. It still does not prove that the visible AppKit panel looked correct
