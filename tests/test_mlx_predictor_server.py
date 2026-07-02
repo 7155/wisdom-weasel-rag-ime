@@ -83,7 +83,7 @@ class MlxPredictorServerTests(unittest.TestCase):
     def test_engine_predict_prefers_next_token_logits_candidates(self) -> None:
         modules, _calls = _fake_mlx_modules(
             generated_text='["JSON候选"]',
-            logits_tokens=["A", "现", "测", "本"],
+            logits_tokens=["输入法候选", "本地记忆", "继续预测"],
         )
         with patch.dict(sys.modules, modules):
             engine = MlxLmEngine("fake-qwen")
@@ -97,11 +97,11 @@ class MlxPredictorServerTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["candidateMode"], "next-token-logits")
-        self.assertEqual(payload["candidates"], ["现", "测", "本"])
-        self.assertEqual(payload["rawText"], "现 测 本")
+        self.assertEqual(payload["candidates"], ["输入法候选", "本地记忆", "继续预测"])
+        self.assertEqual(payload["rawText"], "输入法候选 本地记忆 继续预测")
         self.assertEqual(payload["timing"]["candidateMode"], "next-token-logits")
         self.assertFalse(payload["timing"]["fallbackJson"])
-        self.assertEqual(payload["candidateScores"][0]["text"], "现")
+        self.assertEqual(payload["candidateScores"][0]["text"], "输入法候选")
         self.assertIn("probability", payload["candidateScores"][0])
 
     def test_health_reports_prepared_prompt_cache_without_claiming_generation_use(self) -> None:
@@ -244,11 +244,17 @@ class _FakeToken:
 
 
 class _FakeTokenizer:
+    def __init__(self, decode_map: dict[int, str] | None = None) -> None:
+        self.decode_map = decode_map or {}
+
     def encode(self, text: str):
         return [ord(char) for char in text]
 
     def decode(self, tokens):
-        return "".join(chr(int(token)) for token in tokens)
+        values = [int(token) for token in tokens]
+        if len(values) == 1 and values[0] in self.decode_map:
+            return self.decode_map[values[0]]
+        return "".join(chr(value) for value in values)
 
 
 class _FakeStreamResponse:
@@ -262,7 +268,10 @@ def _fake_mlx_modules(*, generated_text: str, logits_tokens: list[str] | None = 
         "load_prompt_cache": 0,
         "stream_generate": 0,
     }
-    tokenizer = _FakeTokenizer()
+    logits_token_ids = {
+        token: 1000 + index for index, token in enumerate(logits_tokens or [])
+    }
+    tokenizer = _FakeTokenizer({token_id: token for token, token_id in logits_token_ids.items()})
 
     mlx_lm = types.ModuleType("mlx_lm")
 
@@ -282,8 +291,8 @@ def _fake_mlx_modules(*, generated_text: str, logits_tokens: list[str] | None = 
         calls["generate_step"] += 1
         prompt_text = "".join(chr(int(token)) for token in prompt) if isinstance(prompt, list) else ""
         if sampler is None and "直接从候选文本开始" in prompt_text and logits_tokens:
-            logprobs = _fake_logprobs(logits_tokens)
-            yield _FakeToken(ord(logits_tokens[0])), logprobs
+            logprobs = _fake_logprobs([logits_token_ids[token] for token in logits_tokens])
+            yield _FakeToken(logits_token_ids[logits_tokens[0]]), logprobs
             return
         if sampler is None:
             yield _FakeToken(0), None
@@ -339,8 +348,7 @@ def _fake_mlx_modules(*, generated_text: str, logits_tokens: list[str] | None = 
     )
 
 
-def _fake_logprobs(tokens: list[str]) -> list[float]:
-    token_ids = [ord(token) for token in tokens]
+def _fake_logprobs(token_ids: list[int]) -> list[float]:
     logprobs = [-20.0] * (max(token_ids) + 1)
     for rank, token_id in enumerate(token_ids):
         logprobs[token_id] = -0.05 - rank
