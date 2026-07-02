@@ -139,9 +139,11 @@ class BlockingPredictionProvider:
 class CapturingCore:
     def __init__(self) -> None:
         self.last_suggest_recent_context = ""
+        self.last_suggest_app = ""
 
-    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", top_k: int = 5):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
         self.last_suggest_recent_context = recent_context
+        self.last_suggest_app = app
         return [
             InputSuggestion(
                 suggestion_id="spy:1",
@@ -158,7 +160,7 @@ class CapturingCore:
 
 
 class PrefixSuggestionCore(CapturingCore):
-    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", top_k: int = 5):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
         return [
             InputSuggestion(
                 suggestion_id="prefix:1",
@@ -191,7 +193,7 @@ class SlowSuggestionCore(CapturingCore):
         self.sleep_s = sleep_s
         self.calls = 0
 
-    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", top_k: int = 5):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
         self.calls += 1
         time.sleep(self.sleep_s)
         return super().suggest_for_input(
@@ -394,6 +396,32 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(len(history_meta["fingerprint"]), 16)
         self.assertTrue(history_meta["hasHistory"])
         self.assertTrue(history_meta["hasExplicitContext"])
+
+    def test_frontmost_app_payload_reaches_rag_retrieval(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        predictor = FakePredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-app-context",
+                "requestSeq": 44,
+                "frontmostApp": "com.openai.codex",
+                "committedContext": "当前正在写 RAG 输入法 sidecar",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(core.last_suggest_app, "com.openai.codex")
+        self.assertEqual(response["rimeContext"]["app"], "com.openai.codex")
 
     def test_model_history_context_uses_low_latency_context_cap(self) -> None:
         class LongHistoryCore(CapturingCore):

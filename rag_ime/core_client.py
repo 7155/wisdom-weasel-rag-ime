@@ -42,6 +42,7 @@ class CoreClient(Protocol):
         current_input: str,
         recent_context: str = "",
         project: str = "",
+        app: str = "",
         top_k: int = 5,
     ) -> list[InputSuggestion]:
         ...
@@ -81,6 +82,7 @@ class JsonCommandCoreClient:
         current_input: str,
         recent_context: str = "",
         project: str = "",
+        app: str = "",
         top_k: int = 5,
     ) -> list[InputSuggestion]:
         payload = self._request(
@@ -89,6 +91,7 @@ class JsonCommandCoreClient:
                 "current_input": current_input,
                 "recent_context": recent_context,
                 "project": project,
+                "app": app,
                 "top_k": top_k,
             },
         )
@@ -182,6 +185,7 @@ class FixtureCoreClient:
         current_input: str,
         recent_context: str = "",
         project: str = "",
+        app: str = "",
         top_k: int = 5,
     ) -> list[InputSuggestion]:
         query = compact_whitespace(f"{recent_context} {current_input}")

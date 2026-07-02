@@ -90,6 +90,7 @@ class RimeContextSnapshot:
     commit_text_preview: str = ""
     committed_context: str = ""
     project: str = ""
+    app: str = ""
     candidates: tuple[RimeCandidate, ...] = ()
     highlighted_index: int = 0
     page: int = 0

@@ -284,6 +284,7 @@ class DebugImeService:
         current_input = _string(payload.get("currentInput"))
         recent_context = _string(payload.get("recentContext"))
         project = _string(payload.get("project")) or self.config.project
+        app = _string(payload.get("app") or payload.get("frontmostApp"))
         top_k = _bounded_int(payload.get("topK"), default=5, minimum=1, maximum=10)
         prediction_context = build_prediction_context(
             self.core,
@@ -300,6 +301,7 @@ class DebugImeService:
                 current_input=current_input,
                 recent_context=prediction_context,
                 project=project,
+                app=app,
                 top_k=top_k,
             )
         )

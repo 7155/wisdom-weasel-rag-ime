@@ -12,6 +12,7 @@ class SuggestionRequest:
     current_input: str
     recent_context: str = ""
     project: str = "wisdom-weasel-rag-ime"
+    app: str = ""
     top_k: int = 5
 
 
@@ -63,6 +64,7 @@ class InputMethodAdapter:
             current_input=request.current_input,
             recent_context=request.recent_context,
             project=request.project or self.project,
+            app=request.app,
             top_k=request.top_k,
         )
         return [normalize_suggestion(item) for item in suggestions]

@@ -5,10 +5,11 @@ import math
 import re
 import sqlite3
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Iterator
 
 from .core_client import CoreMemory
 from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity
@@ -105,6 +106,15 @@ class LocalSqliteCoreClient:
                     PRIMARY KEY(committed_text, project)
                 );
 
+                CREATE TABLE IF NOT EXISTS phrase_app_stats (
+                    committed_text TEXT NOT NULL,
+                    app TEXT NOT NULL,
+                    input_frequency INTEGER NOT NULL DEFAULT 0,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    PRIMARY KEY(committed_text, app)
+                );
+
                 CREATE TABLE IF NOT EXISTS memory_actions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at_ms INTEGER NOT NULL,
@@ -166,6 +176,20 @@ class LocalSqliteCoreClient:
                     last_seen_ms = excluded.last_seen_ms
                 """
             )
+            conn.execute(
+                """
+                INSERT INTO phrase_app_stats(committed_text, app, input_frequency, first_seen_ms, last_seen_ms)
+                SELECT e.committed_text, e.app, COUNT(*), MIN(e.created_at_ms), MAX(e.created_at_ms)
+                FROM input_events e
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE s.deleted = 0 AND e.app != ''
+                GROUP BY e.committed_text, e.app
+                ON CONFLICT(committed_text, app) DO UPDATE SET
+                    input_frequency = excluded.input_frequency,
+                    first_seen_ms = excluded.first_seen_ms,
+                    last_seen_ms = excluded.last_seen_ms
+                """
+            )
 
     def reset(self) -> None:
         with self._connect() as conn:
@@ -178,6 +202,7 @@ class LocalSqliteCoreClient:
                 DROP TABLE IF EXISTS memory_fts;
                 DROP TABLE IF EXISTS phrase_stats;
                 DROP TABLE IF EXISTS phrase_project_stats;
+                DROP TABLE IF EXISTS phrase_app_stats;
                 """
             )
         self.initialize()
@@ -239,6 +264,17 @@ class LocalSqliteCoreClient:
                     """,
                     (text, event.project, created_at, created_at),
                 )
+            if event.app:
+                conn.execute(
+                    """
+                    INSERT INTO phrase_app_stats(committed_text, app, input_frequency, first_seen_ms, last_seen_ms)
+                    VALUES (?, ?, 1, ?, ?)
+                    ON CONFLICT(committed_text, app) DO UPDATE SET
+                        input_frequency = phrase_app_stats.input_frequency + 1,
+                        last_seen_ms = excluded.last_seen_ms
+                    """,
+                    (text, event.app, created_at, created_at),
+                )
             document = _event_fts_document(
                 text,
                 event.recent_context,
@@ -263,12 +299,14 @@ class LocalSqliteCoreClient:
         current_input: str,
         recent_context: str = "",
         project: str = "",
+        app: str = "",
         top_k: int = 5,
     ) -> list[InputSuggestion]:
         cache_key = self._suggestion_cache_key(
             current_input=current_input,
             recent_context=recent_context,
             project=project,
+            app=app,
             top_k=top_k,
         )
         cached = self._get_cached_suggestions(cache_key)
@@ -278,6 +316,7 @@ class LocalSqliteCoreClient:
             current_input=current_input,
             recent_context=recent_context,
             project=project,
+            app=app,
             top_k=max(top_k * 4, 20),
         )
         ranked = [RankedMemory(memory=memory, score=memory.score, rank=index) for index, memory in enumerate(memories, start=1)]
@@ -291,6 +330,7 @@ class LocalSqliteCoreClient:
         current_input: str,
         recent_context: str = "",
         project: str = "",
+        app: str = "",
         top_k: int = 5,
     ) -> list[CoreMemory]:
         self.initialize()
@@ -301,17 +341,18 @@ class LocalSqliteCoreClient:
         if not fts_query:
             rows = []
         else:
-            rows = self._search_rows(fts_query=fts_query, project=project, limit=max(top_k * 8, 50))
+            rows = self._search_rows(fts_query=fts_query, project=project, app=app, limit=max(top_k * 8, 50))
         vector_rows, vector_scores = self._vector_rows(
             query=query,
             project=project,
+            app=app,
             limit=max(top_k * 8, self.vector_candidate_limit),
         )
         rows = _merge_rows(rows, vector_rows)
         if not rows:
-            rows = self._recent_rows(project=project, limit=top_k)
+            rows = self._recent_rows(project=project, app=app, limit=top_k)
         elif len(rows) < top_k:
-            rows = self._append_recent_fill(rows, project=project, limit=top_k)
+            rows = self._append_recent_fill(rows, project=project, app=app, limit=top_k)
 
         present_ms = now_ms()
         memories = [
@@ -319,6 +360,7 @@ class LocalSqliteCoreClient:
                 row,
                 query=query,
                 project=project,
+                app=app,
                 raw_query=raw_query,
                 vector_score=vector_scores.get(int(row["id"]), 0.0),
                 present_ms=present_ms,
@@ -358,6 +400,7 @@ class LocalSqliteCoreClient:
             if action.action_type in ("delete", "hide", "restore"):
                 self._refresh_phrase_stats_for_event(conn, event_id)
                 self._refresh_phrase_project_stats_for_event(conn, event_id)
+                self._refresh_phrase_app_stats_for_event(conn, event_id)
             action_id = int(cur.lastrowid)
         self._clear_suggestion_cache()
         return MemoryAction(
@@ -552,13 +595,21 @@ class LocalSqliteCoreClient:
                 return True
         return False
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _embedding_enabled(self) -> bool:
         return self.embedding_provider.fingerprint != "none"
@@ -600,16 +651,18 @@ class LocalSqliteCoreClient:
         current_input: str,
         recent_context: str,
         project: str,
+        app: str,
         top_k: int,
-    ) -> tuple[str, str, str, int]:
+    ) -> tuple[str, str, str, str, int]:
         return (
             compact_whitespace(current_input),
             compact_whitespace(recent_context),
             compact_whitespace(project),
+            compact_whitespace(app),
             int(top_k),
         )
 
-    def _get_cached_suggestions(self, key: tuple[str, str, str, int]) -> list[InputSuggestion] | None:
+    def _get_cached_suggestions(self, key: tuple[str, str, str, str, int]) -> list[InputSuggestion] | None:
         if self.suggestion_cache_size <= 0:
             return None
         with self._suggestion_cache_lock:
@@ -621,7 +674,7 @@ class LocalSqliteCoreClient:
             self._suggestion_cache_hits += 1
             return _copy_suggestions(cached)
 
-    def _store_cached_suggestions(self, key: tuple[str, str, str, int], suggestions: list[InputSuggestion]) -> None:
+    def _store_cached_suggestions(self, key: tuple[str, str, str, str, int], suggestions: list[InputSuggestion]) -> None:
         if self.suggestion_cache_size <= 0:
             return
         with self._suggestion_cache_lock:
@@ -639,7 +692,7 @@ class LocalSqliteCoreClient:
                 self._suggestion_cache_invalidations += 1
             self._suggestion_cache.clear()
 
-    def _search_rows(self, *, fts_query: str, project: str, limit: int) -> list[sqlite3.Row]:
+    def _search_rows(self, *, fts_query: str, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = [fts_query]
         where = ["memory_fts MATCH ?", "s.deleted = 0"]
         if project:
@@ -653,21 +706,25 @@ class LocalSqliteCoreClient:
                 COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms,
                 COALESCE(pps.input_frequency, 0) AS project_input_frequency,
                 COALESCE(pps.first_seen_ms, e.created_at_ms) AS project_phrase_first_seen_ms,
-                COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms
+                COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms,
+                COALESCE(pas.input_frequency, 0) AS app_input_frequency,
+                COALESCE(pas.first_seen_ms, e.created_at_ms) AS app_phrase_first_seen_ms,
+                COALESCE(pas.last_seen_ms, e.created_at_ms) AS app_phrase_last_seen_ms
             FROM memory_fts
             JOIN input_events e ON e.id = memory_fts.rowid
             JOIN memory_state s ON s.event_id = e.id
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
             LEFT JOIN phrase_project_stats pps ON pps.committed_text = e.committed_text AND pps.project = ?
+            LEFT JOIN phrase_app_stats pas ON pas.committed_text = e.committed_text AND pas.app = ?
             WHERE {' AND '.join(where)}
             ORDER BY s.pinned DESC, bm25(memory_fts) ASC, e.created_at_ms DESC
             LIMIT ?
         """
-        params = [project, *where_params, limit]
+        params = [project, app, *where_params, limit]
         with self._connect() as conn:
             return list(conn.execute(sql, params).fetchall())
 
-    def _vector_rows(self, *, query: str, project: str, limit: int) -> tuple[list[sqlite3.Row], dict[int, float]]:
+    def _vector_rows(self, *, query: str, project: str, app: str, limit: int) -> tuple[list[sqlite3.Row], dict[int, float]]:
         if not self._embedding_enabled() or self.vector_candidate_limit <= 0 or self.vector_weight <= 0:
             return [], {}
         query_vector = self.embedding_provider.embed(query)
@@ -687,15 +744,19 @@ class LocalSqliteCoreClient:
                 COALESCE(pps.input_frequency, 0) AS project_input_frequency,
                 COALESCE(pps.first_seen_ms, e.created_at_ms) AS project_phrase_first_seen_ms,
                 COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms,
+                COALESCE(pas.input_frequency, 0) AS app_input_frequency,
+                COALESCE(pas.first_seen_ms, e.created_at_ms) AS app_phrase_first_seen_ms,
+                COALESCE(pas.last_seen_ms, e.created_at_ms) AS app_phrase_last_seen_ms,
                 v.vector_json
             FROM memory_vectors v
             JOIN input_events e ON e.id = v.event_id
             JOIN memory_state s ON s.event_id = e.id
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
             LEFT JOIN phrase_project_stats pps ON pps.committed_text = e.committed_text AND pps.project = ?
+            LEFT JOIN phrase_app_stats pas ON pas.committed_text = e.committed_text AND pas.app = ?
             WHERE {' AND '.join(where)}
         """
-        params = [project, *where_params]
+        params = [project, app, *where_params]
         candidates: list[tuple[float, sqlite3.Row]] = []
         with self._connect() as conn:
             rows = list(conn.execute(sql, params).fetchall())
@@ -714,7 +775,7 @@ class LocalSqliteCoreClient:
         selected = candidates[: max(1, limit)]
         return [row for _, row in selected], {int(row["id"]): score for score, row in selected}
 
-    def _recent_rows(self, *, project: str, limit: int) -> list[sqlite3.Row]:
+    def _recent_rows(self, *, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = []
         where = ["s.deleted = 0"]
         if project:
@@ -728,23 +789,27 @@ class LocalSqliteCoreClient:
                 COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms,
                 COALESCE(pps.input_frequency, 0) AS project_input_frequency,
                 COALESCE(pps.first_seen_ms, e.created_at_ms) AS project_phrase_first_seen_ms,
-                COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms
+                COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms,
+                COALESCE(pas.input_frequency, 0) AS app_input_frequency,
+                COALESCE(pas.first_seen_ms, e.created_at_ms) AS app_phrase_first_seen_ms,
+                COALESCE(pas.last_seen_ms, e.created_at_ms) AS app_phrase_last_seen_ms
             FROM input_events e
             JOIN memory_state s ON s.event_id = e.id
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
             LEFT JOIN phrase_project_stats pps ON pps.committed_text = e.committed_text AND pps.project = ?
+            LEFT JOIN phrase_app_stats pas ON pas.committed_text = e.committed_text AND pas.app = ?
             WHERE {' AND '.join(where)}
             ORDER BY s.pinned DESC, e.created_at_ms DESC
             LIMIT ?
         """
-        params = [project, *where_params, limit]
+        params = [project, app, *where_params, limit]
         with self._connect() as conn:
             return list(conn.execute(sql, params).fetchall())
 
-    def _append_recent_fill(self, rows: list[sqlite3.Row], *, project: str, limit: int) -> list[sqlite3.Row]:
+    def _append_recent_fill(self, rows: list[sqlite3.Row], *, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         seen = {int(row["id"]) for row in rows}
         filled = list(rows)
-        for row in self._recent_rows(project=project, limit=max(limit * 2, 10)):
+        for row in self._recent_rows(project=project, app=app, limit=max(limit * 2, 10)):
             if int(row["id"]) in seen:
                 continue
             filled.append(row)
@@ -759,6 +824,7 @@ class LocalSqliteCoreClient:
         *,
         query: str,
         project: str,
+        app: str,
         raw_query: str = "",
         vector_score: float = 0.0,
         present_ms: int | None = None,
@@ -789,12 +855,28 @@ class LocalSqliteCoreClient:
         project_input_frequency = _row_int(row, "project_input_frequency", default=0)
         project_phrase_first_seen_ms = _row_int(row, "project_phrase_first_seen_ms", default=int(row["created_at_ms"]))
         project_phrase_last_seen_ms = _row_int(row, "project_phrase_last_seen_ms", default=int(row["created_at_ms"]))
+        app_input_frequency = _row_int(row, "app_input_frequency", default=0)
+        app_phrase_first_seen_ms = _row_int(row, "app_phrase_first_seen_ms", default=int(row["created_at_ms"]))
+        app_phrase_last_seen_ms = _row_int(row, "app_phrase_last_seen_ms", default=int(row["created_at_ms"]))
         event_project = str(row["project"])
-        use_project_frequency = bool(project and event_project == project and project_input_frequency > 0)
-        effective_frequency = project_input_frequency if use_project_frequency else input_frequency
-        effective_first_seen_ms = project_phrase_first_seen_ms if use_project_frequency else phrase_first_seen_ms
-        effective_last_seen_ms = project_phrase_last_seen_ms if use_project_frequency else phrase_last_seen_ms
-        frequency_scope = "project" if use_project_frequency else "global"
+        event_app = str(row["app"])
+        use_project_frequency = bool(project and project_input_frequency > 0)
+        use_app_frequency = bool(not use_project_frequency and app and app_input_frequency > 0)
+        if use_project_frequency:
+            effective_frequency = project_input_frequency
+            effective_first_seen_ms = project_phrase_first_seen_ms
+            effective_last_seen_ms = project_phrase_last_seen_ms
+            frequency_scope = "project"
+        elif use_app_frequency:
+            effective_frequency = app_input_frequency
+            effective_first_seen_ms = app_phrase_first_seen_ms
+            effective_last_seen_ms = app_phrase_last_seen_ms
+            frequency_scope = "app"
+        else:
+            effective_frequency = input_frequency
+            effective_first_seen_ms = phrase_first_seen_ms
+            effective_last_seen_ms = phrase_last_seen_ms
+            frequency_scope = "global"
         frequency_boost = _input_frequency_boost(effective_frequency, effective_last_seen_ms, present_ms=present_ms)
         recent_boost = _last_seen_recency_boost(effective_last_seen_ms, present_ms=present_ms)
         age_days = _age_days(effective_last_seen_ms, present_ms)
@@ -832,6 +914,9 @@ class LocalSqliteCoreClient:
         if use_project_frequency:
             if project_input_frequency > 1:
                 reason.append(f"project-frequency:{project_input_frequency}")
+        elif use_app_frequency:
+            if app_input_frequency > 1:
+                reason.append(f"app-frequency:{app_input_frequency}")
         elif input_frequency > 1:
             reason.append(f"frequency:{input_frequency}")
         if recent_boost:
@@ -867,12 +952,15 @@ class LocalSqliteCoreClient:
                 "deleted": bool(row["deleted"]),
                 "input_frequency": input_frequency,
                 "project_input_frequency": project_input_frequency,
+                "app_input_frequency": app_input_frequency,
                 "effective_frequency": effective_frequency,
                 "effective_frequency_scope": frequency_scope,
                 "phrase_first_seen_ms": phrase_first_seen_ms,
                 "phrase_last_seen_ms": phrase_last_seen_ms,
                 "project_phrase_first_seen_ms": project_phrase_first_seen_ms,
                 "project_phrase_last_seen_ms": project_phrase_last_seen_ms,
+                "app_phrase_first_seen_ms": app_phrase_first_seen_ms,
+                "app_phrase_last_seen_ms": app_phrase_last_seen_ms,
                 "effective_phrase_first_seen_ms": effective_first_seen_ms,
                 "effective_phrase_last_seen_ms": effective_last_seen_ms,
                 "phrase_age_days": round(age_days, 2),
@@ -980,6 +1068,40 @@ class LocalSqliteCoreClient:
                 last_seen_ms = excluded.last_seen_ms
             """,
             (committed_text, project, input_frequency, int(stats["first_seen_ms"]), int(stats["last_seen_ms"])),
+        )
+
+    @staticmethod
+    def _refresh_phrase_app_stats_for_event(conn: sqlite3.Connection, event_id: int) -> None:
+        row = conn.execute("SELECT committed_text, app FROM input_events WHERE id = ?", (event_id,)).fetchone()
+        if row is None:
+            return
+        committed_text = str(row["committed_text"])
+        app = str(row["app"])
+        if not app:
+            return
+        stats = conn.execute(
+            """
+            SELECT COUNT(*) AS input_frequency, MIN(e.created_at_ms) AS first_seen_ms, MAX(e.created_at_ms) AS last_seen_ms
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE e.committed_text = ? AND e.app = ? AND s.deleted = 0
+            """,
+            (committed_text, app),
+        ).fetchone()
+        input_frequency = int(stats["input_frequency"] or 0) if stats else 0
+        if input_frequency <= 0:
+            conn.execute("DELETE FROM phrase_app_stats WHERE committed_text = ? AND app = ?", (committed_text, app))
+            return
+        conn.execute(
+            """
+            INSERT INTO phrase_app_stats(committed_text, app, input_frequency, first_seen_ms, last_seen_ms)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(committed_text, app) DO UPDATE SET
+                input_frequency = excluded.input_frequency,
+                first_seen_ms = excluded.first_seen_ms,
+                last_seen_ms = excluded.last_seen_ms
+            """,
+            (committed_text, app, input_frequency, int(stats["first_seen_ms"]), int(stats["last_seen_ms"])),
         )
 
 
