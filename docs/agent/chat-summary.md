@@ -2076,3 +2076,22 @@ Verification:
 - Doctor unit tests passed: 15.
 - Live doctor now reports `model generation path: MLX model candidates available`.
 - Full suite passed: 286.
+
+### 2026-07-02
+Topic:
+- Move readiness work from patched Squirrel toward native RagImeMac.
+
+Decision:
+- Treat native `RagImeMac` InputMethodKit as the current product route.
+- Treat Rime/Wanxiang as dictionary/behavior reference and first-word fallback source.
+- Keep patched Squirrel as an integration spike and comparison path, not the primary route.
+
+Changes:
+- Added `scripts/doctor_macos_frontend.sh` for native app/sidecar readiness.
+- Native doctor validates app bundle, InputMethodKit plist, bridge config, Swift sidecar decoding, live Prediction-first side candidates, and raw command protection.
+- README now points local validation to native doctor first.
+- Sidecar verifier now retries transient post-commit model-lane busy states with a wider validation budget.
+
+Verification:
+- Native doctor passed against live build and sidecar.
+- Full suite passed: 288.

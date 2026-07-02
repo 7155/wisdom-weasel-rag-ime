@@ -18,8 +18,8 @@ This repo should focus on:
 - evidence preview / expanded evidence UI prototype;
 - pin / downrank / delete action wiring;
 - Agent first-run context hook;
-- macOS InputMethodKit frontend adapter prototype;
-- Rime/Squirrel production frontend integration plan;
+- macOS InputMethodKit frontend adapter and native doctor gate;
+- Wanxiang/Rime dictionary as first-word pinyin anchor and fallback source;
 - optional local OpenAI-compatible model prediction lane;
 - history-input context for local model prediction;
 - measured Mac-local model gate: `qwen3.5:0.8b-mlx` can stream raw text well under 200 ms on a warm runner, but strict TTFC filters now reject half tokens and repeated current-input tokens; the 0.8B model is therefore a speed smoke path, not the default quality source;
@@ -57,17 +57,21 @@ macOS InputMethodKit adapter / CLI prototype
   -> shared core governance action
 ```
 
-The production macOS frontend should not remain a custom pinyin engine. The accepted framework route is Rime/Squirrel:
+The current implementation direction is the independent native `RagImeMac`
+InputMethodKit adapter. Rime/Wanxiang remains the dictionary and behavior
+reference for first-word pinyin anchoring and fallback; patched Squirrel is kept
+as a historical integration spike and comparison target, not the primary
+product route.
 
 ```text
-Squirrel / InputMethodKit
-  -> librime handles raw key input, schemes, dictionaries, spelling, paging
-  -> Rime candidates + labels + comments
+RagImeMac / InputMethodKit
+  -> Wanxiang/Rime-style candidates anchor raw pinyin and fallback
   -> RAG-IME side candidates from local model and local memory
-  -> compact shared candidate panel
+  -> Prediction-first state manager and compact candidate panel
 ```
 
-The current InputMethodKit app is kept as the fast prototype and debug harness. See `docs/rime-squirrel-framework-decision.md` for the framework decision.
+See `docs/rime-squirrel-framework-decision.md` for the older framework
+decision and `docs/macos-frontend-adapter.md` for the native adapter status.
 
 ## Current Commands
 
@@ -244,6 +248,19 @@ Check the Squirrel/sidecar integration state:
 ```bash
 scripts/doctor_squirrel_integration.sh
 ```
+
+Check the native RagImeMac frontend and sidecar integration state:
+
+```bash
+scripts/doctor_macos_frontend.sh
+```
+
+For local validation of the current product route, prefer
+`doctor_macos_frontend.sh`: it checks the `RagImeMac.app` bundle,
+InputMethodKit plist keys, bridge config, Swift sidecar decoding, live
+Prediction-first model/RAG/memory candidates, and raw English/command
+protection. Use `RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1` when validating that
+macOS has actually registered the native input source.
 
 Before trying patched Squirrel as a real input source, run the strict readiness
 gate:
@@ -890,6 +907,19 @@ scripts/install_macos_frontend.sh
 ```
 
 The installer writes a user-level bridge config at `~/Library/Application Support/RagImeMac/bridge-config.json` so the installed input method can find this checkout, the shared runtime SQLite DB at `~/Library/Application Support/RagIme/rag-ime.sqlite`, and the Python executable. Override with `RAG_IME_DB_PATH=/path/to/rag-ime.sqlite scripts/build_macos_frontend.sh` only for isolated debug runs.
+
+Run the native frontend doctor before a real typing session:
+
+```bash
+scripts/doctor_macos_frontend.sh
+```
+
+If you have already added `RAG IME` in System Settings -> Keyboard -> Input
+Sources and want the doctor to enforce registration, use:
+
+```bash
+RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 scripts/doctor_macos_frontend.sh
+```
 
 Use the shared-core JSON command from `pi-rag-memory-extension`:
 

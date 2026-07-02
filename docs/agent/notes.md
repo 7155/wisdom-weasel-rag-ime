@@ -2905,3 +2905,27 @@ Verification:
 - `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650`: passed.
 - `scripts/build_macos_frontend.sh`: passed.
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 286 tests passed.
+
+### 2026-07-02 19:11 CST
+Problem:
+- The active goal now says not to depend on the currently fragile patched Squirrel route. The repo still had Squirrel doctor as the main readiness gate and README still described Squirrel as the accepted production route.
+
+Decisions:
+- Current executable product route is the independent native `RagImeMac` InputMethodKit adapter.
+- Rime/Wanxiang remains the pinyin-anchor/fallback behavior reference and dictionary source; patched Squirrel remains a historical spike/comparison path.
+- Native readiness should have its own doctor rather than using stale same-bundle Squirrel checks.
+
+Changes:
+- Added `scripts/doctor_macos_frontend.sh`.
+- Native doctor checks `RagImeMac.app`, bundle id, InputMethodKit plist keys, bridge config, Swift sidecar preview decoding, live Prediction-first model/RAG/memory candidates, and raw command protection.
+- Input-source registration/selected checks are optional strict gates via `RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1` and `RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE=1`.
+- Updated README to make native RagImeMac the preferred validation route and mark Squirrel as spike/reference.
+- Hardened `scripts/verify_prediction_first_sidecar.py` against transient post-commit `model lane already running` by retrying model validation with a wider 1200ms budget.
+
+Verification:
+- `scripts/doctor_macos_frontend.sh`: passed against live app/sidecar; only warning is that macOS input-source registration was not required.
+- `python3 -m unittest tests.test_doctor_macos_frontend tests.test_doctor_squirrel_integration`: 17 tests passed.
+- `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650`: passed.
+- `scripts/build_macos_frontend.sh`: passed.
+- `bash -n scripts/doctor_macos_frontend.sh scripts/doctor_squirrel_integration.sh && python3 -m py_compile scripts/verify_prediction_first_sidecar.py`: passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 288 tests passed.

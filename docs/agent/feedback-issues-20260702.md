@@ -58,3 +58,11 @@
 - doctor 模型验证现在固定请求 8 个候选位，避免 RAG/记忆占据唯一候选位后误判 “no MLX model predictions”。
 - 如果模型通道第一次返回 `model lane already running` 或超时，doctor 会用更宽的 1200ms 预算做一次模型专项重试。
 - live doctor 现在输出 `[OK] model generation path: MLX model candidates available (...)`；当前只剩 stale system Squirrel.app 这个安装环境 warning。
+
+## 2026-07-02 19:11 修复记录
+
+- 新增 native `RagImeMac` doctor，避免继续把 patched Squirrel 当作唯一验收入口。
+- native doctor 已覆盖：app bundle / InputMethodKit plist / bridge config / Swift sidecar 解码 / live LLM+RAG+memory 候选 / raw command 保护。
+- README 已改成当前产品路线优先验证 `scripts/doctor_macos_frontend.sh`；Squirrel patch 只作为历史 spike 和对照路径保留。
+- `verify_prediction_first_sidecar.py` 也加入 post-commit 模型 busy 重试，避免 MLX 正在运行时把“瞬时 busy”误判成没有模型候选。
+- live native doctor 已通过；下一步真实验收应走 `scripts/install_macos_frontend.sh` -> 系统输入源添加 `RAG IME` -> `RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 scripts/doctor_macos_frontend.sh` -> Edge/TextEdit/Codex App 连续输入。
