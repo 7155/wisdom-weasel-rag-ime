@@ -196,7 +196,8 @@ The installer copies the runtime Python package into `~/Library/Application Supp
 
 If the IME should use a local model lane at login, export the predictor
 variables before running the installer. The installer writes a whitelist of
-`RAG_IME_PREDICTOR_*`, history-context, and cache variables into the plist:
+`RAG_IME_PREDICTOR_*`, embedding/vector, history-context, and cache variables
+into the plist:
 
 ```bash
 export RAG_IME_PREDICTOR_PROVIDER=ollama
@@ -205,6 +206,31 @@ export RAG_IME_PREDICTOR_MODEL=qwen3.5:0.8b-mlx
 export RAG_IME_PREDICTOR_PROFILE=instant
 export RAG_IME_PREDICTOR_STREAM_FIRST=1
 scripts/install_sidecar_launch_agent.sh
+```
+
+For optional vector recall in the installed sidecar, configure an embedding
+provider before installing. `local-hash` is only a deterministic local baseline
+for proving the side-index path; use an OpenAI-compatible local/WSL endpoint for
+real semantic embedding. `RAG_IME_VECTOR_AUTO_REBUILD_LIMIT` backfills existing
+SQLite history on sidecar startup only when the active provider has no vectors
+yet:
+
+```bash
+export RAG_IME_ENABLE_LOCAL_VECTOR=1
+scripts/install_sidecar_launch_agent.sh
+```
+
+That switch writes `RAG_IME_EMBEDDING_PROVIDER=local-hash`,
+`RAG_IME_VECTOR_CANDIDATES=80`, `RAG_IME_VECTOR_WEIGHT=1.4`, and
+`RAG_IME_VECTOR_AUTO_REBUILD_LIMIT=5000` into the LaunchAgent unless you already
+provided explicit embedding/vector values.
+
+The same rebuild can be triggered manually through the sidecar:
+
+```bash
+curl -s http://127.0.0.1:8766/rebuild-vector-index \
+  -H 'Content-Type: application/json' \
+  -d '{"project":"wisdom-weasel-rag-ime","limit":5000}' | python3 -m json.tool
 ```
 
 Remove the LaunchAgent:

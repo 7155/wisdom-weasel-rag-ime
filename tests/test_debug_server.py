@@ -13,8 +13,10 @@ from pathlib import Path
 from threading import Event, Thread
 from urllib.request import Request, urlopen
 
+from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
+from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputSuggestion, ModelPrediction
 from rag_ime.predictor import OllamaPredictionConfig, OllamaPredictionProvider
 
@@ -63,6 +65,15 @@ class PrefixPredictionProvider(FakePredictionProvider):
                 metadata={"initials": "bzgxmzlmsld"},
             ),
         ][:max_candidates]
+
+
+class MarsEmbeddingProvider:
+    fingerprint = "test-mars:v1"
+
+    def embed(self, text: str) -> list[float]:
+        if "火星任务" in text or "赤色星球" in text:
+            return [1.0, 0.0]
+        return [0.0, 1.0]
 
 
 class BlockingPredictionProvider:
@@ -182,6 +193,49 @@ class DebugImeServiceTests(unittest.TestCase):
         seeded = self.service.seed()
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)
+
+    def test_startup_can_backfill_vector_index_when_provider_enabled(self) -> None:
+        db_path = Path(self.tmp.name) / "startup-vector.sqlite"
+        plain_core = LocalSqliteCoreClient(db_path)
+        InputMethodAdapter(plain_core).commit_text("赤色星球探索计划", recent_context="航天项目背景")
+
+        vector_core = LocalSqliteCoreClient(db_path, embedding_provider=MarsEmbeddingProvider(), vector_weight=2.0)
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=db_path,
+                core=vector_core,
+                seed_if_empty=False,
+                vector_auto_rebuild_limit=10,
+            )
+        )
+
+        health = service.health()
+        self.assertTrue(health["vectorStats"]["enabled"])
+        self.assertEqual(health["vectorStats"]["activeProviderVectors"], 1)
+        self.assertEqual(health["vectorAutoRebuild"]["lastRun"]["indexed"], 1)
+        payload = service.suggest({"currentInput": "火星任务", "topK": 1})
+        self.assertEqual(payload["suggestions"][0]["surfaceText"], "赤色星球探索计划")
+
+    def test_rebuild_vector_index_endpoint_backfills_existing_events(self) -> None:
+        db_path = Path(self.tmp.name) / "manual-vector.sqlite"
+        plain_core = LocalSqliteCoreClient(db_path)
+        InputMethodAdapter(plain_core).commit_text("赤色星球探索计划", recent_context="航天项目背景")
+
+        vector_core = LocalSqliteCoreClient(db_path, embedding_provider=MarsEmbeddingProvider(), vector_weight=2.0)
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=db_path,
+                core=vector_core,
+                seed_if_empty=False,
+            )
+        )
+        self.assertEqual(service.health()["vectorStats"]["activeProviderVectors"], 0)
+
+        report = service.rebuild_vector_index({"limit": 10})
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["indexed"], 1)
+        self.assertEqual(report["vectorStats"]["activeProviderVectors"], 1)
 
     def test_suggest_returns_native_frontend_payload(self) -> None:
         predictor = FakePredictionProvider()

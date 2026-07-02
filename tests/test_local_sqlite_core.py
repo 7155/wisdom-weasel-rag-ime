@@ -67,6 +67,32 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertTrue(all(item.evidence_preview for item in suggestions))
         self.assertTrue(all(item.metadata.get("memory_id", "").startswith("event:") for item in suggestions))
 
+    def test_initialize_prunes_orphan_memory_state_and_vectors(self) -> None:
+        orphan_event_id = 999_999
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO memory_state(event_id, updated_at_ms) VALUES (?, ?)", (orphan_event_id, now_ms()))
+            conn.execute(
+                "INSERT INTO memory_vectors(event_id, provider_fingerprint, vector_json, updated_at_ms) VALUES (?, ?, ?, ?)",
+                (orphan_event_id, "orphan-provider", "[1.0]", now_ms()),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_actions(created_at_ms, memory_id, event_id, action_type)
+                VALUES (?, ?, ?, ?)
+                """,
+                (now_ms(), f"event:{orphan_event_id}", orphan_event_id, "accepted"),
+            )
+
+        self.core.initialize()
+
+        with sqlite3.connect(self.db_path) as conn:
+            state_count = conn.execute("SELECT COUNT(*) FROM memory_state WHERE event_id = ?", (orphan_event_id,)).fetchone()[0]
+            vector_count = conn.execute("SELECT COUNT(*) FROM memory_vectors WHERE event_id = ?", (orphan_event_id,)).fetchone()[0]
+            action_event_id = conn.execute("SELECT event_id FROM memory_actions WHERE memory_id = ?", (f"event:{orphan_event_id}",)).fetchone()[0]
+        self.assertEqual(state_count, 0)
+        self.assertEqual(vector_count, 0)
+        self.assertIsNone(action_event_id)
+
     def test_negative_fts5_bm25_score_affects_ranking(self) -> None:
         suggestions = self.adapter.suggest(
             SuggestionRequest(

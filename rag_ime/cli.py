@@ -538,6 +538,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")),
         help="Short TTL cache for repeated /rime-suggest payloads. Use 0 to disable.",
     )
+    debug_server.add_argument(
+        "--vector-auto-rebuild-limit",
+        type=int,
+        default=int(os.environ.get("RAG_IME_VECTOR_AUTO_REBUILD_LIMIT", "0")),
+        help="Backfill this many recent vectors at startup when an embedding provider is enabled and no active vectors exist.",
+    )
 
     sidecar_server = subparsers.add_parser("sidecar-server", help="Run the local HTTP sidecar for Squirrel/Rime")
     sidecar_server.add_argument("--host", default=os.environ.get("RAG_IME_SIDECAR_HOST", "127.0.0.1"))
@@ -549,6 +555,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=int,
         default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")),
         help="Short TTL cache for repeated /rime-suggest payloads. Use 0 to disable.",
+    )
+    sidecar_server.add_argument(
+        "--vector-auto-rebuild-limit",
+        type=int,
+        default=int(os.environ.get("RAG_IME_VECTOR_AUTO_REBUILD_LIMIT", "0")),
+        help="Backfill this many recent vectors at startup when an embedding provider is enabled and no active vectors exist.",
     )
 
     mlx_predictor_server = subparsers.add_parser(
@@ -1348,6 +1360,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 seed_if_empty=not args.no_seed,
                 core=core,
                 rime_cache_ttl_ms=args.rime_cache_ttl_ms,
+                vector_auto_rebuild_limit=args.vector_auto_rebuild_limit,
             )
         )
         return 0
@@ -1366,6 +1379,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 core=core,
                 server_name="sidecar server",
                 rime_cache_ttl_ms=args.rime_cache_ttl_ms,
+                vector_auto_rebuild_limit=args.vector_auto_rebuild_limit,
             )
         )
         return 0

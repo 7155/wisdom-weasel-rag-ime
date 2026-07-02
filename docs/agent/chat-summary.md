@@ -2017,3 +2017,25 @@ Verification:
 - macOS frontend build and user install passed.
 - Full suite passed: 275.
 - Health check shows local MLX Qwen3.5 0.8B text 4bit is active; vector retrieval is still disabled until embedding config/indexing is enabled.
+
+### 2026-07-02
+Topic:
+- Enable installed-sidecar vector RAG baseline and backfill flow.
+
+Decisions:
+- Vector recall remains opt-in. `local-hash` is used only as a deterministic local baseline for proving the vector side-index path, not as a semantic embedding quality claim.
+- The installed sidecar can be given `RAG_IME_ENABLE_LOCAL_VECTOR=1` for the local baseline, or explicit `RAG_IME_EMBEDDING_*` settings for a real local/WSL embedding endpoint.
+
+Changes:
+- `DebugImeService` gained `vectorAutoRebuild` health metadata, startup vector backfill, and a manual `/rebuild-vector-index` endpoint.
+- CLI sidecar/debug servers now accept `--vector-auto-rebuild-limit` / `RAG_IME_VECTOR_AUTO_REBUILD_LIMIT`.
+- LaunchAgent installer now preserves vector auto-rebuild config and can derive a local-hash baseline from `RAG_IME_ENABLE_LOCAL_VECTOR=1`.
+- Local SQLite initialization now prunes orphan memory state/vector rows.
+- README documents installed-sidecar vector setup and HTTP rebuild.
+
+Verification:
+- Live sidecar reinstalled with MLX Qwen3.5 0.8B text 4bit and local-hash vector baseline.
+- Health now reports `vectorStats.enabled=true` and `activeProviderVectors=124`.
+- Manual `/rebuild-vector-index` indexed 124 active vectors.
+- Live Prediction-first verifier passed with RAG, memory, model, raw English/code/path protection, and Rime fallback.
+- Full suite passed: 279.

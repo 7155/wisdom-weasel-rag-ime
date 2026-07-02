@@ -2819,3 +2819,38 @@ Commands:
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 275 tests passed.
 - `scripts/install_macos_frontend.sh`: installed `/Users/undo/Library/Input Methods/RagImeMac.app` and bridge config.
 - `git diff --check`: passed.
+
+### 2026-07-02 17:54 CST
+Problem:
+- Live sidecar could show MLX prediction and FTS/RAG, but optional vector RAG stayed disabled unless the LaunchAgent was installed with embedding env vars and the existing SQLite history was backfilled.
+- The installed DB also had orphan `memory_state` rows from older runs, which made raw DB counts misleading.
+
+Decisions:
+- Keep vector recall opt-in. `local-hash` is only a deterministic local baseline for plumbing and tests, not a semantic embedding quality claim.
+- Add an explicit `RAG_IME_ENABLE_LOCAL_VECTOR=1` installer switch for the local baseline, while preserving explicit OpenAI-compatible/local-WSL embedding settings when provided.
+- Add startup auto-backfill only behind `RAG_IME_VECTOR_AUTO_REBUILD_LIMIT`; do not scan/embed history on every sidecar start by default.
+
+Changes:
+- `DebugImeService` now exposes `vectorAutoRebuild` in health, supports startup vector backfill, and adds `/rebuild-vector-index`.
+- CLI `debug-server` and `sidecar-server` accept `--vector-auto-rebuild-limit`, defaulting from `RAG_IME_VECTOR_AUTO_REBUILD_LIMIT`.
+- LaunchAgent installer preserves `RAG_IME_VECTOR_AUTO_REBUILD_LIMIT` and supports `RAG_IME_ENABLE_LOCAL_VECTOR=1`.
+- `LocalSqliteCoreClient.initialize()` prunes orphan `memory_state` / `memory_vectors` rows and nulls orphan action event ids.
+- README documents installed-sidecar vector setup and manual HTTP rebuild.
+
+Findings:
+- Live sidecar was reinstalled with MLX Qwen3.5 0.8B text 4bit plus `local-hash:96:v1` vector baseline.
+- `/health` now reports `vectorStats.enabled=true`, `activeProviderVectors=124`, `candidateLimit=80`, `weight=1.4`.
+- Current installed DB has 5109 events, but 4985 are deleted/noise-filtered; the actually retrievable set is 124 records: 103 Codex user records, 11 curated feedback records, and 10 sidecar input records.
+- Orphan memory state count is now 0 after the new initialization cleanup.
+
+Commands:
+- `python3 -m py_compile rag_ime/debug_server.py rag_ime/cli.py rag_ime/local_sqlite_core.py`: passed.
+- `python3 -m unittest tests.test_launch_agent_script tests.test_debug_server.DebugImeServiceTests.test_startup_can_backfill_vector_index_when_provider_enabled tests.test_debug_server.DebugImeServiceTests.test_rebuild_vector_index_endpoint_backfills_existing_events tests.test_local_sqlite_core.LocalSqliteCoreClientTests.test_initialize_prunes_orphan_memory_state_and_vectors`: passed.
+- `python3 -m unittest tests.test_debug_server tests.test_local_sqlite_core tests.test_embeddings tests.test_launch_agent_script`: 71 tests passed.
+- `python3 -m unittest tests.test_rime_sidecar tests.test_prediction_first tests.test_prediction_manager tests.test_demo_quality`: 70 tests passed.
+- `scripts/install_sidecar_launch_agent.sh` with MLX predictor env and local-hash vector env: health OK.
+- `curl -s http://127.0.0.1:8766/rebuild-vector-index -d '{"project":"wisdom-weasel-rag-ime","limit":5000}'`: indexed 124 active vectors.
+- `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 350`: passed with post-commit `rag`, `memory`, and `model` candidates visible and raw command/code/path protected.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 279 tests passed.
+- `scripts/build_macos_frontend.sh`: passed.
+- `git diff --check`: passed.
