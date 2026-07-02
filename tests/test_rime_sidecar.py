@@ -865,10 +865,10 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[0]["text"], "设计输入法状态机")
         self.assertEqual(display[0]["sourceType"], "model")
         self.assertEqual(display[1]["text"], "设计一个候选展示方式")
-        self.assertEqual(display[1]["sourceType"], "rag")
+        self.assertEqual(display[1]["sourceType"], "memory")
         self.assertEqual(display[1]["displayLane"], "memory")
         self.assertEqual(display[1]["metadata"]["initials"], "sjyghxzsfs")
-        self.assertEqual([item["sourceType"] for item in display[:3]], ["model", "rag", "model"])
+        self.assertEqual([item["sourceType"] for item in display[:3]], ["model", "memory", "model"])
 
     def test_prediction_first_prefix_does_not_turn_recent_context_into_memory_candidates(self) -> None:
         core = EmptySuggestionCore()
@@ -966,6 +966,37 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertGreater(response["predictionFirst"]["policy"]["sideInserted"], 0)
         self.assertFalse(any(item["sourceType"] == "rime" for item in response["displayCandidates"]))
 
+    def test_prediction_first_post_commit_clears_stale_empty_panel(self) -> None:
+        core = EmptySuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-prediction-first-post-commit-stale",
+                "requestSeq": 54,
+                "frontendBuild": "rag-ime.foreground-trace.v2",
+                "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
+                "rawInput": "",
+                "preedit": "",
+                "idleMs": 1500,
+                "committedContext": "我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 5,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=PrefixConstrainedPredictionProvider(),
+        )
+
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: stale post-commit continuation")
+        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
+        self.assertFalse(response["predictionFirst"]["policy"]["panelVisible"])
+        self.assertTrue(response["predictionFirst"]["policy"]["hideWhenEmpty"])
+        self.assertTrue(response["predictionFirst"]["policy"]["sessionBound"])
+        self.assertEqual(response["displayCandidates"], [])
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertEqual(response["ragCandidates"], [])
+
     def test_predictor_cooldown_skips_second_rime_refresh_but_keeps_rag(self) -> None:
         delegate = FailingPredictionProvider()
         predictor = CooldownPredictionProvider(delegate, cooldown_ms=1000, failure_latency_ms=1)
@@ -1045,6 +1076,64 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertIn("reused recent model holdover", busy_response["modelLane"]["skippedReason"])
         self.assertEqual(busy_response["displayCandidates"][0]["sourceType"], "model")
         self.assertEqual(busy_response["displayCandidates"][0]["displayLayout"], "inline")
+
+    def test_busy_model_lane_does_not_reuse_holdover_after_prefix_changes(self) -> None:
+        payload = {
+            "sessionId": "squirrel-model-holdover-prefix-prime",
+            "requestSeq": 1,
+            "rawInput": "sj",
+            "preedit": "sj",
+            "committedContext": "用户刚刚写完一段关于 RAG 输入法布局的中文上下文",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "forceSideCandidates": True,
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "设计输入法状态机", "comment": "rime"},
+                ]
+            },
+        }
+        primed = build_rime_sidecar_response(
+            payload=payload,
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+        self.assertTrue(primed["modelPredictions"])
+
+        blocking_predictor = BlockingPredictionProvider()
+        worker = Thread(
+            target=build_rime_sidecar_response,
+            kwargs={
+                "payload": {**payload, "sessionId": "squirrel-model-holdover-prefix-block", "requestSeq": 2},
+                "adapter": self.adapter,
+                "core": self.core,
+                "predictor": blocking_predictor,
+            },
+            daemon=True,
+        )
+        worker.start()
+        self.assertTrue(blocking_predictor.entered.wait(timeout=2))
+        try:
+            changed_prefix_response = build_rime_sidecar_response(
+                payload={
+                    **payload,
+                    "sessionId": "squirrel-model-holdover-prefix-change",
+                    "requestSeq": 3,
+                    "rawInput": "sja",
+                    "preedit": "sja",
+                },
+                adapter=self.adapter,
+                core=self.core,
+                predictor=MultiPredictionProvider(),
+            )
+        finally:
+            blocking_predictor.release.set()
+            worker.join(timeout=2)
+
+        self.assertEqual(changed_prefix_response["modelPredictions"], [])
+        self.assertFalse(changed_prefix_response["modelLane"]["holdoverHit"])
+        self.assertEqual(changed_prefix_response["modelLane"]["skippedReason"], "model lane already running")
 
     def test_model_lane_timeout_reuses_holdover_for_horizontal_row(self) -> None:
         payload = {

@@ -63,7 +63,37 @@ class CandidatePool:
     memory: tuple[PredictionCandidate, ...] = ()
 
     def prediction_order(self) -> tuple[PredictionCandidate, ...]:
-        return tuple(sorted((*self.rag, *self.memory, *self.model), key=lambda item: item.score, reverse=True))
+        # Keep all semantic lanes visible before pure score sorting can crowd one
+        # out. The IME is only useful if the user can see local model, RAG, and
+        # personal-memory candidates as distinct choices.
+        groups = {
+            "rag": list(sorted(self.rag, key=lambda item: item.score, reverse=True)),
+            "memory": list(sorted(self.memory, key=lambda item: item.score, reverse=True)),
+            "model": list(sorted(self.model, key=lambda item: item.score, reverse=True)),
+        }
+        ordered: list[PredictionCandidate] = []
+        seen: set[tuple[str, int, str]] = set()
+        for source_type in ("rag", "memory", "model"):
+            group = groups[source_type]
+            if not group:
+                continue
+            candidate = group.pop(0)
+            key = (candidate.source_type, candidate.source_index, candidate.display_text)
+            ordered.append(candidate)
+            seen.add(key)
+
+        remaining = sorted(
+            (item for group in groups.values() for item in group),
+            key=lambda item: item.score,
+            reverse=True,
+        )
+        for candidate in remaining:
+            key = (candidate.source_type, candidate.source_index, candidate.display_text)
+            if key in seen:
+                continue
+            ordered.append(candidate)
+            seen.add(key)
+        return tuple(ordered)
 
 
 @dataclass(frozen=True)
@@ -101,9 +131,16 @@ def build_candidate_pool(
     model_predictions: list[ModelPrediction] | tuple[ModelPrediction, ...] = (),
     suggestions: list[InputSuggestion] | tuple[InputSuggestion, ...] = (),
 ) -> CandidatePool:
-    rag_candidates = tuple(_candidate_from_suggestion(item, index) for index, item in enumerate(suggestions))
+    rag_items: list[PredictionCandidate] = []
+    memory_items: list[PredictionCandidate] = []
+    for index, item in enumerate(suggestions):
+        candidate = _candidate_from_suggestion(item, index)
+        if candidate.source_type == "memory":
+            memory_items.append(candidate)
+        else:
+            rag_items.append(candidate)
     model_candidates = tuple(_candidate_from_model(item, index) for index, item in enumerate(model_predictions))
-    return CandidatePool(rag=rag_candidates, model=model_candidates)
+    return CandidatePool(rag=tuple(rag_items), memory=tuple(memory_items), model=model_candidates)
 
 
 def merge_prediction_first_candidates(
@@ -404,6 +441,9 @@ def _merge_result(
             "engine": "prediction-first",
             "mode": mode.value,
             "reason": reason,
+            "panelVisible": bool(display),
+            "hideWhenEmpty": True,
+            "sessionBound": True,
             "sideInserted": side_inserted,
             "prefixMatchedSideInserted": prefix_matched_side_inserted,
             "rawCommitInserted": raw_commit_inserted,

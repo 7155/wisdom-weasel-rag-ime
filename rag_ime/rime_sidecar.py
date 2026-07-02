@@ -90,6 +90,7 @@ _SHELL_COMMAND_PREFIXES = _RAW_COMMIT_ASCII_TERMS | {
 _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_HOLDOVER_TTL_MS = 900
+_POST_COMMIT_PANEL_TTL_MS = 1200
 _MODEL_HOLDOVER_LOCK = RLock()
 _MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
 _RECENT_MEMORY_KEYWORDS = (
@@ -143,7 +144,7 @@ class RimeSideCandidateTriggerDecision:
 @dataclass(frozen=True)
 class _ModelPredictionHoldover:
     project: str
-    explicit_context_fingerprint: str
+    input_state_fingerprint: str
     predictions: tuple[ModelPrediction, ...]
     created_at: float
 
@@ -462,6 +463,7 @@ def run_side_lanes_with_latency_budget(
     if not isinstance(model_lane, dict):
         predictions = _get_model_holdover_predictions(
             project=project,
+            current_input=current_input,
             explicit_recent_context=explicit_recent_context,
             max_candidates=max_candidates,
         )
@@ -650,6 +652,7 @@ def predict_model_with_latency_budget(
     if not _MODEL_LANE_SEMAPHORE.acquire(blocking=False):
         cached_predictions = _get_model_holdover_predictions(
             project=project,
+            current_input=current_input,
             explicit_recent_context=explicit_recent_context,
             max_candidates=max_candidates,
         )
@@ -705,6 +708,7 @@ def predict_model_with_latency_budget(
             if isinstance(result["predictions"], list) and result["predictions"]:
                 _store_model_holdover_predictions(
                     project=project,
+                    current_input=current_input,
                     explicit_recent_context=explicit_recent_context,
                     predictions=result["predictions"],
                 )
@@ -719,6 +723,7 @@ def predict_model_with_latency_budget(
     if not done.wait(timeout=budget_ms / 1000):
         cached_predictions = _get_model_holdover_predictions(
             project=project,
+            current_input=current_input,
             explicit_recent_context=explicit_recent_context,
             max_candidates=max_candidates,
         )
@@ -883,10 +888,14 @@ def wait_for_model_prediction_lane_idle(timeout_s: float = 1.0) -> bool:
 def _store_model_holdover_predictions(
     *,
     project: str,
+    current_input: str,
     explicit_recent_context: str,
     predictions: list[ModelPrediction],
 ) -> None:
-    fingerprint = _holdover_context_fingerprint(explicit_recent_context)
+    fingerprint = _holdover_input_state_fingerprint(
+        explicit_recent_context=explicit_recent_context,
+        current_input=current_input,
+    )
     if not fingerprint:
         return
     visible = tuple(predictions[:10])
@@ -895,7 +904,7 @@ def _store_model_holdover_predictions(
     with _MODEL_HOLDOVER_LOCK:
         _MODEL_HOLDOVERS[(project, fingerprint)] = _ModelPredictionHoldover(
             project=project,
-            explicit_context_fingerprint=fingerprint,
+            input_state_fingerprint=fingerprint,
             predictions=visible,
             created_at=time.monotonic(),
         )
@@ -904,10 +913,14 @@ def _store_model_holdover_predictions(
 def _get_model_holdover_predictions(
     *,
     project: str,
+    current_input: str,
     explicit_recent_context: str,
     max_candidates: int,
 ) -> list[ModelPrediction]:
-    fingerprint = _holdover_context_fingerprint(explicit_recent_context)
+    fingerprint = _holdover_input_state_fingerprint(
+        explicit_recent_context=explicit_recent_context,
+        current_input=current_input,
+    )
     if not fingerprint:
         return []
     with _MODEL_HOLDOVER_LOCK:
@@ -920,8 +933,12 @@ def _get_model_holdover_predictions(
         return list(cached.predictions[: max(1, min(10, int(max_candidates)))])
 
 
-def _holdover_context_fingerprint(text: str) -> str:
-    return compact_whitespace(text)[-420:]
+def _holdover_input_state_fingerprint(*, explicit_recent_context: str, current_input: str) -> str:
+    context = compact_whitespace(explicit_recent_context)[-420:]
+    query = compact_whitespace(current_input)[:240]
+    if not context and not query:
+        return ""
+    return _short_stable_id(context, query)
 
 
 def _predictor_last_error(predictor: PredictionProvider) -> str:
@@ -1081,9 +1098,13 @@ def choose_semantic_query(snapshot: RimeContextSnapshot) -> tuple[str, str]:
         return raw_semantic_input, "rawSemanticInput"
     candidate_text = compact_whitespace(" ".join(item.text for item in snapshot.candidates[:3] if item.text))
     if candidate_text:
+        prefix = stable_short_pinyin_prefix(snapshot)
         context = compact_whitespace(snapshot.committed_context)
+        query_parts = tuple(part for part in (context[-160:] if context else "", prefix, candidate_text) if part)
         if context:
-            return compact_whitespace(f"{context[-160:]} {candidate_text}"), "rimeCandidates"
+            return compact_whitespace(" ".join(query_parts)), "rimeCandidates"
+        if prefix:
+            return compact_whitespace(f"{prefix} {candidate_text}"), "rimeCandidates"
         return candidate_text, "rimeCandidates"
     preedit = compact_whitespace(snapshot.preedit)
     raw_input = compact_whitespace(snapshot.raw_input)
@@ -1156,6 +1177,8 @@ def decide_side_candidate_refresh(
     if query_basis == "committedContext":
         no_active_composition = not compact_whitespace(snapshot.raw_input) and not compact_whitespace(snapshot.preedit)
         if no_active_composition and signal_len >= 4:
+            if snapshot.idle_ms > _POST_COMMIT_PANEL_TTL_MS:
+                return RimeSideCandidateTriggerDecision(False, "skip: stale post-commit continuation")
             return RimeSideCandidateTriggerDecision(True, "refresh: post-commit continuation")
         if snapshot.idle_ms >= 300 and signal_len >= 4:
             return RimeSideCandidateTriggerDecision(True, "refresh: idle committed context")
@@ -1166,6 +1189,20 @@ def decide_side_candidate_refresh(
 
 def semantic_signal_length(text: str) -> int:
     return sum(1 for char in compact_whitespace(text) if not char.isspace())
+
+
+def stable_short_pinyin_prefix(snapshot: RimeContextSnapshot) -> str:
+    """Return a short user pinyin prefix that can constrain RAG/memory lookup.
+
+    Long raw strings are often typo-heavy pinyin fragments; those should not be
+    used as semantic RAG queries. A short prefix such as "sj" is different: it is
+    the user's active constraint and should match the phrase-memory pinyin index.
+    """
+
+    prefix = compact_whitespace(snapshot.preedit or snapshot.raw_input).lower()
+    if not prefix or not prefix.isascii() or not prefix.isalnum():
+        return ""
+    return prefix if 1 <= len(prefix) <= 4 else ""
 
 
 def merge_display_candidates(

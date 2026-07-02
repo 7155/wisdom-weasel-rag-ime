@@ -570,7 +570,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "# rag-ime.foreground-trace.v2\n"
                     "# panel_text_layout\n"
                     "# sidecar_request_scheduled\n"
-                    "# sidecar_empty_response_ignored\n"
+                    "# sidecar_empty_response_cleared\n"
                     "exit 0\n"
                 ),
             )
@@ -617,7 +617,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "# rag-ime.foreground-trace.v2\n"
                     "# panel_text_layout\n"
                     "# sidecar_request_scheduled\n"
-                    "# sidecar_empty_response_ignored\n"
+                    "# sidecar_empty_response_cleared\n"
                     "exit 0\n"
                 ),
             )
@@ -664,7 +664,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "# rag-ime.foreground-trace.v2\n"
                     "# panel_text_layout\n"
                     "# sidecar_request_scheduled\n"
-                    "# sidecar_empty_response_ignored\n"
+                    "# sidecar_empty_response_cleared\n"
                     "exit 0\n"
                 ),
                 bundle_id="im.rag-ime.inputmethod.RagIme",

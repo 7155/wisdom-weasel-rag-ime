@@ -1806,3 +1806,29 @@ Verification:
 
 Next:
 - Continue with native foreground validation in Codex App, Edge, and TextEdit; if the front panel still shows old candidates, inspect whether the patched Squirrel frontend is sending fresh context and applying the sidecar response.
+
+### 2026-07-02
+Topic:
+- Align LLM/RAG/memory candidate display with Wisdom-Weasel's short-lived prediction session.
+
+Decisions:
+- Prediction UI should not be a persistent clipboard/history panel.
+- Show candidates only while there is active Rime composition or an active prediction session with live candidates.
+- Empty response, stale request, Esc/focus loss, or normal raw input must hide the prediction layer so digits, English, paths, and code stay usable.
+
+Changes:
+- Added `predictionFirst.policy.panelVisible / hideWhenEmpty / sessionBound`.
+- Added 1.2s TTL for post-commit continuation holdover.
+- Bound model holdover reuse to the current semantic input state, so changing pinyin prefix clears the old model row instead of making it look persistent.
+- Kept `rag`, `memory`, and `model` as separate visible lanes before score-only fill.
+- Added short pinyin-prefix lookup for RAG/memory filtering and avoided long raw pinyin as semantic query.
+- Updated Squirrel patch marker from `sidecar_empty_response_ignored` to `sidecar_empty_response_cleared`.
+- Updated framework/frontend docs and feedback issue log.
+
+Verification:
+- Focused prediction/debug/RAG tests passed: 121 tests.
+- Red full-suite regressions around Squirrel trace marker and MLX phrase-like logits were fixed with focused regression tests passing.
+- Full test suite passed: 264 tests.
+
+Next:
+- Commit and push this lifecycle fix, then reinstall/reload the patched frontend before real editor validation.

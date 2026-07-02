@@ -352,12 +352,20 @@ class LocalSqliteCoreClient:
         )
         rows = _merge_rows(rows, vector_rows)
         rows = [row for row in rows if not _row_looks_like_retrieval_noise(row)]
-        rows = [
+        filtered_rows = [
             row
             for row in rows
             if vector_scores.get(int(row["id"]), 0.0) > 0.05
             or _row_matches_required_query(row, raw_query=raw_query)
         ]
+        if not filtered_rows and query != raw_query:
+            filtered_rows = [
+                row
+                for row in rows
+                if vector_scores.get(int(row["id"]), 0.0) > 0.05
+                or _row_matches_required_query(row, raw_query=query, allow_pinyin=False, relaxed=True)
+            ]
+        rows = filtered_rows
         if not rows and _recent_fill_enabled():
             rows = self._recent_rows(project=project, app=app, limit=top_k)
         elif rows and len(rows) < top_k and _recent_fill_enabled():
@@ -1256,10 +1264,26 @@ def _recent_fill_enabled() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _row_matches_required_query(row: sqlite3.Row, *, raw_query: str) -> bool:
+def _row_matches_required_query(
+    row: sqlite3.Row,
+    *,
+    raw_query: str,
+    allow_pinyin: bool = True,
+    relaxed: bool = False,
+) -> bool:
     required = _required_query_terms(raw_query)
+    pinyin_terms = _short_ascii_query_terms(raw_query) if allow_pinyin else []
     if not required:
-        return True
+        if not pinyin_terms:
+            return True
+        pinyin_doc = set(
+            pinyin_search_document(
+                str(row["committed_text"]),
+                str(row["recent_context"]),
+                str(row["preedit"]),
+            ).split()
+        )
+        return any(term in pinyin_doc or any(item.startswith(term) for item in pinyin_doc) for term in pinyin_terms)
     haystack = compact_whitespace(
         " ".join(
             [
@@ -1272,9 +1296,21 @@ def _row_matches_required_query(row: sqlite3.Row, *, raw_query: str) -> bool:
             ]
         )
     ).lower()
+    if pinyin_terms:
+        pinyin_doc = set(
+            pinyin_search_document(
+                str(row["committed_text"]),
+                str(row["recent_context"]),
+                str(row["preedit"]),
+            ).split()
+        )
+        if any(term in pinyin_doc or any(item.startswith(term) for item in pinyin_doc) for term in pinyin_terms):
+            return True
     hits = [term for term in required if term.lower() in haystack]
     if not hits:
         return False
+    if relaxed:
+        return True
     if len(required) <= 2:
         return True
     return len(hits) >= 2 or any(len(term) >= 6 for term in hits)
@@ -1313,6 +1349,36 @@ def _required_query_terms(raw_query: str) -> list[str]:
         if lowered not in terms:
             terms.append(lowered)
     return terms[:8]
+
+
+def _short_ascii_query_terms(raw_query: str) -> list[str]:
+    generic = {
+        "api",
+        "app",
+        "cli",
+        "css",
+        "dev",
+        "git",
+        "ime",
+        "ios",
+        "json",
+        "llm",
+        "mac",
+        "mlx",
+        "rag",
+        "sql",
+        "ui",
+        "url",
+        "web",
+    }
+    terms: list[str] = []
+    for term in token_terms(raw_query, max_terms=32):
+        lowered = term.lower()
+        if lowered in generic:
+            continue
+        if re.fullmatch(r"[a-z]{2,8}", lowered) and lowered not in terms:
+            terms.append(lowered)
+    return terms[:4]
 
 
 def _row_int(row: sqlite3.Row, key: str, *, default: int = 0) -> int:
@@ -1383,7 +1449,15 @@ def _expand_query_for_local_rerank(query: str) -> str:
     if "本地记忆" in text or "个人记忆" in text or "rag" in lowered or "隐私" in text or "云端" in text:
         add("local-first", "SQLite", "FTS5", "memory", "personal memory", "本地记忆")
     if "数字键" in text or ("候选" in text and ("共用" in text or "候选段" in text)):
-        add("Rime candidates", "side candidates", "displayCandidates", "selectionAction", "候选编号")
+        add(
+            "Rime candidates",
+            "side candidates",
+            "number sequence",
+            "selection key",
+            "displayCandidates",
+            "selectionAction",
+            "候选编号",
+        )
     if ("区分" in text or "选择" in text or "路由" in text) and (
         "squirrel" in lowered or "rime" in lowered or "side candidate" in lowered or "候选" in text
     ):

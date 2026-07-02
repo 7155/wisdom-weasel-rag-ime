@@ -2576,3 +2576,28 @@ Commands:
 Findings:
 - Backend service flow is now genuinely Prediction-first for the tested paths: post-commit returns `model + memory` with no Rime fallback, prefix-constrained returns model/memory before fallback, and code/path/command input keeps raw English first.
 - Remaining foreground validation is still native macOS/Squirrel panel behavior in real editors.
+
+### 2026-07-02 14:45 CST
+Problem:
+- User reported the current LLM/RAG/memory candidate display still felt like a stiff non-disappearing clipboard panel.
+- The desired reference is Wisdom-Weasel's LLM prediction behavior: prediction appears naturally after commit, but does not keep blocking input after stale/empty responses.
+
+Changes:
+- Re-aligned the sidecar contract to a short-lived prediction session: `predictionFirst.policy.panelVisible`, `hideWhenEmpty`, and `sessionBound` now explicitly tell the frontend when to show or clear the panel.
+- Added a 1.2s post-commit continuation TTL so AI candidates can visually connect after a commit but disappear before they block digits/English/code input.
+- Bound model holdover cache to the current semantic input state, so `sj` -> `sja` cannot reuse an old model row while the model lane is busy.
+- Split side suggestions into real `rag` and `memory` lanes, then balanced `rag/memory/model` so all three sources can be visible before pure score sorting fills the rest.
+- Added short pinyin-prefix lookup for active composition, while keeping long dirty raw pinyin out of semantic RAG queries.
+- Updated SQLite retrieval to filter with original query plus pinyin index first, then only use expanded query as a relaxed fallback.
+- Unified Squirrel frontend patch marker to `sidecar_empty_response_cleared`; empty sidecar responses must clear the stale panel rather than be treated as ignored.
+- Updated MLX logits tests so the fast path represents phrase-like IME candidates, not low-value single token candidates.
+
+Commands:
+- `python3 -m unittest tests.test_debug_server tests.test_rime_sidecar tests.test_local_sqlite_core tests.test_prediction_first tests.test_demo_quality`: 121 tests passed.
+- `python3 -m unittest -v tests.test_prepare_squirrel_workspace.PrepareSquirrelWorkspaceScriptTests.test_prepare_squirrel_workspace_applies_patch_and_writes_config_offline tests.test_doctor_squirrel_integration.DoctorSquirrelIntegrationScriptTests.test_doctor_reports_stale_duplicate_squirrel_app_as_warning tests.test_doctor_squirrel_integration.DoctorSquirrelIntegrationScriptTests.test_doctor_ignores_original_squirrel_when_configured_app_uses_branded_bundle_id tests.test_mlx_predictor_server.MlxPredictorServerTests.test_engine_predict_prefers_next_token_logits_candidates tests.test_replace_system_squirrel_app`: 7 tests passed.
+- `python3 -m unittest -v tests.test_rime_sidecar.RimeSidecarTests.test_busy_model_lane_reuses_short_model_holdover_for_horizontal_row tests.test_rime_sidecar.RimeSidecarTests.test_busy_model_lane_does_not_reuse_holdover_after_prefix_changes tests.test_rime_sidecar.RimeSidecarTests.test_model_lane_timeout_reuses_holdover_for_horizontal_row tests.test_rime_sidecar.RimeSidecarTests.test_prediction_first_post_commit_clears_stale_empty_panel`: 4 tests passed.
+- `python3 -m unittest discover -s tests`: 264 tests passed.
+
+Findings:
+- The backend/debug flow now matches the Wisdom-Weasel lifecycle principle: show only while the prediction session has live candidates, hide on stale/empty session.
+- Remaining validation is still foreground macOS panel behavior after reinstall/reload of the patched Squirrel frontend.

@@ -302,6 +302,45 @@ class RagImeDemoQualityTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["predictionCount"], 1)
         self.assertGreaterEqual(response["ragLane"]["suggestionCount"], 1)
 
+    def test_prediction_first_demo_requires_llm_rag_and_memory_candidates(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "prediction-first-source-distribution",
+                "requestSeq": 12,
+                "commitTextPreview": "RAG 输入法 LLM 记忆 embedding",
+                "committedContext": "我正在实现 Prediction-first RAG 输入法, 需要 LLM RAG memory 都成功。",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "根据", "comment": "wanxiang"},
+                        {"label": "2", "text": "测试", "comment": "wanxiang"},
+                    ],
+                    "page": 0,
+                    "isLastPage": True,
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=DemoPredictionProvider(),
+        )
+        self._assert_no_bad_display_candidates(response)
+        display = response["displayCandidates"]
+        source_types = [item["sourceType"] for item in display]
+        self.assertIn("model", source_types)
+        self.assertIn("rag", source_types)
+        self.assertIn("memory", source_types)
+        self.assertNotIn("rime", source_types)
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
+        self.assertTrue(
+            all(item["selectionAction"] == "commit_side_candidate" for item in display),
+            display,
+        )
+        self.assertGreaterEqual(response["modelLane"]["predictionCount"], 1)
+        self.assertGreaterEqual(response["ragLane"]["suggestionCount"], 2)
+
 
 class CodexHistoryDemoQualityTests(unittest.TestCase):
     def test_codex_history_loader_keeps_only_real_user_inputs(self) -> None:

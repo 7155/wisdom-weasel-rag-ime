@@ -200,7 +200,7 @@ backend contract:
 installed app contract:
   Squirrel 二进制必须包含 sidecar_request_scheduled
   + rag-ime.foreground-trace.v2
-  + sidecar_empty_response_ignored
+  + sidecar_empty_response_cleared
   + panel_text_layout
 
 system runtime contract:

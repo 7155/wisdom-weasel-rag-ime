@@ -26,6 +26,16 @@
 - 空输入时预测面板改为 post-commit holdover：只有没有 Rime fallback 且距离上次更新不超过 `min(ragImeDisplayHoldoverDuration, 1.2)` 秒才短暂保留，否则清空，避免一直吃掉数字键。
 - sidecar 实测通过：`/api/rime-suggest` 返回 `modelLane.called=true`、`ragLane.called=true`，display candidates 同时包含 `rag`、`memory`、`model`，且 side candidates 的 `selectionAction=commit_side_candidate`。
 
+## 2026-07-02 14:45 Wisdom-Weasel 对齐记录
+
+- 重新对齐候选显示方式：参考 Wisdom-Weasel 的预测态，不再把 AI 候选当作常驻剪贴板面板；只有活动 composition 或活动 prediction session 且存在候选时才显示。
+- sidecar 返回新增 `predictionFirst.policy.panelVisible / hideWhenEmpty / sessionBound`，给 macOS 前端一个明确契约：空候选、过期 post-commit、失焦、Esc、普通数字/英文输入都必须隐藏预测层。
+- post-commit continuation 增加 1.2 秒 TTL：刚上屏后可以视觉连续地接上预测候选，超过窗口就清空，避免几秒后仍挡住输入。
+- 模型 holdover 改成绑定输入状态：cache fingerprint 现在包含当前语义 query；用户从 `sj` 继续变成 `sja` 时不会复用旧模型候选，避免 LLM 横排看起来常驻。
+- 继续拼音约束时不让 LLM 猜脏拼音：只把 1-4 位短拼音前缀作为约束加入语义 query，长 raw pinyin 仍交给 Rime/万象候选处理。
+- `CandidatePool` 改为先保留 `rag`、`memory`、`model` 三条语义 lane 的首个候选，再按分数补齐，避免某一类候选把其他来源挤掉。
+- SQLite 检索改为两阶段过滤：优先用原始 query 和拼音索引过滤，必要时才使用扩展 query 宽松召回，减少“刚开始没含义”的输入触发错误历史。
+
 ## 剩余风险
 
 - `/Library/Input Methods/Squirrel.app` 仍有同 bundle id 的旧系统版 Squirrel；当前用户目录 `/Users/undo/Library/Input Methods/Squirrel.app` 已安装 patched app，但 macOS 可能因重复 app 加载旧版本。需要管理员权限运行 `scripts/replace_system_squirrel_app.sh` 或手动移除系统旧版。

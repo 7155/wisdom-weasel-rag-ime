@@ -246,14 +246,58 @@ class PredictionFirstTests(unittest.TestCase):
                     evidence_preview="用户多次提到面试亮点",
                     confidence=0.7,
                     metadata={"initials": "bzgxmzl cmsxm"},
+                ),
+                InputSuggestion(
+                    suggestion_id="memory-1",
+                    surface_text="高频实时场景里的个人记忆系统",
+                    suggestion_type="phrase",
+                    source_event_id=2,
+                    evidence_preview="用户多次提到这个定位",
+                    confidence=0.92,
+                    metadata={
+                        "source_type": "memory",
+                        "initials": "gpsscjldgrjyxt",
+                    },
                 )
             ],
         )
 
         self.assertEqual(result.mode, InputMode.POST_COMMIT_PREDICTING)
-        self.assertEqual([item.source_type for item in result.display_candidates], ["rag", "model"])
-        self.assertEqual([item.text for item in result.display_candidates], ["把这个项目整理成面试项目", "做一个本地 RAG 输入法"])
+        self.assertEqual([item.source_type for item in result.display_candidates], ["rag", "memory", "model"])
+        self.assertEqual(
+            [item.text for item in result.display_candidates],
+            ["把这个项目整理成面试项目", "高频实时场景里的个人记忆系统", "做一个本地 RAG 输入法"],
+        )
         self.assertFalse(result.policy["rimeCompositionOwnedByRime"])
+
+    def test_candidate_pool_keeps_rag_memory_and_model_as_separate_lanes(self) -> None:
+        pool = build_candidate_pool(
+            model_predictions=[
+                ModelPrediction(text="用本地 MLX 小模型续写", rank=1, provider_name="mlx", latency_ms=20)
+            ],
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="memory-1",
+                    surface_text="个人记忆系统",
+                    suggestion_type="phrase",
+                    source_event_id=2,
+                    evidence_preview="",
+                    confidence=0.99,
+                    metadata={"source_type": "memory"},
+                ),
+                InputSuggestion(
+                    suggestion_id="rag-1",
+                    surface_text="embedding query 应该结合当前输入和上下文",
+                    suggestion_type="sentence",
+                    source_event_id=1,
+                    evidence_preview="",
+                    confidence=0.4,
+                    metadata={"source_type": "rag"},
+                ),
+            ],
+        )
+
+        self.assertEqual([item.source_type for item in pool.prediction_order()[:3]], ["rag", "memory", "model"])
 
     def test_mode_inference_distinguishes_anchor_prefix_and_post_commit(self) -> None:
         self.assertEqual(

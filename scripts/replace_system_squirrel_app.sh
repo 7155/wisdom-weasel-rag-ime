@@ -33,7 +33,7 @@ has_current_rag_ime_frontend_patch() {
     strings "$executable" 2>/dev/null | grep -Fq "rag-ime.foreground-trace.v2" &&
     strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
     strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_ignored"
+    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_cleared"
 }
 
 bool_true() {

@@ -94,6 +94,36 @@ key input
 
 The bridge uses the same local backend as the CLI MVP. It does not call GPT, Claude, or any cloud service by default. The optional model lane only runs when `RAG_IME_PREDICTOR_*` points at a local or user-owned OpenAI-compatible endpoint.
 
+## Prediction Session Lifecycle
+
+The macOS frontend must follow the Wisdom-Weasel-style lifecycle instead of keeping a persistent AI panel open:
+
+```text
+Rime composition active
+  -> show normal Rime candidates, optionally with side candidates appended
+
+meaningful text committed
+  -> open a short prediction session
+  -> show LLM/RAG/memory candidates only while the session has candidates
+
+user continues typing pinyin
+  -> Rime owns composition again
+  -> sidecar filters the candidate pool with the short pinyin prefix
+
+empty result / stale request / Esc / focus lost / normal raw input
+  -> hide prediction panel
+```
+
+The backend now exposes this contract through `predictionFirst.policy`:
+
+```text
+panelVisible   true only when displayCandidates is non-empty
+hideWhenEmpty  frontend must hide on empty candidates
+sessionBound   candidates belong to the active request/session only
+```
+
+Post-commit prediction has a short holdover window, currently 1.2 seconds. This preserves visual continuity after a user commits a word, but prevents old LLM/RAG/memory candidates from blocking number keys, English input, URLs, paths, or code. Model holdover is also tied to the current semantic input state, so changing the active pinyin prefix invalidates the old model row.
+
 For the Squirrel/Rime path, side selection feedback should use the unified `/rime-select` contract. It records the inserted side candidate and, for RAG candidates, the accepted memory action in one local request. The prototype AppKit harness may still issue separate action/commit calls while it remains a debug surface.
 
 ## UI Shape

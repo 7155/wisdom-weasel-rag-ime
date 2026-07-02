@@ -335,13 +335,15 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(prediction_first["predictionFirst"]["pinyinPrefix"], "sj")
         self.assertEqual(
             [item["text"] for item in prediction_first["displayCandidates"]],
-            ["设计一个候选展示方式", "设计输入法状态机", "把本地记忆注入 Agent 首次运行上下文"],
+            ["设计输入法状态机", "设计一个候选展示方式", "把这个项目整理成面试亮点"],
         )
         self.assertEqual(
             [item["displayLane"] for item in prediction_first["displayCandidates"]],
-            ["memory", "model", "memory"],
+            ["model", "memory", "model"],
         )
         self.assertEqual(prediction_first["predictionFirst"]["policy"]["sideInserted"], 3)
+        self.assertTrue(prediction_first["predictionFirst"]["policy"]["panelVisible"])
+        self.assertTrue(prediction_first["predictionFirst"]["policy"]["sessionBound"])
         self.assertTrue(prediction_first["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
 
     def test_rime_suggest_cache_hits_repeated_equivalent_payloads(self) -> None:
@@ -473,7 +475,8 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(second["cache"]["hit"])
         self.assertEqual(second["rawInput"], "ragshurufa")
         self.assertEqual(second["preedit"], "ragshurufa")
-        self.assertEqual(second["semanticQuery"], "RAG 输入法")
+        self.assertIn("RAG 输入法", second["semanticQuery"])
+        self.assertNotIn("ragshuru", second["semanticQuery"])
         self.assertEqual(second["queryBasis"], "rimeCandidates")
 
     def test_cache_probe_reports_warm_suggestion_and_rime_hits(self) -> None:
