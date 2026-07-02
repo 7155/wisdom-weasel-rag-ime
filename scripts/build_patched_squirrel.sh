@@ -164,6 +164,7 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "traceRag
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "panel_text_layout" "actual frontend mixed-layout trace event"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "sidecar_request_scheduled" "real foreground sidecar request trace event"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "sidecar_empty_response_ignored" "empty sidecar response guard"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rag-ime.foreground-trace.v2" "foreground trace v2 marker"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "forceSideCandidates: true" "foreground forced LLM/RAG candidate request"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate separator"

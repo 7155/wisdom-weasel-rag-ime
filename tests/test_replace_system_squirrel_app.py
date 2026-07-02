@@ -131,6 +131,7 @@ def _write_fake_squirrel_app(path: Path, *, patched: bool) -> Path:
         lines.extend(
             [
                 "# rag-ime.squirrel-frontend-trace.v1",
+                "# rag-ime.foreground-trace.v2",
                 "# panel_text_layout",
                 "# sidecar_request_scheduled",
                 "# sidecar_empty_response_ignored",
@@ -175,6 +176,7 @@ def _write_fake_system_tools(tmp_path: Path, *, strip_patch_on_ditto: bool = Fal
                 "path = Path(sys.argv[1])",
                 "text = path.read_text(encoding='utf-8')",
                 "text = text.replace('# rag-ime.squirrel-frontend-trace.v1\\n', '')",
+                "text = text.replace('# rag-ime.foreground-trace.v2\\n', '')",
                 "text = text.replace('# panel_text_layout\\n', '')",
                 "text = text.replace('# sidecar_request_scheduled\\n', '')",
                 "text = text.replace('# sidecar_empty_response_ignored\\n', '')",

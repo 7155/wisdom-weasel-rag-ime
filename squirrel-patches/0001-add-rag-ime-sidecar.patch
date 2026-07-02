@@ -40,7 +40,7 @@ index 813deae..1bec8e3 100644
  			);
 diff --git a/rag-ime.squirrel.custom.yaml b/rag-ime.squirrel.custom.yaml
 new file mode 100644
-index 0000000..0c47f59
+index 0000000..cc2e30b
 --- /dev/null
 +++ b/rag-ime.squirrel.custom.yaml
 @@ -0,0 +1,14 @@
@@ -54,7 +54,7 @@ index 0000000..0c47f59
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 8
-+  latency_budget_ms: 250
++  latency_budget_ms: 300
 +  debounce_ms: 40
 +  timeout_ms: 1200
 +  frontend_trace: true
@@ -128,7 +128,7 @@ index f998248..a0bf7bd 100644
    // swiftlint:disable:next cyclomatic_complexity
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000..0924908
+index 0000000..e716f28
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
 @@ -0,0 +1,328 @@
@@ -170,7 +170,7 @@ index 0000000..0924908
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 8, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 250, range: 30...2000)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 300, range: 30...2000)
 +    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 40, range: 0...500)
 +    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 100...5000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
@@ -655,7 +655,7 @@ index 124ef7b..52c6983 100644
        inputController.deactivateServer(inputController.client())
      }
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..e1a9e05 100644
+index c2adf74..20bc671 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
 @@ -27,6 +27,21 @@ final class SquirrelInputController: IMKInputController {
@@ -779,13 +779,27 @@ index c2adf74..e1a9e05 100644
    // swiftlint:disable:next identifier_name
    func page(up: Bool) -> Bool {
      var handled = false
-@@ -301,6 +394,471 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,6 +394,492 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
 +  func configureRagImeSidecar() {
 +    ragImeSidecarClient = RagImeSidecarClient(config: NSApp.squirrelAppDelegate.config)
 +    clearRagImeDisplayCandidates()
++    if let sidecarClient = ragImeSidecarClient {
++      traceRagImeFrontendEvent("sidecar_configured", fields: [
++        "project": sidecarClient.project,
++        "sidecarURL": sidecarClient.sidecarURL?.absoluteString ?? "",
++        "latencyBudgetMs": sidecarClient.latencyBudgetMs,
++        "maxVisibleCandidates": sidecarClient.maxVisibleCandidates,
++        "maxSideCandidates": sidecarClient.maxSideCandidates,
++        "frontendTrace": sidecarClient.frontendTrace,
++      ])
++    } else {
++      traceRagImeFrontendEvent("sidecar_not_configured", fields: [
++        "reason": "rag_ime config missing or disabled",
++      ])
++    }
 +  }
 +
 +  func selectRagImeSideCandidate(forKey key: String) -> Bool {
@@ -876,6 +890,10 @@ index c2adf74..e1a9e05 100644
 +      "rawInput": rawInput,
 +      "preedit": preedit,
 +      "committedContextChars": ragImeCommittedContext.count,
++      "latencyBudgetMs": sidecarClient.latencyBudgetMs,
++      "maxVisibleCandidates": sidecarClient.maxVisibleCandidates,
++      "maxSideCandidates": sidecarClient.maxSideCandidates,
++      "forceSideCandidates": request.forceSideCandidates,
 +      "candidateCount": rimeCandidates.count,
 +      "candidates": rimeCandidates.prefix(8).map { item in
 +        [
@@ -984,6 +1002,8 @@ index c2adf74..e1a9e05 100644
 +      "preedit": response.preedit,
 +      "semanticQuery": response.semanticQuery,
 +      "queryBasis": response.queryBasis,
++      "displayCount": response.displayCandidates.count,
++      "latencyBudgetMs": response.latencyBudgetMs,
 +      "candidateCounts": ragImeTraceCandidateCounts(),
 +      "candidates": ragImeTraceCandidateSummaries(),
 +    ])
@@ -1126,8 +1146,9 @@ index c2adf74..e1a9e05 100644
 +  }
 +
 +  func traceRagImeFrontendEvent(_ event: String, fields: [String: Any]) {
-+    guard ragImeSidecarClient?.frontendTrace == true else { return }
++    guard ragImeSidecarClient?.frontendTrace == true || event == "sidecar_not_configured" else { return }
 +    var payload = fields
++    payload["frontendBuild"] = "rag-ime.foreground-trace.v2"
 +    payload["schemaVersion"] = "rag-ime.squirrel-frontend-trace.v1"
 +    payload["event"] = event
 +    payload["timestampMs"] = Int(Date().timeIntervalSince1970 * 1000)
@@ -1251,7 +1272,7 @@ index c2adf74..e1a9e05 100644
    func onChordTimer(_: Timer) {
      var processedKeys = false
      if chordKeyCount > 0 && session != 0 {
-@@ -360,6 +918,7 @@ private extension SquirrelInputController {
+@@ -360,6 +939,7 @@ private extension SquirrelInputController {
  
      if session != 0 {
        updateAppOptions()
@@ -1259,7 +1280,7 @@ index c2adf74..e1a9e05 100644
      }
    }
  
-@@ -434,7 +993,7 @@ private extension SquirrelInputController {
+@@ -434,7 +1014,7 @@ private extension SquirrelInputController {
    }
  
    // Preserve reserved comment marks when librime requests a UI-only refresh.
@@ -1268,7 +1289,7 @@ index c2adf74..e1a9e05 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +1005,7 @@ private extension SquirrelInputController {
+@@ -446,6 +1026,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -1276,7 +1297,7 @@ index c2adf74..e1a9e05 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +1018,14 @@ private extension SquirrelInputController {
+@@ -458,13 +1039,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -1292,7 +1313,7 @@ index c2adf74..e1a9e05 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -537,13 +1098,35 @@ private extension SquirrelInputController {
+@@ -537,13 +1119,35 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -1329,7 +1350,7 @@ index c2adf74..e1a9e05 100644
        hidePalettes()
      }
    }
-@@ -551,6 +1134,7 @@ private extension SquirrelInputController {
+@@ -551,6 +1155,7 @@ private extension SquirrelInputController {
    func commit(string: String) {
      guard let client = client else { return }
      client.insertText(string, replacementRange: .empty)

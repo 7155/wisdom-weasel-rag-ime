@@ -86,6 +86,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         '  func traceRagImePanelTextLayout() { _ = "panel_text_layout" }',
                         '  func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }',
                         '  func traceSidecarEmptyResponseIgnored() { _ = "sidecar_empty_response_ignored" }',
+                        '  func traceV2() { _ = "rag-ime.foreground-trace.v2" }',
                         '  func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" }',
                         "}",
                     ]

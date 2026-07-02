@@ -30,6 +30,7 @@ has_current_rag_ime_frontend_patch() {
   local executable="$app/Contents/MacOS/Squirrel"
   [[ -x "$executable" ]] || return 1
   strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
+    strings "$executable" 2>/dev/null | grep -Fq "rag-ime.foreground-trace.v2" &&
     strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
     strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
     strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_ignored"

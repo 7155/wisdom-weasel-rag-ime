@@ -40,7 +40,7 @@ EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDI
 EXPECT_PREDICTOR_BASE_URL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_BASE_URL:-${RAG_IME_PREDICTOR_BASE_URL:-}}"
 EXPECT_PREDICTOR_PROFILE="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
-DOCTOR_LATENCY_BUDGET_MS="${RAG_IME_DOCTOR_LATENCY_BUDGET_MS:-250}"
+DOCTOR_LATENCY_BUDGET_MS="${RAG_IME_DOCTOR_LATENCY_BUDGET_MS:-300}"
 
 failures=0
 warnings=0
@@ -95,6 +95,7 @@ squirrel_app_has_mixed_frontend_trace() {
   local executable="$app/Contents/MacOS/Squirrel"
   [[ -x "$executable" ]] || return 1
   strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
+    strings "$executable" 2>/dev/null | grep -Fq "rag-ime.foreground-trace.v2" &&
     strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
     strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
     strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_ignored"
@@ -648,7 +649,7 @@ def truthy(value):
 
 require_mixed_layout = truthy(sys.argv[5].strip())
 require_logits_model = truthy(sys.argv[6].strip())
-latency_budget_ms = int(sys.argv[7].strip() or "250")
+latency_budget_ms = int(sys.argv[7].strip() or "300")
 
 def expected_rank_for_label(label):
     if label == "0":

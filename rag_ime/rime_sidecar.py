@@ -494,6 +494,16 @@ def clear_model_prediction_holdover_cache() -> None:
         _MODEL_HOLDOVER = None
 
 
+def wait_for_model_prediction_lane_idle(timeout_s: float = 1.0) -> bool:
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while time.monotonic() <= deadline:
+        if _MODEL_LANE_SEMAPHORE.acquire(blocking=False):
+            _MODEL_LANE_SEMAPHORE.release()
+            return True
+        time.sleep(0.005)
+    return False
+
+
 def _store_model_holdover_predictions(
     *,
     project: str,
