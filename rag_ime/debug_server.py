@@ -35,6 +35,7 @@ from .rime_sidecar import (
     choose_semantic_query,
     decide_side_candidate_refresh,
     parse_rime_context_payload,
+    prediction_first_merge_enabled,
     record_rime_side_candidate_selection,
     rime_context_to_payload,
     semantic_signal_length,
@@ -525,7 +526,7 @@ class DebugImeService:
             "project": snapshot.project or self.config.project,
             "semanticQuery": semantic_query,
             "queryBasis": query_basis,
-            "predictionFirstMerge": _bool(payload.get("predictionFirstMerge"), default=False),
+            "predictionFirstMerge": prediction_first_merge_enabled(payload),
             "triggerDecision": {
                 "shouldRefresh": trigger_decision.should_refresh,
                 "reason": trigger_decision.reason,
@@ -606,7 +607,7 @@ class DebugImeService:
         )
         prediction_first = response.get("predictionFirst")
         if isinstance(prediction_first, dict):
-            prediction_first["enabled"] = _bool(payload.get("predictionFirstMerge"), default=False)
+            prediction_first["enabled"] = prediction_first_merge_enabled(payload)
             prediction_first["pinyinPrefix"] = snapshot.preedit or snapshot.raw_input
 
     def _store_rime_response(self, cache_key: str, response: dict[str, object]) -> None:

@@ -750,7 +750,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["displayCandidates"])
         self.assertNotEqual(response["displayCandidates"][0]["sourceType"], "raw_english")
 
-    def test_prediction_first_merge_prefix_filters_side_candidates_before_wanxiang_fallback(self) -> None:
+    def test_prediction_first_merge_prefix_keeps_llm_rag_before_wanxiang_fallback(self) -> None:
         core = PrefixSuggestionCore()
         adapter = InputMethodAdapter(core)
         response = build_rime_sidecar_response(
@@ -781,12 +781,13 @@ class RimeSidecarTests(unittest.TestCase):
         display = response["displayCandidates"]
         self.assertEqual(
             [item["text"] for item in display],
-            ["设计一个候选展示方式", "设计输入法状态机", "手机", "世界"],
+            ["设计一个候选展示方式", "设计输入法状态机", "把本地记忆注入 Agent 首次运行上下文"],
         )
-        self.assertEqual([item["sourceType"] for item in display], ["rag", "model", "rime", "rime"])
-        self.assertEqual([item["displayLane"] for item in display], ["memory", "model", "wanxiang", "wanxiang"])
-        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
-        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 2)
+        self.assertEqual([item["sourceType"] for item in display], ["rag", "model", "rag"])
+        self.assertEqual([item["displayLane"] for item in display], ["memory", "model", "memory"])
+        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 3)
+        self.assertEqual(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 2)
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
         self.assertTrue(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
 
     def test_prediction_first_prefix_uses_compiled_memory_pinyin_index(self) -> None:
@@ -827,7 +828,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[0]["displayLane"], "memory")
         self.assertEqual(display[0]["metadata"]["initials"], "sjyghxzsfs")
         self.assertEqual(display[1]["text"], "设计输入法状态机")
-        self.assertEqual([item["sourceType"] for item in display[:4]], ["rag", "model", "rime", "rime"])
+        self.assertEqual([item["sourceType"] for item in display[:3]], ["rag", "model", "model"])
 
     def test_prediction_first_post_commit_uses_commit_preview_as_prediction_anchor(self) -> None:
         core = CapturingCore()

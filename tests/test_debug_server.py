@@ -320,7 +320,9 @@ class DebugImeServiceTests(unittest.TestCase):
             },
         }
 
-        legacy = service.rime_suggest(dict(base_payload))
+        legacy_payload = dict(base_payload)
+        legacy_payload["predictionFirstMerge"] = False
+        legacy = service.rime_suggest(legacy_payload)
         prediction_first_payload = dict(base_payload)
         prediction_first_payload["requestSeq"] = 32
         prediction_first_payload["predictionFirstMerge"] = True
@@ -333,13 +335,13 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(prediction_first["predictionFirst"]["pinyinPrefix"], "sj")
         self.assertEqual(
             [item["text"] for item in prediction_first["displayCandidates"]],
-            ["设计一个候选展示方式", "设计输入法状态机", "手机", "世界"],
+            ["设计一个候选展示方式", "设计输入法状态机", "把本地记忆注入 Agent 首次运行上下文"],
         )
         self.assertEqual(
             [item["displayLane"] for item in prediction_first["displayCandidates"]],
-            ["memory", "model", "wanxiang", "wanxiang"],
+            ["memory", "model", "memory"],
         )
-        self.assertEqual(prediction_first["predictionFirst"]["policy"]["sideInserted"], 2)
+        self.assertEqual(prediction_first["predictionFirst"]["policy"]["sideInserted"], 3)
         self.assertTrue(prediction_first["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
 
     def test_rime_suggest_cache_hits_repeated_equivalent_payloads(self) -> None:
