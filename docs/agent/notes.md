@@ -2604,7 +2604,8 @@ Problem:
 
 Changes:
 - Re-aligned the sidecar contract to a short-lived prediction session: `predictionFirst.policy.panelVisible`, `hideWhenEmpty`, and `sessionBound` now explicitly tell the frontend when to show or clear the panel.
-- Added a 1.2s post-commit continuation TTL so AI candidates can visually connect after a commit but disappear before they block digits/English/code input.
+- Added a short post-commit continuation TTL so AI candidates can visually connect after a commit but disappear before they block digits/English/code input.
+- Tightened the Wisdom-Weasel-style candidate lifecycle again: patched Squirrel post-commit holdover is now 0.9s, native RagImeMac is 0.85s, and hidden/expired candidates can no longer route number keys.
 - Bound model holdover cache to the current semantic input state, so `sj` -> `sja` cannot reuse an old model row while the model lane is busy.
 - Split side suggestions into real `rag` and `memory` lanes, then balanced `rag/memory/model` so all three sources can be visible before pure score sorting fills the rest.
 - Added short pinyin-prefix lookup for active composition, while keeping long dirty raw pinyin out of semantic RAG queries.
@@ -2741,4 +2742,26 @@ Verification:
 - CLI `/rime-suggest-json` previews passed: `ni` with committed context returns only Rime display candidates and `predictionPanelVisible=false`; post-commit RAG candidates have `insertText == text`.
 - `scripts/build_macos_frontend.sh`: passed.
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 272 tests passed.
+- `git diff --check`: passed.
+
+### 2026-07-02 18:10 CST
+Problem:
+- User feedback: the LLM/RAG/memory candidate appearance should follow Wisdom-Weasel's natural candidate-flow style more closely; a panel that remains visible for seconds after post-commit feels like a clipboard/history popup.
+
+Decision:
+- Keep active composition candidates alive while the user is still typing pinyin, but make passive post-commit prediction short-lived.
+- Hidden, expired, or no-session candidates must not route number keys.
+
+Changes:
+- Patched Squirrel post-commit holdover is now 0.9s, and side-candidate number routing first verifies the current raw input/session before committing.
+- Native RagImeMac no longer has a legacy hidden `modelPredictions + ragSuggestions` number-key path; only visible `displayCandidates` in a valid `ActivePanelSession` can be selected.
+- Native no-session or empty-composition panels now receive the 0.85s post-commit expiry instead of becoming indefinite.
+- Memory candidates with a real source event now record accepted feedback like RAG candidates; recent-context fallback memory remains debug-only and does not create governance actions.
+- `expandedEvidence` is carried through sidecar/native payloads so compact candidates can stay short while evidence remains inspectable.
+
+Verification:
+- `python3 -m py_compile rag_ime/models.py rag_ime/prediction_first.py rag_ime/rime_sidecar.py`: passed.
+- `python3 -m unittest tests.test_build_patched_squirrel tests.test_debug_server tests.test_rime_sidecar tests.test_prediction_first tests.test_prediction_manager tests.test_demo_quality`: 104 tests passed.
+- `scripts/build_macos_frontend.sh`: passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 274 tests passed.
 - `git diff --check`: passed.

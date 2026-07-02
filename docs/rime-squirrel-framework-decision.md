@@ -122,8 +122,8 @@ After a commit, the prediction-only panel is allowed to replace the Rime list
 briefly, but it must be session-bound. It is not a clipboard/history panel: if
 no model/RAG/memory candidate is ready, or the post-commit window has gone
 stale, the panel should disappear so digits and English/code input stay normal.
-The practical default is a roughly 0.8-1.2s post-commit window; the current
-native harness uses 0.85s. Any longer
+The practical default is a roughly 0.85-0.9s post-commit window; the current
+native harness uses 0.85s and the patched Squirrel path uses 0.9s. Any longer
 continuation should require an active prefix, a fresh model/RAG response, or an
 explicit expand action.
 

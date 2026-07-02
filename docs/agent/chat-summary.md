@@ -30,7 +30,7 @@ Changes:
 - Codex history import now defaults to true user input only; assistant/event/tool/system records are skipped.
 - SQLite retrieval and candidate compiler now filter old runtime pollution and low-value instruction/complaint fragments.
 - Candidate source labeling now distinguishes `model`, `rag`, and `memory`.
-- Empty-input post-commit panel holdover is capped to 1.2s and clears when stale or when Rime fallback exists.
+- Empty-input post-commit panel holdover is capped to 0.85-0.9s and clears when stale or when Rime fallback exists.
 - Added `tests/test_demo_quality.py` and documented feedback issues in `docs/agent/feedback-issues-20260702.md`.
 
 Verification:
@@ -1961,3 +1961,22 @@ Verification:
 - Runtime-term and demo-quality tests passed.
 - macOS frontend build passed.
 - Full test suite passed: 272 tests.
+
+### 2026-07-02
+Topic:
+- Tighten candidate-panel lifetime against the Wisdom-Weasel reference behavior.
+
+Decision:
+- Active pinyin composition can keep the panel because it is normal IME state.
+- Passive post-commit continuation is only a short visual bridge: 0.85s in native RagImeMac and 0.9s in patched Squirrel.
+- Expired/hidden/no-session AI candidates must not capture number keys.
+
+Changes:
+- Patched Squirrel now validates the current raw input before routing a side-candidate number key and clears expired post-commit candidates.
+- Native RagImeMac removed the legacy hidden model/RAG number-selection path and only selects visible `displayCandidates` tied to a valid `ActivePanelSession`.
+- Sidecar now carries `expandedEvidence` through display payloads and records accepted feedback for real memory candidates as well as RAG candidates.
+
+Verification:
+- macOS frontend build passed.
+- Focused lifecycle/selection tests passed: 104.
+- Full suite passed: 274.

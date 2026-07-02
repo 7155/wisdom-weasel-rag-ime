@@ -71,6 +71,7 @@ class PredictionCandidate:
     confidence: float = 0.0
     comment: str = ""
     evidence_preview: str = ""
+    expanded_evidence: str = ""
     suggestion_id: str = ""
     memory_id: str = ""
     source_event_id: int | None = None
@@ -429,6 +430,7 @@ def _candidate_from_suggestion(suggestion: InputSuggestion, index: int) -> Predi
         confidence=suggestion.confidence,
         comment=suggestion.suggestion_type,
         evidence_preview=suggestion.evidence_preview,
+        expanded_evidence=suggestion.expanded_evidence,
         suggestion_id=suggestion.suggestion_id,
         memory_id=str(metadata.get("memory_id") or suggestion.suggestion_id),
         source_event_id=suggestion.source_event_id,
@@ -449,6 +451,7 @@ def _candidate_from_model(prediction: ModelPrediction, index: int) -> Prediction
         score=1.0 + prediction.confidence - (index * 0.001),
         confidence=prediction.confidence,
         comment=prediction.provider_name,
+        expanded_evidence="",
         full_pinyin=_metadata_tuple(metadata, "full_pinyin", "pinyin"),
         initials=_metadata_string(metadata, "initials", "pinyin_initials"),
         metadata=metadata,
@@ -480,6 +483,7 @@ def _side_display_item(
         source_index=candidate.source_index,
         comment=candidate.comment,
         evidence_preview=candidate.evidence_preview,
+        expanded_evidence=candidate.expanded_evidence,
         suggestion_id=candidate.suggestion_id,
         memory_id=candidate.memory_id,
         source_event_id=candidate.source_event_id,

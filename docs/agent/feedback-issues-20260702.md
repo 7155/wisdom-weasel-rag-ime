@@ -23,14 +23,14 @@
 - 本地 SQLite 检索新增旧库兼容过滤；已经导入过的 `py 通过`、`git diff --check`、`installation.yaml`、`index.ts 先改成依赖 core`、`MEMORY_SUMMARY` 等残留即使仍在 DB 里，也不会进入候选。
 - `SuggestionCompiler` 继续压缩 RAG 结果为可上屏短候选，并过滤“你参考/你看一下/打不了字/没想到/裸模型尺寸”等不适合输入法候选的聊天残句。
 - 候选来源修正：`model` 来自 MLX，小模型候选横向；`rag` 来自 RAG/embedding/检索；`memory` 来自 curated/user-input/frequency 记忆。
-- 空输入时预测面板改为 post-commit holdover：只有没有 Rime fallback 且距离上次更新不超过 `min(ragImeDisplayHoldoverDuration, 1.2)` 秒才短暂保留，否则清空，避免一直吃掉数字键。
+- 空输入时预测面板改为 post-commit holdover：只有没有 Rime fallback 且距离上次更新不超过 `ragImePostCommitDisplayHoldoverDuration=0.9s` 才短暂保留，否则清空，避免一直吃掉数字键。
 - sidecar 实测通过：`/api/rime-suggest` 返回 `modelLane.called=true`、`ragLane.called=true`，display candidates 同时包含 `rag`、`memory`、`model`，且 side candidates 的 `selectionAction=commit_side_candidate`。
 
 ## 2026-07-02 14:45 Wisdom-Weasel 对齐记录
 
 - 重新对齐候选显示方式：参考 Wisdom-Weasel 的预测态，不再把 AI 候选当作常驻剪贴板面板；只有活动 composition 或活动 prediction session 且存在候选时才显示。
 - sidecar 返回新增 `predictionFirst.policy.panelVisible / hideWhenEmpty / sessionBound`，给 macOS 前端一个明确契约：空候选、过期 post-commit、失焦、Esc、普通数字/英文输入都必须隐藏预测层。
-- post-commit continuation 增加 1.2 秒 TTL：刚上屏后可以视觉连续地接上预测候选，超过窗口就清空，避免几秒后仍挡住输入。
+- post-commit continuation 收敛为 0.85-0.9 秒 TTL：刚上屏后可以视觉连续地接上预测候选，超过窗口就清空，避免几秒后仍挡住输入。
 - 模型 holdover 改成绑定输入状态：cache fingerprint 现在包含当前语义 query；用户从 `sj` 继续变成 `sja` 时不会复用旧模型候选，避免 LLM 横排看起来常驻。
 - 继续拼音约束时不让 LLM 猜脏拼音：只把 1-4 位短拼音前缀作为约束加入语义 query，长 raw pinyin 仍交给 Rime/万象候选处理。
 - `CandidatePool` 改为先保留 `rag`、`memory`、`model` 三条语义 lane 的首个候选，再按分数补齐，避免某一类候选把其他来源挤掉。
