@@ -175,6 +175,7 @@ def check_case(case: dict[str, Any], response: dict[str, Any], *, elapsed_ms: in
     if case_id == "prediction-first-model-memory":
         require(prediction_first.get("enabled") is True, case_id, "prediction-first must be enabled", failures)
         require("model" in source_types, case_id, "must show at least one model candidate", failures)
+        require(source_types and source_types[0] == "model", case_id, "model inline candidate must stay first", failures)
         require(any(source in {"memory", "rag"} for source in source_types), case_id, "must show memory/RAG candidates", failures)
         require("rime" not in source_types, case_id, "must not show Rime while side candidates exist", failures)
         require(int(policy.get("wanxiangFallbackCount") or 0) == 0, case_id, "wanxiang fallback count must be 0", failures)
