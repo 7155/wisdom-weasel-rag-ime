@@ -156,6 +156,8 @@
 - debug 页面已加入 Prediction-first 开关；开启后接受候选会走 `/api/rime-select` 记录选择，并立即触发下一轮 post-commit 预测。
 - 已新增零依赖 `pinyin_index`，`SuggestionCompiler` 会给本地记忆候选自动补 `initials / pinyin_prefixes`；用户继续输入拼音时，CandidatePool 可以直接用这些 metadata 过滤历史短语候选。
 - 已验证本地短语记忆路径: SQLite 里记录的“设计一个候选展示方式”无需手写 metadata，也能在用户输入 `sj` 时排到万象/Rime 兜底候选前。
+- 已新增前端无关 `PredictionSession` 契约：区分 `candidatePanelVisible` 和 `predictionPanelVisible`，明确 `phase / selectionScope / shouldClearPredictionPanel`，避免把万象/Rime 首词候选误当作 AI 预测面板。
+- sidecar 已输出 `predictionSession`，后续非 patched Squirrel 的 macOS adapter 可以直接消费同一生命周期契约。
 - 已把拼音索引写入 SQLite/FTS5 文档；用户输入 `sj` 时，SQLite 可以直接召回历史短语，而不是等 RAG 候选出来后再过滤。
 - 频率排序已有基础:
   - 参考 Rime/librime 用户词典的公开实现：候选上屏后更新 userdb entry 的 `commits`，并结合 tick/衰减值计算候选权重。

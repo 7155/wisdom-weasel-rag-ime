@@ -1832,3 +1832,25 @@ Verification:
 
 Next:
 - Commit and push this lifecycle fix, then reinstall/reload the patched frontend before real editor validation.
+
+### 2026-07-02
+Topic:
+- Extract frontend-neutral PredictionSession lifecycle for the next non-patched-Squirrel adapter path.
+
+Decisions:
+- Do not let future macOS frontend code infer AI overlay state from generic candidate visibility.
+- Treat Rime/wanxiang candidate visibility and AI prediction-panel visibility as separate concepts.
+
+Changes:
+- Added `PredictionSessionState`, `PredictionSessionPhase`, `resolve_prediction_session()`, and `prediction_session_to_payload()`.
+- `/rime-suggest` now returns `predictionSession` with `phase`, `candidatePanelVisible`, `predictionPanelVisible`, `shouldClearPredictionPanel`, and `selectionScope`.
+- Docs now define the shared adapter lifecycle contract for `anchor_composing`, `post_commit`, `prefix_constrained`, `raw_passthrough`, and `hidden`.
+
+Verification:
+- `py_compile` passed for prediction/session modules.
+- Focused Prediction-first and sidecar tests passed: 12 tests.
+- Broader debug/sidecar/core/model regression passed: 129 tests.
+- Full suite passed: 265 tests.
+
+Next:
+- Commit/push this adapter-neutral contract.

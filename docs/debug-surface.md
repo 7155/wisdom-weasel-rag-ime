@@ -325,12 +325,32 @@ The response also includes `triggerDecision`. This is the backend guard that kee
   visible for a short holdover window while raw input changes and Rime has no
   fallback candidates. This is the safe path for `asdioj`-style noise: continue
   from recent Chinese text, do not infer Chinese directly from the raw letters.
-- Model holdover is keyed by project and committed-context fingerprint, and it
-  is reused even when the outer model dispatch exceeds the latency budget. This
-  keeps the first horizontal model row stable under tight budgets without
-  leaking candidates from an unrelated previous context.
+- Model holdover is keyed by project and current semantic input state, including
+  committed context plus the active Rime/pinyin-derived semantic query. It is
+  reused even when the outer model dispatch exceeds the latency budget, but a
+  changed prefix such as `sj -> sja` invalidates the old row so stale model
+  candidates do not look like a persistent clipboard panel.
 - `forceSideCandidates: true` can be used by debug tooling to force a refresh.
 - Skipped refreshes return empty `modelPredictions` / `ragCandidates` and `mergePolicy.sideCandidatesEnabled: false`.
+
+When `predictionFirstMerge` is enabled, the response also includes
+`predictionSession`. This field separates normal candidate visibility from AI
+prediction visibility:
+
+```json
+{
+  "phase": "prefix_constrained",
+  "candidatePanelVisible": true,
+  "predictionPanelVisible": true,
+  "shouldClearPredictionPanel": false,
+  "selectionScope": "mixed_prediction_first"
+}
+```
+
+For first-word pinyin, `candidatePanelVisible` may be true while
+`predictionPanelVisible` is false, because Rime/wanxiang owns that phase. For a
+stale post-commit response, `phase` is `hidden` and
+`shouldClearPredictionPanel` is true.
 
 The strict Squirrel doctor now includes this raw-input safety check. It sends
 one dirty raw-pinyin payload without context and expects `queryBasis:

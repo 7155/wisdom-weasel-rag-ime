@@ -2601,3 +2601,27 @@ Commands:
 Findings:
 - The backend/debug flow now matches the Wisdom-Weasel lifecycle principle: show only while the prediction session has live candidates, hide on stale/empty session.
 - Remaining validation is still foreground macOS panel behavior after reinstall/reload of the patched Squirrel frontend.
+
+### 2026-07-02 15:09 CST
+Problem:
+- The active goal now explicitly says not to treat the current patched Squirrel route as the final usable frontend.
+- Existing `predictionFirst.policy.panelVisible` mixed together normal Rime/wanxiang candidate visibility and AI prediction-panel visibility, which could mislead a future non-Squirrel macOS adapter.
+
+Changes:
+- Added frontend-neutral `PredictionSessionState` and `PredictionSessionPhase` in `rag_ime/prediction_first.py`.
+- Added `resolve_prediction_session()` and `prediction_session_to_payload()` so any frontend can distinguish:
+  - first-word `anchor_composing`: Rime/wanxiang panel visible, AI prediction panel cleared;
+  - `post_commit`: AI prediction panel visible and selection scope is prediction;
+  - `prefix_constrained`: Rime owns composition while prediction candidates can be inserted first;
+  - `raw_passthrough` / `hidden`: stale prediction panel must be cleared.
+- `/rime-suggest` now returns top-level `predictionSession` alongside `predictionFirst`.
+- Updated shared adapter contract, debug docs, and the redesign plan so future macOS frontend work consumes this lifecycle contract instead of copying patched Squirrel behavior.
+
+Commands:
+- `python3 -m py_compile rag_ime/prediction_first.py rag_ime/rime_sidecar.py`: passed.
+- `python3 -m unittest tests.test_prediction_first tests.test_rime_sidecar.RimeSidecarTests.test_prediction_first_merge_prefix_keeps_llm_rag_before_wanxiang_fallback tests.test_rime_sidecar.RimeSidecarTests.test_prediction_first_post_commit_clears_stale_empty_panel`: 12 tests passed.
+- `python3 -m unittest tests.test_debug_server tests.test_rime_sidecar tests.test_prediction_first tests.test_demo_quality tests.test_local_sqlite_core tests.test_mlx_predictor_server`: 129 tests passed.
+- `python3 -m unittest discover -s tests`: 265 tests passed.
+
+Findings:
+- This moves the core product behavior closer to the requested adapter-independent route: frontends can now clear or show the AI prediction layer without relying on Squirrel-specific trace markers.

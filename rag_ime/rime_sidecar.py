@@ -21,7 +21,12 @@ from .models import (
 )
 from .payloads import action_response_payload, model_prediction_to_payload, suggestion_to_payload
 from .pinyin_index import build_pinyin_metadata
-from .prediction_first import infer_input_mode, merge_prediction_first_candidates
+from .prediction_first import (
+    infer_input_mode,
+    merge_prediction_first_candidates,
+    prediction_session_to_payload,
+    resolve_prediction_session,
+)
 from .predictor import PredictionProvider
 from .text_utils import compact_whitespace, now_ms
 
@@ -229,6 +234,9 @@ def build_rime_sidecar_response(
             raw_commit_text=raw_english_candidate_text(snapshot),
         )
         display_candidates = list(prediction_first_result.display_candidates)
+        prediction_session_payload = prediction_session_to_payload(
+            resolve_prediction_session(snapshot=snapshot, merge_result=prediction_first_result)
+        )
         prediction_first_payload: dict[str, object] = {
             "enabled": True,
             "mode": prediction_first_result.mode.value,
@@ -242,6 +250,17 @@ def build_rime_sidecar_response(
             suggestions=suggestions,
         )
         input_mode = infer_input_mode(snapshot)
+        prediction_session_payload = {
+            "phase": "legacy",
+            "inputMode": input_mode.value,
+            "pinyinPrefix": snapshot.preedit or snapshot.raw_input,
+            "candidatePanelVisible": bool(display_candidates),
+            "predictionPanelVisible": False,
+            "shouldClearPredictionPanel": False,
+            "clearReason": "",
+            "selectionScope": "legacy",
+            "rimeCompositionOwnedByRime": input_mode.value.endswith("composing"),
+        }
         prediction_first_payload = {
             "enabled": False,
             "mode": input_mode.value,
@@ -279,6 +298,7 @@ def build_rime_sidecar_response(
         "ragCandidates": [suggestion_to_payload(item) for item in suggestions],
         "displayCandidates": [display_item_to_payload(item) for item in display_candidates],
         "predictionFirst": prediction_first_payload,
+        "predictionSession": prediction_session_payload,
         "selectionActions": {
             "rime": "select_rime_candidate",
             "side": "commit_side_candidate",

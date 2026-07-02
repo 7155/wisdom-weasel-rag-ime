@@ -828,6 +828,10 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
         self.assertTrue(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
+        self.assertEqual(response["predictionSession"]["phase"], "prefix_constrained")
+        self.assertTrue(response["predictionSession"]["predictionPanelVisible"])
+        self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
+        self.assertEqual(response["predictionSession"]["selectionScope"], "mixed_prediction_first")
 
     def test_prediction_first_prefix_uses_compiled_memory_pinyin_index(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-prefix-memory-") as tmp:
@@ -993,6 +997,11 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertFalse(response["predictionFirst"]["policy"]["panelVisible"])
         self.assertTrue(response["predictionFirst"]["policy"]["hideWhenEmpty"])
         self.assertTrue(response["predictionFirst"]["policy"]["sessionBound"])
+        self.assertEqual(response["predictionSession"]["phase"], "hidden")
+        self.assertFalse(response["predictionSession"]["candidatePanelVisible"])
+        self.assertFalse(response["predictionSession"]["predictionPanelVisible"])
+        self.assertTrue(response["predictionSession"]["shouldClearPredictionPanel"])
+        self.assertEqual(response["predictionSession"]["selectionScope"], "none")
         self.assertEqual(response["displayCandidates"], [])
         self.assertEqual(response["modelPredictions"], [])
         self.assertEqual(response["ragCandidates"], [])

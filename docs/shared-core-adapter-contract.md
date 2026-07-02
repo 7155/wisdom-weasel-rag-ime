@@ -48,6 +48,35 @@ RAG_MEMORY_TRACE_PATH
 
 The traditional candidate list should show short candidates. Full RAG evidence belongs in preview or expanded panels.
 
+## Prediction Session Output
+
+Prediction-first adapters must distinguish the normal candidate panel from the
+AI prediction session. Rime/wanxiang can have visible candidates while the AI
+prediction panel should still be cleared.
+
+`/rime-suggest` and other frontend adapters should expose:
+
+```ts
+{
+  phase: "hidden" | "raw_passthrough" | "anchor_composing" | "post_commit" | "prefix_constrained",
+  inputMode: "raw_input" | "anchor_composing" | "post_commit_predicting" | "prefix_constrained_composing",
+  candidatePanelVisible: boolean,
+  predictionPanelVisible: boolean,
+  shouldClearPredictionPanel: boolean,
+  clearReason: string,
+  selectionScope: "none" | "raw" | "rime" | "prediction" | "mixed_prediction_first",
+  rimeCompositionOwnedByRime: boolean
+}
+```
+
+This is the frontend-neutral lifecycle contract:
+
+- first-word pinyin: `anchor_composing`, Rime/wanxiang owns composition, AI panel cleared;
+- post-commit: `post_commit`, AI candidates own the small prediction panel;
+- continued pinyin: `prefix_constrained`, Rime owns composition while matching prediction candidates can be inserted before fallback;
+- raw English/code/path/command: `raw_passthrough`, do not show stale prediction candidates;
+- empty/stale response: `hidden`, frontend clears the AI prediction layer.
+
 ## Suggestion Compiler Boundary
 
 `SuggestionCompiler` belongs to the input-method adapter, not the shared memory core.
