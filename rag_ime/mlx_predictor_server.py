@@ -34,7 +34,9 @@ LOGITS_SYSTEM_PROMPT = (
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _LOW_VALUE_LOGITS_CANDIDATES = {
     "测试",
+    "测试流程",
     "分析",
+    "分析问题",
     "并且",
     "但是",
     "或者",
@@ -46,6 +48,8 @@ _LOW_VALUE_LOGITS_CANDIDATES = {
     "现在",
     "目前",
     "当前",
+    "当前问题",
+    "当前流程",
     "的",
     "了",
     "和",
@@ -769,7 +773,9 @@ def _logits_candidates_are_ime_quality(candidates: Any, *, max_candidates: int) 
     phrase_like = [
         text
         for text in texts
-        if len(text) >= 3 and text not in _LOW_VALUE_LOGITS_CANDIDATES and not re.fullmatch(r"[嗯啊呃额哦噢唔]{1,4}", text)
+        if len(text) >= 3
+        and not _is_low_value_logits_candidate(text)
+        and not re.fullmatch(r"[嗯啊呃额哦噢唔]{1,4}", text)
     ]
     if len(phrase_like) < max(3, min(5, int(max_candidates))):
         return False
@@ -777,6 +783,17 @@ def _logits_candidates_are_ime_quality(candidates: Any, *, max_candidates: int) 
     if single_char_count > len(phrase_like) // 2:
         return False
     return True
+
+
+def _is_low_value_logits_candidate(text: str) -> bool:
+    normalized = compact_whitespace(text)
+    if normalized in _LOW_VALUE_LOGITS_CANDIDATES:
+        return True
+    if any(normalized.startswith(prefix) for prefix in ("测试", "分析")) and len(normalized) <= 4:
+        return True
+    if any(normalized.startswith(prefix) for prefix in ("当前", "目前", "现在")) and len(normalized) <= 5:
+        return True
+    return False
 
 
 def _prompt_cache_used_for_generation(prompt_cache: dict[str, Any]) -> bool:

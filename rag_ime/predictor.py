@@ -35,7 +35,9 @@ _LOW_VALUE_IME_CANDIDATES = {
     "啊",
     "阿",
     "测试",
+    "测试流程",
     "分析",
+    "分析问题",
     "并且",
     "但是",
     "呃",
@@ -51,6 +53,8 @@ _LOW_VALUE_IME_CANDIDATES = {
     "现在",
     "目前",
     "当前",
+    "当前问题",
+    "当前流程",
     "的",
     "了",
     "和",
@@ -1363,6 +1367,10 @@ def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
         if len(normalized) <= 1:
             continue
         if normalized in _LOW_VALUE_IME_CANDIDATES:
+            continue
+        if any(normalized.startswith(prefix) for prefix in ("测试", "分析")) and len(normalized) <= 4:
+            continue
+        if any(normalized.startswith(prefix) for prefix in ("当前", "目前", "现在")) and len(normalized) <= 5:
             continue
         if re.fullmatch(r"[嗯啊呃额]{1,4}", normalized):
             continue

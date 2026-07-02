@@ -8,6 +8,27 @@ from .models import InputSuggestion, ModelPrediction, RimeContextSnapshot, SideC
 from .text_utils import compact_whitespace
 
 
+_LOW_VALUE_WANXIANG_FALLBACK = {
+    "测试",
+    "分析",
+    "并且",
+    "但是",
+    "或者",
+    "基于",
+    "根据",
+    "生成",
+    "假设",
+    "然后",
+    "现在",
+    "目前",
+    "当前",
+    "的",
+    "了",
+    "和",
+    "是",
+}
+
+
 class InputMode(str, Enum):
     RAW_INPUT = "raw_input"
     ANCHOR_COMPOSING = "anchor_composing"
@@ -154,7 +175,7 @@ def merge_prediction_first_candidates(
 
     before_rime = len(display)
     if side_inserted == 0:
-        _append_rime_candidates(display, seen, snapshot, max_visible=max_visible)
+        _append_rime_candidates(display, seen, snapshot, max_visible=max_visible, skip_low_value=True)
     rime_count = len(display) - before_rime
 
     return _merge_result(
@@ -288,12 +309,15 @@ def _append_rime_candidates(
     snapshot: RimeContextSnapshot,
     *,
     max_visible: int,
+    skip_low_value: bool = False,
 ) -> None:
     for candidate in snapshot.candidates:
         if len(display) >= max_visible:
             return
         normalized = _display_norm(candidate.text)
         if not normalized or normalized in seen:
+            continue
+        if skip_low_value and _is_low_value_wanxiang_fallback(candidate.text):
             continue
         seen.add(normalized)
         display.append(
@@ -311,6 +335,17 @@ def _append_rime_candidates(
                 metadata={"candidate_mode": "wanxiang-fallback"},
             )
         )
+
+
+def _is_low_value_wanxiang_fallback(text: str) -> bool:
+    normalized = compact_whitespace(text)
+    if normalized in _LOW_VALUE_WANXIANG_FALLBACK:
+        return True
+    if any(normalized.startswith(prefix) for prefix in ("测试", "分析")) and len(normalized) <= 4:
+        return True
+    if any(normalized.startswith(prefix) for prefix in ("当前", "目前", "现在")) and len(normalized) <= 5:
+        return True
+    return False
 
 
 def _append_raw_commit_candidate(

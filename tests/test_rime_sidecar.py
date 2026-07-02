@@ -935,6 +935,37 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
         self.assertFalse(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
 
+    def test_prediction_first_post_commit_refreshes_without_idle_delay(self) -> None:
+        core = EmptySuggestionCore()
+        adapter = InputMethodAdapter(core)
+        predictor = PrefixConstrainedPredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-prediction-first-post-commit-fast",
+                "requestSeq": 53,
+                "frontendBuild": "rag-ime.foreground-trace.v2",
+                "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
+                "rawInput": "",
+                "preedit": "",
+                "idleMs": 80,
+                "committedContext": "我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+                "forceSideCandidates": False,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 5,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertTrue(response["predictionFirst"]["enabled"])
+        self.assertEqual(response["predictionFirst"]["mode"], "post_commit_predicting")
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: post-commit continuation")
+        self.assertFalse(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
+        self.assertGreater(response["predictionFirst"]["policy"]["sideInserted"], 0)
+        self.assertFalse(any(item["sourceType"] == "rime" for item in response["displayCandidates"]))
+
     def test_predictor_cooldown_skips_second_rime_refresh_but_keeps_rag(self) -> None:
         delegate = FailingPredictionProvider()
         predictor = CooldownPredictionProvider(delegate, cooldown_ms=1000, failure_latency_ms=1)
