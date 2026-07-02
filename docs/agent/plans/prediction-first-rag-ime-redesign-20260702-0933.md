@@ -154,6 +154,10 @@
 - 已验证 prefix constrained 场景: 用户继续输入 `sj` 时，匹配拼音的 RAG/LLM 候选排到万象/Rime 候选前，万象候选仍保留兜底。
 - 已验证 post-commit 场景: 上屏后用 `commitTextPreview + forceSideCandidates` 触发 `post_commit_predicting`，RAG/模型以刚上屏文本作为预测锚点。
 - debug 页面已加入 Prediction-first 开关；开启后接受候选会走 `/api/rime-select` 记录选择，并立即触发下一轮 post-commit 预测。
+- 已新增零依赖 `pinyin_index`，`SuggestionCompiler` 会给本地记忆候选自动补 `initials / pinyin_prefixes`；用户继续输入拼音时，CandidatePool 可以直接用这些 metadata 过滤历史短语候选。
+- 已验证本地短语记忆路径: SQLite 里记录的“设计一个候选展示方式”无需手写 metadata，也能在用户输入 `sj` 时排到万象/Rime 兜底候选前。
+- 已把拼音索引写入 SQLite/FTS5 文档；用户输入 `sj` 时，SQLite 可以直接召回历史短语，而不是等 RAG 候选出来后再过滤。
+- 频率排序已有基础: `memory_state.accepted_count` 会进入候选分数，用户多次接受的候选会优先于同类候选。
 - 当前仍未完成真实 macOS adapter 验收；debug 页面只用于观察候选来源、mode、prefix、sideInserted、wanxiangFallbackCount。
 
 ## 验收 / 退出条件

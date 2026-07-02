@@ -189,6 +189,62 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertNotIn("当", surfaces)
         self.assertIn("高频实时场景里的个人记忆系统", surfaces)
 
+    def test_suggestions_include_pinyin_metadata_for_prefix_constrained_memory(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text(
+            "设计一个候选展示方式",
+            recent_context="Prediction-first RAG IME 需要用户继续输入 sj 时约束历史短语候选",
+            tags=("phrase-memory",),
+        )
+
+        suggestions = self.adapter.suggest(
+            SuggestionRequest(
+                current_input="候选展示",
+                recent_context="输入法设计",
+                top_k=1,
+            )
+        )
+
+        self.assertEqual(suggestions[0].surface_text, "设计一个候选展示方式")
+        self.assertEqual(suggestions[0].metadata["initials"], "sjyghxzsfs")
+        self.assertIn("sjyghxzsfs", suggestions[0].metadata["pinyin_prefixes"])
+        self.assertIn("hx", suggestions[0].metadata["pinyin_prefixes"])
+
+    def test_sqlite_fts_recalls_memory_by_pinyin_prefix(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text(
+            "设计一个候选展示方式",
+            recent_context="Prediction-first RAG IME 需要用户继续输入 sj 时约束历史短语候选",
+            tags=("phrase-memory",),
+        )
+        self.adapter.commit_text("普通中文候选兜底", recent_context="输入法候选")
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="sj", top_k=2))
+
+        self.assertEqual(suggestions[0].surface_text, "设计一个候选展示方式")
+        self.assertIn("pinyin:", suggestions[0].metadata["reason"])
+
+    def test_accepted_count_boosts_frequently_selected_memory(self) -> None:
+        self.core.reset()
+        frequent_id = self.adapter.commit_text("高频候选方案", recent_context="输入法 频率 候选方案")
+        self.adapter.commit_text("普通候选方案", recent_context="输入法 频率 候选方案")
+
+        for _ in range(4):
+            self.core.apply_action(
+                MemoryAction(
+                    action_id=None,
+                    created_at_ms=0,
+                    memory_id=frequent_id,
+                    action_type="accepted",
+                    query="输入法 频率 候选方案",
+                )
+            )
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="输入法 频率 候选方案", top_k=2))
+
+        self.assertEqual(suggestions[0].surface_text, "高频候选方案")
+        self.assertIn("accepted:4", suggestions[0].metadata["reason"])
+
     def test_codex_tool_trace_is_downranked_but_still_recallable(self) -> None:
         self.core.reset()
         self.adapter.commit_text(

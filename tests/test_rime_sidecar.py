@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
 
@@ -703,6 +704,46 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 2)
         self.assertTrue(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
+
+    def test_prediction_first_prefix_uses_compiled_memory_pinyin_index(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-prefix-memory-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
+            core.initialize()
+            adapter = InputMethodAdapter(core)
+            adapter.commit_text(
+                "设计一个候选展示方式",
+                recent_context="Prediction-first RAG IME 继续输入 sj 时约束个人历史短语",
+                tags=("phrase-memory",),
+            )
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "squirrel-prediction-first-prefix-memory",
+                    "requestSeq": 53,
+                    "rawInput": "sj",
+                    "preedit": "sj",
+                    "committedContext": "我想",
+                    "predictionFirstMerge": True,
+                    "maxVisibleCandidates": 5,
+                    "maxSideCandidates": 3,
+                    "rimeContext": {
+                        "candidates": [
+                            {"label": "1", "text": "手机", "comment": "wanxiang"},
+                            {"label": "2", "text": "世界", "comment": "wanxiang"},
+                        ]
+                    },
+                },
+                adapter=adapter,
+                core=core,
+                predictor=PrefixConstrainedPredictionProvider(),
+            )
+
+        display = response["displayCandidates"]
+        self.assertEqual(display[0]["text"], "设计一个候选展示方式")
+        self.assertEqual(display[0]["sourceType"], "rag")
+        self.assertEqual(display[0]["displayLane"], "memory")
+        self.assertEqual(display[0]["metadata"]["initials"], "sjyghxzsfs")
+        self.assertEqual(display[1]["text"], "设计输入法状态机")
+        self.assertEqual([item["sourceType"] for item in display[:4]], ["rag", "model", "rime", "rime"])
 
     def test_prediction_first_post_commit_uses_commit_preview_as_prediction_anchor(self) -> None:
         core = CapturingCore()
