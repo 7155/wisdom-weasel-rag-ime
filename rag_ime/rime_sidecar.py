@@ -26,7 +26,7 @@ _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_HOLDOVER_TTL_MS = 900
 _MODEL_HOLDOVER_LOCK = RLock()
-_MODEL_HOLDOVER: "_ModelPredictionHoldover | None" = None
+_MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
 
 
 @dataclass(frozen=True)
@@ -309,12 +309,27 @@ def run_side_lanes_with_latency_budget(
         predictions = []
     model_lane = model_result.get("lane")
     if not isinstance(model_lane, dict):
-        model_lane = _model_lane_status(
-            called=True,
-            timed_out=True,
-            skipped_reason="model dispatch exceeded latency budget",
-            budget_ms=max(0, int(latency_budget_ms)),
+        predictions = _get_model_holdover_predictions(
+            project=project,
+            explicit_recent_context=explicit_recent_context,
+            max_candidates=max_candidates,
         )
+        if predictions:
+            model_lane = _model_lane_status(
+                called=True,
+                timed_out=True,
+                skipped_reason="model dispatch exceeded latency budget; reused recent model holdover",
+                budget_ms=max(0, int(latency_budget_ms)),
+                prediction_count=len(predictions),
+                holdover_hit=True,
+            )
+        else:
+            model_lane = _model_lane_status(
+                called=True,
+                timed_out=True,
+                skipped_reason="model dispatch exceeded latency budget",
+                budget_ms=max(0, int(latency_budget_ms)),
+            )
 
     return suggestions, rag_lane, predictions, model_lane
 
@@ -489,9 +504,8 @@ def _model_lane_status(
 
 
 def clear_model_prediction_holdover_cache() -> None:
-    global _MODEL_HOLDOVER
     with _MODEL_HOLDOVER_LOCK:
-        _MODEL_HOLDOVER = None
+        _MODEL_HOLDOVERS.clear()
 
 
 def wait_for_model_prediction_lane_idle(timeout_s: float = 1.0) -> bool:
@@ -510,16 +524,16 @@ def _store_model_holdover_predictions(
     explicit_recent_context: str,
     predictions: list[ModelPrediction],
 ) -> None:
-    global _MODEL_HOLDOVER
-    if not compact_whitespace(explicit_recent_context):
+    fingerprint = _holdover_context_fingerprint(explicit_recent_context)
+    if not fingerprint:
         return
     visible = tuple(predictions[:10])
     if not visible:
         return
     with _MODEL_HOLDOVER_LOCK:
-        _MODEL_HOLDOVER = _ModelPredictionHoldover(
+        _MODEL_HOLDOVERS[(project, fingerprint)] = _ModelPredictionHoldover(
             project=project,
-            explicit_context_fingerprint=_holdover_context_fingerprint(explicit_recent_context),
+            explicit_context_fingerprint=fingerprint,
             predictions=visible,
             created_at=time.monotonic(),
         )
@@ -531,17 +545,15 @@ def _get_model_holdover_predictions(
     explicit_recent_context: str,
     max_candidates: int,
 ) -> list[ModelPrediction]:
-    if not compact_whitespace(explicit_recent_context):
+    fingerprint = _holdover_context_fingerprint(explicit_recent_context)
+    if not fingerprint:
         return []
     with _MODEL_HOLDOVER_LOCK:
-        cached = _MODEL_HOLDOVER
+        cached = _MODEL_HOLDOVERS.get((project, fingerprint))
         if cached is None:
             return []
         if time.monotonic() - cached.created_at > _MODEL_HOLDOVER_TTL_MS / 1000:
-            return []
-        if cached.project != project:
-            return []
-        if cached.explicit_context_fingerprint != _holdover_context_fingerprint(explicit_recent_context):
+            _MODEL_HOLDOVERS.pop((project, fingerprint), None)
             return []
         return list(cached.predictions[: max(1, min(10, int(max_candidates)))])
 
