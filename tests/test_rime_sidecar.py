@@ -825,7 +825,10 @@ class RimeSidecarTests(unittest.TestCase):
             [item["text"] for item in display],
             ["设计输入法状态机", "设计一个候选展示方式"],
         )
-        self.assertEqual([item["sourceType"] for item in display], ["model", "rag"])
+        self.assertEqual(
+            [item["sourceType"] for item in display],
+            ["model", "rag"],
+        )
         self.assertEqual([item["displayLane"] for item in display], ["model", "memory"])
         self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 2)

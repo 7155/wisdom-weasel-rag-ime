@@ -65,7 +65,7 @@ class PredictionManagerTests(unittest.TestCase):
             [item.text for item in result.display_candidates],
             ["设计输入法状态机", "设计一个候选展示方式"],
         )
-        self.assertTrue(all(item.source_type != "rime" for item in result.display_candidates))
+        self.assertEqual([item.source_type for item in result.display_candidates], ["model", "memory"])
 
     def test_expired_pool_clears_post_commit_prediction_panel(self) -> None:
         manager = PredictionManager(candidate_pool_ttl_ms=1200)

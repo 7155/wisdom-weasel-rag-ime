@@ -105,14 +105,18 @@ def load_codex_history_records(
     min_chars: int = 12,
     max_chars: int = 1600,
     path_order: str = "path",
+    roles: Iterable[str] | None = None,
 ) -> list[CodexHistoryRecord]:
     if limit is not None and limit <= 0:
         return []
+    allowed_roles = {compact_whitespace(role).lower() for role in roles or () if compact_whitespace(role)}
     records: list[CodexHistoryRecord] = []
     seen_texts: set[str] = set()
     for jsonl_path in iter_codex_jsonl_paths_ordered(path, order=path_order):
         for line_number, obj in iter_jsonl_objects(jsonl_path):
             role = truncate_text(_find_first_string(obj, ROLE_KEYS) or _find_first_string(obj, FALLBACK_ROLE_KEYS), 40)
+            if allowed_roles and role.lower() not in allowed_roles:
+                continue
             created_at_ms = _find_timestamp_ms(obj)
             for text in _extract_codex_memory_fragments(obj):
                 normalized = truncate_text(text, max_chars)

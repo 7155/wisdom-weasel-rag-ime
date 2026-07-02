@@ -430,9 +430,26 @@ Preview and import local Codex history for memory/RAG evaluation:
 
 ```bash
 python3 -m rag_ime.cli import-codex-history \
-  --path "$HOME/.codex/session_index.jsonl" \
+  --path "$HOME/.codex" \
   --dry-run \
   --limit 20
+```
+
+`import-codex-history` defaults to `--roles user`, because IME memory should be
+built from the user's actual input rather than Codex progress/status streams.
+If an old database was populated before that filter existed, hide the stale
+non-user rows, then re-import user history and rebuild the vector side index:
+
+```bash
+python3 -m rag_ime.cli --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" \
+  prune-codex-history-noise \
+  --project wisdom-weasel-rag-ime
+
+python3 -m rag_ime.cli --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" \
+  import-codex-history \
+  --path "$HOME/.codex" \
+  --project wisdom-weasel-rag-ime \
+  --limit 5000
 ```
 
 Evaluate retrieval quality against explicit cases:

@@ -43,6 +43,7 @@ _GENERIC_STATUS_PREFIXES = (
     "已完成这一步 git 同步",
     "已完成 git 同步",
     "已经完成 git 同步",
+    "已按只读方式调研",
     "已读取",
     "已搜索",
     "已列出",
@@ -277,6 +278,12 @@ def _is_low_value_memory_text(text: str) -> bool:
         return True
     if surface in _LOW_VALUE_SURFACES:
         return True
+    if surface.startswith(("请继续做一个窄任务", "请继续做一个任务")):
+        return True
+    if ("做只读调研" in surface or "只读方式调研" in surface) and any(
+        marker in surface for marker in ("不编辑文件", "不修改文件", "不要改文件", "未修改文件")
+    ):
+        return True
     if re.fullmatch(r"[嗯啊呃额哦噢唔]{1,4}", surface):
         return True
     parts = [part for part in re.split(r"[\s,，、;；。.!?！？/]+", surface) if part]
@@ -328,14 +335,15 @@ def compress_surface_text(
     compact = compact_whitespace(raw)
     if not compact:
         return ""
-    if _looks_like_surface_noise(compact) or _looks_like_surface_noise(_clean_surface_segment(compact)):
+    cleaned_compact = _clean_surface_segment(compact)
+    if _looks_like_surface_noise(compact) or _looks_like_surface_noise(cleaned_compact):
         return ""
     if (
-        len(compact) <= max_chars
-        and not _looks_like_surface_noise(compact)
-        and not _contains_product_candidate_marker(compact)
+        len(cleaned_compact) <= max_chars
+        and not _looks_like_surface_noise(cleaned_compact)
+        and not _contains_product_candidate_marker(cleaned_compact)
     ):
-        return compact
+        return cleaned_compact
 
     candidates: list[tuple[float, int, str]] = []
     index = 0
@@ -359,6 +367,9 @@ def compress_surface_text(
 
     for clause in _extract_product_candidate_clauses(raw):
         add_candidate(clause, source_score=2.2)
+
+    for example in _extract_ime_candidate_examples(raw):
+        add_candidate(example, source_score=2.8)
 
     inferred_summary = _inferred_surface_identifier_summary(compact)
     if inferred_summary:
@@ -388,8 +399,11 @@ def _clean_surface_segment(segment: str) -> str:
     text = _TRANSCRIPT_PREFIX_RE.sub("", text)
     text = _TOOL_PREFIX_RE.sub("", text)
     text = _BULLET_PREFIX_RE.sub("", text)
+    text = re.sub(r"^\*\*\s*>\s*", "", text)
     text = re.sub(r"^#+\s*", "", text)
     text = re.sub(r"^>\s*", "", text)
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = text.replace("**", "")
     text = re.sub(r"^\*\*(只读结论|结论|建议|问题|变化|验证)\*\*\s*[:：]?\s*", "", text)
     text = re.sub(r"^(问题|结论|建议|变化|验证|Changes|Findings|Next|Decision)\s*[:：]\s*", "", text, flags=re.IGNORECASE)
     if text.startswith("Chunk ID:") and " Output:" in text:
@@ -438,6 +452,46 @@ def _extract_product_candidate_clauses(text: str) -> list[str]:
             seen.add(key)
             deduped.append(item)
     return deduped[:4]
+
+
+def _extract_ime_candidate_examples(text: str) -> list[str]:
+    compact = _remove_cjk_spacing(compact_whitespace(text))
+    if not compact or not any(marker in compact for marker in ("候选", "预测", "拼音", "RAG", "记忆")):
+        return []
+    results: list[str] = []
+    prefix_results: list[str] = []
+    matches = list(re.finditer(r"(?:^|[\s:：|])(?:[1-9][.)、]?\s+)", compact))
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(compact)
+        window = compact[max(0, match.start() - 96) : match.start()]
+        if not any(
+            marker in window
+            for marker in ("显示预测候选", "候选变成", "预测候选", "拼音匹配", "[RAG]", "[记忆]", "[LLM]")
+        ):
+            continue
+        segment = compact[match.end() : end]
+        head = re.split(r"\s*(?:\[[^\]]+\])|[。！？；;\n]", segment, maxsplit=1)[0]
+        cleaned = _clean_surface_segment(head)
+        cleaned = re.sub(r"\s*\[[^\]]+\]\s*$", "", cleaned)
+        cleaned = compact_whitespace(cleaned)
+        if not cleaned or not _CJK_RE.search(cleaned):
+            continue
+        if len(cleaned) < 4 or len(cleaned) > 42:
+            continue
+        if _looks_like_surface_noise(cleaned):
+            continue
+        if any(marker in window for marker in ("候选变成", "拼音匹配", "PREFIX_CONSTRAINED", "prefix")):
+            prefix_results.append(cleaned)
+        else:
+            results.append(cleaned)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in [*prefix_results, *results]:
+        key = item.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(item)
+    return deduped[:6]
 
 
 def _contains_product_candidate_marker(text: str) -> bool:
@@ -543,6 +597,10 @@ def _looks_like_surface_noise(text: str) -> bool:
         return True
     if stripped.startswith(_GENERIC_STATUS_PREFIXES):
         return True
+    if stripped.startswith(("请继续做一个窄任务", "请继续做一个任务")):
+        return True
+    if _looks_like_short_instruction_surface(stripped):
+        return True
     if stripped.startswith(_INSTRUCTION_FRAGMENT_PREFIXES) and len(stripped) <= 36:
         return True
     if stripped.startswith(("(eval):", "+-", "-+", "+++", "---")):
@@ -591,6 +649,27 @@ def _looks_like_surface_noise(text: str) -> bool:
     if "esc to interrupt" in stripped or "yield_time_ms" in stripped or "max_output_tokens" in stripped:
         return True
     if stripped in {"{", "}", "[", "]"}:
+        return True
+    return False
+
+
+def _looks_like_short_instruction_surface(text: str) -> bool:
+    stripped = _remove_cjk_spacing(compact_whitespace(text)).rstrip("。.!！")
+    if not stripped:
+        return False
+    if stripped.startswith(("要求：", "要求:")) and re.search(r"\d+[).、]", stripped):
+        return True
+    if stripped.startswith(("不编辑文件", "不修改文件", "只回传路径", "只返回路径")):
+        return True
+    if len(stripped) > 36:
+        return False
+    if stripped in {"不要改文件", "不要修改文件", "不要动文件", "不要提交", "不要直接写"}:
+        return True
+    if stripped.startswith(("不要改", "不要修改", "不要动")) and "文件" in stripped:
+        return True
+    if stripped.startswith(("请继续做", "请给我文件路径", "请先", "你需要")):
+        return True
+    if stripped.startswith(("给出推荐排序", "优先官方文档", "关注 TTFT", "明确哪些方案适合")):
         return True
     return False
 

@@ -308,6 +308,34 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(records[0].role, "user")
         self.assertGreater(records[0].created_at_ms, 0)
 
+    def test_load_codex_history_records_can_filter_to_user_role(self) -> None:
+        mixed_history = self.root / "mixed-codex.jsonl"
+        mixed_history.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "用户真正输入的 RAG 输入法需求"}],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps({"summary": "没有 role 的系统摘要不应该默认进 IME 记忆候选"}, ensure_ascii=False),
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        all_records = load_codex_history_records(mixed_history, limit=10)
+        user_records = load_codex_history_records(mixed_history, limit=10, roles=("user",))
+
+        self.assertEqual([item.role for item in all_records], ["user", ""])
+        self.assertEqual([item.text for item in user_records], ["用户真正输入的 RAG 输入法需求"])
+
     def test_record_can_be_converted_to_input_event(self) -> None:
         record = load_codex_history_records(self.history, limit=1)[0]
         event = input_event_from_codex_record(record, project="wisdom-weasel-rag-ime")
@@ -504,6 +532,71 @@ class CodexHistoryTests(unittest.TestCase):
                     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'input_events'"
                 ).fetchone()
             self.assertIsNone(table)
+
+    def test_cli_import_defaults_to_user_role(self) -> None:
+        mixed_history = self.root / "mixed-cli-codex.jsonl"
+        mixed_history.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "用户输入应该进入本地记忆候选"}],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps({"summary": "无角色摘要只在显式 --roles any 时导入"}, ensure_ascii=False),
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(
+                [
+                    "--db-path",
+                    str(self.root / "user-default.sqlite"),
+                    "import-codex-history",
+                    "--path",
+                    str(mixed_history),
+                    "--dry-run",
+                    "--sample-size",
+                    "5",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["roles"], ["user"])
+        self.assertEqual(payload["records"], 1)
+        self.assertEqual(payload["samples"][0]["text"], "用户输入应该进入本地记忆候选")
+
+        any_stdout = io.StringIO()
+        with redirect_stdout(any_stdout):
+            any_code = main(
+                [
+                    "--db-path",
+                    str(self.root / "any-role.sqlite"),
+                    "import-codex-history",
+                    "--path",
+                    str(mixed_history),
+                    "--dry-run",
+                    "--roles",
+                    "any",
+                    "--sample-size",
+                    "5",
+                ]
+            )
+
+        self.assertEqual(any_code, 0)
+        any_payload = json.loads(any_stdout.getvalue())
+        self.assertEqual(any_payload["roles"], "any")
+        self.assertEqual(any_payload["records"], 2)
 
     def test_cli_import_and_eval_cases(self) -> None:
         db_path = self.root / "codex-history.sqlite"

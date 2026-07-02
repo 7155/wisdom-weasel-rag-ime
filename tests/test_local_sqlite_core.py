@@ -391,6 +391,73 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             ).fetchone()
         self.assertIsNone(gone)
 
+    def test_hide_codex_history_noise_keeps_user_rows_and_rebuilds_phrase_stats(self) -> None:
+        self.core.reset()
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_000_000,
+                source="codex_history",
+                committed_text="用户真正提出的 RAG 输入法需求",
+                recent_context="codex_history:session.jsonl:1 role:user",
+                app="codex",
+                project="wisdom-weasel-rag-ime",
+                tags=("codex-history", "role:user", "record:user01"),
+            )
+        )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_001_000,
+                source="codex_history",
+                committed_text="Working (44m 30s) esc to interrupt",
+                recent_context="codex status stream",
+                app="codex",
+                project="wisdom-weasel-rag-ime",
+                tags=("codex-history", "role:event_msg", "record:event01"),
+            )
+        )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_002_000,
+                source="codex_history",
+                committed_text="我会先检查数据库再修改导入器",
+                recent_context="codex assistant narration",
+                app="codex",
+                project="wisdom-weasel-rag-ime",
+                tags=("codex-history", "role:assistant", "record:assistant01"),
+            )
+        )
+
+        dry_run = self.core.hide_codex_history_noise(project="wisdom-weasel-rag-ime", dry_run=True)
+        report = self.core.hide_codex_history_noise(project="wisdom-weasel-rag-ime")
+
+        self.assertEqual(dry_run["wouldHide"], 2)
+        self.assertEqual(dry_run["hidden"], 0)
+        self.assertEqual(report["hidden"], 2)
+        with sqlite3.connect(self.db_path) as conn:
+            active_rows = conn.execute(
+                """
+                SELECT e.committed_text
+                FROM input_events e
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE e.source = 'codex_history' AND s.deleted = 0
+                ORDER BY e.id
+                """
+            ).fetchall()
+            hidden_status_stat = conn.execute(
+                "SELECT 1 FROM phrase_stats WHERE committed_text = ?",
+                ("Working (44m 30s) esc to interrupt",),
+            ).fetchone()
+            action_count = conn.execute(
+                "SELECT COUNT(*) FROM memory_actions WHERE action_type = 'hide' AND query = 'codex-history-noise-prune'"
+            ).fetchone()[0]
+
+        self.assertEqual([row[0] for row in active_rows], ["用户真正提出的 RAG 输入法需求"])
+        self.assertIsNone(hidden_status_stat)
+        self.assertEqual(action_count, 2)
+
     def test_project_phrase_frequency_does_not_leak_between_projects(self) -> None:
         self.core.reset()
         now = now_ms()
