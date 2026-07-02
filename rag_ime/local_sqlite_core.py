@@ -13,6 +13,7 @@ from typing import Any
 from .core_client import CoreMemory
 from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
+from .pinyin_index import pinyin_search_document
 from .suggestion_compiler import RankedMemory, SuggestionCompiler
 from .text_utils import (
     build_fts_document,
@@ -170,7 +171,13 @@ class LocalSqliteCoreClient:
                 "INSERT INTO memory_state(event_id, updated_at_ms) VALUES (?, ?)",
                 (event_id, created_at),
             )
-            document = build_fts_document(text, event.recent_context, event.project, " ".join(event.tags), event.preedit)
+            document = _event_fts_document(
+                text,
+                event.recent_context,
+                event.project,
+                " ".join(event.tags),
+                event.preedit,
+            )
             conn.execute(
                 """
                 INSERT INTO memory_fts(rowid, content_text, committed_text, recent_context, project, tags)
@@ -671,6 +678,7 @@ class LocalSqliteCoreClient:
             tags_text=tags_text,
             source_fields=source_fields,
         )
+        pinyin_boost = _pinyin_rerank_boost(raw_query, committed_text, recent_context)
         accepted = int(row["accepted_count"])
         skipped = int(row["skipped_count"])
         downranked = int(row["downranked"])
@@ -681,6 +689,7 @@ class LocalSqliteCoreClient:
             lexical
             + overlap_score
             + sum(boost for _, boost in field_boosts)
+            + pinyin_boost
             + max(0.0, vector_score) * self.vector_weight
             + project_boost
             + (8.0 if pinned else 0.0)
@@ -697,6 +706,8 @@ class LocalSqliteCoreClient:
         for label, boost in field_boosts:
             if boost > 0:
                 reason.append(f"{label}:{boost:.2f}")
+        if pinyin_boost:
+            reason.append(f"pinyin:{pinyin_boost:.2f}")
         if pinned:
             reason.append("pinned")
         if accepted:
@@ -770,6 +781,10 @@ def _tail_chars(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[-max_chars:]
+
+
+def _event_fts_document(*parts: str) -> str:
+    return build_fts_document(*parts, pinyin_search_document(*parts))
 
 
 def _expand_query_for_local_rerank(query: str) -> str:
@@ -882,6 +897,18 @@ def _field_rerank_boosts(
         ("canonical", canonical_alias),
     ]
     return [(label, boost) for label, boost in boosts if boost > 0]
+
+
+def _pinyin_rerank_boost(raw_query: str, committed_text: str, recent_context: str) -> float:
+    query = re.sub(r"[^A-Za-z0-9]", "", raw_query or "").lower()
+    if len(query) < 2:
+        return 0.0
+    terms = set(pinyin_search_document(committed_text, recent_context).split())
+    if query in terms:
+        return 1.15
+    if any(term.startswith(query) for term in terms):
+        return 0.75
+    return 0.0
 
 
 def _important_ascii_hits(query: str, text: str) -> list[str]:

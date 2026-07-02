@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .models import InputSuggestion
+from .pinyin_index import build_pinyin_metadata
 from .text_utils import compact_whitespace, split_sentences, truncate_text
 
 
@@ -142,6 +143,7 @@ class SuggestionCompiler:
                     "insert_text": source_text,
                     "preview_text": memory.evidence_preview or source_text,
                     "sources": [memory.source_ref],
+                    **build_pinyin_metadata(surface),
                 },
             )
             suggestions.append(suggestion)
