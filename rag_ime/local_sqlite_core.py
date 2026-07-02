@@ -26,6 +26,7 @@ from .text_utils import (
 
 
 _IMPORTANT_ASCII_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+#.\-]{2,}")
+_MS_PER_DAY = 24 * 60 * 60 * 1000
 
 
 class LocalSqliteCoreClient:
@@ -277,6 +278,7 @@ class LocalSqliteCoreClient:
         elif len(rows) < top_k:
             rows = self._append_recent_fill(rows, project=project, limit=top_k)
 
+        present_ms = now_ms()
         memories = [
             self._row_to_memory(
                 row,
@@ -284,6 +286,7 @@ class LocalSqliteCoreClient:
                 project=project,
                 raw_query=raw_query,
                 vector_score=vector_scores.get(int(row["id"]), 0.0),
+                present_ms=present_ms,
             )
             for row in rows
         ]
@@ -317,6 +320,8 @@ class LocalSqliteCoreClient:
                 ),
             )
             self._apply_state_update(conn, event_id, action.action_type, created_at)
+            if action.action_type in ("delete", "hide", "restore"):
+                self._refresh_phrase_stats_for_event(conn, event_id)
             action_id = int(cur.lastrowid)
         self._clear_suggestion_cache()
         return MemoryAction(
@@ -605,7 +610,11 @@ class LocalSqliteCoreClient:
             where.append("(e.project = ? OR e.project = '')")
             params.append(project)
         sql = f"""
-            SELECT e.*, s.*, bm25(memory_fts) AS bm25_score, COALESCE(ps.input_frequency, 1) AS input_frequency
+            SELECT
+                e.*, s.*, bm25(memory_fts) AS bm25_score,
+                COALESCE(ps.input_frequency, 1) AS input_frequency,
+                COALESCE(ps.first_seen_ms, e.created_at_ms) AS phrase_first_seen_ms,
+                COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms
             FROM memory_fts
             JOIN input_events e ON e.id = memory_fts.rowid
             JOIN memory_state s ON s.event_id = e.id
@@ -630,7 +639,12 @@ class LocalSqliteCoreClient:
             where.append("(e.project = ? OR e.project = '')")
             params.append(project)
         sql = f"""
-            SELECT e.*, s.*, 99.0 AS bm25_score, COALESCE(ps.input_frequency, 1) AS input_frequency, v.vector_json
+            SELECT
+                e.*, s.*, 99.0 AS bm25_score,
+                COALESCE(ps.input_frequency, 1) AS input_frequency,
+                COALESCE(ps.first_seen_ms, e.created_at_ms) AS phrase_first_seen_ms,
+                COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms,
+                v.vector_json
             FROM memory_vectors v
             JOIN input_events e ON e.id = v.event_id
             JOIN memory_state s ON s.event_id = e.id
@@ -662,7 +676,11 @@ class LocalSqliteCoreClient:
             where.append("(e.project = ? OR e.project = '')")
             params.append(project)
         sql = f"""
-            SELECT e.*, s.*, 99.0 AS bm25_score, COALESCE(ps.input_frequency, 1) AS input_frequency
+            SELECT
+                e.*, s.*, 99.0 AS bm25_score,
+                COALESCE(ps.input_frequency, 1) AS input_frequency,
+                COALESCE(ps.first_seen_ms, e.created_at_ms) AS phrase_first_seen_ms,
+                COALESCE(ps.last_seen_ms, e.created_at_ms) AS phrase_last_seen_ms
             FROM input_events e
             JOIN memory_state s ON s.event_id = e.id
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
@@ -694,7 +712,9 @@ class LocalSqliteCoreClient:
         project: str,
         raw_query: str = "",
         vector_score: float = 0.0,
+        present_ms: int | None = None,
     ) -> CoreMemory:
+        present_ms = present_ms or now_ms()
         event_id = int(row["id"])
         bm25 = float(row["bm25_score"] if row["bm25_score"] is not None else 99.0)
         lexical = _bm25_relevance(bm25)
@@ -715,7 +735,11 @@ class LocalSqliteCoreClient:
         )
         pinyin_boost = _pinyin_rerank_boost(raw_query, committed_text, recent_context)
         input_frequency = _row_int(row, "input_frequency", default=1)
-        frequency_boost = _input_frequency_boost(input_frequency)
+        phrase_first_seen_ms = _row_int(row, "phrase_first_seen_ms", default=int(row["created_at_ms"]))
+        phrase_last_seen_ms = _row_int(row, "phrase_last_seen_ms", default=int(row["created_at_ms"]))
+        frequency_boost = _input_frequency_boost(input_frequency, phrase_last_seen_ms, present_ms=present_ms)
+        recent_boost = _last_seen_recency_boost(phrase_last_seen_ms, present_ms=present_ms)
+        age_days = _age_days(phrase_last_seen_ms, present_ms)
         accepted = int(row["accepted_count"])
         skipped = int(row["skipped_count"])
         downranked = int(row["downranked"])
@@ -728,6 +752,7 @@ class LocalSqliteCoreClient:
             + sum(boost for _, boost in field_boosts)
             + pinyin_boost
             + frequency_boost
+            + recent_boost
             + max(0.0, vector_score) * self.vector_weight
             + project_boost
             + (8.0 if pinned else 0.0)
@@ -748,6 +773,8 @@ class LocalSqliteCoreClient:
             reason.append(f"pinyin:{pinyin_boost:.2f}")
         if input_frequency > 1:
             reason.append(f"frequency:{input_frequency}")
+        if recent_boost:
+            reason.append(f"recent:{recent_boost:.2f}")
         if pinned:
             reason.append("pinned")
         if accepted:
@@ -778,6 +805,11 @@ class LocalSqliteCoreClient:
                 "downranked": downranked,
                 "deleted": bool(row["deleted"]),
                 "input_frequency": input_frequency,
+                "phrase_first_seen_ms": phrase_first_seen_ms,
+                "phrase_last_seen_ms": phrase_last_seen_ms,
+                "phrase_age_days": round(age_days, 2),
+                "frequency_boost": round(frequency_boost, 3),
+                "recent_boost": round(recent_boost, 3),
             },
         )
 
@@ -817,6 +849,37 @@ class LocalSqliteCoreClient:
         else:
             raise ValueError(f"unsupported action_type: {action_type}")
 
+    @staticmethod
+    def _refresh_phrase_stats_for_event(conn: sqlite3.Connection, event_id: int) -> None:
+        row = conn.execute("SELECT committed_text FROM input_events WHERE id = ?", (event_id,)).fetchone()
+        if row is None:
+            return
+        committed_text = str(row["committed_text"])
+        stats = conn.execute(
+            """
+            SELECT COUNT(*) AS input_frequency, MIN(e.created_at_ms) AS first_seen_ms, MAX(e.created_at_ms) AS last_seen_ms
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE e.committed_text = ? AND s.deleted = 0
+            """,
+            (committed_text,),
+        ).fetchone()
+        input_frequency = int(stats["input_frequency"] or 0) if stats else 0
+        if input_frequency <= 0:
+            conn.execute("DELETE FROM phrase_stats WHERE committed_text = ?", (committed_text,))
+            return
+        conn.execute(
+            """
+            INSERT INTO phrase_stats(committed_text, input_frequency, first_seen_ms, last_seen_ms)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(committed_text) DO UPDATE SET
+                input_frequency = excluded.input_frequency,
+                first_seen_ms = excluded.first_seen_ms,
+                last_seen_ms = excluded.last_seen_ms
+            """,
+            (committed_text, input_frequency, int(stats["first_seen_ms"]), int(stats["last_seen_ms"])),
+        )
+
 
 def _tail_chars(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
@@ -837,10 +900,26 @@ def _row_int(row: sqlite3.Row, key: str, *, default: int = 0) -> int:
     return int(value)
 
 
-def _input_frequency_boost(input_frequency: int) -> float:
+def _age_days(last_seen_ms: int, present_ms: int) -> float:
+    return max(0.0, (present_ms - last_seen_ms) / _MS_PER_DAY)
+
+
+def _frequency_recency_multiplier(last_seen_ms: int, present_ms: int) -> float:
+    age_days = _age_days(last_seen_ms, present_ms)
+    return 0.25 + 0.75 * math.pow(0.5, age_days / 30.0)
+
+
+def _last_seen_recency_boost(last_seen_ms: int, *, present_ms: int) -> float:
+    age_days = _age_days(last_seen_ms, present_ms)
+    boost = 0.85 * math.pow(0.5, age_days / 7.0)
+    return boost if boost >= 0.05 else 0.0
+
+
+def _input_frequency_boost(input_frequency: int, last_seen_ms: int, *, present_ms: int) -> float:
     if input_frequency <= 1:
         return 0.0
-    return min(2.2, math.log1p(input_frequency - 1) * 0.9)
+    raw_boost = min(2.2, math.log1p(input_frequency - 1) * 0.9)
+    return raw_boost * _frequency_recency_multiplier(last_seen_ms, present_ms)
 
 
 def _expand_query_for_local_rerank(query: str) -> str:
