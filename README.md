@@ -18,7 +18,8 @@ This repo should focus on:
 - evidence preview / expanded evidence UI prototype;
 - pin / downrank / delete action wiring;
 - Agent first-run context hook;
-- macOS InputMethodKit frontend adapter and native doctor gate;
+- macOS Rime/Squirrel candidate-layer adapter;
+- native InputMethodKit debug harness and sidecar doctor gate;
 - Wanxiang/Rime dictionary as first-word pinyin anchor and fallback source;
 - optional local OpenAI-compatible model prediction lane;
 - history-input context for local model prediction;
@@ -46,32 +47,24 @@ See `docs/shared-core-adapter-contract.md` for the shared-core requirements.
 ## Planned Runtime Shape
 
 ```text
-macOS InputMethodKit adapter / CLI prototype
-  -> Swift RagBridgeClient JSON command
-  -> LocalSqliteCoreClient or shared rag-memory core API/JSON CLI
-  -> SQLite/FTS5 personal memory
-  -> RetrievedMemory[]
-  -> InputSuggestion[]
-  -> short candidate list + evidence preview
-  -> user action
-  -> shared core governance action
+macOS Squirrel / InputMethodKit frontend
+  -> librime session with Wanxiang/Rime schemas and dictionaries
+  -> structured Rime context: raw input, preedit, page, labels, candidates
+  -> Prediction-first sidecar request
+  -> MLX local model, local RAG, local memory candidate lanes
+  -> merged visible candidate list
+  -> normal Rime selection or side-candidate insertion
+  -> local feedback / memory governance
 ```
 
-The current implementation direction is the independent native `RagImeMac`
-InputMethodKit adapter. Rime/Wanxiang remains the dictionary and behavior
-reference for first-word pinyin anchoring and fallback; patched Squirrel is kept
-as a historical integration spike and comparison target, not the primary
-product route.
+The product route is not the independent native `RagImeMac` app. That app is a
+debug harness for the JSON bridge, AppKit panel, Wanxiang-style dictionary
+preview, and sidecar contract. The real input method must integrate at the
+Rime/Squirrel candidate layer so normal pinyin, English, code, paths, paging,
+and candidate selection remain owned by a mature IME engine.
 
-```text
-RagImeMac / InputMethodKit
-  -> Wanxiang/Rime-style candidates anchor raw pinyin and fallback
-  -> RAG-IME side candidates from local model and local memory
-  -> Prediction-first state manager and compact candidate panel
-```
-
-See `docs/rime-squirrel-framework-decision.md` for the older framework
-decision and `docs/macos-frontend-adapter.md` for the native adapter status.
+See `docs/rime-squirrel-framework-decision.md` for the accepted framework route
+and `docs/macos-frontend-adapter.md` for the debug harness status.
 
 ## Current Commands
 
@@ -249,21 +242,19 @@ Check the Squirrel/sidecar integration state:
 scripts/doctor_squirrel_integration.sh
 ```
 
-Check the native RagImeMac frontend and sidecar integration state:
+Check the native RagImeMac debug harness and sidecar contract:
 
 ```bash
 scripts/doctor_macos_frontend.sh
 ```
 
-For local validation of the current product route, prefer
-`doctor_macos_frontend.sh`: it checks the `RagImeMac.app` bundle,
-InputMethodKit plist keys, bridge config, Swift sidecar decoding, live
-Prediction-first model/RAG/memory candidates, and raw English/command
-protection. Use `RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1` when validating that
-macOS has actually registered the native input source.
+`doctor_macos_frontend.sh` checks the `RagImeMac.app` bundle, InputMethodKit
+plist keys, bridge config, Swift sidecar decoding, live Prediction-first
+model/RAG/memory candidates, and raw English/command protection. This proves
+the backend contract and native panel harness only. It does not prove the final
+product input method is usable in macOS Text Input Sources.
 
-Before trying patched Squirrel as a real input source, run the strict readiness
-gate:
+The product-route frontend gate is the Squirrel/Rime integration:
 
 ```bash
 RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
@@ -900,25 +891,29 @@ Open the native AppKit candidate panel preview:
 build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-panel
 ```
 
-Install the local input method app:
+Install the local native harness app only when debugging the harness itself:
 
 ```bash
-scripts/install_macos_frontend.sh
+RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL=1 scripts/install_macos_frontend.sh
 ```
 
 The installer copies `RagImeMac.app` to `~/Library/Input Methods/`, writes a
 user-level bridge config at `~/Library/Application Support/RagImeMac/bridge-config.json`,
-and checks whether macOS can see the native input source. To install and select
-the input source in one step, use:
+and checks whether macOS can see the native input source. This path is not the
+product input method route. On this machine, macOS can enumerate the source via
+TIS but does not add it to `AppleEnabledThirdPartyInputSources`, so it may not
+appear in System Settings or be selectable.
+
+To install and select the native harness in one step, use:
 
 ```bash
-scripts/install_macos_frontend.sh --select
+RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL=1 scripts/install_macos_frontend.sh --select
 ```
 
 If macOS has not enabled the third-party input source yet, the installer prints
 the exact warning and exits successfully unless `--require-input-source` is
-used. You can still add it manually from System Settings -> Keyboard -> Input
-Sources -> Chinese, Simplified -> `RAG IME`.
+used. Do not treat this as product readiness; keep product validation on the
+Squirrel/Rime candidate-layer path.
 
 Override with `RAG_IME_DB_PATH=/path/to/rag-ime.sqlite scripts/build_macos_frontend.sh`
 only for isolated debug runs.

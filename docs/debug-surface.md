@@ -4,7 +4,10 @@
 
 `debug/` is the browser test surface for inspecting the backend pipeline and candidate payloads.
 
-It is not the product input method UI. The real input method UI is the native macOS `InputMethodKit` + AppKit panel under `macos/RagImeMac/`.
+It is not the product input method UI. The product input method UI should live
+in the Rime/Squirrel candidate flow. The native macOS `InputMethodKit` + AppKit
+panel under `macos/RagImeMac/` is a debug harness for the sidecar contract, not
+the finished IME.
 
 It is intentionally small:
 

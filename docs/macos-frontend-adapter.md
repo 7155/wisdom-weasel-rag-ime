@@ -478,9 +478,10 @@ scripts/replace_system_squirrel_app.sh
 
 The script keeps a timestamped backup under `/Library/Input Methods/` and
 restarts `Squirrel` after copying so the next panel uses the patched frontend.
-It also runs strict doctor without the foreground trace gate by default. That
-post-check proves the system copy has the current frontend patch, the stale duplicate
-is gone, and launchd will restart the same sidecar/MLX model configuration.
+This same-bundle replacement path is an emergency/debug repair only. It should
+not be the default product route because it can fight with the user's existing
+system Squirrel installation and leaves macOS input-source state harder to
+reason about.
 
 For product testing, prefer the independent branded install so the original
 Squirrel can stay installed without sharing a bundle id:
@@ -509,8 +510,8 @@ RAG_IME_REQUIRE_HITOOLBOX_ENABLED=1 \
 ```
 
 If this reports `hitoolboxEnabled=false`, the bundle is registered but not in
-all user input-source preference lists macOS uses. For a local debug machine,
-run:
+all user input-source preference lists macOS uses. Prefer System Settings -> "+"
+for the product path. For a local debug machine only, run:
 
 ```bash
 scripts/enable_squirrel_hitoolbox_input_source.sh
@@ -518,11 +519,11 @@ scripts/enable_squirrel_hitoolbox_input_source.sh
 
 The helper creates Desktop backups of `com.apple.HIToolbox` and
 `com.apple.inputsources`, tries to add the configured bundle/mode entries to
-both, restarts `cfprefsd`, and re-registers the source. Prefer the normal System
-Settings "+" flow for a distributable product; on newer macOS versions the
-`com.apple.inputsources` third-party list may still require that UI route. If
-the check prints `thirdPartyEnabled=false`, add `Squirrel - Simplified` or
-`RAG-IME - Simplified` from System Settings.
+both, restarts `cfprefsd`, and re-registers the source. It is intentionally a
+last-resort local repair helper; on newer macOS versions the
+`com.apple.inputsources` third-party list may reject command-line writes. If the
+check prints `thirdPartyEnabled=false`, add `RAG-IME - Simplified` from System
+Settings.
 
 The active selected source still needs to be changed from the macOS input menu
 before the real continuous typing test. Use the settings helper or add gate

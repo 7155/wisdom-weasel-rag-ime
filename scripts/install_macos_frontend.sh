@@ -15,6 +15,7 @@ REQUIRE_INPUT_SOURCE="${RAG_IME_MACOS_INSTALL_REQUIRE_INPUT_SOURCE:-0}"
 SELECT_INPUT_SOURCE="${RAG_IME_MACOS_INSTALL_SELECT:-0}"
 CLEAN_INSTALL="${RAG_IME_MACOS_INSTALL_CLEAN:-0}"
 WAIT_SECONDS="${RAG_IME_MACOS_INSTALL_WAIT_SECONDS:-5}"
+ALLOW_NATIVE_HARNESS_INSTALL="${RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL:-0}"
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-install-macos.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -57,6 +58,23 @@ bool_true() {
     *) return 1 ;;
   esac
 }
+
+if ! bool_true "$ALLOW_NATIVE_HARNESS_INSTALL"; then
+  cat >&2 <<'EOF'
+[STOP] RagImeMac is a debug harness, not the product input-method route.
+
+The usable product route is the Rime/Squirrel candidate-layer integration:
+Wanxiang/Rime owns pinyin composition; the Prediction-first sidecar injects
+LLM/RAG/memory candidates into that structured candidate flow.
+
+This native InputMethodKit app can still be installed for low-level bridge and
+panel debugging, but it is not expected to appear reliably in macOS Input
+Sources on every machine. To run this harness-only install anyway, set:
+
+  RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL=1 scripts/install_macos_frontend.sh
+EOF
+  exit 2
+fi
 
 wait_for_input_source() {
   local deadline now output status

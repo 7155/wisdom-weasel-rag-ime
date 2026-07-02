@@ -2179,3 +2179,19 @@ Changes:
 Verification:
 - Focused tests passed.
 - Native doctor passes sidecar checks; selected-source doctor still fails until macOS allow-lists/selects RAG IME.
+
+### 2026-07-02
+Topic:
+- Project-management reset after native RagImeMac still did not appear in System Settings.
+
+Decisions:
+- `RagImeMac` is debug harness only, not the product route.
+- Product route returns to branded Squirrel/Rime candidate-layer integration with unique bundle id, Wanxiang/Rime composition, and Prediction-first sidecar candidates.
+- Same-bundle system Squirrel replacement and direct HIToolbox/inputsource plist writes are emergency/debug repair paths only.
+
+Changes:
+- Native install scripts now require `RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL=1`.
+- README, route decision docs, debug-surface docs, and feedback issue log were updated to prevent future route confusion.
+
+Next steps:
+- Implement and verify the independent branded `RAG-IME.app` Squirrel/Rime foreground path with sidecar trace and `/rime-select` feedback.

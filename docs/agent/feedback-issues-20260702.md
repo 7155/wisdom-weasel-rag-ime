@@ -41,6 +41,16 @@
 - `/Library/Input Methods/Squirrel.app` 仍有同 bundle id 的旧系统版 Squirrel；当前用户目录 `/Users/undo/Library/Input Methods/Squirrel.app` 已安装 patched app，但 macOS 可能因重复 app 加载旧版本。需要管理员权限运行 `scripts/replace_system_squirrel_app.sh` 或手动移除系统旧版。
 - 系统目录 `/Library/Input Methods/Squirrel.app` 仍有一个同 bundle id 的旧版应用；live doctor 会把它作为 stale duplicate warning 报出。
 
+## 2026-07-02 21:25 项目管理 / 路线重置
+
+- 用户反馈：系统设置里看不到 `RAG IME`，截图只显示豆包输入法、鼠须管、系统拼音/笔画；当前 native app 不能作为真实可用输入法。
+- 本地证据：`RagImeMac.Hans` 可被 TIS 枚举，但 `thirdPartyEnabled=false`，`TISSelectInputSource=-50`；`/Library/Input Methods/RagImeMac.app` 是 ad-hoc 签名且 `spctl` 判定 rejected。
+- 结论：`RagImeMac` 不能继续包装成产品路线，只保留为 sidecar/Swift/AppKit/debug harness。
+- 已降级：`scripts/install_macos_frontend.sh` 和 `scripts/install_system_macos_frontend.sh` 默认停止执行；必须显式设置 `RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL=1` 才能安装 harness。
+- 已降级：`replace_system_squirrel_app.sh` 和 `enable_squirrel_hitoolbox_input_source.sh` 只作为 emergency/debug repair，不再作为默认产品安装路径。
+- 主线恢复：独立 bundle id 的 Squirrel/Rime 前台候选路径，保留 Wanxiang/Rime composition，Prediction-first sidecar 只注入短生命周期 LLM/RAG/记忆候选。
+- 下一步最小真实闭环：构建/安装独立 `RAG-IME.app`，跑 sidecar server，前台 trace 验证 `sidecar_request_scheduled -> sidecar_response_applied -> panel_text_layout`，数字键选择 side candidate 后走 `/rime-select`，并验证 sidecar 断开/模型超时/英文代码路径输入都 fail closed。
+
 ## 2026-07-02 18:51 修复记录
 
 - 重新导入 Codex 历史：默认只导入 `role=user`，并在 live DB 备份后新增 4896 条真实用户输入记录。

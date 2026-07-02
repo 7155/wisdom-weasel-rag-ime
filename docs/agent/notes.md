@@ -3042,3 +3042,23 @@ Verification:
 - `python3 -m unittest tests.test_install_macos_frontend tests.test_select_macos_input_source tests.test_check_macos_input_source tests.test_doctor_macos_frontend`: 12 tests passed.
 - `scripts/doctor_macos_frontend.sh`: passed app/bridge/live sidecar checks.
 - `RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE=1 scripts/doctor_macos_frontend.sh`: still fails as expected because macOS has not selected/allow-listed `RAG IME`.
+
+### 2026-07-02 21:27 CST
+Problem:
+- User asked for stricter project management and to delete or downgrade wrong paths. The native `RagImeMac` app still does not appear in System Settings Add panel, so treating it as the product route is misleading.
+
+Findings:
+- `RagImeMac.Hans` is TIS-visible but not in `AppleEnabledThirdPartyInputSources`; current source remains 豆包 and `TISSelectInputSource` returns `-50`.
+- `/Library/Input Methods/RagImeMac.app` is ad-hoc signed and `spctl` rejects it. This explains why TIS enumeration is not enough for reliable System Settings allow-listing.
+- The older architecture decision was correct: `RagImeMac` is a debug harness; product work should attach to mature Rime/Squirrel candidate flow.
+- Subagent read-only research agreed: prefer a branded Squirrel/Rime frontend with unique bundle id and sidecar `displayCandidates`; use McBopomofo/fcitx5-macos as references only, not the current Mac product base.
+
+Changes:
+- `install_macos_frontend.sh` and `install_system_macos_frontend.sh` now stop by default and require `RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL=1` for harness-only installation.
+- README route wording changed back to Squirrel/Rime product route; native is documented as debug harness only.
+- `replace_system_squirrel_app.sh` and `enable_squirrel_hitoolbox_input_source.sh` are now documented as emergency/debug repair, not default product install.
+- Feedback/issues doc records the user's visible blockers and the route reset.
+
+Next:
+- Build the independent branded `RAG-IME.app` Squirrel/Rime path, not same-bundle replacement and not native `RagImeMac` as product.
+- Verify real foreground trace: sidecar request, sidecar response applied, panel layout, `/rime-select`, and fail-closed behavior for sidecar/model/raw English/code/path cases.

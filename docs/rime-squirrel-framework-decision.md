@@ -11,6 +11,31 @@ The production macOS input method should be based on Rime/Squirrel, not a standa
 
 The current `macos/RagImeMac` InputMethodKit adapter remains useful for quickly testing the RAG backend, JSON bridge, candidate panel, and action feedback. It is not the final Chinese composition framework.
 
+## 2026-07-02 Route Reset
+
+Do not promote the independent native `RagImeMac` harness into the product
+route. A real install attempt on the target Mac showed why this is the wrong
+completion boundary:
+
+- `/Library/Input Methods/RagImeMac.app` can be visible through TIS as
+  `dev.local.inputmethod.RagImeMac.Hans`, but it remains outside the current
+  user's `AppleEnabledThirdPartyInputSources`.
+- `TISSelectInputSource` returns `-50`, so terminal selection is not enough to
+  make it usable.
+- System Settings did not list `RAG IME` under Chinese, Simplified even after
+  canonical `/Library/Input Methods` installation, LaunchServices refresh, and
+  stale path cleanup.
+- The local harness is ad-hoc signed and `spctl` rejects it. Mature production
+  input methods need a real app signing/notarization path, or they should ride
+  on a mature frontend that already handles packaging.
+
+Therefore `RagImeMac` stays as a debug harness only. Product work should move
+back to a branded Squirrel/Rime frontend with a unique bundle id, using Wanxiang
+schemas for pinyin anchoring and the sidecar `displayCandidates` contract for
+Prediction-first LLM/RAG/memory candidates. Same-bundle replacement of the
+user's existing `Squirrel.app` is reserved for emergency debugging, not the
+default product path.
+
 The final frontend route should be:
 
 ```text

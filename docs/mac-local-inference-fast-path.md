@@ -104,7 +104,7 @@ unset and models stored under `/Volumes/undo 4t/ollama-models`.
 
 | Backend | Model | First-candidate result | Product meaning |
 | --- | --- | ---: | --- |
-| Direct MLX-LM service | local `mlx-community-Qwen3.5-0.8B-4bit` | manual `/predict` returned `candidateMode: next-token-logits` with 8 candidates; manual `/rime-suggest` returned 5 inline model candidates plus 3 block RAG candidates in about 150-200 ms | Current active IME route. Needs repeated p95 and quality comparison before calling the latency work finished. |
+| Direct MLX-LM service | local `mlx-community-Qwen3.5-0.8B-4bit` | manual `/predict` returned `candidateMode: next-token-logits` with 8 candidates; manual `/rime-suggest` returned 5 inline model candidates plus 3 block RAG candidates in about 150-200 ms | Current active model lane. Needs repeated p95 and quality comparison before calling the latency work finished. |
 | Ollama MLX runner | `qwen3.5:0.8b-mlx` | p50 first chunk 46 ms in the first smoke; later rerun p50 124 ms, warm post-load samples 76-133 ms | Best current Mac TTFT baseline. Use for UI iteration and smoke tests. |
 | Ollama MLX runner | `qwen3.5:0.8b-mlx` | warm single-model `bench-ime-ttfc`: p50 `firstCandidateMs` 102 ms, p95 122 ms, with 1/12 samples over 200 ms | Best current TTFC evidence, but still needs stale-cancel and quality gates. |
 | Ollama GGUF/Q8 runner | `qwen3.5:0.8b` | p50 first chunk 194 ms in one run, 296 ms in rerun; unstable cold/outlier behavior | Useful baseline, not the preferred Mac route. |
@@ -120,7 +120,7 @@ first parsed candidate instead of waiting for a complete list.
 
 | Rank | Runtime | Why it ranks here | Use now? |
 | ---: | --- | --- | --- |
-| 1 | Direct MLX-LM resident service | Apple Silicon-native; current implementation exposes `/predict`, `/predict-stream`, `/health`, and `next-token-logits` multi-candidate output. | Yes, current product route. |
+| 1 | Direct MLX-LM resident service | Apple Silicon-native; current implementation exposes `/predict`, `/predict-stream`, `/health`, and `next-token-logits` multi-candidate output. | Yes, current model route. |
 | 2 | Ollama MLX tag | Already downloaded and measured; easiest no-code TTFT baseline; Ollama API supports streaming, `keep_alive`, and thinking controls. | Keep as baseline and fallback smoke route. |
 | 3 | Native `llama.cpp`/Metal provider | Best control over prompt/KV reuse and sequence-copy candidate batching; closest to Wisdom-Weasel's proven low-latency design. | Final fast provider after MLX experiment. |
 | 4 | MLC LLM | Supports Metal device, local/interactive/server modes, OpenAI-style streaming, prefix-cache and speculative configuration knobs. | Keep as backup; compile pipeline is heavier. |
@@ -131,7 +131,7 @@ first parsed candidate instead of waiting for a complete list.
 
 Separate three questions that are easy to confuse:
 
-1. **Fastest active product path today**: direct MLX service with the local
+1. **Fastest active model lane today**: direct MLX service with the local
    Qwen3.5 0.8B 4-bit model and `next-token-logits` multi-candidate output.
 2. **Best controllable product kernel**: native `llama.cpp`/Metal, with direct
    MLX-LM as the Apple-Silicon experiment to beat. The input method eventually

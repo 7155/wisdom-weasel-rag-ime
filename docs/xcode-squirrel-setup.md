@@ -223,12 +223,12 @@ scripts/replace_system_squirrel_app.sh
 
 The script backs up the old `/Library/Input Methods/Squirrel.app` before
 copying the patched app, restarts `Squirrel`, then registers and selects the
-input source. It also runs strict doctor without foreground trace by default, so
-the command fails immediately if the copied system app is still unpatched, the
-same-bundle stale app remains visible, or the sidecar/MLX LaunchAgent runtime
-settings drifted. Set `RAG_IME_SQUIRREL_REPLACE_RUN_DOCTOR=0` only for narrow
-installer debugging. Add the HIToolbox gate when verifying installation on the
-user's machine:
+input source. Treat this as an emergency/debug repair only, not the default
+product install route. The preferred route is a branded independent
+`RAG-IME.app` bundle id so it does not fight the user's installed Squirrel.
+Set `RAG_IME_SQUIRREL_REPLACE_RUN_DOCTOR=0` only for narrow installer
+debugging. Add the HIToolbox gate when verifying installation on the user's
+machine:
 
 ```bash
 RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 \
@@ -241,7 +241,8 @@ If the output says `hitoolboxEnabled=false`, Squirrel is registered but not
 present in every current-user input-source list macOS uses. The normal route is:
 System Settings -> Keyboard -> Input Sources -> "+" -> Chinese, Simplified ->
 Squirrel - Simplified. For the independent product build, add
-`RAG-IME - Simplified` instead. For local debug only, the repo includes a helper:
+`RAG-IME - Simplified` instead. For last-resort local debug only, the repo
+includes a helper:
 
 ```bash
 scripts/enable_squirrel_hitoolbox_input_source.sh
