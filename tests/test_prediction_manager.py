@@ -27,7 +27,7 @@ class PredictionManagerTests(unittest.TestCase):
         self.assertTrue(result.session.prediction_panel_visible)
         self.assertFalse(result.reused_candidate_pool)
         self.assertTrue(result.candidate_pool_active)
-        self.assertEqual([item.source_type for item in result.display_candidates[:2]], ["rag", "model"])
+        self.assertEqual([item.source_type for item in result.display_candidates[:2]], ["model", "rag"])
 
     def test_prefix_composition_reuses_pool_and_filters_by_pinyin(self) -> None:
         manager = PredictionManager(candidate_pool_ttl_ms=1200)

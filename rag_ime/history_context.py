@@ -57,11 +57,13 @@ def build_prediction_context(
         history = compact_whitespace(method(project=project, limit=event_limit, max_chars=history_limit))
 
     if history and explicit:
-        merged = f"历史输入: {history} 当前上下文: {explicit}"
+        merged = f"历史参考(禁止复读): {history} 当前上下文: {explicit}"
     elif history:
-        merged = f"历史输入: {history}"
+        merged = f"历史参考(禁止复读): {history}"
+    elif explicit:
+        merged = f"当前上下文: {explicit}"
     else:
-        merged = explicit
+        merged = ""
     return _tail_chars(compact_whitespace(merged), max(0, char_limit))
 
 
@@ -77,8 +79,8 @@ def prediction_context_metadata(text: str) -> dict[str, object]:
     return {
         "chars": len(normalized),
         "fingerprint": context_fingerprint(normalized),
-        "hasHistory": "历史输入:" in normalized,
-        "hasExplicitContext": "当前上下文:" in normalized or bool(normalized and "历史输入:" not in normalized),
+        "hasHistory": "历史输入:" in normalized or "历史参考" in normalized,
+        "hasExplicitContext": "当前上下文:" in normalized or bool(normalized and "历史输入:" not in normalized and "历史参考" not in normalized),
     }
 
 

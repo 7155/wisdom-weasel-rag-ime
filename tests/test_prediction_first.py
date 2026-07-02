@@ -209,14 +209,14 @@ class PredictionFirstTests(unittest.TestCase):
 
         self.assertEqual(result.display_candidates[0].text, "git status")
         self.assertEqual(result.display_candidates[0].source_type, "raw_english")
-        self.assertEqual(result.display_candidates[1].text, "继续调试候选")
+        self.assertEqual([item.text for item in result.display_candidates], ["git status"])
         self.assertEqual(result.policy["rawCommitInserted"], 1)
-        self.assertEqual(result.policy["sideInserted"], 1)
+        self.assertEqual(result.policy["sideInserted"], 0)
         self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
         session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
-        self.assertEqual(session.phase, PredictionSessionPhase.PREFIX_CONSTRAINED)
-        self.assertTrue(session.prediction_panel_visible)
-        self.assertEqual(session.selection_scope, "mixed_prediction_first")
+        self.assertEqual(session.phase, PredictionSessionPhase.RAW_PASSTHROUGH)
+        self.assertFalse(session.prediction_panel_visible)
+        self.assertEqual(session.selection_scope, "raw")
 
     def test_prefix_constrained_composition_falls_back_to_wanxiang_only_when_side_empty(self) -> None:
         snapshot = RimeContextSnapshot(
@@ -243,7 +243,7 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertTrue(session.should_clear_prediction_panel)
         self.assertEqual(session.selection_scope, "rime")
 
-    def test_post_commit_prediction_prioritizes_rag_memory_before_llm(self) -> None:
+    def test_post_commit_prediction_prioritizes_llm_before_rag_memory(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",
             request_seq=4,
@@ -291,10 +291,10 @@ class PredictionFirstTests(unittest.TestCase):
         )
 
         self.assertEqual(result.mode, InputMode.POST_COMMIT_PREDICTING)
-        self.assertEqual([item.source_type for item in result.display_candidates], ["rag", "memory", "model"])
+        self.assertEqual([item.source_type for item in result.display_candidates], ["model", "rag", "memory"])
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["把这个项目整理成面试项目", "高频实时场景里的个人记忆系统", "做一个本地 RAG 输入法"],
+            ["做一个本地 RAG 输入法", "把这个项目整理成面试项目", "高频实时场景里的个人记忆系统"],
         )
         self.assertFalse(result.policy["rimeCompositionOwnedByRime"])
         session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
@@ -326,7 +326,7 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual(payload["phase"], "hidden")
         self.assertTrue(payload["shouldClearPredictionPanel"])
 
-    def test_candidate_pool_keeps_rag_memory_and_model_as_separate_lanes(self) -> None:
+    def test_candidate_pool_keeps_model_rag_memory_as_separate_lanes(self) -> None:
         pool = build_candidate_pool(
             model_predictions=[
                 ModelPrediction(text="用本地 MLX 小模型续写", rank=1, provider_name="mlx", latency_ms=20)
@@ -353,7 +353,7 @@ class PredictionFirstTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual([item.source_type for item in pool.prediction_order()[:3]], ["rag", "memory", "model"])
+        self.assertEqual([item.source_type for item in pool.prediction_order()[:3]], ["model", "rag", "memory"])
 
     def test_mode_inference_distinguishes_anchor_prefix_and_post_commit(self) -> None:
         self.assertEqual(

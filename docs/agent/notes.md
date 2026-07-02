@@ -3075,3 +3075,34 @@ Changes:
 Verification:
 - Branded install dry-run resolves `target_app=/Users/undo/Library/Input Methods/RAG-IME.app`, `bundle_id=im.rag-ime.inputmethod.RagIme`, `enable_pref_repair=0`, and `auto_select=0`.
 - Focused Squirrel/install tests passed.
+
+### 2026-07-02 23:23 CST
+Problem:
+- User reported the IME still felt unusable: old candidates stayed visible, digits were hijacked, raw English/code/path input broke, RAG looked like clipboard recall instead of useful input assistance, and LLM/RAG/memory were not visibly driving the candidate list.
+- The installed system app at `/Library/Input Methods/RAG-IME.app` was still an older 21:46 binary, while the rebuilt Squirrel frontend existed only in `/tmp`.
+
+Findings:
+- Wisdom-Weasel's useful lesson is lifecycle discipline: Rime owns anchor composition, LLM candidates need explicit selection guards, and stale candidates must fail closed.
+- The product route is branded Squirrel/Rime, not the native `RagImeMac` harness.
+- Admin replacement of `/Library/Input Methods/RAG-IME.app` could not complete because the sudo/admin password step was not available in this session.
+- Installing the latest same-bundle app into `~/Library/Input Methods/RAG-IME.app` works without admin and reuses the existing `RAG-IME - Simplified` third-party allow-list.
+- There is still a duplicate older system app with the same bundle id; doctor warns about it until the system app is removed or replaced with admin rights.
+
+Changes:
+- Raw ASCII/code/path input now suspends side lanes and returns only the raw commit candidate, so `git status`, `model_prediction`, and `/Volumes/...` do not get rewritten by model/RAG candidates.
+- Frontend number-key selection now ignores stale/unselectable display candidates and never commits `raw_english` rows via digit keys.
+- Doctor's mixed-layout candidate contract now uses a realistic 1200ms budget so a slow MLX 0.6B response is not misreported as broken wiring.
+- `installation.yaml` is ignored and removed from the worktree because it is local Rime metadata.
+- Latest branded Squirrel app was installed at `~/Library/Input Methods/RAG-IME.app` and selected as `im.rag-ime.inputmethod.RagIme.Hans`.
+
+Verification:
+- `RAG-IME - Simplified` is selected: `selected=true hitoolboxEnabled=true thirdPartyEnabled=true`.
+- Squirrel doctor passed for the user-level app: candidate contract produced 8 display candidates with model inline first, RAG/memory block rows after, and no Rime fallback when side candidates are available.
+- Live sidecar verification passed for post-commit prediction, prefix-constrained prediction, raw command/code/path passthrough, and Rime fallback.
+- Focused tests passed: `python3 -m unittest -v tests.test_prediction_first tests.test_rime_sidecar tests.test_build_patched_squirrel tests.test_doctor_squirrel_integration tests.test_mlx_predictor_server tests.test_prediction_manager` ran 88 tests OK.
+- `git diff --check` and `py_compile` passed.
+
+Open:
+- Need user real-typing validation in Codex/Edge/TextEdit because Computer Use screen capture failed and cannot inspect the live candidate window.
+- Need admin cleanup later: remove or replace `/Library/Input Methods/RAG-IME.app` so macOS cannot accidentally load the old system binary.
+- Need later model-quality work: keep MLX 0.6B for speed now; compare Qwen3.5 0.8B only after interaction is stable.

@@ -99,21 +99,11 @@ class CandidatePool:
         }
         ordered: list[PredictionCandidate] = []
         seen: set[tuple[str, int, str]] = set()
-        for source_type in ("rag", "memory", "model"):
-            group = groups[source_type]
-            if not group:
-                continue
-            candidate = group.pop(0)
-            key = (candidate.source_type, candidate.source_index, candidate.display_text)
-            ordered.append(candidate)
-            seen.add(key)
-
-        remaining = sorted(
-            (item for group in groups.values() for item in group),
-            key=lambda item: item.score,
-            reverse=True,
-        )
-        for candidate in remaining:
+        for candidate in (
+            tuple(groups["model"])
+            + tuple(groups["rag"])
+            + tuple(groups["memory"])
+        ):
             key = (candidate.source_type, candidate.source_index, candidate.display_text)
             if key in seen:
                 continue
@@ -194,6 +184,16 @@ def merge_prediction_first_candidates(
             prefix=prefix,
             max_visible=max_visible,
         )
+        if raw_inserted:
+            return _merge_result(
+                mode=InputMode.RAW_INPUT,
+                pinyin_prefix=prefix,
+                display=display,
+                side_inserted=0,
+                rime_fallback_count=0,
+                reason="raw ascii/code input is directly commit-able; prediction lanes are suspended",
+                raw_commit_inserted=raw_inserted,
+            )
         before_rime = len(display)
         _append_rime_candidates(display, seen, snapshot, max_visible=max_visible)
         return _merge_result(
@@ -218,6 +218,16 @@ def merge_prediction_first_candidates(
         prefix=prefix,
         max_visible=max_visible,
     )
+    if raw_inserted:
+        return _merge_result(
+            mode=InputMode.RAW_INPUT,
+            pinyin_prefix=prefix,
+            display=display,
+            side_inserted=0,
+            rime_fallback_count=0,
+            reason="raw ascii/code input is directly commit-able; prediction lanes are suspended",
+            raw_commit_inserted=raw_inserted,
+        )
     prediction_candidates = pool.prediction_order()
     strict_prefix_constraint = (
         resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING

@@ -398,7 +398,7 @@ class RimeSidecarTests(unittest.TestCase):
             predictor=predictor,
         )
 
-        self.assertIn("历史输入会进入模型预测", predictor.last_recent_context)
+        self.assertIn("历史参考(禁止复读): 历史输入会进入模型预测", predictor.last_recent_context)
         self.assertIn("当前上下文: 当前正在写 RAG 输入法 sidecar", predictor.last_recent_context)
         self.assertEqual(core.last_suggest_recent_context, "当前正在写 RAG 输入法 sidecar")
         self.assertNotIn("历史输入会进入模型预测", core.last_suggest_recent_context)
@@ -408,6 +408,40 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(len(history_meta["fingerprint"]), 16)
         self.assertTrue(history_meta["hasHistory"])
         self.assertTrue(history_meta["hasExplicitContext"])
+
+    def test_model_predictions_repeating_history_context_are_filtered(self) -> None:
+        class RepeatingHistoryPredictionProvider:
+            def __init__(self) -> None:
+                self.last_recent_context = ""
+
+            def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+                self.last_recent_context = recent_context
+                return [
+                    ModelPrediction(text="历史输入会进入模型预测", rank=1, provider_name="local-mlx", latency_ms=10),
+                    ModelPrediction(text="把输入法流程跑通", rank=2, provider_name="local-mlx", latency_ms=10),
+                    ModelPrediction(text="已上屏上下文: 当前正在写", rank=3, provider_name="local-mlx", latency_ms=10),
+                ][:max_candidates]
+
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        predictor = RepeatingHistoryPredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-filter-stale-history",
+                "requestSeq": 45,
+                "committedContext": "当前正在写 RAG 输入法 sidecar",
+                "latencyBudgetMs": 800,
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertIn("历史参考(禁止复读)", predictor.last_recent_context)
+        self.assertEqual([item["text"] for item in response["modelPredictions"]], ["把输入法流程跑通"])
 
     def test_frontmost_app_payload_reaches_rag_retrieval(self) -> None:
         core = CapturingCore()
@@ -646,12 +680,13 @@ class RimeSidecarTests(unittest.TestCase):
         )
 
         self.assertEqual(response["queryBasis"], "rawSemanticInput")
-        self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
-        self.assertEqual(self.predictor.last_current_input, "model_prediction")
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: raw ascii passthrough")
+        self.assertEqual(self.predictor.last_current_input, "")
         first = response["displayCandidates"][0]
         self.assertEqual(first["sourceType"], "raw_english")
         self.assertEqual(first["insertText"], "model_prediction")
         self.assertEqual(first["selectionAction"], "commit_side_candidate")
+        self.assertEqual(len(response["displayCandidates"]), 1)
 
     def test_shell_command_raw_input_stays_first_candidate(self) -> None:
         response = build_rime_sidecar_response(
@@ -676,11 +711,11 @@ class RimeSidecarTests(unittest.TestCase):
 
         first = response["displayCandidates"][0]
         self.assertEqual(response["queryBasis"], "rawSemanticInput")
-        self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: raw ascii passthrough")
         self.assertEqual(first["sourceType"], "raw_english")
         self.assertEqual(first["insertText"], "git status")
         self.assertEqual(first["selectionAction"], "commit_side_candidate")
-        self.assertTrue(any(item["sourceType"] == "model" for item in response["displayCandidates"][1:]))
+        self.assertEqual(len(response["displayCandidates"]), 1)
 
     def test_prediction_first_code_like_anchor_keeps_raw_commit_first(self) -> None:
         response = build_rime_sidecar_response(
@@ -707,7 +742,10 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(first["sourceType"], "raw_english")
         self.assertEqual(first["insertText"], "model_prediction")
         self.assertEqual(response["predictionFirst"]["policy"]["rawCommitInserted"], 1)
-        self.assertEqual(response["displayCandidates"][1]["sourceType"], "rime")
+        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 0)
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
+        self.assertEqual(len(response["displayCandidates"]), 1)
+        self.assertEqual(response["predictionSession"]["phase"], "raw_passthrough")
 
     def test_prediction_first_patched_frontend_keeps_raw_command_first_with_context(self) -> None:
         response = build_rime_sidecar_response(
@@ -738,7 +776,9 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(first["sourceType"], "raw_english")
         self.assertEqual(first["insertText"], "git status")
         self.assertEqual(response["predictionFirst"]["policy"]["rawCommitInserted"], 1)
-        self.assertTrue(any(item["sourceType"] == "model" for item in response["displayCandidates"][1:]))
+        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 0)
+        self.assertEqual(len(response["displayCandidates"]), 1)
+        self.assertEqual(response["predictionSession"]["phase"], "raw_passthrough")
 
     def test_short_technical_raw_input_refreshes_llm_and_rag_before_rime_noise(self) -> None:
         response = build_rime_sidecar_response(
@@ -977,7 +1017,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(predictor.last_current_input, "我想")
         self.assertEqual(core.last_suggest_recent_context, "用户刚刚上屏了 我想")
         self.assertEqual(response["modelPredictions"][0]["text"], "我想续写")
-        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rag", "model"])
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["model", "rag"])
         self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
         self.assertFalse(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
 
@@ -1450,7 +1490,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["displayCandidates"], [])
         self.assertFalse(response["mergePolicy"]["sideCandidatesEnabled"])
 
-    def test_dirty_raw_pinyin_without_rime_candidate_does_not_refresh_from_recent_context(self) -> None:
+    def test_dirty_raw_pinyin_without_rime_candidate_refreshes_from_committed_context(self) -> None:
         response = build_rime_sidecar_response(
             payload={
                 "sessionId": "squirrel-recent-context-fallback",
@@ -1466,12 +1506,13 @@ class RimeSidecarTests(unittest.TestCase):
             core=self.core,
             predictor=self.predictor,
         )
-        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
-        self.assertEqual(response["triggerDecision"]["reason"], "skip: composing without stable Rime candidate")
-        self.assertEqual(self.predictor.last_current_input, "")
-        self.assertEqual(response["modelPredictions"], [])
-        self.assertEqual(response["ragCandidates"], [])
-        self.assertEqual(response["displayCandidates"], [])
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: committed context fallback")
+        self.assertEqual(response["queryBasis"], "committedContext")
+        self.assertNotIn("asdioj", self.predictor.last_current_input)
+        self.assertIn("候选布局", self.predictor.last_current_input)
+        self.assertGreaterEqual(len(response["modelPredictions"]), 1)
+        self.assertGreaterEqual(len(response["displayCandidates"]), 1)
 
     def test_recent_context_fallback_cleans_repeated_noise_tail(self) -> None:
         suggestions = recent_context_memory_suggestions(

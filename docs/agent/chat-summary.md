@@ -2208,3 +2208,29 @@ Changes:
 Verification:
 - Branded dry-run shows `enable_pref_repair=0` and `auto_select=0`.
 - Focused Squirrel/install tests passed.
+
+### 2026-07-02
+Topic:
+- Stabilize the real RAG-IME input method after user reports that the IME still could not produce usable LLM/RAG/memory candidates.
+
+Decisions:
+- Keep MLX Qwen3 0.6B for now because speed matters more than switching models during interaction debugging.
+- Use the user-level same-bundle `~/Library/Input Methods/RAG-IME.app` as the current test install because system-level replacement needs admin password and the old system binary is still present.
+- Treat duplicate system `/Library/Input Methods/RAG-IME.app` as a known risk until it can be removed or replaced with admin rights.
+
+Changes:
+- Raw English/code/path input now bypasses model/RAG lanes and cannot be selected by digit keys as a stale AI candidate.
+- Mixed-layout doctor now checks the candidate contract with a realistic MLX budget instead of failing at 350ms.
+- Latest branded Squirrel frontend was installed and selected as `RAG-IME - Simplified`.
+- Local generated `installation.yaml` is now ignored and removed.
+
+Verification:
+- `RAG-IME - Simplified` is selected with `selected=true hitoolboxEnabled=true thirdPartyEnabled=true`.
+- Squirrel doctor passed model-inline + RAG/memory-block candidate contract.
+- Live sidecar verification passed for prediction-first, post-commit, raw passthrough, and Rime fallback cases.
+- 88 focused tests, `git diff --check`, and Python compile checks passed.
+
+Next steps:
+- User should test real typing in Codex/Edge/TextEdit with `RAG-IME - Simplified` selected.
+- After confirming real UI behavior, require a frontend trace check for sidecar request/response and number-key side commit.
+- Later remove/replace the stale system app and then optimize 0.6B prompt/cache quality before comparing Qwen3.5 0.8B.
