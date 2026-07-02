@@ -67,6 +67,7 @@ killall TextInputMenuAgent >/dev/null 2>&1 || true
 killall SystemUIServer >/dev/null 2>&1 || true
 killall cfprefsd >/dev/null 2>&1 || true
 sleep 1
+"$ROOT/scripts/refresh_macos_input_sources.sh" >/dev/null 2>&1 || true
 
 echo "$SYSTEM_APP"
 echo "$USER_CONFIG"
