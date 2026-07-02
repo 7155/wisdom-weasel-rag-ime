@@ -502,6 +502,8 @@ def recent_context_memory_suggestions(
         text = _normalize_recent_memory_surface(text)
         if not text or text in seen or text == current:
             continue
+        if _looks_like_broken_recent_memory_surface(text):
+            continue
         if text in _RECENT_MEMORY_LOW_VALUE:
             continue
         seen.add(text)
@@ -534,6 +536,16 @@ def _normalize_recent_memory_surface(text: str) -> str:
     text = re.sub(r"^(的|和|与|及|或|把|再|先|然后)\s*(?=[A-Za-z0-9\u3400-\u9fff])", "", text)
     text = compact_whitespace(text)
     return text
+
+
+def _looks_like_broken_recent_memory_surface(text: str) -> bool:
+    if re.match(r"^[A-Za-z]{1,2}\s+[A-Za-z0-9\u3400-\u9fff]", text):
+        return True
+    if re.search(r"[A-Za-z]-$", text):
+        return True
+    if re.search(r"(^|[\s，,。])[-_][A-Za-z0-9]", text):
+        return True
+    return False
 
 
 def _short_stable_id(*parts: str) -> str:

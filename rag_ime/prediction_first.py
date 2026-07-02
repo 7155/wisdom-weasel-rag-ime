@@ -98,6 +98,7 @@ def merge_prediction_first_candidates(
     max_visible = snapshot.max_visible_candidates
     display: list[SideCandidateDisplayItem] = []
     seen: set[str] = set()
+    raw_inserted = 0
 
     if resolved_mode in (InputMode.RAW_INPUT, InputMode.ANCHOR_COMPOSING):
         raw_inserted = _append_raw_commit_candidate(
@@ -124,6 +125,14 @@ def merge_prediction_first_candidates(
             raw_commit_inserted=raw_inserted,
         )
 
+    raw_inserted = _append_raw_commit_candidate(
+        display,
+        seen,
+        raw_commit_text=raw_commit_text,
+        mode=resolved_mode,
+        prefix=prefix,
+        max_visible=max_visible,
+    )
     prediction_candidates = pool.prediction_order()
     if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING:
         matched = tuple(item for item in prediction_candidates if prediction_candidate_matches_prefix(item, prefix))
@@ -161,6 +170,7 @@ def merge_prediction_first_candidates(
             if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING
             else "post-commit predictions shown before fallback candidates"
         ),
+        raw_commit_inserted=raw_inserted,
         prefix_matched_side_inserted=prefix_matched_side_inserted,
     )
 
