@@ -355,6 +355,7 @@ typing:
 ```bash
 RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 \
 RAG_IME_DOCTOR_REQUIRE_FRONTEND_TRACE=1 \
+RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE=1 \
 RAG_IME_DOCTOR_FRONTEND_TRACE_WAIT=30 \
 RAG_IME_SQUIRREL_WORKDIR=/tmp/rag-ime-squirrel-verify \
   scripts/doctor_squirrel_integration.sh
@@ -372,6 +373,10 @@ first, RAG/memory rows next, and native Rime fallback only after the side
 candidates. After a number-key accept, `latestNumberKeySideCommit` must prove
 the visible key produced a `number_key_route` and then committed the matching
 model/RAG side candidate rather than native Rime selection.
+For foreground acceptance, keep
+`RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE=1` enabled; otherwise doctor only
+proves Squirrel is registered/enabled, not that macOS is currently routing
+keystrokes through it.
 
 If the project opens in Xcode but the script fails, inspect the exact
 `xcodebuild` output first; the wrapper checks the patched files and config before

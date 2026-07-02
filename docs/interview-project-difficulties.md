@@ -210,9 +210,12 @@ system runtime contract:
 ```
 
 这个点的面试表达是：输入法项目不能只测后端 API，因为用户路径在系统输入法前台。
-我最后把“系统正在运行哪个 app bundle、前台是否真的 apply sidecar 候选、空响应是否
-覆盖旧候选”都变成了可检查的工程 gate。它解释了为什么这个项目比普通 RAG demo 难：
+我最后把“系统正在运行哪个 app bundle、当前 selected input source 是否真的是
+Squirrel、前台是否真的 apply sidecar 候选、空响应是否覆盖旧候选”都变成了可检查的
+工程 gate。它解释了为什么这个项目比普通 RAG demo 难：
 它既有模型/RAG 排序问题，也有 macOS 输入法生命周期、bundle 注册和前台实时渲染问题。
+真实前台 trace 现在能验收 `modelInline=5`、`ragBlock=3`、横向模型行、纵向记忆行，
+以及数字键从 `number_key_route` 到 `side_candidate_commit` 的完整提交链路。
 
 ## 我已经落地的工程点
 
@@ -230,7 +233,8 @@ system runtime contract:
 - Rime/Squirrel 正式前端路线 ADR；
 - Squirrel patch pack：在 Rime 候选生成后调用本地 sidecar，异步合并 side candidates，按显示候选路由数字键，并在用户接受 RAG 候选后回写 commit/action。
 - 系统级 patched Squirrel 安装 gate：检测新版前台标记，避免 macOS 加载同 bundle id 的旧系统 app 后继续显示纯 Rime 候选。
-- strict doctor 现在能验收 `display=8 model=5 rag=3 rime=0`、MLX next-token logits/top-k、本地 LaunchAgent、系统输入源 selected=true，以及 stale same-bundle app 检测。
+- strict doctor 现在能验收 `display=8 model=5 rag=3 rime=0`、MLX next-token logits/top-k、本地 LaunchAgent、系统输入源 selected=true、真实前台 trace，以及 stale same-bundle app 检测。
+- 模型 holdover 按 `project + committedContext fingerprint` 分桶，并覆盖外层 dispatch 超时，避免旧模型线程完成后污染当前输入上下文。
 - `predictor-ttft` 首 chunk 和 first parsed candidate 延迟测量；
 - Mac 本地推理路线调研：Ollama MLX tag、MLX-LM prompt cache、llama.cpp/Metal KV cache、Core ML stateful KV、MiniVLLM/vLLM 取舍。
 - 实测 `qwen3.5:0.8b-mlx` 在 Mac warm path 上达到 46ms p50 first chunk，同时用质量评测证明 0.8B 模型不能替代本地 RAG 记忆。

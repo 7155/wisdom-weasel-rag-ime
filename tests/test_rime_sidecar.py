@@ -170,6 +170,7 @@ class RimeSidecarTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
+        clear_model_prediction_holdover_cache()
 
     def test_semantic_query_uses_rime_candidates_not_dirty_raw_pinyin(self) -> None:
         snapshot = parse_rime_context_payload(

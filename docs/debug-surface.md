@@ -292,6 +292,9 @@ The strict doctor sends `latencyBudgetMs=300` by default, matching the managed
 Squirrel config. This avoids testing a stricter 150 ms fallback path that the
 real patched frontend does not use. Set `RAG_IME_DOCTOR_LATENCY_BUDGET_MS` to
 stress a different budget.
+Use `RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE=1` for real foreground
+acceptance. Without it, doctor only proves macOS has registered and enabled the
+source; it does not prove keystrokes are currently routed through Squirrel.
 
 The trace is written by the patched Squirrel app itself, not by the sidecar. A
 passing `latestMixedPanel` proves the actual frontend used sidecar display
@@ -322,6 +325,10 @@ The response also includes `triggerDecision`. This is the backend guard that kee
   visible for a short holdover window while raw input changes and Rime has no
   fallback candidates. This is the safe path for `asdioj`-style noise: continue
   from recent Chinese text, do not infer Chinese directly from the raw letters.
+- Model holdover is keyed by project and committed-context fingerprint, and it
+  is reused even when the outer model dispatch exceeds the latency budget. This
+  keeps the first horizontal model row stable under tight budgets without
+  leaking candidates from an unrelated previous context.
 - `forceSideCandidates: true` can be used by debug tooling to force a refresh.
 - Skipped refreshes return empty `modelPredictions` / `ragCandidates` and `mergePolicy.sideCandidatesEnabled: false`.
 

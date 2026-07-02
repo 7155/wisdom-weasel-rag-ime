@@ -24,6 +24,7 @@ REQUIRE_MIXED_LAYOUT="${REQUIRE_MIXED_LAYOUT_CONFIGURED:-0}"
 CHECK_LAUNCHD="${RAG_IME_DOCTOR_CHECK_LAUNCHD:-1}"
 REQUIRE_INPUT_SOURCE_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE:-}"
 REQUIRE_INPUT_SOURCE="${REQUIRE_INPUT_SOURCE_CONFIGURED:-0}"
+REQUIRE_SELECTED_INPUT_SOURCE="${RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE:-0}"
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
 REFRESH_INPUT_SOURCE="${RAG_IME_DOCTOR_REFRESH_INPUT_SOURCE:-1}"
@@ -480,6 +481,7 @@ printf 'squirrel_app: %s\n' "$SQUIRREL_APP"
 printf 'squirrel_input_source: %s\n' "$SQUIRREL_INPUT_SOURCE_ID"
 printf 'tryout_readiness: %s\n' "$REQUIRE_TRYOUT"
 printf 'require_hitoolbox_enabled: %s\n' "$REQUIRE_HITOOLBOX_ENABLED"
+printf 'require_selected_input_source: %s\n' "$REQUIRE_SELECTED_INPUT_SOURCE"
 printf 'require_mixed_layout: %s\n' "$REQUIRE_MIXED_LAYOUT"
 printf 'refresh_input_source: %s\n' "$REFRESH_INPUT_SOURCE"
 printf 'require_frontend_trace: %s\n' "$REQUIRE_FRONTEND_TRACE"
@@ -587,7 +589,11 @@ check_macos_input_source() {
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/rag-ime-tis-input-source.out.XXXXXX")"
   out="$tmpdir/out"
   set +e
-  if bool_true "$REQUIRE_HITOOLBOX_ENABLED"; then
+  if bool_true "$REQUIRE_SELECTED_INPUT_SOURCE" && bool_true "$REQUIRE_HITOOLBOX_ENABLED"; then
+    "$ROOT/scripts/check_macos_input_source.sh" --require-selected --require-hitoolbox-enabled "$input_source_id" >"$out" 2>&1
+  elif bool_true "$REQUIRE_SELECTED_INPUT_SOURCE"; then
+    "$ROOT/scripts/check_macos_input_source.sh" --require-selected "$input_source_id" >"$out" 2>&1
+  elif bool_true "$REQUIRE_HITOOLBOX_ENABLED"; then
     "$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$input_source_id" >"$out" 2>&1
   else
     "$ROOT/scripts/check_macos_input_source.sh" "$input_source_id" >"$out" 2>&1
@@ -597,6 +603,8 @@ check_macos_input_source() {
 
   if [[ "$status" == "0" ]]; then
     ok "macOS input source enabled: $(cat "$out")"
+  elif bool_true "$REQUIRE_SELECTED_INPUT_SOURCE" && grep -Fq "id=$input_source_id" "$out" && grep -Fq "selected=false" "$out"; then
+    require_or_warn "$REQUIRE_INPUT_SOURCE" "macOS input source is enabled but not selected/current: $(cat "$out")"
   elif grep -Fq "id=$input_source_id" "$out"; then
     require_or_warn "$REQUIRE_INPUT_SOURCE" "macOS input source is registered but not enabled/selectable: $(cat "$out")"
   else

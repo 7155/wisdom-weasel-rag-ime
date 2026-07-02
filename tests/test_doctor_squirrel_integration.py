@@ -803,8 +803,38 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("[FAIL] macOS input source is registered but not enabled/selectable", result.stdout)
 
+    def test_doctor_can_require_selected_macos_input_source(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-input-source-selected-") as tmp:
+            tmp_path = Path(tmp)
+            app = _write_fake_squirrel_app(tmp_path / "Squirrel.app", body="#!/usr/bin/env bash\nexit 0\n")
+            fake_bin = _write_fake_swift(tmp_path, enabled=True, selected=False)
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                "RAG_IME_SQUIRREL_APP": str(app),
+                "RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES": str(app),
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "1",
+                "RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                cwd="/tmp",
+                env=env,
+                text=True,
+                capture_output=True,
+            )
 
-def _write_fake_swift(tmp_path: Path, *, enabled: bool) -> Path:
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("require_selected_input_source: 1", result.stdout)
+        self.assertIn("[FAIL] macOS input source is enabled but not selected/current", result.stdout)
+
+
+def _write_fake_swift(tmp_path: Path, *, enabled: bool, selected: bool = False) -> Path:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
     swift = fake_bin / "swift"
@@ -814,7 +844,7 @@ def _write_fake_swift(tmp_path: Path, *, enabled: bool) -> Path:
                 "#!/usr/bin/env bash",
                 (
                     "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified "
-                    f"enabled={'true' if enabled else 'false'} selectable=true selected=false'"
+                    f"enabled={'true' if enabled else 'false'} selectable=true selected={'true' if selected else 'false'}'"
                 ),
             ]
         )
