@@ -88,6 +88,13 @@ class LocalSqliteCoreClient:
                     FOREIGN KEY(event_id) REFERENCES input_events(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS phrase_stats (
+                    committed_text TEXT PRIMARY KEY,
+                    input_frequency INTEGER NOT NULL DEFAULT 0,
+                    first_seen_ms INTEGER NOT NULL,
+                    last_seen_ms INTEGER NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS memory_actions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at_ms INTEGER NOT NULL,
@@ -121,6 +128,20 @@ class LocalSqliteCoreClient:
                 ON memory_vectors(provider_fingerprint);
                 """
             )
+            conn.execute(
+                """
+                INSERT INTO phrase_stats(committed_text, input_frequency, first_seen_ms, last_seen_ms)
+                SELECT e.committed_text, COUNT(*), MIN(e.created_at_ms), MAX(e.created_at_ms)
+                FROM input_events e
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE s.deleted = 0
+                GROUP BY e.committed_text
+                ON CONFLICT(committed_text) DO UPDATE SET
+                    input_frequency = MAX(phrase_stats.input_frequency, excluded.input_frequency),
+                    first_seen_ms = MIN(phrase_stats.first_seen_ms, excluded.first_seen_ms),
+                    last_seen_ms = MAX(phrase_stats.last_seen_ms, excluded.last_seen_ms)
+                """
+            )
 
     def reset(self) -> None:
         with self._connect() as conn:
@@ -131,6 +152,7 @@ class LocalSqliteCoreClient:
                 DROP TABLE IF EXISTS memory_state;
                 DROP TABLE IF EXISTS input_events;
                 DROP TABLE IF EXISTS memory_fts;
+                DROP TABLE IF EXISTS phrase_stats;
                 """
             )
         self.initialize()
@@ -170,6 +192,16 @@ class LocalSqliteCoreClient:
             conn.execute(
                 "INSERT INTO memory_state(event_id, updated_at_ms) VALUES (?, ?)",
                 (event_id, created_at),
+            )
+            conn.execute(
+                """
+                INSERT INTO phrase_stats(committed_text, input_frequency, first_seen_ms, last_seen_ms)
+                VALUES (?, 1, ?, ?)
+                ON CONFLICT(committed_text) DO UPDATE SET
+                    input_frequency = phrase_stats.input_frequency + 1,
+                    last_seen_ms = excluded.last_seen_ms
+                """,
+                (text, created_at, created_at),
             )
             document = _event_fts_document(
                 text,
@@ -573,10 +605,11 @@ class LocalSqliteCoreClient:
             where.append("(e.project = ? OR e.project = '')")
             params.append(project)
         sql = f"""
-            SELECT e.*, s.*, bm25(memory_fts) AS bm25_score
+            SELECT e.*, s.*, bm25(memory_fts) AS bm25_score, COALESCE(ps.input_frequency, 1) AS input_frequency
             FROM memory_fts
             JOIN input_events e ON e.id = memory_fts.rowid
             JOIN memory_state s ON s.event_id = e.id
+            LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
             WHERE {' AND '.join(where)}
             ORDER BY s.pinned DESC, bm25(memory_fts) ASC, e.created_at_ms DESC
             LIMIT ?
@@ -597,10 +630,11 @@ class LocalSqliteCoreClient:
             where.append("(e.project = ? OR e.project = '')")
             params.append(project)
         sql = f"""
-            SELECT e.*, s.*, 99.0 AS bm25_score, v.vector_json
+            SELECT e.*, s.*, 99.0 AS bm25_score, COALESCE(ps.input_frequency, 1) AS input_frequency, v.vector_json
             FROM memory_vectors v
             JOIN input_events e ON e.id = v.event_id
             JOIN memory_state s ON s.event_id = e.id
+            LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
             WHERE {' AND '.join(where)}
         """
         candidates: list[tuple[float, sqlite3.Row]] = []
@@ -628,9 +662,10 @@ class LocalSqliteCoreClient:
             where.append("(e.project = ? OR e.project = '')")
             params.append(project)
         sql = f"""
-            SELECT e.*, s.*, 99.0 AS bm25_score
+            SELECT e.*, s.*, 99.0 AS bm25_score, COALESCE(ps.input_frequency, 1) AS input_frequency
             FROM input_events e
             JOIN memory_state s ON s.event_id = e.id
+            LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
             WHERE {' AND '.join(where)}
             ORDER BY s.pinned DESC, e.created_at_ms DESC
             LIMIT ?
@@ -679,6 +714,8 @@ class LocalSqliteCoreClient:
             source_fields=source_fields,
         )
         pinyin_boost = _pinyin_rerank_boost(raw_query, committed_text, recent_context)
+        input_frequency = _row_int(row, "input_frequency", default=1)
+        frequency_boost = _input_frequency_boost(input_frequency)
         accepted = int(row["accepted_count"])
         skipped = int(row["skipped_count"])
         downranked = int(row["downranked"])
@@ -690,6 +727,7 @@ class LocalSqliteCoreClient:
             + overlap_score
             + sum(boost for _, boost in field_boosts)
             + pinyin_boost
+            + frequency_boost
             + max(0.0, vector_score) * self.vector_weight
             + project_boost
             + (8.0 if pinned else 0.0)
@@ -708,6 +746,8 @@ class LocalSqliteCoreClient:
                 reason.append(f"{label}:{boost:.2f}")
         if pinyin_boost:
             reason.append(f"pinyin:{pinyin_boost:.2f}")
+        if input_frequency > 1:
+            reason.append(f"frequency:{input_frequency}")
         if pinned:
             reason.append("pinned")
         if accepted:
@@ -737,6 +777,7 @@ class LocalSqliteCoreClient:
                 "pinned": pinned,
                 "downranked": downranked,
                 "deleted": bool(row["deleted"]),
+                "input_frequency": input_frequency,
             },
         )
 
@@ -785,6 +826,21 @@ def _tail_chars(text: str, max_chars: int) -> str:
 
 def _event_fts_document(*parts: str) -> str:
     return build_fts_document(*parts, pinyin_search_document(*parts))
+
+
+def _row_int(row: sqlite3.Row, key: str, *, default: int = 0) -> int:
+    if key not in row.keys():
+        return default
+    value = row[key]
+    if value is None:
+        return default
+    return int(value)
+
+
+def _input_frequency_boost(input_frequency: int) -> float:
+    if input_frequency <= 1:
+        return 0.0
+    return min(2.2, math.log1p(input_frequency - 1) * 0.9)
 
 
 def _expand_query_for_local_rerank(query: str) -> str:

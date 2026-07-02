@@ -157,7 +157,11 @@
 - 已新增零依赖 `pinyin_index`，`SuggestionCompiler` 会给本地记忆候选自动补 `initials / pinyin_prefixes`；用户继续输入拼音时，CandidatePool 可以直接用这些 metadata 过滤历史短语候选。
 - 已验证本地短语记忆路径: SQLite 里记录的“设计一个候选展示方式”无需手写 metadata，也能在用户输入 `sj` 时排到万象/Rime 兜底候选前。
 - 已把拼音索引写入 SQLite/FTS5 文档；用户输入 `sj` 时，SQLite 可以直接召回历史短语，而不是等 RAG 候选出来后再过滤。
-- 频率排序已有基础: `memory_state.accepted_count` 会进入候选分数，用户多次接受的候选会优先于同类候选。
+- 频率排序已有基础:
+  - 参考 Rime/librime 用户词典的公开实现：候选上屏后更新 userdb entry 的 `commits`，并结合 tick/衰减值计算候选权重。
+  - 当前本地 SQLite 先实现两个稳定信号：`accepted_count` 表示用户主动接受该候选；同一 `committed_text` 反复上屏会增量写入 `phrase_stats.input_frequency`，查询时直接 join 进入排序分数，避免输入过程中反复全表聚合。
+  - `SuggestionCompiler` 会把 `state.input_frequency / accepted_count / pinned / downranked` 透传到候选 metadata，便于 debug 页面和后续管理面板解释“为什么这个候选靠前”。
+  - 下一步补齐 Rime 式时间衰减：近期高频更强，长期不用的短语自然降权，避免旧噪声永久霸榜。
 - 当前仍未完成真实 macOS adapter 验收；debug 页面只用于观察候选来源、mode、prefix、sideInserted、wanxiangFallbackCount。
 
 ## 验收 / 退出条件
@@ -184,5 +188,7 @@
 - 公开资料:
   - `https://github.com/scukeqi/Wisdom-Weasel`
   - `https://github.com/scukeqi/Wisdom-Weasel/issues`
+  - `https://github.com/rime/librime`
+  - `https://raw.githubusercontent.com/rime/librime/master/src/rime/dict/user_dictionary.cc`
   - `https://github.com/Open-Less/openless`
   - `https://arxiv.org/abs/2203.00249`
