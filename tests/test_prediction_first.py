@@ -163,6 +163,39 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual(result.policy["prefixMatchedSideInserted"], 0)
         self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
 
+    def test_prefix_constrained_raw_command_keeps_raw_commit_first(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=33,
+            raw_input="git status",
+            preedit="git status",
+            committed_context="正在调试 Prediction-first RAG 输入法",
+            candidates=(RimeCandidate(text="给他", comment="wanxiang", index=0),),
+            max_visible_candidates=5,
+            max_side_candidates=3,
+        )
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(
+                    text="继续调试候选",
+                    rank=1,
+                    provider_name="qwen-mlx",
+                    latency_ms=30,
+                )
+            ],
+            suggestions=[],
+            raw_commit_text="git status",
+        )
+
+        self.assertEqual(result.display_candidates[0].text, "git status")
+        self.assertEqual(result.display_candidates[0].source_type, "raw_english")
+        self.assertEqual(result.display_candidates[1].text, "继续调试候选")
+        self.assertEqual(result.policy["rawCommitInserted"], 1)
+        self.assertEqual(result.policy["sideInserted"], 1)
+        self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
+
     def test_prefix_constrained_composition_falls_back_to_wanxiang_only_when_side_empty(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",

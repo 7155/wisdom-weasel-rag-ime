@@ -156,7 +156,7 @@ def visible_candidates_are_side_first(candidates: Any) -> bool:
             model_indices.append(index)
             if display_layout != "inline" or display_lane != "model" or selection_action != "commit_side_candidate":
                 return False
-        elif source_type == "rag":
+        elif source_type in {"rag", "memory"}:
             rag_indices.append(index)
             if display_layout != "block" or display_lane != "memory" or selection_action != "commit_side_candidate":
                 return False

@@ -696,6 +696,37 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["predictionFirst"]["policy"]["rawCommitInserted"], 1)
         self.assertEqual(response["displayCandidates"][1]["sourceType"], "rime")
 
+    def test_prediction_first_patched_frontend_keeps_raw_command_first_with_context(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-prediction-first-command",
+                "requestSeq": 33,
+                "rawInput": "git status",
+                "preedit": "git status",
+                "committedContext": "正在调试 Prediction-first RAG 输入法",
+                "frontendBuild": "rag-ime.foreground-trace.v2",
+                "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "给他", "comment": "wanxiang"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+
+        first = response["displayCandidates"][0]
+        self.assertTrue(response["predictionFirst"]["enabled"])
+        self.assertEqual(first["sourceType"], "raw_english")
+        self.assertEqual(first["insertText"], "git status")
+        self.assertEqual(response["predictionFirst"]["policy"]["rawCommitInserted"], 1)
+        self.assertTrue(any(item["sourceType"] == "model" for item in response["displayCandidates"][1:]))
+
     def test_short_technical_raw_input_refreshes_llm_and_rag_before_rime_noise(self) -> None:
         response = build_rime_sidecar_response(
             payload={
