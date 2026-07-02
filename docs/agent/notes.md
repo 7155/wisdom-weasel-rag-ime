@@ -3020,3 +3020,25 @@ Verification:
 
 Next:
 - Run the system installer with visible admin password entry, then reopen System Settings Add panel and add `RAG IME`; if it still does not appear, treat native InputMethodKit as debug harness only and move the real product route to a mature Rime/Squirrel-compatible framework without repeating the stale patched-Squirrel bundle conflict.
+
+### 2026-07-02 21:12 CST
+Problem:
+- User ran `scripts/install_system_macos_frontend.sh`; the system app installed, but Add panel still did not show `RAG IME`, and `TISSelectInputSource` still returned `-50`.
+
+Findings:
+- `/Library/Input Methods/RagImeMac.app` is now canonical and owned by `root:wheel`; user-local duplicate app is no longer active.
+- LaunchServices now contains a valid canonical `/Library/Input Methods/RagImeMac.app` record with localized names, icon, `CFBundleVersion=2`, and bundle id `dev.local.inputmethod.RagImeMac`.
+- LaunchServices still contains old temporary `RagImeMac.app` paths from previous tests; these do not point to live files.
+- A first LS cleanup matcher was too broad because LS records can contain unrelated notification/activity fields; it was immediately narrowed to only unregister paths ending in `/RagImeMac.app`.
+- After refresh, `RagImeMac.Hans` remains TIS-visible but not selectable as current input source: `selected=false current=豆包 hitoolboxEnabled=false thirdPartyEnabled=false`.
+
+Changes:
+- Added `scripts/refresh_macos_input_sources.sh` to unregister stale `RagImeMac.app` LS paths only, register the canonical system app, run LS garbage collection, and restart `cfprefsd`, `TextInputMenuAgent`, `SystemUIServer`, and System Settings.
+- `install_system_macos_frontend.sh` now calls the refresh script after system install.
+- Added regression coverage so the refresh script only unregisters `RagImeMac.app` paths and not arbitrary LS blocks.
+
+Verification:
+- `scripts/refresh_macos_input_sources.sh`: passed and now only reports the canonical app plus current TIS state.
+- `python3 -m unittest tests.test_install_macos_frontend tests.test_select_macos_input_source tests.test_check_macos_input_source tests.test_doctor_macos_frontend`: 12 tests passed.
+- `scripts/doctor_macos_frontend.sh`: passed app/bridge/live sidecar checks.
+- `RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE=1 scripts/doctor_macos_frontend.sh`: still fails as expected because macOS has not selected/allow-listed `RAG IME`.

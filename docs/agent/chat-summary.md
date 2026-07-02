@@ -2161,3 +2161,21 @@ Verification:
 - Native build and focused tests passed.
 - Native doctor passes app/bridge/sidecar checks.
 - Selected-source doctor correctly fails until macOS actually selects `RAG IME`.
+
+### 2026-07-02
+Topic:
+- Add LaunchServices refresh for native RagImeMac registration.
+
+Findings:
+- System install now leaves `/Library/Input Methods/RagImeMac.app` as `root:wheel` and LaunchServices has a valid canonical record.
+- Add/select still fails because `AppleEnabledThirdPartyInputSources` does not include RagIme; current input source remains 豆包.
+- Old temporary LS records existed from prior test installs, so refresh now targets only stale paths ending in `/RagImeMac.app`.
+
+Changes:
+- Added `scripts/refresh_macos_input_sources.sh`.
+- System installer now invokes the refresh after installing the canonical system app.
+- Added a test guard to prevent broad LS unregister matching.
+
+Verification:
+- Focused tests passed.
+- Native doctor passes sidecar checks; selected-source doctor still fails until macOS allow-lists/selects RAG IME.

@@ -88,6 +88,14 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
         self.assertIn("/bin/chmod -R u+rwX,go+rX", source)
         self.assertIn("lsregister -f -R", source)
 
+    def test_refresh_script_only_unregisters_rag_ime_app_paths(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "refresh_macos_input_sources.sh").read_text(encoding="utf-8")
+
+        self.assertIn('current_path.endswith("/RagImeMac.app")', source)
+        self.assertNotIn("identifier:                 {bundle_id}", source)
+        self.assertIn("lsregister-before.txt", source)
+
     def test_native_info_plist_declares_visible_hans_input_mode_and_icon(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with (root / "macos" / "RagImeMac" / "Info.plist").open("rb") as handle:
