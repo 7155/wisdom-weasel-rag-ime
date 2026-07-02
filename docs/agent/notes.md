@@ -7,6 +7,23 @@
 
 ## Log
 
+### 2026-07-03 07:45 CST
+Problem:
+- User required a hard TODO discipline for reference reading: read once now, read again before coding, and check again after implementation.
+- Previous attempts repeatedly diverged from Wisdom-Weasel/Felix behavior, especially candidate lifecycle, LLM/RAG visibility, and stale prediction panels.
+
+Findings:
+- First-pass Felix/Wisdom-Weasel reading is complete for the current migration scope.
+- `RimeWithWeasel/RimeWithWeasel.cpp` hides no-input predictions on any non-digit key, clears old AI candidates when new pinyin starts, routes space/number keys through unified `DisplayCandidate`, commits LLM candidates through `m_pending_llm_commit`, records committed text into `ContextHistory`, and triggers `NoInputPrediction` only after meaningful commits.
+- Its candidate UI is not a detached overlay: `_BuildDisplayCandidates` merges Rime, LLM, rerank candidates, pending placeholders, labels, comments, and source labels into the same candidate-info path; TSF duplicate windows are explicitly suppressed.
+- `alpha_rerank.lua` uses Rime commit history, query variants, user-frequency/preference score breakdowns, skipped-higher negative feedback, top1 takeover guards, and detailed trace logs. It reranks active composition candidates; it does not keep a no-input box alive.
+- `wanxiang.schema.yaml`, `auto_phrase.lua`, and `super_english.lua` show the right boundary: Wanxiang/Rime owns pinyin anchoring, user dictionary/frequency, English/vibecode support, and fallback candidates.
+- Installer/build docs emphasize exact runtime sync, user-dir patching, deploy/restart, and log-first diagnosis when the candidate box disappears or stale files are active.
+
+Decisions:
+- Before touching implementation, reopen and reread the exact Felix paths relevant to that code change.
+- After implementation, compare the final diff against the same reference paths and verify the three failure classes: stale panel, unusable number keys, and invisible/nonselectable LLM/RAG/memory candidates.
+
 ### 2026-07-02 23:33 CST
 Problem:
 - User explicitly marked `https://github.com/Felix3322/Wisdom-Weasel` as a key reference repository because it improves heavily on the original Wisdom-Weasel path and should guide this RAG-IME project.

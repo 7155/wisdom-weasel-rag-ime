@@ -1,5 +1,24 @@
 # Chat Summary
 
+### 2026-07-03
+Topic:
+- Set a mandatory three-pass reading workflow for Felix/Wisdom-Weasel and finish the first pass.
+
+Decisions:
+- Every migrated behavior must go through three checks: first source reading, second pre-code reread of the same files, and third post-implementation source-vs-diff audit.
+- Keep Felix/Wisdom-Weasel as the concrete reference for candidate lifecycle, not just a high-level inspiration.
+
+Findings:
+- `RimeWithWeasel` exits no-input prediction on normal typing, clears stale AI candidates on new pinyin, routes numbers through a unified display candidate list, commits LLM candidates through pending commit, then triggers the next no-input prediction from committed text.
+- Felix's UI path merges Rime/LLM/rerank/source labels into one candidate-info pipeline and avoids duplicate candidate windows.
+- Wanxiang/Rime owns pinyin anchoring, user dictionary/frequency, English support, and fallback; AI should not replace that layer.
+- Alpha/Lua feedback records accepted candidate and skipped higher candidates, with score breakdowns and top1 guards.
+
+Next steps:
+- Before coding, reread the exact reference files listed in `docs/agent/todo.md`.
+- Implement top1 guard, shown-candidate feedback, source/score diagnostics, and candidate lifecycle fixes in this project.
+- After coding, rerun tests and do the third-pass reference diff audit before pushing.
+
 ### 2026-07-02
 Topic:
 - Mark Felix3322/Wisdom-Weasel as the key upstream reference for RAG-IME.
