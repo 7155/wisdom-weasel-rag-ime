@@ -17,6 +17,8 @@ NO_DOWNLOAD="${RAG_IME_SQUIRREL_NO_DOWNLOAD:-0}"
 SKIP_POSTINSTALL="${RAG_IME_SQUIRREL_SKIP_POSTINSTALL:-0}"
 SKIP_CODESIGN="${RAG_IME_SQUIRREL_SKIP_CODESIGN:-0}"
 CODESIGN_IDENTITY="${RAG_IME_SQUIRREL_CODESIGN_IDENTITY:--}"
+ENABLE_PREF_REPAIR="${RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR:-0}"
+AUTO_SELECT="${RAG_IME_SQUIRREL_AUTO_SELECT:-0}"
 DEFAULT_BUNDLE_ID="im.rime.inputmethod.Squirrel"
 BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
@@ -64,6 +66,8 @@ Environment:
   RAG_IME_SQUIRREL_CODESIGN_IDENTITY codesign identity after copy (default: - for ad-hoc)
   RAG_IME_SQUIRREL_SKIP_CODESIGN skip post-copy codesign
   RAG_IME_SQUIRREL_SKIP_POSTINSTALL skip Squirrel scripts/postinstall after install
+  RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR allow direct HIToolbox/inputsource plist repair after branded install
+  RAG_IME_SQUIRREL_AUTO_SELECT select the branded input source after install
   RAG_IME_SQUIRREL_INPUT_SOURCE_ID input source checked after install
   RAG_IME_XCODEBUILD             xcodebuild executable override
   RAG_IME_SQUIRREL_BUILD_DRY_RUN print resolved commands without requiring Xcode/workdir
@@ -111,6 +115,8 @@ no_download=$NO_DOWNLOAD
 build_settings=$BUILD_SETTINGS_EXTRA
 codesign_identity=$CODESIGN_IDENTITY
 skip_codesign=$SKIP_CODESIGN
+enable_pref_repair=$ENABLE_PREF_REPAIR
+auto_select=$AUTO_SELECT
 bundle_id=$BUNDLE_ID
 input_source_id=$INPUT_SOURCE_ID
 hant_input_source_id=$HANT_INPUT_SOURCE_ID
@@ -294,20 +300,30 @@ run_branded_postinstall() {
     printf '[OK] branded macOS input source enabled for real use: %s\n' "$output"
   else
     printf '[WARN] branded macOS input source not confirmed after install: %s\n' "$output" >&2
-    RAG_IME_SQUIRREL_APP="$app" \
-      RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
-      RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
-      "$ROOT/scripts/enable_squirrel_hitoolbox_input_source.sh" >/dev/null 2>&1 || true
-    if output="$("$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
-      printf '[OK] branded macOS input source enabled after HIToolbox repair: %s\n' "$output"
+    if bool_true "$ENABLE_PREF_REPAIR"; then
+      RAG_IME_SQUIRREL_APP="$app" \
+        RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+        RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+        "$ROOT/scripts/enable_squirrel_hitoolbox_input_source.sh" >/dev/null 2>&1 || true
+      if output="$("$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
+        printf '[OK] branded macOS input source enabled after HIToolbox repair: %s\n' "$output"
+      else
+        printf '[WARN] branded macOS input source still needs manual System Settings add: %s\n' "$output" >&2
+      fi
     else
-      printf '[WARN] branded macOS input source still needs manual System Settings add: %s\n' "$output" >&2
+      printf '[WARN] preference repair is disabled; add %s from System Settings -> Keyboard -> Input Sources.\n' "$HANS_DISPLAY_NAME" >&2
+      printf '[WARN] To allow the old direct-preference repair helper, set RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR=1.\n' >&2
     fi
   fi
-  if output="$("$ROOT/scripts/select_macos_input_source.sh" "$INPUT_SOURCE_ID" 2>&1)"; then
-    printf '[OK] selected branded input source: %s\n' "$output"
+
+  if bool_true "$AUTO_SELECT"; then
+    if output="$("$ROOT/scripts/select_macos_input_source.sh" "$INPUT_SOURCE_ID" 2>&1)"; then
+      printf '[OK] selected branded input source: %s\n' "$output"
+    else
+      printf '[WARN] branded input source was not selected automatically: %s\n' "$output" >&2
+    fi
   else
-    printf '[WARN] branded input source was not selected automatically: %s\n' "$output" >&2
+    printf '[INFO] not selecting branded input source automatically; use the macOS input menu after System Settings adds %s.\n' "$HANS_DISPLAY_NAME"
   fi
 }
 

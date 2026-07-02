@@ -2195,3 +2195,16 @@ Changes:
 
 Next steps:
 - Implement and verify the independent branded `RAG-IME.app` Squirrel/Rime foreground path with sidecar trace and `/rime-select` feedback.
+
+### 2026-07-02
+Topic:
+- Make branded Squirrel install safer and easier to reason about.
+
+Changes:
+- `build_patched_squirrel.sh` now defaults direct preference repair and auto-selection to off.
+- `RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR=1` and `RAG_IME_SQUIRREL_AUTO_SELECT=1` are explicit debug opt-ins.
+- Docs now describe System Settings Add + input menu switch as the normal route for `RAG-IME - Simplified`.
+
+Verification:
+- Branded dry-run shows `enable_pref_repair=0` and `auto_select=0`.
+- Focused Squirrel/install tests passed.

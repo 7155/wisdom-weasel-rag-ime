@@ -499,6 +499,17 @@ RAG_IME_SQUIRREL_DISPLAY_NAME=RAG-IME \
 That creates `/Users/undo/Library/Input Methods/RAG-IME.app`; the manual System
 Settings source to add is `RAG-IME - Simplified`.
 
+The branded installer does not run direct HIToolbox/inputsource preference
+repair or automatic selection by default. Those were the fragile paths that made
+native install debugging hard to reason about on newer macOS releases. For local
+installer debugging only, opt in with:
+
+```bash
+RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR=1 \
+RAG_IME_SQUIRREL_AUTO_SELECT=1 \
+  scripts/build_patched_squirrel.sh install
+```
+
 The strict doctor verifies that the installed macOS input source
 `im.rime.inputmethod.Squirrel.Hans` is registered, enabled, and selectable. That
 is the TIS registration check. For the state visible in System Settings, require

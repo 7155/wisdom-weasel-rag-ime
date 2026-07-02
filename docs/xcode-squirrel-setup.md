@@ -256,6 +256,16 @@ prints `thirdPartyEnabled=false`, use the System Settings "+" flow; otherwise
 the input menu can keep showing another third-party input method even while TIS
 reports Squirrel as registered/selectable.
 
+The branded `RAG-IME.app` installer no longer runs that direct preference repair
+or automatic input-source selection by default. To use those old behaviors for
+local installer debugging, opt in explicitly:
+
+```bash
+RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR=1 \
+RAG_IME_SQUIRREL_AUTO_SELECT=1 \
+  scripts/build_patched_squirrel.sh install
+```
+
 Terminal-based selection can still fail if macOS refuses to switch the active
 foreground input source from a background command; use the input menu for the
 continuous typing test. To open the Keyboard settings pane, use the System

@@ -3062,3 +3062,16 @@ Changes:
 Next:
 - Build the independent branded `RAG-IME.app` Squirrel/Rime path, not same-bundle replacement and not native `RagImeMac` as product.
 - Verify real foreground trace: sidecar request, sidecar response applied, panel layout, `/rime-select`, and fail-closed behavior for sidecar/model/raw English/code/path cases.
+
+### 2026-07-02 21:35 CST
+Problem:
+- The independent branded Squirrel installer still mixed install/build with direct preference repair and automatic input-source selection, which made macOS input-source debugging hard to reason about.
+
+Changes:
+- `build_patched_squirrel.sh` now defaults `RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR=0` and `RAG_IME_SQUIRREL_AUTO_SELECT=0`.
+- Branded `RAG-IME.app` install may still register/enable through Squirrel's own commands, but it will not run the direct HIToolbox/inputsource plist helper or auto-select the source unless explicitly opted in.
+- README, Xcode setup, and macOS adapter docs now document the explicit opt-in for those debug-only behaviors.
+
+Verification:
+- Branded install dry-run resolves `target_app=/Users/undo/Library/Input Methods/RAG-IME.app`, `bundle_id=im.rag-ime.inputmethod.RagIme`, `enable_pref_repair=0`, and `auto_select=0`.
+- Focused Squirrel/install tests passed.
