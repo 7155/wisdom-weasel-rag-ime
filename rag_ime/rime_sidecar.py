@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -112,10 +113,24 @@ _RECENT_MEMORY_LOW_VALUE = {
     "基于",
     "测试",
     "分析",
+    "验证",
     "假设",
     "或者",
     "现在",
     "目前",
+}
+_RECENT_MEMORY_TRAILING_NOISE = _RECENT_MEMORY_LOW_VALUE | {
+    "啊",
+    "阿",
+    "呃",
+    "嗯",
+    "额",
+    "哦",
+    "噢",
+    "唔",
+    "法",
+    "撒旦",
+    "深度",
 }
 
 
@@ -425,19 +440,20 @@ def run_side_lanes_with_latency_budget(
             skipped_reason="RAG dispatch exceeded latency budget",
             budget_ms=max(0, int(latency_budget_ms)),
         )
-    recent_fallback = recent_context_memory_suggestions(
-        recent_context=explicit_recent_context or recent_context,
-        current_input=current_input,
-        top_k=max(0, int(top_k) - len(suggestions)),
-    )
-    if recent_fallback:
-        seen_surfaces = {compact_whitespace(item.surface_text) for item in suggestions}
-        for item in recent_fallback:
-            if compact_whitespace(item.surface_text) not in seen_surfaces:
-                suggestions.append(item)
-                seen_surfaces.add(compact_whitespace(item.surface_text))
-        rag_lane["recentContextFallbackCount"] = len(recent_fallback)
-        rag_lane["suggestionCount"] = len(suggestions)
+    if recent_context_candidate_fallback_enabled():
+        recent_fallback = recent_context_memory_suggestions(
+            recent_context=explicit_recent_context or recent_context,
+            current_input=current_input,
+            top_k=max(0, int(top_k) - len(suggestions)),
+        )
+        if recent_fallback:
+            seen_surfaces = {compact_whitespace(item.surface_text) for item in suggestions}
+            for item in recent_fallback:
+                if compact_whitespace(item.surface_text) not in seen_surfaces:
+                    suggestions.append(item)
+                    seen_surfaces.add(compact_whitespace(item.surface_text))
+            rag_lane["recentContextFallbackCount"] = len(recent_fallback)
+            rag_lane["suggestionCount"] = len(suggestions)
 
     predictions = model_result.get("predictions")
     if not isinstance(predictions, list):
@@ -532,20 +548,71 @@ def recent_context_memory_suggestions(
     return result
 
 
+def recent_context_candidate_fallback_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Debug-only escape hatch for turning recent screen text into candidates.
+
+    The production IME must not treat the just-typed context as a memory
+    candidate. Recent context is still fed to model/RAG retrieval, but direct
+    slicing makes the UI behave like a clipboard and crowds out real memories.
+    """
+
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_RECENT_CONTEXT_CANDIDATES", "")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _normalize_recent_memory_surface(text: str) -> str:
     text = compact_whitespace(text)
     text = re.sub(r"^[,，。！？；;、\s]+|[,，。！？；;、\s]+$", "", text)
     text = re.sub(r"^(的|和|与|及|或|把|再|先|然后)\s*(?=[A-Za-z0-9\u3400-\u9fff])", "", text)
     text = compact_whitespace(text)
+    text = _collapse_repeated_recent_memory_surface(text)
     return text
 
 
 def _looks_like_broken_recent_memory_surface(text: str) -> bool:
+    if _is_low_value_recent_memory_surface(text):
+        return True
     if re.match(r"^[A-Za-z]{1,2}\s+[A-Za-z0-9\u3400-\u9fff]", text):
         return True
     if re.search(r"[A-Za-z]-$", text):
         return True
     if re.search(r"(^|[\s，,。])[-_][A-Za-z0-9]", text):
+        return True
+    parts = [part for part in re.split(r"[\s,，、;；。.!?！？/]+", compact_whitespace(text)) if part]
+    if len(parts) <= 4 and all(part in _RECENT_MEMORY_TRAILING_NOISE for part in parts):
+        return True
+    return False
+
+
+def _collapse_repeated_recent_memory_surface(text: str) -> str:
+    surface = compact_whitespace(text)
+    parts = [part for part in surface.split(" ") if part]
+    if len(parts) < 3:
+        return surface
+    for width in range(1, min(5, len(parts) // 2 + 1)):
+        first = parts[:width]
+        second = parts[width : width * 2]
+        if first != second:
+            continue
+        tail = parts[width * 2 :]
+        if not tail or all(part in _RECENT_MEMORY_TRAILING_NOISE or len(part) <= 1 for part in tail):
+            candidate = compact_whitespace(" ".join(first))
+            if candidate and not _is_low_value_recent_memory_surface(candidate):
+                return candidate
+    return surface
+
+
+def _is_low_value_recent_memory_surface(text: str) -> bool:
+    surface = compact_whitespace(text)
+    if not surface:
+        return True
+    if surface in _RECENT_MEMORY_LOW_VALUE:
+        return True
+    parts = [part for part in re.split(r"[\s,，、;；。.!?！？/]+", surface) if part]
+    if not parts:
+        return True
+    if len(parts) <= 4 and all(part in _RECENT_MEMORY_TRAILING_NOISE for part in parts):
         return True
     return False
 
@@ -625,6 +692,11 @@ def predict_model_with_latency_budget(
                 recent_context=recent_context,
                 max_candidates=max_candidates,
             )
+            predictions = _filter_model_predictions(
+                predictions,
+                current_input=current_input,
+                explicit_recent_context=explicit_recent_context,
+            )
             result["predictions"] = predictions
             if not predictions:
                 predictor_error = _predictor_last_error(predictor)
@@ -680,6 +752,75 @@ def predict_model_with_latency_budget(
         prediction_count=len(predictions),
         history_context=_string(result.get("historyContext")),
     )
+
+
+def _filter_model_predictions(
+    predictions: list[ModelPrediction],
+    *,
+    current_input: str,
+    explicit_recent_context: str,
+) -> list[ModelPrediction]:
+    cleaned: list[ModelPrediction] = []
+    seen: set[str] = set()
+    for prediction in predictions:
+        text = _clean_model_prediction_text(
+            prediction.text,
+            current_input=current_input,
+            explicit_recent_context=explicit_recent_context,
+        )
+        normalized = compact_whitespace(text).lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        if text == prediction.text:
+            cleaned.append(prediction)
+        else:
+            cleaned.append(
+                ModelPrediction(
+                    text=text,
+                    rank=prediction.rank,
+                    provider_name=prediction.provider_name,
+                    latency_ms=prediction.latency_ms,
+                    confidence=prediction.confidence,
+                    metadata=dict(prediction.metadata),
+                )
+            )
+    return cleaned
+
+
+def _clean_model_prediction_text(
+    text: str,
+    *,
+    current_input: str,
+    explicit_recent_context: str,
+) -> str:
+    surface = compact_whitespace(text)
+    if not surface:
+        return ""
+    for prefix in (current_input, explicit_recent_context):
+        prefix = compact_whitespace(prefix)
+        if prefix and surface.startswith(prefix) and _has_repeated_recent_memory_prefix(prefix):
+            surface = compact_whitespace(surface.removeprefix(prefix))
+    surface = compact_whitespace(surface)
+    surface = re.sub(r"^[,，。！？；;、\s]+|[,，。！？；;、\s]+$", "", surface)
+    surface = _collapse_repeated_recent_memory_surface(surface)
+    if not surface:
+        return ""
+    if _looks_like_broken_recent_memory_surface(surface):
+        return ""
+    if surface in {"续写", "继续", "候选", "预测"}:
+        return ""
+    return surface
+
+
+def _has_repeated_recent_memory_prefix(text: str) -> bool:
+    parts = [part for part in compact_whitespace(text).split(" ") if part]
+    if len(parts) < 3:
+        return False
+    for width in range(1, min(5, len(parts) // 2 + 1)):
+        if parts[:width] == parts[width : width * 2]:
+            return True
+    return False
 
 
 def _rag_lane_status(
@@ -1099,12 +1240,15 @@ def merge_display_candidates(
             continue
         display_texts.add(normalized_text)
         metadata = dict(suggestion.metadata)
+        source_type = str(metadata.get("source_type") or "rag")
+        if source_type not in {"rag", "memory"}:
+            source_type = "rag"
         display.append(
             SideCandidateDisplayItem(
                 label=_display_label("", len(display)),
                 text=suggestion.surface_text,
                 insert_text=str(metadata.get("insert_text") or suggestion.surface_text),
-                source_type="rag",
+                source_type=source_type,
                 selection_action="commit_side_candidate",
                 source_index=rag_count,
                 comment=suggestion.suggestion_type,

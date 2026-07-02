@@ -199,8 +199,25 @@ class CodexHistoryTests(unittest.TestCase):
                     "{not valid json",
                     json.dumps(
                         {
+                            "type": "response_item",
+                            "created_at": "2026-06-30T10:02:00Z",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": "FTS5 排序和 local-first 记忆要能服务 Codex 历史评测。",
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
                             "event_msg": {
-                                "message": "FTS5 排序和 local-first 记忆要能服务 Codex 历史评测。",
+                                "message": "Working (44m 30s) esc to interrupt",
                                 "timestamp_ms": 1782813600000,
                             }
                         },
@@ -286,6 +303,7 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(len(records), 2)
         self.assertIn("RAG 输入法", records[0].text)
         self.assertIn("FTS5 排序", records[1].text)
+        self.assertNotIn("Working", "\n".join(item.text for item in records))
         self.assertIn("codex-history", records[0].tags)
         self.assertEqual(records[0].role, "user")
         self.assertGreater(records[0].created_at_ms, 0)
@@ -443,8 +461,8 @@ class CodexHistoryTests(unittest.TestCase):
                             "type": "response_item",
                             "payload": {
                                 "type": "message",
-                                "role": "assistant",
-                                "content": [{"type": "output_text", "text": "最新 RAG-IME 记忆应该先导入"}],
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "最新 RAG-IME 记忆应该先导入"}],
                             },
                         },
                         ensure_ascii=False,

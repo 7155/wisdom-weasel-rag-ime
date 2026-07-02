@@ -25,6 +25,7 @@ from rag_ime.rime_sidecar import (
     decide_side_candidate_refresh,
     merge_display_candidates,
     parse_rime_context_payload,
+    recent_context_memory_suggestions,
     wait_for_model_prediction_lane_idle,
 )
 
@@ -869,7 +870,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[1]["metadata"]["initials"], "sjyghxzsfs")
         self.assertEqual([item["sourceType"] for item in display[:3]], ["model", "rag", "model"])
 
-    def test_prediction_first_prefix_uses_recent_context_memory_pinyin_index(self) -> None:
+    def test_prediction_first_prefix_does_not_turn_recent_context_into_memory_candidates(self) -> None:
         core = EmptySuggestionCore()
         adapter = InputMethodAdapter(core)
         response = build_rime_sidecar_response(
@@ -897,10 +898,9 @@ class RimeSidecarTests(unittest.TestCase):
         display = response["displayCandidates"]
         self.assertGreater(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 0)
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
-        self.assertTrue(any(item["sourceType"] == "memory" for item in display))
-        recent_memory = next(item for item in display if item["sourceType"] == "memory")
-        self.assertIn("sj", recent_memory["metadata"]["pinyin_prefixes"])
-        self.assertEqual(recent_memory["metadata"]["fallback"], "recent_context")
+        self.assertFalse(any(item["metadata"].get("fallback") == "recent_context" for item in display))
+        self.assertEqual([item["sourceType"] for item in display], ["model", "model"])
+        self.assertNotIn("recentContextFallbackCount", response["ragLane"])
 
     def test_prediction_first_post_commit_uses_commit_preview_as_prediction_anchor(self) -> None:
         core = CapturingCore()
@@ -1283,6 +1283,15 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: recent committed context fallback")
         self.assertIn("刚刚输入了", self.predictor.last_current_input)
         self.assertIn(response["displayCandidates"][0]["sourceType"], {"model", "rag"})
+
+    def test_recent_context_fallback_cleans_repeated_noise_tail(self) -> None:
+        suggestions = recent_context_memory_suggestions(
+            recent_context="接入本地记忆 接入本地记忆 法 撒旦",
+            current_input="",
+            top_k=4,
+        )
+        texts = [item.surface_text for item in suggestions]
+        self.assertEqual(texts, ["接入本地记忆"])
 
     def test_short_rime_candidate_skips_until_idle(self) -> None:
         snapshot = parse_rime_context_payload(

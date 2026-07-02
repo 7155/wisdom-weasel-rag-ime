@@ -7,6 +7,29 @@
 
 ## Log
 
+### 2026-07-02 14:10 CST
+Problem:
+- User reported the IME still looked like clipboard/Rime fallback: LLM/RAG/memory were not reliably visible, Codex history noise appeared as candidates, and the panel stayed visible even with no input.
+
+Changes:
+- Tightened Codex history import to `role=user` only; skipped assistant/event/tool/system injected records.
+- Added retrieval-time and compiler-time filters for old DB pollution: `MEMORY_SUMMARY`, subagent notifications, patch/tool logs, `installation.yaml`, `index.ts` status fragments, and low-value complaint/instruction fragments.
+- Added curated demo-quality memory rows for embedding query, source labels, stale panel, and model/RAG/memory acceptance.
+- Changed sidecar source labels so retrieved candidates can show `rag` or `memory`, while MLX predictions remain `model`.
+- Added post-commit frontend holdover: empty input only keeps prediction panel for <= 1.2s and only if no Rime fallback exists.
+
+Verification:
+- `python3 -m unittest discover -s tests -p 'test_demo_quality.py'`: 11 tests passed.
+- Focused Codex history/local SQLite/Squirrel patch tests passed.
+- Live `/api/rime-suggest` returned `rag`, `memory`, and `model` candidates, all commit-side selectable; MLX model lane returned in about 320ms under a 650ms budget.
+- `RAG_IME_SQUIRREL_RESET=1 scripts/prepare_squirrel_workspace.sh` succeeded after switching patch application to `git apply --recount`.
+- `scripts/build_patched_squirrel.sh install` built with Xcode 26.6 and installed `/Users/undo/Library/Input Methods/Squirrel.app`.
+- `scripts/doctor_squirrel_integration.sh`: failures=0, warnings=2.
+
+Pitfalls:
+- `/Library/Input Methods/Squirrel.app` is still a stale same-bundle duplicate and may need admin replacement.
+- doctor's model-generation diagnostic still misses the MLX candidate despite the live `/api/rime-suggest` demo returning `sourceType=model`.
+
 ### 2026-07-02 04:27 CST
 Problem:
 - The frontend trace checker still accepted mixed-panel events based mainly on counts and separators.

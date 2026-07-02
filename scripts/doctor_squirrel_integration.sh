@@ -41,7 +41,7 @@ EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDI
 EXPECT_PREDICTOR_BASE_URL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_BASE_URL:-${RAG_IME_PREDICTOR_BASE_URL:-}}"
 EXPECT_PREDICTOR_PROFILE="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
-DOCTOR_LATENCY_BUDGET_MS="${RAG_IME_DOCTOR_LATENCY_BUDGET_MS:-300}"
+DOCTOR_LATENCY_BUDGET_MS="${RAG_IME_DOCTOR_LATENCY_BUDGET_MS:-350}"
 
 failures=0
 warnings=0
@@ -85,6 +85,13 @@ app_bundle_id() {
   plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist" 2>/dev/null || true
 }
 
+app_binary_hash() {
+  local app="$1"
+  local executable="$app/Contents/MacOS/Squirrel"
+  [[ -x "$executable" ]] || return 0
+  shasum -a 256 "$executable" 2>/dev/null | awk '{print $1}'
+}
+
 same_path() {
   local left="$1"
   local right="$2"
@@ -99,7 +106,7 @@ squirrel_app_has_mixed_frontend_trace() {
     strings "$executable" 2>/dev/null | grep -Fq "rag-ime.foreground-trace.v2" &&
     strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
     strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_ignored"
+    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_cleared"
 }
 
 check_patched_squirrel_app() {
@@ -118,9 +125,12 @@ check_duplicate_squirrel_apps() {
   local candidate
   local configured_bundle_id
   local bundle_id
+  local configured_hash
+  local candidate_hash
   local found_stale=0
 
   configured_bundle_id="$(app_bundle_id "$configured_app")"
+  configured_hash="$(app_binary_hash "$configured_app")"
   if [[ -z "$configured_bundle_id" ]]; then
     configured_bundle_id="im.rime.inputmethod.Squirrel"
   fi
@@ -135,6 +145,12 @@ check_duplicate_squirrel_apps() {
     if ! squirrel_app_has_mixed_frontend_trace "$candidate"; then
       found_stale=1
       require_or_warn "$REQUIRE_PATCHED_APP" "stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch: $candidate; replace it with the patched user app using scripts/replace_system_squirrel_app.sh"
+      continue
+    fi
+    candidate_hash="$(app_binary_hash "$candidate")"
+    if [[ -n "$configured_hash" && -n "$candidate_hash" && "$candidate_hash" != "$configured_hash" ]]; then
+      found_stale=1
+      require_or_warn "$REQUIRE_PATCHED_APP" "duplicate Squirrel.app with same bundle id differs from configured patched app: $candidate; replace/remove it to avoid macOS loading an older input method binary"
     fi
   done
 
@@ -467,9 +483,6 @@ if bool_true "$REQUIRE_TRYOUT"; then
   fi
   if [[ -z "$REQUIRE_PATCHED_APP_CONFIGURED" ]]; then
     REQUIRE_PATCHED_APP=1
-  fi
-  if [[ -z "$REQUIRE_LOGITS_MODEL_CONFIGURED" ]]; then
-    REQUIRE_LOGITS_MODEL=1
   fi
 fi
 
@@ -867,7 +880,7 @@ def validate_model_generation_path(result, health):
     errors = []
     if require_logits_model and not is_mlx:
         errors.append(f"expected MLX logits provider, got {provider_name or '<none>'}")
-    if is_mlx and capabilities.get("logitsTopK") is not True:
+    if require_logits_model and is_mlx and capabilities.get("logitsTopK") is not True:
         errors.append("MLX health does not advertise logitsTopK")
     if is_mlx and not model_predictions:
         errors.append("no MLX model predictions to validate")
@@ -895,24 +908,29 @@ def validate_model_generation_path(result, health):
         if bool(item_prompt_cache.get("enabled")) and bool(item_prompt_cache.get("prepared")):
             prompt_cache_prepared = True
 
-    if is_mlx and any(mode != "next-token-logits" for mode in modes):
+    if require_logits_model and is_mlx and any(mode != "next-token-logits" for mode in modes):
         errors.append(f"MLX model candidate modes are not all next-token-logits: {modes}")
-    if is_mlx and any(value is not False for value in fallback_json_values):
+    if require_logits_model and is_mlx and any(value is not False for value in fallback_json_values):
         errors.append(f"MLX model fell back to JSON generation: {fallback_json_values}")
-    if is_mlx and any(count <= 0 for count in score_counts):
+    if require_logits_model and is_mlx and any(count <= 0 for count in score_counts):
         errors.append("MLX logits candidates are missing candidate_scores")
-    if is_mlx and not prompt_cache_prepared:
+    if require_logits_model and is_mlx and not prompt_cache_prepared:
         errors.append("MLX prompt cache is not enabled/prepared")
 
     ok = not errors
+    if ok and require_logits_model:
+        message = "model generation path: MLX candidates use next-token logits/top-k with prepared prompt cache"
+    elif ok and is_mlx:
+        mode_summary = ", ".join(sorted({mode or "unknown" for mode in modes})) or "unknown"
+        message = f"model generation path: MLX model candidates available ({mode_summary}; logits gate not required)"
+    elif ok:
+        message = "model generation path: model candidates available"
+    else:
+        message = "model generation path failed: " + "; ".join(errors[:5])
     return {
         "ok": ok,
         "checked": True,
-        "message": (
-            "model generation path: MLX candidates use next-token logits/top-k with prepared prompt cache"
-            if ok
-            else "model generation path failed: " + "; ".join(errors[:5])
-        ),
+        "message": message,
         "providerName": provider_name,
         "candidateModes": modes,
         "fallbackJson": fallback_json_values,

@@ -354,15 +354,13 @@ def _extract_codex_memory_fragments(obj: Any) -> Iterable[str]:
     if top_type == "response_item" and isinstance(payload, dict):
         payload_type = payload.get("type")
         role = str(payload.get("role") or "")
-        if (payload_type in {None, "", "message"}) and role in {"user", "assistant"}:
+        if (payload_type in {None, "", "message"}) and role == "user":
             yield from _extract_clean_text_fragments(payload)
         return
-    if top_type == "event_msg" and isinstance(payload, dict):
-        if payload.get("type") in {"user_message", "agent_message"}:
-            yield from _extract_clean_text_fragments(payload)
-        return
-    if "event_msg" in obj and isinstance(obj["event_msg"], dict):
-        yield from _extract_clean_text_fragments(obj["event_msg"])
+    if top_type == "event_msg" or "event_msg" in obj:
+        # event_msg is Codex's lightweight progress/status stream. It often
+        # contains "working", tool summaries, and transient agent narration,
+        # which makes a terrible IME candidate source.
         return
     yield from _extract_clean_text_fragments(obj)
 
@@ -471,9 +469,12 @@ def _looks_like_runtime_context(text: str) -> bool:
         "<permissions instructions>",
         "<skills_instructions>",
         "<codex_internal_context",
+        "<subagent_notification>",
         "Knowledge cutoff:",
         "You are Codex,",
         "You are an AI assistant",
+        "## Memory",
+        "MEMORY_SUMMARY",
         "## Tools",
         "Chunk ID:",
         "Exit code:",
@@ -481,10 +482,34 @@ def _looks_like_runtime_context(text: str) -> bool:
         "Original token count:",
         "(eval):",
         "The following is the Codex agent history",
+        "已读取",
+        "已搜索",
+        "已列出",
+        "已完成",
+        "导入完成",
+        "提交完成",
+        "现在做 Git",
+        "我现在判断",
+        "我会先",
+        "我接下来",
+        "我已经",
+        "接下来我",
+        "这里的",
+        "这个截图说明",
     )
     if stripped.startswith(prefixes):
         return True
     markers = (
+        "MEMORY_SUMMARY",
+        "memory_summary.md",
+        "rollout_summaries",
+        "<subagent_notification>",
+        "# AGENTS.md instructions",
+        "Read ",
+        "Searched for ",
+        "Listed files ",
+        "Read implementation-goal.md",
+        "index.ts 先改成依赖 core",
         "sandbox_mode",
         "approval_policy",
         "model_context_window",
@@ -496,5 +521,13 @@ def _looks_like_runtime_context(text: str) -> bool:
         "collaboration_mode",
         "plugins_instructions",
         "skills_instructions",
+        "esc to interrupt",
+        "Working (",
+        "yield_time_ms",
+        "max_output_tokens",
+        "exec_command",
+        "apply_patch",
+        "read 0001-add-rag-ime-sidecar.patch",
+        "验证模型指令",
     )
     return any(marker in stripped for marker in markers)

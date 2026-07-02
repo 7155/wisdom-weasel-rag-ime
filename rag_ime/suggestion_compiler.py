@@ -34,18 +34,58 @@ _SKIP_SURFACE_PREFIXES = (
     "# Files mentioned",
     "<subagent_notification>",
     "<codex_internal_context",
+    "MEMORY_SUMMARY",
+    "## Memory",
+    "# AGENTS.md instructions",
 )
 
 _GENERIC_STATUS_PREFIXES = (
     "已完成这一步 git 同步",
     "已完成 git 同步",
     "已经完成 git 同步",
+    "已读取",
+    "已搜索",
+    "已列出",
     "本轮继续推进",
     "继续推进了一轮",
+    "导入完成",
     "提交完成",
     "忽略规则已补",
+    "现在做 Git",
+    "我先",
+    "我会先",
+    "我接下来",
+    "我现在",
+    "我已经",
+    "接下来我",
+    "这个截图说明",
     "**只读结论**",
     "只读结论",
+)
+
+_PRODUCT_CANDIDATE_MARKERS = (
+    "我的判断是",
+    "我的方案是",
+    "我建议",
+    "建议",
+    "目标是",
+    "核心是",
+    "重点是",
+    "亮点是",
+    "原则是",
+    "最优方案",
+    "最终方案",
+    "一句话",
+)
+
+_INSTRUCTION_FRAGMENT_PREFIXES = (
+    "你要",
+    "你看",
+    "你先",
+    "你可以",
+    "可以把",
+    "如果 macOS",
+    "只会在",
 )
 
 _LOW_VALUE_SURFACES = {
@@ -53,6 +93,7 @@ _LOW_VALUE_SURFACES = {
     "阿",
     "测试",
     "分析",
+    "验证",
     "并且",
     "但是",
     "呃",
@@ -78,6 +119,12 @@ _LOW_VALUE_SURFACES = {
     "和",
     "是",
     "当",
+}
+
+_LOW_VALUE_MEMORY_TOKENS = _LOW_VALUE_SURFACES | {
+    "问题",
+    "流程",
+    "输出",
 }
 
 
@@ -123,9 +170,13 @@ class SuggestionCompiler:
         seen_insert_texts: set[str] = set()
         for item in ranked_memories:
             memory = item.memory
+            if _skip_memory_by_tags(memory.tags):
+                continue
             raw_source_text = memory.text or ""
             source_text = compact_whitespace(raw_source_text)
             if not source_text:
+                continue
+            if _is_low_value_memory_text(source_text):
                 continue
             insert_norm = _suggestion_insert_norm(source_text)
             if insert_norm in seen_insert_texts:
@@ -155,6 +206,7 @@ class SuggestionCompiler:
                     "reason": memory.reason,
                     "rank": item.rank,
                     "tags": list(memory.tags),
+                    "source_type": _source_type_from_tags(memory.tags),
                     "insert_text": source_text,
                     "preview_text": memory.evidence_preview or source_text,
                     "sources": [memory.source_ref],
@@ -172,9 +224,31 @@ def _suggestion_insert_norm(text: str) -> str:
     return compact_whitespace(text).lower()
 
 
+def _skip_memory_by_tags(tags: tuple[str, ...]) -> bool:
+    tag_set = {str(tag).lower() for tag in tags}
+    if "role:event_msg" in tag_set or "role:assistant" in tag_set:
+        return True
+    if "source:rag" in tag_set or "source:model" in tag_set:
+        return True
+    if "runtime-noise" in tag_set:
+        return True
+    return False
+
+
+def _source_type_from_tags(tags: tuple[str, ...]) -> str:
+    tag_set = {str(tag).lower() for tag in tags}
+    if tag_set.intersection({"rag", "embedding", "retrieval", "suggestion-compiler"}):
+        return "rag"
+    if tag_set.intersection({"memory", "frequency", "phrase-memory", "user-input", "curated"}):
+        return "memory"
+    return "rag"
+
+
 def _is_meaningful_suggestion_surface(text: str) -> bool:
     surface = compact_whitespace(text)
     if not surface:
+        return False
+    if _is_low_value_memory_text(surface):
         return False
     if surface in _LOW_VALUE_SURFACES:
         return False
@@ -183,6 +257,24 @@ def _is_meaningful_suggestion_surface(text: str) -> bool:
     if len(surface) == 1 and _CJK_RE.fullmatch(surface):
         return False
     return True
+
+
+def _is_low_value_memory_text(text: str) -> bool:
+    surface = compact_whitespace(text)
+    if not surface:
+        return True
+    if surface in _LOW_VALUE_SURFACES:
+        return True
+    if re.fullmatch(r"[嗯啊呃额哦噢唔]{1,4}", surface):
+        return True
+    parts = [part for part in re.split(r"[\s,，、;；。.!?！？/]+", surface) if part]
+    if not parts:
+        return True
+    if len(parts) <= 4 and all(part in _LOW_VALUE_MEMORY_TOKENS for part in parts):
+        return True
+    if len(surface) <= 8 and all(part in _LOW_VALUE_MEMORY_TOKENS for part in parts):
+        return True
+    return False
 
 
 def classify_suggestion(text: str, tags: tuple[str, ...] = ()) -> str:
@@ -226,7 +318,11 @@ def compress_surface_text(
         return ""
     if _looks_like_surface_noise(compact) or _looks_like_surface_noise(_clean_surface_segment(compact)):
         return ""
-    if len(compact) <= max_chars and not _looks_like_surface_noise(compact):
+    if (
+        len(compact) <= max_chars
+        and not _looks_like_surface_noise(compact)
+        and not _contains_product_candidate_marker(compact)
+    ):
         return compact
 
     candidates: list[tuple[float, int, str]] = []
@@ -248,6 +344,9 @@ def compress_surface_text(
 
     for sentence in split_sentences(raw):
         add_candidate(sentence)
+
+    for clause in _extract_product_candidate_clauses(raw):
+        add_candidate(clause, source_score=2.2)
 
     inferred_summary = _inferred_surface_identifier_summary(compact)
     if inferred_summary:
@@ -273,6 +372,7 @@ def _clean_surface_segment(segment: str) -> str:
     text = compact_whitespace(segment)
     if not text:
         return ""
+    text = _remove_cjk_spacing(text)
     text = _TRANSCRIPT_PREFIX_RE.sub("", text)
     text = _TOOL_PREFIX_RE.sub("", text)
     text = _BULLET_PREFIX_RE.sub("", text)
@@ -283,6 +383,54 @@ def _clean_surface_segment(segment: str) -> str:
     if text.startswith("Chunk ID:") and " Output:" in text:
         text = text.split(" Output:", 1)[1]
     return compact_whitespace(text.strip("` \t"))
+
+
+def _remove_cjk_spacing(text: str) -> str:
+    previous = ""
+    current = text
+    while current != previous:
+        previous = current
+        current = re.sub(r"([\u3400-\u9fff])\s+([\u3400-\u9fff])", r"\1\2", current)
+    return current
+
+
+def _extract_product_candidate_clauses(text: str) -> list[str]:
+    compact = _remove_cjk_spacing(compact_whitespace(text))
+    if not compact:
+        return []
+    results: list[str] = []
+    for marker in _PRODUCT_CANDIDATE_MARKERS:
+        start = compact.find(marker)
+        if start < 0:
+            continue
+        tail = compact[start + len(marker) :]
+        tail = re.sub(r"^[：:，,\s>*-]+", "", tail)
+        for sentence in split_sentences(tail) or [tail]:
+            cleaned = _clean_surface_segment(sentence)
+            if "，" in cleaned:
+                head = cleaned.split("，", 1)[0]
+                if len(head) >= 8:
+                    cleaned = head
+            if cleaned and 4 <= len(cleaned) <= 48 and not _looks_like_surface_noise(cleaned):
+                results.append(cleaned)
+                break
+    for match in re.finditer(r"(?:^|[。！？；;\n])(?:目标|核心|方案|原则|结论|建议|亮点)\s*[:：]\s*([^。！？；;\n]{4,48})", compact):
+        cleaned = _clean_surface_segment(match.group(1))
+        if cleaned and not _looks_like_surface_noise(cleaned):
+            results.append(cleaned)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in results:
+        key = item.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(item)
+    return deduped[:4]
+
+
+def _contains_product_candidate_marker(text: str) -> bool:
+    compact = _remove_cjk_spacing(compact_whitespace(text))
+    return any(marker in compact for marker in _PRODUCT_CANDIDATE_MARKERS)
 
 
 def _surface_identifier_summary(text: str, *, max_chars: int) -> str:
@@ -374,16 +522,61 @@ def _is_surface_identifier(token: str) -> bool:
 
 
 def _looks_like_surface_noise(text: str) -> bool:
-    stripped = text.strip()
+    stripped = _remove_cjk_spacing(text.strip())
     if not stripped:
         return True
+    if _is_low_value_memory_text(stripped):
+        return True
     if stripped.startswith(_SKIP_SURFACE_PREFIXES):
+        return True
+    if stripped.startswith(_GENERIC_STATUS_PREFIXES):
+        return True
+    if stripped.startswith(_INSTRUCTION_FRAGMENT_PREFIXES) and len(stripped) <= 36:
         return True
     if stripped.startswith(("(eval):", "+-", "-+", "+++", "---")):
         return True
     if _FILE_HIT_PREFIX_RE.match(stripped):
         return True
     if stripped.startswith(("/Volumes/", "/Users/", "~/")) and len(stripped.split()) <= 2:
+        return True
+    if "验证模型指令" in stripped:
+        return True
+    lowered = stripped.lower()
+    if (
+        "memory_summary" in lowered
+        or "rollout_summaries" in lowered
+        or "<subagent_notification>" in lowered
+        or "codex_internal_context" in lowered
+        or "index.ts 先改成依赖 core" in lowered
+        or "read implementation-goal.md" in lowered
+        or "searched for " in lowered
+        or "listed files " in lowered
+        or "py 通过" in stripped
+        or "git diff --check" in stripped
+        or "installation.yaml" in lowered
+        or "管理员密码" in stripped
+        or "未跟踪" in stripped
+    ):
+        return True
+    if "不是目的" in stripped and len(stripped) <= 40:
+        return True
+    if stripped.startswith(("目前也没想到", "现在也没想到", "还没有想到")) and len(stripped) <= 48:
+        return True
+    if stripped.startswith(("我目前没有想到", "目前没有想到", "我还没想到")) and len(stripped) <= 48:
+        return True
+    if re.search(r"(?:0\\.5B|3\\.5B|4B|7B|8B|14B)", stripped) and len(stripped) <= 64:
+        return True
+    if stripped.startswith(("然后我不是", "就是这个", "这个输入法")) and len(stripped) <= 48:
+        return True
+    if stripped.startswith(("所以一方面", "另一方面也", "就是用户选择", "就是这个输入法，就首候选")):
+        return True
+    if stripped.endswith(("?", "？")) and len(stripped) <= 80:
+        return True
+    if any(marker in stripped for marker in ("打不了字", "没法输入", "没有任何输出", "完全没有任何输出")):
+        return True
+    if any(marker in stripped for marker in ("你看一下", "你参考", "你先用", "你把")) and len(stripped) <= 80:
+        return True
+    if "esc to interrupt" in stripped or "yield_time_ms" in stripped or "max_output_tokens" in stripped:
         return True
     if stripped in {"{", "}", "[", "]"}:
         return True

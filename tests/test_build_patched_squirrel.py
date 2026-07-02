@@ -30,12 +30,15 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("let maxWidth = if ragImePanelVertical", patch_text)
         self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 2.5", patch_text)
         self.assertIn("func canUseRagImeDisplayHoldover(", patch_text)
+        self.assertIn("func canUseRagImePostCommitDisplayHoldover(", patch_text)
+        self.assertIn("postCommitHoldover", patch_text)
+        self.assertIn("min(ragImeDisplayHoldoverDuration, 1.2)", patch_text)
         self.assertIn("guard !ragImeDisplayCandidates.isEmpty else { return false }", patch_text)
         self.assertNotIn('ragImeDisplayQueryBasis == "committedContext"', patch_text)
-        self.assertNotIn("guard fallbackCandidates.isEmpty else { return false }", patch_text)
         self.assertIn("forceSideCandidates: true", patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_request_scheduled"', patch_text)
-        self.assertIn('traceRagImeFrontendEvent("sidecar_empty_response_ignored"', patch_text)
+        self.assertIn('traceRagImeFrontendEvent("sidecar_empty_response_cleared"', patch_text)
+        self.assertIn("clearRagImeDisplayCandidates()", patch_text)
         self.assertIn("rag-ime.foreground-trace.v2", patch_text)
         self.assertIn("guard !response.displayCandidates.isEmpty else {", patch_text)
         self.assertIn("committedContext: ragImeCommittedContext", patch_text)
@@ -237,6 +240,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
 
             self.assertIn("[OK] installed patched Squirrel.app", result.stdout)
             self.assertTrue((install_dir / "Squirrel.app" / "Contents" / "MacOS" / "Squirrel").is_file())
+            self.assertTrue((workdir / "librime" / "include" / "rime_api_stdbool.h").is_file())
             config = (rime_dir / "squirrel.custom.yaml").read_text(encoding="utf-8")
             self.assertIn('"rag_ime/enabled": true', config)
             self.assertIn('"rag_ime/sidecar_url": "http://127.0.0.1:19866/api"', config)
@@ -274,7 +278,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'final class SquirrelInputController { func ragImePanelForcesHorizontalLayout() -> Bool { false }; '
             'func traceRagImeFrontendEvent() {}; func traceRagImePanelTextLayout() { _ = "panel_text_layout" }; '
             'func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }; '
-            'func traceSidecarEmptyResponseIgnored() { _ = "sidecar_empty_response_ignored" }; '
+            'func traceSidecarEmptyResponseCleared() { _ = "sidecar_empty_response_cleared" }; '
             'func traceV2() { _ = "rag-ime.foreground-trace.v2" }; '
             'func forceSideCandidates() { _ = "forceSideCandidates: true" }; '
             'func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" } }\n'
@@ -287,6 +291,8 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
     )
     (workdir / "Squirrel.xcodeproj").mkdir()
     (workdir / "Squirrel.xcodeproj" / "project.pbxproj").write_text("// pbxproj\n", encoding="utf-8")
+    (workdir / "librime" / "dist" / "include").mkdir(parents=True)
+    (workdir / "librime" / "dist" / "include" / "rime_api_stdbool.h").write_text("// rime api\n", encoding="utf-8")
     (workdir / "rag-ime.squirrel.custom.yaml").write_text(
         "\n".join(
             [
@@ -299,7 +305,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 8",
-                "  latency_budget_ms: 300",
+                "  latency_budget_ms: 350",
                 "  debounce_ms: 40",
                 "  timeout_ms: 1200",
                 "  frontend_trace: true",

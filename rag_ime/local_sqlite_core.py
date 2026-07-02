@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sqlite3
 from collections import OrderedDict
@@ -22,6 +23,7 @@ from .text_utils import (
     compact_whitespace,
     now_ms,
     overlap_terms,
+    token_terms,
     truncate_text,
 )
 
@@ -334,7 +336,7 @@ class LocalSqliteCoreClient:
         top_k: int = 5,
     ) -> list[CoreMemory]:
         self.initialize()
-        raw_query = compact_whitespace(f"{recent_context} {current_input}")
+        raw_query = _build_retrieval_query(current_input=current_input, recent_context=recent_context, project=project, app=app)
         query = _expand_query_for_local_rerank(raw_query)
         fts_query = build_fts_query(query)
         rows: list[sqlite3.Row] = []
@@ -349,9 +351,16 @@ class LocalSqliteCoreClient:
             limit=max(top_k * 8, self.vector_candidate_limit),
         )
         rows = _merge_rows(rows, vector_rows)
-        if not rows:
+        rows = [row for row in rows if not _row_looks_like_retrieval_noise(row)]
+        rows = [
+            row
+            for row in rows
+            if vector_scores.get(int(row["id"]), 0.0) > 0.05
+            or _row_matches_required_query(row, raw_query=raw_query)
+        ]
+        if not rows and _recent_fill_enabled():
             rows = self._recent_rows(project=project, app=app, limit=top_k)
-        elif len(rows) < top_k:
+        elif rows and len(rows) < top_k and _recent_fill_enabled():
             rows = self._append_recent_fill(rows, project=project, app=app, limit=top_k)
 
         present_ms = now_ms()
@@ -886,6 +895,7 @@ class LocalSqliteCoreClient:
         pinned = bool(row["pinned"])
         project_boost = 0.4 if project and row["project"] == project else 0.0
         runtime_penalty = _runtime_trace_penalty(committed_text)
+        tag_boost = _tag_quality_boost(tags)
         score = (
             lexical
             + overlap_score
@@ -895,6 +905,7 @@ class LocalSqliteCoreClient:
             + recent_boost
             + max(0.0, vector_score) * self.vector_weight
             + project_boost
+            + tag_boost
             + (8.0 if pinned else 0.0)
             + accepted * 0.6
             - skipped * 0.3
@@ -906,6 +917,8 @@ class LocalSqliteCoreClient:
             reason.append("overlap:" + ",".join(overlap[:4]))
         if vector_score > 0:
             reason.append(f"vector:{vector_score:.3f}")
+        if tag_boost:
+            reason.append(f"tag:{tag_boost:.2f}")
         for label, boost in field_boosts:
             if boost > 0:
                 reason.append(f"{label}:{boost:.2f}")
@@ -1115,6 +1128,193 @@ def _event_fts_document(*parts: str) -> str:
     return build_fts_document(*parts, pinyin_search_document(*parts))
 
 
+def _build_retrieval_query(*, current_input: str, recent_context: str, project: str, app: str) -> str:
+    current = _clean_retrieval_text(current_input, max_chars=180)
+    context = _clean_retrieval_text(recent_context, max_chars=260)
+    return compact_whitespace(" ".join(part for part in (current, context) if part))
+
+
+def _clean_retrieval_text(text: str, *, max_chars: int) -> str:
+    compact = compact_whitespace(text)
+    if not compact:
+        return ""
+    compact = re.sub(r"```.*?```", " ", compact, flags=re.DOTALL)
+    compact = re.sub(r"`[^`]{1,180}`", " ", compact)
+    segments: list[str] = []
+    for segment in re.split(r"[。！？；;\n\r]+", compact):
+        cleaned = compact_whitespace(segment)
+        if not cleaned or _looks_like_retrieval_noise(cleaned):
+            continue
+        segments.append(cleaned)
+    result = compact_whitespace(" ".join(segments))
+    if len(result) > max_chars:
+        result = result[-max_chars:]
+    return result
+
+
+def _looks_like_retrieval_noise(text: str) -> bool:
+    stripped = compact_whitespace(text)
+    lowered = stripped.lower()
+    if not stripped:
+        return True
+    if stripped.startswith(
+        (
+            "*** Begin Patch",
+            "*** Update File:",
+            "diff --git",
+            "Chunk ID:",
+            "Output:",
+            "Wall time:",
+            "Original token count:",
+            "Process exited",
+            "已读取",
+            "已搜索",
+            "已列出",
+            "已完成",
+            "导入完成",
+            "提交完成",
+            "我现在判断",
+            "我会先",
+            "这里的可切分点",
+            "这个截图说明",
+            "然后另一个对话正在把这个rag和记忆系统做成一个底层",
+        )
+    ):
+        return True
+    if (
+        "esc to interrupt" in lowered
+        or "yield_time_ms" in lowered
+        or "max_output_tokens" in lowered
+        or "memory_summary" in lowered
+        or "rollout_summaries" in lowered
+        or "<subagent_notification>" in lowered
+        or "codex_internal_context" in lowered
+        or "index.ts 先改成依赖 core" in lowered
+    ):
+        return True
+    if re.fullmatch(r"(?:python3|git|bash|zsh|pytest|xcodebuild|rg|sed|sqlite3)\b.*", lowered):
+        return True
+    if re.search(r"/(?:Users|Volumes|Library|Applications)/", stripped):
+        return True
+    return False
+
+
+def _row_looks_like_retrieval_noise(row: sqlite3.Row) -> bool:
+    tags = _row_tags(row)
+    tag_set = {tag.lower() for tag in tags}
+    if "runtime-noise" in tag_set or "role:event_msg" in tag_set or "role:assistant" in tag_set:
+        return True
+    text = compact_whitespace(
+        " ".join(
+            [
+                str(row["committed_text"]),
+                str(row["recent_context"]),
+                str(row["preedit"]),
+                str(row["schema_id"]),
+                str(row["provider_name"]),
+                " ".join(tags),
+            ]
+        )
+    )
+    if _looks_like_retrieval_noise(text):
+        return True
+    lowered = text.lower()
+    markers = (
+        "memory_summary",
+        "rollout_summaries",
+        "<subagent_notification>",
+        "# agents.md instructions",
+        "codex_internal_context",
+        "working (",
+        "chunk id:",
+        "original token count:",
+        "read implementation-goal.md",
+        "searched for ",
+        "listed files ",
+        "index.ts 先改成依赖 core",
+        "py 通过",
+        "git diff --check",
+        "installation.yaml",
+        "管理员密码",
+        "未跟踪",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _row_tags(row: sqlite3.Row) -> list[str]:
+    try:
+        raw = json.loads(row["tags_json"] or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw]
+
+
+def _recent_fill_enabled() -> bool:
+    value = os.environ.get("RAG_IME_RECENT_MEMORY_FILL", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _row_matches_required_query(row: sqlite3.Row, *, raw_query: str) -> bool:
+    required = _required_query_terms(raw_query)
+    if not required:
+        return True
+    haystack = compact_whitespace(
+        " ".join(
+            [
+                str(row["committed_text"]),
+                str(row["recent_context"]),
+                str(row["preedit"]),
+                str(row["schema_id"]),
+                str(row["provider_name"]),
+                " ".join(json.loads(row["tags_json"] or "[]")),
+            ]
+        )
+    ).lower()
+    hits = [term for term in required if term.lower() in haystack]
+    if not hits:
+        return False
+    if len(required) <= 2:
+        return True
+    return len(hits) >= 2 or any(len(term) >= 6 for term in hits)
+
+
+def _required_query_terms(raw_query: str) -> list[str]:
+    generic = {
+        "agent",
+        "candidate",
+        "candidates",
+        "codex",
+        "debug",
+        "ime",
+        "input",
+        "local",
+        "memory",
+        "model",
+        "rag",
+        "rime",
+        "side",
+        "squirrel",
+        "test",
+        "tests",
+        "wisdom",
+        "weasel",
+    }
+    terms: list[str] = []
+    for term in token_terms(raw_query, max_terms=32):
+        lowered = term.lower()
+        if lowered in generic or len(lowered) < 2:
+            continue
+        if re.fullmatch(r"\d+", lowered):
+            continue
+        if re.fullmatch(r"[a-z]{1,3}", lowered):
+            continue
+        if lowered not in terms:
+            terms.append(lowered)
+    return terms[:8]
+
+
 def _row_int(row: sqlite3.Row, key: str, *, default: int = 0) -> int:
     if key not in row.keys():
         return default
@@ -1144,6 +1344,22 @@ def _input_frequency_boost(input_frequency: int, last_seen_ms: int, *, present_m
         return 0.0
     raw_boost = min(2.2, math.log1p(input_frequency - 1) * 0.9)
     return raw_boost * _frequency_recency_multiplier(last_seen_ms, present_ms)
+
+
+def _tag_quality_boost(tags: tuple[str, ...]) -> float:
+    tag_set = {str(tag).lower() for tag in tags}
+    boost = 0.0
+    if "curated" in tag_set:
+        boost += 1.4
+    if "demo-quality" in tag_set:
+        boost += 0.8
+    if "user-input" in tag_set:
+        boost += 0.35
+    if "source-label" in tag_set:
+        boost += 0.25
+    if "frequency" in tag_set or "phrase-memory" in tag_set:
+        boost += 0.2
+    return boost
 
 
 def _expand_query_for_local_rerank(query: str) -> str:

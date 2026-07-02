@@ -2,6 +2,26 @@
 
 ### 2026-07-02
 Topic:
+- Make Prediction-first RAG IME demo usable after user reported clipboard-like candidates and stale panels.
+
+Changes:
+- Codex history import now defaults to true user input only; assistant/event/tool/system records are skipped.
+- SQLite retrieval and candidate compiler now filter old runtime pollution and low-value instruction/complaint fragments.
+- Candidate source labeling now distinguishes `model`, `rag`, and `memory`.
+- Empty-input post-commit panel holdover is capped to 1.2s and clears when stale or when Rime fallback exists.
+- Added `tests/test_demo_quality.py` and documented feedback issues in `docs/agent/feedback-issues-20260702.md`.
+
+Verification:
+- Demo quality tests passed: 11 tests.
+- Live sidecar returned `rag`, `memory`, and `model` candidates with `commit_side_candidate`.
+- Patched Squirrel built and installed to `/Users/undo/Library/Input Methods/Squirrel.app`.
+- Doctor passed with 0 failures and 2 warnings: stale system Squirrel duplicate, and doctor model diagnostic mismatch.
+
+Next:
+- Replace or remove stale `/Library/Input Methods/Squirrel.app` with admin credentials, then manually test in TextEdit/Edge/Codex App that empty panels clear and number keys commit side candidates.
+
+### 2026-07-02
+Topic:
 - Tighten foreground trace side-first visible ordering.
 
 Changes:

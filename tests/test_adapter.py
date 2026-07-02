@@ -224,7 +224,7 @@ class InputMethodAdapterTests(unittest.TestCase):
                 evidence_preview="short filler should not occupy IME candidate slots",
                 tags=("codex-history",),
             )
-            for index, text in enumerate(("加油", "深度", "基于", "或者"))
+            for index, text in enumerate(("加油", "深度", "基于", "或者", "基于 和 根据"))
         ]
         useful = CoreMemory(
             memory_id="mem-useful-after-low",
@@ -242,6 +242,59 @@ class InputMethodAdapterTests(unittest.TestCase):
         )
 
         self.assertEqual([item.surface_text for item in suggestions], ["输入法候选应该围绕当前上下文生成"])
+
+    def test_candidate_surface_skips_codex_status_and_instruction_fragments(self) -> None:
+        noisy_memories = [
+            CoreMemory(
+                memory_id="mem-agent-status",
+                source_event_id="560",
+                text="我现在判断：先不用停，index.ts 先改成依赖 core。",
+                source_ref="memory:560#status",
+                score=0.95,
+                reason="fixture:status",
+                evidence_preview="agent progress should stay out of candidate UI",
+                tags=("codex-history",),
+            ),
+            CoreMemory(
+                memory_id="mem-user-debug-instruction",
+                source_event_id="561",
+                text="你要 自己 调试",
+                source_ref="memory:561#instruction",
+                score=0.94,
+                reason="fixture:instruction",
+                evidence_preview="imperative debug fragment should not occupy IME candidates",
+                tags=("codex-history",),
+            ),
+            CoreMemory(
+                memory_id="mem-validation-noise",
+                source_event_id="562",
+                text="好像 rag 没有 生效 验证模型指令 这个 不是 目的",
+                source_ref="memory:562#validation",
+                score=0.93,
+                reason="fixture:validation",
+                evidence_preview="debug validation phrase",
+                tags=("codex-history",),
+            ),
+            CoreMemory(
+                memory_id="mem-useful-product-idea",
+                source_event_id="563",
+                text="我的判断是：输入法应该预测用户接下来想表达的短语，而不是复读最近上下文。",
+                source_ref="memory:563#idea",
+                score=0.8,
+                reason="fixture:idea",
+                evidence_preview="prediction-first product idea",
+                tags=("codex-history", "product-idea"),
+            ),
+        ]
+
+        suggestions = SuggestionCompiler().compile(
+            [
+                RankedMemory(memory=memory, score=memory.score, rank=index + 1)
+                for index, memory in enumerate(noisy_memories)
+            ]
+        )
+
+        self.assertEqual([item.surface_text for item in suggestions], ["输入法应该预测用户接下来想表达的短语"])
 
     def test_candidate_surface_infers_project_config_keys(self) -> None:
         embedding_memory = CoreMemory(

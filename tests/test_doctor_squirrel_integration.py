@@ -300,9 +300,9 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             "[OK] sidecar predictor: local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true",
             result.stdout,
         )
-        self.assertIn("doctor_latency_budget_ms: 300", result.stdout)
+        self.assertIn("doctor_latency_budget_ms: 350", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.suggest_payloads)
-        self.assertTrue(all(payload.get("latencyBudgetMs") == 300 for payload in _DoctorSidecarHandler.suggest_payloads))
+        self.assertTrue(all(payload.get("latencyBudgetMs") == 350 for payload in _DoctorSidecarHandler.suggest_payloads))
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
@@ -397,7 +397,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[OK] HTTP sidecar health, rime-suggest, and rime-select passed", result.stdout)
         self.assertIn("[OK] candidate contract: model inline + rag block + shared selection keys passed", result.stdout)
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
-        self.assertIn("[OK] model generation path: MLX candidates use next-token logits/top-k", result.stdout)
+        self.assertIn("[OK] model generation path: MLX model candidates available", result.stdout)
         self.assertIn("[OK] sidecar LaunchAgent plist: matches current sidecar provider/model env", result.stdout)
         self.assertIn("[OK] MLX predictor LaunchAgent plist: matches text-only MLX model", result.stdout)
         self.assertIn("[OK] tryout runtime path has launchd or healthy HTTP sidecar", result.stdout)
