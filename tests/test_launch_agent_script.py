@@ -33,6 +33,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_EMBEDDING_MODEL": "bge-small-zh",
                 "RAG_IME_VECTOR_CANDIDATES": "48",
                 "RAG_IME_VECTOR_WEIGHT": "1.7",
+                "RAG_IME_VECTOR_AUTO_REBUILD_LIMIT": "5000",
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
@@ -68,10 +69,47 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_MODEL"], "bge-small-zh")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_CANDIDATES"], "48")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_WEIGHT"], "1.7")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_AUTO_REBUILD_LIMIT"], "5000")
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
         self.assertIn("sidecar-server", payload["ProgramArguments"])
         self.assertIn("18766", payload["ProgramArguments"])
         self.assertIn("sidecar_launch.py", " ".join(payload["ProgramArguments"]))
+
+    def test_install_sidecar_launch_agent_can_enable_local_vector_baseline(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-vector-test-") as tmp:
+            env = {
+                **os.environ,
+                "HOME": tmp,
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+                "RAG_IME_ENABLE_LOCAL_VECTOR": "1",
+            }
+            for key in list(env):
+                if key.startswith("RAG_IME_EMBEDDING_") or key in {
+                    "RAG_IME_VECTOR_CANDIDATES",
+                    "RAG_IME_VECTOR_WEIGHT",
+                    "RAG_IME_VECTOR_AUTO_REBUILD_LIMIT",
+                }:
+                    env.pop(key, None)
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            plist_path = Path(tmp) / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist"
+            with plist_path.open("rb") as fh:
+                payload = plistlib.load(fh)
+
+        env_vars = payload["EnvironmentVariables"]
+        self.assertEqual(env_vars["RAG_IME_EMBEDDING_PROVIDER"], "local-hash")
+        self.assertEqual(env_vars["RAG_IME_EMBEDDING_DIMENSIONS"], "96")
+        self.assertEqual(env_vars["RAG_IME_VECTOR_CANDIDATES"], "80")
+        self.assertEqual(env_vars["RAG_IME_VECTOR_WEIGHT"], "1.4")
+        self.assertEqual(env_vars["RAG_IME_VECTOR_AUTO_REBUILD_LIMIT"], "5000")
 
     def test_install_mlx_predictor_launch_agent_dry_run_writes_plist(self) -> None:
         root = Path(__file__).resolve().parents[1]

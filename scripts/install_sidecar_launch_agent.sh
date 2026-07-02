@@ -142,10 +142,18 @@ for key in (
     "RAG_IME_EMBEDDING_EXTRA_HEADERS_JSON",
     "RAG_IME_VECTOR_CANDIDATES",
     "RAG_IME_VECTOR_WEIGHT",
+    "RAG_IME_VECTOR_AUTO_REBUILD_LIMIT",
 ):
     value = os.environ.get(key)
     if value:
         env_vars[key] = value
+enable_local_vector = os.environ.get("RAG_IME_ENABLE_LOCAL_VECTOR", "").strip().lower() in {"1", "true", "yes", "on"}
+if enable_local_vector:
+    env_vars.setdefault("RAG_IME_EMBEDDING_PROVIDER", "local-hash")
+    env_vars.setdefault("RAG_IME_EMBEDDING_DIMENSIONS", "96")
+    env_vars.setdefault("RAG_IME_VECTOR_CANDIDATES", "80")
+    env_vars.setdefault("RAG_IME_VECTOR_WEIGHT", "1.4")
+    env_vars.setdefault("RAG_IME_VECTOR_AUTO_REBUILD_LIMIT", "5000")
 if core_command:
     env_vars["RAG_MEMORY_CORE_COMMAND"] = core_command
 

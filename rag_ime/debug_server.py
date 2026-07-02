@@ -58,6 +58,7 @@ class DebugServerConfig:
     input_source_id: str = "im.rime.inputmethod.Squirrel.Hans"
     input_source_check_script: Path | None = None
     input_source_require_hitoolbox: bool = True
+    vector_auto_rebuild_limit: int = 0
 
 
 @dataclass
@@ -93,6 +94,7 @@ class DebugImeService:
             self.core.initialize()
         if config.seed_if_empty and self._event_count() == 0:
             seed_demo_memories(self.adapter, default_fixture_memories())
+        self._vector_auto_rebuild_report = self._maybe_auto_rebuild_vector_index()
 
     def health(self) -> dict[str, object]:
         return {
@@ -113,6 +115,32 @@ class DebugImeService:
             },
             "predictor": prediction_provider_status(self.predictor, probe_capabilities=True),
             "suggestionCache": self._suggestion_cache_stats(),
+            "vectorStats": self._vector_index_stats(),
+            "vectorAutoRebuild": self._vector_auto_rebuild_status(),
+        }
+
+    def rebuild_vector_index(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.vector-rebuild.v1",
+                "ok": False,
+                "reason": "vector rebuild is only available for local SQLite core",
+            }
+        project = _string(payload.get("project")) or self.config.project
+        limit = _bounded_int(payload.get("limit"), default=0, minimum=0, maximum=200_000)
+        report = self.core.rebuild_vector_index(project=project, limit=limit)
+        self._vector_auto_rebuild_report = {
+            "trigger": "manual",
+            "project": project,
+            "limit": limit,
+            **report,
+        }
+        return {
+            "schemaVersion": "rag-ime.vector-rebuild.v1",
+            "ok": bool(report.get("enabled")),
+            "project": project,
+            "limit": limit,
+            **report,
             "vectorStats": self._vector_index_stats(),
         }
 
@@ -496,6 +524,52 @@ class DebugImeService:
         stats = getattr(self.core, "vector_index_stats", None)
         return stats() if callable(stats) else None
 
+    def _maybe_auto_rebuild_vector_index(self) -> dict[str, object] | None:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return None
+        limit = max(0, int(self.config.vector_auto_rebuild_limit))
+        if limit <= 0:
+            return None
+        stats = self.core.vector_index_stats()
+        if not bool(stats.get("enabled")):
+            return {
+                "trigger": "startup",
+                "skippedReason": "embedding provider disabled",
+                "limit": limit,
+                **stats,
+            }
+        event_count = self._event_count()
+        active_vectors = int(stats.get("activeProviderVectors") or 0)
+        if event_count is None or event_count <= 0:
+            return {
+                "trigger": "startup",
+                "skippedReason": "no input events",
+                "limit": limit,
+                **stats,
+            }
+        if active_vectors > 0:
+            return {
+                "trigger": "startup",
+                "skippedReason": "active provider vectors already present",
+                "limit": limit,
+                **stats,
+            }
+        report = self.core.rebuild_vector_index(project=self.config.project, limit=limit)
+        return {
+            "trigger": "startup",
+            "project": self.config.project,
+            "limit": limit,
+            **report,
+        }
+
+    def _vector_auto_rebuild_status(self) -> dict[str, object]:
+        limit = max(0, int(self.config.vector_auto_rebuild_limit))
+        return {
+            "enabled": limit > 0,
+            "limit": limit,
+            "lastRun": self._vector_auto_rebuild_report,
+        }
+
     def _cache_ttl_ms(self) -> int:
         return max(0, int(self.config.rime_cache_ttl_ms))
 
@@ -734,6 +808,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
             elif path in ("/api/cache-probe", "/cache-probe"):
                 self._write_json(HTTPStatus.OK, self.service.cache_probe(payload))
+            elif path in ("/api/rebuild-vector-index", "/rebuild-vector-index"):
+                self._write_json(HTTPStatus.OK, self.service.rebuild_vector_index(payload))
             elif path in ("/api/commit", "/commit"):
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
             elif path in ("/api/action", "/action"):

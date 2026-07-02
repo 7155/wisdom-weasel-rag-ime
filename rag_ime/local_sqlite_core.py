@@ -150,6 +150,20 @@ class LocalSqliteCoreClient:
                 ON memory_vectors(provider_fingerprint);
                 """
             )
+            conn.executescript(
+                """
+                DELETE FROM memory_state
+                WHERE event_id NOT IN (SELECT id FROM input_events);
+
+                DELETE FROM memory_vectors
+                WHERE event_id NOT IN (SELECT id FROM input_events);
+
+                UPDATE memory_actions
+                SET event_id = NULL
+                WHERE event_id IS NOT NULL
+                  AND event_id NOT IN (SELECT id FROM input_events);
+                """
+            )
             conn.execute(
                 """
                 INSERT INTO phrase_stats(committed_text, input_frequency, first_seen_ms, last_seen_ms)
