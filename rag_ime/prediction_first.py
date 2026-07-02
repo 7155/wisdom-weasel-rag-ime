@@ -135,9 +135,7 @@ def merge_prediction_first_candidates(
     )
     prediction_candidates = pool.prediction_order()
     if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING:
-        matched = tuple(item for item in prediction_candidates if prediction_candidate_matches_prefix(item, prefix))
-        unmatched = tuple(item for item in prediction_candidates if item not in matched)
-        prediction_candidates = matched + unmatched
+        prediction_candidates = _prefix_lane_order(prediction_candidates, prefix)
 
     side_budget = min(snapshot.max_side_candidates, max_visible)
     side_inserted = 0
@@ -183,6 +181,25 @@ def prediction_candidate_matches_prefix(candidate: PredictionCandidate, prefix: 
     if not keys:
         return False
     return any(key.startswith(prefix_norm) for key in keys)
+
+
+def _prefix_lane_order(candidates: tuple[PredictionCandidate, ...], prefix: str) -> tuple[PredictionCandidate, ...]:
+    model_candidates = tuple(item for item in candidates if item.source_type == "model")
+    memory_candidates = tuple(item for item in candidates if item.source_type != "model")
+    matched_model, unmatched_model = _split_prefix_matches(model_candidates, prefix)
+    matched_memory, unmatched_memory = _split_prefix_matches(memory_candidates, prefix)
+    visible_unmatched_model = unmatched_model[:1]
+    deferred_unmatched_model = unmatched_model[1:]
+    return matched_model + matched_memory + visible_unmatched_model + unmatched_memory + deferred_unmatched_model
+
+
+def _split_prefix_matches(
+    candidates: tuple[PredictionCandidate, ...],
+    prefix: str,
+) -> tuple[tuple[PredictionCandidate, ...], tuple[PredictionCandidate, ...]]:
+    matched = tuple(item for item in candidates if prediction_candidate_matches_prefix(item, prefix))
+    unmatched = tuple(item for item in candidates if item not in matched)
+    return matched, unmatched
 
 
 def _candidate_from_suggestion(suggestion: InputSuggestion, index: int) -> PredictionCandidate:

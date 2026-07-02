@@ -117,19 +117,19 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertTrue(result.policy["rimeCompositionOwnedByRime"])
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["设计一个候选展示方式", "设计输入法状态机", "把本地记忆注入 Agent 首次运行上下文"],
+            ["设计输入法状态机", "设计一个候选展示方式", "把这个项目整理成面试亮点"],
         )
         self.assertEqual(
             [item.source_type for item in result.display_candidates],
-            ["rag", "model", "rag"],
+            ["model", "rag", "model"],
         )
         self.assertEqual([item.label for item in result.display_candidates], ["1", "2", "3"])
         self.assertEqual(result.policy["sideInserted"], 3)
         self.assertEqual(result.policy["prefixMatchedSideInserted"], 2)
         self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
-        self.assertEqual(result.display_candidates[0].display_lane, "memory")
-        self.assertEqual(result.display_candidates[2].display_lane, "memory")
-        self.assertEqual(result.display_candidates[0].metadata["candidate_mode"], "prefix_constrained_composing")
+        self.assertEqual(result.display_candidates[0].display_lane, "model")
+        self.assertEqual(result.display_candidates[2].display_lane, "model")
+        self.assertEqual(result.display_candidates[1].metadata["candidate_mode"], "prefix_constrained_composing")
 
     def test_prefix_constrained_composition_uses_unmatched_llm_before_wanxiang_when_available(self) -> None:
         snapshot = RimeContextSnapshot(

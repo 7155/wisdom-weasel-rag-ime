@@ -159,6 +159,13 @@ class CapturingCore:
         return "历史输入会进入模型预测 但不能污染 RAG 检索"
 
 
+class EmptySuggestionCore(CapturingCore):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.last_suggest_recent_context = recent_context
+        self.last_suggest_app = app
+        return []
+
+
 class PrefixSuggestionCore(CapturingCore):
     def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
         return [
@@ -812,10 +819,10 @@ class RimeSidecarTests(unittest.TestCase):
         display = response["displayCandidates"]
         self.assertEqual(
             [item["text"] for item in display],
-            ["设计一个候选展示方式", "设计输入法状态机", "把本地记忆注入 Agent 首次运行上下文"],
+            ["设计输入法状态机", "设计一个候选展示方式", "把这个项目整理成面试亮点"],
         )
-        self.assertEqual([item["sourceType"] for item in display], ["rag", "model", "rag"])
-        self.assertEqual([item["displayLane"] for item in display], ["memory", "model", "memory"])
+        self.assertEqual([item["sourceType"] for item in display], ["model", "rag", "model"])
+        self.assertEqual([item["displayLane"] for item in display], ["model", "memory", "model"])
         self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 3)
         self.assertEqual(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
@@ -854,12 +861,46 @@ class RimeSidecarTests(unittest.TestCase):
             )
 
         display = response["displayCandidates"]
-        self.assertEqual(display[0]["text"], "设计一个候选展示方式")
-        self.assertEqual(display[0]["sourceType"], "rag")
-        self.assertEqual(display[0]["displayLane"], "memory")
-        self.assertEqual(display[0]["metadata"]["initials"], "sjyghxzsfs")
-        self.assertEqual(display[1]["text"], "设计输入法状态机")
-        self.assertEqual([item["sourceType"] for item in display[:3]], ["rag", "model", "model"])
+        self.assertEqual(display[0]["text"], "设计输入法状态机")
+        self.assertEqual(display[0]["sourceType"], "model")
+        self.assertEqual(display[1]["text"], "设计一个候选展示方式")
+        self.assertEqual(display[1]["sourceType"], "rag")
+        self.assertEqual(display[1]["displayLane"], "memory")
+        self.assertEqual(display[1]["metadata"]["initials"], "sjyghxzsfs")
+        self.assertEqual([item["sourceType"] for item in display[:3]], ["model", "rag", "model"])
+
+    def test_prediction_first_prefix_uses_recent_context_memory_pinyin_index(self) -> None:
+        core = EmptySuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-prediction-first-recent-memory-prefix",
+                "requestSeq": 54,
+                "rawInput": "sj",
+                "preedit": "sj",
+                "committedContext": "我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 5,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "手机", "comment": "wanxiang"},
+                    ]
+                },
+            },
+            adapter=adapter,
+            core=core,
+            predictor=PrefixConstrainedPredictionProvider(),
+        )
+
+        display = response["displayCandidates"]
+        self.assertGreater(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 0)
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
+        self.assertTrue(any(item["sourceType"] == "memory" for item in display))
+        recent_memory = next(item for item in display if item["sourceType"] == "memory")
+        self.assertIn("sj", recent_memory["metadata"]["pinyin_prefixes"])
+        self.assertEqual(recent_memory["metadata"]["fallback"], "recent_context")
 
     def test_prediction_first_post_commit_uses_commit_preview_as_prediction_anchor(self) -> None:
         core = CapturingCore()

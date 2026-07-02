@@ -19,6 +19,7 @@ from .models import (
     SideCandidateDisplayItem,
 )
 from .payloads import action_response_payload, model_prediction_to_payload, suggestion_to_payload
+from .pinyin_index import build_pinyin_metadata
 from .prediction_first import infer_input_mode, merge_prediction_first_candidates
 from .predictor import PredictionProvider
 from .text_utils import compact_whitespace, now_ms
@@ -522,6 +523,7 @@ def recent_context_memory_suggestions(
                     "memory_id": f"recent-context:{index}",
                     "insert_text": text,
                     "fallback": "recent_context",
+                    **build_pinyin_metadata(text),
                 },
             )
         )
