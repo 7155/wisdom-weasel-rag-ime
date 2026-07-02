@@ -775,6 +775,12 @@ def post_rime_suggest(payload):
 
 def doctor_prediction_payload(*, session_id="doctor", request_seq=1, latency_ms=None):
     effective_latency_ms = latency_budget_ms if latency_ms is None else latency_ms
+    if require_mixed_layout:
+        # Mixed-layout readiness checks the end-to-end candidate contract, not
+        # the strict first-token latency target. Keep latency optimization as a
+        # separate benchmark so a slow local MLX model does not look like a
+        # broken LLM/RAG wiring path.
+        effective_latency_ms = max(effective_latency_ms, 1200)
     return {
         "sessionId": session_id,
         "requestSeq": request_seq,
@@ -833,6 +839,7 @@ def retry_model_probe_if_needed(result, provider_name):
     return last_result, model_predictions, skipped_reason
 
 def validate_raw_pinyin_guard():
+    guard_latency_ms = max(latency_budget_ms, 1200) if require_mixed_layout else latency_budget_ms
     dirty = post_rime_suggest({
         "sessionId": "doctor-raw-pinyin",
         "requestSeq": 2,
@@ -840,7 +847,7 @@ def validate_raw_pinyin_guard():
         "preedit": "jiubiruwopinshishur",
         "maxVisibleCandidates": 6,
         "maxSideCandidates": 3,
-        "latencyBudgetMs": latency_budget_ms,
+        "latencyBudgetMs": guard_latency_ms,
         "rimeContext": {"candidates": []},
     })
     fallback = post_rime_suggest({
@@ -851,7 +858,7 @@ def validate_raw_pinyin_guard():
         "committedContext": "刚刚输入了 RAG 输入法的候选布局，需要继续预测下一句",
         "maxVisibleCandidates": 6,
         "maxSideCandidates": 3,
-        "latencyBudgetMs": latency_budget_ms,
+        "latencyBudgetMs": guard_latency_ms,
         "rimeContext": {"candidates": []},
     })
 

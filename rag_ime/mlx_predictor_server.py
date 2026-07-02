@@ -103,8 +103,9 @@ class MlxLmEngine:
         self.model_id = model_id
         self.model_info = _inspect_local_mlx_model(model_id)
         self.model, self.tokenizer = load(model_id)
+        self._base_completion_mode = _is_base_completion_model(model_id, self.model_info)
         self._prompt_cache = _PromptCacheState(
-            enabled=bool(enable_prompt_cache),
+            enabled=bool(enable_prompt_cache) and not self._base_completion_mode,
             stable_prefix=self._stable_prompt_prefix(),
             max_kv_size=max(0, int(prompt_cache_max_kv_size)),
         )
@@ -129,7 +130,9 @@ class MlxLmEngine:
                 "batchCandidates": True,
                 "logitsTopK": True,
                 "serverTiming": True,
+                "baseCompletion": self._base_completion_mode,
             },
+            "promptMode": "base-completion" if self._base_completion_mode else "chat-json",
         }
 
     def prompt_cache_status(self) -> dict[str, Any]:
@@ -148,6 +151,42 @@ class MlxLmEngine:
         request_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
+        if self._base_completion_mode:
+            raw_text = "".join(
+                self.stream_text(
+                    current_input=current_input,
+                    recent_context=recent_context,
+                    max_candidates=max_candidates,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    stream_first_candidate=stream_first_candidate,
+                    request_metadata=request_metadata,
+                )
+            )
+            total_ms = int((time.perf_counter() - started) * 1000)
+            candidates = self.parse_candidates_from_raw(
+                raw_text,
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=max_candidates,
+            )
+            return {
+                "ok": True,
+                "model": self.model_id,
+                "rawText": raw_text,
+                "candidates": candidates,
+                "candidateMode": "base-completion",
+                "totalMs": total_ms,
+                "promptCache": self.prompt_cache_status(),
+                "timing": {
+                    "candidateMode": "base-completion",
+                    "logitsMs": 0,
+                    "fallbackJson": False,
+                },
+                "requestMeta": dict(request_metadata or {}),
+            }
+
         logits_candidates = self.predict_next_token_logits(
             current_input=current_input,
             recent_context=recent_context,
@@ -294,7 +333,7 @@ class MlxLmEngine:
             max_candidates=max_candidates,
             stream_first_candidate=stream_first_candidate,
         )
-        if self._prompt_cache.ready_for_generation() and not stream_first_candidate:
+        if self._prompt_cache.ready_for_generation() and not stream_first_candidate and not self._base_completion_mode:
             try:
                 for text in self._stream_text_with_prompt_cache(
                     current_input=current_input,
@@ -393,6 +432,8 @@ class MlxLmEngine:
                 yield delta
 
     def _stable_prompt_prefix(self, *, stream_first_candidate: bool = False) -> str:
+        if self._base_completion_mode:
+            return ""
         prompt = STREAM_FIRST_SYSTEM_PROMPT if stream_first_candidate else SYSTEM_PROMPT
         return f"<|im_start|>system\n{prompt}<|im_end|>\n<|im_start|>user\n"
 
@@ -404,6 +445,8 @@ class MlxLmEngine:
         max_candidates: int,
         stream_first_candidate: bool = False,
     ) -> str:
+        if self._base_completion_mode:
+            return _build_base_completion_prompt(current_input=current_input, recent_context=recent_context)
         return (
             f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, stream_first_candidate=stream_first_candidate)}"
             "\n/no_think"
@@ -418,12 +461,16 @@ class MlxLmEngine:
         max_candidates: int,
         stream_first_candidate: bool = False,
     ) -> str:
+        if self._base_completion_mode:
+            return _build_base_completion_prompt(current_input=current_input, recent_context=recent_context)
         return (
             f"{self._stable_prompt_prefix(stream_first_candidate=stream_first_candidate)}"
             f"{self._dynamic_prompt_suffix(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, stream_first_candidate=stream_first_candidate)}"
         )
 
     def _build_logits_prompt(self, *, current_input: str, recent_context: str, max_candidates: int) -> str:
+        if self._base_completion_mode:
+            return _build_base_completion_prompt(current_input=current_input, recent_context=recent_context)
         return (
             f"<|im_start|>system\n{LOGITS_SYSTEM_PROMPT}<|im_end|>\n"
             "<|im_start|>user\n"
@@ -467,6 +514,23 @@ class MlxLmEngine:
             self._prompt_cache.error = exc.__class__.__name__
         finally:
             self._prompt_cache.prepare_ms = int((time.perf_counter() - started) * 1000)
+
+    def parse_candidates_from_raw(
+        self,
+        raw_text: str,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_candidates: int,
+    ) -> list[str]:
+        if self._base_completion_mode:
+            return _parse_base_completion_candidates(
+                raw_text,
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=max_candidates,
+            )
+        return parse_prediction_candidates(raw_text, max_candidates=max_candidates)
 
 
 def make_mlx_predictor_handler(engine: MlxLmEngine):
@@ -512,7 +576,16 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
             for text in engine.stream_text(**request):
                 raw_text += text
                 self._write_json_line({"delta": text, "elapsedMs": int((time.perf_counter() - started) * 1000)})
-            candidates = parse_prediction_candidates(raw_text, max_candidates=int(request["max_candidates"]))
+            parse_candidates = getattr(engine, "parse_candidates_from_raw", None)
+            if callable(parse_candidates):
+                candidates = parse_candidates(
+                    raw_text,
+                    current_input=str(request.get("current_input") or ""),
+                    recent_context=str(request.get("recent_context") or ""),
+                    max_candidates=int(request["max_candidates"]),
+                )
+            else:
+                candidates = parse_prediction_candidates(raw_text, max_candidates=int(request["max_candidates"]))
             self._write_json_line(
                 {
                     "done": True,
@@ -663,6 +736,18 @@ def _quantization_summary(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_base_completion_model(model_id: str, model_info: dict[str, Any]) -> bool:
+    normalized_id = str(model_id).lower()
+    path_parts = {part.lower() for part in Path(model_id).parts}
+    if "base" in normalized_id or any(part.endswith("-base") or part == "base" for part in path_parts):
+        return True
+    architecture = str(model_info.get("architecture") or "").lower()
+    model_type = str(model_info.get("modelType") or "").lower()
+    if "instruct" in normalized_id or "chat" in normalized_id:
+        return False
+    return architecture == "qwen3forcausallm" and model_type == "qwen3"
+
+
 def _build_mlx_prompt(
     *,
     current_input: str,
@@ -703,6 +788,219 @@ def _build_mlx_dynamic_prompt(
         "- 不要输出单字、语气词、连接词、泛词、重复词。\n"
         f"输出 {max_candidates} 个候选 JSON 数组。"
     )
+
+
+def _build_base_completion_prompt(*, current_input: str, recent_context: str) -> str:
+    sections = _split_prediction_context(recent_context)
+    current = compact_whitespace(sections["current"] or _strip_prediction_context_labels(recent_context))
+    query = compact_whitespace(current_input)
+    if current:
+        query = _remove_context_overlap(query, current)
+    if query and (_looks_like_candidate_constraint_query(query) or _looks_like_prompt_instruction(query)):
+        query = ""
+    if current and query:
+        prompt = f"{current}{query}" if _CJK_RE.search(current[-1:]) and _CJK_RE.search(query[:1]) else f"{current} {query}"
+    else:
+        prompt = current or query
+    return _tail_chars(compact_whitespace(prompt), 360)
+
+
+def _parse_base_completion_candidates(
+    raw_text: str,
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+) -> list[str]:
+    cleaned = _clean_base_completion_text(raw_text)
+    if not cleaned:
+        return []
+    context_sections = _split_prediction_context(recent_context)
+    context_text = compact_whitespace(" ".join(item for item in context_sections.values() if item))
+    candidates = _base_candidate_parts(cleaned)
+    if not candidates:
+        candidates = parse_prediction_candidates(cleaned, max_candidates=max_candidates)
+    if not candidates:
+        candidates = [cleaned]
+    return _filter_base_completion_candidates(
+        candidates,
+        current_input=current_input,
+        recent_context=context_text or recent_context,
+        max_candidates=max_candidates,
+    )
+
+
+def _clean_base_completion_text(text: str) -> str:
+    text = re.split(r"<\|(?:im_end|endoftext|im_start)\|>", text, maxsplit=1)[0]
+    cleaned = re.sub(r"(?is)<think>.*?</think>", " ", text)
+    cleaned = re.sub(r"(?is)<think>.*", " ", cleaned)
+    cleaned = re.sub(r"(?is)<analysis>.*?</analysis>", " ", cleaned)
+    cleaned = re.sub(r"(?is)<reasoning>.*?</reasoning>", " ", cleaned)
+    cleaned = re.sub(r"<\|[^|]{1,64}\|>", " ", cleaned)
+    cleaned = cleaned.replace("Assistant:", " ").replace("assistant:", " ")
+    cleaned = cleaned.replace("```json", " ").replace("```", " ")
+    return compact_whitespace(cleaned)
+
+
+def _base_candidate_parts(text: str) -> list[str]:
+    json_candidates = _jsonish_base_candidates(text)
+    if json_candidates:
+        return json_candidates
+    first_clause = re.split(r"[。！？!?；;\n\r]", text, maxsplit=1)[0]
+    first_clause = re.sub(r"^[,，、\s]+", "", first_clause)
+    if not first_clause:
+        return []
+    chunks = [part.strip(" ,，、。！？!?；;:：\"'“”‘’[]()（）") for part in re.split(r"[,，、]|\\s{2,}", first_clause)]
+    chunks = [part for part in chunks if part]
+    if chunks:
+        return chunks
+    return [first_clause]
+
+
+def _jsonish_base_candidates(text: str) -> list[str]:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        return [compact_whitespace(str(item)) for item in parsed if compact_whitespace(str(item))]
+    if "[" in text:
+        quoted = [match.strip() for match in re.findall(r'"([^"\n\r]{1,48})"', text)]
+        if quoted:
+            return quoted
+    return []
+
+
+def _filter_base_completion_candidates(
+    candidates: list[str],
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    input_norm = _repeat_norm(current_input)
+    context_norm = _repeat_norm(recent_context)
+    for candidate in candidates:
+        surface = _normalize_base_candidate(candidate)
+        if not surface:
+            continue
+        norm = _repeat_norm(surface)
+        if not norm or norm in seen:
+            continue
+        if input_norm and (norm == input_norm or norm in input_norm):
+            continue
+        if context_norm and (norm == context_norm or norm in context_norm):
+            continue
+        if _looks_like_prompt_instruction(surface) or _is_low_value_base_candidate(surface):
+            continue
+        seen.add(norm)
+        result.append(surface)
+        if len(result) >= max(1, int(max_candidates)):
+            break
+    return result
+
+
+def _normalize_base_candidate(text: str) -> str:
+    surface = compact_whitespace(text)
+    surface = re.sub(r"^[0-9]+[.)、．]\s*", "", surface)
+    surface = surface.strip(" \t\r\n\"'`[]{}(),，。！？:：;；、|")
+    if not surface or "�" in surface or "<|" in surface:
+        return ""
+    if len(surface) > 24:
+        surface = surface[:24]
+    return surface
+
+
+def _is_low_value_base_candidate(text: str) -> bool:
+    normalized = compact_whitespace(text)
+    if normalized in _LOW_VALUE_LOGITS_CANDIDATES:
+        return True
+    if len(normalized) <= 1:
+        return True
+    if re.fullmatch(r"[A-Za-z0-9_./:-]{1,8}", normalized):
+        return True
+    if len(_CJK_RE.findall(normalized)) < 2 and len(normalized) <= 4:
+        return True
+    if re.fullmatch(r"[嗯啊呃额哦噢唔]{1,4}", normalized):
+        return True
+    if normalized.endswith("候选") and len(normalized) <= 6:
+        return True
+    return False
+
+
+def _split_prediction_context(text: str) -> dict[str, str]:
+    normalized = compact_whitespace(text)
+    result = {"history": "", "current": ""}
+    if not normalized:
+        return result
+    current_match = re.search(r"当前上下文:\s*(.+)$", normalized)
+    if current_match:
+        current = current_match.group(1)
+        current = re.split(r"\s*历史(?:输入|参考)[^:：]*[:：]", current, maxsplit=1)[0]
+        result["current"] = compact_whitespace(current)
+    history_match = re.search(r"历史(?:输入|参考)[^:：]*[:：]\s*(.+?)(?:\s*当前上下文:|$)", normalized)
+    if history_match:
+        result["history"] = compact_whitespace(history_match.group(1))
+    if not result["current"] and not result["history"]:
+        result["current"] = normalized
+    return result
+
+
+def _strip_prediction_context_labels(text: str) -> str:
+    stripped = re.sub(r"历史(?:输入|参考)[^:：]*[:：]", " ", text)
+    stripped = stripped.replace("当前上下文:", " ")
+    return compact_whitespace(stripped)
+
+
+def _remove_context_overlap(query: str, current: str) -> str:
+    query = compact_whitespace(query)
+    current = compact_whitespace(current)
+    if not query or not current:
+        return query
+    if _repeat_norm(query) == _repeat_norm(current[-len(query) :]):
+        return ""
+    if query.startswith(current[-min(len(current), len(query)) :]):
+        return compact_whitespace(query.removeprefix(current[-min(len(current), len(query)) :]))
+    return query
+
+
+def _looks_like_candidate_constraint_query(text: str) -> bool:
+    normalized = compact_whitespace(text)
+    if not normalized:
+        return False
+    parts = [part for part in re.split(r"[\s,，、;；|/]+", normalized) if part]
+    cjk_parts = sum(1 for part in parts if _CJK_RE.search(part))
+    ascii_parts = sum(1 for part in parts if part.isascii())
+    return len(parts) >= 2 and (cjk_parts >= 2 or ascii_parts >= 1)
+
+
+def _looks_like_prompt_instruction(text: str) -> bool:
+    lowered = text.lower()
+    prompt_markers = (
+        "已上屏上下文",
+        "当前拼音",
+        "当前输入",
+        "候选词",
+        "输出",
+        "json",
+        "assistant",
+        "system",
+        "user",
+        "/no_think",
+    )
+    return any(marker in lowered for marker in prompt_markers)
+
+
+def _repeat_norm(text: str) -> str:
+    return re.sub(r"[\s\W_]+", "", compact_whitespace(text), flags=re.UNICODE).lower()
+
+
+def _tail_chars(text: str, max_chars: int) -> str:
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
 
 
 def _request_metadata_from_payload(payload: dict[str, Any]) -> dict[str, Any]:

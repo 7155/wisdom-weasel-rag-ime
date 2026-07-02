@@ -82,6 +82,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             patch_text,
         )
         self.assertIn('traceRagImeFrontendEvent("number_key_route"', patch_text)
+        self.assertIn('guard ragImeDisplayCandidates[index].sourceType != "raw_english" else {', patch_text)
         self.assertIn("+    return selectCandidate(index)", patch_text)
 
     def test_build_script_dry_run_reports_resolved_commands(self) -> None:

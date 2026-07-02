@@ -104,6 +104,40 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(payload["candidateScores"][0]["text"], "输入法候选")
         self.assertIn("probability", payload["candidateScores"][0])
 
+    def test_base_model_uses_plain_completion_prefix_not_chat_prompt(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text="需要把输入法流程跑通。")
+        with tempfile.TemporaryDirectory(prefix="Qwen3-0.6B-Base-") as tmp, patch.dict(sys.modules, modules):
+            model_dir = Path(tmp)
+            (model_dir / "model.safetensors").write_bytes(b"fake")
+            (model_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "architectures": ["Qwen3ForCausalLM"],
+                        "model_type": "qwen3",
+                        "hidden_size": 1024,
+                        "num_hidden_layers": 28,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            engine = MlxLmEngine(str(model_dir))
+            payload = engine.predict(
+                current_input="我现在这个候选词根本不像 LLM 输出的，都",
+                recent_context="历史参考(禁止复读): 补后端测试 当前上下文: 我现在这个候选词根本不像 LLM 输出的，都",
+                max_candidates=3,
+                max_tokens=12,
+                temperature=0.05,
+                top_p=0.8,
+            )
+
+        self.assertEqual(payload["candidateMode"], "base-completion")
+        self.assertEqual(payload["candidates"], ["需要把输入法流程跑通"])
+        prompt = calls["prompts"][-1]
+        self.assertIn("我现在这个候选词根本不像 LLM 输出的，都", prompt)
+        self.assertNotIn("<|im_start|>", prompt)
+        self.assertNotIn("已上屏上下文", prompt)
+        self.assertNotIn("补后端测试", prompt)
+
     def test_health_reports_prepared_prompt_cache_without_claiming_generation_use(self) -> None:
         server, thread = _start_fake_server()
         try:
@@ -267,6 +301,7 @@ def _fake_mlx_modules(*, generated_text: str, logits_tokens: list[str] | None = 
         "generate_step": 0,
         "load_prompt_cache": 0,
         "stream_generate": 0,
+        "prompts": [],
     }
     logits_token_ids = {
         token: 1000 + index for index, token in enumerate(logits_tokens or [])
@@ -290,6 +325,7 @@ def _fake_mlx_modules(*, generated_text: str, logits_tokens: list[str] | None = 
     def generate_step(prompt, model, max_tokens: int, prompt_cache=None, sampler=None):
         calls["generate_step"] += 1
         prompt_text = "".join(chr(int(token)) for token in prompt) if isinstance(prompt, list) else ""
+        calls["prompts"].append(prompt_text)
         if sampler is None and "直接从候选文本开始" in prompt_text and logits_tokens:
             logprobs = _fake_logprobs([logits_token_ids[token] for token in logits_tokens])
             yield _FakeToken(logits_token_ids[logits_tokens[0]]), logprobs

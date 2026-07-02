@@ -814,6 +814,9 @@ index c2adf74..20bc671 100644
 +    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {
 +      return false
 +    }
++    guard ragImeDisplayCandidates[index].sourceType != "raw_english" else {
++      return false
++    }
 +    traceRagImeFrontendEvent("number_key_route", fields: [
 +      "key": key,
 +      "index": index,

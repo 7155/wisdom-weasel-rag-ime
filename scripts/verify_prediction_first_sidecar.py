@@ -308,14 +308,17 @@ def check_case(case: dict[str, Any], response: dict[str, Any], *, elapsed_ms: in
         first = display[0] if display and isinstance(display[0], dict) else {}
         require(first.get("sourceType") == "raw_english", case_id, "raw command must stay first", failures)
         require(first.get("insertText") == "git status", case_id, "raw command insert text mismatch", failures)
+        require(len(display) == 1, case_id, "raw command must not mix model/RAG/Rime candidates", failures)
     elif case_id == "raw-code-identifier-keeps-english-first":
         first = display[0] if display and isinstance(display[0], dict) else {}
         require(first.get("sourceType") == "raw_english", case_id, "raw code identifier must stay first", failures)
         require(first.get("insertText") == "model_prediction", case_id, "raw code identifier insert text mismatch", failures)
+        require(len(display) == 1, case_id, "raw code identifier must not mix model/RAG/Rime candidates", failures)
     elif case_id == "raw-path-keeps-english-first":
         first = display[0] if display and isinstance(display[0], dict) else {}
         require(first.get("sourceType") == "raw_english", case_id, "raw path must stay first", failures)
         require(first.get("insertText") == "/Volumes/undo 4t/git/learnA", case_id, "raw path insert text mismatch", failures)
+        require(len(display) == 1, case_id, "raw path must not mix model/RAG/Rime candidates", failures)
     elif case_id == "rime-fallback-when-no-context":
         require(source_types[:2] == ["rime", "rime"], case_id, "plain anchor should keep Rime fallback", failures)
     return report, failures

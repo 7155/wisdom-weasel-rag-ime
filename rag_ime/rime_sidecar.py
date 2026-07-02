@@ -770,6 +770,7 @@ def predict_model_with_latency_budget(
                 predictions,
                 current_input=current_input,
                 explicit_recent_context=explicit_recent_context,
+                prediction_context=recent_context,
             )
             result["predictions"] = predictions
             if not predictions:
@@ -836,6 +837,7 @@ def _filter_model_predictions(
     *,
     current_input: str,
     explicit_recent_context: str,
+    prediction_context: str = "",
 ) -> list[ModelPrediction]:
     cleaned: list[ModelPrediction] = []
     seen: set[str] = set()
@@ -844,6 +846,7 @@ def _filter_model_predictions(
             prediction.text,
             current_input=current_input,
             explicit_recent_context=explicit_recent_context,
+            prediction_context=prediction_context,
         )
         normalized = compact_whitespace(text).lower()
         if not normalized or normalized in seen:
@@ -870,10 +873,14 @@ def _clean_model_prediction_text(
     *,
     current_input: str,
     explicit_recent_context: str,
+    prediction_context: str = "",
 ) -> str:
     surface = compact_whitespace(text)
     if not surface:
         return ""
+    surface = re.sub(r"(?is)<think>.*?</think>", " ", surface)
+    surface = re.sub(r"(?is)<think>.*", " ", surface)
+    surface = compact_whitespace(surface)
     for prefix in (current_input, explicit_recent_context):
         prefix = compact_whitespace(prefix)
         if prefix and surface.startswith(prefix) and _has_repeated_recent_memory_prefix(prefix):
@@ -885,9 +892,62 @@ def _clean_model_prediction_text(
         return ""
     if _looks_like_broken_recent_memory_surface(surface):
         return ""
+    if _looks_like_model_prompt_echo(surface):
+        return ""
+    if _model_prediction_repeats_context(
+        surface,
+        current_input=current_input,
+        explicit_recent_context=explicit_recent_context,
+        prediction_context=prediction_context,
+    ):
+        return ""
     if surface in {"续写", "继续", "候选", "预测"}:
         return ""
     return surface
+
+
+def _looks_like_model_prompt_echo(surface: str) -> bool:
+    normalized = compact_whitespace(surface)
+    lowered = normalized.lower()
+    markers = (
+        "已上屏上下文",
+        "当前拼音",
+        "当前输入",
+        "候选词",
+        "候选 JSON",
+        "assistant",
+        "system",
+        "user",
+        "/no_think",
+    )
+    if any(marker.lower() in lowered for marker in markers):
+        return True
+    if normalized.endswith("候选") and len(normalized) <= 6:
+        return True
+    return False
+
+
+def _model_prediction_repeats_context(
+    surface: str,
+    *,
+    current_input: str,
+    explicit_recent_context: str,
+    prediction_context: str,
+) -> bool:
+    candidate_norm = _repeat_norm(surface)
+    if not candidate_norm:
+        return True
+    for context in (current_input, explicit_recent_context, prediction_context):
+        context_norm = _repeat_norm(context)
+        if not context_norm:
+            continue
+        if candidate_norm == context_norm or candidate_norm in context_norm:
+            return True
+    return False
+
+
+def _repeat_norm(text: str) -> str:
+    return re.sub(r"[\s\W_]+", "", compact_whitespace(text), flags=re.UNICODE).lower()
 
 
 def _has_repeated_recent_memory_prefix(text: str) -> bool:
@@ -1263,6 +1323,9 @@ def decide_side_candidate_refresh(
     if snapshot.max_side_candidates <= 0:
         return RimeSideCandidateTriggerDecision(False, "skip: side candidates disabled")
 
+    if raw_english_candidate_text(snapshot):
+        return RimeSideCandidateTriggerDecision(False, "skip: raw ascii passthrough")
+
     if snapshot.force_side_candidates:
         return RimeSideCandidateTriggerDecision(True, "force: explicit side candidate refresh")
 
@@ -1275,10 +1338,6 @@ def decide_side_candidate_refresh(
 
     if query_basis == "rawSemanticInput":
         return RimeSideCandidateTriggerDecision(True, "refresh: semantic raw input")
-
-    composing_without_rime_candidate = bool(compact_whitespace(snapshot.raw_input)) and not snapshot.candidates
-    if composing_without_rime_candidate and query_basis == "committedContext":
-        return RimeSideCandidateTriggerDecision(False, "skip: composing without stable Rime candidate")
 
     if query_basis == "commitTextPreview" and signal_len >= 2:
         return RimeSideCandidateTriggerDecision(True, "refresh: commit preview")
@@ -1297,10 +1356,13 @@ def decide_side_candidate_refresh(
 
     if query_basis == "committedContext":
         no_active_composition = not compact_whitespace(snapshot.raw_input) and not compact_whitespace(snapshot.preedit)
-        if no_active_composition and signal_len >= 4:
+        if signal_len >= 4:
             if snapshot.idle_ms > _POST_COMMIT_PANEL_TTL_MS:
                 return RimeSideCandidateTriggerDecision(False, "skip: stale post-commit continuation")
-            return RimeSideCandidateTriggerDecision(True, "refresh: post-commit continuation")
+            return RimeSideCandidateTriggerDecision(
+                True,
+                "refresh: post-commit continuation" if no_active_composition else "refresh: committed context fallback",
+            )
         if snapshot.idle_ms >= 300 and signal_len >= 4:
             return RimeSideCandidateTriggerDecision(True, "refresh: idle committed context")
         return RimeSideCandidateTriggerDecision(False, "skip: waiting for active composition signal")
@@ -1352,6 +1414,7 @@ def merge_display_candidates(
                 metadata={"candidate_mode": "raw-english"},
             )
         )
+        return display
     side_budget = min(snapshot.max_side_candidates, max_visible)
     rag_reserve = min(rag_block_reserve(side_budget), len(suggestions)) if model_predictions else 0
     side_limit = min(
