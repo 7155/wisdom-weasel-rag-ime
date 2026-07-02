@@ -823,11 +823,11 @@ class RimeSidecarTests(unittest.TestCase):
         display = response["displayCandidates"]
         self.assertEqual(
             [item["text"] for item in display],
-            ["设计输入法状态机", "设计一个候选展示方式", "把这个项目整理成面试亮点"],
+            ["设计输入法状态机", "设计一个候选展示方式"],
         )
-        self.assertEqual([item["sourceType"] for item in display], ["model", "rag", "model"])
-        self.assertEqual([item["displayLane"] for item in display], ["model", "memory", "model"])
-        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 3)
+        self.assertEqual([item["sourceType"] for item in display], ["model", "rag"])
+        self.assertEqual([item["displayLane"] for item in display], ["model", "memory"])
+        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
         self.assertTrue(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
@@ -875,7 +875,41 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[1]["sourceType"], "memory")
         self.assertEqual(display[1]["displayLane"], "memory")
         self.assertEqual(display[1]["metadata"]["initials"], "sjyghxzsfs")
-        self.assertEqual([item["sourceType"] for item in display[:3]], ["model", "memory", "model"])
+        self.assertEqual([item["sourceType"] for item in display], ["model", "memory"])
+
+    def test_prediction_first_prefix_without_match_returns_to_wanxiang_fallback(self) -> None:
+        core = PrefixSuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-prediction-first-prefix-no-match",
+                "requestSeq": 55,
+                "rawInput": "ni",
+                "preedit": "ni",
+                "committedContext": "我想",
+                "predictionFirstMerge": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "你", "comment": "wanxiang"},
+                        {"label": "2", "text": "呢", "comment": "wanxiang"},
+                    ]
+                },
+            },
+            adapter=adapter,
+            core=core,
+            predictor=PrefixConstrainedPredictionProvider(),
+        )
+
+        self.assertEqual(response["predictionFirst"]["mode"], "prefix_constrained_composing")
+        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 0)
+        self.assertEqual(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 0)
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 2)
+        self.assertEqual([item["text"] for item in response["displayCandidates"]], ["你", "呢"])
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime", "rime"])
+        self.assertFalse(response["predictionSession"]["predictionPanelVisible"])
+        self.assertTrue(response["predictionSession"]["shouldClearPredictionPanel"])
 
     def test_prediction_first_prefix_does_not_turn_recent_context_into_memory_candidates(self) -> None:
         core = EmptySuggestionCore()
@@ -906,7 +940,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertGreater(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 0)
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
         self.assertFalse(any(item["metadata"].get("fallback") == "recent_context" for item in display))
-        self.assertEqual([item["sourceType"] for item in display], ["model", "model"])
+        self.assertEqual([item["sourceType"] for item in display], ["model"])
         self.assertNotIn("recentContextFallbackCount", response["ragLane"])
 
     def test_prediction_first_post_commit_uses_commit_preview_as_prediction_anchor(self) -> None:
@@ -1347,7 +1381,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelPredictions"], [])
         self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
 
-    def test_rag_display_text_is_compressed_but_insert_text_is_full(self) -> None:
+    def test_rag_display_text_is_compressed_and_insert_text_is_short_candidate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-sidecar-surface-") as tmp:
             core = LocalSqliteCoreClient(f"{tmp}/rag-ime.sqlite")
             core.initialize()
@@ -1381,8 +1415,8 @@ class RimeSidecarTests(unittest.TestCase):
 
         rag_item = next(item for item in response["displayCandidates"] if item["sourceType"] == "rag")
         self.assertEqual(rag_item["text"], "候选面板只显示压缩标题，完整段落放 insert_text。")
-        self.assertIn("背景说明这一句不是候选重点", rag_item["insertText"])
-        self.assertIn("evidence preview 放到展开面板", rag_item["insertText"])
+        self.assertEqual(rag_item["insertText"], rag_item["text"])
+        self.assertIn("背景说明这一句不是候选重点", rag_item["metadata"]["preview_text"])
 
     def test_dirty_raw_pinyin_without_rime_candidates_skips_side_lanes(self) -> None:
         response = build_rime_sidecar_response(

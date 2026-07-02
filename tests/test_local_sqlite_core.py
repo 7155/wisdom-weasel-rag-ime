@@ -179,7 +179,9 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         for query, expected in cases:
             with self.subTest(query=query):
                 suggestions = self.adapter.suggest(SuggestionRequest(current_input=query, top_k=1))
-                self.assertEqual(suggestions[0].metadata["insert_text"], expected)
+                self.assertIn(expected, suggestions[0].expanded_evidence)
+                self.assertLessEqual(len(suggestions[0].surface_text), 42)
+                self.assertEqual(suggestions[0].metadata["insert_text"], suggestions[0].surface_text)
 
     def test_suggestions_deduplicate_repeated_memory_surfaces(self) -> None:
         self.core.reset()
