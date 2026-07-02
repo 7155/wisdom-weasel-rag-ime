@@ -147,7 +147,7 @@ Run the Swift-to-Python preview contract:
 build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-json
 ```
 
-This initializes the local DB, seeds deterministic demo memories, calls `suggest-json`, and prints the native frontend JSON payload.
+This initializes the configured DB, calls `suggest-json`, and prints the native frontend JSON payload. It does not seed demo memories, so installed builds inspect the same live runtime DB used by the sidecar.
 
 Run the Swift-to-Python Rime/Squirrel side-candidate preview:
 
@@ -155,7 +155,7 @@ Run the Swift-to-Python Rime/Squirrel side-candidate preview:
 build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-sidecar-json
 ```
 
-This initializes the local DB, seeds deterministic demo memories, calls `rime-suggest-json`, and verifies that Swift can decode the merged `displayCandidates` payload. The preview intentionally includes dirty raw pinyin plus Rime candidates; the response should use `queryBasis: "rimeCandidates"` instead of asking the model to decode raw input.
+This initializes the configured DB, calls `rime-suggest-json`, and verifies that Swift can decode the merged `displayCandidates` payload. The preview intentionally includes dirty raw pinyin plus Rime candidates; the response should use `queryBasis: "rimeCandidates"` instead of asking the model to decode raw input.
 
 Open the native panel preview:
 
@@ -163,7 +163,7 @@ Open the native panel preview:
 build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-panel
 ```
 
-This uses the same seeded backend and shows the actual AppKit candidate/evidence panel for six seconds.
+This uses the same configured backend and shows the actual AppKit candidate/evidence panel for six seconds.
 
 Install locally:
 
