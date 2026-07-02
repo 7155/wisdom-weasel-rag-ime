@@ -47,6 +47,23 @@ _GENERIC_STATUS_PREFIXES = (
     "只读结论",
 )
 
+_LOW_VALUE_SURFACES = {
+    "啊",
+    "阿",
+    "呃",
+    "嗯",
+    "额",
+    "呐",
+    "哦",
+    "噢",
+    "唔",
+    "的",
+    "了",
+    "和",
+    "是",
+    "当",
+}
+
 
 class MemoryLike(Protocol):
     memory_id: str
@@ -87,12 +104,17 @@ class SuggestionCompiler:
 
     def compile(self, ranked_memories: list[RankedMemory]) -> list[InputSuggestion]:
         suggestions: list[InputSuggestion] = []
+        seen_insert_texts: set[str] = set()
         for item in ranked_memories:
             memory = item.memory
             raw_source_text = memory.text or ""
             source_text = compact_whitespace(raw_source_text)
             if not source_text:
                 continue
+            insert_norm = _suggestion_insert_norm(source_text)
+            if insert_norm in seen_insert_texts:
+                continue
+            seen_insert_texts.add(insert_norm)
             suggestion_type = classify_suggestion(source_text, memory.tags)
             surface = compress_surface_text(
                 raw_source_text,
@@ -100,7 +122,7 @@ class SuggestionCompiler:
                 suggestion_type=suggestion_type,
                 max_chars=self.options.max_surface_chars,
             )
-            if not surface:
+            if not surface or not _is_meaningful_suggestion_surface(surface):
                 continue
             suggestion = InputSuggestion(
                 suggestion_id=f"sug-{memory.memory_id}",
@@ -126,6 +148,23 @@ class SuggestionCompiler:
             if len(suggestions) >= self.options.max_suggestions:
                 break
         return suggestions
+
+
+def _suggestion_insert_norm(text: str) -> str:
+    return compact_whitespace(text).lower()
+
+
+def _is_meaningful_suggestion_surface(text: str) -> bool:
+    surface = compact_whitespace(text)
+    if not surface:
+        return False
+    if surface in _LOW_VALUE_SURFACES:
+        return False
+    if re.fullmatch(r"[嗯啊呃额哦噢唔]{1,4}", surface):
+        return False
+    if len(surface) == 1 and _CJK_RE.fullmatch(surface):
+        return False
+    return True
 
 
 def classify_suggestion(text: str, tags: tuple[str, ...] = ()) -> str:

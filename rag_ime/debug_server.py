@@ -523,6 +523,7 @@ class DebugImeService:
             "project": snapshot.project or self.config.project,
             "semanticQuery": semantic_query,
             "queryBasis": query_basis,
+            "predictionFirstMerge": _bool(payload.get("predictionFirstMerge"), default=False),
             "triggerDecision": {
                 "shouldRefresh": trigger_decision.should_refresh,
                 "reason": trigger_decision.reason,
@@ -601,6 +602,10 @@ class DebugImeService:
                 },
             }
         )
+        prediction_first = response.get("predictionFirst")
+        if isinstance(prediction_first, dict):
+            prediction_first["enabled"] = _bool(payload.get("predictionFirstMerge"), default=False)
+            prediction_first["pinyinPrefix"] = snapshot.preedit or snapshot.raw_input
 
     def _store_rime_response(self, cache_key: str, response: dict[str, object]) -> None:
         ttl_ms = self._cache_ttl_ms()
@@ -803,6 +808,18 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _bool(value: object, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
 
 
 def _optional_int(value: object) -> int | None:

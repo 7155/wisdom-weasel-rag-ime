@@ -30,6 +30,14 @@ OLLAMA_STREAM_FIRST_SYSTEM_PROMPT = (
 )
 
 MLX_STABLE_PREFIX = f"{OLLAMA_CHAT_SYSTEM_PROMPT}\n"
+_LOW_VALUE_IME_CANDIDATES = {
+    "啊",
+    "阿",
+    "呃",
+    "嗯",
+    "额",
+    "呐",
+}
 
 
 class PredictionProvider(Protocol):
@@ -164,7 +172,7 @@ class OpenAICompatiblePredictionProvider:
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_text = "\n".join(raw_texts)
         candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
-        candidates = _filter_repeated_input_candidates(candidates, query)
+        candidates = _finalize_ime_prediction_candidates(candidates, query)
         return [
             ModelPrediction(
                 text=item,
@@ -324,7 +332,7 @@ class OllamaPredictionProvider:
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_text = "\n".join(raw_texts)
         candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
-        candidates = _filter_repeated_input_candidates(candidates, query)
+        candidates = _finalize_ime_prediction_candidates(candidates, query)
         return [
             ModelPrediction(
                 text=item,
@@ -458,7 +466,7 @@ class MlxPredictionServiceProvider:
         if not candidates:
             candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
         candidates = _parse_prediction_candidate_texts(candidates, max_candidates=max_items)
-        candidates = _filter_repeated_input_candidates(candidates, query)
+        candidates = _finalize_ime_prediction_candidates(candidates, query)
         return [
             ModelPrediction(
                 text=item,
@@ -1085,7 +1093,7 @@ def _measure_ollama_stream_ttft(
                         first_text = text
                     if first_candidate_ms is None:
                         candidates = _parse_streaming_prediction_candidates(full_text, max_candidates=max_candidates)
-                        candidates = _filter_repeated_input_candidates(candidates, query)
+                        candidates = _finalize_ime_prediction_candidates(candidates, query)
                         if candidates:
                             first_candidate_ms = int((time.perf_counter() - started) * 1000)
                             if stop_after_first_candidate:
@@ -1119,10 +1127,10 @@ def _measure_ollama_stream_ttft(
     total_ms = int((time.perf_counter() - started) * 1000)
     if not stop_after_first_candidate:
         candidates = _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
-        candidates = _filter_repeated_input_candidates(candidates, query)
+        candidates = _finalize_ime_prediction_candidates(candidates, query)
     elif not candidates:
         candidates = _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
-        candidates = _filter_repeated_input_candidates(candidates, query)
+        candidates = _finalize_ime_prediction_candidates(candidates, query)
     return {
         "ok": first_chunk_ms is not None,
         "firstChunkMs": first_chunk_ms,
@@ -1174,14 +1182,14 @@ def _measure_mlx_stream_ttft(
                         first_text = text
                     if first_candidate_ms is None:
                         final_candidates = _parse_streaming_prediction_candidates(full_text, max_candidates=max_candidates)
-                        final_candidates = _filter_repeated_input_candidates(final_candidates, query)
+                        final_candidates = _finalize_ime_prediction_candidates(final_candidates, query)
                         if final_candidates:
                             first_candidate_ms = int((time.perf_counter() - started) * 1000)
                             if stop_after_first_candidate:
                                 break
                 if isinstance(payload.get("candidates"), list):
                     final_candidates = _candidate_parts_from_json_value(payload.get("candidates"))
-                    final_candidates = _filter_repeated_input_candidates(final_candidates, query)
+                    final_candidates = _finalize_ime_prediction_candidates(final_candidates, query)
                     if final_candidates and first_candidate_ms is None:
                         first_candidate_ms = int((time.perf_counter() - started) * 1000)
                         if stop_after_first_candidate:
@@ -1219,7 +1227,7 @@ def _measure_mlx_stream_ttft(
     total_ms = int((time.perf_counter() - started) * 1000)
     candidates = final_candidates or _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
     candidates = _parse_prediction_candidate_texts(candidates, max_candidates=max_candidates)
-    candidates = _filter_repeated_input_candidates(candidates, query)
+    candidates = _finalize_ime_prediction_candidates(candidates, query)
     return {
         "ok": first_chunk_ms is not None,
         "firstChunkMs": first_chunk_ms,
@@ -1315,6 +1323,28 @@ def _filter_repeated_input_candidates(candidates: list[str], current_input: str)
             continue
         seen.add(candidate)
         result.append(candidate)
+    return result
+
+
+def _finalize_ime_prediction_candidates(candidates: list[str], current_input: str) -> list[str]:
+    return _filter_low_value_ime_candidates(_filter_repeated_input_candidates(candidates, current_input))
+
+
+def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = compact_whitespace(candidate)
+        if not normalized:
+            continue
+        if normalized in _LOW_VALUE_IME_CANDIDATES:
+            continue
+        if re.fullmatch(r"[嗯啊呃额]{1,4}", normalized):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
     return result
 
 

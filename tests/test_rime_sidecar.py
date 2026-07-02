@@ -22,6 +22,7 @@ from rag_ime.rime_sidecar import (
     choose_semantic_query,
     clear_model_prediction_holdover_cache,
     decide_side_candidate_refresh,
+    merge_display_candidates,
     parse_rime_context_payload,
     wait_for_model_prediction_lane_idle,
 )
@@ -52,6 +53,28 @@ class MultiPredictionProvider:
             ModelPrediction(text=f"{current_input}模型{i}", rank=i, provider_name="multi-model", latency_ms=8)
             for i in range(1, max_candidates + 1)
         ]
+
+
+class PrefixConstrainedPredictionProvider:
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        return [
+            ModelPrediction(
+                text="设计输入法状态机",
+                rank=1,
+                provider_name="qwen-mlx",
+                latency_ms=12,
+                confidence=0.82,
+                metadata={"initials": "sjsrfztj"},
+            ),
+            ModelPrediction(
+                text="把这个项目整理成面试亮点",
+                rank=2,
+                provider_name="qwen-mlx",
+                latency_ms=12,
+                confidence=0.9,
+                metadata={"initials": "bzgxmzlmsld"},
+            ),
+        ][:max_candidates]
 
 
 class FailingPredictionProvider:
@@ -131,6 +154,34 @@ class CapturingCore:
 
     def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
         return "历史输入会进入模型预测 但不能污染 RAG 检索"
+
+
+class PrefixSuggestionCore(CapturingCore):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", top_k: int = 5):
+        return [
+            InputSuggestion(
+                suggestion_id="prefix:1",
+                surface_text="设计一个候选展示方式",
+                suggestion_type="rag",
+                source_event_id=1,
+                evidence_preview="用户之前讨论过候选展示方式",
+                confidence=0.94,
+                metadata={
+                    "insert_text": "设计一个候选展示方式",
+                    "source_type": "rag",
+                    "initials": "sjygxhzsfs",
+                },
+            ),
+            InputSuggestion(
+                suggestion_id="prefix:2",
+                surface_text="把本地记忆注入 Agent 首次运行上下文",
+                suggestion_type="rag",
+                source_event_id=2,
+                evidence_preview="不匹配 sj，应被 prefix 过滤",
+                confidence=0.99,
+                metadata={"source_type": "rag", "initials": "bbdjy zr agent scyx sxw"},
+            ),
+        ][:top_k]
 
 
 class SlowSuggestionCore(CapturingCore):
@@ -249,7 +300,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["modelLane"]["called"])
         self.assertFalse(response["modelLane"]["timedOut"])
         self.assertEqual(response["modelLane"]["predictionCount"], 1)
-        self.assertEqual(response["modelLane"]["totalLatencyBudgetMs"], 150)
+        self.assertEqual(response["modelLane"]["totalLatencyBudgetMs"], 300)
 
     def test_layout_contract_keeps_model_inline_and_sentence_candidates_block(self) -> None:
         response = build_rime_sidecar_response(
@@ -481,6 +532,210 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertFalse(any(item["sourceType"] == "rime" for item in display))
         self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 3)
         self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
+
+    def test_display_merge_deduplicates_sources_and_fills_later_candidates(self) -> None:
+        snapshot = parse_rime_context_payload(
+            {
+                "sessionId": "squirrel-dedupe",
+                "requestSeq": 1,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 5,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "推荐", "comment": "rime"},
+                        {"label": "2", "text": "让", "comment": "rime"},
+                    ]
+                },
+            },
+            default_project="wisdom-weasel-rag-ime",
+        )
+        display = merge_display_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(text="推荐", rank=1, provider_name="model", latency_ms=8),
+                ModelPrediction(text="推荐", rank=2, provider_name="model", latency_ms=8),
+                ModelPrediction(text="生成", rank=3, provider_name="model", latency_ms=8),
+            ],
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="sug-1",
+                    surface_text="重复句子",
+                    suggestion_type="memory",
+                    source_event_id=1,
+                    evidence_preview="first",
+                    confidence=0.9,
+                ),
+                InputSuggestion(
+                    suggestion_id="sug-2",
+                    surface_text="重复句子",
+                    suggestion_type="memory",
+                    source_event_id=2,
+                    evidence_preview="duplicate",
+                    confidence=0.8,
+                ),
+                InputSuggestion(
+                    suggestion_id="sug-3",
+                    surface_text="新的句子",
+                    suggestion_type="memory",
+                    source_event_id=3,
+                    evidence_preview="new",
+                    confidence=0.7,
+                ),
+            ],
+        )
+
+        self.assertEqual([item.text for item in display], ["推荐", "生成", "重复句子", "新的句子", "让"])
+        self.assertEqual([item.source_type for item in display], ["model", "model", "rag", "rag", "rime"])
+
+    def test_code_like_raw_input_gets_commit_candidate(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-raw-english",
+                "requestSeq": 1,
+                "rawInput": "model_prediction",
+                "preedit": "model_prediction",
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+        )
+
+        self.assertEqual(response["queryBasis"], "rawSemanticInput")
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
+        self.assertEqual(self.predictor.last_current_input, "model_prediction")
+        first = response["displayCandidates"][0]
+        self.assertEqual(first["sourceType"], "raw_english")
+        self.assertEqual(first["insertText"], "model_prediction")
+        self.assertEqual(first["selectionAction"], "commit_side_candidate")
+
+    def test_short_technical_raw_input_refreshes_llm_and_rag_before_rime_noise(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-raw-rag",
+                "requestSeq": 1,
+                "rawInput": "rag",
+                "preedit": "rag",
+                "committedContext": "我正在做本地 RAG 输入法，需要根据历史输入预测候选。",
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "让", "comment": "rime"},
+                        {"label": "2", "text": "人", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=MultiPredictionProvider(),
+        )
+
+        display = response["displayCandidates"]
+        self.assertEqual(response["queryBasis"], "rawSemanticInput")
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
+        self.assertEqual(response["modelLane"]["predictionCount"], 8)
+        self.assertEqual([item["sourceType"] for item in display[:5]], ["model"] * 5)
+        self.assertEqual([item["sourceType"] for item in display[5:]], ["rag", "rag", "rag"])
+        self.assertFalse(any(item["sourceType"] == "rime" for item in display))
+
+    def test_plain_lowercase_pinyin_does_not_get_raw_english_candidate(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-plain-pinyin",
+                "requestSeq": 1,
+                "rawInput": "shuoyihenduoshihou",
+                "preedit": "shuoyihenduoshihou",
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "说一很多时候", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+        )
+
+        self.assertTrue(response["displayCandidates"])
+        self.assertNotEqual(response["displayCandidates"][0]["sourceType"], "raw_english")
+
+    def test_prediction_first_merge_prefix_filters_side_candidates_before_wanxiang_fallback(self) -> None:
+        core = PrefixSuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-prediction-first-prefix",
+                "requestSeq": 51,
+                "rawInput": "sj",
+                "preedit": "sj",
+                "committedContext": "我想",
+                "predictionFirstMerge": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "手机", "comment": "wanxiang"},
+                        {"label": "2", "text": "世界", "comment": "wanxiang"},
+                    ]
+                },
+            },
+            adapter=adapter,
+            core=core,
+            predictor=PrefixConstrainedPredictionProvider(),
+        )
+
+        self.assertTrue(response["predictionFirst"]["enabled"])
+        self.assertEqual(response["predictionFirst"]["mode"], "prefix_constrained_composing")
+        self.assertEqual(response["predictionFirst"]["pinyinPrefix"], "sj")
+        display = response["displayCandidates"]
+        self.assertEqual(
+            [item["text"] for item in display],
+            ["设计一个候选展示方式", "设计输入法状态机", "手机", "世界"],
+        )
+        self.assertEqual([item["sourceType"] for item in display], ["rag", "model", "rime", "rime"])
+        self.assertEqual([item["displayLane"] for item in display], ["memory", "model", "wanxiang", "wanxiang"])
+        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 2)
+        self.assertTrue(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
+
+    def test_prediction_first_post_commit_uses_commit_preview_as_prediction_anchor(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        predictor = FakePredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-prediction-first-post-commit",
+                "requestSeq": 52,
+                "commitTextPreview": "我想",
+                "committedContext": "用户刚刚上屏了 我想",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertTrue(response["predictionFirst"]["enabled"])
+        self.assertEqual(response["predictionFirst"]["mode"], "post_commit_predicting")
+        self.assertEqual(response["queryBasis"], "commitTextPreview")
+        self.assertEqual(response["semanticQuery"], "我想")
+        self.assertEqual(response["triggerDecision"]["reason"], "force: explicit side candidate refresh")
+        self.assertEqual(predictor.last_current_input, "我想")
+        self.assertEqual(core.last_suggest_recent_context, "用户刚刚上屏了 我想")
+        self.assertEqual(response["modelPredictions"][0]["text"], "我想续写")
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rag", "model"])
+        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
+        self.assertFalse(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
 
     def test_predictor_cooldown_skips_second_rime_refresh_but_keeps_rag(self) -> None:
         delegate = FailingPredictionProvider()
