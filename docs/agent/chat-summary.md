@@ -1854,3 +1854,23 @@ Verification:
 
 Next:
 - Commit/push this adapter-neutral contract.
+
+### 2026-07-02
+Topic:
+- Add reusable PredictionManager above the frontend-neutral PredictionSession contract.
+
+Changes:
+- Added `rag_ime/prediction_manager.py`.
+- `PredictionManager` keeps the active LLM/RAG/memory candidate pool bound to committed context and TTL.
+- Continued pinyin can reuse the candidate pool and filter by prefix; raw passthrough clears the AI panel and does not reuse stale predictions.
+- Added tests for post-commit render, prefix reuse, stale expiry, context isolation, and raw input protection.
+- Updated shared contract and redesign plan with the manager entrypoint.
+
+Verification:
+- `py_compile` passed for prediction manager/core.
+- Prediction-manager and prediction-first tests passed: 15 tests.
+- Broader prediction/debug/sidecar tests passed: 95 tests.
+- Full suite passed: 270 tests.
+
+Next:
+- Commit/push this manager layer.

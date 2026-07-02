@@ -77,6 +77,24 @@ This is the frontend-neutral lifecycle contract:
 - raw English/code/path/command: `raw_passthrough`, do not show stale prediction candidates;
 - empty/stale response: `hidden`, frontend clears the AI prediction layer.
 
+`PredictionManager` is the frontend-neutral owner of this lifecycle. A macOS
+adapter should feed it structured Rime/wanxiang snapshots plus optional fresh
+LLM/RAG/memory sources:
+
+```text
+Rime/wanxiang snapshot
+  + optional model_predictions
+  + optional input_suggestions
+  + optional raw_commit_text for English/code/path/command
+  -> PredictionManager.render()
+  -> display_candidates + prediction_session
+```
+
+The manager keeps the current candidate pool bound to the committed-context
+fingerprint and a short TTL. Continued pinyin such as `sj` can reuse the same
+pool and filter it by prefix; raw passthrough such as `git status` clears the AI
+prediction panel and does not reuse old LLM/RAG candidates.
+
 ## Suggestion Compiler Boundary
 
 `SuggestionCompiler` belongs to the input-method adapter, not the shared memory core.

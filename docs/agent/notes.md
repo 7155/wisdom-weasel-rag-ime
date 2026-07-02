@@ -2625,3 +2625,26 @@ Commands:
 
 Findings:
 - This moves the core product behavior closer to the requested adapter-independent route: frontends can now clear or show the AI prediction layer without relying on Squirrel-specific trace markers.
+
+### 2026-07-02 15:16 CST
+Problem:
+- `PredictionSession` defined the frontend-visible state, but there was still no reusable manager that maintained a candidate pool across post-commit and continued-prefix updates.
+- Without a manager, each future macOS adapter could accidentally reimplement patched-Squirrel-specific cache and clear-panel behavior.
+
+Changes:
+- Added `rag_ime/prediction_manager.py`.
+- `PredictionManager.render()` accepts a structured Rime/wanxiang snapshot, optional fresh model/RAG/memory sources, and optional `raw_commit_text`.
+- The manager binds the candidate pool to the committed-context fingerprint and a short TTL.
+- Continued pinyin can reuse the current candidate pool and apply prefix filtering.
+- Raw passthrough such as `git status` forces `RAW_INPUT`, clears the AI prediction panel, and does not reuse stale LLM/RAG candidates.
+- Added tests for post-commit sources, prefix reuse, TTL expiry, context change, and raw passthrough.
+- Updated shared adapter contract and redesign plan to name `PredictionManager` as the future frontend entrypoint.
+
+Commands:
+- `python3 -m py_compile rag_ime/prediction_manager.py rag_ime/prediction_first.py`: passed.
+- `python3 -m unittest tests.test_prediction_manager tests.test_prediction_first`: 15 tests passed.
+- `python3 -m unittest tests.test_prediction_manager tests.test_prediction_first tests.test_rime_sidecar tests.test_debug_server tests.test_demo_quality`: 95 tests passed.
+- `python3 -m unittest discover -s tests`: 270 tests passed.
+
+Findings:
+- This is a concrete step away from the unavailable patched-Squirrel route: the future adapter can call `PredictionManager` directly and keep ordinary input stable by construction.
