@@ -58,9 +58,13 @@ class PredictionManager:
         raw_commit_text: str = "",
         now_ms: int = 0,
     ) -> PredictionManagerResult:
-        mode = InputMode.RAW_INPUT if compact_whitespace(raw_commit_text) else infer_input_mode(snapshot)
         context_fingerprint = _context_fingerprint(snapshot.committed_context)
         source_update = model_predictions is not None or suggestions is not None
+        mode = (
+            InputMode.RAW_INPUT
+            if compact_whitespace(raw_commit_text) and not source_update
+            else infer_input_mode(snapshot)
+        )
         if source_update:
             self._cache = self._updated_cache(
                 context_fingerprint=context_fingerprint,
