@@ -11,26 +11,32 @@ final class RimeDictionaryCandidateProvider {
     }
 
     private let dictionaryPath: String?
+    private let dictionaryPaths: [String]
     private let essayPath: String?
     private let dictionaryLabel: String
     private var cachedEntries: [Entry]?
+    private var cachedBuckets: [String: [Entry]]?
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         let configured = environment["RAG_IME_RIME_DICT_PATH"].flatMap { $0.isEmpty ? nil : $0 }
+        let configuredPaths = environment["RAG_IME_RIME_DICT_PATHS"].flatMap { $0.isEmpty ? nil : $0 }
+        let configuredDirectory = environment["RAG_IME_RIME_DICT_DIR"].flatMap { $0.isEmpty ? nil : $0 }
         let configuredEssay = environment["RAG_IME_RIME_ESSAY_PATH"].flatMap { $0.isEmpty ? nil : $0 }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = [
-            configured,
-            "\(home)/Library/Rime/wanxiang.dict.yaml",
-            "\(home)/Library/Rime/luna_pinyin.dict.yaml",
-        ].compactMap { $0 }
-        self.dictionaryPath = candidates.first { FileManager.default.fileExists(atPath: $0) }
+        let resolvedPaths = Self.resolveDictionaryPaths(
+            configuredPath: configured,
+            configuredPaths: configuredPaths,
+            configuredDirectory: configuredDirectory,
+            defaultDirectory: "\(home)/Library/Rime"
+        )
+        self.dictionaryPaths = resolvedPaths
+        self.dictionaryPath = resolvedPaths.first
         let essayCandidates = [
             configuredEssay,
             "\(home)/Library/Rime/essay.txt",
         ].compactMap { $0 }
         self.essayPath = essayCandidates.first { FileManager.default.fileExists(atPath: $0) }
-        if let dictionaryPath, dictionaryPath.localizedCaseInsensitiveContains("wanxiang") {
+        if resolvedPaths.contains(where: { $0.localizedCaseInsensitiveContains("wanxiang") }) {
             self.dictionaryLabel = "wanxiang"
         } else {
             self.dictionaryLabel = "rime"
@@ -39,7 +45,7 @@ final class RimeDictionaryCandidateProvider {
 
     func candidates(for rawInput: String, maxCount: Int = 8) -> [RimeCandidatePayload] {
         let query = normalizedQuery(rawInput)
-        guard !query.isEmpty, let entries = loadEntries() else {
+        guard !query.isEmpty, let entries = candidatePool(for: query) else {
             return []
         }
 
@@ -102,13 +108,24 @@ final class RimeDictionaryCandidateProvider {
         if let cachedEntries {
             return cachedEntries
         }
-        guard let dictionaryPath, let content = try? String(contentsOfFile: dictionaryPath, encoding: .utf8) else {
+        guard !dictionaryPaths.isEmpty else {
             cachedEntries = []
             return cachedEntries
         }
         let essayWeights = loadEssayWeights()
-        var inBody = false
         var entries: [Entry] = []
+        for dictionaryPath in dictionaryPaths {
+            guard let content = try? String(contentsOfFile: dictionaryPath, encoding: .utf8) else {
+                continue
+            }
+            appendEntries(from: content, essayWeights: essayWeights, into: &entries)
+        }
+        cachedEntries = entries
+        return entries
+    }
+
+    private func appendEntries(from content: String, essayWeights: [String: Double], into entries: inout [Entry]) {
+        var inBody = false
         for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
             let raw = String(line)
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -140,8 +157,36 @@ final class RimeDictionaryCandidateProvider {
                 order: entries.count
             ))
         }
-        cachedEntries = entries
-        return entries
+    }
+
+    private func candidatePool(for query: String) -> [Entry]? {
+        guard let buckets = loadBuckets() else {
+            return nil
+        }
+        return buckets[bucketKey(query)] ?? []
+    }
+
+    private func loadBuckets() -> [String: [Entry]]? {
+        if let cachedBuckets {
+            return cachedBuckets
+        }
+        guard let entries = loadEntries() else {
+            return nil
+        }
+        var buckets: [String: [Entry]] = [:]
+        for entry in entries {
+            insert(entry, into: &buckets, key: bucketKey(entry.code))
+            insert(entry, into: &buckets, key: bucketKey(entry.initials))
+        }
+        cachedBuckets = buckets
+        return buckets
+    }
+
+    private func insert(_ entry: Entry, into buckets: inout [String: [Entry]], key: String) {
+        guard !key.isEmpty else {
+            return
+        }
+        buckets[key, default: []].append(entry)
     }
 
     private func loadEssayWeights() -> [String: Double] {
@@ -193,7 +238,9 @@ final class RimeDictionaryCandidateProvider {
     }
 
     private func normalizePinyinCode(_ value: String) -> String {
-        value.unicodeScalars
+        value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .unicodeScalars
             .filter { CharacterSet.alphanumerics.contains($0) }
             .map { Character($0).lowercased() }
             .joined()
@@ -204,10 +251,14 @@ final class RimeDictionaryCandidateProvider {
             scalar == " " || scalar == "'" || scalar == "-" || scalar == "_"
         }
         .compactMap { part -> Character? in
-            part.first
+            normalizePinyinCode(String(part)).first
         }
         .map { String($0).lowercased() }
         .joined()
+    }
+
+    private func bucketKey(_ value: String) -> String {
+        String(value.prefix(2))
     }
 
     private func commonnessPenalty(_ text: String) -> Int {
@@ -222,5 +273,117 @@ final class RimeDictionaryCandidateProvider {
             penalty += 1
         }
         return penalty
+    }
+
+    private static func resolveDictionaryPaths(
+        configuredPath: String?,
+        configuredPaths: String?,
+        configuredDirectory: String?,
+        defaultDirectory: String
+    ) -> [String] {
+        let fileManager = FileManager.default
+        var paths: [String] = []
+        if let configuredPaths {
+            paths.append(contentsOf: configuredPaths.split(separator: ":").map(String.init))
+        }
+        if let configuredPath {
+            paths.append(configuredPath)
+        }
+        if let configuredDirectory {
+            paths.append(contentsOf: dictionaryEntryPoints(in: configuredDirectory))
+        }
+        if paths.isEmpty {
+            paths.append(contentsOf: dictionaryEntryPoints(in: defaultDirectory))
+        }
+
+        var expanded: [String] = []
+        var visited = Set<String>()
+        for path in paths where fileManager.fileExists(atPath: path) {
+            expanded.append(contentsOf: expandDictionary(path: path, visited: &visited))
+        }
+        return stableUnique(expanded.filter { fileManager.fileExists(atPath: $0) })
+    }
+
+    private static func dictionaryEntryPoints(in directory: String) -> [String] {
+        [
+            "\(directory)/wanxiang.dict.yaml",
+            "\(directory)/custom/wanxiang_pro.dict.yaml",
+            "\(directory)/custom/wanxiang_pure.dict.yaml",
+            "\(directory)/luna_pinyin.dict.yaml",
+        ].filter { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    private static func expandDictionary(path: String, visited: inout Set<String>) -> [String] {
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard !visited.contains(standardized) else {
+            return []
+        }
+        visited.insert(standardized)
+        let imports = importTables(from: standardized)
+        guard !imports.isEmpty else {
+            return [standardized]
+        }
+        let baseURL = URL(fileURLWithPath: standardized).deletingLastPathComponent()
+        let parentURL = baseURL.deletingLastPathComponent()
+        var paths: [String] = [standardized]
+        for table in imports {
+            let candidates: [URL]
+            if table.hasPrefix("/") {
+                candidates = [URL(fileURLWithPath: table)]
+            } else {
+                candidates = [
+                    baseURL.appendingPathComponent("\(table).dict.yaml"),
+                    parentURL.appendingPathComponent("\(table).dict.yaml"),
+                ]
+            }
+            if let found = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+                paths.append(contentsOf: expandDictionary(path: found.path, visited: &visited))
+            }
+        }
+        return paths
+    }
+
+    private static func importTables(from path: String) -> [String] {
+        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return []
+        }
+        var inImports = false
+        var imports: [String] = []
+        for rawLine in content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            let line = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed == "import_tables:" {
+                inImports = true
+                continue
+            }
+            guard inImports else {
+                continue
+            }
+            if trimmed.hasPrefix("-") {
+                let table = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !table.isEmpty {
+                    imports.append(table)
+                }
+                continue
+            }
+            if !trimmed.isEmpty {
+                break
+            }
+        }
+        return imports
+    }
+
+    private static func stableUnique(_ paths: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for path in paths {
+            let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+            guard !seen.contains(standardized) else {
+                continue
+            }
+            seen.insert(standardized)
+            result.append(standardized)
+        }
+        return result
     }
 }
