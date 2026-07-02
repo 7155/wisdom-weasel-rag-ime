@@ -3,13 +3,18 @@ import AppKit
 final class RagCandidatePanel {
     static let shared = RagCandidatePanel()
 
+    private enum Metrics {
+        static let panelWidth: CGFloat = 420
+        static let contentWidth: CGFloat = 398
+    }
+
     private let panel: NSPanel
     private let contentStack = NSStackView()
     private var sleeves: [ClosureSleeve] = []
 
     private init() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 170),
+            contentRect: NSRect(x: 0, y: 0, width: Metrics.panelWidth, height: 140),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -136,7 +141,7 @@ final class RagCandidatePanel {
                 onSelect(suggestion, index)
             })
         }
-        contentStack.addArrangedSubview(evidenceCard(suggestion: visibleSuggestions[0], onAction: onAction))
+        _ = onAction
     }
 
     private func rebuild(
@@ -171,9 +176,7 @@ final class RagCandidatePanel {
             })
         }
 
-        if let evidenceCandidate = visible.first(where: { !$0.evidencePreview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
-            contentStack.addArrangedSubview(evidenceCard(candidate: evidenceCandidate, onAction: onAction))
-        }
+        _ = onAction
     }
 
     private func header(currentInput: String, count: Int) -> NSView {
@@ -193,7 +196,7 @@ final class RagCandidatePanel {
         query.lineBreakMode = .byTruncatingTail
         query.maximumNumberOfLines = 1
 
-        let badge = NSTextField(labelWithString: "\(min(count, 6))")
+        let badge = NSTextField(labelWithString: "\(min(count, 8))")
         badge.font = .systemFont(ofSize: 10, weight: .semibold)
         badge.textColor = .white
         badge.alignment = .center
@@ -220,7 +223,7 @@ final class RagCandidatePanel {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let visible = Array(predictions.prefix(3))
-        let width = (438 - CGFloat(max(0, visible.count - 1)) * 6) / CGFloat(max(1, visible.count))
+        let width = (Metrics.contentWidth - CGFloat(max(0, visible.count - 1)) * 6) / CGFloat(max(1, visible.count))
         for (index, prediction) in visible.enumerated() {
             let button = NSButton()
             button.isBordered = false
@@ -251,7 +254,7 @@ final class RagCandidatePanel {
             button.widthAnchor.constraint(equalToConstant: width).isActive = true
             stack.addArrangedSubview(button)
         }
-        stack.widthAnchor.constraint(equalToConstant: 438).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: Metrics.contentWidth).isActive = true
         return stack
     }
 
@@ -266,7 +269,7 @@ final class RagCandidatePanel {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let visible = Array(candidates.prefix(5))
-        let width = (438 - CGFloat(max(0, visible.count - 1)) * 6) / CGFloat(max(1, visible.count))
+        let width = (Metrics.contentWidth - CGFloat(max(0, visible.count - 1)) * 6) / CGFloat(max(1, visible.count))
         for (index, candidate) in visible.enumerated() {
             let button = baseCandidateButton(height: 26)
             button.layer?.backgroundColor = sourceColor(candidate).withAlphaComponent(index == 0 ? 0.22 : 0.14).cgColor
@@ -284,7 +287,7 @@ final class RagCandidatePanel {
             button.widthAnchor.constraint(equalToConstant: width).isActive = true
             stack.addArrangedSubview(button)
         }
-        stack.widthAnchor.constraint(equalToConstant: 438).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: Metrics.contentWidth).isActive = true
         return stack
     }
 
@@ -308,7 +311,7 @@ final class RagCandidatePanel {
         ))
         button.attributedTitle = label
         button.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        button.widthAnchor.constraint(equalToConstant: 438).isActive = true
+        button.widthAnchor.constraint(equalToConstant: Metrics.contentWidth).isActive = true
         return button
     }
 
@@ -326,7 +329,7 @@ final class RagCandidatePanel {
             source: sourceBadge(candidate),
             fontSize: 13
         )
-        button.widthAnchor.constraint(equalToConstant: 438).isActive = true
+        button.widthAnchor.constraint(equalToConstant: Metrics.contentWidth).isActive = true
         return button
     }
 
@@ -353,7 +356,7 @@ final class RagCandidatePanel {
 
         stack.addArrangedSubview(meta)
         stack.addArrangedSubview(preview)
-        stack.widthAnchor.constraint(equalToConstant: 438).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: Metrics.contentWidth).isActive = true
         return stack
     }
 
@@ -380,7 +383,7 @@ final class RagCandidatePanel {
 
         stack.addArrangedSubview(meta)
         stack.addArrangedSubview(preview)
-        stack.widthAnchor.constraint(equalToConstant: 438).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: Metrics.contentWidth).isActive = true
         return stack
     }
 
@@ -409,7 +412,7 @@ final class RagCandidatePanel {
         let label = NSTextField(wrappingLabelWithString: "No local memory matched. Keep typing or commit text to build the local memory base.")
         label.font = .systemFont(ofSize: 12, weight: .regular)
         label.textColor = .secondaryLabelColor
-        label.widthAnchor.constraint(equalToConstant: 438).isActive = true
+        label.widthAnchor.constraint(equalToConstant: Metrics.contentWidth).isActive = true
         return label
     }
 
@@ -418,8 +421,7 @@ final class RagCandidatePanel {
         let visibleRows = suggestionCount > 0 ? min(3, suggestionCount) : 0
         let rowHeight = visibleRows * 34
         let emptyHeight = predictionCount == 0 && suggestionCount == 0 ? 34 : 0
-        let previewHeight = suggestionCount > 0 ? 45 : 0
-        return NSSize(width: 460, height: CGFloat(42 + predictionHeight + rowHeight + emptyHeight + previewHeight))
+        return NSSize(width: Metrics.panelWidth, height: CGFloat(42 + predictionHeight + rowHeight + emptyHeight))
     }
 
     private func fittingSize(displayCandidates: [RimeDisplayCandidate]) -> NSSize {
@@ -429,8 +431,7 @@ final class RagCandidatePanel {
         let inlineHeight = inlineCount > 0 ? 32 : 0
         let rowHeight = min(5, blockRows) * 36
         let emptyHeight = visible.isEmpty ? 34 : 0
-        let previewHeight = visible.contains { !$0.evidencePreview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ? 45 : 0
-        return NSSize(width: 460, height: CGFloat(42 + inlineHeight + rowHeight + emptyHeight + previewHeight))
+        return NSSize(width: Metrics.panelWidth, height: CGFloat(42 + inlineHeight + rowHeight + emptyHeight))
     }
 
     private func baseCandidateButton(height: CGFloat) -> NSButton {

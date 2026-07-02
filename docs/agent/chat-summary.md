@@ -1997,3 +1997,23 @@ Verification:
 - Wanxiang fixture preview passed for `ni`, `shijie`, `sj`, and rejected command/path input.
 - Real `7155/rime-wanxiang` smoke passed via `RAG_IME_RIME_DICT_DIR=/tmp/rime-wanxiang-inspect`; cold YAML load was about 16s, so this stays a debug bridge until a real librime/native index path replaces it.
 - Full suite passed: 275.
+
+### 2026-07-02
+Topic:
+- Compact native panel and live-verifier correction for Prediction-first RAG IME.
+
+User question:
+- The branch name `codex/wisdom-weasel-rag-ime-mvp` is just a Git branch namespace prefix; GitHub's `default` badge means this branch is currently the default branch, not that the repo is under a Codex folder.
+
+Changes:
+- Native candidate popup is smaller and no longer renders evidence cards by default.
+- Candidate-pool TTL now matches the short post-commit panel behavior at 900ms.
+- LaunchAgent installer now preserves embedding/vector env vars for future local/remote embedding setup.
+- Live sidecar verifier now treats unmatched pinyin as a valid Rime fallback path, while still requiring AI/RAG/memory to take priority when a prefix-matching side candidate exists.
+
+Verification:
+- Focused tests passed: 29.
+- Live `verify_prediction_first_sidecar.py --latency-budget-ms 350` passed.
+- macOS frontend build and user install passed.
+- Full suite passed: 275.
+- Health check shows local MLX Qwen3.5 0.8B text 4bit is active; vector retrieval is still disabled until embedding config/indexing is enabled.

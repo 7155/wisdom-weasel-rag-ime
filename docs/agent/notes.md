@@ -2787,3 +2787,35 @@ Verification:
 - `python3 -m unittest tests.test_macos_dictionary_provider tests.test_prediction_first tests.test_rime_sidecar tests.test_prediction_manager`: 59 tests passed.
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 275 tests passed.
 - `git diff --check`: passed.
+
+### 2026-07-02 17:28 CST
+Problem:
+- User asked why the GitHub branch appears under `codex/...`; clarified this is only a branch-name prefix, and `default` means GitHub currently treats that branch as the default branch.
+- User feedback: the IME panel should stay compact, should not expose evidence/source cards in the tiny IME window by default, and live verification should not falsely fail when a pinyin prefix has no matching AI/RAG/memory candidate.
+
+Decisions:
+- Keep the real IME candidate panel small. Evidence and long previews remain in payloads for debug/manage surfaces, not the default candidate popup.
+- Adapter-neutral candidate-pool TTL should match the short post-commit panel policy: 0.9s.
+- Live sidecar verification must distinguish two correct states: matching prefix means AI/RAG/memory candidates take over; unmatched prefix means clean Rime/Wanxiang fallback with stale prediction panel cleared.
+
+Changes:
+- Native `RagCandidatePanel` is narrower and no longer renders evidence cards in normal candidate rows.
+- `PredictionManager` default candidate-pool TTL is now 900ms.
+- LaunchAgent installer now preserves embedding/vector env vars such as `RAG_IME_EMBEDDING_*`, `RAG_IME_VECTOR_CANDIDATES`, and `RAG_IME_VECTOR_WEIGHT`.
+- Live verifier now accepts clean Rime fallback for unmatched prefix and still enforces AI-first behavior when side candidates match.
+
+Findings:
+- Current sidecar health is OK, using MLX local Qwen3.5 0.8B text 4bit at `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local`.
+- Predictor prompt cache is enabled and hit-ready; `vectorStats.enabled=false` because no embedding provider env is active in the installed sidecar yet.
+- `installation.yaml` is still untracked and was intentionally left out of staging.
+
+Commands:
+- `git status -sb`: `## codex/wisdom-weasel-rag-ime-mvp...origin/codex/wisdom-weasel-rag-ime-mvp`; modified files are `macos/RagImeMac/Sources/RagCandidatePanel.swift`, `rag_ime/prediction_manager.py`, `scripts/install_sidecar_launch_agent.sh`, `scripts/verify_prediction_first_sidecar.py`, `tests/test_launch_agent_script.py`; untracked `installation.yaml`.
+- `git diff --stat`: 7 files changed, 114 insertions(+), 26 deletions(-).
+- `python3 -m py_compile scripts/verify_prediction_first_sidecar.py rag_ime/prediction_manager.py`: passed.
+- `python3 -m unittest tests.test_prediction_manager tests.test_prediction_first tests.test_demo_quality tests.test_launch_agent_script`: 29 tests passed.
+- `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 350`: passed; live cases covered prefix fallback, post-commit model/RAG panel, raw command/code/path protection, and no-context Rime fallback.
+- `scripts/build_macos_frontend.sh`: passed and signed `build/RagImeMac.app`.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 275 tests passed.
+- `scripts/install_macos_frontend.sh`: installed `/Users/undo/Library/Input Methods/RagImeMac.app` and bridge config.
+- `git diff --check`: passed.

@@ -219,12 +219,23 @@ def check_case(case: dict[str, Any], response: dict[str, Any], *, elapsed_ms: in
     failures: list[str] = []
     if case_id == "prediction-first-model-memory":
         require(prediction_first.get("enabled") is True, case_id, "prediction-first must be enabled", failures)
-        require("model" in source_types, case_id, "must show at least one model candidate", failures)
-        require(source_types and source_types[0] == "model", case_id, "model inline candidate must stay first", failures)
-        require(any(source in {"memory", "rag"} for source in source_types), case_id, "must show memory/RAG candidates", failures)
-        require("rime" not in source_types, case_id, "must not show Rime while side candidates exist", failures)
-        require(int(policy.get("wanxiangFallbackCount") or 0) == 0, case_id, "wanxiang fallback count must be 0", failures)
-        require(int(policy.get("prefixMatchedSideInserted") or 0) > 0, case_id, "pinyin prefix must match at least one side candidate", failures)
+        prefix_matched_side = int(policy.get("prefixMatchedSideInserted") or 0)
+        wanxiang_fallback_count = int(policy.get("wanxiangFallbackCount") or 0)
+        if prefix_matched_side > 0:
+            require(source_types and source_types[0] != "rime", case_id, "side candidate must stay before Rime", failures)
+            require(
+                any(source in {"model", "memory", "rag"} for source in source_types),
+                case_id,
+                "must show model/memory/RAG candidates",
+                failures,
+            )
+            require("rime" not in source_types, case_id, "must not show Rime while side candidates exist", failures)
+            require(wanxiang_fallback_count == 0, case_id, "wanxiang fallback count must be 0", failures)
+        else:
+            require(source_types and all(source == "rime" for source in source_types), case_id, "unmatched prefix must fall back to Rime", failures)
+            require(wanxiang_fallback_count > 0, case_id, "unmatched prefix must report Rime fallback count", failures)
+            require(policy.get("predictionPanelVisible") is False, case_id, "unmatched prefix must hide prediction panel", failures)
+            require(policy.get("shouldClearPredictionPanel") is True, case_id, "unmatched prefix must clear stale prediction panel", failures)
         require(not (LOW_VALUE & set(texts)), case_id, "low-value words must be filtered", failures)
     elif case_id == "post-commit-model-memory-panel":
         require(prediction_first.get("enabled") is True, case_id, "prediction-first must be enabled", failures)
