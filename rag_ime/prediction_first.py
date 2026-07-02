@@ -217,7 +217,11 @@ def merge_prediction_first_candidates(
         max_visible=max_visible,
     )
     prediction_candidates = pool.prediction_order()
-    if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING:
+    strict_prefix_constraint = (
+        resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING
+        and not raw_inserted
+    )
+    if strict_prefix_constraint:
         prediction_candidates = _prefix_lane_order(prediction_candidates, prefix)
 
     side_budget = min(snapshot.max_side_candidates, max_visible)
@@ -228,6 +232,8 @@ def merge_prediction_first_candidates(
             break
         normalized = _display_norm(candidate.display_text)
         if not normalized or normalized in seen:
+            continue
+        if strict_prefix_constraint and not prediction_candidate_matches_prefix(candidate, prefix):
             continue
         seen.add(normalized)
         display.append(_side_display_item(candidate, len(display), resolved_mode, prefix))
@@ -247,7 +253,7 @@ def merge_prediction_first_candidates(
         side_inserted=side_inserted,
         rime_fallback_count=rime_count,
         reason=(
-            "prefix-constrained predictions sorted first; remaining LLM/RAG candidates fill before wanxiang/rime fallback"
+            "prefix-constrained predictions are hard-filtered by user pinyin; wanxiang/rime handles fallback"
             if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING
             else "post-commit predictions shown before fallback candidates"
         ),
@@ -391,13 +397,9 @@ def prediction_candidate_matches_prefix(candidate: PredictionCandidate, prefix: 
 def _prefix_lane_order(candidates: tuple[PredictionCandidate, ...], prefix: str) -> tuple[PredictionCandidate, ...]:
     model_candidates = tuple(item for item in candidates if item.source_type == "model")
     memory_candidates = tuple(item for item in candidates if item.source_type != "model")
-    matched_model, unmatched_model = _split_prefix_matches(model_candidates, prefix)
-    matched_memory, unmatched_memory = _split_prefix_matches(memory_candidates, prefix)
-    if matched_model:
-        return matched_model + matched_memory + unmatched_model + unmatched_memory
-    visible_unmatched_model = unmatched_model[:1]
-    deferred_unmatched_model = unmatched_model[1:]
-    return visible_unmatched_model + matched_memory + unmatched_memory + deferred_unmatched_model
+    matched_model, _ = _split_prefix_matches(model_candidates, prefix)
+    matched_memory, _ = _split_prefix_matches(memory_candidates, prefix)
+    return matched_model + matched_memory
 
 
 def _split_prefix_matches(

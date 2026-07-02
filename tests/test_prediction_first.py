@@ -126,18 +126,17 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertTrue(result.policy["rimeCompositionOwnedByRime"])
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["设计输入法状态机", "设计一个候选展示方式", "把这个项目整理成面试亮点"],
+            ["设计输入法状态机", "设计一个候选展示方式"],
         )
         self.assertEqual(
             [item.source_type for item in result.display_candidates],
-            ["model", "rag", "model"],
+            ["model", "rag"],
         )
-        self.assertEqual([item.label for item in result.display_candidates], ["1", "2", "3"])
-        self.assertEqual(result.policy["sideInserted"], 3)
+        self.assertEqual([item.label for item in result.display_candidates], ["1", "2"])
+        self.assertEqual(result.policy["sideInserted"], 2)
         self.assertEqual(result.policy["prefixMatchedSideInserted"], 2)
         self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
         self.assertEqual(result.display_candidates[0].display_lane, "model")
-        self.assertEqual(result.display_candidates[2].display_lane, "model")
         self.assertEqual(result.display_candidates[1].metadata["candidate_mode"], "prefix_constrained_composing")
         session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
         self.assertEqual(session.phase, PredictionSessionPhase.PREFIX_CONSTRAINED)
@@ -147,7 +146,7 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual(session.selection_scope, "mixed_prediction_first")
         self.assertTrue(session.rime_composition_owned_by_rime)
 
-    def test_prefix_constrained_composition_uses_unmatched_llm_before_wanxiang_when_available(self) -> None:
+    def test_prefix_constrained_composition_falls_back_to_wanxiang_when_side_candidates_do_not_match(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",
             request_seq=3,
@@ -173,11 +172,14 @@ class PredictionFirstTests(unittest.TestCase):
             suggestions=[],
         )
 
-        self.assertEqual([item.text for item in result.display_candidates], ["把这个项目整理成面试亮点"])
-        self.assertEqual([item.source_type for item in result.display_candidates], ["model"])
-        self.assertEqual(result.policy["sideInserted"], 1)
+        self.assertEqual([item.text for item in result.display_candidates], ["手机"])
+        self.assertEqual([item.source_type for item in result.display_candidates], ["rime"])
+        self.assertEqual(result.policy["sideInserted"], 0)
         self.assertEqual(result.policy["prefixMatchedSideInserted"], 0)
-        self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
+        self.assertEqual(result.policy["wanxiangFallbackCount"], 1)
+        session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
+        self.assertEqual(session.phase, PredictionSessionPhase.ANCHOR_COMPOSING)
+        self.assertTrue(session.should_clear_prediction_panel)
 
     def test_prefix_constrained_raw_command_keeps_raw_commit_first(self) -> None:
         snapshot = RimeContextSnapshot(

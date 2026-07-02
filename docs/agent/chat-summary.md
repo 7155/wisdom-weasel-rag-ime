@@ -1941,3 +1941,23 @@ Verification:
 
 Open issue:
 - Candidate quality still needs a separate pass: short prefixes like `ni` can recall long RAG history snippets instead of concise, prefix-constrained continuation candidates.
+
+### 2026-07-02
+Topic:
+- Tighten Prediction-first candidate appearance and commit contract after user feedback.
+
+User feedback captured:
+- The panel should feel like Wisdom-Weasel's natural IME candidate flow, not a persistent clipboard/history popup.
+- Short active pinyin such as `ni` must not show unrelated RAG/memory history snippets.
+- RAG/memory candidates should be selectable short spans; full retrieved material is evidence for expansion, not direct committed text.
+
+Changes:
+- Prefix-constrained mode now hard-filters side candidates by pinyin metadata. If no LLM/RAG/memory candidate matches, Wanxiang/Rime fallback is shown and the prediction panel is marked clearable.
+- `SuggestionCompiler` now sets `insert_text` to the compact candidate surface and keeps original material in expanded evidence / preview metadata.
+- Tests now cover the no-match `ni -> 你/呢` fallback and the short-candidate insert contract.
+
+Verification:
+- Focused prefix/insert tests passed.
+- Runtime-term and demo-quality tests passed.
+- macOS frontend build passed.
+- Full test suite passed: 272 tests.

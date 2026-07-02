@@ -2719,3 +2719,26 @@ Commands:
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_prediction_first tests.test_prediction_manager tests.test_rime_sidecar tests.test_debug_server`: 84 tests passed.
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 271 tests passed.
 - `git diff --check`: passed.
+
+### 2026-07-02 17:12 CST
+Problem:
+- User feedback: the LLM/RAG/memory panel still felt too much like a persistent clipboard/history popup, and short prefixes such as `ni` could show unrelated RAG/history suggestions.
+- Selecting a RAG candidate could commit the full retrieved history paragraph because `SuggestionCompiler` kept compact `surface_text` but long `metadata.insert_text`.
+
+Decision:
+- Prefix-constrained mode must be a hard user constraint: if active pinyin does not match a side candidate's pinyin metadata, that side candidate must not occupy a number key.
+- A number-key selection in the real IME should commit the compact candidate span. Full RAG source material belongs in `expandedEvidence` / `preview_text`, not `insertText`.
+
+Changes:
+- `merge_prediction_first_candidates()` now hard-filters model/RAG/memory candidates in `PREFIX_CONSTRAINED_COMPOSING`; unmatched side candidates are dropped and Wanxiang/Rime fallback owns the visible list.
+- Raw English/code passthrough still keeps its direct raw commit candidate and may show same-request side candidates.
+- `SuggestionCompiler` now writes compact candidate text to `metadata.insert_text`, de-duplicates by committed candidate span, and preserves full source text in expanded evidence.
+- Added regression coverage for `ni` prefix no-match fallback: visible candidates become Wanxiang/Rime `你` and `呢`, while the prediction panel asks the frontend to clear.
+
+Verification:
+- Focused prefix/insert contract tests passed.
+- Runtime-term and demo-quality tests passed.
+- CLI `/rime-suggest-json` previews passed: `ni` with committed context returns only Rime display candidates and `predictionPanelVisible=false`; post-commit RAG candidates have `insertText == text`.
+- `scripts/build_macos_frontend.sh`: passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 272 tests passed.
+- `git diff --check`: passed.

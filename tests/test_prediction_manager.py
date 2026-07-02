@@ -63,7 +63,7 @@ class PredictionManagerTests(unittest.TestCase):
         self.assertEqual(result.session.selection_scope, "mixed_prediction_first")
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["设计输入法状态机", "设计一个候选展示方式", "把这个项目整理成面试亮点"],
+            ["设计输入法状态机", "设计一个候选展示方式"],
         )
         self.assertTrue(all(item.source_type != "rime" for item in result.display_candidates))
 

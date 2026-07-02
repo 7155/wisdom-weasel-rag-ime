@@ -178,10 +178,6 @@ class SuggestionCompiler:
                 continue
             if _is_low_value_memory_text(source_text):
                 continue
-            insert_norm = _suggestion_insert_norm(source_text)
-            if insert_norm in seen_insert_texts:
-                continue
-            seen_insert_texts.add(insert_norm)
             suggestion_type = classify_suggestion(source_text, memory.tags)
             surface = compress_surface_text(
                 raw_source_text,
@@ -191,6 +187,11 @@ class SuggestionCompiler:
             )
             if not surface or not _is_meaningful_suggestion_surface(surface):
                 continue
+            insert_text = compile_candidate_insert_text(surface)
+            insert_norm = _suggestion_insert_norm(insert_text)
+            if insert_norm in seen_insert_texts:
+                continue
+            seen_insert_texts.add(insert_norm)
             suggestion = InputSuggestion(
                 suggestion_id=f"sug-{memory.memory_id}",
                 surface_text=surface,
@@ -207,7 +208,7 @@ class SuggestionCompiler:
                     "rank": item.rank,
                     "tags": list(memory.tags),
                     "source_type": _source_type_from_tags(memory.tags),
-                    "insert_text": source_text,
+                    "insert_text": insert_text,
                     "preview_text": memory.evidence_preview or source_text,
                     "sources": [memory.source_ref],
                     "state": dict(getattr(memory, "state", {}) or {}),
@@ -222,6 +223,17 @@ class SuggestionCompiler:
 
 def _suggestion_insert_norm(text: str) -> str:
     return compact_whitespace(text).lower()
+
+
+def compile_candidate_insert_text(surface_text: str) -> str:
+    """Return the text committed by number selection in the real IME panel.
+
+    Full RAG evidence stays in `expanded_evidence` / `preview_text`. Selecting a
+    candidate must commit the concise candidate span, not an entire retrieved
+    history paragraph.
+    """
+
+    return compact_whitespace(surface_text)
 
 
 def _skip_memory_by_tags(tags: tuple[str, ...]) -> bool:
@@ -310,7 +322,7 @@ def compress_surface_text(
     suggestion_type: str = "",
     max_chars: int = 42,
 ) -> str:
-    """Return compact candidate-bar text while preserving full insert text elsewhere."""
+    """Return compact candidate-bar text while preserving full evidence elsewhere."""
 
     raw = text or ""
     compact = compact_whitespace(raw)
@@ -616,14 +628,16 @@ def _surface_candidate_score(text: str, tags: tuple[str, ...], suggestion_type: 
 
 def expanded_evidence(memory: MemoryLike, source_text: str) -> str:
     preview = memory.evidence_preview or source_text
-    return "\n".join(
-        [
-            memory.source_ref,
-            f"reason: {memory.reason}",
-            "",
-            preview,
-        ]
-    ).strip()
+    parts = [
+        memory.source_ref,
+        f"reason: {memory.reason}",
+        "",
+        preview,
+    ]
+    source = compact_whitespace(source_text)
+    if source and source != compact_whitespace(preview):
+        parts.extend(["", source])
+    return "\n".join(parts).strip()
 
 
 def _optional_int(value: str | None) -> int | None:

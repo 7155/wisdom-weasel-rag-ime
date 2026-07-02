@@ -125,7 +125,7 @@ class InputMethodAdapterTests(unittest.TestCase):
         self.assertIn("sources", structure.metadata)
         self.assertLessEqual(len(structure.surface_text), 42)
 
-    def test_candidate_surface_prefers_useful_bullet_without_truncating_insert_text(self) -> None:
+    def test_candidate_surface_prefers_useful_bullet_and_commits_short_candidate_text(self) -> None:
         memory = CoreMemory(
             memory_id="mem-long-rag",
             source_event_id="501",
@@ -144,8 +144,9 @@ class InputMethodAdapterTests(unittest.TestCase):
         suggestion = SuggestionCompiler().compile([RankedMemory(memory=memory, score=0.9, rank=1)])[0]
 
         self.assertEqual(suggestion.surface_text, "候选面板只显示压缩标题，完整段落放 insert_text。")
-        self.assertIn("背景说明这一句不是候选重点", suggestion.metadata["insert_text"])
-        self.assertIn("evidence preview 放到展开面板", suggestion.metadata["insert_text"])
+        self.assertEqual(suggestion.metadata["insert_text"], suggestion.surface_text)
+        self.assertIn("背景说明这一句不是候选重点", suggestion.expanded_evidence)
+        self.assertIn("evidence preview 放到展开面板", suggestion.expanded_evidence)
 
     def test_candidate_surface_strips_tool_trace_prefix_but_keeps_identifier(self) -> None:
         memory = CoreMemory(
@@ -167,7 +168,8 @@ class InputMethodAdapterTests(unittest.TestCase):
         self.assertNotIn("tool exec_command", suggestion.surface_text)
         self.assertNotIn("Chunk ID", suggestion.surface_text)
         self.assertIn("RAG_IME_PREDICTOR_BASE_URL", suggestion.surface_text)
-        self.assertIn("tool exec_command", suggestion.metadata["insert_text"])
+        self.assertEqual(suggestion.metadata["insert_text"], suggestion.surface_text)
+        self.assertIn("tool exec_command", suggestion.expanded_evidence)
 
     def test_candidate_surface_skips_patch_and_file_hit_noise(self) -> None:
         patch_memory = CoreMemory(
