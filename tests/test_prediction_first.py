@@ -5,10 +5,13 @@ import unittest
 from rag_ime.models import InputSuggestion, ModelPrediction, RimeCandidate, RimeContextSnapshot
 from rag_ime.prediction_first import (
     InputMode,
+    PredictionSessionPhase,
+    prediction_session_to_payload,
     infer_input_mode,
     merge_prediction_first_candidates,
     prediction_candidate_matches_prefix,
     build_candidate_pool,
+    resolve_prediction_session,
 )
 
 
@@ -50,6 +53,12 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual([item.text for item in result.display_candidates], ["我想", "微信"])
         self.assertEqual([item.source_type for item in result.display_candidates], ["rime", "rime"])
         self.assertEqual(result.policy["sideInserted"], 0)
+        session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
+        self.assertEqual(session.phase, PredictionSessionPhase.ANCHOR_COMPOSING)
+        self.assertTrue(session.candidate_panel_visible)
+        self.assertFalse(session.prediction_panel_visible)
+        self.assertTrue(session.should_clear_prediction_panel)
+        self.assertEqual(session.selection_scope, "rime")
 
     def test_prefix_constrained_composition_keeps_llm_rag_before_wanxiang_fallback(self) -> None:
         snapshot = RimeContextSnapshot(
@@ -130,6 +139,13 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual(result.display_candidates[0].display_lane, "model")
         self.assertEqual(result.display_candidates[2].display_lane, "model")
         self.assertEqual(result.display_candidates[1].metadata["candidate_mode"], "prefix_constrained_composing")
+        session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
+        self.assertEqual(session.phase, PredictionSessionPhase.PREFIX_CONSTRAINED)
+        self.assertTrue(session.candidate_panel_visible)
+        self.assertTrue(session.prediction_panel_visible)
+        self.assertFalse(session.should_clear_prediction_panel)
+        self.assertEqual(session.selection_scope, "mixed_prediction_first")
+        self.assertTrue(session.rime_composition_owned_by_rime)
 
     def test_prefix_constrained_composition_uses_unmatched_llm_before_wanxiang_when_available(self) -> None:
         snapshot = RimeContextSnapshot(
@@ -195,6 +211,10 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual(result.policy["rawCommitInserted"], 1)
         self.assertEqual(result.policy["sideInserted"], 1)
         self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
+        session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
+        self.assertEqual(session.phase, PredictionSessionPhase.PREFIX_CONSTRAINED)
+        self.assertTrue(session.prediction_panel_visible)
+        self.assertEqual(session.selection_scope, "mixed_prediction_first")
 
     def test_prefix_constrained_composition_falls_back_to_wanxiang_only_when_side_empty(self) -> None:
         snapshot = RimeContextSnapshot(
@@ -214,6 +234,12 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual([item.source_type for item in result.display_candidates], ["rime"])
         self.assertEqual(result.policy["sideInserted"], 0)
         self.assertEqual(result.policy["wanxiangFallbackCount"], 1)
+        session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
+        self.assertEqual(session.phase, PredictionSessionPhase.ANCHOR_COMPOSING)
+        self.assertTrue(session.candidate_panel_visible)
+        self.assertFalse(session.prediction_panel_visible)
+        self.assertTrue(session.should_clear_prediction_panel)
+        self.assertEqual(session.selection_scope, "rime")
 
     def test_post_commit_prediction_prioritizes_rag_memory_before_llm(self) -> None:
         snapshot = RimeContextSnapshot(
@@ -269,6 +295,34 @@ class PredictionFirstTests(unittest.TestCase):
             ["把这个项目整理成面试项目", "高频实时场景里的个人记忆系统", "做一个本地 RAG 输入法"],
         )
         self.assertFalse(result.policy["rimeCompositionOwnedByRime"])
+        session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
+        self.assertEqual(session.phase, PredictionSessionPhase.POST_COMMIT)
+        self.assertTrue(session.prediction_panel_visible)
+        self.assertFalse(session.should_clear_prediction_panel)
+        self.assertEqual(session.selection_scope, "prediction")
+
+    def test_post_commit_without_live_candidates_clears_prediction_session(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=5,
+            committed_context="我想做一个 Prediction-first RAG 输入法",
+            candidates=(),
+            max_visible_candidates=4,
+            max_side_candidates=4,
+            idle_ms=1500,
+        )
+
+        result = merge_prediction_first_candidates(snapshot=snapshot, model_predictions=[], suggestions=[])
+        session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
+        payload = prediction_session_to_payload(session)
+
+        self.assertEqual(session.phase, PredictionSessionPhase.HIDDEN)
+        self.assertFalse(session.candidate_panel_visible)
+        self.assertFalse(session.prediction_panel_visible)
+        self.assertTrue(session.should_clear_prediction_panel)
+        self.assertEqual(session.selection_scope, "none")
+        self.assertEqual(payload["phase"], "hidden")
+        self.assertTrue(payload["shouldClearPredictionPanel"])
 
     def test_candidate_pool_keeps_rag_memory_and_model_as_separate_lanes(self) -> None:
         pool = build_candidate_pool(

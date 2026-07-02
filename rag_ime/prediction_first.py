@@ -37,6 +37,30 @@ class InputMode(str, Enum):
     PREFIX_CONSTRAINED_COMPOSING = "prefix_constrained_composing"
 
 
+class PredictionSessionPhase(str, Enum):
+    HIDDEN = "hidden"
+    RAW_PASSTHROUGH = "raw_passthrough"
+    ANCHOR_COMPOSING = "anchor_composing"
+    POST_COMMIT = "post_commit"
+    PREFIX_CONSTRAINED = "prefix_constrained"
+
+
+@dataclass(frozen=True)
+class PredictionSessionState:
+    phase: PredictionSessionPhase
+    input_mode: InputMode
+    pinyin_prefix: str
+    candidate_panel_visible: bool
+    prediction_panel_visible: bool
+    should_clear_prediction_panel: bool
+    clear_reason: str = ""
+    selection_scope: str = "none"
+    rime_composition_owned_by_rime: bool = False
+    side_candidate_count: int = 0
+    rime_candidate_count: int = 0
+    raw_commit_count: int = 0
+
+
 @dataclass(frozen=True)
 class PredictionCandidate:
     display_text: str
@@ -230,6 +254,128 @@ def merge_prediction_first_candidates(
         raw_commit_inserted=raw_inserted,
         prefix_matched_side_inserted=prefix_matched_side_inserted,
     )
+
+
+def resolve_prediction_session(
+    *,
+    snapshot: RimeContextSnapshot,
+    merge_result: PredictionFirstMergeResult,
+) -> PredictionSessionState:
+    """Resolve the frontend-neutral session lifecycle for prediction candidates.
+
+    Rime/wanxiang candidates and AI prediction candidates can share a visible
+    list, but they do not share the same lifecycle. A frontend should hide its
+    prediction overlay when this state says `should_clear_prediction_panel`, even
+    if Rime still has normal composition candidates to show.
+    """
+
+    mode = merge_result.mode
+    policy = merge_result.policy
+    side_count = _policy_int(policy, "sideInserted")
+    rime_count = _policy_int(policy, "wanxiangFallbackCount")
+    raw_count = _policy_int(policy, "rawCommitInserted")
+    display_visible = bool(merge_result.display_candidates)
+    rime_owned = mode in {InputMode.ANCHOR_COMPOSING, InputMode.PREFIX_CONSTRAINED_COMPOSING}
+
+    if mode == InputMode.RAW_INPUT:
+        phase = PredictionSessionPhase.RAW_PASSTHROUGH if raw_count else PredictionSessionPhase.HIDDEN
+        return PredictionSessionState(
+            phase=phase,
+            input_mode=mode,
+            pinyin_prefix=merge_result.pinyin_prefix,
+            candidate_panel_visible=display_visible,
+            prediction_panel_visible=False,
+            should_clear_prediction_panel=True,
+            clear_reason="raw input passthrough" if raw_count else "no active input",
+            selection_scope="raw" if raw_count else "none",
+            rime_composition_owned_by_rime=False,
+            side_candidate_count=side_count,
+            rime_candidate_count=rime_count,
+            raw_commit_count=raw_count,
+        )
+
+    if mode == InputMode.ANCHOR_COMPOSING:
+        return PredictionSessionState(
+            phase=PredictionSessionPhase.ANCHOR_COMPOSING,
+            input_mode=mode,
+            pinyin_prefix=merge_result.pinyin_prefix,
+            candidate_panel_visible=display_visible,
+            prediction_panel_visible=False,
+            should_clear_prediction_panel=True,
+            clear_reason="wanxiang/rime owns anchor composition",
+            selection_scope="rime" if rime_count else "none",
+            rime_composition_owned_by_rime=True,
+            side_candidate_count=side_count,
+            rime_candidate_count=rime_count,
+            raw_commit_count=raw_count,
+        )
+
+    if mode == InputMode.POST_COMMIT_PREDICTING:
+        prediction_visible = side_count > 0 and display_visible
+        return PredictionSessionState(
+            phase=PredictionSessionPhase.POST_COMMIT if prediction_visible else PredictionSessionPhase.HIDDEN,
+            input_mode=mode,
+            pinyin_prefix=merge_result.pinyin_prefix,
+            candidate_panel_visible=display_visible,
+            prediction_panel_visible=prediction_visible,
+            should_clear_prediction_panel=not prediction_visible,
+            clear_reason="" if prediction_visible else _post_commit_clear_reason(snapshot),
+            selection_scope="prediction" if prediction_visible else "none",
+            rime_composition_owned_by_rime=False,
+            side_candidate_count=side_count,
+            rime_candidate_count=rime_count,
+            raw_commit_count=raw_count,
+        )
+
+    if mode == InputMode.PREFIX_CONSTRAINED_COMPOSING:
+        prediction_visible = side_count > 0 and display_visible
+        selection_scope = "mixed_prediction_first" if prediction_visible else ("rime" if rime_count else "none")
+        return PredictionSessionState(
+            phase=PredictionSessionPhase.PREFIX_CONSTRAINED if prediction_visible else PredictionSessionPhase.ANCHOR_COMPOSING,
+            input_mode=mode,
+            pinyin_prefix=merge_result.pinyin_prefix,
+            candidate_panel_visible=display_visible,
+            prediction_panel_visible=prediction_visible,
+            should_clear_prediction_panel=not prediction_visible,
+            clear_reason="" if prediction_visible else "prefix has no matching prediction candidates",
+            selection_scope=selection_scope,
+            rime_composition_owned_by_rime=rime_owned,
+            side_candidate_count=side_count,
+            rime_candidate_count=rime_count,
+            raw_commit_count=raw_count,
+        )
+
+    return PredictionSessionState(
+        phase=PredictionSessionPhase.HIDDEN,
+        input_mode=mode,
+        pinyin_prefix=merge_result.pinyin_prefix,
+        candidate_panel_visible=display_visible,
+        prediction_panel_visible=False,
+        should_clear_prediction_panel=True,
+        clear_reason="unknown prediction mode",
+        selection_scope="none",
+        rime_composition_owned_by_rime=rime_owned,
+        side_candidate_count=side_count,
+        rime_candidate_count=rime_count,
+        raw_commit_count=raw_count,
+    )
+
+
+def prediction_session_to_payload(state: PredictionSessionState) -> dict[str, object]:
+    return {
+        "phase": state.phase.value,
+        "inputMode": state.input_mode.value,
+        "pinyinPrefix": state.pinyin_prefix,
+        "candidatePanelVisible": state.candidate_panel_visible,
+        "predictionPanelVisible": state.prediction_panel_visible,
+        "shouldClearPredictionPanel": state.should_clear_prediction_panel,
+        "clearReason": state.clear_reason,
+        "selectionScope": state.selection_scope,
+        "rimeCompositionOwnedByRime": state.rime_composition_owned_by_rime,
+        "sideCandidateCount": state.side_candidate_count,
+        "rimeCandidateCount": state.rime_candidate_count,
+        "rawCommitCount": state.raw_commit_count,
+    }
 
 
 def prediction_candidate_matches_prefix(candidate: PredictionCandidate, prefix: str) -> bool:
@@ -442,6 +588,11 @@ def _merge_result(
             "mode": mode.value,
             "reason": reason,
             "panelVisible": bool(display),
+            "predictionPanelVisible": side_inserted > 0 and mode
+            in {InputMode.POST_COMMIT_PREDICTING, InputMode.PREFIX_CONSTRAINED_COMPOSING},
+            "shouldClearPredictionPanel": not (
+                side_inserted > 0 and mode in {InputMode.POST_COMMIT_PREDICTING, InputMode.PREFIX_CONSTRAINED_COMPOSING}
+            ),
             "hideWhenEmpty": True,
             "sessionBound": True,
             "sideInserted": side_inserted,
@@ -493,6 +644,19 @@ def _pinyin_norm(value: str) -> str:
 
 def _display_norm(value: str) -> str:
     return compact_whitespace(value).lower()
+
+
+def _policy_int(policy: dict[str, object], key: str) -> int:
+    try:
+        return int(policy.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _post_commit_clear_reason(snapshot: RimeContextSnapshot) -> str:
+    if snapshot.idle_ms > 0:
+        return "post-commit prediction session stale or empty"
+    return "post-commit prediction has no live candidates"
 
 
 def _display_label(zero_based_index: int) -> str:
