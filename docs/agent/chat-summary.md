@@ -2,6 +2,19 @@
 
 ### 2026-07-02
 Topic:
+- Mark Felix3322/Wisdom-Weasel as the key upstream reference for RAG-IME.
+
+Decisions:
+- Treat `https://github.com/Felix3322/Wisdom-Weasel` as a primary reference repository for future RAG-IME architecture and interaction work.
+- Use its three-layer direction as a guardrail: Wanxiang/Rime for pinyin anchoring, Alpha-style rerank for candidate ordering and frequency/personalization, LLM for no-input/post-commit prediction, and our RAG/memory sidecar for personal candidate generation.
+- Prefer adapting portable ideas into the macOS/MLX sidecar instead of copying Windows-specific TSF, DLL, installer, CUDA/HF, ASR, or assistant-panel code.
+
+Next steps:
+- Continue targeted source reading of its `LLMProvider`, `RimeWithWeasel`, `alpha-input`, `alpha_backend`, and `hf_backend` paths.
+- Implement the portable subset next: SQLite-backed user-frequency prior, candidate feedback, score/source diagnostics, stale-result guards, and better post-commit/no-input lifecycle.
+
+### 2026-07-02
+Topic:
 - Align native macOS candidate appearance with Wisdom-Weasel's short-lived LLM candidate flow.
 
 Findings:

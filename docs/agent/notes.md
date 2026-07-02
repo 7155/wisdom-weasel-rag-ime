@@ -7,6 +7,26 @@
 
 ## Log
 
+### 2026-07-02 23:33 CST
+Problem:
+- User explicitly marked `https://github.com/Felix3322/Wisdom-Weasel` as a key reference repository because it improves heavily on the original Wisdom-Weasel path and should guide this RAG-IME project.
+
+Findings:
+- Local reference clone: `/Volumes/undo 4t/git/learnA/agent-source-projects/wisdom-weasel-felix`.
+- Fork HEAD observed: `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`.
+- Original upstream comparison point: `/Volumes/undo 4t/git/learnA/agent-source-projects/wisdom-weasel`, scukeqi `main` at `64ba2fdd484c3fa1c1a87e88591911c3d31b3eb6`.
+- This fork is now a primary engineering reference, not a casual comparison.
+
+Reference priority:
+- First priority: copy the product boundary, not Windows-specific code. Wanxiang/Rime owns pinyin anchoring and fallback; Alpha-style rerank owns existing candidate ordering; LLM owns no-input/post-commit prediction; RAG/memory supplies personal candidate material.
+- Second priority: adapt its candidate lifecycle discipline: async scheduling, stale-result discard, auto-hide/no-input behavior, source-aware candidate display, and explicit feedback after selection.
+- Third priority: adapt its personalization mechanisms: user-frequency prior, accepted-candidate positive feedback, skipped higher-ranked candidate negative feedback, score breakdown diagnostics.
+- Do not directly port now: Windows TSF/UI installer code, CUDA/HF training stack, ASR/assistant panel, or DLL-specific Alpha bridge.
+
+Impact:
+- Future implementation should be checked against this fork before inventing new candidate-window, rerank, feedback, or prompt-flow behavior.
+- The immediate migration target is a small Mac-friendly version of the fork's Alpha/personalization ideas inside our sidecar: SQLite-backed frequency/feedback scoring plus source/rank diagnostics, while keeping MLX direct for generation.
+
 ### 2026-07-02 15:56 CST
 Problem:
 - User pointed out that the current LLM/RAG/memory candidate panel still felt stiff: when no input is active, the prediction panel can linger for seconds and look like a detached clipboard/history popup.
