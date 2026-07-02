@@ -28,9 +28,11 @@ copy_missing_tree() {
 
 fail_build_output() {
   local log="$1"
-  if grep -E "missing input schema|failed to save config|failed to save.*config|error:" "$log" >/dev/null 2>&1; then
+  local fatal_log
+  fatal_log="$(grep -Ev "User notification authorization error: Notifications are not allowed for this application" "$log" || true)"
+  if printf '%s\n' "$fatal_log" | grep -E "missing input schema|failed to save config|failed to save.*config|error:" >/dev/null 2>&1; then
     echo "Squirrel user data build reported errors:" >&2
-    cat "$log" >&2
+    printf '%s\n' "$fatal_log" >&2
     exit 1
   fi
 }

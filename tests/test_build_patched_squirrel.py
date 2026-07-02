@@ -36,6 +36,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("forceSideCandidates: true", patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_request_scheduled"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_empty_response_ignored"', patch_text)
+        self.assertIn("rag-ime.foreground-trace.v2", patch_text)
         self.assertIn("guard !response.displayCandidates.isEmpty else {", patch_text)
         self.assertIn("committedContext: ragImeCommittedContext", patch_text)
         self.assertIn("private var ragImePendingRequestFingerprint: String = \"\"", patch_text)
@@ -274,6 +275,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func traceRagImeFrontendEvent() {}; func traceRagImePanelTextLayout() { _ = "panel_text_layout" }; '
             'func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }; '
             'func traceSidecarEmptyResponseIgnored() { _ = "sidecar_empty_response_ignored" }; '
+            'func traceV2() { _ = "rag-ime.foreground-trace.v2" }; '
             'func forceSideCandidates() { _ = "forceSideCandidates: true" }; '
             'func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" } }\n'
         ),
@@ -297,7 +299,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 8",
-                "  latency_budget_ms: 250",
+                "  latency_budget_ms: 300",
                 "  debounce_ms: 40",
                 "  timeout_ms: 1200",
                 "  frontend_trace: true",

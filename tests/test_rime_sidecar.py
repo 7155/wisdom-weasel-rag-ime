@@ -23,6 +23,7 @@ from rag_ime.rime_sidecar import (
     clear_model_prediction_holdover_cache,
     decide_side_candidate_refresh,
     parse_rime_context_payload,
+    wait_for_model_prediction_lane_idle,
 )
 
 
@@ -161,10 +162,14 @@ class SlowHistoryCore(CapturingCore):
 
 class RimeSidecarTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         clear_model_prediction_holdover_cache()
         self.core = FixtureCoreClient()
         self.adapter = InputMethodAdapter(self.core)
         self.predictor = FakePredictionProvider()
+
+    def tearDown(self) -> None:
+        self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
 
     def test_semantic_query_uses_rime_candidates_not_dirty_raw_pinyin(self) -> None:
         snapshot = parse_rime_context_payload(
@@ -594,7 +599,7 @@ class RimeSidecarTests(unittest.TestCase):
             )
             elapsed_ms = int((time.perf_counter() - started) * 1000)
         finally:
-            time.sleep(0.14)
+            self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
 
         self.assertLess(elapsed_ms, 100)
         self.assertEqual(slow_predictor.calls, 1)

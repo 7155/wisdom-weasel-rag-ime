@@ -300,9 +300,9 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             "[OK] sidecar predictor: local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true",
             result.stdout,
         )
-        self.assertIn("doctor_latency_budget_ms: 250", result.stdout)
+        self.assertIn("doctor_latency_budget_ms: 300", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.suggest_payloads)
-        self.assertTrue(all(payload.get("latencyBudgetMs") == 250 for payload in _DoctorSidecarHandler.suggest_payloads))
+        self.assertTrue(all(payload.get("latencyBudgetMs") == 300 for payload in _DoctorSidecarHandler.suggest_payloads))
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
@@ -567,6 +567,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 body=(
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
+                    "# rag-ime.foreground-trace.v2\n"
                     "# panel_text_layout\n"
                     "# sidecar_request_scheduled\n"
                     "# sidecar_empty_response_ignored\n"
@@ -613,6 +614,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 body=(
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
+                    "# rag-ime.foreground-trace.v2\n"
                     "# panel_text_layout\n"
                     "# sidecar_request_scheduled\n"
                     "# sidecar_empty_response_ignored\n"
@@ -659,6 +661,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 body=(
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
+                    "# rag-ime.foreground-trace.v2\n"
                     "# panel_text_layout\n"
                     "# sidecar_request_scheduled\n"
                     "# sidecar_empty_response_ignored\n"
