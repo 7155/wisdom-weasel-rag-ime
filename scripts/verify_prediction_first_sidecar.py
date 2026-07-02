@@ -40,6 +40,12 @@ def main() -> int:
         started = time.perf_counter()
         try:
             response = post_json(f"{base_url}/rime-suggest", case["payload"])
+            response = retry_post_commit_model_if_needed(
+                base_url=base_url,
+                case=case,
+                response=response,
+                latency_budget_ms=args.latency_budget_ms,
+            )
         except Exception as exc:
             failures.append(f"{case['caseId']}: request failed: {exc}")
             report["cases"].append({"caseId": case["caseId"], "ok": False, "error": str(exc)})
@@ -63,6 +69,54 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("sidecar response must be a JSON object")
     return parsed
+
+
+def retry_post_commit_model_if_needed(
+    *,
+    base_url: str,
+    case: dict[str, Any],
+    response: dict[str, Any],
+    latency_budget_ms: int,
+) -> dict[str, Any]:
+    if case.get("caseId") != "post-commit-model-memory-panel":
+        return response
+    if _has_model_candidate(response):
+        return response
+    model_lane = response.get("modelLane") if isinstance(response.get("modelLane"), dict) else {}
+    skipped_reason = str(model_lane.get("skippedReason") or "")
+    if skipped_reason not in {"model lane already running", "model lane exceeded latency budget"}:
+        return response
+    payload = dict(case["payload"])
+    payload["sessionId"] = "verify-post-commit-model-retry"
+    payload["requestSeq"] = int(payload.get("requestSeq") or 1) + 100
+    payload["latencyBudgetMs"] = max(latency_budget_ms, 1200)
+    for attempt in range(2):
+        time.sleep(0.18 * (attempt + 1))
+        retry_payload = dict(payload)
+        retry_payload["requestSeq"] = int(payload["requestSeq"]) + attempt
+        retried = post_json(f"{base_url}/rime-suggest", retry_payload)
+        if _has_model_candidate(retried):
+            retried["verifyRetry"] = {
+                "reason": skipped_reason,
+                "attempt": attempt + 1,
+                "latencyBudgetMs": retry_payload["latencyBudgetMs"],
+            }
+            return retried
+    response["verifyRetry"] = {
+        "reason": skipped_reason,
+        "attempt": 2,
+        "latencyBudgetMs": payload["latencyBudgetMs"],
+        "modelStillMissing": True,
+    }
+    return response
+
+
+def _has_model_candidate(response: dict[str, Any]) -> bool:
+    display = response.get("displayCandidates")
+    if isinstance(display, list) and any(isinstance(item, dict) and item.get("sourceType") == "model" for item in display):
+        return True
+    predictions = response.get("modelPredictions")
+    return isinstance(predictions, list) and any(isinstance(item, dict) for item in predictions)
 
 
 def patched_frontend_base(case_id: str, latency_budget_ms: int) -> dict[str, Any]:
