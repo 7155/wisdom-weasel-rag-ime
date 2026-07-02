@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -32,7 +33,7 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
             )
 
         self.assertIn("dry-run: would install", result.stdout)
-        self.assertIn("input_source_id=dev.local.inputmethod.RagImeMac", result.stdout)
+        self.assertIn("input_source_id=dev.local.inputmethod.RagImeMac.Hans", result.stdout)
         self.assertIn("RagImeMac.app", result.stdout)
 
     def test_installs_app_and_user_bridge_config_under_home(self) -> None:
@@ -76,6 +77,37 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
         self.assertIn("/usr/bin/ditto \"$APP_DIR\" \"$TARGET_APP\"", source)
         self.assertIn("CLEAN_INSTALL", source)
         self.assertIn("rm -rf \"$TARGET_APP\"", source)
+
+    def test_system_install_uses_canonical_system_app_permissions(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "install_system_macos_frontend.sh").read_text(encoding="utf-8")
+
+        self.assertIn("/Library/Input Methods", source)
+        self.assertIn("RAG_IME_MACOS_PRUNE_USER_DUPLICATE", source)
+        self.assertIn("/usr/sbin/chown -R root:wheel", source)
+        self.assertIn("/bin/chmod -R u+rwX,go+rX", source)
+        self.assertIn("lsregister -f -R", source)
+
+    def test_native_info_plist_declares_visible_hans_input_mode_and_icon(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with (root / "macos" / "RagImeMac" / "Info.plist").open("rb") as handle:
+            info = plistlib.load(handle)
+
+        self.assertEqual(info["CFBundleIdentifier"], "dev.local.inputmethod.RagImeMac")
+        self.assertEqual(info["CFBundleVersion"], "2")
+        self.assertEqual(info["CFBundleIconFile"], "RagImeIcon")
+        self.assertEqual(info["CFBundleIconName"], "RagImeIcon")
+        self.assertIn("MacOSX", info["CFBundleSupportedPlatforms"])
+        modes = info["ComponentInputModeDict"]["tsInputModeListKey"]
+        self.assertIn("dev.local.inputmethod.RagImeMac.Hans", modes)
+        self.assertEqual(
+            modes["dev.local.inputmethod.RagImeMac.Hans"]["TISIntendedLanguage"],
+            "zh-Hans",
+        )
+        self.assertEqual(
+            info["ComponentInputModeDict"]["tsVisibleInputModeOrderedArrayKey"],
+            ["dev.local.inputmethod.RagImeMac.Hans"],
+        )
 
 
 def _write_fake_app(tmp_path: Path) -> Path:

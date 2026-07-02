@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INPUT_SOURCE_ID="${1:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac}}}"
+INPUT_SOURCE_ID="${1:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac.Hans}}}"
 MODULE_CACHE="${RAG_IME_SWIFT_MODULE_CACHE:-${TMPDIR:-/tmp}/rag-ime-swift-module-cache}"
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-tis-select-input-source.XXXXXX")"
@@ -45,8 +45,9 @@ func printStatus(_ source: TISInputSource) {
   let enabled = cfBoolProperty(source, kTISPropertyInputSourceIsEnabled)
   let selectable = cfBoolProperty(source, kTISPropertyInputSourceIsSelectCapable)
   let currentID = currentInputSourceID()
-  let selected = cfBoolProperty(source, kTISPropertyInputSourceIsSelected) || currentID == id
-  print("id=\(id) name=\(name) enabled=\(enabled) selectable=\(selectable) selected=\(selected) current=\(currentID ?? "<none>")")
+  let tisSelected = cfBoolProperty(source, kTISPropertyInputSourceIsSelected)
+  let currentSelected = currentID == id
+  print("id=\(id) name=\(name) enabled=\(enabled) selectable=\(selectable) selected=\(currentSelected) tisSelected=\(tisSelected) current=\(currentID ?? "<none>")")
 }
 
 let target = CommandLine.arguments[1]

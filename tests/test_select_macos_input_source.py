@@ -18,7 +18,7 @@ class SelectMacosInputSourceScriptTests(unittest.TestCase):
         source = (root / "scripts" / "select_macos_input_source.sh").read_text(encoding="utf-8")
 
         self.assertIn("RAG_IME_MACOS_INPUT_SOURCE_ID", source)
-        self.assertIn("dev.local.inputmethod.RagImeMac", source)
+        self.assertIn("dev.local.inputmethod.RagImeMac.Hans", source)
 
 
 if __name__ == "__main__":

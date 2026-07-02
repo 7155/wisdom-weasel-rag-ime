@@ -7,13 +7,18 @@ TARGET_DIR="${RAG_IME_MACOS_TARGET_DIR:-$HOME/Library/Input Methods}"
 TARGET_APP="$TARGET_DIR/RagImeMac.app"
 CONFIG_DIR="${RAG_IME_MACOS_CONFIG_DIR:-$HOME/Library/Application Support/RagImeMac}"
 USER_CONFIG="$CONFIG_DIR/bridge-config.json"
-INPUT_SOURCE_ID="${RAG_IME_MACOS_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac}"
+INPUT_SOURCE_ID="${RAG_IME_MACOS_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac.Hans}"
 BUNDLE_ID="${RAG_IME_MACOS_BUNDLE_ID:-dev.local.inputmethod.RagImeMac}"
 DRY_RUN="${RAG_IME_MACOS_INSTALL_DRY_RUN:-0}"
 CHECK_INPUT_SOURCE="${RAG_IME_MACOS_INSTALL_CHECK:-1}"
 REQUIRE_INPUT_SOURCE="${RAG_IME_MACOS_INSTALL_REQUIRE_INPUT_SOURCE:-0}"
 SELECT_INPUT_SOURCE="${RAG_IME_MACOS_INSTALL_SELECT:-0}"
 CLEAN_INSTALL="${RAG_IME_MACOS_INSTALL_CLEAN:-0}"
+WAIT_SECONDS="${RAG_IME_MACOS_INSTALL_WAIT_SECONDS:-5}"
+TMP_BASE="${TMPDIR:-/tmp}"
+tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-install-macos.XXXXXX")"
+trap 'rm -rf "$tmpdir"' EXIT
+INPUT_SOURCE_STATUS_FILE="$tmpdir/input-source-status.txt"
 
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
@@ -53,6 +58,27 @@ bool_true() {
   esac
 }
 
+wait_for_input_source() {
+  local deadline now output status
+  deadline=$((SECONDS + WAIT_SECONDS))
+  while true; do
+    set +e
+    output="$(RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" "$ROOT/scripts/check_macos_input_source.sh" "$INPUT_SOURCE_ID" 2>&1)"
+    status=$?
+    set -e
+    if [[ "$output" != missing\ * ]]; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    now=$SECONDS
+    if (( now >= deadline )); then
+      printf '%s\n' "$output"
+      return "$status"
+    fi
+    sleep 0.25
+  done
+}
+
 if [[ ! -d "$APP_DIR" ]]; then
   "$ROOT/scripts/build_macos_frontend.sh" >/dev/null
 fi
@@ -65,6 +91,10 @@ else
     rm -rf "$TARGET_APP"
   fi
   /usr/bin/ditto "$APP_DIR" "$TARGET_APP"
+  LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+  if [[ -x "$LSREGISTER" ]]; then
+    "$LSREGISTER" -f -R "$TARGET_APP" >/dev/null 2>&1 || true
+  fi
 fi
 
 if bool_true "$DRY_RUN"; then
@@ -84,11 +114,20 @@ echo "input_source_id=$INPUT_SOURCE_ID"
 if bool_true "$SELECT_INPUT_SOURCE"; then
   if bool_true "$DRY_RUN"; then
     echo "dry-run: would select input source $INPUT_SOURCE_ID"
+  elif ! wait_for_input_source >"$INPUT_SOURCE_STATUS_FILE"; then
+    cat "$INPUT_SOURCE_STATUS_FILE"
+    echo "[WARN] input source is not visible to macOS yet: $INPUT_SOURCE_ID" >&2
+    echo "Open System Settings -> Keyboard -> Input Sources, then add RAG IME." >&2
+    if bool_true "$REQUIRE_INPUT_SOURCE"; then
+      exit 2
+    fi
   elif RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" "$ROOT/scripts/select_macos_input_source.sh" "$INPUT_SOURCE_ID"; then
     echo "[OK] selected input source: $INPUT_SOURCE_ID"
   else
+    cat "$INPUT_SOURCE_STATUS_FILE"
     echo "[WARN] cannot select input source yet: $INPUT_SOURCE_ID" >&2
-    echo "Open System Settings -> Keyboard -> Input Sources, then add RAG IME." >&2
+    echo "If thirdPartyEnabled=false above, macOS has not added RAG IME to the third-party input-source allow-list." >&2
+    echo "Open System Settings -> Keyboard -> Input Sources, remove any stale RAG IME entry, then add RAG IME again." >&2
     if bool_true "$REQUIRE_INPUT_SOURCE"; then
       exit 2
     fi
@@ -96,9 +135,11 @@ if bool_true "$SELECT_INPUT_SOURCE"; then
 elif bool_true "$CHECK_INPUT_SOURCE"; then
   if bool_true "$DRY_RUN"; then
     echo "dry-run: would check input source $INPUT_SOURCE_ID"
-  elif RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" "$ROOT/scripts/check_macos_input_source.sh" "$INPUT_SOURCE_ID"; then
+  elif wait_for_input_source >"$INPUT_SOURCE_STATUS_FILE"; then
+    cat "$INPUT_SOURCE_STATUS_FILE"
     echo "[OK] input source is registered: $INPUT_SOURCE_ID"
   else
+    cat "$INPUT_SOURCE_STATUS_FILE"
     echo "[WARN] input source is not registered yet: $INPUT_SOURCE_ID" >&2
     echo "Open System Settings -> Keyboard -> Input Sources, then add RAG IME." >&2
     if bool_true "$REQUIRE_INPUT_SOURCE"; then
