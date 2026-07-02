@@ -17,6 +17,9 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$ROOT/macos/RagImeMac/Info.plist" "$CONTENTS_DIR/Info.plist"
+if [[ -d "$ROOT/macos/RagImeMac/Resources" ]]; then
+  /usr/bin/ditto "$ROOT/macos/RagImeMac/Resources" "$RESOURCES_DIR"
+fi
 
 ICON_PPM="$RESOURCES_DIR/RagImeIcon.ppm"
 python3 - "$ICON_PPM" <<'PY'
@@ -24,25 +27,29 @@ import math
 import sys
 
 path = sys.argv[1]
-size = 64
+size = 1024
 pixels = []
 for y in range(size):
     for x in range(size):
         dx = x - size / 2
         dy = y - size / 2
         radius = math.sqrt(dx * dx + dy * dy)
-        if radius > 30:
+        if radius > size * 0.47:
             pixels.append((0, 0, 0))
             continue
-        teal = int(128 + 72 * (1 - y / size))
-        blue = int(160 + 72 * (x / size))
+        teal = int(118 + 88 * (1 - y / size))
+        blue = int(150 + 86 * (x / size))
         bg = (18, teal, blue)
         in_r = (
-            (15 <= x <= 22 and 17 <= y <= 47)
-            or (22 <= x <= 40 and 17 <= y <= 23)
-            or (22 <= x <= 40 and 30 <= y <= 36)
-            or (38 <= x <= 45 and 24 <= y <= 30)
-            or (32 <= x <= 45 and 36 <= y <= 47 and abs((y - 36) - (x - 32)) <= 5)
+            (0.23 <= x / size <= 0.34 and 0.24 <= y / size <= 0.74)
+            or (0.34 <= x / size <= 0.62 and 0.24 <= y / size <= 0.35)
+            or (0.34 <= x / size <= 0.62 and 0.46 <= y / size <= 0.57)
+            or (0.59 <= x / size <= 0.70 and 0.35 <= y / size <= 0.47)
+            or (
+                0.50 <= x / size <= 0.72
+                and 0.57 <= y / size <= 0.74
+                and abs(((y / size) - 0.57) - ((x / size) - 0.50)) <= 0.08
+            )
         )
         pixels.append((245, 250, 252) if in_r else bg)
 
@@ -52,6 +59,17 @@ with open(path, "wb") as fh:
         fh.write(bytes(pixel))
 PY
 sips -s format tiff "$ICON_PPM" --out "$RESOURCES_DIR/RagImeIcon.tiff" >/dev/null
+ICONSET="$RESOURCES_DIR/RagImeIcon.iconset"
+mkdir -p "$ICONSET"
+for size in 16 32 128 256 512; do
+  sips -s format png -z "$size" "$size" "$ICON_PPM" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+  retina=$((size * 2))
+  sips -s format png -z "$retina" "$retina" "$ICON_PPM" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+done
+if command -v iconutil >/dev/null 2>&1; then
+  iconutil -c icns "$ICONSET" -o "$RESOURCES_DIR/RagImeIcon.icns" >/dev/null
+fi
+rm -rf "$ICONSET"
 rm -f "$ICON_PPM"
 
 swiftc \

@@ -19,10 +19,10 @@ while [[ "${1:-}" == --* ]]; do
       ;;
   esac
 done
-INPUT_SOURCE_ID="${1:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac}}}"
+INPUT_SOURCE_ID="${1:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac.Hans}}}"
 if [[ -n "${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-}" ]]; then
   INPUT_SOURCE_BUNDLE_ID="$RAG_IME_INPUT_SOURCE_BUNDLE_ID"
-elif [[ "$INPUT_SOURCE_ID" == "${RAG_IME_MACOS_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac}" ]]; then
+elif [[ "$INPUT_SOURCE_ID" == "${RAG_IME_MACOS_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac.Hans}" ]]; then
   INPUT_SOURCE_BUNDLE_ID="${RAG_IME_MACOS_BUNDLE_ID:-dev.local.inputmethod.RagImeMac}"
 else
   INPUT_SOURCE_BUNDLE_ID="${INPUT_SOURCE_ID%.*}"
@@ -74,8 +74,9 @@ for item in list {
   let name = cfStringProperty(source, kTISPropertyLocalizedName) ?? "<unnamed>"
   let enabled = cfBoolProperty(source, kTISPropertyInputSourceIsEnabled)
   let selectable = cfBoolProperty(source, kTISPropertyInputSourceIsSelectCapable)
-  let selected = cfBoolProperty(source, kTISPropertyInputSourceIsSelected) || currentID == id
-  print("id=\(id) name=\(name) enabled=\(enabled) selectable=\(selectable) selected=\(selected) current=\(currentID ?? "<none>")")
+  let tisSelected = cfBoolProperty(source, kTISPropertyInputSourceIsSelected)
+  let currentSelected = currentID == id
+  print("id=\(id) name=\(name) enabled=\(enabled) selectable=\(selectable) selected=\(currentSelected) tisSelected=\(tisSelected) current=\(currentID ?? "<none>")")
 }
 if !matched {
   print("missing \(target)")
@@ -119,7 +120,7 @@ if [[ "$INPUT_SOURCE_BUNDLE_ID" != com.apple.* ]]; then
 fi
 
 hitoolbox_value=false
-if [[ "$hitoolbox_ok" == "1" && "$third_party_ok" == "1" ]]; then
+if [[ "$hitoolbox_ok" == "1" ]]; then
   hitoolbox_value=true
 fi
 third_party_value=false

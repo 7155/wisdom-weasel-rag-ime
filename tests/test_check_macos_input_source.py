@@ -36,7 +36,7 @@ class CheckMacosInputSourceScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("enabled=true selectable=true", result.stdout)
-        self.assertIn("hitoolboxEnabled=false", result.stdout)
+        self.assertIn("hitoolboxEnabled=true", result.stdout)
         self.assertIn("thirdPartyEnabled=false", result.stdout)
 
     def test_reports_ready_when_hitoolbox_and_third_party_sources_both_include_squirrel(self) -> None:

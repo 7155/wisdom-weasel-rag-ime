@@ -2143,3 +2143,21 @@ Verification:
 - Native build passed.
 - Live sidecar now returns both MLX model and RAG candidates for the embedding/RAG debugging context.
 - Current machine still needs manual Keyboard Input Sources selection; install succeeds but `TISSelectInputSource` returns `-50` and active source remains 豆包.
+
+### 2026-07-02
+Topic:
+- Continue native macOS input-source registration repair after Add panel did not show RAG IME.
+
+Findings:
+- `RagImeMac.Hans` is visible to TIS and has healthy MLX/RAG sidecar candidates, but it is not in macOS `AppleEnabledThirdPartyInputSources`; current input source remains 豆包.
+- System Settings Add not showing the app is likely due to registration split-brain: duplicate user/system installs, stale HIToolbox entries, missing app icon/platform metadata, and system app ownership not matching mature input methods.
+
+Changes:
+- Added visible `.Hans` input mode metadata, app icon metadata, supported platform declaration, localized mode names, generated `.icns`, and version bump.
+- Added system installer and reset scripts to canonicalize `/Library/Input Methods/RagImeMac.app`, remove stale HIToolbox records, and make selected-source verification stricter.
+- Fixed selected-source checks so `selected=true` only means the current TIS source actually equals `RagImeMac.Hans`.
+
+Verification:
+- Native build and focused tests passed.
+- Native doctor passes app/bridge/sidecar checks.
+- Selected-source doctor correctly fails until macOS actually selects `RAG IME`.

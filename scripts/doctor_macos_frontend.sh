@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="${RAG_IME_MACOS_APP:-$ROOT/build/RagImeMac.app}"
 BUNDLE_ID="${RAG_IME_MACOS_BUNDLE_ID:-dev.local.inputmethod.RagImeMac}"
-INPUT_SOURCE_ID="${RAG_IME_MACOS_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac}"
+INPUT_SOURCE_ID="${RAG_IME_MACOS_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac.Hans}"
 SIDECAR_BASE_URL="http://${RAG_IME_SIDECAR_HOST:-127.0.0.1}:${RAG_IME_SIDECAR_PORT:-8766}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
 REQUIRE_INSTALLED="${RAG_IME_DOCTOR_REQUIRE_INSTALLED:-0}"
@@ -237,6 +237,10 @@ else
 fi
 
 if bool_true "$REQUIRE_INPUT_SOURCE" || bool_true "$REQUIRE_SELECTED_INPUT_SOURCE"; then
+  input_source_required=0
+  if bool_true "$REQUIRE_INPUT_SOURCE" || bool_true "$REQUIRE_SELECTED_INPUT_SOURCE"; then
+    input_source_required=1
+  fi
   args=("$INPUT_SOURCE_ID")
   if bool_true "$REQUIRE_SELECTED_INPUT_SOURCE"; then
     args=("--require-selected" "${args[@]}")
@@ -244,7 +248,7 @@ if bool_true "$REQUIRE_INPUT_SOURCE" || bool_true "$REQUIRE_SELECTED_INPUT_SOURC
   if RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" "$ROOT/scripts/check_macos_input_source.sh" "${args[@]}" >/tmp/rag-ime-native-input-source.out 2>/tmp/rag-ime-native-input-source.err; then
     ok "native macOS input source ready: $(cat /tmp/rag-ime-native-input-source.out)"
   else
-    require_or_warn "$REQUIRE_INPUT_SOURCE" "native macOS input source not ready: $(cat /tmp/rag-ime-native-input-source.out 2>/dev/null || true) $(cat /tmp/rag-ime-native-input-source.err 2>/dev/null || true)"
+    require_or_warn "$input_source_required" "native macOS input source not ready: $(cat /tmp/rag-ime-native-input-source.out 2>/dev/null || true) $(cat /tmp/rag-ime-native-input-source.err 2>/dev/null || true)"
   fi
 else
   warn "native macOS input source check not required; set RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 for registration gate"

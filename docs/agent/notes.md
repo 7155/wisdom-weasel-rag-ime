@@ -2989,3 +2989,34 @@ Verification:
 - `scripts/build_macos_frontend.sh`: passed.
 - Live `/rime-suggest` now returns model + RAG candidates for the embedding/RAG debugging context, including `输入提示` from MLX and `embedding 检索应该结合当前输入和上下文窗口` from RAG.
 - `scripts/install_macos_frontend.sh --select`: installed app and synced bridge config, but current macOS session still requires manually adding/selecting `RAG IME` in Keyboard Input Sources.
+
+### 2026-07-02 21:04 CST
+Problem:
+- User confirmed System Settings -> Keyboard -> Input Sources -> Add did not show `RAG IME`, so native `RagImeMac` still could not be selected for real typing.
+
+Findings:
+- Live sidecar and MLX/RAG are healthy; the current blocker is macOS input-source registration, not candidate generation.
+- TIS enumerates `dev.local.inputmethod.RagImeMac.Hans` as `enabled=true selectable=true`, but current source remains 豆包 and `thirdPartyEnabled=false`.
+- `TISSelectInputSource` returns `-50` for both `RagImeMac.Hans` and Squirrel in this Codex/terminal session when the current source is 豆包.
+- `/Library/Input Methods/RagImeMac.app` existed but was owned by `undo:staff`, unlike system-installed Doubao/Squirrel (`root:wheel`).
+- Explorer comparison with Squirrel/fcitx5/OpenVanilla found high-risk differences: duplicate same-bundle installs under both user and system Input Methods, missing app icon metadata, missing `CFBundleSupportedPlatforms`, stale HIToolbox entries without matching `AppleEnabledThirdPartyInputSources`, and LaunchServices cache split-brain.
+- A direct/admin plist overwrite of `com.apple.inputsources.plist` did not persist RagIme entries; macOS restored the third-party allow-list, so System Settings must be treated as the authority for that list.
+
+Changes:
+- Added explicit `.Hans` input mode metadata in `macos/RagImeMac/Info.plist`, plus `CFBundleIconFile`, `CFBundleIconName`, `CFBundleSupportedPlatforms`, and bumped `CFBundleVersion` to `2`.
+- Added localized `InfoPlist.strings` for `en`, `zh-Hans`, and `zh-Hant` so the mode displays as `RAG IME` / `RAG 输入法` instead of a raw id.
+- `build_macos_frontend.sh` now generates `RagImeIcon.icns` and copies localized resources.
+- Added `scripts/install_system_macos_frontend.sh` to install the canonical app under `/Library/Input Methods`, back up duplicate user-local `RagImeMac.app`, set `root:wheel` permissions, re-sign, and re-register LaunchServices.
+- Added `scripts/reset_macos_ragime_registration.sh` to remove stale RagIme records from HIToolbox enabled/selected/history without touching other input methods.
+- `check_macos_input_source.sh` and `select_macos_input_source.sh` now distinguish actual current source (`selected`) from TIS preference flag (`tisSelected`) to avoid false positives.
+- `install_macos_frontend.sh` now waits briefly for TIS visibility and reports `thirdPartyEnabled=false` as a real allow-list blocker.
+
+Verification:
+- `scripts/build_macos_frontend.sh`: passed and produced `RagImeIcon.icns` plus updated plist/resources.
+- `scripts/reset_macos_ragime_registration.sh`: removed RagIme from HIToolbox stale records; TIS still enumerates the source, but `hitoolboxEnabled=false thirdPartyEnabled=false`.
+- `python3 -m unittest tests.test_install_macos_frontend tests.test_select_macos_input_source tests.test_check_macos_input_source tests.test_doctor_macos_frontend tests.test_native_input_controller`: 18 tests passed.
+- `scripts/doctor_macos_frontend.sh`: passed app/bridge/live sidecar checks; live sources include memory/RAG and raw English protection.
+- `RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE=1 scripts/doctor_macos_frontend.sh`: intentionally fails with `selected=false current=com.bytedance.inputmethod.doubaoime.pinyin thirdPartyEnabled=false`, proving real typing is not yet selected.
+
+Next:
+- Run the system installer with visible admin password entry, then reopen System Settings Add panel and add `RAG IME`; if it still does not appear, treat native InputMethodKit as debug harness only and move the real product route to a mature Rime/Squirrel-compatible framework without repeating the stale patched-Squirrel bundle conflict.
