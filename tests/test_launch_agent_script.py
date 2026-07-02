@@ -28,6 +28,11 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_HISTORY_CONTEXT_EVENTS": "6",
                 "RAG_IME_MODEL_CONTEXT_CHARS": "120",
                 "RAG_IME_RIME_CACHE_TTL_MS": "400",
+                "RAG_IME_EMBEDDING_PROVIDER": "openai-compatible",
+                "RAG_IME_EMBEDDING_BASE_URL": "http://127.0.0.1:18000",
+                "RAG_IME_EMBEDDING_MODEL": "bge-small-zh",
+                "RAG_IME_VECTOR_CANDIDATES": "48",
+                "RAG_IME_VECTOR_WEIGHT": "1.7",
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
@@ -58,6 +63,11 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_HISTORY_CONTEXT_EVENTS"], "6")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_MODEL_CONTEXT_CHARS"], "120")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_RIME_CACHE_TTL_MS"], "400")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_PROVIDER"], "openai-compatible")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_BASE_URL"], "http://127.0.0.1:18000")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_MODEL"], "bge-small-zh")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_CANDIDATES"], "48")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_WEIGHT"], "1.7")
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
         self.assertIn("sidecar-server", payload["ProgramArguments"])
         self.assertIn("18766", payload["ProgramArguments"])

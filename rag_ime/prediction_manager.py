@@ -14,6 +14,9 @@ from .prediction_first import (
 from .text_utils import compact_whitespace
 
 
+DEFAULT_CANDIDATE_POOL_TTL_MS = 900
+
+
 @dataclass(frozen=True)
 class PredictionManagerResult:
     merge_result: PredictionFirstMergeResult
@@ -42,7 +45,7 @@ class PredictionManager:
     behavior into the frontend.
     """
 
-    def __init__(self, *, candidate_pool_ttl_ms: int = 1200) -> None:
+    def __init__(self, *, candidate_pool_ttl_ms: int = DEFAULT_CANDIDATE_POOL_TTL_MS) -> None:
         self.candidate_pool_ttl_ms = max(0, int(candidate_pool_ttl_ms))
         self._cache: _CandidateSourceCache | None = None
 
