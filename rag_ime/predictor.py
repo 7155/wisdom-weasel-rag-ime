@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .models import ModelPrediction
+from .pinyin_index import build_pinyin_metadata
 from .text_utils import compact_whitespace
 
 
@@ -49,6 +50,7 @@ _LOW_VALUE_IME_CANDIDATES = {
     "然后",
     "现在",
     "目前",
+    "当前",
     "的",
     "了",
     "和",
@@ -196,15 +198,16 @@ class OpenAICompatiblePredictionProvider:
                 provider_name=self.config.provider_name,
                 latency_ms=latency_ms,
                 confidence=max(0.0, min(1.0, 1.0 - (index - 1) * 0.08)),
-                metadata={
-                    "model": self.config.model,
-                    "base_url": self.config.base_url,
-                    "profile": self.config.profile,
-                    "prompt_mode": _normalized_prompt_mode(self.config.prompt_mode),
-                    "raw_text": raw_text,
-                    "requestMeta": request_meta,
-                },
-            )
+                        metadata={
+                            "model": self.config.model,
+                            "base_url": self.config.base_url,
+                            "profile": self.config.profile,
+                            "prompt_mode": _normalized_prompt_mode(self.config.prompt_mode),
+                            "raw_text": raw_text,
+                            "requestMeta": request_meta,
+                            **build_pinyin_metadata(item),
+                        },
+                    )
             for index, item in enumerate(candidates, start=1)
         ]
 
@@ -341,6 +344,7 @@ class OllamaPredictionProvider:
                             "stream_first_candidate": True,
                             "first_candidate_ms": streamed["first_candidate_ms"],
                             "requestMeta": request_meta,
+                            **build_pinyin_metadata(streamed["candidate"]),
                         },
                     )
                 ]
@@ -363,6 +367,7 @@ class OllamaPredictionProvider:
                     "prompt_mode": self.config.prompt_mode,
                     "raw_text": raw_text,
                     "requestMeta": request_meta,
+                    **build_pinyin_metadata(item),
                 },
             )
             for index, item in enumerate(candidates, start=1)
@@ -469,6 +474,7 @@ class MlxPredictionServiceProvider:
                             "prompt_cache": streamed.get("prompt_cache", {}),
                             "server_timing": streamed.get("server_timing", {}),
                             "requestMeta": request_meta,
+                            **build_pinyin_metadata(streamed["candidate"]),
                         },
                     )
                 ]
@@ -501,6 +507,7 @@ class MlxPredictionServiceProvider:
                     "prompt_cache": payload.get("promptCache", {}),
                     "server_timing": payload.get("timing", {}),
                     "requestMeta": request_meta,
+                    **build_pinyin_metadata(item),
                 },
             )
             for index, item in enumerate(candidates, start=1)

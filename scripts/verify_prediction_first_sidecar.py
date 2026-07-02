@@ -10,7 +10,7 @@ import urllib.request
 from typing import Any
 
 
-LOW_VALUE = {"根据", "基于", "和", "测试", "分析", "假设", "或者", "生成", "现在", "目前", "然后"}
+LOW_VALUE = {"根据", "基于", "和", "测试", "分析", "假设", "或者", "生成", "现在", "目前", "当前", "然后"}
 
 
 def main() -> int:
@@ -81,7 +81,7 @@ def prediction_first_payload(latency_budget_ms: int) -> dict[str, Any]:
         {
             "rawInput": "sj",
             "preedit": "sj",
-            "committedContext": "我想做一个预测优先的 RAG 输入法，先把输入法流程跑通，再接入本地记忆和 LLM 候选",
+            "committedContext": "我想设计一个候选展示方式，做一个预测优先的 RAG 输入法，先把输入法流程跑通，再接入本地记忆和 LLM 候选",
             "rimeContext": {
                 "candidates": [
                     {"label": "1", "text": "设计", "comment": "wanxiang", "index": 0},
@@ -178,6 +178,7 @@ def check_case(case: dict[str, Any], response: dict[str, Any], *, elapsed_ms: in
         require(any(source in {"memory", "rag"} for source in source_types), case_id, "must show memory/RAG candidates", failures)
         require("rime" not in source_types, case_id, "must not show Rime while side candidates exist", failures)
         require(int(policy.get("wanxiangFallbackCount") or 0) == 0, case_id, "wanxiang fallback count must be 0", failures)
+        require(int(policy.get("prefixMatchedSideInserted") or 0) > 0, case_id, "pinyin prefix must match at least one side candidate", failures)
         require(not (LOW_VALUE & set(texts)), case_id, "low-value words must be filtered", failures)
     elif case_id == "weak-context-no-low-value-model":
         require(prediction_first.get("enabled") is True, case_id, "prediction-first must be enabled", failures)
