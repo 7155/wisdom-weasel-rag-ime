@@ -352,6 +352,22 @@ For first-word pinyin, `candidatePanelVisible` may be true while
 stale post-commit response, `phase` is `hidden` and
 `shouldClearPredictionPanel` is true.
 
+When `predictionFirstMerge` is served through `PredictionManager`, the policy
+also reports:
+
+```json
+{
+  "candidatePoolActive": true,
+  "candidatePoolReused": false,
+  "candidatePoolStale": false
+}
+```
+
+`candidatePoolReused=true` is expected only for short same-context handoffs,
+such as post-commit prediction followed by continued pinyin. If
+`candidatePoolStale=true` or `shouldClearPredictionPanel=true`, the real IME
+frontend must hide the AI layer instead of leaving a passive popup on screen.
+
 The strict Squirrel doctor now includes this raw-input safety check. It sends
 one dirty raw-pinyin payload without context and expects `queryBasis:
 rawInputFallback`, `shouldRefresh=false`, and no display candidates; then it

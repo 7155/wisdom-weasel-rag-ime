@@ -65,7 +65,10 @@ prediction panel should still be cleared.
   shouldClearPredictionPanel: boolean,
   clearReason: string,
   selectionScope: "none" | "raw" | "rime" | "prediction" | "mixed_prediction_first",
-  rimeCompositionOwnedByRime: boolean
+  rimeCompositionOwnedByRime: boolean,
+  candidatePoolActive?: boolean,
+  candidatePoolReused?: boolean,
+  candidatePoolStale?: boolean
 }
 ```
 
@@ -89,6 +92,12 @@ Rime/wanxiang snapshot
   -> PredictionManager.render()
   -> display_candidates + prediction_session
 ```
+
+Adapters should treat `candidatePoolStale` and `shouldClearPredictionPanel` as
+hard clear signals. Cached candidates are allowed to bridge a very short
+post-commit-to-prefix transition, but they must not keep a prediction popup
+visible after the user has paused, switched focus, or started raw
+English/code/path input.
 
 The manager keeps the current candidate pool bound to the committed-context
 fingerprint and a short TTL. Continued pinyin such as `sj` can reuse the same

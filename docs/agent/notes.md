@@ -2648,3 +2648,29 @@ Commands:
 
 Findings:
 - This is a concrete step away from the unavailable patched-Squirrel route: the future adapter can call `PredictionManager` directly and keep ordinary input stable by construction.
+
+### 2026-07-02 15:35 CST
+Problem:
+- User feedback: the current LLM/RAG/memory candidates felt like a passive popup because they could stay visible for seconds after the user stopped interacting.
+- The desired reference is Wisdom-Weasel's demo behavior: LLM candidates appear as a natural continuation of the normal Rime candidate flow, not as a clipboard/history panel.
+
+Source findings:
+- Wisdom-Weasel records committed text into `ContextHistory`, enters LLM prediction mode after meaningful commit, runs prediction asynchronously, drops stale model results with a request sequence, and merges LLM candidates into the structured Rime candidate list.
+- Its llama.cpp provider caches the system prompt KV state and batch-samples multiple candidates.
+- It is useful as a lifecycle reference, but RAG-IME should not copy its "letter key exits LLM mode" behavior because continued pinyin is how the user constrains prediction.
+
+Changes:
+- `/rime-suggest` now uses per-session `PredictionManager` for `predictionFirstMerge`.
+- The manager is keyed by project, app, and session id.
+- Stale post-commit continuation, raw passthrough, raw pinyin fallback, empty signal, or missing committed context clears the candidate pool before rendering.
+- `predictionFirst.policy` now reports `candidatePoolActive`, `candidatePoolReused`, `candidatePoolStale`, and `candidatePoolContextFingerprint`.
+- Added a regression test proving that a prior live post-commit candidate pool is dropped when a later stale request arrives for the same session.
+- Updated framework/debug/shared-contract docs with the short-lived prediction-session rule.
+
+Commands:
+- `python3 -m py_compile rag_ime/rime_sidecar.py rag_ime/prediction_manager.py rag_ime/prediction_first.py`: passed.
+- `python3 -m unittest -v tests.test_rime_sidecar.RimeSidecarTests.test_prediction_first_post_commit_refreshes_without_idle_delay tests.test_rime_sidecar.RimeSidecarTests.test_prediction_first_post_commit_clears_stale_empty_panel tests.test_rime_sidecar.RimeSidecarTests.test_prediction_first_stale_post_commit_drops_prior_manager_pool tests.test_prediction_manager`: 8 tests passed.
+- `python3 -m unittest discover -s tests`: 271 tests passed.
+
+Follow-up fix:
+- Raw English/code/command input clears stale cached predictions, but fresh same-request model/RAG candidates can still appear after the raw commit candidate. This keeps `git status` style input usable without turning off AI help when the backend has a current result.

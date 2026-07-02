@@ -22,6 +22,7 @@ from rag_ime.rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
     clear_model_prediction_holdover_cache,
+    clear_prediction_manager_cache,
     decide_side_candidate_refresh,
     merge_display_candidates,
     parse_rime_context_payload,
@@ -226,6 +227,7 @@ class RimeSidecarTests(unittest.TestCase):
     def setUp(self) -> None:
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         clear_model_prediction_holdover_cache()
+        clear_prediction_manager_cache()
         self.core = FixtureCoreClient()
         self.adapter = InputMethodAdapter(self.core)
         self.predictor = FakePredictionProvider()
@@ -233,6 +235,7 @@ class RimeSidecarTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         clear_model_prediction_holdover_cache()
+        clear_prediction_manager_cache()
 
     def test_semantic_query_uses_rime_candidates_not_dirty_raw_pinyin(self) -> None:
         snapshot = parse_rime_context_payload(
@@ -968,6 +971,8 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: post-commit continuation")
         self.assertFalse(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
         self.assertGreater(response["predictionFirst"]["policy"]["sideInserted"], 0)
+        self.assertTrue(response["predictionFirst"]["policy"]["candidatePoolActive"])
+        self.assertFalse(response["predictionFirst"]["policy"]["candidatePoolReused"])
         self.assertFalse(any(item["sourceType"] == "rime" for item in response["displayCandidates"]))
 
     def test_prediction_first_post_commit_clears_stale_empty_panel(self) -> None:
@@ -1005,6 +1010,47 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["displayCandidates"], [])
         self.assertEqual(response["modelPredictions"], [])
         self.assertEqual(response["ragCandidates"], [])
+
+    def test_prediction_first_stale_post_commit_drops_prior_manager_pool(self) -> None:
+        core = EmptySuggestionCore()
+        adapter = InputMethodAdapter(core)
+        predictor = PrefixConstrainedPredictionProvider()
+        session_id = "squirrel-prediction-first-stale-after-live"
+        live_payload = {
+            "sessionId": session_id,
+            "requestSeq": 1,
+            "frontendBuild": "rag-ime.foreground-trace.v2",
+            "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
+            "rawInput": "",
+            "preedit": "",
+            "idleMs": 80,
+            "committedContext": "我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 5,
+            "rimeContext": {"candidates": []},
+        }
+        live = build_rime_sidecar_response(
+            payload=live_payload,
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+        self.assertEqual(live["predictionSession"]["phase"], "post_commit")
+        self.assertTrue(live["predictionFirst"]["policy"]["candidatePoolActive"])
+
+        stale = build_rime_sidecar_response(
+            payload={**live_payload, "requestSeq": 2, "idleMs": 1500},
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(stale["triggerDecision"]["reason"], "skip: stale post-commit continuation")
+        self.assertEqual(stale["predictionSession"]["phase"], "hidden")
+        self.assertTrue(stale["predictionSession"]["shouldClearPredictionPanel"])
+        self.assertEqual(stale["displayCandidates"], [])
+        self.assertFalse(stale["predictionFirst"]["policy"]["candidatePoolActive"])
+        self.assertFalse(stale["predictionFirst"]["policy"]["candidatePoolReused"])
 
     def test_predictor_cooldown_skips_second_rime_refresh_but_keeps_rag(self) -> None:
         delegate = FailingPredictionProvider()

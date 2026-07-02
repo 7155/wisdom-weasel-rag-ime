@@ -94,6 +94,13 @@ Wisdom-Weasel is valuable because it already stepped on several input-method-spe
 8. Treat prediction UI as a short-lived session.
    The LLM candidate window should be visible only while composition or LLM prediction mode has live candidates. Empty candidates, stale request sequence, Esc, focus loss, or ordinary input should exit prediction mode and hide the panel. RAG-IME exposes the same contract as `predictionFirst.policy.panelVisible / hideWhenEmpty / sessionBound`.
 
+9. Do not copy a persistent popup.
+   The Wisdom-Weasel demo feels natural because LLM candidates visually continue
+   the normal Rime candidate flow. It is not a long-lived clipboard/history
+   panel. RAG-IME should keep the post-commit prediction panel short-lived: if
+   the user does not select a prediction and the session goes stale, the panel
+   must clear even when the backend still has cached memory candidates.
+
 ## Candidate Lane Policy
 
 The UI should not split "word candidates" and "paragraph candidates" into separate number-key modes.
@@ -111,7 +118,13 @@ after commit / prediction-only mode:
 
 Rime candidates keep priority during active composition because they are the user's normal typing path. RAG and memory candidates should be appended or shown in a compact secondary lane, not allowed to steal the first candidate slots unless the user explicitly enables aggressive reranking.
 
-After a commit, the prediction-only panel is allowed to replace the Rime list briefly, but it must be session-bound. It is not a clipboard/history panel: if no model/RAG/memory candidate is ready, or the post-commit window has gone stale, the panel should disappear so digits and English/code input stay normal.
+After a commit, the prediction-only panel is allowed to replace the Rime list
+briefly, but it must be session-bound. It is not a clipboard/history panel: if
+no model/RAG/memory candidate is ready, or the post-commit window has gone
+stale, the panel should disappear so digits and English/code input stay normal.
+The practical default is a roughly 0.8-1.2s post-commit window; any longer
+continuation should require an active prefix, a fresh model/RAG response, or an
+explicit expand action.
 
 The default IME panel stays small:
 

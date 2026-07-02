@@ -23,10 +23,9 @@ from .payloads import action_response_payload, model_prediction_to_payload, sugg
 from .pinyin_index import build_pinyin_metadata
 from .prediction_first import (
     infer_input_mode,
-    merge_prediction_first_candidates,
     prediction_session_to_payload,
-    resolve_prediction_session,
 )
+from .prediction_manager import PredictionManager
 from .predictor import PredictionProvider
 from .text_utils import compact_whitespace, now_ms
 
@@ -98,6 +97,8 @@ _MODEL_HOLDOVER_TTL_MS = 900
 _POST_COMMIT_PANEL_TTL_MS = 1200
 _MODEL_HOLDOVER_LOCK = RLock()
 _MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
+_PREDICTION_MANAGER_LOCK = RLock()
+_PREDICTION_MANAGERS: dict[tuple[str, str, str], PredictionManager] = {}
 _RECENT_MEMORY_KEYWORDS = (
     "输入法",
     "RAG",
@@ -227,21 +228,36 @@ def build_rime_sidecar_response(
         }
     prediction_first_enabled = prediction_first_merge_enabled(payload)
     if prediction_first_enabled:
-        prediction_first_result = merge_prediction_first_candidates(
+        prediction_manager = _prediction_manager_for_snapshot(snapshot, default_project=default_project)
+        raw_commit_text = raw_english_candidate_text(snapshot)
+        if _should_clear_prediction_pool(
             snapshot=snapshot,
-            model_predictions=model_predictions,
-            suggestions=suggestions,
-            raw_commit_text=raw_english_candidate_text(snapshot),
+            trigger_decision=trigger_decision,
+            raw_commit_text=raw_commit_text,
+        ):
+            prediction_manager.clear()
+        source_update = trigger_decision.should_refresh or bool(model_predictions) or bool(suggestions)
+        manager_result = prediction_manager.render(
+            snapshot=snapshot,
+            model_predictions=model_predictions if source_update else None,
+            suggestions=suggestions if source_update else None,
+            raw_commit_text=raw_commit_text,
+            now_ms=now_ms(),
         )
+        prediction_first_result = manager_result.merge_result
         display_candidates = list(prediction_first_result.display_candidates)
-        prediction_session_payload = prediction_session_to_payload(
-            resolve_prediction_session(snapshot=snapshot, merge_result=prediction_first_result)
-        )
+        prediction_session_payload = prediction_session_to_payload(manager_result.session)
         prediction_first_payload: dict[str, object] = {
             "enabled": True,
             "mode": prediction_first_result.mode.value,
             "pinyinPrefix": prediction_first_result.pinyin_prefix,
-            "policy": prediction_first_result.policy,
+            "policy": {
+                **prediction_first_result.policy,
+                "candidatePoolActive": manager_result.candidate_pool_active,
+                "candidatePoolReused": manager_result.reused_candidate_pool,
+                "candidatePoolStale": manager_result.candidate_pool_stale,
+                "candidatePoolContextFingerprint": manager_result.context_fingerprint,
+            },
         }
     else:
         display_candidates = merge_display_candidates(
@@ -895,6 +911,11 @@ def clear_model_prediction_holdover_cache() -> None:
         _MODEL_HOLDOVERS.clear()
 
 
+def clear_prediction_manager_cache() -> None:
+    with _PREDICTION_MANAGER_LOCK:
+        _PREDICTION_MANAGERS.clear()
+
+
 def wait_for_model_prediction_lane_idle(timeout_s: float = 1.0) -> bool:
     deadline = time.monotonic() + max(0.0, timeout_s)
     while time.monotonic() <= deadline:
@@ -902,6 +923,43 @@ def wait_for_model_prediction_lane_idle(timeout_s: float = 1.0) -> bool:
             _MODEL_LANE_SEMAPHORE.release()
             return True
         time.sleep(0.005)
+    return False
+
+
+def _prediction_manager_for_snapshot(
+    snapshot: RimeContextSnapshot,
+    *,
+    default_project: str,
+) -> PredictionManager:
+    project = compact_whitespace(snapshot.project or default_project)
+    app = compact_whitespace(snapshot.app)
+    session_id = compact_whitespace(snapshot.session_id)
+    key = (project, app, session_id)
+    with _PREDICTION_MANAGER_LOCK:
+        manager = _PREDICTION_MANAGERS.get(key)
+        if manager is None:
+            manager = PredictionManager(candidate_pool_ttl_ms=_POST_COMMIT_PANEL_TTL_MS)
+            _PREDICTION_MANAGERS[key] = manager
+        return manager
+
+
+def _should_clear_prediction_pool(
+    *,
+    snapshot: RimeContextSnapshot,
+    trigger_decision: RimeSideCandidateTriggerDecision,
+    raw_commit_text: str,
+) -> bool:
+    if compact_whitespace(raw_commit_text):
+        return True
+    if not compact_whitespace(snapshot.committed_context):
+        return True
+    reason = trigger_decision.reason
+    if reason in {
+        "skip: stale post-commit continuation",
+        "skip: raw pinyin fallback",
+        "skip: empty semantic signal",
+    }:
+        return True
     return False
 
 

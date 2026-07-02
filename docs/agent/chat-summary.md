@@ -1874,3 +1874,23 @@ Verification:
 
 Next:
 - Commit/push this manager layer.
+
+### 2026-07-02
+Topic:
+- Align LLM/RAG/memory candidate appearance with Wisdom-Weasel's natural candidate-flow lifecycle.
+
+Findings:
+- Wisdom-Weasel's demo and code show LLM candidates as part of the Rime candidate flow, not as a persistent history popup.
+- It enters prediction after meaningful commit, predicts asynchronously, drops stale results, appends LLM candidates to the structured candidate list, and uses llama.cpp system-prompt KV cache plus batch candidate sampling.
+- RAG-IME should preserve the short-lived session model but keep continued pinyin as a prediction constraint instead of exiting prediction mode on letters.
+
+Changes:
+- `/rime-suggest` now uses `PredictionManager` in `predictionFirstMerge`.
+- The candidate pool is session/project/app scoped and cleared on stale post-commit, raw passthrough, raw pinyin fallback, empty signal, or missing committed context.
+- Debug policy now exposes candidate-pool active/reused/stale fields.
+- Docs now state that passive post-commit prediction should live only around 0.8-1.2s unless the user keeps constraining or a fresh result arrives.
+
+Verification:
+- `py_compile` passed for sidecar/prediction modules.
+- Focused sidecar + prediction-manager tests passed: 8 tests.
+- Full suite passed: 271 tests.
