@@ -12,6 +12,7 @@ const state = {
   rimeSidecar: null,
   predictorTtfc: null,
   cacheProbe: null,
+  predictionFirstMerge: false,
   inputSource: null,
   inputSourceChecking: false,
   inputSourceTimer: 0,
@@ -95,6 +96,8 @@ const elements = {
   cacheCore: document.getElementById("cacheCore"),
   cacheRime: document.getElementById("cacheRime"),
   cacheRepeat: document.getElementById("cacheRepeat"),
+  predictionFirstToggle: document.getElementById("predictionFirstToggle"),
+  predictionFirstStatus: document.getElementById("predictionFirstStatus"),
   inputSourceButton: document.getElementById("inputSourceButton"),
   inputInstalled: document.getElementById("inputInstalled"),
   inputThirdParty: document.getElementById("inputThirdParty"),
@@ -125,10 +128,49 @@ function sourceLabel(suggestion) {
   return "local memory";
 }
 
+function sidecarDisplayCandidates() {
+  if (!state.predictionFirstMerge || !state.rimeSidecar?.predictionFirst?.enabled) return [];
+  const items = state.rimeSidecar.displayCandidates;
+  return Array.isArray(items) ? items : [];
+}
+
+function sidecarShortCandidates() {
+  return sidecarDisplayCandidates()
+    .filter((item) => item.displayLayout !== "block" && item.sourceType !== "rag" && item.sourceType !== "memory")
+    .slice(0, 6);
+}
+
+function sidecarRagCandidates() {
+  return sidecarDisplayCandidates()
+    .filter((item) => item.displayLayout === "block" || item.sourceType === "rag" || item.sourceType === "memory")
+    .slice(0, 4);
+}
+
+function sidecarCandidateToSuggestion(item) {
+  return {
+    suggestionId: item.suggestionId || `${item.sourceType}:${item.sourceIndex}`,
+    surfaceText: item.text,
+    insertText: item.insertText || item.text,
+    suggestionType: item.sourceType || "sidecar",
+    sourceEventId: item.sourceEventId || 0,
+    evidencePreview: item.evidencePreview || item.comment || "",
+    expandedEvidence: item.evidencePreview || "",
+    confidence: item.metadata?.confidence || 0,
+    memoryId: item.memoryId || item.sourceType || "sidecar",
+    metadata: { sources: [item.displayLane || item.sourceType || "sidecar"], sidecarCandidate: item },
+  };
+}
+
 function render() {
   const query = state.query || "sa";
-  const shortItems = shortCandidates(query);
-  const ragItems = state.suggestions.length ? state.suggestions : fallbackSuggestions;
+  const sidecarShort = sidecarShortCandidates();
+  const sidecarRag = sidecarRagCandidates();
+  const shortItems = sidecarShort.length ? sidecarShort.map((item) => item.text) : shortCandidates(query);
+  const ragItems = sidecarRag.length
+    ? sidecarRag.map(sidecarCandidateToSuggestion)
+    : state.suggestions.length
+      ? state.suggestions
+      : fallbackSuggestions;
 
   elements.committedText.textContent = state.committed;
   elements.preeditText.textContent = state.query;
@@ -182,16 +224,20 @@ function render() {
       })),
       modelPredictions: state.modelPredictions,
       historyContext: state.historyContext,
+      predictionFirstMerge: state.predictionFirstMerge,
       rimeSidecar: state.rimeSidecar
         ? {
             queryBasis: state.rimeSidecar.queryBasis,
             triggerDecision: state.rimeSidecar.triggerDecision,
             cache: state.rimeSidecar.cache || null,
+            predictionFirst: state.rimeSidecar.predictionFirst || null,
             displayCandidates: (state.rimeSidecar.displayCandidates || []).map((item) => ({
               label: item.label,
               selectionKey: item.selectionKey,
               selectionRank: item.selectionRank,
               text: item.text,
+              displayLayout: item.displayLayout,
+              displayLane: item.displayLane,
               sourceType: item.sourceType,
             })),
           }
@@ -240,6 +286,7 @@ function render() {
 
   renderTtfc();
   renderCacheProbe();
+  renderPredictionFirst();
   renderInputSource();
 }
 
@@ -256,8 +303,12 @@ async function suggestNow() {
   if (!query) {
     state.modelPredictions = [];
     state.historyContext = "";
-    state.rimeSidecar = null;
     state.suggestions = fallbackSuggestions;
+    if (state.predictionFirstMerge && state.committed.trim()) {
+      await refreshPostCommitPredictions("");
+      return;
+    }
+    state.rimeSidecar = null;
     render();
     return;
   }
@@ -299,15 +350,17 @@ async function suggestNow() {
   }
 }
 
-async function probeRimeSidecar(query) {
-  const candidates = shortCandidates(query)
-    .slice(0, 2)
-    .map((item, index) => ({
-      label: String(index + 1),
-      text: item,
-      comment: "debug-rime",
-      index,
-    }));
+async function probeRimeSidecar(query, options = {}) {
+  const candidates = query
+    ? shortCandidates(query)
+        .slice(0, 2)
+        .map((item, index) => ({
+          label: String(index + 1),
+          text: item,
+          comment: "debug-rime",
+          index,
+        }))
+    : [];
   const response = await fetch("/api/rime-suggest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -316,10 +369,13 @@ async function probeRimeSidecar(query) {
       requestSeq: Date.now(),
       rawInput: query,
       preedit: query,
+      commitTextPreview: options.commitTextPreview || "",
       committedContext: state.committed.slice(-220),
-      idleMs: 0,
+      idleMs: options.idleMs ?? 0,
       maxVisibleCandidates: 6,
       maxSideCandidates: 2,
+      predictionFirstMerge: state.predictionFirstMerge,
+      forceSideCandidates: options.forceSideCandidates === true,
       rimeContext: {
         candidates,
         highlightedIndex: 0,
@@ -330,6 +386,25 @@ async function probeRimeSidecar(query) {
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
+}
+
+async function refreshPostCommitPredictions(anchorText) {
+  if (!state.predictionFirstMerge || !state.committed.trim()) return;
+  setPipeline("rank");
+  try {
+    state.rimeSidecar = await probeRimeSidecar("", {
+      commitTextPreview: anchorText,
+      forceSideCandidates: true,
+      idleMs: 120,
+    });
+    state.apiOnline = true;
+  } catch (_) {
+    state.rimeSidecar = null;
+    state.apiOnline = false;
+  } finally {
+    window.setTimeout(() => setPipeline(""), 180);
+    render();
+  }
 }
 
 function debounceSuggest() {
@@ -344,6 +419,11 @@ function setPipeline(active) {
 }
 
 function acceptShort(index) {
+  const sidecarItem = sidecarShortCandidates()[index];
+  if (sidecarItem) {
+    acceptSidecarCandidate(sidecarItem);
+    return;
+  }
   const item = shortCandidates(state.query || "sa")[index];
   if (!item) return;
   const insertText = `${state.query}${item}`;
@@ -353,9 +433,15 @@ function acceptShort(index) {
   state.focusLayer = "short";
   sendCommit(insertText);
   render();
+  refreshPostCommitPredictions(insertText);
 }
 
 function acceptRag(index) {
+  const sidecarItem = sidecarRagCandidates()[index];
+  if (sidecarItem) {
+    acceptSidecarCandidate(sidecarItem);
+    return;
+  }
   const item = (state.suggestions.length ? state.suggestions : fallbackSuggestions)[index];
   if (!item) return;
   const insertText = item.insertText || item.surfaceText;
@@ -366,6 +452,42 @@ function acceptRag(index) {
   sendAction("accepted", item);
   sendCommit(insertText, item);
   render();
+  refreshPostCommitPredictions(insertText);
+}
+
+async function acceptSidecarCandidate(candidate) {
+  const insertText = candidate.insertText || candidate.text;
+  if (!insertText) return;
+  state.committed += insertText;
+  state.query = "";
+  elements.hiddenInput.value = "";
+  state.focusLayer = "short";
+  await sendRimeSelect(candidate);
+  render();
+  await refreshPostCommitPredictions(insertText);
+}
+
+async function sendRimeSelect(candidate) {
+  try {
+    await fetch("/api/rime-select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        candidate,
+        query: state.query,
+        semanticQuery: state.rimeSidecar?.semanticQuery || "",
+        recentContext: state.committed.slice(-220),
+        committedContext: state.committed.slice(-220),
+        preedit: state.query,
+        project: "wisdom-weasel-rag-ime",
+        source: "debug_prediction_first",
+        providerName: `debug-${candidate.sourceType || "sidecar"}`,
+      }),
+    });
+    state.apiOnline = true;
+  } catch (_) {
+    state.apiOnline = false;
+  }
 }
 
 async function sendAction(actionType, suggestion) {
@@ -510,6 +632,20 @@ function renderCacheProbe() {
   elements.cacheRime.textContent = repeat ? String(rimeHits) : "--";
   elements.cacheRepeat.textContent = repeat ? String(repeat) : "--";
   elements.cacheButton.classList.toggle("is-warn", corePassed === false || rimePassed === false);
+}
+
+function renderPredictionFirst() {
+  const meta = state.rimeSidecar?.predictionFirst || {};
+  const policy = meta.policy || {};
+  elements.predictionFirstToggle.checked = state.predictionFirstMerge;
+  elements.predictionFirstStatus.textContent = [
+    meta.enabled ? meta.mode || "prediction-first" : "legacy sidecar merge",
+    meta.pinyinPrefix ? `prefix=${meta.pinyinPrefix}` : "",
+    Number.isFinite(policy.sideInserted) ? `side=${policy.sideInserted}` : "",
+    Number.isFinite(policy.wanxiangFallbackCount) ? `wanxiang=${policy.wanxiangFallbackCount}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function compactInputSourceId(value) {
@@ -666,6 +802,13 @@ elements.evidenceButton.addEventListener("click", () => {
 });
 elements.ttfcButton.addEventListener("click", probePredictorTtfc);
 elements.cacheButton.addEventListener("click", probeCache);
+elements.predictionFirstToggle.addEventListener("change", () => {
+  state.predictionFirstMerge = elements.predictionFirstToggle.checked;
+  state.rimeSidecar = null;
+  render();
+  suggestNow();
+  elements.hiddenInput.focus();
+});
 elements.inputSourceButton.addEventListener("click", refreshInputSource);
 
 render();

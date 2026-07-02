@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
-from rag_ime.models import ModelPrediction
+from rag_ime.models import InputSuggestion, ModelPrediction
 from rag_ime.predictor import OllamaPredictionConfig, OllamaPredictionProvider
 
 
@@ -37,6 +37,31 @@ class FakePredictionProvider:
                 latency_ms=7,
                 confidence=0.9,
             )
+        ][:max_candidates]
+
+
+class PrefixPredictionProvider(FakePredictionProvider):
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.calls += 1
+        self.last_current_input = current_input
+        self.last_recent_context = recent_context
+        return [
+            ModelPrediction(
+                text="设计输入法状态机",
+                rank=1,
+                provider_name="qwen-mlx",
+                latency_ms=9,
+                confidence=0.84,
+                metadata={"initials": "sjsrfztj"},
+            ),
+            ModelPrediction(
+                text="把这个项目整理成面试亮点",
+                rank=2,
+                provider_name="qwen-mlx",
+                latency_ms=9,
+                confidence=0.9,
+                metadata={"initials": "bzgxmzlmsld"},
+            ),
         ][:max_candidates]
 
 
@@ -99,6 +124,34 @@ class VectorAwareFixtureCore(FixtureCoreClient):
             "candidateLimit": 8,
             "weight": 1.0,
         }
+
+
+class PrefixFixtureCore(FixtureCoreClient):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", top_k: int = 5):
+        return [
+            InputSuggestion(
+                suggestion_id="prefix:1",
+                surface_text="设计一个候选展示方式",
+                suggestion_type="rag",
+                source_event_id=1,
+                evidence_preview="debug prefix evidence",
+                confidence=0.95,
+                metadata={
+                    "insert_text": "设计一个候选展示方式",
+                    "source_type": "rag",
+                    "initials": "sjygxhzsfs",
+                },
+            ),
+            InputSuggestion(
+                suggestion_id="prefix:2",
+                surface_text="把本地记忆注入 Agent 首次运行上下文",
+                suggestion_type="rag",
+                source_event_id=2,
+                evidence_preview="does not match sj",
+                confidence=0.99,
+                metadata={"source_type": "rag", "initials": "bbdjy zr agent scyx sxw"},
+            ),
+        ][:top_k]
 
 
 class DebugImeServiceTests(unittest.TestCase):
@@ -240,6 +293,54 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["displayCandidates"][2]["selectionAction"], "select_rime_candidate")
         self.assertEqual(payload["displayCandidates"][2]["displayLayout"], "fallback")
         self.assertFalse(payload["cache"]["hit"])
+
+    def test_rime_suggest_prediction_first_merge_is_debuggable_and_cache_separated(self) -> None:
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "prediction-first-cache.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                core=PrefixFixtureCore(),
+                predictor=PrefixPredictionProvider(),
+            )
+        )
+        base_payload = {
+            "sessionId": "debug-prediction-first",
+            "requestSeq": 31,
+            "rawInput": "sj",
+            "preedit": "sj",
+            "committedContext": "我想",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "手机", "comment": "wanxiang"},
+                    {"label": "2", "text": "世界", "comment": "wanxiang"},
+                ]
+            },
+        }
+
+        legacy = service.rime_suggest(dict(base_payload))
+        prediction_first_payload = dict(base_payload)
+        prediction_first_payload["requestSeq"] = 32
+        prediction_first_payload["predictionFirstMerge"] = True
+        prediction_first = service.rime_suggest(prediction_first_payload)
+
+        self.assertFalse(legacy["predictionFirst"]["enabled"])
+        self.assertFalse(prediction_first["cache"]["hit"])
+        self.assertTrue(prediction_first["predictionFirst"]["enabled"])
+        self.assertEqual(prediction_first["predictionFirst"]["mode"], "prefix_constrained_composing")
+        self.assertEqual(prediction_first["predictionFirst"]["pinyinPrefix"], "sj")
+        self.assertEqual(
+            [item["text"] for item in prediction_first["displayCandidates"]],
+            ["设计一个候选展示方式", "设计输入法状态机", "手机", "世界"],
+        )
+        self.assertEqual(
+            [item["displayLane"] for item in prediction_first["displayCandidates"]],
+            ["memory", "model", "wanxiang", "wanxiang"],
+        )
+        self.assertEqual(prediction_first["predictionFirst"]["policy"]["sideInserted"], 2)
+        self.assertTrue(prediction_first["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
 
     def test_rime_suggest_cache_hits_repeated_equivalent_payloads(self) -> None:
         predictor = FakePredictionProvider()

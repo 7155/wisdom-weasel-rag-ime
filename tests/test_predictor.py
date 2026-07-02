@@ -24,6 +24,7 @@ from rag_ime.predictor import (
     prediction_provider_from_env,
     prediction_provider_status,
     _filter_repeated_input_candidates,
+    _filter_low_value_ime_candidates,
     _parse_streaming_prediction_candidates,
 )
 
@@ -651,6 +652,12 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(
             _filter_repeated_input_candidates(["现在", "现状"], "现在 限制 现状"),
             ["现在", "现状"],
+        )
+
+    def test_prediction_filter_removes_low_value_filler_candidates(self) -> None:
+        self.assertEqual(
+            _filter_low_value_ime_candidates(["嗯", "推荐", "啊", "呃", "和", "嗯嗯", "当前"]),
+            ["推荐", "和", "当前"],
         )
 
     def test_mlx_provider_uses_resident_prediction_service(self) -> None:

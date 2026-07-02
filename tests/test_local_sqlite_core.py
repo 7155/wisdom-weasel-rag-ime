@@ -164,6 +164,31 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 suggestions = self.adapter.suggest(SuggestionRequest(current_input=query, top_k=1))
                 self.assertEqual(suggestions[0].metadata["insert_text"], expected)
 
+    def test_suggestions_deduplicate_repeated_memory_surfaces(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text("重复候选内容", recent_context="RAG 输入法候选 重复记录")
+        self.adapter.commit_text("重复候选内容", recent_context="RAG 输入法候选 重复记录 第二次")
+        self.adapter.commit_text("新的候选内容", recent_context="RAG 输入法候选 另一条")
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="RAG 输入法候选 重复", top_k=3))
+        surfaces = [item.surface_text for item in suggestions]
+
+        self.assertEqual(surfaces.count("重复候选内容"), 1)
+        self.assertIn("新的候选内容", surfaces)
+
+    def test_suggestions_skip_low_value_one_character_memory_surfaces(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text("嗯", recent_context="RAG 输入法候选 语气词")
+        self.adapter.commit_text("当", recent_context="RAG 输入法候选 单字噪声")
+        self.adapter.commit_text("高频实时场景里的个人记忆系统", recent_context="RAG 输入法候选 高频记忆")
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="RAG 输入法候选", top_k=5))
+        surfaces = [item.surface_text for item in suggestions]
+
+        self.assertNotIn("嗯", surfaces)
+        self.assertNotIn("当", surfaces)
+        self.assertIn("高频实时场景里的个人记忆系统", surfaces)
+
     def test_codex_tool_trace_is_downranked_but_still_recallable(self) -> None:
         self.core.reset()
         self.adapter.commit_text(

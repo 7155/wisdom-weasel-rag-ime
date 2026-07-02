@@ -450,6 +450,23 @@ button {
   border-color: var(--line-2);
 }
 
+.toggle-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.toggle-line input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .ttfc-readout {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

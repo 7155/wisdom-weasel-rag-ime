@@ -17,11 +17,29 @@ from .models import (
     SideCandidateDisplayItem,
 )
 from .payloads import action_response_payload, model_prediction_to_payload, suggestion_to_payload
+from .prediction_first import infer_input_mode, merge_prediction_first_candidates
 from .predictor import PredictionProvider
 from .text_utils import compact_whitespace, now_ms
 
 
 RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
+_SEMANTIC_ASCII_TERMS = {
+    "agent",
+    "bm25",
+    "codex",
+    "fts5",
+    "kv",
+    "llm",
+    "mlx",
+    "pi",
+    "qwen",
+    "rag",
+    "rime",
+    "sqlite",
+    "squirrel",
+    "vcp",
+    "xcode",
+}
 _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_HOLDOVER_TTL_MS = 900
@@ -113,11 +131,36 @@ def build_rime_sidecar_response(
             "totalLatencyBudgetMs": snapshot.latency_budget_ms,
             "elapsedBeforeModelMs": 0,
         }
-    display_candidates = merge_display_candidates(
-        snapshot=snapshot,
-        model_predictions=model_predictions,
-        suggestions=suggestions,
-    )
+    prediction_first_enabled = _bool(payload.get("predictionFirstMerge"), default=False)
+    if prediction_first_enabled:
+        prediction_first_result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=model_predictions,
+            suggestions=suggestions,
+        )
+        display_candidates = list(prediction_first_result.display_candidates)
+        prediction_first_payload: dict[str, object] = {
+            "enabled": True,
+            "mode": prediction_first_result.mode.value,
+            "pinyinPrefix": prediction_first_result.pinyin_prefix,
+            "policy": prediction_first_result.policy,
+        }
+    else:
+        display_candidates = merge_display_candidates(
+            snapshot=snapshot,
+            model_predictions=model_predictions,
+            suggestions=suggestions,
+        )
+        input_mode = infer_input_mode(snapshot)
+        prediction_first_payload = {
+            "enabled": False,
+            "mode": input_mode.value,
+            "pinyinPrefix": snapshot.preedit or snapshot.raw_input,
+            "policy": {
+                "engine": "legacy-sidecar-merge",
+                "reason": "prediction-first merge is behind explicit flag",
+            },
+        }
     return {
         "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
         "sessionId": snapshot.session_id,
@@ -145,6 +188,7 @@ def build_rime_sidecar_response(
         "modelPredictions": [model_prediction_to_payload(item) for item in model_predictions],
         "ragCandidates": [suggestion_to_payload(item) for item in suggestions],
         "displayCandidates": [display_item_to_payload(item) for item in display_candidates],
+        "predictionFirst": prediction_first_payload,
         "selectionActions": {
             "rime": "select_rime_candidate",
             "side": "commit_side_candidate",
@@ -698,7 +742,7 @@ def parse_rime_context_payload(payload: dict[str, Any], *, default_project: str)
         ),
         page=_bounded_int(rime_context.get("page", payload.get("page")), default=0, minimum=0, maximum=999),
         is_last_page=_bool(rime_context.get("isLastPage", payload.get("isLastPage")), default=True),
-        latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=150, minimum=30, maximum=2000),
+        latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=300, minimum=30, maximum=2000),
         max_visible_candidates=_bounded_int(payload.get("maxVisibleCandidates"), default=8, minimum=1, maximum=10),
         max_side_candidates=_bounded_int(payload.get("maxSideCandidates"), default=8, minimum=0, maximum=10),
         idle_ms=_bounded_int(_first_present(payload, rime_context, "idleMs"), default=0, minimum=0, maximum=10000),
@@ -713,6 +757,9 @@ def choose_semantic_query(snapshot: RimeContextSnapshot) -> tuple[str, str]:
     commit_preview = compact_whitespace(snapshot.commit_text_preview)
     if commit_preview:
         return commit_preview, "commitTextPreview"
+    raw_semantic_input = semantic_ascii_input_text(snapshot)
+    if raw_semantic_input:
+        return raw_semantic_input, "rawSemanticInput"
     candidate_text = compact_whitespace(" ".join(item.text for item in snapshot.candidates[:3] if item.text))
     if candidate_text:
         return candidate_text, "rimeCandidates"
@@ -751,6 +798,9 @@ def decide_side_candidate_refresh(
 
     if query_basis == "rawInputFallback":
         return RimeSideCandidateTriggerDecision(False, "skip: raw pinyin fallback")
+
+    if query_basis == "rawSemanticInput":
+        return RimeSideCandidateTriggerDecision(True, "refresh: semantic raw input")
 
     composing_without_rime_candidate = bool(compact_whitespace(snapshot.raw_input)) and not snapshot.candidates
     if composing_without_rime_candidate and query_basis == "committedContext":
@@ -793,6 +843,24 @@ def merge_display_candidates(
 ) -> list[SideCandidateDisplayItem]:
     max_visible = snapshot.max_visible_candidates
     display: list[SideCandidateDisplayItem] = []
+    display_texts: set[str] = set()
+    raw_english = raw_english_candidate_text(snapshot)
+    if raw_english:
+        display_texts.add(_display_text_norm(raw_english))
+        display.append(
+            SideCandidateDisplayItem(
+                label=_display_label("", len(display)),
+                text=raw_english,
+                insert_text=raw_english,
+                source_type="raw_english",
+                selection_action="commit_side_candidate",
+                source_index=0,
+                comment="english",
+                display_layout="inline",
+                display_lane="input",
+                metadata={"candidate_mode": "raw-english"},
+            )
+        )
     side_budget = min(snapshot.max_side_candidates, max_visible)
     rag_reserve = min(rag_block_reserve(side_budget), len(suggestions)) if model_predictions else 0
     side_limit = min(
@@ -800,7 +868,14 @@ def merge_display_candidates(
         max(0, max_visible - len(display)),
         len(model_predictions),
     )
-    for prediction in model_predictions[:side_limit]:
+    model_count = 0
+    for prediction in model_predictions:
+        if model_count >= side_limit or len(display) >= max_visible:
+            break
+        normalized_text = _display_text_norm(prediction.text)
+        if normalized_text in display_texts:
+            continue
+        display_texts.add(normalized_text)
         display.append(
             SideCandidateDisplayItem(
                 label=_display_label("", len(display)),
@@ -820,9 +895,17 @@ def merge_display_candidates(
                 },
             )
         )
+        model_count += 1
     remaining_side_budget = max(0, side_budget - side_limit)
+    rag_count = 0
     remaining = min(remaining_side_budget, max(0, max_visible - len(display)))
-    for index, suggestion in enumerate(suggestions[:remaining]):
+    for suggestion in suggestions:
+        if rag_count >= remaining or len(display) >= max_visible:
+            break
+        normalized_text = _display_text_norm(suggestion.surface_text)
+        if normalized_text in display_texts:
+            continue
+        display_texts.add(normalized_text)
         metadata = dict(suggestion.metadata)
         display.append(
             SideCandidateDisplayItem(
@@ -831,7 +914,7 @@ def merge_display_candidates(
                 insert_text=str(metadata.get("insert_text") or suggestion.surface_text),
                 source_type="rag",
                 selection_action="commit_side_candidate",
-                source_index=index,
+                source_index=rag_count,
                 comment=suggestion.suggestion_type,
                 evidence_preview=suggestion.evidence_preview,
                 suggestion_id=suggestion.suggestion_id,
@@ -842,8 +925,15 @@ def merge_display_candidates(
                 metadata=metadata,
             )
         )
+        rag_count += 1
     rime_remaining = max(0, max_visible - len(display))
-    for index, candidate in enumerate(snapshot.candidates[:rime_remaining]):
+    for candidate in snapshot.candidates:
+        if len(display) >= max_visible:
+            break
+        normalized_text = _display_text_norm(candidate.text)
+        if normalized_text in display_texts:
+            continue
+        display_texts.add(normalized_text)
         display.append(
             SideCandidateDisplayItem(
                 label=_display_label(candidate.label if not display else "", len(display)),
@@ -851,7 +941,7 @@ def merge_display_candidates(
                 insert_text=candidate.text,
                 source_type="rime",
                 selection_action="select_rime_candidate",
-                source_index=index,
+                source_index=candidate.index,
                 comment=candidate.comment,
                 rime_index=candidate.index,
                 display_layout="fallback",
@@ -859,6 +949,55 @@ def merge_display_candidates(
             )
         )
     return display
+
+
+def _display_text_norm(text: str) -> str:
+    return compact_whitespace(text).lower()
+
+
+def raw_english_candidate_text(snapshot: RimeContextSnapshot) -> str:
+    raw = compact_whitespace(snapshot.raw_input)
+    if not raw:
+        raw = compact_whitespace(snapshot.preedit)
+    return raw if looks_like_raw_commit_ascii_input(raw) else ""
+
+
+def semantic_ascii_input_text(snapshot: RimeContextSnapshot) -> str:
+    raw = compact_whitespace(snapshot.raw_input)
+    if not raw:
+        raw = compact_whitespace(snapshot.preedit)
+    return raw if looks_like_semantic_ascii_input(raw) else ""
+
+
+def looks_like_semantic_ascii_input(raw: str) -> bool:
+    if not _is_ascii_text_input(raw):
+        return False
+    if raw.lower() in _SEMANTIC_ASCII_TERMS:
+        return True
+    return looks_like_raw_commit_ascii_input(raw)
+
+
+def looks_like_raw_commit_ascii_input(raw: str) -> bool:
+    if not _is_ascii_text_input(raw):
+        return False
+    code_delimiters = set("_./:-+=<>[]{}()$@#\\|")
+    has_code_delimiter = any(char in code_delimiters for char in raw)
+    has_upper = any(char.isupper() for char in raw)
+    has_lower = any(char.islower() for char in raw)
+    has_digit = any(char.isdigit() for char in raw)
+    return has_code_delimiter or (has_upper and has_lower) or (has_upper and len(raw) >= 2) or (has_digit and len(raw) >= 2)
+
+
+def _is_ascii_text_input(raw: str) -> bool:
+    if not raw or len(raw) > 80:
+        return False
+    if any(char.isspace() for char in raw):
+        return False
+    if not all(32 <= ord(char) <= 126 for char in raw):
+        return False
+    if not any(char.isalpha() for char in raw):
+        return False
+    return True
 
 
 def max_model_side_candidates(side_budget: int) -> int:
