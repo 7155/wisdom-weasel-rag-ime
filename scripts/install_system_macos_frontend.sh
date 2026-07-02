@@ -13,6 +13,7 @@ INPUT_SOURCE_ID="${RAG_IME_MACOS_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMa
 BUNDLE_ID="${RAG_IME_MACOS_BUNDLE_ID:-dev.local.inputmethod.RagImeMac}"
 SELECT_INPUT_SOURCE="${RAG_IME_MACOS_INSTALL_SELECT:-1}"
 PRUNE_USER_DUPLICATE="${RAG_IME_MACOS_PRUNE_USER_DUPLICATE:-1}"
+ALLOW_NATIVE_HARNESS_INSTALL="${RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL:-0}"
 
 bool_true() {
   case "${1:-}" in
@@ -20,6 +21,21 @@ bool_true() {
     *) return 1 ;;
   esac
 }
+
+if ! bool_true "$ALLOW_NATIVE_HARNESS_INSTALL"; then
+  cat >&2 <<'EOF'
+[STOP] RagImeMac is a debug harness, not the product input-method route.
+
+Do not install this native harness into /Library/Input Methods as the main
+Prediction-first RAG IME. The product route is the Rime/Squirrel
+candidate-layer integration with Wanxiang/Rime as the pinyin anchor.
+
+For one-off system-level harness debugging only, set:
+
+  RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL=1 scripts/install_system_macos_frontend.sh
+EOF
+  exit 2
+fi
 
 if [[ ! -d "$APP_DIR" ]]; then
   "$ROOT/scripts/build_macos_frontend.sh" >/dev/null

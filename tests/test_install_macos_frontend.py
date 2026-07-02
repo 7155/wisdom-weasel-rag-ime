@@ -26,6 +26,7 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
                     "HOME": str(Path(tmp) / "home"),
                     "RAG_IME_MACOS_APP": str(app),
                     "RAG_IME_MACOS_INSTALL_DRY_RUN": "1",
+                    "RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL": "1",
                 },
                 check=True,
                 text=True,
@@ -35,6 +36,31 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
         self.assertIn("dry-run: would install", result.stdout)
         self.assertIn("input_source_id=dev.local.inputmethod.RagImeMac.Hans", result.stdout)
         self.assertIn("RagImeMac.app", result.stdout)
+
+    def test_native_install_is_blocked_unless_harness_mode_is_explicit(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-install-macos-") as tmp:
+            app = _write_fake_app(Path(tmp))
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "install_macos_frontend.sh"),
+                    "--no-check",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": str(Path(tmp) / "home"),
+                    "RAG_IME_MACOS_APP": str(app),
+                    "RAG_IME_MACOS_INSTALL_DRY_RUN": "1",
+                },
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("RagImeMac is a debug harness", result.stderr)
+        self.assertIn("Rime/Squirrel candidate-layer integration", result.stderr)
 
     def test_installs_app_and_user_bridge_config_under_home(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -53,6 +79,7 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
                     **os.environ,
                     "HOME": str(home),
                     "RAG_IME_MACOS_APP": str(app),
+                    "RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL": "1",
                 },
                 check=True,
                 text=True,
@@ -84,9 +111,20 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
 
         self.assertIn("/Library/Input Methods", source)
         self.assertIn("RAG_IME_MACOS_PRUNE_USER_DUPLICATE", source)
+        self.assertIn("RAG_IME_ALLOW_NATIVE_HARNESS_INSTALL", source)
+        self.assertIn("debug harness, not the product input-method route", source)
         self.assertIn("/usr/sbin/chown -R root:wheel", source)
         self.assertIn("/bin/chmod -R u+rwX,go+rX", source)
         self.assertIn("lsregister -f -R", source)
+
+    def test_readme_keeps_native_app_as_debug_harness_not_product_route(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        readme = (root / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("macOS Rime/Squirrel candidate-layer adapter", readme)
+        self.assertIn("native InputMethodKit debug harness", readme)
+        self.assertIn("The product route is not the independent native `RagImeMac` app", readme)
+        self.assertNotIn("The current implementation direction is the independent native `RagImeMac`", readme)
 
     def test_refresh_script_only_unregisters_rag_ime_app_paths(self) -> None:
         root = Path(__file__).resolve().parents[1]
