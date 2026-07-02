@@ -353,10 +353,56 @@ class LocalSqliteCoreClient:
         raw_query = _build_retrieval_query(current_input=current_input, recent_context=recent_context, project=project, app=app)
         query = _expand_query_for_local_rerank(raw_query)
         fts_query = build_fts_query(query)
+        rows, vector_scores = self._retrieve_candidate_rows(
+            query=query,
+            raw_query=raw_query,
+            fts_query=fts_query,
+            project=project,
+            app=app,
+            top_k=top_k,
+        )
+        if not rows and project:
+            rows, vector_scores = self._retrieve_candidate_rows(
+                query=query,
+                raw_query=raw_query,
+                fts_query=fts_query,
+                project="",
+                app=app,
+                top_k=top_k,
+            )
+        if not rows and _recent_fill_enabled():
+            rows = self._recent_rows(project=project, app=app, limit=top_k)
+        elif rows and len(rows) < top_k and _recent_fill_enabled():
+            rows = self._append_recent_fill(rows, project=project, app=app, limit=top_k)
+
+        present_ms = now_ms()
+        memories = [
+            self._row_to_memory(
+                row,
+                query=query,
+                project=project,
+                app=app,
+                raw_query=raw_query,
+                vector_score=vector_scores.get(int(row["id"]), 0.0),
+                present_ms=present_ms,
+            )
+            for row in rows
+        ]
+        memories.sort(key=lambda item: item.score, reverse=True)
+        return memories[:top_k]
+
+    def _retrieve_candidate_rows(
+        self,
+        *,
+        query: str,
+        raw_query: str,
+        fts_query: str,
+        project: str,
+        app: str,
+        top_k: int,
+    ) -> tuple[list[sqlite3.Row], dict[int, float]]:
         rows: list[sqlite3.Row] = []
-        if not fts_query:
-            rows = []
-        else:
+        if fts_query:
             rows = self._search_rows(fts_query=fts_query, project=project, app=app, limit=max(top_k * 8, 50))
         vector_rows, vector_scores = self._vector_rows(
             query=query,
@@ -379,27 +425,7 @@ class LocalSqliteCoreClient:
                 if vector_scores.get(int(row["id"]), 0.0) > 0.05
                 or _row_matches_required_query(row, raw_query=query, allow_pinyin=False, relaxed=True)
             ]
-        rows = filtered_rows
-        if not rows and _recent_fill_enabled():
-            rows = self._recent_rows(project=project, app=app, limit=top_k)
-        elif rows and len(rows) < top_k and _recent_fill_enabled():
-            rows = self._append_recent_fill(rows, project=project, app=app, limit=top_k)
-
-        present_ms = now_ms()
-        memories = [
-            self._row_to_memory(
-                row,
-                query=query,
-                project=project,
-                app=app,
-                raw_query=raw_query,
-                vector_score=vector_scores.get(int(row["id"]), 0.0),
-                present_ms=present_ms,
-            )
-            for row in rows
-        ]
-        memories.sort(key=lambda item: item.score, reverse=True)
-        return memories[:top_k]
+        return filtered_rows, vector_scores
 
     def apply_action(self, action: MemoryAction) -> MemoryAction:
         self.initialize()

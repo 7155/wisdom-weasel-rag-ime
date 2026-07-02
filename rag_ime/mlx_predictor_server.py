@@ -25,6 +25,14 @@ SYSTEM_PROMPT = (
     "不要输出泛词或传统词库噪声: 根据、基于、和、测试、分析、验证、假设、或者、现在、目前、当前、然后。"
 )
 
+STREAM_FIRST_SYSTEM_PROMPT = (
+    "你是 Prediction-first 中文输入法的本地续写模型。"
+    "答案只能是一段能接在光标后的中文动作短语或对象短语, 3 到 12 个汉字为主。"
+    "好例子: 跑通输入流程、接入本地记忆、优化候选排序、支持英文输入。"
+    "坏例子: 直接输出、后文候选、输入法候选、模型候选、记忆、需要、当前。"
+    "不要解释, 不要编号, 不要 JSON, 不要拼音, 不要<think>。"
+)
+
 LOGITS_SYSTEM_PROMPT = (
     "你是 Prediction-first 中文输入法的本地续写模型。根据用户已经上屏的上下文, "
     "直接给出最可能接在光标后的中文短语。不要解释, 不要编号, 不要 JSON, 不要拼音。"
@@ -136,6 +144,7 @@ class MlxLmEngine:
         max_tokens: int,
         temperature: float,
         top_p: float,
+        stream_first_candidate: bool = False,
         request_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
@@ -172,6 +181,7 @@ class MlxLmEngine:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
+                stream_first_candidate=stream_first_candidate,
                 request_metadata=request_metadata,
             )
         )
@@ -274,6 +284,7 @@ class MlxLmEngine:
         max_tokens: int,
         temperature: float,
         top_p: float,
+        stream_first_candidate: bool = False,
         request_metadata: dict[str, Any] | None = None,
     ) -> Iterable[str]:
         _ = request_metadata
@@ -281,8 +292,9 @@ class MlxLmEngine:
             current_input=current_input,
             recent_context=recent_context,
             max_candidates=max_candidates,
+            stream_first_candidate=stream_first_candidate,
         )
-        if self._prompt_cache.ready_for_generation():
+        if self._prompt_cache.ready_for_generation() and not stream_first_candidate:
             try:
                 for text in self._stream_text_with_prompt_cache(
                     current_input=current_input,
@@ -291,6 +303,7 @@ class MlxLmEngine:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     top_p=top_p,
+                    stream_first_candidate=stream_first_candidate,
                 ):
                     yield text
                 return
@@ -317,6 +330,7 @@ class MlxLmEngine:
         max_tokens: int,
         temperature: float,
         top_p: float,
+        stream_first_candidate: bool = False,
     ) -> Iterable[str]:
         from mlx_lm.generate import generate_step  # type: ignore
         from mlx_lm.models.cache import load_prompt_cache  # type: ignore
@@ -328,6 +342,7 @@ class MlxLmEngine:
             current_input=current_input,
             recent_context=recent_context,
             max_candidates=max_candidates,
+            stream_first_candidate=stream_first_candidate,
         )
         self._prompt_cache.used_for_generation = True
         self._prompt_cache.hit_count += 1
@@ -377,20 +392,35 @@ class MlxLmEngine:
             if delta:
                 yield delta
 
-    def _stable_prompt_prefix(self) -> str:
-        return f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n"
+    def _stable_prompt_prefix(self, *, stream_first_candidate: bool = False) -> str:
+        prompt = STREAM_FIRST_SYSTEM_PROMPT if stream_first_candidate else SYSTEM_PROMPT
+        return f"<|im_start|>system\n{prompt}<|im_end|>\n<|im_start|>user\n"
 
-    def _dynamic_prompt_suffix(self, *, current_input: str, recent_context: str, max_candidates: int) -> str:
+    def _dynamic_prompt_suffix(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_candidates: int,
+        stream_first_candidate: bool = False,
+    ) -> str:
         return (
-            f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates)}"
+            f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, stream_first_candidate=stream_first_candidate)}"
             "\n/no_think"
             "<|im_end|>\n<|im_start|>assistant\n"
         )
 
-    def _build_prompt(self, *, current_input: str, recent_context: str, max_candidates: int) -> str:
+    def _build_prompt(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_candidates: int,
+        stream_first_candidate: bool = False,
+    ) -> str:
         return (
-            f"{self._stable_prompt_prefix()}"
-            f"{self._dynamic_prompt_suffix(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates)}"
+            f"{self._stable_prompt_prefix(stream_first_candidate=stream_first_candidate)}"
+            f"{self._dynamic_prompt_suffix(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, stream_first_candidate=stream_first_candidate)}"
         )
 
     def _build_logits_prompt(self, *, current_input: str, recent_context: str, max_candidates: int) -> str:
@@ -547,6 +577,7 @@ def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str
         "max_tokens": max(1, min(64, _int_payload(payload.get("maxTokens"), 8))),
         "temperature": _float_payload(payload.get("temperature"), 0.15),
         "top_p": _float_payload(payload.get("topP"), 0.85),
+        "stream_first_candidate": bool(payload.get("streamFirstCandidate")),
         "request_metadata": _request_metadata_from_payload(payload),
     }
 
@@ -632,10 +663,16 @@ def _quantization_summary(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_mlx_prompt(*, current_input: str, recent_context: str, max_candidates: int) -> str:
+def _build_mlx_prompt(
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+    stream_first_candidate: bool = False,
+) -> str:
     return (
         f"{_stable_prompt_prefix()}"
-        f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates)}"
+        f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, stream_first_candidate=stream_first_candidate)}"
     )
 
 
@@ -643,7 +680,19 @@ def _stable_prompt_prefix() -> str:
     return f"{SYSTEM_PROMPT}\n"
 
 
-def _build_mlx_dynamic_prompt(*, current_input: str, recent_context: str, max_candidates: int) -> str:
+def _build_mlx_dynamic_prompt(
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+    stream_first_candidate: bool = False,
+) -> str:
+    if stream_first_candidate:
+        return (
+            f"已上屏上下文: {recent_context}\n"
+            f"当前拼音或参考候选: {current_input}\n"
+            "答案写用户下一步最可能输入的具体短语正文。"
+        )
     return (
         f"已上屏上下文: {recent_context}\n"
         f"当前拼音或参考候选: {current_input}\n"

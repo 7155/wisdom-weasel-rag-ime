@@ -384,6 +384,7 @@ class RimeSidecarTests(unittest.TestCase):
                 "sessionId": "squirrel-context-boundary",
                 "requestSeq": 43,
                 "committedContext": "当前正在写 RAG 输入法 sidecar",
+                "latencyBudgetMs": 800,
                 "maxVisibleCandidates": 4,
                 "maxSideCandidates": 2,
                 "rimeContext": {
@@ -418,6 +419,7 @@ class RimeSidecarTests(unittest.TestCase):
                 "requestSeq": 44,
                 "frontmostApp": "com.openai.codex",
                 "committedContext": "当前正在写 RAG 输入法 sidecar",
+                "latencyBudgetMs": 800,
                 "maxVisibleCandidates": 4,
                 "maxSideCandidates": 2,
                 "rimeContext": {
@@ -1322,6 +1324,7 @@ class RimeSidecarTests(unittest.TestCase):
                     "sessionId": "squirrel-slow-rag",
                     "requestSeq": 78,
                     "latencyBudgetMs": 30,
+                    "forceSideCandidates": True,
                     "maxVisibleCandidates": 5,
                     "maxSideCandidates": 2,
                     "rimeContext": {
@@ -1350,7 +1353,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["sideLaneMode"], "parallel")
         self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["model", "rime"])
 
-    def test_slow_history_context_does_not_call_model_after_budget_timeout(self) -> None:
+    def test_realtime_model_lane_uses_explicit_context_without_waiting_for_slow_history(self) -> None:
         core = SlowHistoryCore(sleep_s=0.12)
         adapter = InputMethodAdapter(core)
         predictor = FakePredictionProvider()
@@ -1360,7 +1363,7 @@ class RimeSidecarTests(unittest.TestCase):
                 payload={
                     "sessionId": "squirrel-slow-history",
                     "requestSeq": 79,
-                    "latencyBudgetMs": 40,
+                    "latencyBudgetMs": 300,
                     "maxVisibleCandidates": 5,
                     "maxSideCandidates": 2,
                     "rimeContext": {
@@ -1378,11 +1381,13 @@ class RimeSidecarTests(unittest.TestCase):
             time.sleep(0.14)
 
         self.assertLess(elapsed_ms, 100)
-        self.assertEqual(predictor.last_current_input, "")
+        self.assertEqual(predictor.last_current_input, "RAG 输入法")
         self.assertTrue(response["modelLane"]["called"])
-        self.assertTrue(response["modelLane"]["timedOut"])
-        self.assertEqual(response["modelPredictions"], [])
-        self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
+        self.assertFalse(response["modelLane"]["timedOut"])
+        self.assertEqual(response["modelLane"]["contextMode"], "explicit-realtime")
+        self.assertEqual(predictor.last_recent_context, "")
+        self.assertTrue(response["modelPredictions"])
+        self.assertTrue(any(item["sourceType"] == "model" for item in response["displayCandidates"]))
 
     def test_rag_display_text_is_compressed_and_insert_text_is_short_candidate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-sidecar-surface-") as tmp:
@@ -1445,7 +1450,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["displayCandidates"], [])
         self.assertFalse(response["mergePolicy"]["sideCandidatesEnabled"])
 
-    def test_dirty_raw_pinyin_can_use_recent_committed_context_fallback(self) -> None:
+    def test_dirty_raw_pinyin_without_rime_candidate_does_not_refresh_from_recent_context(self) -> None:
         response = build_rime_sidecar_response(
             payload={
                 "sessionId": "squirrel-recent-context-fallback",
@@ -1461,10 +1466,12 @@ class RimeSidecarTests(unittest.TestCase):
             core=self.core,
             predictor=self.predictor,
         )
-        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
-        self.assertEqual(response["triggerDecision"]["reason"], "refresh: recent committed context fallback")
-        self.assertIn("刚刚输入了", self.predictor.last_current_input)
-        self.assertIn(response["displayCandidates"][0]["sourceType"], {"model", "rag"})
+        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: composing without stable Rime candidate")
+        self.assertEqual(self.predictor.last_current_input, "")
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertEqual(response["ragCandidates"], [])
+        self.assertEqual(response["displayCandidates"], [])
 
     def test_recent_context_fallback_cleans_repeated_noise_tail(self) -> None:
         suggestions = recent_context_memory_suggestions(

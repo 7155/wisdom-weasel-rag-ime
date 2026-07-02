@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INPUT_SOURCE_ID="${1:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}}"
+INPUT_SOURCE_ID="${1:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac}}}"
 MODULE_CACHE="${RAG_IME_SWIFT_MODULE_CACHE:-${TMPDIR:-/tmp}/rag-ime-swift-module-cache}"
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-tis-select-input-source.XXXXXX")"
@@ -64,9 +64,13 @@ if !cfBoolProperty(source, kTISPropertyInputSourceIsEnabled) {
 }
 
 let selectStatus = TISSelectInputSource(source)
-guard selectStatus == noErr else {
-  fputs("TISSelectInputSource failed: \(selectStatus)\n", stderr)
-  exit(4)
+if selectStatus != noErr {
+  Thread.sleep(forTimeInterval: 0.25)
+  if currentInputSourceID() != target {
+    fputs("TISSelectInputSource failed: \(selectStatus)\n", stderr)
+    exit(4)
+  }
+  fputs("TISSelectInputSource returned \(selectStatus), but current source is already \(target)\n", stderr)
 }
 
 Thread.sleep(forTimeInterval: 0.25)

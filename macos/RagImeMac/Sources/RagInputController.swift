@@ -123,8 +123,7 @@ final class RagInputController: IMKInputController {
         if canRouteNumberToVisiblePanel(),
            let number = Int(string),
            number >= 1,
-           number <= latestDisplayCandidates.count {
-            let candidate = latestDisplayCandidates[number - 1]
+           let candidate = displayCandidate(matchingSelectionNumber: number) {
             let query = composition.isEmpty ? candidate.text : composition
             commit(text: candidate.insertText, client: client, selectedDisplayCandidate: candidate, selectedSuggestion: nil, rank: number, queryOverride: query)
             return true
@@ -135,9 +134,9 @@ final class RagInputController: IMKInputController {
 
     private func selectFirstCandidateIfAvailable(client: IMKTextInput) -> Bool {
         clearExpiredPanelIfNeeded()
-        if canRouteNumberToVisiblePanel(), let candidate = latestDisplayCandidates.first {
+        if canRouteNumberToVisiblePanel(), let candidate = firstVisibleDisplayCandidate() {
             let query = composition.isEmpty ? candidate.text : composition
-            commit(text: candidate.insertText, client: client, selectedDisplayCandidate: candidate, selectedSuggestion: nil, rank: 1, queryOverride: query)
+            commit(text: candidate.insertText, client: client, selectedDisplayCandidate: candidate, selectedSuggestion: nil, rank: candidate.selectionRank ?? 1, queryOverride: query)
             return true
         }
         guard !composition.isEmpty else {
@@ -535,6 +534,30 @@ final class RagInputController: IMKInputController {
         }
     }
 
+    private func displayCandidate(matchingSelectionNumber number: Int) -> RimeDisplayCandidate? {
+        if let candidate = latestDisplayCandidates.first(where: { candidate in
+            if candidate.selectionRank == number {
+                return true
+            }
+            if candidate.selectionKey == "\(number)" {
+                return true
+            }
+            return false
+        }) {
+            return candidate
+        }
+        if latestDisplayCandidates.indices.contains(number - 1) {
+            return latestDisplayCandidates[number - 1]
+        }
+        return nil
+    }
+
+    private func firstVisibleDisplayCandidate() -> RimeDisplayCandidate? {
+        latestDisplayCandidates.min {
+            ($0.selectionRank ?? Int.max) < ($1.selectionRank ?? Int.max)
+        } ?? latestDisplayCandidates.first
+    }
+
     private func clearExpiredPanelIfNeeded() {
         guard let session = activePanelSession, let expiresAt = session.expiresAt, expiresAt <= Date() else {
             return
@@ -592,8 +615,13 @@ final class RagInputController: IMKInputController {
         }
         var actualRange = NSRange(location: NSNotFound, length: 0)
         let selectedRange = client.selectedRange()
-        let fallbackRange = NSRange(location: max(0, composition.utf16.count), length: 0)
-        let range = selectedRange.location == NSNotFound ? fallbackRange : selectedRange
+        let markedCaretRange = NSRange(location: max(0, composition.utf16.count), length: 0)
+        let range: NSRange
+        if !composition.isEmpty {
+            range = markedCaretRange
+        } else {
+            range = selectedRange.location == NSNotFound ? NSRange(location: 0, length: 0) : selectedRange
+        }
         let rect = client.firstRect(forCharacterRange: range, actualRange: &actualRange)
         guard
             rect.origin.x.isFinite,

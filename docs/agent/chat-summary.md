@@ -2110,3 +2110,36 @@ Verification:
 - Native build passed.
 - Native doctor passed against live sidecar.
 - Sidecar verifier passed with weak-context clear and raw English/code/path cases.
+
+### 2026-07-02
+Topic:
+- Close native install and input-source selection loop.
+
+Changes:
+- `install_macos_frontend.sh` now has `--select`, `--check`, `--no-check`, and `--require-input-source`.
+- Shared TIS scripts default to native `dev.local.inputmethod.RagImeMac`.
+- `select_macos_input_source.sh` treats the final current-input-source state as authoritative when `TISSelectInputSource` returns `-50` but the system already switched.
+- README now documents `scripts/install_macos_frontend.sh --select` plus strict doctor.
+
+Verification:
+- Live `scripts/install_macos_frontend.sh --select` installed and selected `RAG IME`.
+- Strict native doctor passed with selected-input-source requirements enabled.
+
+### 2026-07-02
+Topic:
+- Repair Prediction-first IME flow after user reported LLM/RAG were still not usable.
+
+Findings:
+- MLX local `Qwen3.5-0.8B` service is healthy and can stream short candidates, but the sidecar/non-streaming path had an interface crash and the prompt could make the small model copy meta words.
+- The imported Codex history DB is real (`10018` events, `5023` vectors), but it is stored under `wisdom-weasel-rag-ime`; requests with `project=learnA` caused RAG to silently return zero.
+- Real-time vector scanning was too slow for a 100ms RAG lane; FTS-only is the right immediate candidate path, with vector/deep RAG reserved for later refresh.
+- Native panel display and numeric selection could diverge because the UI regrouped rows but selection still used local indexes.
+
+Changes:
+- Added project fallback retrieval, real-time FTS-only RAG path, MLX low-value/meta-word filtering, MLX `/predict` compatibility, and backend `selectionRank/selectionKey` selection in the native panel.
+
+Verification:
+- Core tests passed: 137.
+- Native build passed.
+- Live sidecar now returns both MLX model and RAG candidates for the embedding/RAG debugging context.
+- Current machine still needs manual Keyboard Input Sources selection; install succeeds but `TISSelectInputSource` returns `-50` and active source remains 豆包.

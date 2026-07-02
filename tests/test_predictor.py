@@ -387,6 +387,13 @@ class PredictionProviderTests(unittest.TestCase):
         )
         self.assertEqual(parsed, ["现在", "现状"])
 
+    def test_parse_prediction_candidates_extracts_unfinished_qwen_json_strings(self) -> None:
+        parsed = parse_prediction_candidates(
+            '<think>\n\n</think>\n\n["接入本地记忆","验证 LLM 候选","预测流程完成","部署 RAG 组件',
+            max_candidates=4,
+        )
+        self.assertEqual(parsed, ["接入本地记忆", "验证 LLM 候选", "预测流程完成"])
+
     def test_openai_compatible_provider_returns_short_ranked_predictions(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -412,7 +419,7 @@ class PredictionProviderTests(unittest.TestCase):
             server.shutdown()
             thread.join(timeout=2)
             server.server_close()
-        self.assertEqual([item.text for item in predictions], ["本地记忆", "输入法候选", "RAG上下文"])
+        self.assertEqual([item.text for item in predictions], ["本地记忆", "RAG上下文"])
         self.assertEqual(predictions[0].provider_name, "mock-qwen")
         self.assertGreaterEqual(predictions[0].latency_ms, 0)
         self.assertEqual(_MockOpenAIHandler.captured_payload["model"], "Qwen3-0.6B")
@@ -455,7 +462,7 @@ class PredictionProviderTests(unittest.TestCase):
             server.shutdown()
             thread.join(timeout=2)
             server.server_close()
-        self.assertEqual([item.text for item in predictions], ["本地记忆", "输入法候选", "RAG上下文"])
+        self.assertEqual([item.text for item in predictions], ["本地记忆", "RAG上下文"])
         self.assertEqual(_MockCompletionHandler.captured_path, "/v1/completions")
         self.assertEqual(_MockCompletionHandler.captured_payload["model"], "qwen-base")
         self.assertEqual(_MockCompletionHandler.captured_payload["prompt"], "本地记忆输入法")
@@ -634,9 +641,17 @@ class PredictionProviderTests(unittest.TestCase):
 
     def test_streaming_plain_text_parser_waits_for_usable_candidate(self) -> None:
         self.assertEqual(_parse_streaming_prediction_candidates("本", max_candidates=1), [])
-        self.assertEqual(_parse_streaming_prediction_candidates("本地", max_candidates=1), ["本地"])
+        self.assertEqual(_parse_streaming_prediction_candidates("本地", max_candidates=1), [])
+        self.assertEqual(_parse_streaming_prediction_candidates("本地记忆", max_candidates=1), ["本地记忆"])
         self.assertEqual(_parse_streaming_prediction_candidates("R", max_candidates=1), [])
         self.assertEqual(_parse_streaming_prediction_candidates("RAG", max_candidates=1), ["RAG"])
+        self.assertEqual(
+            _parse_streaming_prediction_candidates(
+                "<think>\n\n</think>\n\n记忆<|im_end|>\n<|endoftext|><|im_start|>user\n你是",
+                max_candidates=1,
+            ),
+            [],
+        )
 
     def test_prediction_filter_removes_repeated_current_input_tokens(self) -> None:
         self.assertEqual(
@@ -656,8 +671,26 @@ class PredictionProviderTests(unittest.TestCase):
 
     def test_prediction_filter_removes_low_value_filler_candidates(self) -> None:
         self.assertEqual(
-            _filter_low_value_ime_candidates(["嗯", "推荐", "啊", "呃", "和", "嗯嗯", "当前", "测试流程", "当前问题"]),
-            ["推荐"],
+            _filter_low_value_ime_candidates(
+                [
+                    "嗯",
+                    "推荐",
+                    "啊",
+                    "呃",
+                    "和",
+                    "嗯嗯",
+                    "当前",
+                    "测试流程",
+                    "当前问题",
+                    "LLM",
+                    "接入",
+                    "RAG",
+                    "后文候选",
+                    "模型候选",
+                    "候选展示方式",
+                ]
+            ),
+            ["推荐", "候选展示方式"],
         )
 
     def test_mlx_provider_uses_resident_prediction_service(self) -> None:
@@ -692,11 +725,11 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(_MockMlxHandler.captured_path, "/predict")
         self.assertEqual(_MockMlxHandler.captured_payload["model"], "mlx-qwen3.5-0.8b")
         self.assertEqual(_MockMlxHandler.captured_payload["maxCandidates"], 3)
-        self.assertEqual(_MockMlxHandler.captured_payload["maxTokens"], 8)
+        self.assertEqual(_MockMlxHandler.captured_payload["maxTokens"], 24)
         self.assertEqual(_MockMlxHandler.captured_payload["contextChars"], len("用户正在写本地记忆输入法"))
         self.assertEqual(len(_MockMlxHandler.captured_payload["contextFingerprint"]), 16)
         self.assertEqual(len(_MockMlxHandler.captured_payload["stablePrefixHash"]), 16)
-        self.assertEqual([item.text for item in predictions], ["本地记忆", "输入法候选", "RAG上下文"])
+        self.assertEqual([item.text for item in predictions], ["本地记忆", "RAG上下文"])
         self.assertEqual(predictions[0].provider_name, "local-mlx")
         self.assertEqual(predictions[0].latency_ms, 17)
         self.assertEqual(predictions[0].metadata["candidate_mode"], "next-token-logits")
@@ -1206,7 +1239,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(report["prediction"]["providerConfigured"])
         self.assertEqual(report["prediction"]["maxCandidates"], 3)
         self.assertEqual(report["prediction"]["overBudgetCount"], 0)
-        self.assertEqual(report["prediction"]["totalCandidates"], 3)
+        self.assertEqual(report["prediction"]["totalCandidates"], 2)
         self.assertEqual(report["latency"]["caseCount"], 1)
         self.assertEqual(report["cases"][0]["topSurfaces"][0], "本地记忆")
 

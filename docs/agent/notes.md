@@ -2948,3 +2948,44 @@ Verification:
 - `scripts/doctor_macos_frontend.sh`: passed; only warning is optional input-source registration gate not required.
 - `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650`: passed, including weak-context panel clear and raw English/code/path protection.
 - `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 291 tests passed.
+
+### 2026-07-02 19:32 CST
+Problem:
+- Native app install was still a loose manual step: `install_macos_frontend.sh` copied files but did not verify or select the macOS input source.
+- `select_macos_input_source.sh` could report failure on `TISSelectInputSource=-50` even when macOS had already switched the current input source.
+
+Changes:
+- `install_macos_frontend.sh` now supports `--select`, `--check`, `--no-check`, and `--require-input-source`.
+- Shared input-source scripts now default to native `dev.local.inputmethod.RagImeMac`; Squirrel paths still pass explicit Squirrel IDs.
+- Selection script now trusts final TIS state if `TISSelectInputSource` returns an error but current input source is already the target.
+- README now documents `scripts/install_macos_frontend.sh --select` and the strict native doctor gate.
+- Added tests for native install script and select-script fallback behavior.
+
+Live verification:
+- `scripts/install_macos_frontend.sh --select`: installed `/Users/undo/Library/Input Methods/RagImeMac.app`, synced bridge config, and selected `dev.local.inputmethod.RagImeMac`.
+- Strict native doctor passed with `RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE=1 RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE=1`; the selected source is `RAG IME`.
+- `python3 scripts/verify_prediction_first_sidecar.py --latency-budget-ms 650`: passed.
+
+### 2026-07-02 20:58 CST
+Problem:
+- User reported the IME flow still was not usable: LLM/RAG did not visibly work, RAG looked like recent-context clipboard snippets, numbers could not reliably select candidates, and the panel could remain stale.
+
+Findings:
+- Live MLX service was healthy with local text-only `Qwen3.5-0.8B` MLX 4-bit, but the sidecar was not always running and the non-streaming `/predict` path crashed on `stream_first_candidate`.
+- The real memory DB had 10018 `input_events` and 5023 vectors, but all were under project `wisdom-weasel-rag-ime`; requests using `project=learnA` filtered RAG down to zero.
+- Real-time RAG used local-hash vector scanning and often missed the 100ms lane budget. FTS-only recall was faster and good enough for immediate input candidates.
+- Native panel rendering grouped inline/model and block/RAG rows, but click/number selection still used local row indexes instead of backend `selectionRank`.
+- TIS currently sees `dev.local.inputmethod.RagImeMac` as selectable but not selected/enabled in the active session; `scripts/install_macos_frontend.sh --select` installs the app but `TISSelectInputSource` returns `-50` on this machine now.
+
+Changes:
+- Added project-fallback retrieval when a requested project has no rows, so imported Codex history is still usable if the frontend passes a different project.
+- Added a real-time RAG fast path that uses FTS-only retrieval for tight budgets, leaving vector/deep RAG for slower refresh.
+- Hardened MLX streaming parsing and low-value filtering so single meta words such as `记忆`, `模型`, `输入法候选`, `后文候选`, and `直接输出` do not become IME candidates.
+- Updated MLX fast prompt to avoid prompt meta-word copying and fixed `/predict` compatibility with `stream_first_candidate`.
+- Fixed native panel selection to use backend `selectionRank/selectionKey` for display and numeric selection.
+
+Verification:
+- `python3 -m unittest tests.test_predictor tests.test_mlx_predictor_server tests.test_rime_sidecar tests.test_native_input_controller tests.test_local_sqlite_core tests.test_install_macos_frontend tests.test_select_macos_input_source`: 137 tests passed.
+- `scripts/build_macos_frontend.sh`: passed.
+- Live `/rime-suggest` now returns model + RAG candidates for the embedding/RAG debugging context, including `输入提示` from MLX and `embedding 检索应该结合当前输入和上下文窗口` from RAG.
+- `scripts/install_macos_frontend.sh --select`: installed app and synced bridge config, but current macOS session still requires manually adding/selecting `RAG IME` in Keyboard Input Sources.
