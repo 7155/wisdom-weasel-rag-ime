@@ -293,11 +293,11 @@ run_branded_postinstall() {
   local app="$1"
   local output
 
-  "$app/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-  sleep 0.5
-  "$app/Contents/MacOS/Squirrel" --enable-input-source "$INPUT_SOURCE_ID" >/dev/null 2>&1 || true
-  sleep 0.5
-  if output="$("$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
+  if output="$(RAG_IME_SQUIRREL_APP="$app" \
+    RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+    RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+    RAG_IME_SQUIRREL_AUTO_SELECT=0 \
+    "$ROOT/scripts/refresh_squirrel_input_source_registration.sh" 2>&1)"; then
     printf '[OK] branded macOS input source enabled for real use: %s\n' "$output"
   else
     printf '[WARN] branded macOS input source not confirmed after install: %s\n' "$output" >&2
