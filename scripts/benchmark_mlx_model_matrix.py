@@ -119,7 +119,14 @@ def main(argv: list[str] | None = None) -> int:
         "python": args.python,
         "host": args.host,
         "basePort": args.base_port,
-        "models": [{"model": model, "port": args.base_port + index} for index, model in enumerate(models)],
+        "models": [
+            {
+                "model": model,
+                "port": args.base_port + index,
+                "modelInfo": inspect_model_path(model),
+            }
+            for index, model in enumerate(models)
+        ],
         "caseIds": [case.case_id for case in cases],
         "maxCandidates": args.max_candidates,
         "maxTokens": args.max_tokens,
@@ -168,6 +175,95 @@ def parse_models(raw: str) -> list[str]:
     if not models:
         raise SystemExit("at least one --models entry is required")
     return models
+
+
+def inspect_model_path(model: str) -> dict[str, Any]:
+    path = Path(model).expanduser()
+    info: dict[str, Any] = {
+        "exists": path.exists(),
+        "path": str(path),
+        "textOnly": False,
+        "hasVisionConfig": False,
+        "configPresent": False,
+        "modelFileCount": 0,
+        "diskBytes": 0,
+    }
+    if not path.exists():
+        info["reason"] = "model_path_not_found"
+        return info
+
+    model_dir = path if path.is_dir() else path.parent
+    model_files = sorted(model_dir.glob("*.safetensors"))
+    info["modelDir"] = str(model_dir)
+    info["modelFileCount"] = len(model_files)
+    info["diskBytes"] = sum(file.stat().st_size for file in model_files if file.is_file())
+    config_path = model_dir / "config.json"
+    if not config_path.exists():
+        info["reason"] = "missing_config_json"
+        return info
+
+    info["configPresent"] = True
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        info["reason"] = f"invalid_config_json:{exc.__class__.__name__}"
+        return info
+
+    text_config = config.get("text_config") if isinstance(config.get("text_config"), dict) else {}
+    source = text_config if text_config else config
+    has_vision_config = isinstance(config.get("vision_config"), dict)
+    info.update(
+        {
+            "architecture": first_string(config.get("architectures")),
+            "modelType": str(config.get("model_type") or source.get("model_type") or ""),
+            "textModelType": str(text_config.get("model_type") or ""),
+            "hasVisionConfig": has_vision_config,
+            "textOnly": not has_vision_config,
+            "hiddenSize": optional_int(source.get("hidden_size")),
+            "numHiddenLayers": optional_int(source.get("num_hidden_layers")),
+            "vocabSize": optional_int(source.get("vocab_size")),
+            "quantization": quantization_summary(config),
+        }
+    )
+    tokenizer_config_path = model_dir / "tokenizer_config.json"
+    if tokenizer_config_path.exists():
+        try:
+            tokenizer_config = json.loads(tokenizer_config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            tokenizer_config = {}
+        chat_template = str(tokenizer_config.get("chat_template") or "")
+        info["hasChatTemplate"] = bool(chat_template)
+        info["chatTemplateSupportsThinking"] = "enable_thinking" in chat_template or "thinking" in chat_template.lower()
+    else:
+        info["hasChatTemplate"] = False
+        info["chatTemplateSupportsThinking"] = False
+    return info
+
+
+def first_string(value: Any) -> str:
+    if isinstance(value, list) and value:
+        return str(value[0])
+    return str(value or "")
+
+
+def optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def quantization_summary(config: dict[str, Any]) -> dict[str, Any]:
+    quantization = config.get("quantization")
+    if not isinstance(quantization, dict):
+        quantization = config.get("quantization_config")
+    if not isinstance(quantization, dict):
+        return {}
+    return {
+        key: value
+        for key, value in quantization.items()
+        if isinstance(value, (str, int, float, bool)) or value is None
+    }
 
 
 def load_cases(args: argparse.Namespace) -> list[MatrixCase]:
