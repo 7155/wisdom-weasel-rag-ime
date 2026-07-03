@@ -80,6 +80,7 @@ class MacOSDictionaryProviderTests(unittest.TestCase):
                     swiftc,
                     str(root / "macos/RagImeMac/Sources/RagModels.swift"),
                     str(root / "macos/RagImeMac/Sources/RimeSidecarModels.swift"),
+                    str(root / "macos/RagImeMac/Sources/RagBridgeClient.swift"),
                     str(root / "macos/RagImeMac/Sources/RimeDictionaryCandidateProvider.swift"),
                     str(wrapper),
                     "-o",

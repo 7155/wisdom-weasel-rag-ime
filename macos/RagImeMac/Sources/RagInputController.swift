@@ -66,6 +66,7 @@ final class RagInputController: IMKInputController {
             clearPostCommitPredictionPanelBeforeTyping()
             composition += string
             updateMarkedText(client: client)
+            showLocalRimeFallbackCandidates(for: composition, client: client)
             scheduleSuggestionRefresh(client: client)
             return true
         }
@@ -104,6 +105,7 @@ final class RagInputController: IMKInputController {
     override func activateServer(_ sender: Any!) {
         super.activateServer(sender)
         clearExpiredPanelIfNeeded()
+        rimeCandidateProvider.warmUp()
     }
 
     override func deactivateServer(_ sender: Any!) {
@@ -160,7 +162,7 @@ final class RagInputController: IMKInputController {
         guard !composition.isEmpty else {
             return false
         }
-        if let candidate = rimeCandidateProvider.candidates(for: composition, maxCount: 1).first {
+        if let candidate = rimeCandidateProvider.candidates(for: composition, maxCount: 1, allowColdLoad: false).first {
             commit(text: candidate.text, client: client, selectedSuggestion: nil, rank: 1, queryOverride: composition)
             return true
         }
@@ -305,8 +307,14 @@ final class RagInputController: IMKInputController {
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
-                    self?.clearCandidateState()
-                    self?.clearVisiblePredictionPanel()
+                    guard
+                        let self,
+                        self.composition == inputSnapshot,
+                        self.committedContext == contextSnapshot
+                    else {
+                        return
+                    }
+                    self.showLocalRimeFallbackCandidates(for: inputSnapshot, client: providedClient ?? self.client())
                 }
                 NSLog("RAG IME suggest failed: \(error.localizedDescription)")
             }
@@ -408,6 +416,71 @@ final class RagInputController: IMKInputController {
         activatePanelSession(response: response, postCommit: postCommit)
     }
 
+    private func showLocalRimeFallbackCandidates(for input: String, client providedClient: IMKTextInput?) {
+        let candidates = rimeCandidateProvider.candidates(for: input, maxCount: 8, allowColdLoad: false)
+        guard !candidates.isEmpty else {
+            clearCandidateState()
+            clearVisiblePredictionPanel()
+            return
+        }
+        latestDisplayCandidates = candidates.enumerated().map { index, candidate in
+            RimeDisplayCandidate(
+                label: candidate.label.isEmpty ? "\(index + 1)" : candidate.label,
+                selectionKey: "\(index + 1)",
+                selectionRank: index + 1,
+                text: candidate.text,
+                insertText: candidate.text,
+                sourceType: "rime",
+                selectionAction: "select_rime_candidate",
+                sourceIndex: candidate.index ?? index,
+                comment: candidate.comment,
+                evidencePreview: candidate.comment.isEmpty ? "local dictionary" : candidate.comment,
+                expandedEvidence: nil,
+                suggestionId: "",
+                memoryId: "",
+                sourceEventId: nil,
+                rimeIndex: candidate.index ?? index,
+                displayLayout: "inline",
+                displayLane: "rime",
+                metadata: [:]
+            )
+        }
+        latestModelPredictions = []
+        latestSuggestions = []
+        latestPredictionSession = nil
+        activePanelSession = ActivePanelSession(
+            requestSeq: requestSeq,
+            sessionFingerprint: "local-rime-\(input)",
+            phase: "anchor_composing",
+            committedContext: committedContext,
+            composition: input,
+            expiresAt: nil
+        )
+        panelExpiration?.cancel()
+        panelExpiration = nil
+        RagCandidatePanel.shared.show(
+            displayCandidates: latestDisplayCandidates,
+            currentInput: input,
+            anchor: panelAnchor(client: providedClient),
+            onSelect: { [weak self] candidate, index in
+                guard let self, let client = self.client() else {
+                    return
+                }
+                guard self.composition == input else {
+                    return
+                }
+                self.commit(
+                    text: candidate.insertText,
+                    client: client,
+                    selectedDisplayCandidate: candidate,
+                    selectedSuggestion: nil,
+                    rank: candidate.selectionRank ?? index + 1,
+                    queryOverride: input
+                )
+            }
+        )
+    }
+
     private func activatePanelSession(response: RimeSidecarResponse, postCommit: Bool) {
         let predictionSession = response.predictionSession
         let phase = predictionSession?.phase ?? ""
@@ -500,7 +573,9 @@ final class RagInputController: IMKInputController {
         if trimmed.rangeOfCharacter(from: .decimalDigits) != nil {
             return true
         }
-        if trimmed.count >= 4, rimeCandidateProvider.candidates(for: trimmed, maxCount: 1).isEmpty {
+        if trimmed.count >= 4,
+           rimeCandidateProvider.isReady,
+           rimeCandidateProvider.candidates(for: trimmed, maxCount: 1, allowColdLoad: false).isEmpty {
             return true
         }
         return false
@@ -530,7 +605,7 @@ final class RagInputController: IMKInputController {
         idleMs: Int,
         forceSideCandidates: Bool
     ) -> RimeSidecarRequest {
-        let rimeCandidates = rimeCandidateProvider.candidates(for: preedit.isEmpty ? rawInput : preedit, maxCount: 8)
+        let rimeCandidates = rimeCandidateProvider.candidates(for: preedit.isEmpty ? rawInput : preedit, maxCount: 8, allowColdLoad: false)
         return RimeSidecarRequest(
             sessionId: sessionId,
             requestSeq: requestSeq,
@@ -721,13 +796,9 @@ final class RagInputController: IMKInputController {
         }
         var actualRange = NSRange(location: NSNotFound, length: 0)
         let selectedRange = client.selectedRange()
-        let markedCaretRange = NSRange(location: max(0, composition.utf16.count), length: 0)
-        let range: NSRange
-        if !composition.isEmpty {
-            range = markedCaretRange
-        } else {
-            range = selectedRange.location == NSNotFound ? NSRange(location: 0, length: 0) : selectedRange
-        }
+        let range = selectedRange.location == NSNotFound
+            ? NSRange(location: NSNotFound, length: 0)
+            : NSRange(location: selectedRange.location, length: 0)
         let rect = client.firstRect(forCharacterRange: range, actualRange: &actualRange)
         guard
             rect.origin.x.isFinite,
