@@ -7,6 +7,33 @@
 
 ## Log
 
+### 2026-07-03 12:09 CST
+Problem:
+- User reported the current IME still fails the core product bar: real frontend can crash on input-source switching, candidate panel can linger or appear in the wrong place, RAG/LLM/memory candidates looked like clipboard/debug snippets, `sj`-style pinyin constraints did not steer the AI path, and MLX model output was visible in diagnostics even when it did not match the user prefix.
+- Current round must not switch the system input method or open GUI apps because recent foreground switching caused Edge/Ghostty/Codex instability.
+
+Findings:
+- The local DB is large enough for real RAG testing (`input_events` > 10k, vectors > 5k), but it contains generated sidecar rows tagged `source:model` / `source:rag`; those rows were skipped by the compiler but could still enter `recent_input_context()` and poison model history.
+- Weak local-hash vector matches could pass retrieval with only `vector_score > 0.05`, which explains unrelated candidates for short weak inputs.
+- Prefix-constrained requests were feeding RAG the broad semantic string `context + sj + 手机 世界`; for RAG this is too wide and can retrieve long Codex plan paragraphs.
+- The current MLX model (`Qwen3-0.6B-Base`) is loaded through MLX and text-only, but in prefix mode it can produce off-prefix writing prompts such as “写一篇...” / “帮我写...”.
+
+Changes:
+- `recent_input_context()` now skips generated `source:model` / `source:rag`, assistant/system/event/tool/runtime-noise rows, and noisy retrieval surfaces.
+- Vector-only retrieval now requires a configurable confidence gate (`RAG_IME_VECTOR_ONLY_MIN_SCORE`, default `0.35`) plus a real query signal.
+- Prefix-constrained RAG now queries by the stable short pinyin prefix (`sj`) while keeping committed context as context, instead of querying with the whole mixed semantic string.
+- Prefix-constrained MLX/model predictions are hard-filtered by pinyin initials; off-prefix model outputs are removed from `modelPredictions` and recorded as `model predictions did not match pinyin prefix`.
+
+Verification:
+- Focused tests passed for generated-history filtering, weak vector false positive, prefix RAG query, and off-prefix model filtering.
+- Offline live-DB probe: `撤旦` returns no unrelated memory.
+- Offline live-DB + MLX probe for `我想 + sj` shows `ragLane.queryInput=sj`, `modelPredictions=[]` with skipped reason, and the visible candidate is the prefix-matching RAG phrase `设计一个候选展示方式`.
+
+Open:
+- Real foreground input method is still not validated in this round; do not claim product usability until the user allows a controlled GUI/input-source test.
+- MLX prompt/candidateization still needs a deeper Felix `LLMProvider.cpp` pass so the model produces useful prefix-matching short spans instead of being filtered out.
+- Existing DB still needs noise governance beyond online filtering.
+
 ### 2026-07-03 08:12 CST
 Problem:
 - User required the reference-reading TODO to be executed as a hard workflow: read now, reread before code, and check again after implementation.
@@ -3278,3 +3305,37 @@ Changes:
 
 Next:
 - Continue P0 on the branded Squirrel route before any OpenLess-style UI work.
+
+### 2026-07-03 12:40 CST
+Problem:
+- User feedback: current visible candidates still looked like clipboard/memory echoes, not real LLM/RAG prediction; no-input panels stayed too long; RAG seemed to search unrelated Codex text; switching real input sources can crash Edge/Ghostty/Codex, so this pass must not switch the system input method.
+
+Findings:
+- Real sidecar CLI response already exposes `displayCandidates`, not `candidates`; an earlier manual probe read the wrong JSON key.
+- Prefix-constrained RAG was fixed to query only the active prefix such as `sj`, but the model lane was still receiving the full semantic query `context + sj + Rime candidates`. That made Qwen output or echo strings like `设计手机世界`, which the repeat filter correctly removed.
+- Local MLX services were verified without Ollama. Existing 8767 service loads text-only `Qwen3-0.6B-Base`. A temporary 8768 service loaded `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local`.
+- Qwen3-0.6B Base is fast but weak for instruction-following. Qwen3.5-0.8B text can produce usable short candidates when request fields are separated correctly.
+
+Changes:
+- `run_side_lanes_with_latency_budget()` now passes only the stable short pinyin prefix to the model lane during `pinyin_constrained_prediction`; Rime candidates are still passed through the typed `rimeCandidates` field.
+- Added a regression assertion that prefix-constrained model requests receive `currentInput == "sj"` and not the merged semantic query.
+- Kept the earlier RAG/memory safeguards from this pass: recent context skips generated `source:model/source:rag` rows, weak vector-only matches are gated, and off-prefix model candidates are filtered out.
+
+Offline verification:
+- Focused regression tests passed: `test_model_lane_receives_pinyin_constrained_request_context`, `test_model_lane_filters_off_prefix_pinyin_predictions`, `test_model_lane_timeout_keeps_rag_candidates_responsive`.
+- Broader suite passed: 151 tests across local SQLite core, Rime sidecar, prediction-first, prediction manager, predictor, and MLX predictor server.
+- Full suite passed: `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests` ran 322 tests OK.
+- `python3 -m py_compile ...` and `git diff --check` passed.
+- Real DB + MLX 0.8B sidecar probe with `committedContext="我想做一个本地 RAG 输入法，接下来想"` and `preedit="sj"` produced:
+  - `1 设计本地输入法` from `model/local-mlx`, elapsed about 587 ms under a 900 ms sidecar budget.
+  - `2 设计一个候选展示方式` from `rag`, elapsed about 444 ms.
+- Updated the user LaunchAgents without switching input sources:
+  - `com.rag-ime.mlx-predictor` now loads `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local`.
+  - `com.rag-ime.sidecar` now points to the same MLX predictor with `timeout=900ms`, `maxTokens=32`, `temperature=0.2`, `topP=0.9`.
+  - HTTP health on `127.0.0.1:8766` shows `eventCount=10032`, `activeProviderVectors=5037`, `predictor.providerName=local-mlx`, and `modelInfo.textOnly=true`.
+  - HTTP `/rime-suggest` against the resident sidecar produced `1 设计输入法 [model/local-mlx]` and `2 设计一个候选展示方式 [rag]` under a 900 ms budget.
+
+Next:
+- Do not switch/select the real macOS input source until the crash risk is intentionally accepted by the user.
+- Foreground trace still needs controlled manual testing; do not treat HTTP success as real IME success until the candidate panel, number keys, and app-crash behavior are verified.
+- Continue P0 frontend/Squirrel validation: candidate panel position, auto-hide, no stale panel, number-key routing, English/code passthrough, and real `sidecar_response_applied -> side_candidate_commit` trace.

@@ -22,7 +22,7 @@ from .models import (
     SideCandidateDisplayItem,
 )
 from .payloads import action_response_payload, model_prediction_to_payload, suggestion_to_payload
-from .pinyin_index import build_pinyin_metadata
+from .pinyin_index import build_pinyin_metadata, text_initials
 from .prediction_first import (
     infer_input_mode,
     prediction_session_to_payload,
@@ -489,18 +489,26 @@ def run_side_lanes_with_latency_budget(
             if compact_whitespace(item.text)
         ]
     )
+    rag_current_input = current_input
+    model_current_input = current_input
+    if request_type == "pinyin_constrained_prediction":
+        prefix = stable_short_pinyin_prefix(snapshot)
+        if prefix:
+            rag_current_input = prefix
+            model_current_input = prefix
 
     def run_rag() -> None:
         suggestions, lane = suggest_rag_with_latency_budget(
             adapter=adapter,
             core=core,
-            current_input=current_input,
+            current_input=rag_current_input,
             recent_context=recent_context,
             project=project,
             app=app,
             top_k=top_k,
             latency_budget_ms=rag_budget_ms,
         )
+        lane["queryInput"] = rag_current_input
         rag_result["suggestions"] = suggestions
         rag_result["lane"] = lane
 
@@ -509,7 +517,7 @@ def run_side_lanes_with_latency_budget(
             core=core,
             predictor=predictor,
             snapshot=snapshot,
-            current_input=current_input,
+            current_input=model_current_input,
             explicit_recent_context=explicit_recent_context,
             project=project,
             max_candidates=max_candidates,
@@ -831,7 +839,7 @@ def predict_model_with_latency_budget(
                 return
             result["requestType"] = request_type
             result["rimeCandidateCount"] = len(rime_candidate_texts)
-            predictions = predict_with_optional_request_context(
+            raw_predictions = predict_with_optional_request_context(
                 predictor,
                 current_input=current_input,
                 recent_context=recent_context,
@@ -839,17 +847,21 @@ def predict_model_with_latency_budget(
                 request_type=request_type,
                 rime_candidates=rime_candidate_texts,
             )
+            result["rawPredictionCount"] = len(raw_predictions)
             predictions = _filter_model_predictions(
-                predictions,
+                raw_predictions,
                 current_input=current_input,
                 explicit_recent_context=explicit_recent_context,
                 prediction_context=recent_context,
+                pinyin_prefix=stable_short_pinyin_prefix(snapshot) if request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED else "",
             )
             result["predictions"] = predictions
             if not predictions:
                 predictor_error = _predictor_last_error(predictor)
                 if predictor_error:
                     result["error"] = predictor_error
+                elif request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED and raw_predictions:
+                    result["skippedReason"] = "model predictions did not match pinyin prefix"
             if isinstance(result["predictions"], list) and result["predictions"]:
                 _store_model_holdover_predictions(
                     project=project,
@@ -917,6 +929,7 @@ def _filter_model_predictions(
     current_input: str,
     explicit_recent_context: str,
     prediction_context: str = "",
+    pinyin_prefix: str = "",
 ) -> list[ModelPrediction]:
     cleaned: list[ModelPrediction] = []
     seen: set[str] = set()
@@ -929,6 +942,8 @@ def _filter_model_predictions(
         )
         normalized = compact_whitespace(text).lower()
         if not normalized or normalized in seen:
+            continue
+        if pinyin_prefix and not _model_prediction_matches_pinyin_prefix(prediction, text, pinyin_prefix):
             continue
         seen.add(normalized)
         if text == prediction.text:
@@ -945,6 +960,31 @@ def _filter_model_predictions(
                 )
             )
     return cleaned
+
+
+def _model_prediction_matches_pinyin_prefix(prediction: ModelPrediction, text: str, prefix: str) -> bool:
+    prefix_norm = _pinyin_constraint_norm(prefix)
+    if not prefix_norm:
+        return True
+    keys: list[str] = []
+    metadata = dict(prediction.metadata or {})
+    for key in ("initials", "pinyin_initials"):
+        value = metadata.get(key)
+        if isinstance(value, str):
+            keys.append(_pinyin_constraint_norm(value))
+    for key in ("pinyin", "full_pinyin", "pinyin_prefixes"):
+        value = metadata.get(key)
+        if isinstance(value, str):
+            keys.extend(_pinyin_constraint_norm(part) for part in value.replace("'", " ").split())
+            keys.append(_pinyin_constraint_norm(value))
+        elif isinstance(value, (list, tuple)):
+            keys.extend(_pinyin_constraint_norm(str(part)) for part in value)
+    keys.append(_pinyin_constraint_norm(text_initials(text)))
+    return any(key.startswith(prefix_norm) for key in dict.fromkeys(keys) if key)
+
+
+def _pinyin_constraint_norm(value: str) -> str:
+    return "".join(char.lower() for char in compact_whitespace(value) if char.isascii() and char.isalnum())
 
 
 def _clean_model_prediction_text(

@@ -41,6 +41,15 @@ class CapturingEmbeddingProvider:
         return [0.0, 1.0]
 
 
+class WeakNoisyEmbeddingProvider:
+    fingerprint = "test-weak-noisy:v1"
+
+    def embed(self, text: str) -> list[float]:
+        if "撤旦" in text:
+            return [1.0, 0.0]
+        return [0.2, 0.98]
+
+
 class LocalSqliteCoreClientTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-core-test-")
@@ -254,6 +263,32 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(suggestions[0].metadata["initials"], "sjyghxzsfs")
         self.assertIn("sjyghxzsfs", suggestions[0].metadata["pinyin_prefixes"])
         self.assertIn("hx", suggestions[0].metadata["pinyin_prefixes"])
+
+    def test_recent_input_context_skips_generated_side_candidates(self) -> None:
+        self.core.reset()
+        self.adapter.commit_text(
+            "真实用户输入要保留到模型上下文",
+            recent_context="用户正在写 RAG 输入法调试记录",
+            tags=("user-input",),
+        )
+        self.adapter.commit_text(
+            "模型生成候选不应继续污染历史",
+            source="squirrel_rime_sidecar",
+            provider_name="rime-sidecar:model",
+            tags=("squirrel", "rime-sidecar", "source:model"),
+        )
+        self.adapter.commit_text(
+            "RAG 生成候选不应被模型复读",
+            source="squirrel_rime_sidecar",
+            provider_name="rime-sidecar:rag",
+            tags=("squirrel", "rime-sidecar", "source:rag"),
+        )
+
+        context = self.core.recent_input_context(limit=5)
+
+        self.assertIn("真实用户输入要保留到模型上下文", context)
+        self.assertNotIn("模型生成候选不应继续污染历史", context)
+        self.assertNotIn("RAG 生成候选不应被模型复读", context)
 
     def test_sqlite_fts_recalls_memory_by_pinyin_prefix(self) -> None:
         self.core.reset()
@@ -918,6 +953,20 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         stats = core.vector_index_stats()
         self.assertTrue(stats["enabled"])
         self.assertEqual(stats["activeProviderVectors"], 2)
+
+    def test_weak_vector_only_match_does_not_recall_unrelated_memory(self) -> None:
+        db_path = Path(self.tmp.name) / "weak-vector.sqlite"
+        core = LocalSqliteCoreClient(
+            db_path,
+            embedding_provider=WeakNoisyEmbeddingProvider(),
+            vector_weight=2.0,
+        )
+        adapter = InputMethodAdapter(core)
+        adapter.commit_text("使徒在圣经中被描述为什么", recent_context="宗教文本学习记录")
+
+        suggestions = adapter.suggest(SuggestionRequest(current_input="撤旦", top_k=5))
+
+        self.assertEqual(suggestions, [])
 
     def test_rebuild_vector_index_backfills_existing_events(self) -> None:
         db_path = Path(self.tmp.name) / "vector-backfill.sqlite"

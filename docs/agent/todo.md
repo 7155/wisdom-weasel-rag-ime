@@ -27,6 +27,11 @@
   - [x] 写代码前复读：`LLMProvider.cpp` / `hf_backend/app/prompting.py` 的短候选 prompt 与 candidateization。
   - [x] prediction-first top1 guard，避免低价值短词长期占首位。
   - [x] `/rime-select` 接收 `shownCandidates`，记录 selected 与 skipped-higher feedback。
+  - [x] prefix-constrained RAG 只用当前拼音前缀检索，避免 `sj + Rime 候选 + 上下文` 把整段 Codex 方案当剪贴板候选。
+  - [x] `recent_input_context()` 跳过 `source:model` / `source:rag` 生成候选，避免模型/RAG 自我复读旧候选。
+  - [x] 弱向量命中加质量门，短弱输入如 `撤旦` 不再被低可信 embedding 召回无关“圣经/使徒”记忆。
+  - [x] pinyin-constrained 模型候选硬过滤，不匹配当前拼音前缀的 MLX 输出不进入 `modelPredictions` / 可选候选。
+  - [x] pinyin-constrained 模型 lane 只传当前拼音前缀给 `currentInput`，Rime 候选只走 `rimeCandidates`，避免模型拼接/回显 `sj + 设计 + 手机 + 世界`。
   - [ ] SQLite / FTS5 频率与反馈路径对齐 Felix user-frequency / preference 思路。
   - [ ] MLX prompt 与 candidateization 对齐 Felix 的短候选策略。
   - [ ] debug / doctor 输出 source、score、guard、latency、backend，能定位 RAG / LLM / memory 是否真的生效。
@@ -38,10 +43,14 @@
 - [ ] P0：按 Felix DisplayCandidate 生命周期修正真实 Squirrel 候选显示、隐藏、数字键选择、旧请求丢弃。
 - [ ] P1：按 Felix LLMProvider 请求类型重做 MLX provider、短候选 prompt、candidateization、partial candidate。
 - [ ] P2：按 Alpha/Wanxiang 思路实现 SQLite 频率、accepted/skipped feedback、source/score/guard 诊断。
+- [ ] P0：真实输入法调试优先级最高。每次改前端都先确认“能输入拼音/英文、候选框位置正确、空输入不常驻、数字键不被无输入面板占用”；HTTP/doctor 只能算前置检查。
+- [ ] P0：当前真实输入源切换会导致 Edge/Ghostty 等应用闪退，未得到用户许可前不再自动切换输入法或打开 GUI 测试。
+- [ ] P1：清理/治理现有本机 DB 噪声，区分真实用户输入、AI 生成候选、Codex runtime/tool 输出和 curated demo memory。
 - [ ] 对照 Felix prompt，重写 Qwen/MLX 小模型候选生成 prompt，避免解释性长句和“剪贴板式候选”。
 - [ ] 对照 Felix scheduler，调整本项目候选框消失、刷新冻结、旧请求丢弃、无输入时不常驻的问题。
 - [ ] 对照 rime-wanxiang，确认首词锚定、传统词库兜底、用户词频上浮的最佳接入点。
 - [ ] 对照 Wisdom-Weasel 原始项目，补齐本项目缺失的真实输入法闭环，而不是只做 sidecar demo。
+- [ ] 将 LaunchAgent/安装配置切到本机完整 `Qwen3.5-0.8B-text-4bit-local` MLX 服务；当前离线验证证明它能在 900ms 预算下产出可选 LLM 候选，但真实输入法切换测试暂缓。
 
 ## Blocked
 
@@ -53,3 +62,5 @@
 - [x] 完成 Felix/Wisdom-Weasel 第一遍逐项阅读：LLMProvider、RimeWithWeasel、ContextHistory、alpha-input、alpha_backend、hf_backend、Rime Lua bridge、Wanxiang schema/hooks、候选 UI 生命周期、安装/诊断脚本。
 - [x] 完成三遍阅读协议在本轮实现上的闭环：二次复读参考源码、实现 top1 guard / shownCandidates feedback、第三遍对照 diff，并通过全量 312 个测试。
 - [x] 写成 `docs/agent/felix-wisdom-weasel-migration-matrix-20260703.md`，后续编码必须按矩阵先复读再实现。
+- [x] 离线修复 RAG/记忆/MLX 候选质量门：prefix RAG query、生成候选污染上下文、弱向量误召回、off-prefix 模型候选过滤。
+- [x] 修复 prefix-constrained MLX 输入污染：模型现在收到 `sj`，Rime 候选单独传递；离线真实 DB 探针得到 `1 设计本地输入法 [model]`、`2 设计一个候选展示方式 [rag]`。

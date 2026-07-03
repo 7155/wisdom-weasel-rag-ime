@@ -2,6 +2,31 @@
 
 ### 2026-07-03
 Topic:
+- Tighten offline RAG/memory/MLX quality gates without switching the unstable system input method.
+
+Decisions:
+- Do not perform real GUI/input-source switching until the user explicitly allows a controlled foreground test; current verification is sidecar/core/CLI only.
+- Treat `source:model` / `source:rag` rows as generated sidecar outputs for model-history purposes, not as clean recent user context.
+
+Changes:
+- `recent_input_context()` skips generated sidecar/model/RAG rows and runtime/tool/assistant/system noise.
+- Vector-only retrieval now requires a stronger configurable score gate; weak short inputs no longer admit unrelated low-score embedding hits.
+- Prefix-constrained RAG queries by the active pinyin prefix (`sj`) while keeping committed context separate.
+- Prefix-constrained model predictions are hard-filtered by pinyin initials; off-prefix MLX outputs are hidden from both `modelPredictions` and selectable display candidates.
+- Updated `docs/agent/todo.md` with the newly recorded user-facing problems and validation priority.
+
+Verification:
+- Focused unit tests passed for recent-context filtering, weak vector rejection, prefix RAG query, and off-prefix model filtering.
+- Offline live-DB probe: `撤旦` returns no unrelated memory.
+- Offline live-DB + MLX probe for `我想 + sj`: `ragLane.queryInput=sj`, `modelPredictions=[]`, skipped reason `model predictions did not match pinyin prefix`, visible RAG candidate `设计一个候选展示方式`.
+
+Next steps:
+- Run broader regression and diff checks.
+- After user allows foreground testing, validate real typing before claiming the IME is usable.
+- Continue with Felix-style MLX prompt/candidateization so the model produces useful short candidates instead of being filtered out.
+
+### 2026-07-03
+Topic:
 - Execute the three-pass Felix/Wisdom-Weasel reading workflow and land the first concrete migration patch.
 
 Changes:
@@ -2390,3 +2415,25 @@ Changes:
 Next steps:
 - Resume P0 branded Squirrel build/install/foreground trace verification.
 - Do not start OpenLess-style control panel work until Felix/Squirrel/Wanxiang input flow is usable.
+
+### 2026-07-03
+Topic:
+- Prefix-constrained RAG/MLX candidate chain repaired offline without switching the real macOS input method.
+
+Findings:
+- `displayCandidates` is the actual sidecar output list; manual probes must not look for `candidates`.
+- The model lane bug was that prefix-constrained requests passed the merged semantic query into `currentInput`. That caused Qwen/MLX to echo or concatenate Rime candidates, then the repeat/prefix filters removed everything.
+- Local complete MLX model `/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local` works better than the currently loaded course `Qwen3-0.6B-Base`.
+
+Changes:
+- Prefix-constrained model requests now pass only the stable pinyin prefix such as `sj` as `currentInput`; Rime candidates are sent only through `rimeCandidates`.
+- Regression tests now lock this contract.
+
+Verification:
+- Full test suite passed: 322 tests.
+- Real DB + temporary Qwen3.5-0.8B MLX service at 8768 produced a usable mixed result under a 900 ms budget: `设计本地输入法` from model first, `设计一个候选展示方式` from RAG second.
+- User LaunchAgents were updated without switching input sources. Resident `127.0.0.1:8766` sidecar now reports Qwen3.5-0.8B text, 10032 DB events, 5037 active vectors, and HTTP `/rime-suggest` returns `设计输入法 [model]` before `设计一个候选展示方式 [rag]`.
+
+Next steps:
+- Keep real input-source switching disabled until safe manual testing is agreed, because the user reported app crashes when switching.
+- Next engineering step is controlled Squirrel/frontend trace verification, not more HTTP-only proof.

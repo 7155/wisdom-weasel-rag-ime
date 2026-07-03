@@ -29,6 +29,7 @@ from .text_utils import (
 
 
 _IMPORTANT_ASCII_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+#.\-]{2,}")
+_VECTOR_ONLY_MIN_SCORE_DEFAULT = 0.35
 _MS_PER_DAY = 24 * 60 * 60 * 1000
 
 
@@ -415,15 +416,15 @@ class LocalSqliteCoreClient:
         filtered_rows = [
             row
             for row in rows
-            if vector_scores.get(int(row["id"]), 0.0) > 0.05
-            or _row_matches_required_query(row, raw_query=raw_query)
+            if _row_matches_required_query(row, raw_query=raw_query)
+            or _vector_only_match_allowed(raw_query=raw_query, vector_score=vector_scores.get(int(row["id"]), 0.0))
         ]
         if not filtered_rows and query != raw_query:
             filtered_rows = [
                 row
                 for row in rows
-                if vector_scores.get(int(row["id"]), 0.0) > 0.05
-                or _row_matches_required_query(row, raw_query=query, allow_pinyin=False, relaxed=True)
+                if _row_matches_required_query(row, raw_query=query, allow_pinyin=False, relaxed=True)
+                or _vector_only_match_allowed(raw_query=raw_query, vector_score=vector_scores.get(int(row["id"]), 0.0))
             ]
         return filtered_rows, vector_scores
 
@@ -502,14 +503,14 @@ class LocalSqliteCoreClient:
             where.append("(e.project = ? OR e.project = '')")
             params.append(project)
         sql = f"""
-            SELECT e.committed_text, e.recent_context, e.preedit, e.created_at_ms
+            SELECT e.committed_text, e.recent_context, e.preedit, e.created_at_ms, e.source, e.provider_name, e.tags_json
             FROM input_events e
             JOIN memory_state s ON s.event_id = e.id
             WHERE {' AND '.join(where)}
             ORDER BY e.id DESC
             LIMIT ?
         """
-        params.append(max(1, min(20, limit)))
+        params.append(max(1, min(40, max(limit * 4, limit))))
         with self._connect() as conn:
             rows = list(conn.execute(sql, params).fetchall())
 
@@ -517,6 +518,8 @@ class LocalSqliteCoreClient:
         used_chars = 0
         separator_len = len(" / ")
         for row in rows:
+            if _row_should_skip_recent_context(row):
+                continue
             text = compact_whitespace(str(row["committed_text"]))
             if not text:
                 continue
@@ -536,6 +539,8 @@ class LocalSqliteCoreClient:
                 next_len = len(snippet)
             selected.append(snippet)
             used_chars += next_len
+            if len(selected) >= limit:
+                break
         return compact_whitespace(" / ".join(reversed(selected)))
 
     def event_count(self) -> int:
@@ -1416,9 +1421,59 @@ def _row_tags(row: sqlite3.Row) -> list[str]:
     return [str(item) for item in raw]
 
 
+def _row_should_skip_recent_context(row: sqlite3.Row) -> bool:
+    tags = {tag.lower() for tag in _row_tags(row)}
+    generated_tags = {"source:model", "source:rag"}
+    if tags.intersection(generated_tags):
+        return True
+    if "runtime-noise" in tags or "role:event_msg" in tags or "role:assistant" in tags or "role:system" in tags:
+        return True
+    if str(row["source"]).strip().lower() in {"codex_internal_context", "tool_output"}:
+        return True
+    text = compact_whitespace(
+        " ".join(
+            [
+                str(row["committed_text"]),
+                str(row["recent_context"]),
+                str(row["preedit"]),
+                str(row["provider_name"]),
+                " ".join(tags),
+            ]
+        )
+    )
+    return _looks_like_retrieval_noise(text)
+
+
 def _recent_fill_enabled() -> bool:
     value = os.environ.get("RAG_IME_RECENT_MEMORY_FILL", "").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _vector_only_match_allowed(*, raw_query: str, vector_score: float) -> bool:
+    if vector_score <= 0:
+        return False
+    threshold = _vector_only_min_score()
+    if vector_score < threshold:
+        return False
+    query = compact_whitespace(raw_query)
+    if not query:
+        return False
+    required = _required_query_terms(query)
+    pinyin_terms = _short_ascii_query_terms(query)
+    if not required and not pinyin_terms:
+        return False
+    return True
+
+
+def _vector_only_min_score() -> float:
+    raw = os.environ.get("RAG_IME_VECTOR_ONLY_MIN_SCORE", "").strip()
+    if not raw:
+        return _VECTOR_ONLY_MIN_SCORE_DEFAULT
+    try:
+        value = float(raw)
+    except ValueError:
+        return _VECTOR_ONLY_MIN_SCORE_DEFAULT
+    return max(0.0, min(0.95, value))
 
 
 def _row_matches_required_query(

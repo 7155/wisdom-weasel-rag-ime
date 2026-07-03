@@ -111,6 +111,26 @@ class PrefixConstrainedPredictionProvider:
         ][:max_candidates]
 
 
+class OffPrefixPredictionProvider:
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        return [
+            ModelPrediction(
+                text="写一篇关于智能语音助手的研究背景",
+                rank=1,
+                provider_name="qwen-mlx",
+                latency_ms=12,
+                confidence=0.82,
+            ),
+            ModelPrediction(
+                text="帮我写一下研究背景和意义",
+                rank=2,
+                provider_name="qwen-mlx",
+                latency_ms=12,
+                confidence=0.78,
+            ),
+        ][:max_candidates]
+
+
 class FailingPredictionProvider:
     config = OpenAICompatiblePredictionConfig(
         base_url="http://127.0.0.1:9",
@@ -171,10 +191,12 @@ class BlockingPredictionProvider:
 
 class CapturingCore:
     def __init__(self) -> None:
+        self.last_suggest_current_input = ""
         self.last_suggest_recent_context = ""
         self.last_suggest_app = ""
 
     def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.last_suggest_current_input = current_input
         self.last_suggest_recent_context = recent_context
         self.last_suggest_app = app
         return [
@@ -372,9 +394,39 @@ class RimeSidecarTests(unittest.TestCase):
         )
 
         self.assertEqual(predictor.last_request_type, "pinyin_constrained_prediction")
+        self.assertEqual(predictor.last_current_input, "sj")
         self.assertEqual(predictor.last_rime_candidates, ("设计", "手机"))
         self.assertEqual(response["modelLane"]["requestType"], "pinyin_constrained_prediction")
         self.assertEqual(response["modelLane"]["rimeCandidateCount"], 2)
+        self.assertEqual(response["ragLane"]["queryInput"], "sj")
+
+    def test_model_lane_filters_off_prefix_pinyin_predictions(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-off-prefix-model",
+                "requestSeq": 47,
+                "rawInput": "sj",
+                "preedit": "sj",
+                "committedContext": "我想",
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "手机", "comment": "rime"},
+                        {"label": "2", "text": "世界", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=InputMethodAdapter(EmptySuggestionCore()),
+            core=EmptySuggestionCore(),
+            predictor=OffPrefixPredictionProvider(),
+        )
+
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertEqual(response["modelLane"]["predictionCount"], 0)
+        self.assertEqual(response["modelLane"]["skippedReason"], "model predictions did not match pinyin prefix")
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime", "rime"])
 
     def test_layout_contract_keeps_model_inline_and_sentence_candidates_block(self) -> None:
         response = build_rime_sidecar_response(
@@ -1242,7 +1294,7 @@ class RimeSidecarTests(unittest.TestCase):
             payload=payload,
             adapter=self.adapter,
             core=self.core,
-            predictor=MultiPredictionProvider(),
+            predictor=PrefixConstrainedPredictionProvider(),
         )
         self.assertTrue(primed["modelPredictions"])
 
@@ -1290,7 +1342,7 @@ class RimeSidecarTests(unittest.TestCase):
             "forceSideCandidates": True,
             "rimeContext": {
                 "candidates": [
-                    {"label": "1", "text": "设计输入法状态机", "comment": "rime"},
+                    {"label": "1", "text": "手机", "comment": "rime"},
                 ]
             },
         }
@@ -1298,7 +1350,7 @@ class RimeSidecarTests(unittest.TestCase):
             payload=payload,
             adapter=self.adapter,
             core=self.core,
-            predictor=MultiPredictionProvider(),
+            predictor=PrefixConstrainedPredictionProvider(),
         )
         self.assertTrue(primed["modelPredictions"])
 
