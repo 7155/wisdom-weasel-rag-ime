@@ -337,6 +337,37 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertIn("frequency:2", suggestions[0].metadata["reason"])
         self.assertEqual(suggestions[0].metadata["state"]["input_frequency"], 2)
 
+    def test_score_breakdown_explains_frequency_and_acceptance_signals(self) -> None:
+        self.core.reset()
+        frequent_id = self.adapter.commit_text("高频候选方案", recent_context="输入法 词频 候选方案")
+        self.adapter.commit_text("高频候选方案", recent_context="输入法 词频 候选方案 第二次")
+        self.adapter.commit_text("普通候选方案", recent_context="输入法 词频 候选方案 最新")
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=0,
+                memory_id=frequent_id,
+                action_type="accepted",
+                query="输入法 词频 候选方案",
+            )
+        )
+
+        suggestions = self.adapter.suggest(SuggestionRequest(current_input="输入法 词频 候选方案", top_k=2))
+
+        breakdown = suggestions[0].metadata["score_breakdown"]
+        self.assertEqual(breakdown["schemaVersion"], "rag-ime.score-breakdown.v1")
+        self.assertEqual(breakdown["rawSignals"]["inputFrequency"], 2)
+        self.assertEqual(breakdown["rawSignals"]["acceptedCount"], 1)
+        self.assertEqual(breakdown["rawSignals"]["effectiveFrequencyScope"], "project")
+        self.assertGreater(breakdown["components"]["frequency"], 0)
+        self.assertEqual(breakdown["components"]["accepted"], 0.6)
+        self.assertAlmostEqual(
+            breakdown["total"],
+            sum(breakdown["components"].values()),
+            places=3,
+        )
+        self.assertEqual(suggestions[0].metadata["state"]["score_breakdown"], breakdown)
+
     def test_phrase_frequency_uses_recentness_decay(self) -> None:
         self.core.reset()
         now = now_ms()
