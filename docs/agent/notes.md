@@ -3596,3 +3596,29 @@ Verification:
 Next:
 - Re-run the focused Swift build after the final tiny fingerprint cleanup, then commit and push.
 - Continue P0 foreground validation only with user permission because real app switching previously crashed Edge/Ghostty.
+
+### 2026-07-03 20:15 CST
+Problem:
+- The native AppKit harness could still look like pure ABC if live input waited on Wanxiang YAML or sidecar refresh before showing candidates.
+- Full Wanxiang YAML cold load is too heavy for the input thread; the previous direct precompile attempt produced a 234MB resource when every prefix was expanded.
+
+Findings:
+- A build-time hot index with 35k high-frequency entries keeps useful first-screen candidates (`ni`, `wo`, `wx`, `sj`, `shijie`) while staying small enough for the debug harness.
+- `essay.txt` weights are needed so common phrases such as `我想` rank above rare dictionary entries.
+
+Changes:
+- Added `scripts/build_rime_candidate_index.py` to expand Wanxiang imports, fold tone marks, merge essay weights, and emit a capped `rime-candidate-index.tsv`.
+- `scripts/build_macos_frontend.sh` now bundles the hot Wanxiang index into `RagImeMac.app`.
+- `RimeDictionaryCandidateProvider` now checks the prebuilt index before YAML, so live local fallback candidates can appear without cold-loading the full dictionary.
+- The prebuilt index warms in the background at provider creation/activation; live `allowColdLoad=false` lookups only read the loaded cache instead of parsing TSV/YAML on the key event path.
+- `RagBridgeConfig` carries an optional `rimeCandidateIndexPath` override for explicit testing.
+
+Verification:
+- `scripts/build_macos_frontend.sh` built and signed `build/RagImeMac.app`; bundled index size was 1.4MB.
+- `--preview-rime-dictionary-json` returned Wanxiang-style candidates: `ni -> 你/呢/...`, `wo -> 我/我的/我是/...`, `sj -> 世界/事件/...`, `shijie -> 世界/...`.
+- Focused native/dictionary/install tests passed: 30 tests OK.
+- Full suite passed: 365 tests OK.
+
+Next:
+- Run full suite, `git diff --check`, commit, and push.
+- Continue with AI/RAG/memory visibility and English/code input after the fallback layer is stable.

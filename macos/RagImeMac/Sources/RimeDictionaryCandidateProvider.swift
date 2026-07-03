@@ -12,11 +12,14 @@ final class RimeDictionaryCandidateProvider {
 
     private let dictionaryPath: String?
     private let dictionaryPaths: [String]
+    private let candidateIndexPath: String?
     private let essayPath: String?
     private let dictionaryLabel: String
     private let cacheLock = NSLock()
+    private var cachedPrebuiltIndex: [String: [RimeCandidatePayload]]?
     private var cachedEntries: [Entry]?
     private var cachedBuckets: [String: [Entry]]?
+    private var isPrebuiltIndexWarming = false
     private var isWarming = false
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment) {
@@ -25,6 +28,8 @@ final class RimeDictionaryCandidateProvider {
         let bridgeConfig = RagBridgeConfig.load()
         let configuredDirectory = environment["RAG_IME_RIME_DICT_DIR"].flatMap { $0.isEmpty ? nil : $0 }
             ?? bridgeConfig.rimeDictDir
+        let configuredIndex = environment["RAG_IME_RIME_INDEX_PATH"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? bridgeConfig.rimeCandidateIndexPath
         let configuredEssay = environment["RAG_IME_RIME_ESSAY_PATH"].flatMap { $0.isEmpty ? nil : $0 }
         let repoRoot = environment["RAG_IME_REPO_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? bridgeConfig.repoRoot
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -36,6 +41,7 @@ final class RimeDictionaryCandidateProvider {
         )
         self.dictionaryPaths = resolvedPaths
         self.dictionaryPath = resolvedPaths.first
+        self.candidateIndexPath = Self.resolveCandidateIndexPath(configuredIndex)
         let essayCandidates = [
             configuredEssay,
             "\(home)/Library/Rime/essay.txt",
@@ -46,21 +52,26 @@ final class RimeDictionaryCandidateProvider {
         } else {
             self.dictionaryLabel = "rime"
         }
+        startPrebuiltIndexWarmUpIfNeeded()
     }
 
     func warmUp() {
+        startPrebuiltIndexWarmUpIfNeeded()
         startWarmUpIfNeeded()
     }
 
     var isReady: Bool {
         cacheLock.lock()
-        let ready = cachedBuckets != nil
+        let ready = cachedPrebuiltIndex != nil || cachedBuckets != nil
         cacheLock.unlock()
         return ready
     }
 
     func candidates(for rawInput: String, maxCount: Int = 8, allowColdLoad: Bool = true) -> [RimeCandidatePayload] {
         let query = normalizedQuery(rawInput)
+        if !query.isEmpty, let indexed = indexedCandidates(for: query, maxCount: maxCount, allowColdLoad: allowColdLoad) {
+            return indexed
+        }
         guard !query.isEmpty, let entries = candidatePool(for: query, allowColdLoad: allowColdLoad) else {
             return []
         }
@@ -104,6 +115,102 @@ final class RimeDictionaryCandidateProvider {
         }
         return payloads
     }
+
+    private func indexedCandidates(for query: String, maxCount: Int, allowColdLoad: Bool) -> [RimeCandidatePayload]? {
+        let loadedIndex: [String: [RimeCandidatePayload]]?
+        if allowColdLoad {
+            loadedIndex = loadPrebuiltIndex()
+        } else {
+            loadedIndex = cachedPrebuiltIndexValue()
+            if loadedIndex == nil {
+                startPrebuiltIndexWarmUpIfNeeded()
+            }
+        }
+        guard let index = loadedIndex else {
+            return nil
+        }
+        guard let candidates = index[query] else {
+            return []
+        }
+        return candidates.prefix(max(1, maxCount)).enumerated().map { offset, candidate in
+            RimeCandidatePayload(
+                label: "\(offset + 1)",
+                text: candidate.text,
+                comment: candidate.comment,
+                index: candidate.index
+            )
+        }
+    }
+
+    private func cachedPrebuiltIndexValue() -> [String: [RimeCandidatePayload]]? {
+        cacheLock.lock()
+        let loaded = cachedPrebuiltIndex
+        cacheLock.unlock()
+        return loaded
+    }
+
+    private func loadPrebuiltIndex() -> [String: [RimeCandidatePayload]]? {
+        cacheLock.lock()
+        if let cachedPrebuiltIndex {
+            cacheLock.unlock()
+            return cachedPrebuiltIndex
+        }
+        cacheLock.unlock()
+        guard let candidateIndexPath, FileManager.default.fileExists(atPath: candidateIndexPath) else {
+            return nil
+        }
+        guard let content = try? String(contentsOfFile: candidateIndexPath, encoding: .utf8) else {
+            return nil
+        }
+        var index: [String: [RimeCandidatePayload]] = [:]
+        for raw in content.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw)
+            if line.isEmpty || line.hasPrefix("#") {
+                continue
+            }
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count >= 4 else {
+                continue
+            }
+            let prefix = fields[0]
+            let text = fields[1]
+            let comment = fields[2]
+            let indexValue = Int(fields[3])
+            index[prefix, default: []].append(RimeCandidatePayload(
+                label: "\(index[prefix, default: []].count + 1)",
+                text: text,
+                comment: comment,
+                index: indexValue
+            ))
+        }
+        cacheLock.lock()
+        cachedPrebuiltIndex = index
+        isPrebuiltIndexWarming = false
+        let loaded = cachedPrebuiltIndex
+        cacheLock.unlock()
+        return loaded
+    }
+
+    private func startPrebuiltIndexWarmUpIfNeeded() {
+        cacheLock.lock()
+        if cachedPrebuiltIndex != nil || isPrebuiltIndexWarming || candidateIndexPath == nil {
+            cacheLock.unlock()
+            return
+        }
+        isPrebuiltIndexWarming = true
+        cacheLock.unlock()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else {
+                return
+            }
+            if self.loadPrebuiltIndex() == nil {
+                self.cacheLock.lock()
+                self.isPrebuiltIndexWarming = false
+                self.cacheLock.unlock()
+            }
+        }
+    }
+
 
     func diagnosticPayload(for queries: [String]) -> [String: [[String: String]]] {
         var payload: [String: [[String: String]]] = [:]
@@ -385,6 +492,17 @@ final class RimeDictionaryCandidateProvider {
                 .path,
             "\(home)/Library/Rime",
         ])
+    }
+
+    private static func resolveCandidateIndexPath(_ configuredIndex: String?) -> String? {
+        if let configuredIndex, FileManager.default.fileExists(atPath: configuredIndex) {
+            return configuredIndex
+        }
+        if let bundled = Bundle.main.path(forResource: "rime-candidate-index", ofType: "tsv"),
+           FileManager.default.fileExists(atPath: bundled) {
+            return bundled
+        }
+        return nil
     }
 
     private static func dictionaryEntryPoints(in directory: String) -> [String] {

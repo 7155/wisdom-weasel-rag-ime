@@ -174,6 +174,19 @@ tree on the AppKit input thread. `RagInputController` starts a background
 typing and lets the sidecar/prediction path continue. CLI preview commands may
 still cold-load synchronously so dictionary wiring can be verified.
 
+Builds now also precompile a small hot Wanxiang index into
+`RagImeMac.app/Contents/Resources/rime-candidate-index.tsv` with
+`scripts/build_rime_candidate_index.py`. The script expands Wanxiang
+`import_tables`, merges `essay.txt` frequency weights when available, keeps
+short high-frequency candidates and single-character fallback, and caps the
+resource to the first-screen use case. At runtime the AppKit harness tries this
+prebuilt index before touching YAML, so normal pinyin such as `ni`, `wo`, `sj`,
+and `shijie` can show local candidates immediately while the full dictionary and
+LLM/RAG sidecar continue asynchronously. The prebuilt index is also warmed in
+the background when the provider is created or activated; live `allowColdLoad=false`
+lookups only use the loaded cache and do not parse TSV/YAML on the key event
+path.
+
 For the Squirrel/Rime path, side selection feedback should use the unified `/rime-select` contract. It records the inserted side candidate, applies committed-event accepted feedback for model/raw side candidates, records the source-memory accepted action when a RAG/memory candidate carries memory ids, and uses visible `shownCandidates` for skipped-higher feedback. Ordinary Rime fallback candidates should be committed through the normal input path instead of `/rime-select`, so Rime/Wanxiang remains responsible for anchor/fallback behavior. The prototype AppKit harness may still issue separate action/commit calls while it remains a debug surface.
 
 ## UI Shape

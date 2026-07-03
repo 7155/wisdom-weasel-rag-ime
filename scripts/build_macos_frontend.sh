@@ -13,6 +13,7 @@ RAG_IME_DB_PATH_VALUE="${RAG_IME_DB_PATH:-$DEFAULT_RUNTIME_DB}"
 RAG_IME_PROJECT_VALUE="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 RAG_IME_TOP_K_VALUE="${RAG_IME_TOP_K:-5}"
 RAG_IME_SIDECAR_URL_VALUE="${RAG_IME_SIDECAR_URL:-http://127.0.0.1:8766}"
+RAG_IME_RIME_INDEX_PATH_VALUE="${RAG_IME_RIME_INDEX_PATH:-}"
 if [[ -n "${RAG_IME_RIME_DICT_DIR:-}" ]]; then
   RAG_IME_RIME_DICT_DIR_VALUE="$RAG_IME_RIME_DICT_DIR"
 elif [[ -f "$ROOT/../agent-source-projects/wisdom-weasel-felix/third_party/rime_wanxiang/wanxiang.dict.yaml" ]]; then
@@ -31,6 +32,21 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$ROOT/macos/RagImeMac/Info.plist" "$CONTENTS_DIR/Info.plist"
 if [[ -d "$ROOT/macos/RagImeMac/Resources" ]]; then
   /usr/bin/ditto "$ROOT/macos/RagImeMac/Resources" "$RESOURCES_DIR"
+fi
+
+if [[ -f "$RAG_IME_RIME_DICT_DIR_VALUE/wanxiang.dict.yaml" || -f "$RAG_IME_RIME_DICT_DIR_VALUE/luna_pinyin.dict.yaml" ]]; then
+  INDEX_ARGS=(
+    --dict-dir "$RAG_IME_RIME_DICT_DIR_VALUE"
+    --output "$RESOURCES_DIR/rime-candidate-index.tsv"
+    --cap 12
+    --max-prefix-len 8
+    --max-text-len 8
+    --max-entries 35000
+  )
+  if [[ -f "$HOME/Library/Rime/essay.txt" ]]; then
+    INDEX_ARGS+=(--essay-path "$HOME/Library/Rime/essay.txt")
+  fi
+  python3 "$ROOT/scripts/build_rime_candidate_index.py" "${INDEX_ARGS[@]}" >/dev/null
 fi
 
 ICON_PPM="$RESOURCES_DIR/RagImeIcon.ppm"
@@ -105,6 +121,7 @@ RAG_IME_PROJECT_VALUE="$RAG_IME_PROJECT_VALUE" \
 RAG_IME_TOP_K_VALUE="$RAG_IME_TOP_K_VALUE" \
 RAG_IME_SIDECAR_URL_VALUE="$RAG_IME_SIDECAR_URL_VALUE" \
 RAG_IME_RIME_DICT_DIR_VALUE="$RAG_IME_RIME_DICT_DIR_VALUE" \
+RAG_IME_RIME_INDEX_PATH_VALUE="$RAG_IME_RIME_INDEX_PATH_VALUE" \
 python3 - "$RESOURCES_DIR/bridge-config.json" "$RESOURCES_DIR/bridge-config.example.json" <<'PY'
 import json
 import os
@@ -118,6 +135,7 @@ payload = {
     "topK": int(os.environ["RAG_IME_TOP_K_VALUE"]),
     "sidecarBaseUrl": os.environ["RAG_IME_SIDECAR_URL_VALUE"],
     "rimeDictDir": os.environ["RAG_IME_RIME_DICT_DIR_VALUE"],
+    "rimeCandidateIndexPath": os.environ["RAG_IME_RIME_INDEX_PATH_VALUE"],
 }
 for path in sys.argv[1:]:
     with open(path, "w", encoding="utf-8") as fh:

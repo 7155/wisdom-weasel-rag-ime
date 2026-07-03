@@ -2662,3 +2662,22 @@ Verification:
 - Build succeeded and `--print-config` showed `rimeDictDir` pointing to Felix Wanxiang.
 - `--preview-rime-dictionary-json` returned `comment=wanxiang` and Simplified candidates.
 - Full suite passed: 363 tests OK.
+
+### 2026-07-03
+Topic:
+- Precompiled a small Wanxiang hot index for the native AppKit debug harness.
+
+Findings:
+- Expanding every Wanxiang prefix produced a 234MB resource, so the runtime needs a capped hot index rather than a bundled full dictionary cache.
+- 35k high-frequency entries plus `essay.txt` weights kept useful first-screen candidates for `ni`, `wo`, `wx`, `sj`, and `shijie`.
+
+Changes:
+- Added `scripts/build_rime_candidate_index.py` and bundled `rime-candidate-index.tsv` during `scripts/build_macos_frontend.sh`.
+- `RimeDictionaryCandidateProvider` now tries the prebuilt index before YAML; `RagBridgeConfig` has `rimeCandidateIndexPath` for overrides.
+- The prebuilt index warms in the background, while live `allowColdLoad=false` lookups only use loaded cache.
+- macOS adapter docs now explain the hot-index boundary and keep Squirrel/librime as the product route.
+
+Verification:
+- Build produced a 1.4MB bundled index and previewed Wanxiang candidates correctly.
+- Focused native/dictionary/install tests passed: 30 tests OK.
+- Full suite passed: 365 tests OK.
