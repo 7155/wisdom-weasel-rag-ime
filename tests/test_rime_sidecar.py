@@ -16,7 +16,7 @@ from rag_ime.adapter import InputMethodAdapter
 from rag_ime.cli import main
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.models import InputSuggestion, ModelPrediction
+from rag_ime.models import InputSuggestion, MemoryAction, ModelPrediction
 from rag_ime.predictor import CooldownPredictionProvider, OpenAICompatiblePredictionConfig
 from rag_ime.rime_sidecar import (
     build_rime_sidecar_response,
@@ -1585,6 +1585,60 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(rag_item["insertText"], rag_item["text"])
         self.assertIn("背景说明这一句不是候选重点", rag_item["metadata"]["preview_text"])
         self.assertIn("背景说明这一句不是候选重点", rag_item["expandedEvidence"])
+
+    def test_rag_display_candidate_exposes_alpha_style_score_breakdown(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-sidecar-score-") as tmp:
+            core = LocalSqliteCoreClient(f"{tmp}/rag-ime.sqlite")
+            core.initialize()
+            adapter = InputMethodAdapter(core)
+            memory_id = adapter.commit_text(
+                "设计一个候选展示方式",
+                recent_context="Prediction-first RAG IME 需要解释候选排序",
+                project="wisdom-weasel-rag-ime",
+                tags=("rag", "memory"),
+            )
+            adapter.commit_text(
+                "普通候选展示",
+                recent_context="无关输入法调试",
+                project="wisdom-weasel-rag-ime",
+            )
+            core.apply_action(
+                MemoryAction(
+                    action_id=None,
+                    created_at_ms=0,
+                    memory_id=memory_id,
+                    action_type="accepted",
+                    query="候选展示方式",
+                )
+            )
+
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "squirrel-score-breakdown",
+                    "requestSeq": 102,
+                    "maxVisibleCandidates": 4,
+                    "maxSideCandidates": 2,
+                    "forceSideCandidates": True,
+                    "committedContext": "我想设计一个",
+                    "preedit": "zs",
+                    "rimeContext": {
+                        "candidates": [
+                            {"label": "1", "text": "候选", "comment": "rime"},
+                        ]
+                    },
+                },
+                adapter=adapter,
+                core=core,
+                predictor=self.predictor,
+            )
+
+        rag_item = next(item for item in response["displayCandidates"] if item["sourceType"] == "rag")
+        breakdown = rag_item["metadata"]["score_breakdown"]
+        self.assertEqual(breakdown["schemaVersion"], "rag-ime.score-breakdown.v1")
+        self.assertIn("fts5", breakdown["components"])
+        self.assertEqual(breakdown["components"]["accepted"], 0.6)
+        self.assertEqual(breakdown["rawSignals"]["acceptedCount"], 1)
+        self.assertIn("weights", breakdown)
 
     def test_dirty_raw_pinyin_without_rime_candidates_skips_side_lanes(self) -> None:
         response = build_rime_sidecar_response(

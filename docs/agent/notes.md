@@ -3363,3 +3363,31 @@ Verification:
 Next:
 - Commit the frontend lifecycle/observability patch and push.
 - Still do not claim real IME usability until a controlled foreground test verifies panel position, auto-hide, number-key commit, and no app crash.
+
+### 2026-07-03 13:18 CST
+Problem:
+- Continue Felix-first optimization without switching the real macOS input source. The next useful piece is RAG/memory candidate explainability, because the user repeatedly asked why RAG retrieved unrelated material and how embedding/ranking are actually used.
+
+Findings:
+- Felix public HEAD is still `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`; local clone matches.
+- Felix Alpha's portable idea here is not the Windows DLL/ONNX runtime itself, but the score-breakdown discipline: semantic, preference, user-frequency, continuation, base prior, feedback, and logs should explain why a candidate moved.
+- This repo already had SQLite signals for FTS5, vector score, pinyin boost, phrase frequency, project/app frequency, accepted/skipped/downranked, pinned, tags, and runtime-noise penalty, but they were mostly compressed into a reason string.
+
+Changes:
+- Added `score_breakdown` generation in `LocalSqliteCoreClient._row_to_memory()`.
+- The breakdown uses stable JSON schema `rag-ime.score-breakdown.v1` with `components`, `rawSignals`, `weights`, `fieldBoosts`, query, expandedQuery, and total.
+- `SuggestionCompiler` now passes the breakdown into suggestion metadata only when present.
+- RAG `displayCandidates[*].metadata.score_breakdown` now carries the same structure through `/rime-suggest`.
+- Updated `docs/agent/felix-first-architecture-20260703.md` to mark this as the first migrated P2 Alpha-style SQLite ranking diagnostic.
+
+Verification:
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest -v tests.test_local_sqlite_core.LocalSqliteCoreClientTests.test_score_breakdown_explains_frequency_and_acceptance_signals tests.test_rime_sidecar.RimeSidecarTests.test_rag_display_candidate_exposes_alpha_style_score_breakdown` passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest -v tests.test_local_sqlite_core tests.test_rime_sidecar` passed: 87 tests OK.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests` passed: 324 tests OK.
+- `python3 -m py_compile rag_ime/local_sqlite_core.py rag_ime/suggestion_compiler.py tests/test_local_sqlite_core.py tests/test_rime_sidecar.py` passed.
+- `python3 -m py_compile rag_ime/*.py scripts/*.py` passed.
+- `git diff --check` passed.
+
+Next:
+- Commit and push.
+- Next Felix P2/P1 candidates: expose score breakdown in doctor/debug CLI, then improve MLX candidateization/prompt flow.

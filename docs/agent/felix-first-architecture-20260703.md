@@ -306,6 +306,17 @@ Acceptance:
 - RAG evidence ids are attached to RAG-derived candidates.
 - Debug trace can explain why a candidate appeared.
 
+Current migrated pieces:
+
+- `rag_ime/local_sqlite_core.py` now emits `score_breakdown` with
+  `fts5 / overlap / field / pinyin / frequency / recent / vector / project /
+  tag / pinned / accepted / skipped / downranked / runtimeTrace` components.
+- `rag_ime/suggestion_compiler.py` passes the breakdown into suggestion
+  metadata, and `displayCandidates[*].metadata.score_breakdown` exposes it to
+  the sidecar/debug path.
+- This ports Felix Alpha's score-breakdown diagnostic idea without porting the
+  Windows DLL, ONNX runtime, or Lua filter directly.
+
 ### P3: Management Console
 
 Only after P0-P2 are usable:

@@ -1030,21 +1030,57 @@ class LocalSqliteCoreClient:
         project_boost = 0.4 if project and row["project"] == project else 0.0
         runtime_penalty = _runtime_trace_penalty(committed_text)
         tag_boost = _tag_quality_boost(tags)
+        field_boost_total = sum(boost for _, boost in field_boosts)
+        vector_boost = max(0.0, vector_score) * self.vector_weight
+        pinned_boost = 8.0 if pinned else 0.0
+        accepted_boost = accepted * 0.6
+        skipped_penalty = skipped * 0.3
+        downrank_penalty = downranked * 0.85
         score = (
             lexical
             + overlap_score
-            + sum(boost for _, boost in field_boosts)
+            + field_boost_total
             + pinyin_boost
             + frequency_boost
             + recent_boost
-            + max(0.0, vector_score) * self.vector_weight
+            + vector_boost
             + project_boost
             + tag_boost
-            + (8.0 if pinned else 0.0)
-            + accepted * 0.6
-            - skipped * 0.3
-            - downranked * 0.85
+            + pinned_boost
+            + accepted_boost
+            - skipped_penalty
+            - downrank_penalty
             - runtime_penalty
+        )
+        score_breakdown = _score_breakdown_payload(
+            query=query,
+            raw_query=raw_query,
+            total=score,
+            lexical=lexical,
+            overlap_score=overlap_score,
+            field_boosts=field_boosts,
+            pinyin_boost=pinyin_boost,
+            frequency_boost=frequency_boost,
+            recent_boost=recent_boost,
+            vector_score=vector_score,
+            vector_weight=self.vector_weight,
+            vector_boost=vector_boost,
+            project_boost=project_boost,
+            tag_boost=tag_boost,
+            pinned_boost=pinned_boost,
+            accepted_boost=accepted_boost,
+            skipped_penalty=skipped_penalty,
+            downrank_penalty=downrank_penalty,
+            runtime_penalty=runtime_penalty,
+            input_frequency=input_frequency,
+            project_input_frequency=project_input_frequency,
+            app_input_frequency=app_input_frequency,
+            effective_frequency=effective_frequency,
+            frequency_scope=frequency_scope,
+            accepted=accepted,
+            skipped=skipped,
+            downranked=downranked,
+            pinned=pinned,
         )
         reason = [f"fts5:{lexical:.3f}"]
         if overlap:
@@ -1113,6 +1149,7 @@ class LocalSqliteCoreClient:
                 "phrase_age_days": round(age_days, 2),
                 "frequency_boost": round(frequency_boost, 3),
                 "recent_boost": round(recent_boost, 3),
+                "score_breakdown": score_breakdown,
             },
         )
 
@@ -1622,6 +1659,97 @@ def _input_frequency_boost(input_frequency: int, last_seen_ms: int, *, present_m
         return 0.0
     raw_boost = min(2.2, math.log1p(input_frequency - 1) * 0.9)
     return raw_boost * _frequency_recency_multiplier(last_seen_ms, present_ms)
+
+
+def _score_breakdown_payload(
+    *,
+    query: str,
+    raw_query: str,
+    total: float,
+    lexical: float,
+    overlap_score: float,
+    field_boosts: list[tuple[str, float]],
+    pinyin_boost: float,
+    frequency_boost: float,
+    recent_boost: float,
+    vector_score: float,
+    vector_weight: float,
+    vector_boost: float,
+    project_boost: float,
+    tag_boost: float,
+    pinned_boost: float,
+    accepted_boost: float,
+    skipped_penalty: float,
+    downrank_penalty: float,
+    runtime_penalty: float,
+    input_frequency: int,
+    project_input_frequency: int,
+    app_input_frequency: int,
+    effective_frequency: int,
+    frequency_scope: str,
+    accepted: int,
+    skipped: int,
+    downranked: int,
+    pinned: bool,
+) -> dict[str, Any]:
+    """Stable Alpha-style ranking diagnostics for debug surfaces.
+
+    The IME panel should stay compact. This payload is for doctor/debug tools
+    that need to explain why a RAG or memory candidate outranked alternatives.
+    """
+
+    return {
+        "schemaVersion": "rag-ime.score-breakdown.v1",
+        "total": _round_score(total),
+        "query": truncate_text(raw_query or query, 120),
+        "expandedQuery": truncate_text(query, 120),
+        "components": {
+            "fts5": _round_score(lexical),
+            "overlap": _round_score(overlap_score),
+            "field": _round_score(sum(boost for _, boost in field_boosts)),
+            "pinyin": _round_score(pinyin_boost),
+            "frequency": _round_score(frequency_boost),
+            "recent": _round_score(recent_boost),
+            "vector": _round_score(vector_boost),
+            "project": _round_score(project_boost),
+            "tag": _round_score(tag_boost),
+            "pinned": _round_score(pinned_boost),
+            "accepted": _round_score(accepted_boost),
+            "skipped": _round_score(-skipped_penalty),
+            "downranked": _round_score(-downrank_penalty),
+            "runtimeTrace": _round_score(-runtime_penalty),
+        },
+        "fieldBoosts": [
+            {"name": label, "score": _round_score(boost)}
+            for label, boost in field_boosts
+            if abs(boost) > 0.0005
+        ],
+        "rawSignals": {
+            "vectorScore": _round_score(vector_score),
+            "inputFrequency": input_frequency,
+            "projectInputFrequency": project_input_frequency,
+            "appInputFrequency": app_input_frequency,
+            "effectiveFrequency": effective_frequency,
+            "effectiveFrequencyScope": frequency_scope,
+            "acceptedCount": accepted,
+            "skippedCount": skipped,
+            "downrankedCount": downranked,
+            "pinned": pinned,
+        },
+        "weights": {
+            "vector": _round_score(vector_weight),
+            "accepted": 0.6,
+            "skipped": -0.3,
+            "downranked": -0.85,
+            "pinned": 8.0,
+        },
+    }
+
+
+def _round_score(value: float) -> float:
+    if not math.isfinite(value):
+        return 0.0
+    return round(float(value), 3)
 
 
 def _tag_quality_boost(tags: tuple[str, ...]) -> float:

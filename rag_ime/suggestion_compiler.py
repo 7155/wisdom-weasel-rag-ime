@@ -193,6 +193,23 @@ class SuggestionCompiler:
             if insert_norm in seen_insert_texts:
                 continue
             seen_insert_texts.add(insert_norm)
+            state = dict(getattr(memory, "state", {}) or {})
+            score_breakdown = state.get("score_breakdown")
+            metadata = {
+                "memory_id": memory.memory_id,
+                "source_ref": memory.source_ref,
+                "reason": memory.reason,
+                "rank": item.rank,
+                "tags": list(memory.tags),
+                "source_type": _source_type_from_tags(memory.tags),
+                "insert_text": insert_text,
+                "preview_text": memory.evidence_preview or source_text,
+                "sources": [memory.source_ref],
+                "state": state,
+                **build_pinyin_metadata(surface),
+            }
+            if score_breakdown is not None:
+                metadata["score_breakdown"] = score_breakdown
             suggestion = InputSuggestion(
                 suggestion_id=f"sug-{memory.memory_id}",
                 surface_text=surface,
@@ -202,19 +219,7 @@ class SuggestionCompiler:
                 confidence=max(0.0, min(1.0, item.score)),
                 actions=("commit", "expand", "pin", "downrank", "delete"),
                 expanded_evidence=expanded_evidence(memory, source_text),
-                metadata={
-                    "memory_id": memory.memory_id,
-                    "source_ref": memory.source_ref,
-                    "reason": memory.reason,
-                    "rank": item.rank,
-                    "tags": list(memory.tags),
-                    "source_type": _source_type_from_tags(memory.tags),
-                    "insert_text": insert_text,
-                    "preview_text": memory.evidence_preview or source_text,
-                    "sources": [memory.source_ref],
-                    "state": dict(getattr(memory, "state", {}) or {}),
-                    **build_pinyin_metadata(surface),
-                },
+                metadata=metadata,
             )
             suggestions.append(suggestion)
             if len(suggestions) >= self.options.max_suggestions:

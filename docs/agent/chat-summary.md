@@ -2465,3 +2465,28 @@ Verification:
 Next steps:
 - Commit and push this frontend lifecycle batch.
 - Real foreground validation remains pending and must be explicitly controlled with the user.
+
+### 2026-07-03
+Topic:
+- First Alpha-style ranking diagnostic migrated from Felix/Wisdom-Weasel.
+
+Findings:
+- Felix `main` still matches local `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`.
+- The portable Alpha idea for this pass is score-breakdown diagnostics, not Windows-specific DLL/ONNX/Lua runtime code.
+- Existing SQLite ranking had useful factors but only exposed them as a compact `reason` string.
+
+Changes:
+- Added structured `score_breakdown` to SQLite memory ranking output.
+- The payload explains FTS5, overlap, field boosts, pinyin, phrase frequency, recency, vector contribution, project/tag/pin/feedback boosts, and penalties.
+- `SuggestionCompiler` and `/rime-suggest` now preserve the breakdown into RAG display-candidate metadata.
+- Updated the Felix-first architecture note to show this P2 migrated piece.
+
+Verification:
+- New focused score-breakdown tests passed.
+- Full local SQLite + Rime sidecar modules passed: 87 tests OK.
+- Full suite passed: 324 tests OK.
+- `py_compile` and `git diff --check` passed.
+
+Next steps:
+- Commit and push.
+- Follow-up: surface this breakdown through doctor/debug endpoints and continue Felix-style MLX candidateization.
