@@ -403,6 +403,34 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["rimeCandidateCount"], 2)
         self.assertEqual(response["ragLane"]["queryInput"], "sj")
 
+    def test_post_commit_model_lane_uses_clean_screen_context_not_history_wrapper(self) -> None:
+        predictor = CapturingRequestPredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-model-context",
+                "requestSeq": 461,
+                "rawInput": "",
+                "preedit": "",
+                "commitTextPreview": "输入法什么时候可以",
+                "committedContext": "你好，输入法什么时候可以完成改正。现在候选词不像 LLM 输出。",
+                "forceSideCandidates": True,
+                "latencyBudgetMs": 650,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(predictor.last_request_type, "no_input_prediction")
+        self.assertEqual(predictor.last_current_input, "输入法什么时候可以")
+        self.assertEqual(predictor.last_recent_context, "你好，输入法什么时候可以完成改正。现在候选词不像 LLM 输出。")
+        self.assertNotIn("历史参考", predictor.last_recent_context)
+        self.assertEqual(response["modelLane"]["contextMode"], "explicit-post-commit")
+        self.assertEqual(response["modelLane"]["predictionCount"], 1)
+
     def test_model_lane_filters_off_prefix_pinyin_predictions(self) -> None:
         response = build_rime_sidecar_response(
             payload={
@@ -513,16 +541,16 @@ class RimeSidecarTests(unittest.TestCase):
             predictor=predictor,
         )
 
-        self.assertIn("历史参考(禁止复读): 历史输入会进入模型预测", predictor.last_recent_context)
-        self.assertIn("当前上下文: 当前正在写 RAG 输入法 sidecar", predictor.last_recent_context)
+        self.assertEqual(predictor.last_recent_context, "当前正在写 RAG 输入法 sidecar")
         self.assertEqual(core.last_suggest_recent_context, "当前正在写 RAG 输入法 sidecar")
         self.assertNotIn("历史输入会进入模型预测", core.last_suggest_recent_context)
         self.assertEqual(response["historyContext"], predictor.last_recent_context)
         history_meta = response["historyContextMeta"]
         self.assertEqual(history_meta["chars"], len(predictor.last_recent_context))
         self.assertEqual(len(history_meta["fingerprint"]), 16)
-        self.assertTrue(history_meta["hasHistory"])
+        self.assertFalse(history_meta["hasHistory"])
         self.assertTrue(history_meta["hasExplicitContext"])
+        self.assertEqual(response["modelLane"]["contextMode"], "explicit-post-commit")
 
     def test_model_predictions_repeating_history_context_are_filtered(self) -> None:
         class RepeatingHistoryPredictionProvider:
@@ -532,7 +560,7 @@ class RimeSidecarTests(unittest.TestCase):
             def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
                 self.last_recent_context = recent_context
                 return [
-                    ModelPrediction(text="历史输入会进入模型预测", rank=1, provider_name="local-mlx", latency_ms=10),
+                    ModelPrediction(text="当前正在写 RAG 输入法 sidecar", rank=1, provider_name="local-mlx", latency_ms=10),
                     ModelPrediction(text="把输入法流程跑通", rank=2, provider_name="local-mlx", latency_ms=10),
                     ModelPrediction(text="已上屏上下文: 当前正在写", rank=3, provider_name="local-mlx", latency_ms=10),
                 ][:max_candidates]
@@ -555,7 +583,7 @@ class RimeSidecarTests(unittest.TestCase):
             predictor=predictor,
         )
 
-        self.assertIn("历史参考(禁止复读)", predictor.last_recent_context)
+        self.assertEqual(predictor.last_recent_context, "当前正在写 RAG 输入法 sidecar")
         self.assertEqual([item["text"] for item in response["modelPredictions"]], ["把输入法流程跑通"])
 
     def test_frontmost_app_payload_reaches_rag_retrieval(self) -> None:

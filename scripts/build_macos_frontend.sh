@@ -12,6 +12,7 @@ DEFAULT_RUNTIME_DB="$HOME/Library/Application Support/RagIme/rag-ime.sqlite"
 RAG_IME_DB_PATH_VALUE="${RAG_IME_DB_PATH:-$DEFAULT_RUNTIME_DB}"
 RAG_IME_PROJECT_VALUE="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 RAG_IME_TOP_K_VALUE="${RAG_IME_TOP_K:-5}"
+RAG_IME_SIDECAR_URL_VALUE="${RAG_IME_SIDECAR_URL:-http://127.0.0.1:8766}"
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
@@ -91,6 +92,7 @@ RAG_IME_DB_PATH_VALUE="$RAG_IME_DB_PATH_VALUE" \
 PYTHON_EXECUTABLE="$PYTHON_EXECUTABLE" \
 RAG_IME_PROJECT_VALUE="$RAG_IME_PROJECT_VALUE" \
 RAG_IME_TOP_K_VALUE="$RAG_IME_TOP_K_VALUE" \
+RAG_IME_SIDECAR_URL_VALUE="$RAG_IME_SIDECAR_URL_VALUE" \
 python3 - "$RESOURCES_DIR/bridge-config.json" "$RESOURCES_DIR/bridge-config.example.json" <<'PY'
 import json
 import os
@@ -102,6 +104,7 @@ payload = {
     "pythonExecutable": os.environ["PYTHON_EXECUTABLE"],
     "project": os.environ["RAG_IME_PROJECT_VALUE"],
     "topK": int(os.environ["RAG_IME_TOP_K_VALUE"]),
+    "sidecarBaseUrl": os.environ["RAG_IME_SIDECAR_URL_VALUE"],
 }
 for path in sys.argv[1:]:
     with open(path, "w", encoding="utf-8") as fh:

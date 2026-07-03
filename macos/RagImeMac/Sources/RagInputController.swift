@@ -96,7 +96,24 @@ final class RagInputController: IMKInputController {
     }
 
     override func hidePalettes() {
+        cancelPendingRefresh(invalidateResponses: true)
         clearCandidateState()
+        clearVisiblePredictionPanel()
+    }
+
+    override func activateServer(_ sender: Any!) {
+        super.activateServer(sender)
+        clearExpiredPanelIfNeeded()
+    }
+
+    override func deactivateServer(_ sender: Any!) {
+        super.deactivateServer(sender)
+        composition = ""
+        cancelPendingRefresh(invalidateResponses: true)
+        clearCandidateState()
+        if let client = sender as? IMKTextInput {
+            clearMarkedText(client: client)
+        }
         clearVisiblePredictionPanel()
     }
 
@@ -171,7 +188,7 @@ final class RagInputController: IMKInputController {
         committedContext = appendingContext(previousContext, finalText)
         composition = ""
         clearCandidateState()
-        pendingRefresh?.cancel()
+        cancelPendingRefresh(invalidateResponses: true)
         clearVisiblePredictionPanel()
 
         let bridge = self.bridge
@@ -217,7 +234,7 @@ final class RagInputController: IMKInputController {
         committedContext = appendingContext(previousContext, text.trimmingCharacters(in: .whitespacesAndNewlines))
         composition = ""
         clearCandidateState()
-        pendingRefresh?.cancel()
+        cancelPendingRefresh(invalidateResponses: true)
         clearVisiblePredictionPanel()
 
         let bridge = self.bridge
@@ -229,7 +246,7 @@ final class RagInputController: IMKInputController {
     private func cancelCurrentComposition(client: IMKTextInput) {
         composition = ""
         clearCandidateState()
-        pendingRefresh?.cancel()
+        cancelPendingRefresh(invalidateResponses: true)
         panelExpiration?.cancel()
         clearMarkedText(client: client)
         clearVisiblePredictionPanel()
@@ -656,6 +673,14 @@ final class RagInputController: IMKInputController {
         panelExpiration = nil
         activePanelSession = nil
         RagCandidatePanel.shared.hide()
+    }
+
+    private func cancelPendingRefresh(invalidateResponses: Bool) {
+        pendingRefresh?.cancel()
+        pendingRefresh = nil
+        if invalidateResponses {
+            requestSeq += 1
+        }
     }
 
     private func appendingContext(_ context: String, _ text: String) -> String {

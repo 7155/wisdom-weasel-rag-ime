@@ -829,6 +829,13 @@ def predict_model_with_latency_budget(
             elif budget_ms <= _REALTIME_MODEL_CONTEXT_BUDGET_MS:
                 recent_context = compact_whitespace(explicit_recent_context)[-420:]
                 result["contextMode"] = "explicit-realtime"
+            elif request_type == PREDICTION_REQUEST_NO_INPUT:
+                # Post-commit prediction is a continuation task. The RAG lane
+                # can use expanded history, but small local models are more
+                # reliable when they see only clean on-screen context instead
+                # of "history/reference/current context" wrappers.
+                recent_context = compact_whitespace(explicit_recent_context)[-420:]
+                result["contextMode"] = "explicit-post-commit"
             else:
                 context_event_limit, context_char_limit = model_prediction_context_limits()
                 recent_context = build_prediction_context(
