@@ -28,7 +28,13 @@ from .prediction_first import (
     prediction_session_to_payload,
 )
 from .prediction_manager import PredictionManager
-from .predictor import PredictionProvider
+from .predictor import (
+    PREDICTION_REQUEST_NO_INPUT,
+    PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+    PREDICTION_REQUEST_RIME_REORDER,
+    PredictionProvider,
+    predict_with_optional_request_context,
+)
 from .text_utils import compact_whitespace, now_ms
 
 
@@ -179,6 +185,7 @@ def build_rime_sidecar_response(
             adapter=adapter,
             core=core,
             predictor=predictor,
+            snapshot=snapshot,
             current_input=semantic_query,
             recent_context=snapshot.committed_context,
             explicit_recent_context=snapshot.committed_context,
@@ -439,6 +446,7 @@ def run_side_lanes_with_latency_budget(
     adapter: InputMethodAdapter,
     core: CoreClient,
     predictor: PredictionProvider,
+    snapshot: RimeContextSnapshot,
     current_input: str,
     recent_context: str,
     explicit_recent_context: str,
@@ -451,6 +459,14 @@ def run_side_lanes_with_latency_budget(
     rag_result: dict[str, object] = {}
     model_result: dict[str, object] = {}
     rag_budget_ms = _rag_lane_budget_for_request(latency_budget_ms)
+    request_type = model_request_type_for_snapshot(snapshot)
+    rime_candidate_count = len(
+        [
+            item
+            for item in snapshot.candidates[:10]
+            if compact_whitespace(item.text)
+        ]
+    )
 
     def run_rag() -> None:
         suggestions, lane = suggest_rag_with_latency_budget(
@@ -470,6 +486,7 @@ def run_side_lanes_with_latency_budget(
         predictions, lane = predict_model_with_latency_budget(
             core=core,
             predictor=predictor,
+            snapshot=snapshot,
             current_input=current_input,
             explicit_recent_context=explicit_recent_context,
             project=project,
@@ -534,6 +551,8 @@ def run_side_lanes_with_latency_budget(
                 budget_ms=max(0, int(latency_budget_ms)),
                 prediction_count=len(predictions),
                 holdover_hit=True,
+                request_type=request_type,
+                rime_candidate_count=rime_candidate_count,
             )
         else:
             model_lane = _model_lane_status(
@@ -541,6 +560,8 @@ def run_side_lanes_with_latency_budget(
                 timed_out=True,
                 skipped_reason="model dispatch exceeded latency budget",
                 budget_ms=max(0, int(latency_budget_ms)),
+                request_type=request_type,
+                rime_candidate_count=rime_candidate_count,
             )
 
     return suggestions, rag_lane, predictions, model_lane
@@ -690,10 +711,21 @@ def _short_stable_id(*parts: str) -> str:
     return hashlib.sha1(material.encode("utf-8")).hexdigest()[:10]
 
 
+def model_request_type_for_snapshot(snapshot: RimeContextSnapshot) -> str:
+    active_prefix = compact_whitespace(snapshot.preedit or snapshot.raw_input)
+    committed_context = compact_whitespace(snapshot.committed_context)
+    if active_prefix and committed_context:
+        return PREDICTION_REQUEST_PINYIN_CONSTRAINED
+    if active_prefix and snapshot.candidates:
+        return PREDICTION_REQUEST_RIME_REORDER
+    return PREDICTION_REQUEST_NO_INPUT
+
+
 def predict_model_with_latency_budget(
     *,
     core: CoreClient,
     predictor: PredictionProvider,
+    snapshot: RimeContextSnapshot,
     current_input: str,
     explicit_recent_context: str,
     project: str,
@@ -701,12 +733,20 @@ def predict_model_with_latency_budget(
     latency_budget_ms: int,
 ) -> tuple[list[ModelPrediction], dict[str, object]]:
     budget_ms = max(0, int(latency_budget_ms))
+    request_type = model_request_type_for_snapshot(snapshot)
+    rime_candidate_texts = tuple(
+        compact_whitespace(item.text)
+        for item in snapshot.candidates[:10]
+        if compact_whitespace(item.text)
+    )
     if budget_ms <= 0:
         return [], _model_lane_status(
             called=False,
             timed_out=False,
             skipped_reason="no latency budget remaining",
             budget_ms=budget_ms,
+            request_type=request_type,
+            rime_candidate_count=len(rime_candidate_texts),
         )
     if max_candidates <= 0:
         return [], _model_lane_status(
@@ -714,6 +754,8 @@ def predict_model_with_latency_budget(
             timed_out=False,
             skipped_reason="no side candidate slot",
             budget_ms=budget_ms,
+            request_type=request_type,
+            rime_candidate_count=len(rime_candidate_texts),
         )
     if not _MODEL_LANE_SEMAPHORE.acquire(blocking=False):
         cached_predictions = _get_model_holdover_predictions(
@@ -730,12 +772,16 @@ def predict_model_with_latency_budget(
                 budget_ms=budget_ms,
                 prediction_count=len(cached_predictions),
                 holdover_hit=True,
+                request_type=request_type,
+                rime_candidate_count=len(rime_candidate_texts),
             )
         return [], _model_lane_status(
             called=False,
             timed_out=False,
             skipped_reason="model lane already running",
             budget_ms=budget_ms,
+            request_type=request_type,
+            rime_candidate_count=len(rime_candidate_texts),
         )
 
     done = Event()
@@ -761,10 +807,15 @@ def predict_model_with_latency_budget(
             if int((time.perf_counter() - started) * 1000) >= budget_ms:
                 result["skippedReason"] = "history context exceeded latency budget"
                 return
-            predictions = predictor.predict(
+            result["requestType"] = request_type
+            result["rimeCandidateCount"] = len(rime_candidate_texts)
+            predictions = predict_with_optional_request_context(
+                predictor,
                 current_input=current_input,
                 recent_context=recent_context,
                 max_candidates=max_candidates,
+                request_type=request_type,
+                rime_candidates=rime_candidate_texts,
             )
             predictions = _filter_model_predictions(
                 predictions,
@@ -807,12 +858,16 @@ def predict_model_with_latency_budget(
                 budget_ms=budget_ms,
                 prediction_count=len(cached_predictions),
                 holdover_hit=True,
+                request_type=request_type,
+                rime_candidate_count=len(rime_candidate_texts),
             )
         return [], _model_lane_status(
             called=True,
             timed_out=True,
             skipped_reason="model lane exceeded latency budget",
             budget_ms=budget_ms,
+            request_type=request_type,
+            rime_candidate_count=len(rime_candidate_texts),
         )
 
     predictions = result.get("predictions")
@@ -829,6 +884,8 @@ def predict_model_with_latency_budget(
         prediction_count=len(predictions),
         history_context=_string(result.get("historyContext")),
         context_mode=_string(result.get("contextMode")),
+        request_type=_string(result.get("requestType")) or request_type,
+        rime_candidate_count=_optional_int(result.get("rimeCandidateCount")) or len(rime_candidate_texts),
     )
 
 
@@ -990,6 +1047,8 @@ def _model_lane_status(
     history_context: str = "",
     holdover_hit: bool = False,
     context_mode: str = "",
+    request_type: str = "",
+    rime_candidate_count: int = 0,
 ) -> dict[str, object]:
     return {
         "called": called,
@@ -1001,6 +1060,8 @@ def _model_lane_status(
         "historyContext": history_context,
         "holdoverHit": holdover_hit,
         "contextMode": context_mode,
+        "requestType": request_type,
+        "rimeCandidateCount": max(0, int(rime_candidate_count)),
     }
 
 

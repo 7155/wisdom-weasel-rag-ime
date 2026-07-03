@@ -716,6 +716,8 @@ class PredictionProviderTests(unittest.TestCase):
                 current_input="RAG 输入法",
                 recent_context="用户正在写本地记忆输入法",
                 max_candidates=3,
+                request_type="pinyin_constrained_prediction",
+                rime_candidates=("输入法", "音法", "英法"),
             )
         finally:
             server.shutdown()
@@ -726,6 +728,10 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(_MockMlxHandler.captured_payload["model"], "mlx-qwen3.5-0.8b")
         self.assertEqual(_MockMlxHandler.captured_payload["maxCandidates"], 3)
         self.assertEqual(_MockMlxHandler.captured_payload["maxTokens"], 24)
+        self.assertEqual(_MockMlxHandler.captured_payload["requestType"], "pinyin_constrained_prediction")
+        self.assertEqual(_MockMlxHandler.captured_payload["rimeCandidates"], ["输入法", "音法", "英法"])
+        self.assertEqual(_MockMlxHandler.captured_payload["rimeCandidateCount"], 3)
+        self.assertEqual(len(_MockMlxHandler.captured_payload["rimeCandidatesFingerprint"]), 16)
         self.assertEqual(_MockMlxHandler.captured_payload["contextChars"], len("用户正在写本地记忆输入法"))
         self.assertEqual(len(_MockMlxHandler.captured_payload["contextFingerprint"]), 16)
         self.assertEqual(len(_MockMlxHandler.captured_payload["stablePrefixHash"]), 16)
@@ -735,6 +741,9 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(predictions[0].metadata["candidate_mode"], "next-token-logits")
         self.assertEqual(predictions[0].metadata["candidate_scores"][0]["tokenId"], 42)
         self.assertEqual(predictions[0].metadata["prompt_cache"], {"enabled": False})
+        self.assertEqual(predictions[0].metadata["request_type"], "pinyin_constrained_prediction")
+        self.assertEqual(predictions[0].metadata["rime_candidates"], ["输入法", "音法", "英法"])
+        self.assertEqual(predictions[0].metadata["requestMeta"]["requestType"], "pinyin_constrained_prediction")
         self.assertEqual(
             predictions[0].metadata["requestMeta"]["contextFingerprint"],
             _MockMlxHandler.captured_payload["contextFingerprint"],

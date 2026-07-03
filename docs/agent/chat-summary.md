@@ -2303,3 +2303,27 @@ Changes:
 
 Next steps:
 - Implement P0 candidate lifecycle and selection mapping first, then P1 MLX request types/candidateization, then P2 SQLite feedback/frequency/RAG query compiler.
+
+### 2026-07-03
+Topic:
+- Second-pass code comparison against `Felix3322/Wisdom-Weasel`.
+
+Findings:
+- Confirmed from Felix source that the high-value design is request typed: no-input continuation, pinyin-constrained prediction, and Rime reorder are separate provider contracts.
+- Confirmed Felix's UI stability comes from session lifecycle: request sequence invalidation, clearing old AI rows on new input, no-input auto-hide, and one display list whose slots map back to either Rime candidates or LLM commits.
+- Confirmed Felix's candidate quality comes from model-output candidateization and staged no-input generation, not from asking a small model for a free-form list once.
+- Confirmed Alpha's useful parts are score breakdown, positive/negative preference, user frequency, top1 guard, and traceability.
+
+Changes:
+- Added normalized request-type and Rime-candidate propagation through our predictor, MLX worker, and Rime sidecar model lane.
+- Added focused tests for MLX request normalization/prompting and sidecar request propagation.
+- Updated the Felix migration matrix with a second-pass file list and the remaining P0/P1 migration gaps.
+
+Verification:
+- 315 local tests passed.
+- `git diff --check` passed.
+
+Next steps:
+- P0: close the Mac/Squirrel lifecycle and visible-slot mapping gap before further model-quality work.
+- P1: port Felix-style staged MLX continuation and candidateization.
+- P1: expose SQLite/Alpha-style scoring breakdown and feedback effects in candidate diagnostics.

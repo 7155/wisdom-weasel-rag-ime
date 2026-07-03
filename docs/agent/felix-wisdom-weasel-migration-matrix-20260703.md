@@ -1,8 +1,9 @@
 # Felix Wisdom-Weasel Migration Matrix
 
 Snapshot:
-- Reference repo: `/Volumes/undo 4t/git/learnA/agent-source-projects/wisdom-weasel-felix`
+- Reference repo: `/tmp/felix-wisdom-weasel` for the 2026-07-03 second-pass read. Earlier local reference path was `/Volumes/undo 4t/git/learnA/agent-source-projects/wisdom-weasel-felix`.
 - Reference commit: `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`
+- Reference branches observed: `main`, `codex/all-local-uncommitted-pr`, `codex/openai-extra-request-params`, `codex/personalize-ranking-pr`
 - Date: 2026-07-03
 
 ## One-Line Decision
@@ -301,3 +302,128 @@ Before touching a related module:
 3. Implement only that boundary.
 4. Run focused tests and `git diff --check`.
 5. Recheck the Felix behavior after the patch to confirm the interaction did not drift.
+
+## Second-Pass Comparison Notes
+
+Date: 2026-07-03
+
+Felix files read in this pass:
+
+- `README.md`
+- `WeaselServer/LLMProvider.h`
+- `WeaselServer/LLMProvider.cpp`
+- `RimeWithWeasel/RimeWithWeasel.cpp`
+- `WeaselServer/ContextHistory.cpp`
+- `WeaselServer/LLMCandidateWindow.cpp`
+- `WeaselServer/HFConstraintProvider.cpp`
+- `alpha_backend/src/main.rs`
+- `hf_backend/app/prompting.py`
+- `hf_backend/app/pinyin_constraint.py`
+- `third_party/alpha-input/src/predictive_similarity.rs`
+- `third_party/alpha-input/src/preference.rs`
+- `third_party/alpha-input/src/user_frequency.rs`
+- `third_party/alpha-input/src/lib.rs`
+
+### What Has Already Been Migrated In This Project
+
+The current Python/MLX sidecar now has the same high-level request contract as Felix:
+
+```text
+Felix LLMRequestType::NoInputPrediction
+  -> rag_ime.predictor.PREDICTION_REQUEST_NO_INPUT
+
+Felix LLMRequestType::PinyinConstrainedPrediction
+  -> rag_ime.predictor.PREDICTION_REQUEST_PINYIN_CONSTRAINED
+
+Felix LLMRequestType::RimeReorder
+  -> rag_ime.predictor.PREDICTION_REQUEST_RIME_REORDER
+```
+
+Concrete local implementation:
+
+- `rag_ime/predictor.py` normalizes request type and Rime candidate text.
+- `rag_ime/rime_sidecar.py` chooses request type from the live snapshot and passes top Rime candidates into the model lane.
+- `rag_ime/mlx_predictor_server.py` includes request type, Rime candidates, and request metadata in prompt construction and response diagnostics.
+- Tests cover sidecar to predictor propagation and MLX request normalization/prompt construction.
+
+This is only the provider contract. It does not mean the full Wisdom-Weasel interaction is complete.
+
+### Felix Behaviors Still Missing Or Partial
+
+| Mechanism | Felix implementation | Current project state | Migration priority |
+| --- | --- | --- | --- |
+| Interactive/background lanes | `LLMTaskScheduler` splits `RimeReorder`/pinyin prediction into interactive lane and no-input continuation into background lane with quiet window | Python sidecar has latency budgets and semaphores, but no equivalent request scheduler and stale UI invalidation at frontend level | P0 |
+| Request invalidation | `m_llm_request_seq` invalidates scheduled, rerank, partial, and final responses | `PredictionManager` has TTL/context fingerprint, but frontend request sequence and stale sidecar response discard must be proven end to end | P0 |
+| No-input auto-hide | `_ArmNoInputPredictionAutoHide` hides post-commit panel after inactivity and any non-selection key hides it immediately | `_POST_COMMIT_PANEL_TTL_MS` exists, but real candidate window behavior still needs foreground validation | P0 |
+| Display selection mapping | `_BuildDisplayCandidates` stores display rows as Rime index, LLM commit, or placeholder; `_SelectDisplayCandidate` maps visible slot back to real action | `SideCandidateDisplayItem` has `selection_action`, `source_index`, and `rime_index`; must verify native/Squirrel slot selection cannot select stale rows | P0 |
+| Rime reorder only | `RimeReorder` prompt says only use existing candidates and filters generated candidates against the original pool | MLX prompt says reorder mode, but candidate parsing still needs a hard filter against Rime pool | P1 |
+| Candidateization | `RemovePromptEcho`, punctuation cuts, preferred lengths, no-input diversity reorder, SSE partial parsing | We have `parse_prediction_candidates`, but not Felix-style staged branch parsing and preferred-length continuation candidates | P1 |
+| Staged no-input generation | Local Ollama path runs short first candidate, high-diversity short word, short phrase, phrase, and long sentence branches | MLX currently does logits-first plus JSON fallback, not staged continuation branches | P1 |
+| Alpha score breakdown | Semantic score + preference score + user frequency + order prior + top1 guard + trace response | SQLite has frequency and feedback data, but candidate rows need explicit breakdown and debug reasons in the IME response | P1 |
+| Positive/negative preference | `apply_user_feedback(committed_text, negative_candidates)` updates positive vector, negative vector, and frequency | We record accepted/skipped in tests, but need scorer integration that visibly changes future ranking | P1 |
+| Context backspace sync | `ContextHistory::RemoveRecentText` rebuilds recent context after backspace outside composition | Our history context path needs the same foreground behavior if post-commit context is edited | P2 |
+| Pinyin token constraint | HF backend has logits processor to mask allowed token ids by pinyin initial | We should not depend on HF, but MLX could later add lightweight pinyin-filtered sampling if candidate quality remains weak | P2 |
+
+### P0 Engineering Rule From Felix
+
+The candidate window must be controlled by session state, not by whether there happened to be old model/RAG results.
+
+```text
+new key that is not a candidate selection
+  -> hide no-input prediction immediately
+  -> invalidate stale request sequence
+
+new pinyin input
+  -> clear old AI supplemental rows
+  -> let Rime own composition
+  -> schedule pinyin-constrained/reorder work
+
+late response
+  -> compare request sequence / fingerprint
+  -> discard if stale
+```
+
+Until this is true, MLX/RAG quality work will not make the IME usable.
+
+### P1 MLX Rule From Felix
+
+For no-input prediction, the model should not be asked for "eight candidates" in one brittle instruction. The safer route is:
+
+```text
+branch 1: low-temperature, 8 token budget, stream first short candidate
+branch 2: high-temperature short word, max 3 chars
+branch 3: high-temperature short phrase, max 4 chars
+branch 4: medium phrase, max 8 chars
+branch 5: longer sentence, max 24 chars, only after short candidates exist
+merge -> remove prompt echo -> cut punctuation -> normalize -> dedup -> diversity reorder
+```
+
+On Mac, this should be implemented inside the resident MLX worker. Do not reintroduce Ollama.
+
+### P1 Scoring Rule From Felix
+
+Alpha's useful shape is:
+
+```text
+semantic_score
++ preference_score
++ user_frequency_score
++ order_priority
+-> top1_guard
+-> score breakdown / trace id
+```
+
+For this project, store the same concepts in SQLite rather than JSON side files:
+
+- selected candidate: positive feedback and frequency increment;
+- displayed candidates above selected row: negative feedback;
+- skipped/stale candidates: trace only unless actually shown;
+- low-value top1 guard: prevent words such as `根据`, `测试`, `现在`, `的`, `了` from dominating.
+
+### Do Not Copy From Felix
+
+- `LLMCandidateWindow.cpp` is a simple Windows popup and is not the interaction quality source.
+- `WeaselService.cpp` is service boilerplate.
+- `AIAssistantDialog`/ASR/PPT/demo assets are separate product surfaces.
+- The Ollama fast path is useful as an algorithm reference only; the Mac product path remains MLX.
+- The Rust Alpha native library is not a first step. First reproduce the scorer contract in Python/SQLite, then decide whether native acceleration is justified.

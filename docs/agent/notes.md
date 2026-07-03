@@ -3188,3 +3188,28 @@ Changes:
 
 Next:
 - Before the next code patch, reopen the Felix files named in the matrix and implement the smallest P0/P1 boundary, then do the third read-back against both Felix behavior and our diff.
+
+### 2026-07-03 01:48 CST
+Problem:
+- User asked to repeatedly inspect and compare `Felix3322/Wisdom-Weasel` because earlier iterations did not faithfully carry over Wisdom-Weasel's hard-won interaction model.
+
+Findings:
+- Felix's transferable core is now confirmed in code, not only README: `LLMRequestType` splits no-input prediction, pinyin-constrained prediction, and Rime reorder.
+- `RimeWithWeasel` uses interactive/background scheduling, request sequence invalidation, no-input auto-hide, and a single display list mapping visible rows back to Rime indices or LLM commits.
+- `LLMProvider.cpp` candidateization removes prompt echo, cuts at punctuation, emits preferred short lengths, deduplicates, streams partial candidates, and uses staged no-input generation branches.
+- Alpha scoring combines semantic score, preference score, user frequency score, order prior, top1 guard, and trace/debug fields.
+- `ContextHistory` is only short-term committed-text context with sentence-boundary trimming and backspace sync; it should not replace SQLite/RAG evidence.
+
+Changes:
+- `rag_ime/predictor.py`, `rag_ime/mlx_predictor_server.py`, and `rag_ime/rime_sidecar.py` now pass a normalized prediction request type and Rime candidate pool through the MLX model lane.
+- Added tests proving MLX request normalization/prompt construction and sidecar-to-predictor request propagation.
+- Expanded `docs/agent/felix-wisdom-weasel-migration-matrix-20260703.md` with the second-pass file list, done/missing matrix, and P0/P1 migration rules.
+
+Verification:
+- Full local test suite passed: `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests` ran 315 tests OK.
+- `git diff --check` passed.
+
+Next:
+- P0: implement or verify frontend-level request sequence, stale response discard, auto-hide, and visible-slot selection mapping in the Mac/Squirrel route.
+- P1: port Felix-style MLX staged generation and candidateization.
+- P1: add Alpha-style score breakdown and feedback-visible ranking to the SQLite scorer.
