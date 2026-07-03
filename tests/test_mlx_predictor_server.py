@@ -15,6 +15,7 @@ from rag_ime.mlx_predictor_server import (
     MlxLmEngine,
     _PromptCacheState,
     _build_mlx_dynamic_prompt,
+    QWEN_NON_THINKING_ASSISTANT_PREFIX,
     _normalize_prediction_request,
     make_mlx_predictor_handler,
 )
@@ -108,6 +109,23 @@ class MlxPredictorServerTests(unittest.TestCase):
             request_type="no_input_prediction",
         ))
 
+    def test_chat_prompt_uses_qwen_non_thinking_assistant_prefix(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text='["跑通输入法","优化候选排序"]')
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想",
+                max_candidates=2,
+                max_tokens=12,
+                temperature=0.15,
+                top_p=0.85,
+            )
+
+        prompt = calls["prompts"][-1]
+        self.assertIn(QWEN_NON_THINKING_ASSISTANT_PREFIX, prompt)
+        self.assertNotIn("/no_think", prompt)
+        self.assertEqual(payload["candidates"], ["跑通输入法", "优化候选排序"])
+
     def test_engine_uses_loaded_prompt_cache_for_streaming_generation(self) -> None:
         modules, calls = _fake_mlx_modules(generated_text='["缓存候选","输入法"]')
         with patch.dict(sys.modules, modules):
@@ -138,7 +156,7 @@ class MlxPredictorServerTests(unittest.TestCase):
     def test_engine_predict_prefers_next_token_logits_candidates(self) -> None:
         modules, _calls = _fake_mlx_modules(
             generated_text='["JSON候选"]',
-            logits_tokens=["输入法候选", "本地记忆", "继续预测"],
+            logits_tokens=["输入法候选", "本地记忆", "优化候选排序"],
         )
         with patch.dict(sys.modules, modules):
             engine = MlxLmEngine("fake-qwen")
@@ -152,8 +170,8 @@ class MlxPredictorServerTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["candidateMode"], "next-token-logits")
-        self.assertEqual(payload["candidates"], ["输入法候选", "本地记忆", "继续预测"])
-        self.assertEqual(payload["rawText"], "输入法候选 本地记忆 继续预测")
+        self.assertEqual(payload["candidates"], ["输入法候选", "本地记忆", "优化候选排序"])
+        self.assertEqual(payload["rawText"], "输入法候选 本地记忆 优化候选排序")
         self.assertEqual(payload["timing"]["candidateMode"], "next-token-logits")
         self.assertFalse(payload["timing"]["fallbackJson"])
         self.assertEqual(payload["candidateScores"][0]["text"], "输入法候选")
@@ -258,6 +276,31 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(payload["candidateMode"], "json-generation")
         self.assertEqual(payload["candidates"], ["把流程跑通", "接入本地记忆"])
         self.assertEqual(payload["timing"]["candidateMode"], "json-generation")
+
+    def test_stream_decode_skips_replacement_character_intermediate_chunks(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text="验证候选")
+        with patch.dict(sys.modules, modules):
+            engine = MlxLmEngine("fake-qwen")
+            real_decode = engine.tokenizer.decode
+
+            def decode(tokens):
+                if len(tokens) == 2:
+                    return "验\ufffd"
+                return real_decode(tokens)
+
+            engine.tokenizer.decode = decode
+            text = "".join(
+                engine.stream_text(
+                    current_input="",
+                    recent_context="测试",
+                    max_candidates=1,
+                    max_tokens=8,
+                    temperature=0.15,
+                    top_p=0.85,
+                )
+            )
+
+        self.assertEqual(text, "验证候选")
 
     def test_health_reports_prepared_prompt_cache_without_claiming_generation_use(self) -> None:
         server, thread = _start_fake_server()

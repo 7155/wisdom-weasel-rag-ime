@@ -23,6 +23,7 @@ DRY_RUN="${RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN:-0}"
 detect_python() {
   local candidate
   local candidates=()
+  candidates+=("$ROOT/.venv-mlx314sys/bin/python")
   candidates+=("$ROOT/.venv-mlx/bin/python")
   candidates+=("$ROOT/.venv/bin/python")
   candidates+=("/opt/homebrew/bin/python3.13")
