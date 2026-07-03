@@ -2287,3 +2287,19 @@ Next steps:
 - User should test real typing in Codex/Edge/TextEdit with `RAG-IME - Simplified` selected.
 - After confirming real UI behavior, require a frontend trace check for sidecar request/response and number-key side commit.
 - Later remove/replace the stale system app and then optimize 0.6B prompt/cache quality before comparing Qwen3.5 0.8B.
+
+### 2026-07-03
+Topic:
+- Re-read Felix3322/Wisdom-Weasel as the primary reference before continuing implementation.
+
+Findings:
+- Felix fork local snapshot is `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`.
+- The architecture boundary to copy is: Wanxiang/Rime owns pinyin, dictionaries, English/code/path, and fallback; LLM owns post-commit/no-input and pinyin-constrained prediction; Alpha-style scorer owns frequency, feedback, top1 guard, and diagnostics.
+- Wanxiang's `contextual_suggestions: false` and `super_english.lua` reinforce that small-model prediction should not replace Rime's core input path or English/vibecode handling.
+
+Changes:
+- Added `docs/agent/felix-wisdom-weasel-migration-matrix-20260703.md`.
+- Updated `docs/agent/todo.md` with P0/P1/P2 migration tasks tied to Felix mechanisms.
+
+Next steps:
+- Implement P0 candidate lifecycle and selection mapping first, then P1 MLX request types/candidateization, then P2 SQLite feedback/frequency/RAG query compiler.

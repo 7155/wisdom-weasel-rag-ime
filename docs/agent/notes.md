@@ -3170,3 +3170,21 @@ Open:
 - Need user real-typing validation in Codex/Edge/TextEdit because Computer Use screen capture failed and cannot inspect the live candidate window.
 - Need admin cleanup later: remove or replace `/Library/Input Methods/RAG-IME.app` so macOS cannot accidentally load the old system binary.
 - Need later model-quality work: keep MLX 0.6B for speed now; compare Qwen3.5 0.8B only after interaction is stable.
+
+### 2026-07-03 00:36 CST
+Problem:
+- User explicitly requested another careful read of `https://github.com/Felix3322/Wisdom-Weasel` and said this fork should be treated as a key reference before more coding.
+
+Findings:
+- Felix fork snapshot is `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`.
+- The fork's strongest transferable boundary is not "LLM replaces Rime"; it is `Wanxiang/Rime anchors pinyin and English`, `LLM handles post-commit/no-input and pinyin-constrained continuation`, and `Alpha-style scoring handles rerank/frequency/feedback`.
+- Wanxiang keeps pinyin, user dictionary, English/mixed-code translators, auto phrase, and Alpha rerank inside the Rime translator/filter chain.
+- `contextual_suggestions: false` in Wanxiang is an important warning: Rime's built-in phrase prediction and LLM continuation should not be collapsed into one opaque ranking path.
+- `super_english.lua` protects English/code/path style input through formatting, spacing, single-letter handling, URL/protocol exceptions, and fallback reconstruction; RAG/LLM must not rewrite this lane.
+
+Changes:
+- Added `docs/agent/felix-wisdom-weasel-migration-matrix-20260703.md`.
+- Updated `docs/agent/todo.md` with the Felix migration matrix and explicit P0/P1/P2 migration tasks.
+
+Next:
+- Before the next code patch, reopen the Felix files named in the matrix and implement the smallest P0/P1 boundary, then do the third read-back against both Felix behavior and our diff.

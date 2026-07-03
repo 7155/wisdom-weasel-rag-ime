@@ -19,6 +19,7 @@
   - [x] 09 rime-wanxiang：schema、Lua hooks、词库和用户词频接入边界。
   - [x] 10 Weasel UI / candidate list：候选显示、source label、布局与候选框生命周期。
   - [x] 11 installer / build docs：只提取可迁移的安装、诊断、重启、签名经验。
+  - [x] 12 迁移矩阵：把 Felix 机制映射到本项目 P0/P1/P2/P3 改造项。
 - [ ] 本项目迁移实现
   - [x] 写代码前复读：`RimeWithWeasel/RimeWithWeasel.cpp` 的按键退出、display candidate、commit 后预测、stale request 丢弃。
   - [x] 写代码前复读：`alpha_rerank.lua` 的 commit feedback、query variants、top1 guard、日志字段。
@@ -34,6 +35,9 @@
 
 ## Next
 
+- [ ] P0：按 Felix DisplayCandidate 生命周期修正真实 Squirrel 候选显示、隐藏、数字键选择、旧请求丢弃。
+- [ ] P1：按 Felix LLMProvider 请求类型重做 MLX provider、短候选 prompt、candidateization、partial candidate。
+- [ ] P2：按 Alpha/Wanxiang 思路实现 SQLite 频率、accepted/skipped feedback、source/score/guard 诊断。
 - [ ] 对照 Felix prompt，重写 Qwen/MLX 小模型候选生成 prompt，避免解释性长句和“剪贴板式候选”。
 - [ ] 对照 Felix scheduler，调整本项目候选框消失、刷新冻结、旧请求丢弃、无输入时不常驻的问题。
 - [ ] 对照 rime-wanxiang，确认首词锚定、传统词库兜底、用户词频上浮的最佳接入点。
@@ -48,3 +52,4 @@
 - [x] 记录 Felix3322/Wisdom-Weasel 为重点参考仓库并推送 `fb1ac7f`。
 - [x] 完成 Felix/Wisdom-Weasel 第一遍逐项阅读：LLMProvider、RimeWithWeasel、ContextHistory、alpha-input、alpha_backend、hf_backend、Rime Lua bridge、Wanxiang schema/hooks、候选 UI 生命周期、安装/诊断脚本。
 - [x] 完成三遍阅读协议在本轮实现上的闭环：二次复读参考源码、实现 top1 guard / shownCandidates feedback、第三遍对照 diff，并通过全量 312 个测试。
+- [x] 写成 `docs/agent/felix-wisdom-weasel-migration-matrix-20260703.md`，后续编码必须按矩阵先复读再实现。
