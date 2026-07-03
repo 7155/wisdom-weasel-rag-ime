@@ -203,6 +203,7 @@ index 0000000..e716f28
 +
 +  func recordSideCandidateCommit(
 +    _ candidate: RagImeDisplayCandidate,
++    shownCandidates: [RagImeDisplayCandidate],
 +    query: String,
 +    recentContext: String,
 +    preedit: String
@@ -211,6 +212,7 @@ index 0000000..e716f28
 +    guard !Self.trimmed(insertText).isEmpty else { return }
 +    let selectionPayload = RagImeSelectionPayload(
 +      candidate: candidate,
++      shownCandidates: shownCandidates,
 +      query: query,
 +      recentContext: recentContext,
 +      committedContext: recentContext,
@@ -325,6 +327,7 @@ index 0000000..e716f28
 +
 +struct RagImeSelectionPayload: Encodable {
 +  let candidate: RagImeDisplayCandidate
++  let shownCandidates: [RagImeDisplayCandidate]
 +  let query: String
 +  let recentContext: String
 +  let committedContext: String
@@ -714,6 +717,7 @@ index c2adf74..20bc671 100644
 +        rimeAPI.clear_composition(session)
 +        recordRagImeSideCandidateCommit(
 +          candidate,
++          shownCandidates: ragImeDisplayCandidates,
 +          query: query,
 +          recentContext: recentContext,
 +          preedit: sourcePreedit
@@ -1286,6 +1290,7 @@ index c2adf74..20bc671 100644
 +
 +  func recordRagImeSideCandidateCommit(
 +    _ candidate: RagImeDisplayCandidate,
++    shownCandidates: [RagImeDisplayCandidate],
 +    query: String,
 +    recentContext: String,
 +    preedit: String
@@ -1295,6 +1300,7 @@ index c2adf74..20bc671 100644
 +      do {
 +        try sidecarClient.recordSideCandidateCommit(
 +          candidate,
++          shownCandidates: shownCandidates,
 +          query: query,
 +          recentContext: recentContext,
 +          preedit: preedit

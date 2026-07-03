@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
@@ -28,6 +28,16 @@ _LOW_VALUE_WANXIANG_FALLBACK = {
     "了",
     "和",
     "是",
+}
+_LOW_VALUE_PREDICTION_TOP1 = _LOW_VALUE_WANXIANG_FALLBACK | {
+    "嗯",
+    "啊",
+    "哦",
+    "吧",
+    "呢",
+    "就是",
+    "这个",
+    "那个",
 }
 
 
@@ -235,6 +245,7 @@ def merge_prediction_first_candidates(
     )
     if strict_prefix_constraint:
         prediction_candidates = _prefix_lane_order(prediction_candidates, prefix)
+    prediction_candidates, top1_guard = _apply_prediction_top1_guard(prediction_candidates)
 
     side_budget = min(snapshot.max_side_candidates, max_visible)
     side_inserted = 0
@@ -271,6 +282,7 @@ def merge_prediction_first_candidates(
         ),
         raw_commit_inserted=raw_inserted,
         prefix_matched_side_inserted=prefix_matched_side_inserted,
+        top1_guard=top1_guard,
     )
 
 
@@ -421,6 +433,78 @@ def _split_prefix_matches(
     matched = tuple(item for item in candidates if prediction_candidate_matches_prefix(item, prefix))
     unmatched = tuple(item for item in candidates if item not in matched)
     return matched, unmatched
+
+
+def _apply_prediction_top1_guard(
+    candidates: tuple[PredictionCandidate, ...],
+) -> tuple[tuple[PredictionCandidate, ...], dict[str, object] | None]:
+    if len(candidates) < 2:
+        return candidates, None
+    first = candidates[0]
+    if not _is_low_value_prediction_top1(first):
+        return candidates, None
+
+    for index, candidate in enumerate(candidates[1:], start=1):
+        if not _can_promote_over_low_value_top1(candidate):
+            continue
+        promoted = replace(
+            candidate,
+            metadata={
+                **candidate.metadata,
+                "top1_guard": "promoted_over_low_value",
+                "guarded_from_rank": index + 1,
+                "original_top1": first.display_text,
+            },
+        )
+        demoted = replace(
+            first,
+            metadata={
+                **first.metadata,
+                "top1_guard": "demoted_low_value",
+                "guarded_by": candidate.display_text,
+            },
+        )
+        reordered = list(candidates)
+        reordered[0] = demoted
+        reordered[index] = promoted
+        promoted_candidate = reordered.pop(index)
+        reordered.insert(0, promoted_candidate)
+        guard = {
+            "triggered": True,
+            "reason": "low_value_prediction_top1",
+            "originalTop1": first.display_text,
+            "promotedText": candidate.display_text,
+            "promotedSourceType": candidate.source_type,
+            "promotedOriginalRank": index + 1,
+        }
+        return tuple(reordered), guard
+    return candidates, {
+        "triggered": False,
+        "reason": "low_value_prediction_top1_without_challenger",
+        "originalTop1": first.display_text,
+    }
+
+
+def _is_low_value_prediction_top1(candidate: PredictionCandidate) -> bool:
+    text = compact_whitespace(candidate.display_text)
+    if not text:
+        return True
+    if text in _LOW_VALUE_PREDICTION_TOP1:
+        return True
+    if len(text) <= 1 and text not in {"✓", "✅"}:
+        return True
+    return _is_low_value_wanxiang_fallback(text)
+
+
+def _can_promote_over_low_value_top1(candidate: PredictionCandidate) -> bool:
+    text = compact_whitespace(candidate.display_text)
+    if len(text) < 2:
+        return False
+    if _is_low_value_prediction_top1(candidate):
+        return False
+    if candidate.source_type in {"rag", "memory"}:
+        return True
+    return candidate.source_type == "model" and len(text) >= 2
 
 
 def _candidate_from_suggestion(suggestion: InputSuggestion, index: int) -> PredictionCandidate:
@@ -595,6 +679,7 @@ def _merge_result(
     reason: str,
     raw_commit_inserted: int = 0,
     prefix_matched_side_inserted: int = 0,
+    top1_guard: dict[str, object] | None = None,
 ) -> PredictionFirstMergeResult:
     return PredictionFirstMergeResult(
         mode=mode,
@@ -617,6 +702,7 @@ def _merge_result(
             "rawCommitInserted": raw_commit_inserted,
             "wanxiangFallbackCount": rime_fallback_count,
             "rimeCompositionOwnedByRime": mode in {InputMode.ANCHOR_COMPOSING, InputMode.PREFIX_CONSTRAINED_COMPOSING},
+            "top1Guard": top1_guard or {"triggered": False},
         },
     )
 

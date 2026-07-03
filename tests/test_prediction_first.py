@@ -303,6 +303,56 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertFalse(session.should_clear_prediction_panel)
         self.assertEqual(session.selection_scope, "prediction")
 
+    def test_post_commit_top1_guard_promotes_content_over_low_value_prediction(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=44,
+            committed_context="我现在这个候选词根本不像 LLM 输出",
+            candidates=(),
+            max_visible_candidates=4,
+            max_side_candidates=4,
+        )
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(
+                    text="根据",
+                    rank=1,
+                    provider_name="qwen-mlx",
+                    latency_ms=20,
+                    confidence=0.99,
+                ),
+                ModelPrediction(
+                    text="补后端测试",
+                    rank=2,
+                    provider_name="qwen-mlx",
+                    latency_ms=20,
+                    confidence=0.8,
+                ),
+            ],
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="rag-1",
+                    surface_text="对照 Wisdom-Weasel 修候选生命周期",
+                    suggestion_type="rag",
+                    source_event_id=1,
+                    evidence_preview="Felix top1 guard",
+                    confidence=0.85,
+                    metadata={"source_type": "rag"},
+                )
+            ],
+        )
+
+        self.assertEqual(result.display_candidates[0].text, "补后端测试")
+        self.assertEqual(result.display_candidates[0].source_type, "model")
+        self.assertEqual(result.display_candidates[0].metadata["top1_guard"], "promoted_over_low_value")
+        self.assertEqual(result.display_candidates[1].text, "根据")
+        self.assertEqual(result.display_candidates[1].metadata["top1_guard"], "demoted_low_value")
+        self.assertTrue(result.policy["top1Guard"]["triggered"])
+        self.assertEqual(result.policy["top1Guard"]["originalTop1"], "根据")
+        self.assertEqual(result.policy["top1Guard"]["promotedText"], "补后端测试")
+
     def test_post_commit_without_live_candidates_clears_prediction_session(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",

@@ -2,6 +2,27 @@
 
 ### 2026-07-03
 Topic:
+- Execute the three-pass Felix/Wisdom-Weasel reading workflow and land the first concrete migration patch.
+
+Changes:
+- Added `prediction_first` top1 guard: low-value short candidates such as `根据` / `测试` / `分析` no longer stay first when a stronger model/RAG/memory candidate exists.
+- Added `/rime-select` shown-candidate feedback: selected RAG/memory candidates record `accepted`; higher-ranked visible RAG/memory candidates skipped by the user record `skipped`.
+- Updated the Squirrel patch so real frontend selection sends `shownCandidates: ragImeDisplayCandidates` to the sidecar.
+- Added regression tests for top1 guard, skipped-higher feedback, and patch payload presence.
+
+Verification:
+- Focused tests passed: `tests.test_prediction_first`, `tests.test_rime_sidecar`, `tests.test_build_patched_squirrel` (63 tests).
+- Full test suite passed: 312 tests.
+- `git diff --check` and `py_compile` passed.
+- Third-pass source/diff audit completed against Felix `RimeWithWeasel`, `alpha_rerank.lua`, Wanxiang schema/hooks, and `LLMProvider`.
+
+Next steps:
+- Continue with MLX prompt/candidateization alignment to Felix `LLMProvider.cpp`.
+- Add fuller SQLite user-frequency/preference scoring from accepted/skipped feedback.
+- Improve debug/doctor output so source, score, guard, latency, and backend are visible during real IME tests.
+
+### 2026-07-03
+Topic:
 - Set a mandatory three-pass reading workflow for Felix/Wisdom-Weasel and finish the first pass.
 
 Decisions:

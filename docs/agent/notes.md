@@ -7,6 +7,33 @@
 
 ## Log
 
+### 2026-07-03 08:12 CST
+Problem:
+- User required the reference-reading TODO to be executed as a hard workflow: read now, reread before code, and check again after implementation.
+- Candidate quality was still failing in two concrete ways: weak short candidates such as `根据` could occupy the first slot, and selected side candidates did not send the full shown list back for skipped-higher feedback.
+
+Attempts:
+- Second-pass reread before coding:
+  - `RimeWithWeasel/RimeWithWeasel.cpp`: no-input candidate clear on typing, unified display candidate selection, pending LLM commit, request-seq stale discard.
+  - `alpha_rerank.lua`: top1 takeover guard, skipped-higher negative feedback, query variants, score-breakdown logging.
+  - `wanxiang.schema.yaml` / `super_english.lua`: Wanxiang/Rime remains responsible for pinyin anchoring, English/vibecode support, and user dictionary/frequency.
+  - `LLMProvider.cpp`: short candidate prompt and continuation candidateization.
+- Implemented a prediction-first top1 guard in `rag_ime/prediction_first.py`; low-value first candidates are demoted when a stronger model/RAG/memory candidate exists.
+- Extended `/rime-select` in `rag_ime/rime_sidecar.py` to accept `shownCandidates`, record the selected candidate as `accepted`, and record higher-ranked shown RAG/memory candidates as `skipped`.
+- Updated `squirrel-patches/0001-add-rag-ime-sidecar.patch` so the real Squirrel frontend sends `shownCandidates: ragImeDisplayCandidates` to sidecar selection recording.
+
+Verification:
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest tests.test_prediction_first tests.test_rime_sidecar tests.test_build_patched_squirrel`: 63 tests passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests`: 312 tests passed.
+- `git diff --check`: passed.
+- `python3 -m py_compile rag_ime/prediction_first.py rag_ime/rime_sidecar.py`: passed.
+- Third-pass diff audit confirmed the change stayed limited to top1 guard, selection feedback, patch payload, and tests.
+
+Open:
+- MLX prompt/candidateization still needs to be aligned to Felix `LLMProvider.cpp`.
+- SQLite frequency/preference scoring still needs a fuller Felix-style user-frequency prior, beyond the accepted/skipped actions added here.
+- debug/doctor output still needs richer source/score/guard/latency/backend evidence.
+
 ### 2026-07-03 07:45 CST
 Problem:
 - User required a hard TODO discipline for reference reading: read once now, read again before coding, and check again after implementation.
