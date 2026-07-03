@@ -31,6 +31,24 @@ from .text_utils import (
 _IMPORTANT_ASCII_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+#.\-]{2,}")
 _VECTOR_ONLY_MIN_SCORE_DEFAULT = 0.35
 _MS_PER_DAY = 24 * 60 * 60 * 1000
+_PHRASE_FEEDBACK_SELECT_COLUMNS = """
+                COALESCE(pfb.phrase_accepted_count, s.accepted_count) AS phrase_accepted_count,
+                COALESCE(pfb.phrase_skipped_count, s.skipped_count) AS phrase_skipped_count,
+                COALESCE(pfb.phrase_downranked_count, s.downranked) AS phrase_downranked_count
+"""
+_PHRASE_FEEDBACK_JOIN = """
+            LEFT JOIN (
+                SELECT
+                    e2.committed_text,
+                    SUM(s2.accepted_count) AS phrase_accepted_count,
+                    SUM(s2.skipped_count) AS phrase_skipped_count,
+                    SUM(s2.downranked) AS phrase_downranked_count
+                FROM input_events e2
+                JOIN memory_state s2 ON s2.event_id = e2.id
+                WHERE s2.deleted = 0
+                GROUP BY e2.committed_text
+            ) pfb ON pfb.committed_text = e.committed_text
+"""
 
 
 class LocalSqliteCoreClient:
@@ -852,13 +870,15 @@ class LocalSqliteCoreClient:
                 COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms,
                 COALESCE(pas.input_frequency, 0) AS app_input_frequency,
                 COALESCE(pas.first_seen_ms, e.created_at_ms) AS app_phrase_first_seen_ms,
-                COALESCE(pas.last_seen_ms, e.created_at_ms) AS app_phrase_last_seen_ms
+                COALESCE(pas.last_seen_ms, e.created_at_ms) AS app_phrase_last_seen_ms,
+{_PHRASE_FEEDBACK_SELECT_COLUMNS}
             FROM memory_fts
             JOIN input_events e ON e.id = memory_fts.rowid
             JOIN memory_state s ON s.event_id = e.id
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
             LEFT JOIN phrase_project_stats pps ON pps.committed_text = e.committed_text AND pps.project = ?
             LEFT JOIN phrase_app_stats pas ON pas.committed_text = e.committed_text AND pas.app = ?
+{_PHRASE_FEEDBACK_JOIN}
             WHERE {' AND '.join(where)}
             ORDER BY s.pinned DESC, bm25(memory_fts) ASC, e.created_at_ms DESC
             LIMIT ?
@@ -890,6 +910,7 @@ class LocalSqliteCoreClient:
                 COALESCE(pas.input_frequency, 0) AS app_input_frequency,
                 COALESCE(pas.first_seen_ms, e.created_at_ms) AS app_phrase_first_seen_ms,
                 COALESCE(pas.last_seen_ms, e.created_at_ms) AS app_phrase_last_seen_ms,
+{_PHRASE_FEEDBACK_SELECT_COLUMNS},
                 v.vector_json
             FROM memory_vectors v
             JOIN input_events e ON e.id = v.event_id
@@ -897,6 +918,7 @@ class LocalSqliteCoreClient:
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
             LEFT JOIN phrase_project_stats pps ON pps.committed_text = e.committed_text AND pps.project = ?
             LEFT JOIN phrase_app_stats pas ON pas.committed_text = e.committed_text AND pas.app = ?
+{_PHRASE_FEEDBACK_JOIN}
             WHERE {' AND '.join(where)}
         """
         params = [project, app, *where_params]
@@ -935,12 +957,14 @@ class LocalSqliteCoreClient:
                 COALESCE(pps.last_seen_ms, e.created_at_ms) AS project_phrase_last_seen_ms,
                 COALESCE(pas.input_frequency, 0) AS app_input_frequency,
                 COALESCE(pas.first_seen_ms, e.created_at_ms) AS app_phrase_first_seen_ms,
-                COALESCE(pas.last_seen_ms, e.created_at_ms) AS app_phrase_last_seen_ms
+                COALESCE(pas.last_seen_ms, e.created_at_ms) AS app_phrase_last_seen_ms,
+{_PHRASE_FEEDBACK_SELECT_COLUMNS}
             FROM input_events e
             JOIN memory_state s ON s.event_id = e.id
             LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
             LEFT JOIN phrase_project_stats pps ON pps.committed_text = e.committed_text AND pps.project = ?
             LEFT JOIN phrase_app_stats pas ON pas.committed_text = e.committed_text AND pas.app = ?
+{_PHRASE_FEEDBACK_JOIN}
             WHERE {' AND '.join(where)}
             ORDER BY s.pinned DESC, e.created_at_ms DESC
             LIMIT ?
@@ -1023,9 +1047,12 @@ class LocalSqliteCoreClient:
         frequency_boost = _input_frequency_boost(effective_frequency, effective_last_seen_ms, present_ms=present_ms)
         recent_boost = _last_seen_recency_boost(effective_last_seen_ms, present_ms=present_ms)
         age_days = _age_days(effective_last_seen_ms, present_ms)
-        accepted = int(row["accepted_count"])
-        skipped = int(row["skipped_count"])
-        downranked = int(row["downranked"])
+        event_accepted = int(row["accepted_count"])
+        event_skipped = int(row["skipped_count"])
+        event_downranked = int(row["downranked"])
+        accepted = _row_int(row, "phrase_accepted_count", default=event_accepted)
+        skipped = _row_int(row, "phrase_skipped_count", default=event_skipped)
+        downranked = _row_int(row, "phrase_downranked_count", default=event_downranked)
         pinned = bool(row["pinned"])
         project_boost = 0.4 if project and row["project"] == project else 0.0
         runtime_penalty = _runtime_trace_penalty(committed_text)
@@ -1130,8 +1157,11 @@ class LocalSqliteCoreClient:
             state={
                 "accepted_count": accepted,
                 "skipped_count": skipped,
+                "event_accepted_count": event_accepted,
+                "event_skipped_count": event_skipped,
                 "pinned": pinned,
                 "downranked": downranked,
+                "event_downranked": event_downranked,
                 "deleted": bool(row["deleted"]),
                 "input_frequency": input_frequency,
                 "project_input_frequency": project_input_frequency,

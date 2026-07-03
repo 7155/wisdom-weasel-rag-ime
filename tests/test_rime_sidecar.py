@@ -16,7 +16,7 @@ from rag_ime.adapter import InputMethodAdapter
 from rag_ime.cli import main
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.models import InputSuggestion, MemoryAction, ModelPrediction
+from rag_ime.models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
 from rag_ime.predictor import CooldownPredictionProvider, OpenAICompatiblePredictionConfig
 from rag_ime.rime_sidecar import (
     build_rime_sidecar_response,
@@ -1907,6 +1907,77 @@ class RimeSidecarTests(unittest.TestCase):
                 ],
             )
 
+    def test_rime_select_feedback_changes_future_memory_ranking(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-rime-select-rerank-") as tmp:
+            db_path = f"{tmp}/select-rerank.sqlite"
+            project = "wisdom-weasel-rag-ime"
+            query = "selection feedback 输入法 候选"
+            core = LocalSqliteCoreClient(db_path)
+            adapter = InputMethodAdapter(core)
+            core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=1_900_000_000_000,
+                    source="fixture",
+                    committed_text="补齐 selection feedback",
+                    recent_context=query,
+                    project=project,
+                    tags=("phrase-memory",),
+                )
+            )
+            core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=1_900_000_001_000,
+                    source="fixture",
+                    committed_text="把 RAG 候选做成可选择的输入片段",
+                    recent_context=query,
+                    project=project,
+                    tags=("phrase-memory",),
+                )
+            )
+            before = core.suggest_for_input(current_input=query, project=project, top_k=2)
+            selected_before = before[1]
+            skipped_before = before[0]
+            selected_id_from_suggestion = selected_before.source_event_id
+            skipped_id_from_suggestion = skipped_before.source_event_id
+            shown_candidates = [
+                _shown_candidate_from_suggestion(skipped_before, label="1"),
+                _shown_candidate_from_suggestion(selected_before, label="2"),
+            ]
+            response = record_rime_side_candidate_selection(
+                payload={
+                    "candidate": shown_candidates[1],
+                    "shownCandidates": shown_candidates,
+                    "query": query,
+                    "recentContext": "用户选择第二个候选",
+                    "project": project,
+                },
+                adapter=adapter,
+                core=core,
+            )
+            after = core.suggest_for_input(current_input=query, project=project, top_k=2)
+
+            self.assertEqual(response["recordedActionCount"], 2)
+            self.assertEqual(response["skippedActionCount"], 1)
+            self.assertEqual(after[0].surface_text, selected_before.surface_text)
+            self.assertIn("accepted:1", after[0].metadata["reason"])
+            with sqlite3.connect(db_path) as conn:
+                state = {
+                    row[0]: (row[1], row[2])
+                    for row in conn.execute(
+                        """
+                        SELECT e.id, s.accepted_count, s.skipped_count
+                        FROM input_events e
+                        JOIN memory_state s ON s.event_id = e.id
+                        WHERE e.id IN (?, ?)
+                        """,
+                        (selected_id_from_suggestion, skipped_id_from_suggestion),
+                    )
+                }
+            self.assertEqual(state[selected_id_from_suggestion], (1, 0))
+            self.assertEqual(state[skipped_id_from_suggestion], (0, 1))
+
     def test_cli_rime_select_json_dry_run_does_not_write_database(self) -> None:
         payload = {
             "dryRun": True,
@@ -1989,6 +2060,20 @@ class RimeSidecarTests(unittest.TestCase):
                     ("第十个候选",),
                 ).fetchone()
             self.assertEqual(row, ("第十个候选", 10))
+
+
+def _shown_candidate_from_suggestion(suggestion: InputSuggestion, *, label: str) -> dict[str, object]:
+    return {
+        "label": label,
+        "selectionKey": label,
+        "selectionRank": int(label),
+        "text": suggestion.surface_text,
+        "insertText": suggestion.metadata.get("insert_text") or suggestion.surface_text,
+        "sourceType": "memory",
+        "suggestionId": suggestion.suggestion_id,
+        "memoryId": suggestion.metadata["memory_id"],
+        "sourceEventId": suggestion.source_event_id,
+    }
 
 
 if __name__ == "__main__":
