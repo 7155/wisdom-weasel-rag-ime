@@ -2513,3 +2513,25 @@ Verification:
 Next steps:
 - Run the full suite, commit, and push.
 - Continue with Felix-style MLX prompt/candidateization after this observability patch.
+
+### 2026-07-03
+Topic:
+- Felix-style MLX candidateization for Prediction-first IME output.
+
+Findings:
+- Prompt-only control is not enough for small local Qwen/MLX models; the parser must treat generated text as raw material and enforce IME candidate shape.
+- The old MLX fallback path could expose sentence fragments, repeated current input, or generic "candidate" text, which matched the user's bad foreground screenshots.
+
+Changes:
+- Added an IME-facing candidateizer that strips current-input/context echo, converts plain continuation sentences into short selectable spans, and filters low-value candidates.
+- Rime reorder outputs are now constrained to the original Rime/Wanxiang candidate pool even when the model emits indices or prose.
+- MLX sidecar fallback and client cleanup now share the same candidateization logic.
+
+Verification:
+- Focused predictor/MLX server tests passed: 53 tests OK.
+- Full suite passed: 329 tests OK.
+- `py_compile` and `git diff --check` passed.
+
+Next steps:
+- Commit and push this batch.
+- Continue with sidecar/runtime candidate quality probes; keep real input-source switching paused until controlled manual validation.

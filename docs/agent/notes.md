@@ -3411,3 +3411,28 @@ Verification:
 Next:
 - Run full suite, then commit and push.
 - Continue next Felix-style item after this: MLX prompt/candidateization, while keeping real foreground input-source testing paused until explicitly controlled.
+
+### 2026-07-03 14:07 CST
+Problem:
+- The user repeatedly observed that model candidates looked like stale clipboard/memory snippets instead of LLM IME continuations, and that Rime/MLX paths could still emit generic or out-of-pool candidates.
+
+Findings:
+- Felix/Wisdom-Weasel's portable lesson is to treat model output as raw material: remove prompt echo, reject reasoning/process noise, turn plain generated sentences into short continuation spans, and keep Rime reorder inside the candidate pool.
+- This repo's MLX fallback path still used the older generic parser, so non-JSON model output could leak as long, awkward, or repeated candidates.
+
+Changes:
+- Added `parse_ime_prediction_candidates()` as the IME-facing candidateizer for MLX/service output.
+- Sentence fallback now strips current-input/context echo and converts a generated continuation clause into short selectable candidates.
+- Rime reorder parsing now accepts index outputs like `[2, 1]` or text mentions but returns only original Rime candidates.
+- MLX service and client both use the IME candidateizer for JSON-generation fallback and streaming first-candidate cleanup; direct payload candidate lists remain direct candidates and are only filtered.
+- Added regression tests for prompt-echo removal, short continuation generation, and Rime reorder pool safety.
+
+Verification:
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest -v tests.test_predictor tests.test_mlx_predictor_server` passed: 53 tests OK.
+- `python3 -m py_compile rag_ime/*.py scripts/*.py` passed.
+- `git diff --check` passed.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests` passed: 329 tests OK.
+
+Next:
+- Commit and push.
+- Continue with real sidecar/runtime candidate quality probes before touching foreground input-source switching again.

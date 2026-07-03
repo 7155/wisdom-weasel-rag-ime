@@ -17,9 +17,12 @@ from rag_ime.predictor import (
     OllamaPredictionProvider,
     OpenAICompatiblePredictionConfig,
     OpenAICompatiblePredictionProvider,
+    PREDICTION_REQUEST_NO_INPUT,
+    PREDICTION_REQUEST_RIME_REORDER,
     PredictionBenchmarkCase,
     benchmark_prediction_provider,
     doctor_prediction_provider,
+    parse_ime_prediction_candidates,
     parse_prediction_candidates,
     prediction_provider_from_env,
     prediction_provider_status,
@@ -393,6 +396,29 @@ class PredictionProviderTests(unittest.TestCase):
             max_candidates=4,
         )
         self.assertEqual(parsed, ["接入本地记忆", "验证 LLM 候选", "预测流程完成"])
+
+    def test_parse_ime_prediction_candidates_turns_sentence_into_short_continuations(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            "我想设计一个候选展示方式，并补充来源诊断。",
+            current_input="我想",
+            recent_context="我想",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=4,
+        )
+
+        self.assertEqual(parsed[0], "设计一个候选展示方式")
+        self.assertNotIn("我想", "".join(parsed))
+        self.assertTrue(all(2 <= len(item) <= 16 for item in parsed))
+
+    def test_parse_ime_prediction_candidates_keeps_rime_reorder_inside_pool(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '我建议顺序是 [2, 1]，不要输出 "随便发挥"',
+            request_type=PREDICTION_REQUEST_RIME_REORDER,
+            rime_candidates=("手机", "设计", "世界"),
+            max_candidates=3,
+        )
+
+        self.assertEqual(parsed, ["设计", "手机"])
 
     def test_openai_compatible_provider_returns_short_ranked_predictions(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)

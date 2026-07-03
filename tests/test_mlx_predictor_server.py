@@ -18,6 +18,7 @@ from rag_ime.mlx_predictor_server import (
     _normalize_prediction_request,
     make_mlx_predictor_handler,
 )
+from rag_ime.predictor import PREDICTION_REQUEST_RIME_REORDER
 
 
 class _FakeMlxEngine:
@@ -149,6 +150,39 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertFalse(payload["timing"]["fallbackJson"])
         self.assertEqual(payload["candidateScores"][0]["text"], "输入法候选")
         self.assertIn("probability", payload["candidateScores"][0])
+
+    def test_engine_json_fallback_candidateizes_sentence_output(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text="我想设计一个候选展示方式，并补充来源诊断。")
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="我想",
+                recent_context="我想",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+            )
+
+        self.assertEqual(payload["candidateMode"], "json-generation")
+        self.assertEqual(payload["candidates"][0], "设计一个候选展示方式")
+        self.assertNotIn("我想", "".join(payload["candidates"]))
+
+    def test_engine_rime_reorder_fallback_stays_inside_rime_pool(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text="[2, 1]")
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="sj",
+                recent_context="我想",
+                max_candidates=3,
+                max_tokens=8,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_RIME_REORDER,
+                rime_candidates=("手机", "设计", "世界"),
+            )
+
+        self.assertEqual(payload["candidateMode"], "json-generation")
+        self.assertEqual(payload["candidates"], ["设计", "手机"])
 
     def test_base_model_uses_plain_completion_prefix_not_chat_prompt(self) -> None:
         modules, calls = _fake_mlx_modules(generated_text="需要把输入法流程跑通。")
