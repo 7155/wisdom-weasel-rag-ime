@@ -703,6 +703,7 @@ index c2adf74..20bc671 100644
 +  private var ragImeLastRequestFingerprint: String = ""
 +  private var ragImePendingRequestFingerprint: String = ""
 +  private var ragImePendingRequestWorkItem: DispatchWorkItem?
++  private var ragImeDisplayExpiryWorkItem: DispatchWorkItem?
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -1074,6 +1075,7 @@ index c2adf74..20bc671 100644
 +    } else {
 +      ragImeDisplayExpiresAt = nil
 +    }
++    scheduleRagImeDisplayExpiry()
 +    traceRagImeFrontendEvent("sidecar_response_applied", fields: [
 +      "requestSeq": response.requestSeq,
 +      "rawInput": response.rawInput,
@@ -1236,6 +1238,48 @@ index c2adf74..20bc671 100644
 +    return now <= expiresAt
 +  }
 +
++  func scheduleRagImeDisplayExpiry() {
++    ragImeDisplayExpiryWorkItem?.cancel()
++    guard !ragImeDisplayCandidates.isEmpty else {
++      ragImeDisplayExpiryWorkItem = nil
++      return
++    }
++    let stateFingerprint = ragImeDisplayStateFingerprint()
++    let delay: TimeInterval
++    if let expiresAt = ragImeDisplayExpiresAt {
++      delay = max(0.05, expiresAt.timeIntervalSinceNow)
++    } else if ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty {
++      delay = ragImePostCommitDisplayHoldoverDuration
++    } else {
++      delay = ragImeDisplayHoldoverDuration
++    }
++    let workItem = DispatchWorkItem { [weak self] in
++      guard let self else { return }
++      guard self.ragImeDisplayStateFingerprint() == stateFingerprint else { return }
++      guard !self.ragImeDisplayCandidates.isEmpty else { return }
++      let candidateCount = self.ragImeDisplayCandidates.count
++      self.clearRagImeDisplayCandidates()
++      self.traceRagImeFrontendEvent("panel_expired_cleared", fields: [
++        "candidateCount": candidateCount,
++        "delayMs": Int(delay * 1000),
++      ])
++      self.rimeUpdate(clearReservedComments: false, requestSidecar: false)
++    }
++    ragImeDisplayExpiryWorkItem = workItem
++    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
++  }
++
++  func ragImeDisplayStateFingerprint() -> String {
++    return [
++      ragImeDisplayRawInput,
++      ragImeDisplayPreedit,
++      ragImeDisplaySemanticQuery,
++      ragImeDisplayQueryBasis,
++      String(ragImeDisplayUpdatedAt.timeIntervalSince1970),
++      String(ragImeDisplayCandidates.count),
++    ].joined(separator: "\u{1f}")
++  }
++
 +  func canSelectRagImeDisplayCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
 +    guard ragImeDisplaySessionStillLive() else { return false }
 +    guard !ragImeDisplaySessionFingerprint.isEmpty else { return true }
@@ -1304,7 +1348,6 @@ index c2adf74..20bc671 100644
 +  }
 +
 +  func traceRagImeFrontendEvent(_ event: String, fields: [String: Any]) {
-+    guard ragImeSidecarClient?.frontendTrace == true || event == "sidecar_not_configured" else { return }
 +    var payload = fields
 +    payload["frontendBuild"] = "rag-ime.foreground-trace.v2"
 +    payload["schemaVersion"] = "rag-ime.squirrel-frontend-trace.v1"
@@ -1386,6 +1429,8 @@ index c2adf74..20bc671 100644
 +    ragImePendingRequestFingerprint = ""
 +    ragImePendingRequestWorkItem?.cancel()
 +    ragImePendingRequestWorkItem = nil
++    ragImeDisplayExpiryWorkItem?.cancel()
++    ragImeDisplayExpiryWorkItem = nil
 +  }
 +
 +  func recordRagImeSideCandidateCommit(

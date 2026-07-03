@@ -99,6 +99,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     [
                         "import Foundation",
                         "struct SquirrelApp {",
+                        '  static let logDir = FileManager.default.temporaryDirectory.appending(component: "rime.squirrel", directoryHint: .isDirectory)',
                         '  static let appDir = "/Library/Input Library/Squirrel.app".withCString { dir in',
                         "    URL(fileURLWithFileSystemRepresentation: dir, isDirectory: false, relativeTo: nil)",
                         "  }",
@@ -153,6 +154,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "import Foundation",
                         "struct SquirrelApp {",
                         "  static let appDir = Bundle.main.bundleURL",
+                        '  static let logDir = FileManager.default.temporaryDirectory.appending(component: "rime.squirrel", directoryHint: .isDirectory)',
                         "}",
                     ]
                 )
@@ -196,6 +198,10 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             self.assertTrue((workdir / "sources" / "SquirrelInputController.swift").is_file())
             self.assertIn(
                 "static let appDir = Bundle.main.bundleURL",
+                (workdir / "sources" / "Main.swift").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "traceRagImeProcessEvent",
                 (workdir / "sources" / "Main.swift").read_text(encoding="utf-8"),
             )
             self.assertIn(

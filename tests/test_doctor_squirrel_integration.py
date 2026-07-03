@@ -682,10 +682,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
 
         self.assertIn("[OK] installed Squirrel.app contains current RAG-IME frontend patch", result.stdout)
         self.assertIn(
-            "[WARN] stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch",
+            "[WARN] stale input method app with same bundle id lacks current RAG-IME frontend patch",
             result.stdout,
         )
-        self.assertIn("scripts/replace_system_squirrel_app.sh", result.stdout)
+        self.assertIn("replace or remove it before foreground typing validation", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_fails_required_patched_app_when_stale_duplicate_exists(self) -> None:
@@ -729,10 +729,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "[FAIL] stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch",
+            "[FAIL] stale input method app with same bundle id lacks current RAG-IME frontend patch",
             result.stdout,
         )
-        self.assertIn("scripts/replace_system_squirrel_app.sh", result.stdout)
+        self.assertIn("replace or remove it before foreground typing validation", result.stdout)
         self.assertIn("summary: failures=", result.stdout)
 
     def test_doctor_ignores_original_squirrel_when_configured_app_uses_branded_bundle_id(self) -> None:
@@ -779,8 +779,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 capture_output=True,
             )
 
-        self.assertIn("[OK] no stale same-bundle Squirrel.app detected", result.stdout)
-        self.assertNotIn("stale Squirrel.app with same bundle id", result.stdout)
+        self.assertIn("[OK] no stale same-bundle input method app detected", result.stdout)
+        self.assertNotIn("stale input method app with same bundle id", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_can_require_frontend_trace_gate(self) -> None:

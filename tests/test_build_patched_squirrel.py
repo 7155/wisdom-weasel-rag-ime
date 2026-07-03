@@ -57,14 +57,21 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("guard !response.displayCandidates.isEmpty else {", patch_text)
         self.assertIn("committedContext: ragImeCommittedContext", patch_text)
         self.assertIn("private var ragImePendingRequestFingerprint: String = \"\"", patch_text)
+        self.assertIn("private var ragImeDisplayExpiryWorkItem: DispatchWorkItem?", patch_text)
         self.assertIn("fingerprint == ragImeLastRequestFingerprint || fingerprint == ragImePendingRequestFingerprint", patch_text)
         self.assertIn("guard response.requestSeq == request.requestSeq else {", patch_text)
         self.assertIn("guard response.committedContext == request.committedContext else {", patch_text)
         self.assertIn("guard ragImeCommittedContext == request.committedContext else {", patch_text)
         self.assertIn("func completeRagImeSidecarRequest(fingerprint: String, keepLastFingerprint: Bool)", patch_text)
+        self.assertIn("func scheduleRagImeDisplayExpiry()", patch_text)
+        self.assertIn("func ragImeDisplayStateFingerprint() -> String", patch_text)
+        self.assertIn('traceRagImeFrontendEvent("panel_expired_cleared"', patch_text)
+        self.assertIn("ragImeDisplayExpiryWorkItem?.cancel()", patch_text)
+        self.assertIn("rimeUpdate(clearReservedComments: false, requestSidecar: false)", patch_text)
         self.assertIn("let frontendTrace: Bool", patch_text)
         self.assertIn("rag_ime/frontend_trace", patch_text)
         self.assertIn("func traceRagImeFrontendEvent(_ event: String, fields: [String: Any])", patch_text)
+        self.assertNotIn("guard ragImeSidecarClient?.frontendTrace == true", patch_text)
         self.assertIn('traceRagImeFrontendEvent("panel_display_candidates"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("side_candidate_commit"', patch_text)
         self.assertIn("shownCandidates: ragImeDisplayCandidates", patch_text)
@@ -138,6 +145,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('if bool_true "$AUTO_SELECT"', source)
         self.assertIn("preference repair is disabled", source)
         self.assertIn("not selecting branded input source automatically", source)
+        self.assertIn("traceRagImeProcessEvent", source)
 
     def test_build_script_uses_xcodebuild_list_and_build(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -323,6 +331,10 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
     )
     (workdir / "sources" / "SquirrelPanel.swift").write_text(
         "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \" \" }; func traceRagImePanelTextLayout() {} }\n",
+        encoding="utf-8",
+    )
+    (workdir / "sources" / "Main.swift").write_text(
+        "struct SquirrelApp { static func traceRagImeProcessEvent() {} }\n",
         encoding="utf-8",
     )
     (workdir / "Squirrel.xcodeproj").mkdir()
