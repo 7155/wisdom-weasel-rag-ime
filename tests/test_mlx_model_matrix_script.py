@@ -135,8 +135,10 @@ class MlxModelMatrixScriptTests(unittest.TestCase):
                 {
                     "totalMs": 200,
                     "candidateCount": 2,
-                    "badRawMarkers": ["<think>"],
-                    "lowValueCandidates": ["补后端测试"],
+                    "badRawMarkers": ["<think>", "<|im_end|>"],
+                    "lowValueCandidates": ["补后端测试", "验证 LLM 候选"],
+                    "weakCandidates": ["优化"],
+                    "duplicatePrefixGroups": [{"prefix": "把流程跑", "items": ["把流程跑通", "把流程跑"]}],
                     "candidateMode": "json-generation",
                 },
                 {
@@ -144,6 +146,8 @@ class MlxModelMatrixScriptTests(unittest.TestCase):
                     "candidateCount": 0,
                     "badRawMarkers": [],
                     "lowValueCandidates": [],
+                    "weakCandidates": [],
+                    "duplicatePrefixGroups": [],
                     "candidateMode": "next-token-logits",
                 },
             ]
@@ -152,15 +156,49 @@ class MlxModelMatrixScriptTests(unittest.TestCase):
         self.assertEqual(summary["caseCount"], 2)
         self.assertEqual(summary["totalCandidates"], 2)
         self.assertEqual(summary["emptyCases"], 1)
-        self.assertEqual(summary["badRawMarkerCount"], 1)
-        self.assertEqual(summary["lowValueCandidateCount"], 1)
+        self.assertEqual(summary["badRawMarkerCount"], 2)
+        self.assertEqual(summary["lowValueCandidateCount"], 2)
+        self.assertEqual(summary["weakCandidateCount"], 1)
+        self.assertEqual(summary["duplicatePrefixGroupCount"], 1)
         self.assertLess(summary["qualityScore"], 100)
+
+    def test_quality_helpers_flag_chat_template_echo_short_and_duplicate_candidates(self) -> None:
+        self.assertIn("<|im_end|>", matrix.BAD_RAW_MARKERS)
+        self.assertIn("Human:", matrix.BAD_RAW_MARKERS)
+        self.assertEqual(
+            matrix.weak_candidates_for_case(["优化", "部署本地记忆模块"], request_type="no_input_prediction"),
+            ["优化"],
+        )
+        self.assertEqual(
+            matrix.duplicate_prefix_groups(["把流程跑通", "把流程跑", "接入本地记忆"])[0],
+            {"prefix": "把流程跑", "items": ["把流程跑通", "把流程跑"]},
+        )
 
     def test_choose_winner_prefers_quality_before_latency(self) -> None:
         winner = matrix.choose_winner(
             [
-                {"model": "fast", "ok": True, "summary": {"qualityScore": 80, "p50TotalMs": 50, "lowValueCandidateCount": 0}},
-                {"model": "better", "ok": True, "summary": {"qualityScore": 90, "p50TotalMs": 500, "lowValueCandidateCount": 0}},
+                {
+                    "model": "fast",
+                    "ok": True,
+                    "summary": {
+                        "qualityScore": 80,
+                        "p50TotalMs": 50,
+                        "lowValueCandidateCount": 0,
+                        "weakCandidateCount": 0,
+                        "duplicatePrefixGroupCount": 0,
+                    },
+                },
+                {
+                    "model": "better",
+                    "ok": True,
+                    "summary": {
+                        "qualityScore": 90,
+                        "p50TotalMs": 500,
+                        "lowValueCandidateCount": 0,
+                        "weakCandidateCount": 0,
+                        "duplicatePrefixGroupCount": 0,
+                    },
+                },
             ]
         )
 

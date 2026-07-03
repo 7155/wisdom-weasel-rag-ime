@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -23,12 +24,18 @@ DEFAULT_MODELS = (
     "Qwen3-1.7B-4bit",
 )
 DEFAULT_PYTHON = REPO_ROOT / ".venv-mlx314sys" / "bin" / "python"
-BAD_RAW_MARKERS = ("<think>", "</think>", "\ufffd", "/no_think")
+BAD_RAW_MARKERS = ("<think>", "</think>", "\ufffd", "/no_think", "<|im_end|>", "<|endoftext|>", "Human:", "Assistant:")
 LOW_VALUE_CANDIDATES = {
     "补后端测试",
+    "后文候选",
+    "候选展示",
+    "模型候选",
     "模型相关表达",
     "调试流程",
+    "输入法候选",
     "继续预测",
+    "验证 LLM",
+    "验证 LLM 候选",
     "预测流程",
 }
 
@@ -422,6 +429,8 @@ def run_case(*, host: str, port: int, case: MatrixCase, args: argparse.Namespace
     wall_ms = int((time.perf_counter() - started) * 1000)
     candidates = [str(item) for item in response.get("candidates", []) if str(item).strip()]
     raw_text = str(response.get("rawText") or "")
+    weak_candidates = weak_candidates_for_case(candidates, request_type=case.request_type)
+    duplicate_groups = duplicate_prefix_groups(candidates)
     return {
         "caseId": case.case_id,
         "requestType": case.request_type,
@@ -433,6 +442,8 @@ def run_case(*, host: str, port: int, case: MatrixCase, args: argparse.Namespace
         "rawPreview": raw_text[:240],
         "badRawMarkers": [marker for marker in BAD_RAW_MARKERS if marker in raw_text],
         "lowValueCandidates": [item for item in candidates if item in LOW_VALUE_CANDIDATES],
+        "weakCandidates": weak_candidates,
+        "duplicatePrefixGroups": duplicate_groups,
         "candidates": candidates,
         "timing": response.get("timing", {}),
         "promptCache": response.get("promptCache", {}),
@@ -444,12 +455,16 @@ def summarize_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
     candidate_counts = [int(item["candidateCount"]) for item in cases]
     bad_marker_count = sum(len(item.get("badRawMarkers", [])) for item in cases)
     low_value_count = sum(len(item.get("lowValueCandidates", [])) for item in cases)
+    weak_candidate_count = sum(len(item.get("weakCandidates", [])) for item in cases)
+    duplicate_prefix_group_count = sum(len(item.get("duplicatePrefixGroups", [])) for item in cases)
     return {
         "caseCount": len(cases),
         "totalCandidates": sum(candidate_counts),
         "emptyCases": sum(1 for count in candidate_counts if count == 0),
         "badRawMarkerCount": bad_marker_count,
         "lowValueCandidateCount": low_value_count,
+        "weakCandidateCount": weak_candidate_count,
+        "duplicatePrefixGroupCount": duplicate_prefix_group_count,
         "p50TotalMs": percentile(latencies, 0.50),
         "p95TotalMs": percentile(latencies, 0.95),
         "maxTotalMs": max(latencies) if latencies else 0,
@@ -465,6 +480,8 @@ def quality_score(cases: list[dict[str, Any]]) -> int:
             score -= 25
         score -= 15 * len(item.get("badRawMarkers", []))
         score -= 8 * len(item.get("lowValueCandidates", []))
+        score -= 6 * len(item.get("weakCandidates", []))
+        score -= 6 * len(item.get("duplicatePrefixGroups", []))
     return max(0, min(100, score))
 
 
@@ -478,6 +495,8 @@ def choose_winner(reports: list[dict[str, Any]]) -> dict[str, Any]:
             -int(item["summary"].get("qualityScore") or 0),
             int(item["summary"].get("p50TotalMs") or 0),
             int(item["summary"].get("lowValueCandidateCount") or 0),
+            int(item["summary"].get("weakCandidateCount") or 0),
+            int(item["summary"].get("duplicatePrefixGroupCount") or 0),
         ),
     )
     best = ranked[0]
@@ -487,6 +506,39 @@ def choose_winner(reports: list[dict[str, Any]]) -> dict[str, Any]:
         "p50TotalMs": best["summary"].get("p50TotalMs"),
         "reason": "highest_quality_then_lowest_p50_latency",
     }
+
+
+def weak_candidates_for_case(candidates: list[str], *, request_type: str) -> list[str]:
+    weak: list[str] = []
+    for candidate in candidates:
+        text = str(candidate).strip()
+        if not text:
+            continue
+        cjk_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", text))
+        if request_type == "no_input_prediction" and cjk_count <= 2:
+            weak.append(text)
+        elif cjk_count == 0 and len(text) <= 2:
+            weak.append(text)
+    return weak
+
+
+def duplicate_prefix_groups(candidates: list[str]) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    normalized = [str(item).strip() for item in candidates if str(item).strip()]
+    for index, left in enumerate(normalized):
+        for right in normalized[index + 1 :]:
+            shorter, longer = sorted((left, right), key=len)
+            if len(shorter) < 2:
+                continue
+            if not longer.startswith(shorter):
+                continue
+            key = (shorter, longer)
+            if key in seen:
+                continue
+            seen.add(key)
+            groups.append({"prefix": shorter, "items": [left, right]})
+    return groups
 
 
 def percentile(values: list[int], fraction: float) -> int:

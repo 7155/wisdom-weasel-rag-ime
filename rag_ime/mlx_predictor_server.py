@@ -48,6 +48,15 @@ LOGITS_SYSTEM_PROMPT = (
 )
 
 QWEN_NON_THINKING_ASSISTANT_PREFIX = "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+GENERATION_STOP_MARKERS = (
+    "<|im_end|>",
+    "<|endoftext|>",
+    "<|im_start|>",
+    "\nHuman:",
+    "\nAssistant:",
+    "Human:",
+    "Assistant:",
+)
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _LOW_VALUE_LOGITS_CANDIDATES = {
@@ -573,18 +582,23 @@ class MlxLmEngine:
             sampler=sampler,
         ):
             token_id = _token_to_int(token)
+            if _token_is_eos(self.tokenizer, token_id):
+                break
             generated_tokens.append(token_id)
             decoded = self.tokenizer.decode(generated_tokens)
             if isinstance(decoded, bytes):
                 decoded = decoded.decode("utf-8", errors="ignore")
             if not isinstance(decoded, str):
                 decoded = str(decoded)
+            decoded, reached_stop = _visible_generation_text(decoded)
             if "\ufffd" in decoded:
                 continue
             delta = decoded[len(emitted) :] if decoded.startswith(emitted) else decoded
             emitted = decoded
             if delta:
                 yield delta
+            if reached_stop:
+                break
 
     def _stable_prompt_prefix(self, *, stream_first_candidate: bool = False) -> str:
         if self._base_completion_mode:
@@ -1314,6 +1328,42 @@ def _token_to_int(token: object) -> int:
     if callable(item):
         return int(item())
     return int(token)  # type: ignore[arg-type]
+
+
+def _token_is_eos(tokenizer: Any, token_id: int) -> bool:
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    if eos_token_id is None:
+        return False
+    if isinstance(eos_token_id, (list, tuple, set)):
+        try:
+            return int(token_id) in {int(item) for item in eos_token_id}
+        except (TypeError, ValueError):
+            return False
+    try:
+        return int(token_id) == int(eos_token_id)
+    except (TypeError, ValueError):
+        return False
+
+
+def _truncate_at_generation_stop(text: str) -> tuple[str, bool]:
+    stop_indexes = [text.find(marker) for marker in GENERATION_STOP_MARKERS if marker and marker in text]
+    stop_indexes = [index for index in stop_indexes if index >= 0]
+    if not stop_indexes:
+        return text, False
+    first_stop = min(stop_indexes)
+    return text[:first_stop], True
+
+
+def _visible_generation_text(text: str) -> tuple[str, bool]:
+    visible, reached_stop = _truncate_at_generation_stop(text)
+    if reached_stop:
+        return visible, True
+    for marker in GENERATION_STOP_MARKERS:
+        max_prefix = min(len(marker) - 1, len(visible))
+        for prefix_len in range(max_prefix, 0, -1):
+            if visible.endswith(marker[:prefix_len]):
+                return visible[:-prefix_len], False
+    return visible, False
 
 
 def _top_logprob_indices(logprobs: Any, *, limit: int) -> list[int]:

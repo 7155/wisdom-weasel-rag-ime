@@ -1480,7 +1480,12 @@ def parse_ime_prediction_candidates(
     )
     if resolved_request_type == PREDICTION_REQUEST_NO_INPUT:
         candidates = _filter_repeated_context_candidates(candidates, recent_context)
-    return _finalize_ime_prediction_candidates(candidates, current_input)[:max_items]
+    allowed_ascii_candidates = rime_candidate_tuple if resolved_request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED else ()
+    return _finalize_ime_prediction_candidates(
+        candidates,
+        current_input,
+        allowed_ascii_candidates=allowed_ascii_candidates,
+    )[:max_items]
 
 
 def _parse_prediction_candidate_texts(texts: list[str], *, max_candidates: int = 5) -> list[str]:
@@ -1560,13 +1565,26 @@ def _cjk_counter(text: str) -> Counter[str]:
     return Counter(_cjk_chars(text))
 
 
-def _finalize_ime_prediction_candidates(candidates: list[str], current_input: str) -> list[str]:
-    return _filter_low_value_ime_candidates(_filter_repeated_input_candidates(candidates, current_input))
+def _finalize_ime_prediction_candidates(
+    candidates: list[str],
+    current_input: str,
+    *,
+    allowed_ascii_candidates: tuple[str, ...] = (),
+) -> list[str]:
+    return _filter_low_value_ime_candidates(
+        _filter_repeated_input_candidates(candidates, current_input),
+        allowed_ascii_candidates=allowed_ascii_candidates,
+    )
 
 
-def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
+def _filter_low_value_ime_candidates(
+    candidates: list[str],
+    *,
+    allowed_ascii_candidates: tuple[str, ...] = (),
+) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
+    allowed_ascii = {compact_whitespace(item).lower() for item in allowed_ascii_candidates if compact_whitespace(item)}
     for candidate in candidates:
         normalized = compact_whitespace(candidate)
         if not normalized:
@@ -1575,9 +1593,10 @@ def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
             continue
         if len(normalized) <= 1:
             continue
-        if re.fullmatch(r"[A-Za-z0-9_./:-]{1,8}", normalized):
+        is_allowed_ascii = normalized.lower() in allowed_ascii
+        if re.fullmatch(r"[A-Za-z0-9_./:-]{1,8}", normalized) and not is_allowed_ascii:
             continue
-        if _cjk_char_count(normalized) < 2 and len(normalized) <= 4:
+        if _cjk_char_count(normalized) < 2 and len(normalized) <= 4 and not is_allowed_ascii:
             continue
         if normalized in _LOW_VALUE_IME_CANDIDATES:
             continue

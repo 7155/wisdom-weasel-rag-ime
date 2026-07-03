@@ -18,6 +18,7 @@ from rag_ime.predictor import (
     OpenAICompatiblePredictionConfig,
     OpenAICompatiblePredictionProvider,
     PREDICTION_REQUEST_NO_INPUT,
+    PREDICTION_REQUEST_PINYIN_CONSTRAINED,
     PREDICTION_REQUEST_RIME_REORDER,
     PredictionBenchmarkCase,
     benchmark_prediction_provider,
@@ -475,6 +476,18 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed[:4], ["设计", "手机", "世界", "数据"])
         self.assertNotIn("验证 LLM �选", parsed)
+
+    def test_parse_ime_prediction_candidates_keeps_ascii_rime_candidates_for_code_lane(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["model", "module", "memory", "mlx"]',
+            current_input="model",
+            recent_context="这个输入法主要服务 vibe coding",
+            request_type=PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+            rime_candidates=("model", "module", "memory", "mlx"),
+            max_candidates=4,
+        )
+
+        self.assertEqual(parsed, ["module", "memory", "mlx"])
 
     def test_openai_compatible_provider_returns_short_ranked_predictions(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
