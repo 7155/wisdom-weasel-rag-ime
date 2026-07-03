@@ -1580,7 +1580,11 @@ def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
             continue
         if normalized in _LOW_VALUE_IME_CANDIDATES:
             continue
-        if normalized.endswith("候选") and _cjk_char_count(normalized) <= 4:
+        if (
+            normalized.endswith("候选")
+            and _cjk_char_count(normalized) <= 4
+            and not re.search(r"\b(?:RAG|LLM|MLX)\b", normalized, flags=re.IGNORECASE)
+        ):
             continue
         if any(normalized.startswith(prefix) for prefix in ("测试", "分析", "假设")) and _cjk_char_count(normalized) <= 6:
             continue
