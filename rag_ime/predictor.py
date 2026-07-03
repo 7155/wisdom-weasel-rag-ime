@@ -507,10 +507,21 @@ class MlxPredictionServiceProvider:
                 rime_candidates=rime_candidate_tuple,
             )
             if streamed:
+                streamed_candidates = parse_ime_prediction_candidates(
+                    streamed["candidate"],
+                    max_candidates=1,
+                    current_input=query,
+                    recent_context=context,
+                    request_type=resolved_request_type,
+                    rime_candidates=rime_candidate_tuple,
+                )
+                if not streamed_candidates:
+                    return []
+                streamed_candidate = streamed_candidates[0]
                 latency_ms = int((time.perf_counter() - started) * 1000)
                 return [
                     ModelPrediction(
-                        text=streamed["candidate"],
+                        text=streamed_candidate,
                         rank=1,
                         provider_name=self.config.provider_name,
                         latency_ms=latency_ms,
@@ -528,7 +539,7 @@ class MlxPredictionServiceProvider:
                             "request_type": resolved_request_type,
                             "rime_candidates": list(rime_candidate_tuple),
                             "requestMeta": request_meta,
-                            **build_pinyin_metadata(streamed["candidate"]),
+                            **build_pinyin_metadata(streamed_candidate),
                         },
                     )
                 ]
@@ -544,11 +555,21 @@ class MlxPredictionServiceProvider:
             return []
         latency_ms = _int_from_payload(payload.get("totalMs"), wall_ms)
         raw_texts = _mlx_raw_texts_from_payload(payload)
-        candidates = _candidate_parts_from_json_value(payload.get("candidates"))
-        if not candidates:
-            candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
-        candidates = _parse_prediction_candidate_texts(candidates, max_candidates=max_items)
-        candidates = _finalize_ime_prediction_candidates(candidates, query)
+        payload_candidates = _candidate_parts_from_json_value(payload.get("candidates"))
+        if payload_candidates:
+            candidates = _finalize_ime_prediction_candidates(
+                _parse_prediction_candidate_texts(payload_candidates, max_candidates=max_items),
+                query,
+            )[:max_items]
+        else:
+            candidates = parse_ime_prediction_candidates(
+                raw_texts,
+                max_candidates=max_items,
+                current_input=query,
+                recent_context=context,
+                request_type=str(payload.get("requestType") or resolved_request_type),
+                rime_candidates=rime_candidate_tuple,
+            )
         return [
             ModelPrediction(
                 text=item,
@@ -1417,6 +1438,38 @@ def parse_prediction_candidates(text: str, *, max_candidates: int = 5) -> list[s
     return _parse_prediction_candidate_texts([text], max_candidates=max_candidates)
 
 
+def parse_ime_prediction_candidates(
+    text: str | list[str],
+    *,
+    max_candidates: int = 5,
+    current_input: str = "",
+    recent_context: str = "",
+    request_type: str = PREDICTION_REQUEST_GENERIC,
+    rime_candidates: tuple[str, ...] | list[str] = (),
+) -> list[str]:
+    texts = [text] if isinstance(text, str) else [str(item) for item in text if str(item).strip()]
+    max_items = max(1, int(max_candidates))
+    resolved_request_type = normalize_prediction_request_type(request_type)
+    rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
+
+    if resolved_request_type == PREDICTION_REQUEST_RIME_REORDER and rime_candidate_tuple:
+        reordered = _rime_reorder_candidates_from_texts(texts, rime_candidate_tuple, max_candidates=max_items)
+        if reordered:
+            return reordered
+
+    candidates = _structured_prediction_candidate_texts(texts, max_candidates=max_items)
+    if not candidates:
+        candidates = _continuation_prediction_candidates_from_texts(
+            texts,
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidates=max_items,
+        )
+    if not candidates:
+        candidates = _parse_prediction_candidate_texts(texts, max_candidates=max_items)
+    return _finalize_ime_prediction_candidates(candidates, current_input)[:max_items]
+
+
 def _parse_prediction_candidate_texts(texts: list[str], *, max_candidates: int = 5) -> list[str]:
     max_items = max(1, int(max_candidates))
     seen: set[str] = set()
@@ -1524,6 +1577,196 @@ def _candidate_parts_from_text(text: str) -> list[str]:
             continue
         candidates.append(item)
     return candidates
+
+
+def _structured_prediction_candidate_texts(texts: list[str], *, max_candidates: int) -> list[str]:
+    max_items = max(1, int(max_candidates))
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        cleaned = _clean_prediction_output(text)
+        if not cleaned:
+            continue
+        parts = _candidate_parts_from_json_text(cleaned) or _candidate_parts_from_json_fragment(cleaned)
+        if not parts and _looks_like_candidate_list_output(cleaned):
+            parts = _candidate_parts_from_text(cleaned)
+        for part in parts:
+            item = _normalize_prediction_candidate_text(part)
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            candidates.append(item)
+            if len(candidates) >= max_items:
+                return candidates
+    return candidates
+
+
+def _looks_like_candidate_list_output(text: str) -> bool:
+    if re.search(r"(?:^|[\s,，、;；|/])\d+[.)、．]", text):
+        return True
+    if not re.search(r"[\n\r;；|/]", text):
+        return False
+    parts = [part for part in re.split(r"[\s;；|/]+", text) if part]
+    return len(parts) >= 2 and sum(1 for part in parts if _cjk_char_count(part) >= 2) >= 2
+
+
+def _continuation_prediction_candidates_from_texts(
+    texts: list[str],
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+) -> list[str]:
+    max_items = max(1, int(max_candidates))
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        cleaned = _remove_prediction_prompt_echo(_clean_prediction_output(text), current_input=current_input, recent_context=recent_context)
+        for item in _continuation_candidate_spans(cleaned):
+            if item in seen:
+                continue
+            seen.add(item)
+            candidates.append(item)
+            if len(candidates) >= max_items:
+                return candidates
+    return candidates
+
+
+def _remove_prediction_prompt_echo(text: str, *, current_input: str, recent_context: str) -> str:
+    cleaned = compact_whitespace(text)
+    for prefix in (compact_whitespace(current_input), compact_whitespace(recent_context)[-120:]):
+        if prefix and cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].lstrip(" \t\r\n,，、:：;；。.!！?？")
+    context = compact_whitespace(recent_context)
+    max_overlap = min(len(context), len(cleaned), 80)
+    for size in range(max_overlap, 3, -1):
+        if context[-size:] == cleaned[:size]:
+            return cleaned[size:].lstrip(" \t\r\n,，、:：;；。.!！?？")
+    return cleaned
+
+
+def _continuation_candidate_spans(text: str) -> list[str]:
+    cleaned = _normalize_prediction_candidate_text(text)
+    if not cleaned:
+        return []
+    first_clause = re.split(r"[，,。.!！?？；;\n\r]", cleaned, maxsplit=1)[0]
+    first_clause = _strip_leading_prediction_fillers(_normalize_prediction_candidate_text(first_clause))
+    if _cjk_char_count(first_clause) < 2:
+        return []
+    compacted = re.sub(r"\s+", "", first_clause)
+    if len(compacted) < 2:
+        return []
+    if compacted in _LOW_VALUE_IME_CANDIDATES:
+        return []
+
+    spans: list[str] = []
+    if len(compacted) <= 16:
+        spans.append(compacted)
+    else:
+        spans.append(compacted[:16])
+    for length in (4, 6, 8, 12, 16):
+        if len(compacted) >= length:
+            spans.append(compacted[:length])
+    result: list[str] = []
+    seen: set[str] = set()
+    for span in spans:
+        item = _normalize_prediction_candidate_text(span)
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _strip_leading_prediction_fillers(text: str) -> str:
+    result = text
+    for prefix in ("然后", "而且", "并且", "同时", "可以", "应该", "需要", "就是", "继续", "接下来"):
+        if result.startswith(prefix) and _cjk_char_count(result[len(prefix):]) >= 2:
+            result = result[len(prefix):]
+            break
+    return result.lstrip("将要会能再")
+
+
+def _normalize_prediction_candidate_text(text: str) -> str:
+    item = compact_whitespace(str(text))
+    item = re.sub(r"^\s*\d+[.)、．]?\s*", "", item)
+    item = item.strip(" \t\r\n。.!！?？:\"'“”‘’[]()（）{}<>《》")
+    return compact_whitespace(item)
+
+
+def _rime_reorder_candidates_from_texts(
+    texts: list[str],
+    rime_candidates: tuple[str, ...],
+    *,
+    max_candidates: int,
+) -> list[str]:
+    max_items = max(1, int(max_candidates))
+    result: list[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: str) -> None:
+        if len(result) >= max_items:
+            return
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            result.append(candidate)
+
+    for text in texts:
+        cleaned = _clean_prediction_output(text)
+        for token in _rime_reorder_tokens_from_text(cleaned):
+            if token.isdigit():
+                index = int(token) - 1
+                if 0 <= index < len(rime_candidates):
+                    add(rime_candidates[index])
+                    continue
+            if token in rime_candidates:
+                add(token)
+        for _position, candidate in sorted(
+            (position, candidate)
+            for candidate in rime_candidates
+            if (position := cleaned.find(candidate)) >= 0
+        ):
+            add(candidate)
+        if len(result) >= max_items:
+            break
+    return result
+
+
+def _rime_reorder_tokens_from_text(text: str) -> list[str]:
+    tokens: list[str] = []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if parsed is not None:
+        tokens.extend(_rime_reorder_tokens_from_json(parsed))
+    tokens.extend(re.findall(r"\d+", text))
+    tokens.extend(_candidate_parts_from_text(text))
+    result: list[str] = []
+    for token in tokens:
+        item = compact_whitespace(str(token))
+        if item.isdigit():
+            result.append(item)
+            continue
+        normalized = _normalize_prediction_candidate_text(item)
+        if normalized:
+            result.append(normalized)
+    return result
+
+
+def _rime_reorder_tokens_from_json(value: Any) -> list[str]:
+    if isinstance(value, (str, int, float)):
+        return [str(value)]
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(_rime_reorder_tokens_from_json(item))
+        return result
+    if isinstance(value, dict):
+        for key in ("candidates", "候选", "items", "predictions", "order"):
+            if key in value:
+                return _rime_reorder_tokens_from_json(value[key])
+    return []
 
 
 def _parse_streaming_prediction_candidates(text: str, *, max_candidates: int = 5) -> list[str]:

@@ -20,6 +20,7 @@ from .predictor import (
     PREDICTION_REQUEST_RIME_REORDER,
     normalize_prediction_request_type,
     normalized_rime_candidate_texts,
+    parse_ime_prediction_candidates,
     parse_prediction_candidates,
 )
 from .text_utils import compact_whitespace
@@ -247,7 +248,14 @@ class MlxLmEngine:
             )
         )
         total_ms = int((time.perf_counter() - started) * 1000)
-        candidates = parse_prediction_candidates(raw_text, max_candidates=max_candidates)
+        candidates = parse_ime_prediction_candidates(
+            raw_text,
+            max_candidates=max_candidates,
+            current_input=current_input,
+            recent_context=recent_context,
+            request_type=resolved_request_type,
+            rime_candidates=rime_candidate_tuple,
+        )
         return {
             "ok": True,
             "model": self.model_id,
@@ -577,6 +585,8 @@ class MlxLmEngine:
         current_input: str,
         recent_context: str,
         max_candidates: int,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
     ) -> list[str]:
         if self._base_completion_mode:
             return _parse_base_completion_candidates(
@@ -585,7 +595,14 @@ class MlxLmEngine:
                 recent_context=recent_context,
                 max_candidates=max_candidates,
             )
-        return parse_prediction_candidates(raw_text, max_candidates=max_candidates)
+        return parse_ime_prediction_candidates(
+            raw_text,
+            max_candidates=max_candidates,
+            current_input=current_input,
+            recent_context=recent_context,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
+        )
 
 
 def make_mlx_predictor_handler(engine: MlxLmEngine):
@@ -638,6 +655,8 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
                     current_input=str(request.get("current_input") or ""),
                     recent_context=str(request.get("recent_context") or ""),
                     max_candidates=int(request["max_candidates"]),
+                    request_type=normalize_prediction_request_type(request.get("request_type")),
+                    rime_candidates=normalized_rime_candidate_texts(request.get("rime_candidates")),
                 )
             else:
                 candidates = parse_prediction_candidates(raw_text, max_candidates=int(request["max_candidates"]))
