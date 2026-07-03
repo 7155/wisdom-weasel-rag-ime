@@ -406,9 +406,31 @@ class PredictionProviderTests(unittest.TestCase):
             max_candidates=4,
         )
 
-        self.assertEqual(parsed[0], "设计一个候选展示方式")
+        self.assertEqual(parsed[:4], ["设计", "设计一个", "设计一个候选", "设计一个候选展示"])
         self.assertNotIn("我想", "".join(parsed))
         self.assertTrue(all(2 <= len(item) <= 16 for item in parsed))
+
+    def test_parse_ime_prediction_candidates_skips_explanation_and_uses_numbered_items(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            "好的，我给出候选：1. 设计一个候选展示方式 2. 接入本地记忆 3. 优化候选排序",
+            current_input="我想",
+            recent_context="我想",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=3,
+        )
+
+        self.assertEqual(parsed, ["设计一个候选展示方式", "接入本地记忆", "优化候选排序"])
+
+    def test_parse_ime_prediction_candidates_skips_filler_clause_before_useful_continuation(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            "好的，我会继续优化候选排序，并补齐来源诊断。",
+            current_input="",
+            recent_context="这个输入法现在需要",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=3,
+        )
+
+        self.assertEqual(parsed[:3], ["优化", "优化候选", "优化候选排序"])
 
     def test_parse_ime_prediction_candidates_filters_repeated_post_commit_context(self) -> None:
         parsed = parse_ime_prediction_candidates(
