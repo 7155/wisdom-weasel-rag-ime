@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 
@@ -53,6 +55,79 @@ class MlxModelMatrixScriptTests(unittest.TestCase):
         self.assertEqual(len(cases), 1)
         self.assertEqual(cases[0].case_id, "post")
         self.assertEqual(cases[0].rime_candidates, ("记忆",))
+
+    def test_inspect_model_path_reports_text_only_qwen3(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp)
+            (model_dir / "model.safetensors").write_bytes(b"fake")
+            (model_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "architectures": ["Qwen3ForCausalLM"],
+                        "model_type": "qwen3",
+                        "hidden_size": 2048,
+                        "num_hidden_layers": 28,
+                        "vocab_size": 151936,
+                        "quantization": {"bits": 4, "group_size": 64},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (model_dir / "tokenizer_config.json").write_text(
+                json.dumps({"chat_template": "{% if enable_thinking is false %}<think></think>{% endif %}"}),
+                encoding="utf-8",
+            )
+
+            info = matrix.inspect_model_path(str(model_dir))
+
+        self.assertTrue(info["exists"])
+        self.assertTrue(info["textOnly"])
+        self.assertFalse(info["hasVisionConfig"])
+        self.assertEqual(info["architecture"], "Qwen3ForCausalLM")
+        self.assertEqual(info["quantization"]["bits"], 4)
+        self.assertTrue(info["hasChatTemplate"])
+        self.assertTrue(info["chatTemplateSupportsThinking"])
+
+    def test_inspect_model_path_flags_vision_language_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp)
+            (model_dir / "model.safetensors").write_bytes(b"fake")
+            (model_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "architectures": ["Qwen3_5ForConditionalGeneration"],
+                        "model_type": "qwen3_5",
+                        "text_config": {"model_type": "qwen3_5_text", "hidden_size": 2048},
+                        "vision_config": {"model_type": "qwen3_5_vision"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            info = matrix.inspect_model_path(str(model_dir))
+
+        self.assertTrue(info["exists"])
+        self.assertFalse(info["textOnly"])
+        self.assertTrue(info["hasVisionConfig"])
+        self.assertEqual(info["textModelType"], "qwen3_5_text")
+
+    def test_dry_run_includes_model_info_without_loading_mlx(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp)
+            (model_dir / "model.safetensors").write_bytes(b"fake")
+            (model_dir / "config.json").write_text(
+                json.dumps({"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = matrix.main(["--models", str(model_dir), "--dry-run", "--pretty"])
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["schemaVersion"], "rag-ime.mlx-model-matrix-plan.v1")
+        self.assertEqual(payload["models"][0]["model"], str(model_dir))
+        self.assertTrue(payload["models"][0]["modelInfo"]["textOnly"])
 
     def test_summarize_cases_penalizes_bad_markers_and_low_value_candidates(self) -> None:
         summary = matrix.summarize_cases(
