@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -14,6 +15,11 @@ from .models import ModelPrediction
 from .pinyin_index import build_pinyin_metadata
 from .text_utils import compact_whitespace
 
+
+PREDICTION_REQUEST_NO_INPUT = "no_input_prediction"
+PREDICTION_REQUEST_PINYIN_CONSTRAINED = "pinyin_constrained_prediction"
+PREDICTION_REQUEST_RIME_REORDER = "rime_reorder"
+PREDICTION_REQUEST_GENERIC = "generic_prediction"
 
 OPENAI_CHAT_SYSTEM_PROMPT = (
     "你是一个本地中文输入法预测器。只输出候选词或短语, "
@@ -88,6 +94,8 @@ class PredictionProvider(Protocol):
         current_input: str,
         recent_context: str = "",
         max_candidates: int = 5,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
     ) -> list[ModelPrediction]:
         ...
 
@@ -173,7 +181,10 @@ class NullPredictionProvider:
         current_input: str,
         recent_context: str = "",
         max_candidates: int = 5,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
     ) -> list[ModelPrediction]:
+        _ = request_type, rime_candidates
         return []
 
 
@@ -194,7 +205,10 @@ class OpenAICompatiblePredictionProvider:
         current_input: str,
         recent_context: str = "",
         max_candidates: int = 5,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
     ) -> list[ModelPrediction]:
+        _ = request_type, rime_candidates
         query = compact_whitespace(current_input)
         context = compact_whitespace(recent_context)[-420:]
         if not query and not context:
@@ -333,7 +347,10 @@ class OllamaPredictionProvider:
         current_input: str,
         recent_context: str = "",
         max_candidates: int = 5,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
     ) -> list[ModelPrediction]:
+        _ = request_type, rime_candidates
         query = compact_whitespace(current_input)
         context = compact_whitespace(recent_context)[-420:]
         if not query and not context:
@@ -462,21 +479,33 @@ class MlxPredictionServiceProvider:
         current_input: str,
         recent_context: str = "",
         max_candidates: int = 5,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
     ) -> list[ModelPrediction]:
         query = compact_whitespace(current_input)
         context = compact_whitespace(recent_context)[-420:]
         if not query and not context:
             return []
+        resolved_request_type = normalize_prediction_request_type(request_type)
+        rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
         max_items = max(1, min(10, int(max_candidates)))
         request_meta = _prediction_request_metadata(
             context=context,
             query=query,
             stable_prefix=MLX_STABLE_PREFIX,
+            request_type=resolved_request_type,
+            rime_candidates=rime_candidate_tuple,
         )
         self.last_error = ""
         started = time.perf_counter()
         if self.config.stream_first_candidate:
-            streamed = self._stream_first_candidate(context=context, query=query, max_candidates=max_items)
+            streamed = self._stream_first_candidate(
+                context=context,
+                query=query,
+                max_candidates=max_items,
+                request_type=resolved_request_type,
+                rime_candidates=rime_candidate_tuple,
+            )
             if streamed:
                 latency_ms = int((time.perf_counter() - started) * 1000)
                 return [
@@ -496,12 +525,20 @@ class MlxPredictionServiceProvider:
                             "first_candidate_ms": streamed["first_candidate_ms"],
                             "prompt_cache": streamed.get("prompt_cache", {}),
                             "server_timing": streamed.get("server_timing", {}),
+                            "request_type": resolved_request_type,
+                            "rime_candidates": list(rime_candidate_tuple),
                             "requestMeta": request_meta,
                             **build_pinyin_metadata(streamed["candidate"]),
                         },
                     )
                 ]
-        payload = self._predict_payload(context=context, query=query, max_candidates=max_items)
+        payload = self._predict_payload(
+            context=context,
+            query=query,
+            max_candidates=max_items,
+            request_type=resolved_request_type,
+            rime_candidates=rime_candidate_tuple,
+        )
         wall_ms = int((time.perf_counter() - started) * 1000)
         if not payload:
             return []
@@ -529,6 +566,8 @@ class MlxPredictionServiceProvider:
                     "candidate_scores": payload.get("candidateScores", []),
                     "prompt_cache": payload.get("promptCache", {}),
                     "server_timing": payload.get("timing", {}),
+                    "request_type": str(payload.get("requestType") or resolved_request_type),
+                    "rime_candidates": list(rime_candidate_tuple),
                     "requestMeta": request_meta,
                     **build_pinyin_metadata(item),
                 },
@@ -536,8 +575,24 @@ class MlxPredictionServiceProvider:
             for index, item in enumerate(candidates, start=1)
         ]
 
-    def _predict_payload(self, *, context: str, query: str, max_candidates: int) -> dict[str, Any]:
-        body = _mlx_predict_body(self.config, context=context, query=query, max_candidates=max_candidates, stream=False)
+    def _predict_payload(
+        self,
+        *,
+        context: str,
+        query: str,
+        max_candidates: int,
+        request_type: str,
+        rime_candidates: tuple[str, ...],
+    ) -> dict[str, Any]:
+        body = _mlx_predict_body(
+            self.config,
+            context=context,
+            query=query,
+            max_candidates=max_candidates,
+            stream=False,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
+        )
         request = urllib.request.Request(
             f"{self.config.base_url.rstrip('/')}/predict",
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -552,13 +607,23 @@ class MlxPredictionServiceProvider:
             return {}
         return payload if isinstance(payload, dict) else {}
 
-    def _stream_first_candidate(self, *, context: str, query: str, max_candidates: int) -> dict[str, Any]:
+    def _stream_first_candidate(
+        self,
+        *,
+        context: str,
+        query: str,
+        max_candidates: int,
+        request_type: str,
+        rime_candidates: tuple[str, ...],
+    ) -> dict[str, Any]:
         measured = _measure_mlx_stream_ttft(
             self.config,
             current_input=query,
             recent_context=context,
             max_candidates=max_candidates,
             stop_after_first_candidate=True,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
         )
         if not measured.get("ok"):
             self.last_error = str(measured.get("error") or "")
@@ -661,6 +726,8 @@ class CooldownPredictionProvider:
         current_input: str,
         recent_context: str = "",
         max_candidates: int = 5,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
     ) -> list[ModelPrediction]:
         now = time.perf_counter()
         if self.cooldown_ms > 0 and now < self._state.cooldown_until:
@@ -668,10 +735,13 @@ class CooldownPredictionProvider:
             return []
 
         started = time.perf_counter()
-        predictions = self.delegate.predict(
+        predictions = predict_with_optional_request_context(
+            self.delegate,
             current_input=current_input,
             recent_context=recent_context,
             max_candidates=max_candidates,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
         )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         delegate_error = str(getattr(self.delegate, "last_error", "") or "")
@@ -1196,10 +1266,20 @@ def _measure_mlx_stream_ttft(
     recent_context: str,
     max_candidates: int,
     stop_after_first_candidate: bool = False,
+    request_type: str = PREDICTION_REQUEST_GENERIC,
+    rime_candidates: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     query = compact_whitespace(current_input)
     context = compact_whitespace(recent_context)[-420:]
-    body = _mlx_predict_body(config, context=context, query=query, max_candidates=max_candidates, stream=True)
+    body = _mlx_predict_body(
+        config,
+        context=context,
+        query=query,
+        max_candidates=max_candidates,
+        stream=True,
+        request_type=request_type,
+        rime_candidates=rime_candidates,
+    )
     if stop_after_first_candidate:
         body["streamFirstCandidate"] = True
         body["maxCandidates"] = 1
@@ -1607,11 +1687,17 @@ def _mlx_predict_body(
     query: str,
     max_candidates: int,
     stream: bool,
+    request_type: str = PREDICTION_REQUEST_GENERIC,
+    rime_candidates: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    resolved_request_type = normalize_prediction_request_type(request_type)
+    rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
     body: dict[str, Any] = {
         "model": str(getattr(config, "model", "")),
         "currentInput": query,
         "recentContext": context,
+        "requestType": resolved_request_type,
+        "rimeCandidates": list(rime_candidate_tuple),
         "maxCandidates": max(1, min(10, int(max_candidates))),
         "maxTokens": max(1, min(64, int(getattr(config, "max_tokens", 8)))),
         "temperature": float(getattr(config, "temperature", 0.15)),
@@ -1622,6 +1708,8 @@ def _mlx_predict_body(
             context=context,
             query=query,
             stable_prefix=MLX_STABLE_PREFIX,
+            request_type=resolved_request_type,
+            rime_candidates=rime_candidate_tuple,
         ),
     }
     extra_body = getattr(config, "extra_body", None)
@@ -1649,13 +1737,84 @@ def _mlx_stream_text_delta(payload: dict[str, Any]) -> str:
     return ""
 
 
-def _prediction_request_metadata(*, context: str, query: str, stable_prefix: str = "") -> dict[str, object]:
+def _prediction_request_metadata(
+    *,
+    context: str,
+    query: str,
+    stable_prefix: str = "",
+    request_type: str = PREDICTION_REQUEST_GENERIC,
+    rime_candidates: tuple[str, ...] = (),
+) -> dict[str, object]:
+    resolved_request_type = normalize_prediction_request_type(request_type)
+    rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
     return {
         "currentInputFingerprint": _short_hash(compact_whitespace(query)),
         "contextFingerprint": _short_hash(compact_whitespace(context)),
         "contextChars": len(compact_whitespace(context)),
         "stablePrefixHash": _short_hash(stable_prefix),
+        "requestType": resolved_request_type,
+        "rimeCandidateCount": len(rime_candidate_tuple),
+        "rimeCandidatesFingerprint": _short_hash("\x1f".join(rime_candidate_tuple)),
     }
+
+
+def normalize_prediction_request_type(value: object) -> str:
+    text = compact_whitespace(str(value or "")).lower().replace("-", "_")
+    if text in {
+        PREDICTION_REQUEST_NO_INPUT,
+        PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+        PREDICTION_REQUEST_RIME_REORDER,
+    }:
+        return text
+    return PREDICTION_REQUEST_GENERIC
+
+
+def normalized_rime_candidate_texts(values: tuple[str, ...] | list[str] | object) -> tuple[str, ...]:
+    if not isinstance(values, (tuple, list)):
+        return ()
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = compact_whitespace(str(value or ""))
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+        if len(result) >= 10:
+            break
+    return tuple(result)
+
+
+def predict_with_optional_request_context(
+    provider: PredictionProvider,
+    *,
+    current_input: str,
+    recent_context: str = "",
+    max_candidates: int = 5,
+    request_type: str = PREDICTION_REQUEST_GENERIC,
+    rime_candidates: tuple[str, ...] = (),
+) -> list[ModelPrediction]:
+    try:
+        signature = inspect.signature(provider.predict)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None:
+        parameters = signature.parameters
+        has_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+        supports_context = has_kwargs or "request_type" in parameters or "rime_candidates" in parameters
+        if supports_context:
+            return provider.predict(
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=max_candidates,
+                request_type=normalize_prediction_request_type(request_type),
+                rime_candidates=normalized_rime_candidate_texts(rime_candidates),
+            )
+    return provider.predict(
+        current_input=current_input,
+        recent_context=recent_context,
+        max_candidates=max_candidates,
+    )
 
 
 def _short_hash(text: str) -> str:

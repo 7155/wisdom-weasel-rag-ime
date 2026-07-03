@@ -51,6 +51,36 @@ class FakePredictionProvider:
         ][:max_candidates]
 
 
+class CapturingRequestPredictionProvider:
+    def __init__(self) -> None:
+        self.last_request_type = ""
+        self.last_rime_candidates: tuple[str, ...] = ()
+        self.last_current_input = ""
+
+    def predict(
+        self,
+        *,
+        current_input: str,
+        recent_context: str = "",
+        max_candidates: int = 5,
+        request_type: str = "",
+        rime_candidates: tuple[str, ...] = (),
+    ):
+        _ = recent_context
+        self.last_current_input = current_input
+        self.last_request_type = request_type
+        self.last_rime_candidates = rime_candidates
+        return [
+            ModelPrediction(
+                text="设计一个候选展示方式",
+                rank=1,
+                provider_name="capture-model",
+                latency_ms=6,
+                confidence=0.91,
+            )
+        ][:max_candidates]
+
+
 class MultiPredictionProvider:
     def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
         return [
@@ -316,6 +346,35 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertFalse(response["modelLane"]["timedOut"])
         self.assertEqual(response["modelLane"]["predictionCount"], 1)
         self.assertEqual(response["modelLane"]["totalLatencyBudgetMs"], 300)
+
+    def test_model_lane_receives_pinyin_constrained_request_context(self) -> None:
+        predictor = CapturingRequestPredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-request-type",
+                "requestSeq": 46,
+                "rawInput": "sj",
+                "preedit": "sj",
+                "committedContext": "我想",
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "设计", "comment": "rime"},
+                        {"label": "2", "text": "手机", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(predictor.last_request_type, "pinyin_constrained_prediction")
+        self.assertEqual(predictor.last_rime_candidates, ("设计", "手机"))
+        self.assertEqual(response["modelLane"]["requestType"], "pinyin_constrained_prediction")
+        self.assertEqual(response["modelLane"]["rimeCandidateCount"], 2)
 
     def test_layout_contract_keeps_model_inline_and_sentence_candidates_block(self) -> None:
         response = build_rime_sidecar_response(

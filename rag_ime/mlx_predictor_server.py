@@ -13,7 +13,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Iterable
 
-from .predictor import parse_prediction_candidates
+from .predictor import (
+    PREDICTION_REQUEST_GENERIC,
+    PREDICTION_REQUEST_NO_INPUT,
+    PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+    PREDICTION_REQUEST_RIME_REORDER,
+    normalize_prediction_request_type,
+    normalized_rime_candidate_texts,
+    parse_prediction_candidates,
+)
 from .text_utils import compact_whitespace
 
 
@@ -147,10 +155,14 @@ class MlxLmEngine:
         max_tokens: int,
         temperature: float,
         top_p: float,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
         stream_first_candidate: bool = False,
         request_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
+        resolved_request_type = normalize_prediction_request_type(request_type)
+        rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
         if self._base_completion_mode:
             raw_text = "".join(
                 self.stream_text(
@@ -160,6 +172,8 @@ class MlxLmEngine:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     top_p=top_p,
+                    request_type=resolved_request_type,
+                    rime_candidates=rime_candidate_tuple,
                     stream_first_candidate=stream_first_candidate,
                     request_metadata=request_metadata,
                 )
@@ -177,12 +191,14 @@ class MlxLmEngine:
                 "rawText": raw_text,
                 "candidates": candidates,
                 "candidateMode": "base-completion",
+                "requestType": resolved_request_type,
                 "totalMs": total_ms,
                 "promptCache": self.prompt_cache_status(),
                 "timing": {
                     "candidateMode": "base-completion",
                     "logitsMs": 0,
                     "fallbackJson": False,
+                    "requestType": resolved_request_type,
                 },
                 "requestMeta": dict(request_metadata or {}),
             }
@@ -191,6 +207,8 @@ class MlxLmEngine:
             current_input=current_input,
             recent_context=recent_context,
             max_candidates=max_candidates,
+            request_type=resolved_request_type,
+            rime_candidates=rime_candidate_tuple,
             request_metadata=request_metadata,
         )
         if _logits_candidates_are_ime_quality(logits_candidates["candidates"], max_candidates=max_candidates):
@@ -202,12 +220,14 @@ class MlxLmEngine:
                 "candidates": logits_candidates["candidates"],
                 "candidateScores": logits_candidates["candidateScores"],
                 "candidateMode": "next-token-logits",
+                "requestType": resolved_request_type,
                 "totalMs": total_ms,
                 "promptCache": self.prompt_cache_status(),
                 "timing": {
                     "candidateMode": "next-token-logits",
                     "logitsMs": logits_candidates["elapsedMs"],
                     "fallbackJson": False,
+                    "requestType": resolved_request_type,
                 },
                 "requestMeta": dict(request_metadata or {}),
             }
@@ -220,6 +240,8 @@ class MlxLmEngine:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
+                request_type=resolved_request_type,
+                rime_candidates=rime_candidate_tuple,
                 stream_first_candidate=stream_first_candidate,
                 request_metadata=request_metadata,
             )
@@ -232,6 +254,7 @@ class MlxLmEngine:
             "rawText": raw_text,
             "candidates": candidates,
             "candidateMode": "json-generation",
+            "requestType": resolved_request_type,
             "totalMs": total_ms,
             "promptCache": self.prompt_cache_status(),
             "timing": {
@@ -239,6 +262,7 @@ class MlxLmEngine:
                 "logitsMs": logits_candidates.get("elapsedMs", 0),
                 "fallbackJson": True,
                 "fallbackReason": logits_candidates.get("qualityReason") or "logits_candidates_not_phrase_quality",
+                "requestType": resolved_request_type,
             },
             "requestMeta": dict(request_metadata or {}),
         }
@@ -249,6 +273,8 @@ class MlxLmEngine:
         current_input: str,
         recent_context: str,
         max_candidates: int,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
         request_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         _ = request_metadata
@@ -261,6 +287,8 @@ class MlxLmEngine:
                 current_input=current_input,
                 recent_context=recent_context,
                 max_candidates=max_candidates,
+                request_type=request_type,
+                rime_candidates=rime_candidates,
             )
             tokens = self.tokenizer.encode(prompt)
             token, logprobs = next(generate_step(mx.array(tokens), self.model, max_tokens=1))
@@ -323,6 +351,8 @@ class MlxLmEngine:
         max_tokens: int,
         temperature: float,
         top_p: float,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
         stream_first_candidate: bool = False,
         request_metadata: dict[str, Any] | None = None,
     ) -> Iterable[str]:
@@ -331,6 +361,8 @@ class MlxLmEngine:
             current_input=current_input,
             recent_context=recent_context,
             max_candidates=max_candidates,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
             stream_first_candidate=stream_first_candidate,
         )
         if self._prompt_cache.ready_for_generation() and not stream_first_candidate and not self._base_completion_mode:
@@ -342,6 +374,8 @@ class MlxLmEngine:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     top_p=top_p,
+                    request_type=request_type,
+                    rime_candidates=rime_candidates,
                     stream_first_candidate=stream_first_candidate,
                 ):
                     yield text
@@ -369,6 +403,8 @@ class MlxLmEngine:
         max_tokens: int,
         temperature: float,
         top_p: float,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
         stream_first_candidate: bool = False,
     ) -> Iterable[str]:
         from mlx_lm.generate import generate_step  # type: ignore
@@ -381,6 +417,8 @@ class MlxLmEngine:
             current_input=current_input,
             recent_context=recent_context,
             max_candidates=max_candidates,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
             stream_first_candidate=stream_first_candidate,
         )
         self._prompt_cache.used_for_generation = True
@@ -443,12 +481,14 @@ class MlxLmEngine:
         current_input: str,
         recent_context: str,
         max_candidates: int,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
         stream_first_candidate: bool = False,
     ) -> str:
         if self._base_completion_mode:
             return _build_base_completion_prompt(current_input=current_input, recent_context=recent_context)
         return (
-            f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, stream_first_candidate=stream_first_candidate)}"
+            f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, request_type=request_type, rime_candidates=rime_candidates, stream_first_candidate=stream_first_candidate)}"
             "\n/no_think"
             "<|im_end|>\n<|im_start|>assistant\n"
         )
@@ -459,23 +499,38 @@ class MlxLmEngine:
         current_input: str,
         recent_context: str,
         max_candidates: int,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
         stream_first_candidate: bool = False,
     ) -> str:
         if self._base_completion_mode:
             return _build_base_completion_prompt(current_input=current_input, recent_context=recent_context)
         return (
             f"{self._stable_prompt_prefix(stream_first_candidate=stream_first_candidate)}"
-            f"{self._dynamic_prompt_suffix(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, stream_first_candidate=stream_first_candidate)}"
+            f"{self._dynamic_prompt_suffix(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, request_type=request_type, rime_candidates=rime_candidates, stream_first_candidate=stream_first_candidate)}"
         )
 
-    def _build_logits_prompt(self, *, current_input: str, recent_context: str, max_candidates: int) -> str:
+    def _build_logits_prompt(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_candidates: int,
+        request_type: str = PREDICTION_REQUEST_GENERIC,
+        rime_candidates: tuple[str, ...] = (),
+    ) -> str:
         if self._base_completion_mode:
             return _build_base_completion_prompt(current_input=current_input, recent_context=recent_context)
+        resolved_request_type = normalize_prediction_request_type(request_type)
+        rime_line = _rime_candidates_prompt_line(rime_candidates)
         return (
             f"<|im_start|>system\n{LOGITS_SYSTEM_PROMPT}<|im_end|>\n"
             "<|im_start|>user\n"
+            f"请求类型: {resolved_request_type}\n"
             f"上下文: {recent_context}\n"
             f"当前输入: {current_input}\n"
+            f"{rime_line}"
+            f"模式说明: {_request_type_prompt_instruction(resolved_request_type)}\n"
             f"给出 {max_candidates} 个候选中最可能的第一个候选, 直接从候选文本开始。"
             "\n/no_think"
             "<|im_end|>\n<|im_start|>assistant\n"
@@ -591,6 +646,7 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
                     "done": True,
                     "rawText": raw_text,
                     "candidates": candidates,
+                    "requestType": normalize_prediction_request_type(request.get("request_type")),
                     "totalMs": int((time.perf_counter() - started) * 1000),
                     "promptCache": engine.prompt_cache_status(),
                     "requestMeta": dict(request.get("request_metadata") or {}),
@@ -650,6 +706,8 @@ def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str
         "max_tokens": max(1, min(64, _int_payload(payload.get("maxTokens"), 8))),
         "temperature": _float_payload(payload.get("temperature"), 0.15),
         "top_p": _float_payload(payload.get("topP"), 0.85),
+        "request_type": normalize_prediction_request_type(payload.get("requestType")),
+        "rime_candidates": normalized_rime_candidate_texts(payload.get("rimeCandidates")),
         "stream_first_candidate": bool(payload.get("streamFirstCandidate")),
         "request_metadata": _request_metadata_from_payload(payload),
     }
@@ -753,11 +811,13 @@ def _build_mlx_prompt(
     current_input: str,
     recent_context: str,
     max_candidates: int,
+    request_type: str = PREDICTION_REQUEST_GENERIC,
+    rime_candidates: tuple[str, ...] = (),
     stream_first_candidate: bool = False,
 ) -> str:
     return (
         f"{_stable_prompt_prefix()}"
-        f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, stream_first_candidate=stream_first_candidate)}"
+        f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, request_type=request_type, rime_candidates=rime_candidates, stream_first_candidate=stream_first_candidate)}"
     )
 
 
@@ -770,24 +830,55 @@ def _build_mlx_dynamic_prompt(
     current_input: str,
     recent_context: str,
     max_candidates: int,
+    request_type: str = PREDICTION_REQUEST_GENERIC,
+    rime_candidates: tuple[str, ...] = (),
     stream_first_candidate: bool = False,
 ) -> str:
+    resolved_request_type = normalize_prediction_request_type(request_type)
+    rime_line = _rime_candidates_prompt_line(rime_candidates)
+    mode_instruction = _request_type_prompt_instruction(resolved_request_type)
     if stream_first_candidate:
         return (
+            f"请求类型: {resolved_request_type}\n"
             f"已上屏上下文: {recent_context}\n"
             f"当前拼音或参考候选: {current_input}\n"
+            f"{rime_line}"
+            f"模式说明: {mode_instruction}\n"
             "答案写用户下一步最可能输入的具体短语正文。"
         )
     return (
+        f"请求类型: {resolved_request_type}\n"
         f"已上屏上下文: {recent_context}\n"
         f"当前拼音或参考候选: {current_input}\n"
+        f"{rime_line}"
+        f"模式说明: {mode_instruction}\n"
         "要求:\n"
         "- 输出能直接接在已上屏上下文后面的候选, 每个 2 到 16 个汉字为主。\n"
         "- 当前输入如果是拼音、英文串或 Rime 候选列表, 只把它当作约束, 不要复述这些词。\n"
+        "- 拼音约束模式下, 候选语义要符合上下文, 同时尽量满足当前拼音或首字母。\n"
+        "- Rime 重排模式下, 优先从 Rime 候选里挑更符合上下文的词, 必要时只补充极短预测。\n"
         "- 候选要像用户下一步真的会输入的内容, 优先项目、输入法、RAG、记忆、调试、模型相关表达。\n"
         "- 不要输出单字、语气词、连接词、泛词、重复词。\n"
         f"输出 {max_candidates} 个候选 JSON 数组。"
     )
+
+
+def _request_type_prompt_instruction(request_type: str) -> str:
+    resolved = normalize_prediction_request_type(request_type)
+    if resolved == PREDICTION_REQUEST_NO_INPUT:
+        return "用户刚上屏了一段文字, 现在需要预测后文接龙, 不要做拼音转汉字。"
+    if resolved == PREDICTION_REQUEST_PINYIN_CONSTRAINED:
+        return "用户正在用拼音约束预测方向, 候选必须尽量匹配当前拼音或首字母约束。"
+    if resolved == PREDICTION_REQUEST_RIME_REORDER:
+        return "当前已有 Rime/Wanxiang 候选, 只在候选之间选择或补充极短候选, 不要自由发挥长句。"
+    return "根据上下文给出输入法候选。"
+
+
+def _rime_candidates_prompt_line(rime_candidates: tuple[str, ...] | list[str] | object) -> str:
+    candidates = normalized_rime_candidate_texts(rime_candidates)
+    if not candidates:
+        return ""
+    return f"Rime候选: {' / '.join(candidates[:8])}\n"
 
 
 def _build_base_completion_prompt(*, current_input: str, recent_context: str) -> str:
@@ -1005,7 +1096,15 @@ def _tail_chars(text: str, max_chars: int) -> str:
 
 def _request_metadata_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    for key in ("currentInputFingerprint", "contextFingerprint", "contextChars", "stablePrefixHash"):
+    for key in (
+        "currentInputFingerprint",
+        "contextFingerprint",
+        "contextChars",
+        "stablePrefixHash",
+        "requestType",
+        "rimeCandidateCount",
+        "rimeCandidatesFingerprint",
+    ):
         value = payload.get(key)
         if isinstance(value, (str, int, float, bool)):
             result[key] = value

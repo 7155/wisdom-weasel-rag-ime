@@ -11,7 +11,13 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime.mlx_predictor_server import MlxLmEngine, _PromptCacheState, make_mlx_predictor_handler
+from rag_ime.mlx_predictor_server import (
+    MlxLmEngine,
+    _PromptCacheState,
+    _build_mlx_dynamic_prompt,
+    _normalize_prediction_request,
+    make_mlx_predictor_handler,
+)
 
 
 class _FakeMlxEngine:
@@ -53,6 +59,46 @@ class _FakeMlxEngine:
 
 
 class MlxPredictorServerTests(unittest.TestCase):
+    def test_normalized_request_keeps_prediction_request_type_and_rime_candidates(self) -> None:
+        request = _normalize_prediction_request(
+            {
+                "model": "fake-mlx-qwen",
+                "currentInput": "sj",
+                "recentContext": "我想",
+                "requestType": "rime-reorder",
+                "rimeCandidates": ["设计", "手机", "设计", ""],
+                "contextFingerprint": "ctx123",
+                "rimeCandidateCount": 2,
+                "rimeCandidatesFingerprint": "rime123",
+            },
+            default_model="fake-mlx-qwen",
+        )
+
+        self.assertEqual(request["request_type"], "rime_reorder")
+        self.assertEqual(request["rime_candidates"], ("设计", "手机"))
+        self.assertEqual(request["request_metadata"]["contextFingerprint"], "ctx123")
+        self.assertEqual(request["request_metadata"]["rimeCandidateCount"], 2)
+        self.assertEqual(request["request_metadata"]["rimeCandidatesFingerprint"], "rime123")
+
+    def test_dynamic_prompt_includes_request_type_and_rime_candidates(self) -> None:
+        prompt = _build_mlx_dynamic_prompt(
+            current_input="sj",
+            recent_context="我想",
+            max_candidates=3,
+            request_type="pinyin_constrained_prediction",
+            rime_candidates=("设计", "手机"),
+        )
+
+        self.assertIn("请求类型: pinyin_constrained_prediction", prompt)
+        self.assertIn("Rime候选: 设计 / 手机", prompt)
+        self.assertIn("拼音约束", prompt)
+        self.assertIn("不要做拼音转汉字", _build_mlx_dynamic_prompt(
+            current_input="",
+            recent_context="我想",
+            max_candidates=2,
+            request_type="no_input_prediction",
+        ))
+
     def test_engine_uses_loaded_prompt_cache_for_streaming_generation(self) -> None:
         modules, calls = _fake_mlx_modules(generated_text='["缓存候选","输入法"]')
         with patch.dict(sys.modules, modules):
@@ -229,6 +275,8 @@ class MlxPredictorServerTests(unittest.TestCase):
                     "maxCandidates": 2,
                     "maxTokens": 8,
                     "stream": True,
+                    "requestType": "pinyin_constrained_prediction",
+                    "rimeCandidates": ["本地记忆", "输入法"],
                     "contextFingerprint": "ctx123456789abcd",
                     "currentInputFingerprint": "input1234567890",
                     "stablePrefixHash": "prefix123456789",
@@ -249,6 +297,7 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(events[0]["delta"], '["本地记忆"')
         self.assertTrue(events[-1]["done"])
         self.assertEqual(events[-1]["candidates"], ["本地记忆", "输入法候选"])
+        self.assertEqual(events[-1]["requestType"], "pinyin_constrained_prediction")
         self.assertTrue(events[-1]["promptCache"]["prepared"])
         self.assertFalse(events[-1]["promptCache"]["usedForGeneration"])
         self.assertEqual(events[-1]["requestMeta"]["contextFingerprint"], "ctx123456789abcd")
