@@ -89,7 +89,15 @@ _LOW_VALUE_IME_CANDIDATES = {
     "rag",
     "LLM",
     "llm",
+    "好的",
+    "可以",
+    "没问题",
+    "候选如下",
+    "以下是",
+    "以下是候选",
+    "给出候选",
 }
+_CONTINUATION_PREFERRED_LENGTHS = (2, 4, 6, 8, 12, 16)
 
 
 class PredictionProvider(Protocol):
@@ -512,14 +520,7 @@ class MlxPredictionServiceProvider:
                 rime_candidates=rime_candidate_tuple,
             )
             if streamed:
-                streamed_candidates = parse_ime_prediction_candidates(
-                    streamed["candidate"],
-                    max_candidates=1,
-                    current_input=query,
-                    recent_context=context,
-                    request_type=resolved_request_type,
-                    rime_candidates=rime_candidate_tuple,
-                )
+                streamed_candidates = _finalize_ime_prediction_candidates([streamed["candidate"]], query)
                 if not streamed_candidates:
                     return []
                 streamed_candidate = streamed_candidates[0]
@@ -1580,12 +1581,6 @@ def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
             continue
         if normalized in _LOW_VALUE_IME_CANDIDATES:
             continue
-        if (
-            normalized.endswith("候选")
-            and _cjk_char_count(normalized) <= 4
-            and not re.search(r"\b(?:RAG|LLM|MLX)\b", normalized, flags=re.IGNORECASE)
-        ):
-            continue
         if any(normalized.startswith(prefix) for prefix in ("测试", "分析", "假设")) and _cjk_char_count(normalized) <= 6:
             continue
         if any(normalized.startswith(prefix) for prefix in ("当前", "目前", "现在")) and len(normalized) <= 5:
@@ -1615,6 +1610,24 @@ def _looks_like_candidate_list_input(text: str) -> bool:
     return cjk_parts >= 2
 
 
+def _looks_like_prompt_instruction(text: str) -> bool:
+    lowered = compact_whitespace(text).lower()
+    prompt_markers = (
+        "已上屏上下文",
+        "当前拼音",
+        "当前输入",
+        "候选词",
+        "输出要求",
+        "输出",
+        "json",
+        "assistant",
+        "system",
+        "user",
+        "/no_think",
+    )
+    return any(marker in lowered for marker in prompt_markers)
+
+
 def _candidate_parts_from_text(text: str) -> list[str]:
     cleaned = _clean_prediction_output(text)
     if not cleaned:
@@ -1625,6 +1638,9 @@ def _candidate_parts_from_text(text: str) -> list[str]:
     json_fragment_candidates = _candidate_parts_from_json_fragment(cleaned)
     if json_fragment_candidates:
         return json_fragment_candidates
+    numbered_candidates = _numbered_candidate_parts_from_text(cleaned)
+    if numbered_candidates:
+        return numbered_candidates
     parts = re.split(r"[\s,，、;；|/]+", cleaned)
     candidates: list[str] = []
     for part in parts:
@@ -1634,6 +1650,19 @@ def _candidate_parts_from_text(text: str) -> list[str]:
             continue
         candidates.append(item)
     return candidates
+
+
+def _numbered_candidate_parts_from_text(text: str) -> list[str]:
+    candidates: list[str] = []
+    pattern = re.compile(
+        r"(?:^|[\s,，、;；|/:\n\r：])\d+[.)、．]\s*"
+        r"(.+?)(?=(?:[\s,，、;；|/:\n\r：]\d+[.)、．])|$)"
+    )
+    for match in pattern.finditer(text):
+        item = _normalize_prediction_candidate_text(match.group(1))
+        if item:
+            candidates.append(item)
+    return candidates if len(candidates) >= 2 else []
 
 
 def _structured_prediction_candidate_texts(texts: list[str], *, max_candidates: int) -> list[str]:
@@ -1659,7 +1688,7 @@ def _structured_prediction_candidate_texts(texts: list[str], *, max_candidates: 
 
 
 def _looks_like_candidate_list_output(text: str) -> bool:
-    if re.search(r"(?:^|[\s,，、;；|/])\d+[.)、．]", text):
+    if re.search(r"(?:^|[\s,，、;；|/:\n\r：])\d+[.)、．]", text):
         return True
     if not re.search(r"[\n\r;；|/]", text):
         return False
@@ -1706,8 +1735,7 @@ def _continuation_candidate_spans(text: str) -> list[str]:
     cleaned = _normalize_prediction_candidate_text(text)
     if not cleaned:
         return []
-    first_clause = re.split(r"[，,。.!！?？；;\n\r]", cleaned, maxsplit=1)[0]
-    first_clause = _strip_leading_prediction_fillers(_normalize_prediction_candidate_text(first_clause))
+    first_clause = _first_useful_continuation_clause(cleaned)
     if _cjk_char_count(first_clause) < 2:
         return []
     compacted = re.sub(r"\s+", "", first_clause)
@@ -1717,13 +1745,10 @@ def _continuation_candidate_spans(text: str) -> list[str]:
         return []
 
     spans: list[str] = []
-    if len(compacted) <= 16:
-        spans.append(compacted)
-    else:
-        spans.append(compacted[:16])
-    for length in (4, 6, 8, 12, 16):
+    for length in _CONTINUATION_PREFERRED_LENGTHS:
         if len(compacted) >= length:
             spans.append(compacted[:length])
+    spans.append(compacted[:16])
     result: list[str] = []
     seen: set[str] = set()
     for span in spans:
@@ -1735,11 +1760,51 @@ def _continuation_candidate_spans(text: str) -> list[str]:
     return result
 
 
+def _first_useful_continuation_clause(text: str) -> str:
+    for clause in re.split(r"[，,。.!！?？；;\n\r]", text):
+        item = _strip_leading_prediction_fillers(_normalize_prediction_candidate_text(clause))
+        compacted = re.sub(r"\s+", "", item)
+        if _cjk_char_count(compacted) < 2:
+            continue
+        if compacted in _LOW_VALUE_IME_CANDIDATES:
+            continue
+        if _looks_like_prompt_instruction(compacted):
+            continue
+        return compacted
+    return ""
+
+
 def _strip_leading_prediction_fillers(text: str) -> str:
     result = text
-    for prefix in ("然后", "而且", "并且", "同时", "可以", "应该", "需要", "就是", "继续", "接下来"):
-        if result.startswith(prefix) and _cjk_char_count(result[len(prefix):]) >= 2:
-            result = result[len(prefix):]
+    prefixes = (
+        "好的",
+        "好",
+        "可以",
+        "没问题",
+        "以下是候选",
+        "以下是",
+        "候选如下",
+        "给出候选",
+        "我会",
+        "我将",
+        "然后",
+        "而且",
+        "并且",
+        "同时",
+        "应该",
+        "需要",
+        "就是",
+        "继续",
+        "接下来",
+    )
+    for _ in range(4):
+        stripped = False
+        for prefix in prefixes:
+            if result.startswith(prefix) and _cjk_char_count(result[len(prefix):]) >= 2:
+                result = result[len(prefix):]
+                stripped = True
+                break
+        if not stripped:
             break
     return result.lstrip("将要会能再")
 

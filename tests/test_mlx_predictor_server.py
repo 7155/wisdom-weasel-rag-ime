@@ -190,7 +190,7 @@ class MlxPredictorServerTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["candidateMode"], "json-generation")
-        self.assertEqual(payload["candidates"][0], "设计一个候选展示方式")
+        self.assertEqual(payload["candidates"][:3], ["设计", "设计一个", "设计一个候选"])
         self.assertNotIn("我想", "".join(payload["candidates"]))
 
     def test_engine_rime_reorder_fallback_stays_inside_rime_pool(self) -> None:
