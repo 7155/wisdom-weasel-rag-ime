@@ -112,7 +112,7 @@ enum RagImeMacMain {
 
     private static func runPreviewRimeDictionaryJSON() {
         let provider = RimeDictionaryCandidateProvider()
-        let queries = ["ni", "wo", "xian", "sj", "shijie", "git status", "/Volumes/undo"]
+        let queries = ["ni", "wo", "xian", "sj", "shijie", "hello", "python", "rag", "git status", "/Volumes/undo"]
         do {
             let data = try JSONSerialization.data(
                 withJSONObject: provider.diagnosticPayload(for: queries),

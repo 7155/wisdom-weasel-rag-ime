@@ -2,6 +2,30 @@
 
 ### 2026-07-03
 Topic:
+- Bring Felix/Wanxiang English fallback into the native debug harness without switching the real input source.
+
+Decisions:
+- Keep 1.7B MLX as a later model-quality route; do not switch realtime model path until the base input/candidate flow is stable.
+- Do not install or select the macOS input source in this round; verify with build resources and CLI previews only.
+
+Changes:
+- `build_rime_candidate_index.py` now imports `wanxiang_english.dict.yaml` and indexes ASCII English candidates with two-character minimum prefixes.
+- Added curated vibecode terms such as `rag`, `llm`, `mlx`, `qwen`, `python`, `github`, `sqlite`, `xcode`, `vscode`, `json`, `yaml`, and `terminal`.
+- `build_macos_frontend.sh` now bundles full Wanxiang English (`--max-english-entries 0`) under the per-prefix cap.
+- `--preview-rime-dictionary-json` probes `hello`, `python`, and `rag`.
+
+Verification:
+- Built and signed `build/RagImeMac.app`; bundled `rime-candidate-index.tsv` is 15MB.
+- CLI preview returns `hello`, `python`, and `rag` from `wanxiang_english`; `git status` and `/Volumes/undo` still return no dictionary candidates.
+- Full test suite passed: 366 tests OK.
+- `git diff --check` passed.
+
+Next steps:
+- Commit and push this baseline fallback improvement.
+- Continue with visible MLX/RAG/memory candidate quality and controlled real frontend validation only when explicitly allowed.
+
+### 2026-07-03
+Topic:
 - Tighten offline RAG/memory/MLX quality gates without switching the unstable system input method.
 
 Decisions:

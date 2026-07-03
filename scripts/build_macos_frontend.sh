@@ -46,6 +46,13 @@ if [[ -f "$RAG_IME_RIME_DICT_DIR_VALUE/wanxiang.dict.yaml" || -f "$RAG_IME_RIME_
   if [[ -f "$HOME/Library/Rime/essay.txt" ]]; then
     INDEX_ARGS+=(--essay-path "$HOME/Library/Rime/essay.txt")
   fi
+  if [[ -f "$RAG_IME_RIME_DICT_DIR_VALUE/wanxiang_english.dict.yaml" ]]; then
+    INDEX_ARGS+=(
+      --english-dict "$RAG_IME_RIME_DICT_DIR_VALUE/wanxiang_english.dict.yaml"
+      --max-english-entries 0
+      --max-english-prefix-len 16
+    )
+  fi
   python3 "$ROOT/scripts/build_rime_candidate_index.py" "${INDEX_ARGS[@]}" >/dev/null
 fi
 

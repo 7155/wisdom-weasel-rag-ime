@@ -7,6 +7,34 @@
 
 ## Log
 
+### 2026-07-03 20:47 CST
+Problem:
+- User wants vibecode-style English/code input to be reliable before the LLM/RAG layer is judged usable.
+- Felix/Wisdom-Weasel relies on Wanxiang's English schema and Lua filters for mixed Chinese/English fallback; this repo's native debug harness only precompiled the Chinese Wanxiang index.
+
+Findings:
+- Felix `wanxiang.schema.yaml` wires `table_translator@wanxiang_english` plus `lua_filter@*wanxiang.super_english`.
+- `wanxiang_english.dict.yaml` imports `dicts/en`; the local Felix checkout has about 71k English entries.
+- The first capped English attempt with 20k rows missed common words such as `hello` because the dictionary is not ordered for our hot-index selection needs.
+
+Changes:
+- `scripts/build_rime_candidate_index.py` now also imports `wanxiang_english.dict.yaml`, indexes ASCII English candidates, and keeps English prefixes out of one-letter queries so Chinese single-letter behavior is not polluted.
+- Added curated technical terms such as `rag`, `llm`, `mlx`, `qwen`, `python`, `github`, `sqlite`, `xcode`, `vscode`, `json`, `yaml`, and `terminal`.
+- `scripts/build_macos_frontend.sh` now bundles the full Wanxiang English index (`--max-english-entries 0`) with per-prefix caps.
+- `--preview-rime-dictionary-json` now probes `hello`, `python`, and `rag` in addition to Chinese pinyin and raw command/path safety cases.
+
+Verification:
+- `scripts/build_macos_frontend.sh` built and signed `build/RagImeMac.app`; bundled index size is now 15MB.
+- Preview verified `hello -> hello`, `python -> python/pythonic`, and `rag -> rag/...` from `wanxiang_english`.
+- Preview still leaves `git status` and `/Volumes/undo` empty, so command/path passthrough is not polluted by dictionary candidates.
+- Focused tests passed: index builder, install script, Swift dictionary provider.
+- Full suite passed: 366 tests OK.
+- `git diff --check` passed.
+
+Next:
+- Commit and push.
+- Continue MLX/RAG/memory visible candidate quality; 1.7B MLX can be tried later after the base input flow is stable.
+
 ### 2026-07-03 12:09 CST
 Problem:
 - User reported the current IME still fails the core product bar: real frontend can crash on input-source switching, candidate panel can linger or appear in the wrong place, RAG/LLM/memory candidates looked like clipboard/debug snippets, `sj`-style pinyin constraints did not steer the AI path, and MLX model output was visible in diagnostics even when it did not match the user prefix.
