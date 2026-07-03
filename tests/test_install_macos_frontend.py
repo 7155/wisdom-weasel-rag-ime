@@ -112,6 +112,15 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
         self.assertIn("wisdom-weasel-felix/third_party/rime_wanxiang", source)
         self.assertIn('"rimeDictDir": os.environ["RAG_IME_RIME_DICT_DIR_VALUE"]', source)
 
+    def test_build_precompiles_rime_candidate_index_resource(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "build_macos_frontend.sh").read_text(encoding="utf-8")
+
+        self.assertIn("build_rime_candidate_index.py", source)
+        self.assertIn("rime-candidate-index.tsv", source)
+        self.assertIn("--max-entries 35000", source)
+        self.assertIn('"rimeCandidateIndexPath": os.environ["RAG_IME_RIME_INDEX_PATH_VALUE"]', source)
+
     def test_install_updates_existing_bundle_without_removing_input_source_path_by_default(self) -> None:
         root = Path(__file__).resolve().parents[1]
         source = (root / "scripts" / "install_macos_frontend.sh").read_text(encoding="utf-8")
