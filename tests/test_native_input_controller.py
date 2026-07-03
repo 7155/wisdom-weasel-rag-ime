@@ -64,9 +64,52 @@ class NativeInputControllerSourceTests(unittest.TestCase):
 
         anchor_start = source.index("private func panelAnchor")
         anchor_body = source[anchor_start:]
-        self.assertIn("markedCaretRange", anchor_body)
-        self.assertIn("if !composition.isEmpty", anchor_body)
-        self.assertIn("range = markedCaretRange", anchor_body)
+        self.assertIn("selectedRange.location == NSNotFound", anchor_body)
+        self.assertIn("NSRange(location: NSNotFound, length: 0)", anchor_body)
+        self.assertNotIn("composition.utf16.count", anchor_body)
+
+    def test_native_frontend_shows_local_rime_candidates_before_async_sidecar(self) -> None:
+        source = _controller_source()
+
+        printable_start = source.index("if isPrintableInput(string)")
+        printable_end = source.index("override func commitComposition")
+        printable_body = source[printable_start:printable_end]
+        self.assertIn("showLocalRimeFallbackCandidates(for: composition, client: client)", printable_body)
+        self.assertLess(
+            printable_body.index("showLocalRimeFallbackCandidates(for: composition, client: client)"),
+            printable_body.index("scheduleSuggestionRefresh(client: client)"),
+        )
+
+        local_start = source.index("private func showLocalRimeFallbackCandidates")
+        local_end = source.index("private func activatePanelSession")
+        local_body = source[local_start:local_end]
+        self.assertIn('sourceType: "rime"', local_body)
+        self.assertIn('selectionAction: "select_rime_candidate"', local_body)
+        self.assertIn('phase: "anchor_composing"', local_body)
+        self.assertIn("RagCandidatePanel.shared.show", local_body)
+
+    def test_native_frontend_does_not_cold_load_wanxiang_on_input_thread(self) -> None:
+        source = _controller_source()
+        provider_source = _dictionary_provider_source()
+
+        self.assertIn("rimeCandidateProvider.warmUp()", source)
+        self.assertIn("allowColdLoad: false", source)
+        self.assertIn("rimeCandidateProvider.isReady", source)
+        self.assertIn("func warmUp()", provider_source)
+        self.assertIn("var isReady: Bool", provider_source)
+        self.assertIn("startWarmUpIfNeeded()", provider_source)
+
+    def test_native_frontend_keeps_local_rime_candidates_when_sidecar_fails(self) -> None:
+        source = _controller_source()
+
+        refresh_start = source.index("private func scheduleSuggestionRefresh")
+        refresh_end = source.index("private func schedulePostCommitPrediction")
+        refresh_body = source[refresh_start:refresh_end]
+        self.assertIn("catch", refresh_body)
+        self.assertIn("self.composition == inputSnapshot", refresh_body)
+        self.assertIn("self.committedContext == contextSnapshot", refresh_body)
+        self.assertIn("self.showLocalRimeFallbackCandidates(for: inputSnapshot", refresh_body)
+        self.assertNotIn("self?.clearCandidateState()", refresh_body)
 
     def test_candidate_panel_extracts_inline_model_candidates_even_after_rag(self) -> None:
         source = _panel_source()
@@ -183,6 +226,11 @@ def _models_source() -> str:
 def _bridge_source() -> str:
     root = Path(__file__).resolve().parents[1]
     return (root / "macos" / "RagImeMac" / "Sources" / "RagBridgeClient.swift").read_text(encoding="utf-8")
+
+
+def _dictionary_provider_source() -> str:
+    root = Path(__file__).resolve().parents[1]
+    return (root / "macos" / "RagImeMac" / "Sources" / "RimeDictionaryCandidateProvider.swift").read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

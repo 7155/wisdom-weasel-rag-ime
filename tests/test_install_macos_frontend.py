@@ -104,6 +104,14 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
         self.assertIn("RAG_IME_SIDECAR_URL_VALUE", source)
         self.assertIn('"sidecarBaseUrl": os.environ["RAG_IME_SIDECAR_URL_VALUE"]', source)
 
+    def test_build_writes_rime_dict_dir_into_bridge_config(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "build_macos_frontend.sh").read_text(encoding="utf-8")
+
+        self.assertIn("RAG_IME_RIME_DICT_DIR_VALUE", source)
+        self.assertIn("wisdom-weasel-felix/third_party/rime_wanxiang", source)
+        self.assertIn('"rimeDictDir": os.environ["RAG_IME_RIME_DICT_DIR_VALUE"]', source)
+
     def test_install_updates_existing_bundle_without_removing_input_source_path_by_default(self) -> None:
         root = Path(__file__).resolve().parents[1]
         source = (root / "scripts" / "install_macos_frontend.sh").read_text(encoding="utf-8")

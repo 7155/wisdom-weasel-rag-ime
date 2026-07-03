@@ -7,6 +7,7 @@ struct RagBridgeConfig {
     let project: String
     let topK: Int
     let sidecarBaseUrl: String
+    let rimeDictDir: String?
     let configSource: String
 
     static func load() -> RagBridgeConfig {
@@ -44,6 +45,9 @@ struct RagBridgeConfig {
             ?? userConfig.string("sidecarBaseUrl")
             ?? bundledConfig.string("sidecarBaseUrl")
             ?? "http://127.0.0.1:8766"
+        let rimeDictDir = env["RAG_IME_RIME_DICT_DIR"]
+            ?? userConfig.string("rimeDictDir")
+            ?? bundledConfig.string("rimeDictDir")
         return RagBridgeConfig(
             repoRoot: repoRoot,
             dbPath: dbPath,
@@ -51,6 +55,7 @@ struct RagBridgeConfig {
             project: project,
             topK: topK,
             sidecarBaseUrl: sidecarBaseUrl,
+            rimeDictDir: rimeDictDir,
             configSource: userConfig.source ?? bundledConfig.source ?? "environment/plist/default"
         )
     }
@@ -63,6 +68,7 @@ struct RagBridgeConfig {
             "project": project,
             "sidecarBaseUrl": sidecarBaseUrl,
             "topK": topK,
+            "rimeDictDir": rimeDictDir ?? "",
             "configSource": configSource,
         ]
     }

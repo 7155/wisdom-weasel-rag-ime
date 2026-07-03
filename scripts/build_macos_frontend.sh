@@ -13,6 +13,17 @@ RAG_IME_DB_PATH_VALUE="${RAG_IME_DB_PATH:-$DEFAULT_RUNTIME_DB}"
 RAG_IME_PROJECT_VALUE="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 RAG_IME_TOP_K_VALUE="${RAG_IME_TOP_K:-5}"
 RAG_IME_SIDECAR_URL_VALUE="${RAG_IME_SIDECAR_URL:-http://127.0.0.1:8766}"
+if [[ -n "${RAG_IME_RIME_DICT_DIR:-}" ]]; then
+  RAG_IME_RIME_DICT_DIR_VALUE="$RAG_IME_RIME_DICT_DIR"
+elif [[ -f "$ROOT/../agent-source-projects/wisdom-weasel-felix/third_party/rime_wanxiang/wanxiang.dict.yaml" ]]; then
+  RAG_IME_RIME_DICT_DIR_VALUE="$ROOT/../agent-source-projects/wisdom-weasel-felix/third_party/rime_wanxiang"
+elif [[ -f "$ROOT/third_party/rime_wanxiang/wanxiang.dict.yaml" ]]; then
+  RAG_IME_RIME_DICT_DIR_VALUE="$ROOT/third_party/rime_wanxiang"
+elif [[ -f "$ROOT/rime-wanxiang/wanxiang.dict.yaml" ]]; then
+  RAG_IME_RIME_DICT_DIR_VALUE="$ROOT/rime-wanxiang"
+else
+  RAG_IME_RIME_DICT_DIR_VALUE="$HOME/Library/Rime"
+fi
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
@@ -93,6 +104,7 @@ PYTHON_EXECUTABLE="$PYTHON_EXECUTABLE" \
 RAG_IME_PROJECT_VALUE="$RAG_IME_PROJECT_VALUE" \
 RAG_IME_TOP_K_VALUE="$RAG_IME_TOP_K_VALUE" \
 RAG_IME_SIDECAR_URL_VALUE="$RAG_IME_SIDECAR_URL_VALUE" \
+RAG_IME_RIME_DICT_DIR_VALUE="$RAG_IME_RIME_DICT_DIR_VALUE" \
 python3 - "$RESOURCES_DIR/bridge-config.json" "$RESOURCES_DIR/bridge-config.example.json" <<'PY'
 import json
 import os
@@ -105,6 +117,7 @@ payload = {
     "project": os.environ["RAG_IME_PROJECT_VALUE"],
     "topK": int(os.environ["RAG_IME_TOP_K_VALUE"]),
     "sidecarBaseUrl": os.environ["RAG_IME_SIDECAR_URL_VALUE"],
+    "rimeDictDir": os.environ["RAG_IME_RIME_DICT_DIR_VALUE"],
 }
 for path in sys.argv[1:]:
     with open(path, "w", encoding="utf-8") as fh:

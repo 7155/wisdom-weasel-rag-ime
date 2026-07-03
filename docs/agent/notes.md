@@ -3566,3 +3566,33 @@ Verification:
 Next:
 - Commit and push.
 - Continue P0 real frontend work: candidate panel position, stale no-input hide behavior under real apps, and controlled foreground validation only after the user explicitly wants to test.
+
+### 2026-07-03 20:10 CST
+Problem:
+- User reported the native RAG-IME could degrade into pure ABC with no candidate panel, and earlier previews showed traditional Rime/luna candidates instead of the requested Wanxiang Simplified fallback.
+- Felix/Wisdom-Weasel keeps Rime/Wanxiang candidates present first, then lets LLM/RAG supplement or rerank. The native AppKit harness was waiting for async sidecar before showing candidates, so a slow/failed sidecar made typing look broken.
+
+Findings:
+- `build/RagImeMac.app --preview-rime-dictionary-json` initially used `~/Library/Rime` and returned `comment=rime` plus traditional candidates.
+- The Felix reference checkout contains `third_party/rime_wanxiang`, and the provider can expand its `import_tables`.
+- Wanxiang cold YAML load is expensive, so live AppKit key handling must not synchronously cold-load the dictionary on the input thread.
+
+Changes:
+- `RagInputController` now shows local Rime/Wanxiang fallback candidates immediately after printable pinyin input, before the async sidecar refresh.
+- If `/rime-suggest` fails while composition is unchanged, the native frontend restores local fallback candidates instead of clearing the panel.
+- Panel anchoring now uses the client's selected caret range instead of `composition.utf16.count` as a document offset, reducing cross-app position errors.
+- `bridge-config.json` now carries `rimeDictDir`; the build script defaults it to the Felix repo-local `third_party/rime_wanxiang` path when available.
+- `RimeDictionaryCandidateProvider` now supports background `warmUp()`, `isReady`, and `allowColdLoad=false` for live input. CLI/doctor previews can still cold-load synchronously.
+- Updated macOS adapter docs with the new dictionary order and nonblocking live-input rule.
+
+Verification:
+- Focused native/dictionary/install tests passed: 28 tests OK.
+- `scripts/build_macos_frontend.sh` succeeded.
+- `build/RagImeMac.app/Contents/MacOS/RagImeMac --print-config` shows `rimeDictDir` pointing at Felix `third_party/rime_wanxiang`.
+- `build/RagImeMac.app/Contents/MacOS/RagImeMac --preview-rime-dictionary-json` now returns `comment=wanxiang` and Simplified candidates such as `ni -> 你`, `wo -> 我/我的/我想`, `shijie -> 世界`.
+- Full suite passed: 363 tests OK.
+- `git diff --check` passed.
+
+Next:
+- Re-run the focused Swift build after the final tiny fingerprint cleanup, then commit and push.
+- Continue P0 foreground validation only with user permission because real app switching previously crashed Edge/Ghostty.

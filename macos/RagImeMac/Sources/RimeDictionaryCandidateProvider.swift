@@ -14,20 +14,25 @@ final class RimeDictionaryCandidateProvider {
     private let dictionaryPaths: [String]
     private let essayPath: String?
     private let dictionaryLabel: String
+    private let cacheLock = NSLock()
     private var cachedEntries: [Entry]?
     private var cachedBuckets: [String: [Entry]]?
+    private var isWarming = false
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         let configured = environment["RAG_IME_RIME_DICT_PATH"].flatMap { $0.isEmpty ? nil : $0 }
         let configuredPaths = environment["RAG_IME_RIME_DICT_PATHS"].flatMap { $0.isEmpty ? nil : $0 }
+        let bridgeConfig = RagBridgeConfig.load()
         let configuredDirectory = environment["RAG_IME_RIME_DICT_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? bridgeConfig.rimeDictDir
         let configuredEssay = environment["RAG_IME_RIME_ESSAY_PATH"].flatMap { $0.isEmpty ? nil : $0 }
+        let repoRoot = environment["RAG_IME_REPO_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? bridgeConfig.repoRoot
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let resolvedPaths = Self.resolveDictionaryPaths(
             configuredPath: configured,
             configuredPaths: configuredPaths,
             configuredDirectory: configuredDirectory,
-            defaultDirectory: "\(home)/Library/Rime"
+            defaultDirectories: Self.defaultDictionaryDirectories(repoRoot: repoRoot, home: home)
         )
         self.dictionaryPaths = resolvedPaths
         self.dictionaryPath = resolvedPaths.first
@@ -43,9 +48,20 @@ final class RimeDictionaryCandidateProvider {
         }
     }
 
-    func candidates(for rawInput: String, maxCount: Int = 8) -> [RimeCandidatePayload] {
+    func warmUp() {
+        startWarmUpIfNeeded()
+    }
+
+    var isReady: Bool {
+        cacheLock.lock()
+        let ready = cachedBuckets != nil
+        cacheLock.unlock()
+        return ready
+    }
+
+    func candidates(for rawInput: String, maxCount: Int = 8, allowColdLoad: Bool = true) -> [RimeCandidatePayload] {
         let query = normalizedQuery(rawInput)
-        guard !query.isEmpty, let entries = candidatePool(for: query) else {
+        guard !query.isEmpty, let entries = candidatePool(for: query, allowColdLoad: allowColdLoad) else {
             return []
         }
 
@@ -105,12 +121,18 @@ final class RimeDictionaryCandidateProvider {
     }
 
     private func loadEntries() -> [Entry]? {
+        cacheLock.lock()
         if let cachedEntries {
+            cacheLock.unlock()
             return cachedEntries
         }
+        cacheLock.unlock()
         guard !dictionaryPaths.isEmpty else {
+            cacheLock.lock()
             cachedEntries = []
-            return cachedEntries
+            let entries = cachedEntries
+            cacheLock.unlock()
+            return entries
         }
         let essayWeights = loadEssayWeights()
         var entries: [Entry] = []
@@ -120,8 +142,11 @@ final class RimeDictionaryCandidateProvider {
             }
             appendEntries(from: content, essayWeights: essayWeights, into: &entries)
         }
+        cacheLock.lock()
         cachedEntries = entries
-        return entries
+        let loaded = cachedEntries
+        cacheLock.unlock()
+        return loaded
     }
 
     private func appendEntries(from content: String, essayWeights: [String: Double], into entries: inout [Entry]) {
@@ -159,26 +184,61 @@ final class RimeDictionaryCandidateProvider {
         }
     }
 
-    private func candidatePool(for query: String) -> [Entry]? {
-        guard let buckets = loadBuckets() else {
+    private func candidatePool(for query: String, allowColdLoad: Bool) -> [Entry]? {
+        guard let buckets = loadBuckets(allowColdLoad: allowColdLoad) else {
             return nil
         }
         return buckets[bucketKey(query)] ?? []
     }
 
-    private func loadBuckets() -> [String: [Entry]]? {
+    private func loadBuckets(allowColdLoad: Bool) -> [String: [Entry]]? {
+        cacheLock.lock()
         if let cachedBuckets {
+            cacheLock.unlock()
             return cachedBuckets
         }
-        guard let entries = loadEntries() else {
+        cacheLock.unlock()
+        guard allowColdLoad else {
+            startWarmUpIfNeeded()
             return nil
+        }
+        let buckets = buildBuckets()
+        cacheLock.lock()
+        cachedBuckets = buckets
+        isWarming = false
+        cacheLock.unlock()
+        return buckets
+    }
+
+    private func startWarmUpIfNeeded() {
+        cacheLock.lock()
+        if cachedBuckets != nil || isWarming {
+            cacheLock.unlock()
+            return
+        }
+        isWarming = true
+        cacheLock.unlock()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else {
+                return
+            }
+            let buckets = self.buildBuckets()
+            self.cacheLock.lock()
+            self.cachedBuckets = buckets
+            self.isWarming = false
+            self.cacheLock.unlock()
+        }
+    }
+
+    private func buildBuckets() -> [String: [Entry]] {
+        guard let entries = loadEntries() else {
+            return [:]
         }
         var buckets: [String: [Entry]] = [:]
         for entry in entries {
             insert(entry, into: &buckets, key: bucketKey(entry.code))
             insert(entry, into: &buckets, key: bucketKey(entry.initials))
         }
-        cachedBuckets = buckets
         return buckets
     }
 
@@ -279,7 +339,7 @@ final class RimeDictionaryCandidateProvider {
         configuredPath: String?,
         configuredPaths: String?,
         configuredDirectory: String?,
-        defaultDirectory: String
+        defaultDirectories: [String]
     ) -> [String] {
         let fileManager = FileManager.default
         var paths: [String] = []
@@ -293,7 +353,13 @@ final class RimeDictionaryCandidateProvider {
             paths.append(contentsOf: dictionaryEntryPoints(in: configuredDirectory))
         }
         if paths.isEmpty {
-            paths.append(contentsOf: dictionaryEntryPoints(in: defaultDirectory))
+            for directory in defaultDirectories {
+                let entryPoints = dictionaryEntryPoints(in: directory)
+                if !entryPoints.isEmpty {
+                    paths.append(contentsOf: entryPoints)
+                    break
+                }
+            }
         }
 
         var expanded: [String] = []
@@ -302,6 +368,23 @@ final class RimeDictionaryCandidateProvider {
             expanded.append(contentsOf: expandDictionary(path: path, visited: &visited))
         }
         return stableUnique(expanded.filter { fileManager.fileExists(atPath: $0) })
+    }
+
+    private static func defaultDictionaryDirectories(repoRoot: String, home: String) -> [String] {
+        let repoURL = URL(fileURLWithPath: repoRoot, isDirectory: true).standardizedFileURL
+        return stableUnique([
+            repoURL
+                .deletingLastPathComponent()
+                .appendingPathComponent("agent-source-projects/wisdom-weasel-felix/third_party/rime_wanxiang", isDirectory: true)
+                .path,
+            repoURL
+                .appendingPathComponent("third_party/rime_wanxiang", isDirectory: true)
+                .path,
+            repoURL
+                .appendingPathComponent("rime-wanxiang", isDirectory: true)
+                .path,
+            "\(home)/Library/Rime",
+        ])
     }
 
     private static func dictionaryEntryPoints(in directory: String) -> [String] {

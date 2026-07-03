@@ -2640,3 +2640,25 @@ Verification:
 - Focused lifecycle tests passed: 15 tests OK.
 - macOS frontend build succeeded and signed `build/RagImeMac.app`.
 - Full suite passed: 359 tests OK.
+
+### 2026-07-03
+Topic:
+- Improved native AppKit IME fallback so it does not look like pure ABC while waiting for LLM/RAG.
+
+Findings:
+- The native harness waited for async sidecar responses before showing candidates; if sidecar was slow or failed, users saw no candidate panel.
+- The local dictionary preview was falling back to `~/Library/Rime`, returning traditional `rime` candidates instead of the requested Wanxiang Simplified source.
+- Felix keeps Rime/Wanxiang candidates available first, then lets the prediction layer supplement or rerank; this is the right behavior to migrate.
+
+Changes:
+- Printable pinyin input now immediately renders local Rime/Wanxiang candidates, then lets `/rime-suggest` refresh with LLM/RAG/memory results.
+- Sidecar failures preserve/restore local fallback candidates for the unchanged composition instead of clearing the panel.
+- The panel anchor now uses the client selected caret range rather than `composition.utf16.count` as a document offset.
+- `bridge-config.json` now includes `rimeDictDir`; builds prefer Felix's repo-local `third_party/rime_wanxiang` when available.
+- Live AppKit input uses nonblocking dictionary access with background `warmUp()`; CLI preview can still cold-load synchronously.
+
+Verification:
+- Focused native/dictionary/install tests passed: 28 tests OK.
+- Build succeeded and `--print-config` showed `rimeDictDir` pointing to Felix Wanxiang.
+- `--preview-rime-dictionary-json` returned `comment=wanxiang` and Simplified candidates.
+- Full suite passed: 363 tests OK.

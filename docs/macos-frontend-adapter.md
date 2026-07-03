@@ -153,6 +153,10 @@ It reads dictionaries in this order:
 - `RAG_IME_RIME_DICT_PATHS`, a colon-separated list of `.dict.yaml` files;
 - `RAG_IME_RIME_DICT_PATH`, a single `.dict.yaml` file;
 - `RAG_IME_RIME_DICT_DIR`, a Rime/Wanxiang directory;
+- `rimeDictDir` from `~/Library/Application Support/RagImeMac/bridge-config.json`
+  or the bundled `bridge-config.json`;
+- repo-local Wanxiang directories such as
+  `../agent-source-projects/wisdom-weasel-felix/third_party/rime_wanxiang`;
 - `~/Library/Rime`.
 
 When it finds a Wanxiang entrypoint such as `wanxiang.dict.yaml`, it expands
@@ -162,6 +166,13 @@ match user input `ni`. It also reads `RAG_IME_RIME_ESSAY_PATH` or
 `~/Library/Rime/essay.txt` to avoid rare dictionary entries outranking common
 words. This is only a bridge for debugging the `/rime-suggest` contract;
 production should still get candidates from a real librime session.
+
+The real input path must not synchronously cold-load the full Wanxiang YAML
+tree on the AppKit input thread. `RagInputController` starts a background
+`warmUp()` when the input source activates, and live key handling uses
+`allowColdLoad=false`: if the dictionary is still warming, it avoids blocking
+typing and lets the sidecar/prediction path continue. CLI preview commands may
+still cold-load synchronously so dictionary wiring can be verified.
 
 For the Squirrel/Rime path, side selection feedback should use the unified `/rime-select` contract. It records the inserted side candidate, applies committed-event accepted feedback for model/raw side candidates, records the source-memory accepted action when a RAG/memory candidate carries memory ids, and uses visible `shownCandidates` for skipped-higher feedback. Ordinary Rime fallback candidates should be committed through the normal input path instead of `/rime-select`, so Rime/Wanxiang remains responsible for anchor/fallback behavior. The prototype AppKit harness may still issue separate action/commit calls while it remains a debug surface.
 
