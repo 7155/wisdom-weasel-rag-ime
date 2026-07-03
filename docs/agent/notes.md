@@ -3262,3 +3262,19 @@ Verification:
 Next:
 - P0: build/install the branded Squirrel route and collect real foreground trace for `sidecar_request_scheduled -> sidecar_response_applied -> number_key_route -> side_candidate_commit`.
 - P1: port Felix-style MLX pinyin-constrained/logits candidateization and Alpha-style score diagnostics.
+
+### 2026-07-03 10:47 CST
+Problem:
+- User corrected architecture priority: current architecture must primarily follow `Felix3322/Wisdom-Weasel`; OpenLess should wait until that route is complete.
+
+Findings:
+- Verified `Felix3322/Wisdom-Weasel` public HEAD is still `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`.
+- Re-read Felix core boundaries: `RimeWithWeasel` owns the unified visible candidate list and selection mapping; `LLMProvider` owns typed requests and candidateization; Alpha owns score breakdown, feedback, and frequency.
+- OpenLess remains useful only as a later management-console reference, not as foreground IME architecture.
+
+Changes:
+- Added `docs/agent/felix-first-architecture-20260703.md`.
+- Marked `docs/agent/openless-management-console-reference-20260703.md` as deferred until the Felix/Squirrel/Wanxiang route is usable.
+
+Next:
+- Continue P0 on the branded Squirrel route before any OpenLess-style UI work.

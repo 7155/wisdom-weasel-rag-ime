@@ -2374,3 +2374,19 @@ Verification:
 Next steps:
 - Build/install the branded Squirrel route and verify the real foreground trace.
 - Continue with Felix-style MLX pinyin-constrained candidateization and SQLite/Alpha score diagnostics.
+
+### 2026-07-03
+Topic:
+- Architecture priority reset to Felix-first.
+
+Decisions:
+- Current IME architecture primarily follows `Felix3322/Wisdom-Weasel`, not OpenLess.
+- OpenLess is deferred as a later management-console reference only.
+
+Changes:
+- Added `docs/agent/felix-first-architecture-20260703.md` mapping Felix mechanisms to this repo.
+- Marked the OpenLess reference doc as deferred.
+
+Next steps:
+- Resume P0 branded Squirrel build/install/foreground trace verification.
+- Do not start OpenLess-style control panel work until Felix/Squirrel/Wanxiang input flow is usable.
