@@ -1065,6 +1065,7 @@ try:
             "candidateContract": candidate_contract,
             "rawPinyinGuard": raw_pinyin_guard,
             "modelGenerationPath": model_generation_path,
+            "rankingDiagnostics": result.get("rankingDiagnostics"),
             "predictorCheck": {
                 "ok": predictor_ok,
                 "message": "; ".join(messages),
@@ -1112,6 +1113,43 @@ PY
     ok "$candidate_contract_message"
   elif [[ "$candidate_contract_level" != "SKIP" ]]; then
     require_or_warn "$REQUIRE_MIXED_LAYOUT" "$candidate_contract_message"
+  fi
+  ranking_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+diag = payload.get("rankingDiagnostics") if isinstance(payload.get("rankingDiagnostics"), dict) else {}
+if not diag:
+    print("INFO\tRAG ranking diagnostics: unavailable from sidecar")
+else:
+    source_counts = diag.get("sourceCounts") if isinstance(diag.get("sourceCounts"), dict) else {}
+    top = diag.get("topCandidate") if isinstance(diag.get("topCandidate"), dict) else {}
+    top_text = str(top.get("text") or "")
+    top_source = str(top.get("sourceType") or "")
+    top_total = top.get("scoreBreakdownTotal")
+    source_text = ",".join(f"{key}={value}" for key, value in sorted(source_counts.items())) or "none"
+    if diag.get("hasRagScoreBreakdown"):
+        print(
+            "OK\t"
+            + f"RAG ranking diagnostics available; sources={source_text}; "
+            + f"top={top_source}:{top_text[:30]} total={top_total}"
+        )
+    else:
+        print(
+            "INFO\t"
+            + f"RAG ranking diagnostics present without score breakdown; sources={source_text}; "
+            + f"top={top_source}:{top_text[:30]}"
+        )
+PY
+)"
+  ranking_level="${ranking_line%%	*}"
+  ranking_message="${ranking_line#*	}"
+  if [[ "$ranking_level" == "OK" ]]; then
+    ok "$ranking_message"
+  else
+    info "$ranking_message"
   fi
   raw_pinyin_guard_line="$("$PYTHON_EXECUTABLE" - "$sidecar_out" <<'PY'
 import json

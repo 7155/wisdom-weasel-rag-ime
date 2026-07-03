@@ -263,6 +263,7 @@ class DebugImeService:
             request_payload["requestSeq"] = index + 1
             response = self.rime_suggest(request_payload)
             cache = response.get("cache") if isinstance(response.get("cache"), dict) else {}
+            diagnostics = response.get("rankingDiagnostics") if isinstance(response.get("rankingDiagnostics"), dict) else {}
             rime_samples.append(
                 {
                     "iteration": index + 1,
@@ -271,6 +272,9 @@ class DebugImeService:
                     "cacheKey": str(cache.get("key") or "") if isinstance(cache, dict) else "",
                     "displayCandidateCount": len(response.get("displayCandidates", [])),
                     "queryBasis": str(response.get("queryBasis") or ""),
+                    "sourceCounts": dict(diagnostics.get("sourceCounts") or {}),
+                    "hasRagScoreBreakdown": bool(diagnostics.get("hasRagScoreBreakdown")),
+                    "topCandidate": _ranking_top_candidate_summary(diagnostics),
                 }
             )
         after = self.health()
@@ -362,6 +366,7 @@ class DebugImeService:
         except BaseException as exc:
             self._finish_rime_inflight(cache_key, error=exc)
             raise
+        _attach_rime_ranking_diagnostics(response)
         self._store_rime_response(cache_key, response)
         self._finish_rime_inflight(cache_key, response=response)
         response = copy.deepcopy(response)
@@ -683,6 +688,7 @@ class DebugImeService:
         if isinstance(prediction_first, dict):
             prediction_first["enabled"] = prediction_first_merge_enabled(payload)
             prediction_first["pinyinPrefix"] = snapshot.preedit or snapshot.raw_input
+        _attach_rime_ranking_diagnostics(response)
 
     def _store_rime_response(self, cache_key: str, response: dict[str, object]) -> None:
         ttl_ms = self._cache_ttl_ms()
@@ -916,6 +922,152 @@ def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> 
     if parsed is None:
         return default
     return max(minimum, min(maximum, parsed))
+
+
+def _attach_rime_ranking_diagnostics(response: dict[str, object]) -> None:
+    response["rankingDiagnostics"] = _rime_ranking_diagnostics(response)
+
+
+def _rime_ranking_diagnostics(response: dict[str, object]) -> dict[str, object]:
+    display_candidates = response.get("displayCandidates")
+    if not isinstance(display_candidates, list):
+        display_candidates = []
+    items: list[dict[str, object]] = []
+    source_counts: dict[str, int] = {}
+    has_rag_breakdown = False
+    has_model_candidate_scores = False
+    for index, candidate in enumerate(display_candidates, start=1):
+        if not isinstance(candidate, dict):
+            continue
+        source_type = _string(candidate.get("sourceType")) or _string(candidate.get("displayLane")) or "unknown"
+        source_counts[source_type] = source_counts.get(source_type, 0) + 1
+        diagnostics = _display_candidate_diagnostics(candidate, default_rank=index)
+        breakdown = diagnostics.get("scoreBreakdown")
+        if isinstance(breakdown, dict):
+            has_rag_breakdown = True
+        if int(diagnostics.get("candidateScoreCount") or 0) > 0:
+            has_model_candidate_scores = True
+        items.append(diagnostics)
+    side_count = sum(count for source, count in source_counts.items() if source != "rime")
+    rime_count = source_counts.get("rime", 0)
+    return {
+        "schemaVersion": "rag-ime.ranking-diagnostics.v1",
+        "candidateCount": len(items),
+        "sideCandidateCount": side_count,
+        "rimeCandidateCount": rime_count,
+        "sourceCounts": source_counts,
+        "hasRagScoreBreakdown": has_rag_breakdown,
+        "hasModelCandidateScores": has_model_candidate_scores,
+        "topCandidate": items[0] if items else None,
+        "items": items,
+    }
+
+
+def _display_candidate_diagnostics(candidate: dict[str, object], *, default_rank: int) -> dict[str, object]:
+    metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+    source_type = _string(candidate.get("sourceType")) or _string(candidate.get("displayLane")) or "unknown"
+    item: dict[str, object] = {
+        "selectionKey": _string(candidate.get("selectionKey")) or _string(candidate.get("label")),
+        "selectionRank": _optional_int(candidate.get("selectionRank")) or default_rank,
+        "text": _string(candidate.get("text")),
+        "insertTextLength": len(_string(candidate.get("insertText"))),
+        "sourceType": source_type,
+        "displayLane": _string(candidate.get("displayLane")) or source_type,
+        "displayLayout": _string(candidate.get("displayLayout")),
+        "selectionAction": _string(candidate.get("selectionAction")),
+        "sourceIndex": _optional_int(candidate.get("sourceIndex")),
+        "memoryId": _string(candidate.get("memoryId")),
+        "sourceEventId": _optional_int(candidate.get("sourceEventId")),
+        "suggestionId": _string(candidate.get("suggestionId")),
+        "reason": _string(metadata.get("reason")),
+    }
+    breakdown = metadata.get("score_breakdown")
+    if breakdown is None:
+        breakdown = metadata.get("scoreBreakdown")
+    if isinstance(breakdown, dict):
+        item["scoreBreakdown"] = breakdown
+        item["scoreBreakdownTotal"] = _number_or_none(breakdown.get("total"))
+        components = breakdown.get("components") if isinstance(breakdown.get("components"), dict) else {}
+        item["topScoreComponents"] = _top_score_components(components)
+        raw_signals = breakdown.get("rawSignals") if isinstance(breakdown.get("rawSignals"), dict) else {}
+        item["rawSignalsSummary"] = _raw_signals_summary(raw_signals)
+    candidate_scores = metadata.get("candidate_scores")
+    if candidate_scores is None:
+        candidate_scores = metadata.get("candidateScores")
+    if isinstance(candidate_scores, list):
+        item["candidateScoreCount"] = len(candidate_scores)
+        item["candidateScoresPreview"] = candidate_scores[:5]
+    else:
+        item["candidateScoreCount"] = 0
+    provider_name = _string(metadata.get("provider_name")) or _string(metadata.get("providerName"))
+    if provider_name:
+        item["providerName"] = provider_name
+    candidate_mode = _string(metadata.get("candidate_mode")) or _string(metadata.get("candidateMode"))
+    if not candidate_mode and isinstance(metadata.get("server_timing"), dict):
+        candidate_mode = _string(metadata["server_timing"].get("candidateMode"))  # type: ignore[index]
+    if candidate_mode:
+        item["candidateMode"] = candidate_mode
+    return item
+
+
+def _ranking_top_candidate_summary(diagnostics: dict[str, object]) -> dict[str, object] | None:
+    top = diagnostics.get("topCandidate")
+    if not isinstance(top, dict):
+        return None
+    payload = {
+        key: value
+        for key, value in top.items()
+        if key
+        in {
+            "selectionKey",
+            "selectionRank",
+            "text",
+            "sourceType",
+            "displayLane",
+            "displayLayout",
+            "scoreBreakdownTotal",
+            "candidateScoreCount",
+            "candidateMode",
+            "reason",
+        }
+        and value not in ("", None)
+    }
+    top_components = top.get("topScoreComponents")
+    if isinstance(top_components, list) and top_components:
+        payload["topScoreComponents"] = top_components[:3]
+    return payload
+
+
+def _top_score_components(components: dict[object, object], *, limit: int = 5) -> list[dict[str, object]]:
+    numeric_components: list[tuple[str, float]] = []
+    for key, value in components.items():
+        score = _number_or_none(value)
+        if score is None or abs(score) <= 0.0005:
+            continue
+        numeric_components.append((str(key), score))
+    numeric_components.sort(key=lambda item: abs(item[1]), reverse=True)
+    return [{"name": name, "score": score} for name, score in numeric_components[:limit]]
+
+
+def _raw_signals_summary(raw_signals: dict[object, object]) -> dict[str, object]:
+    keep = (
+        "effectiveFrequency",
+        "effectiveFrequencyScope",
+        "acceptedCount",
+        "skippedCount",
+        "downrankedCount",
+        "pinned",
+        "vectorScore",
+    )
+    return {key: raw_signals[key] for key in keep if key in raw_signals}
+
+
+def _number_or_none(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def _parse_input_source_check_output(output: str) -> dict[str, object]:
