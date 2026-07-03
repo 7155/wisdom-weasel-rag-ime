@@ -163,7 +163,7 @@ match user input `ni`. It also reads `RAG_IME_RIME_ESSAY_PATH` or
 words. This is only a bridge for debugging the `/rime-suggest` contract;
 production should still get candidates from a real librime session.
 
-For the Squirrel/Rime path, side selection feedback should use the unified `/rime-select` contract. It records the inserted side candidate and, for RAG candidates, the accepted memory action in one local request. The prototype AppKit harness may still issue separate action/commit calls while it remains a debug surface.
+For the Squirrel/Rime path, side selection feedback should use the unified `/rime-select` contract. It records the inserted side candidate, applies committed-event accepted feedback for model/raw side candidates, records the source-memory accepted action when a RAG/memory candidate carries memory ids, and uses visible `shownCandidates` for skipped-higher feedback. Ordinary Rime fallback candidates should be committed through the normal input path instead of `/rime-select`, so Rime/Wanxiang remains responsible for anchor/fallback behavior. The prototype AppKit harness may still issue separate action/commit calls while it remains a debug surface.
 
 ## UI Shape
 

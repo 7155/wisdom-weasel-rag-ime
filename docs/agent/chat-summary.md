@@ -2602,3 +2602,22 @@ Verification:
 Next steps:
 - Run full suite, commit, and push.
 - Keep 1.7B MLX as a later optional quality lane; do not replace the 0.6B realtime default yet.
+
+### 2026-07-03
+Topic:
+- Aligned native macOS selection routing with Felix display-candidate feedback semantics.
+
+Findings:
+- The Swift native frontend was sending every visible candidate selection to `/rime-select`, including ordinary Rime fallback rows.
+- That conflicted with the Felix boundary: Rime/Wanxiang owns anchor and fallback; side candidates own prediction feedback.
+- The native frontend also was not sending `shownCandidates`, so skipped-higher feedback was unavailable in the real AppKit path.
+
+Changes:
+- `RagInputController` now sends `/rime-select` only for side candidates, and ordinary Rime rows record a normal `macos_inputmethod_rime` commit.
+- Side-candidate `/rime-select` requests now include the visible `shownCandidates` list.
+- `RimeSelectRequest` Codable model and source-level tests were updated.
+- README and debug/macOS adapter docs were updated to the current committed-event feedback behavior.
+
+Verification:
+- Native source/rime-select focused tests passed: 16 tests OK.
+- `scripts/build_macos_frontend.sh` built and signed `build/RagImeMac.app`.

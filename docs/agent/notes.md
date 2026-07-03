@@ -3516,3 +3516,28 @@ Verification:
 Next:
 - Run full suite, commit, and push.
 - Keep Qwen3-0.6B as realtime default; keep Qwen3-1.7B as a later opt-in slow/quality lane after the live panel flow is stable.
+
+### 2026-07-03 19:01 CST
+Problem:
+- Continue Felix/Wisdom-Weasel migration on the macOS native frontend without switching the foreground input source.
+- The Swift frontend treated every visible `RimeDisplayCandidate` selection as a side-candidate `/rime-select`, including ordinary Rime/Wanxiang fallback rows. That blurred the boundary Felix keeps strict: Rime owns anchor/fallback, side candidates own prediction feedback.
+- Swift also did not send the full visible candidate list to `/rime-select`, so the real native path could not apply skipped-higher feedback even though the backend contract supported it.
+
+Findings:
+- Felix `RimeWithWeasel.cpp` builds one visible display list, but selection is routed by candidate origin.
+- Felix Alpha feedback records committed text as positive feedback and only higher-ranked rerank candidates as conservative negative feedback.
+
+Changes:
+- `RagInputController` now snapshots `latestDisplayCandidates` before clearing the panel and sends it as `shownCandidates` only when the selected row is a side candidate.
+- Ordinary `select_rime_candidate` / `sourceType=rime` rows now record a normal `macos_inputmethod_rime` commit instead of `/rime-select` side feedback.
+- `RimeSelectRequest` now includes `shownCandidates`, aligning the native frontend with the backend skipped-higher contract.
+- Updated README/debug/macOS adapter docs so they no longer claim model side candidates only record committed text.
+
+Verification:
+- Native source/rime-select focused tests passed: 16 tests OK.
+- `scripts/build_macos_frontend.sh` built and signed `build/RagImeMac.app`.
+- `git diff --check` passed.
+
+Next:
+- Run full suite, commit, and push.
+- Continue P0 real frontend lifecycle work: candidate position/lifetime, no-input hide, and controlled foreground validation only when the user explicitly wants to test.

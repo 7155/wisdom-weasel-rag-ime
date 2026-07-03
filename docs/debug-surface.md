@@ -481,7 +481,7 @@ When testing a resident MLX or future llama.cpp provider, matching
 history/context prefix can be reused; changing `currentInputFingerprint` should
 only invalidate the dynamic tail.
 
-`/api/rime-select` records a side-candidate acceptance with one stable payload:
+`/api/rime-select` records a side-candidate acceptance with one stable payload. Native frontends should include the visible `shownCandidates` list so the core can apply conservative skipped-higher feedback to side candidates that were displayed above the selected row:
 
 ```json
 {
@@ -497,13 +497,36 @@ only invalidate the dynamic tail.
     "suggestionId": "sug-event:4",
     "sourceEventId": 4
   },
+  "shownCandidates": [
+    {
+      "label": "1",
+      "selectionKey": "1",
+      "selectionRank": 1,
+      "text": "把这个项目整理成面试亮点",
+      "insertText": "把这个项目整理成面试亮点",
+      "sourceType": "model",
+      "selectionAction": "commit_side_candidate"
+    },
+    {
+      "label": "4",
+      "selectionKey": "4",
+      "selectionRank": 4,
+      "text": "先用 FTS5 证明召回收益",
+      "insertText": "先用 FTS5 证明召回收益",
+      "sourceType": "rag",
+      "selectionAction": "commit_side_candidate",
+      "memoryId": "event:4",
+      "suggestionId": "sug-event:4",
+      "sourceEventId": 4
+    }
+  ],
   "query": "RAG 输入法",
   "recentContext": "用户正在写输入法设计",
   "preedit": "ragshurufa"
 }
 ```
 
-It returns `rag-ime.rime-selection.v1`, records the committed text, and also records an `accepted` action when the selected candidate came from RAG memory. Model side candidates only record the committed text.
+It returns `rag-ime.rime-selection.v1`, records the committed text, applies accepted feedback to the committed side-candidate event when there is no source memory action, and records an `accepted` action on the source memory when the selected candidate came from RAG/memory. Ordinary Rime fallback candidates should not call `/rime-select`; they should be committed as normal input so Rime/Wanxiang remains the anchor and fallback owner.
 
 The page falls back to local mock suggestions if the API is unavailable, so visual iteration can continue while backend work is in progress.
 
