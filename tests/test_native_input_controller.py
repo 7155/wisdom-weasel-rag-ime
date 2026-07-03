@@ -32,6 +32,33 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("session.shouldClearPredictionPanel", should_show_body)
         self.assertIn("return false", should_show_body)
 
+    def test_native_frontend_clears_panel_when_input_server_deactivates(self) -> None:
+        source = _controller_source()
+
+        deactivate_start = source.index("override func deactivateServer")
+        deactivate_end = source.index("private func isPrintableInput")
+        deactivate_body = source[deactivate_start:deactivate_end]
+        self.assertIn("composition = \"\"", deactivate_body)
+        self.assertIn("cancelPendingRefresh(invalidateResponses: true)", deactivate_body)
+        self.assertIn("clearCandidateState()", deactivate_body)
+        self.assertIn("clearMarkedText(client: client)", deactivate_body)
+        self.assertIn("clearVisiblePredictionPanel()", deactivate_body)
+
+    def test_native_frontend_invalidates_async_responses_when_panel_is_hidden(self) -> None:
+        source = _controller_source()
+
+        hide_start = source.index("override func hidePalettes")
+        hide_end = source.index("override func activateServer")
+        hide_body = source[hide_start:hide_end]
+        self.assertIn("cancelPendingRefresh(invalidateResponses: true)", hide_body)
+        self.assertIn("clearVisiblePredictionPanel()", hide_body)
+
+        cancel_start = source.index("private func cancelPendingRefresh")
+        cancel_body = source[cancel_start:]
+        self.assertIn("pendingRefresh?.cancel()", cancel_body)
+        self.assertIn("pendingRefresh = nil", cancel_body)
+        self.assertIn("requestSeq += 1", cancel_body)
+
     def test_panel_anchor_uses_marked_text_range_while_composing(self) -> None:
         source = _controller_source()
 
@@ -78,6 +105,28 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("sessionFingerprint: String", source)
         self.assertIn("let sessionFingerprint: String?", models_source)
 
+    def test_native_bridge_prefers_http_sidecar_for_rime_requests(self) -> None:
+        source = _bridge_source()
+
+        rime_suggest_start = source.index("func rimeSuggest(request:")
+        rime_suggest_end = source.index("func rimeSelect(request:")
+        rime_suggest_body = source[rime_suggest_start:rime_suggest_end]
+        self.assertIn('postSidecar(path: "/rime-suggest"', rime_suggest_body)
+        self.assertLess(
+            rime_suggest_body.index('postSidecar(path: "/rime-suggest"'),
+            rime_suggest_body.index('"rime-suggest-json"'),
+        )
+
+        rime_select_start = source.index("func rimeSelect(request:")
+        rime_select_end = source.index("func recordCommit(")
+        rime_select_body = source[rime_select_start:rime_select_end]
+        self.assertIn('postSidecar(path: "/rime-select"', rime_select_body)
+        self.assertLess(
+            rime_select_body.index('postSidecar(path: "/rime-select"'),
+            rime_select_body.index('"rime-select-json"'),
+        )
+        self.assertIn("sidecarBaseUrl", source)
+
 
 def _controller_source() -> str:
     root = Path(__file__).resolve().parents[1]
@@ -92,6 +141,11 @@ def _panel_source() -> str:
 def _models_source() -> str:
     root = Path(__file__).resolve().parents[1]
     return (root / "macos" / "RagImeMac" / "Sources" / "RimeSidecarModels.swift").read_text(encoding="utf-8")
+
+
+def _bridge_source() -> str:
+    root = Path(__file__).resolve().parents[1]
+    return (root / "macos" / "RagImeMac" / "Sources" / "RagBridgeClient.swift").read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

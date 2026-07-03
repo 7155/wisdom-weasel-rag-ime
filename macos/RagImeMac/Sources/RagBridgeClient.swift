@@ -6,6 +6,7 @@ struct RagBridgeConfig {
     let pythonExecutable: String
     let project: String
     let topK: Int
+    let sidecarBaseUrl: String
     let configSource: String
 
     static func load() -> RagBridgeConfig {
@@ -39,12 +40,17 @@ struct RagBridgeConfig {
             ?? bundledConfig.int("topK")
             ?? bundle.object(forInfoDictionaryKey: "RagImeTopK") as? Int
             ?? 5
+        let sidecarBaseUrl = env["RAG_IME_SIDECAR_URL"]
+            ?? userConfig.string("sidecarBaseUrl")
+            ?? bundledConfig.string("sidecarBaseUrl")
+            ?? "http://127.0.0.1:8766"
         return RagBridgeConfig(
             repoRoot: repoRoot,
             dbPath: dbPath,
             pythonExecutable: python,
             project: project,
             topK: topK,
+            sidecarBaseUrl: sidecarBaseUrl,
             configSource: userConfig.source ?? bundledConfig.source ?? "environment/plist/default"
         )
     }
@@ -55,6 +61,7 @@ struct RagBridgeConfig {
             "dbPath": dbPath,
             "pythonExecutable": pythonExecutable,
             "project": project,
+            "sidecarBaseUrl": sidecarBaseUrl,
             "topK": topK,
             "configSource": configSource,
         ]
@@ -117,6 +124,8 @@ private struct RagBridgeConfigFile {
 enum RagBridgeError: LocalizedError {
     case invalidUTF8
     case processFailed(command: String, status: Int32, stderr: String)
+    case invalidURL(String)
+    case httpFailed(url: String, status: Int, body: String)
 
     var errorDescription: String? {
         switch self {
@@ -124,6 +133,10 @@ enum RagBridgeError: LocalizedError {
             return "RAG IME bridge returned non-UTF8 output"
         case .processFailed(let command, let status, let stderr):
             return "RAG IME bridge failed (\(status)): \(command)\n\(stderr)"
+        case .invalidURL(let value):
+            return "RAG IME bridge sidecar URL is invalid: \(value)"
+        case .httpFailed(let url, let status, let body):
+            return "RAG IME sidecar HTTP failed (\(status)): \(url)\n\(body)"
         }
     }
 }
@@ -167,6 +180,9 @@ final class RagBridgeClient {
     }
 
     func rimeSuggest(request: RimeSidecarRequest) throws -> RimeSidecarResponse {
+        if let response = try? postSidecar(path: "/rime-suggest", payload: request, responseType: RimeSidecarResponse.self) {
+            return response
+        }
         let payloadURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("rag-ime-rime-sidecar-\(UUID().uuidString).json")
         let encoder = JSONEncoder()
@@ -185,6 +201,9 @@ final class RagBridgeClient {
     }
 
     func rimeSelect(request: RimeSelectRequest) throws -> RimeSelectResponse {
+        if let response = try? postSidecar(path: "/rime-select", payload: request, responseType: RimeSelectResponse.self) {
+            return response
+        }
         let payloadURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("rag-ime-rime-select-\(UUID().uuidString).json")
         let encoder = JSONEncoder()
@@ -233,6 +252,48 @@ final class RagBridgeClient {
             suggestion.surfaceText,
         ])
         return try decoder.decode(ActionResponse.self, from: data)
+    }
+
+    private func postSidecar<Request: Encodable, Response: Decodable>(
+        path: String,
+        payload: Request,
+        responseType: Response.Type
+    ) throws -> Response {
+        let base = config.sidecarBaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: base + path) else {
+            throw RagBridgeError.invalidURL(base + path)
+        }
+
+        let requestData = try JSONEncoder().encode(payload)
+        var urlRequest = URLRequest(url: url, timeoutInterval: 1.6)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = requestData
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<Data, Error>!
+        URLSession.shared.dataTask(with: urlRequest) { data, response, error in
+            defer { semaphore.signal() }
+            if let error {
+                result = .failure(error)
+                return
+            }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let body = data ?? Data()
+            guard (200..<300).contains(status) else {
+                let bodyText = String(data: body, encoding: .utf8) ?? "<non-utf8 body>"
+                result = .failure(RagBridgeError.httpFailed(url: url.absoluteString, status: status, body: bodyText))
+                return
+            }
+            result = .success(body)
+        }.resume()
+
+        _ = semaphore.wait(timeout: .now() + 1.8)
+        guard let result else {
+            throw RagBridgeError.httpFailed(url: url.absoluteString, status: -1, body: "timeout")
+        }
+        let data = try result.get()
+        return try decoder.decode(responseType, from: data)
     }
 
     private func runCli(_ cliArgs: [String]) throws -> Data {
