@@ -17,7 +17,7 @@ from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.models import InputSuggestion, ModelPrediction
+from rag_ime.models import InputSuggestion, MemoryAction, ModelPrediction
 from rag_ime.predictor import OllamaPredictionConfig, OllamaPredictionProvider
 
 
@@ -347,6 +347,69 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["displayCandidates"][2]["selectionAction"], "select_rime_candidate")
         self.assertEqual(payload["displayCandidates"][2]["displayLayout"], "fallback")
         self.assertFalse(payload["cache"]["hit"])
+        self.assertEqual(payload["rankingDiagnostics"]["schemaVersion"], "rag-ime.ranking-diagnostics.v1")
+        self.assertEqual(payload["rankingDiagnostics"]["candidateCount"], len(payload["displayCandidates"]))
+        self.assertGreaterEqual(payload["rankingDiagnostics"]["sourceCounts"]["model"], 1)
+
+    def test_rime_suggest_ranking_diagnostics_explain_rag_score_breakdown(self) -> None:
+        db_path = Path(self.tmp.name) / "ranking-diagnostics.sqlite"
+        core = LocalSqliteCoreClient(db_path)
+        core.initialize()
+        adapter = InputMethodAdapter(core)
+        memory_id = adapter.commit_text(
+            "设计一个候选展示方式",
+            recent_context="Prediction-first RAG IME 需要解释候选排序",
+            project="wisdom-weasel-rag-ime",
+            tags=("rag", "memory"),
+        )
+        core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=0,
+                memory_id=memory_id,
+                action_type="accepted",
+                query="候选展示方式",
+            )
+        )
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=db_path,
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                core=core,
+                predictor=FakePredictionProvider(),
+            )
+        )
+
+        payload = {
+            "sessionId": "debug-rag-score",
+            "requestSeq": 41,
+            "rawInput": "zs",
+            "preedit": "zs",
+            "committedContext": "我想设计一个",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "forceSideCandidates": True,
+            "rimeContext": {"candidates": [{"label": "1", "text": "展示", "comment": "rime"}]},
+        }
+        response = service.rime_suggest(payload)
+
+        diagnostics = response["rankingDiagnostics"]
+        self.assertTrue(diagnostics["hasRagScoreBreakdown"])
+        self.assertEqual(diagnostics["sourceCounts"]["rag"], 1)
+        rag_diag = next(item for item in diagnostics["items"] if item["sourceType"] == "rag")
+        self.assertEqual(rag_diag["scoreBreakdown"]["schemaVersion"], "rag-ime.score-breakdown.v1")
+        self.assertEqual(rag_diag["scoreBreakdown"]["components"]["accepted"], 0.6)
+        self.assertEqual(rag_diag["rawSignalsSummary"]["acceptedCount"], 1)
+        self.assertTrue(rag_diag["topScoreComponents"])
+
+        cached_payload = dict(payload)
+        cached_payload["sessionId"] = "debug-rag-score-cache"
+        cached_payload["requestSeq"] = 42
+        cached = service.rime_suggest(cached_payload)
+        self.assertTrue(cached["cache"]["hit"])
+        self.assertTrue(cached["rankingDiagnostics"]["hasRagScoreBreakdown"])
+        self.assertEqual(cached["rankingDiagnostics"]["sourceCounts"]["rag"], 1)
 
     def test_rime_suggest_prediction_first_merge_is_debuggable_and_cache_separated(self) -> None:
         service = DebugImeService(
@@ -553,6 +616,8 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(len(report["samples"]["rimeSuggest"]), 3)
         self.assertFalse(report["samples"]["rimeSuggest"][0]["hit"])
         self.assertTrue(report["samples"]["rimeSuggest"][1]["hit"])
+        self.assertIn("sourceCounts", report["samples"]["rimeSuggest"][0])
+        self.assertIn("topCandidate", report["samples"]["rimeSuggest"][0])
         self.assertTrue(report["samples"]["suggest"][0]["topSuggestions"])
 
     def test_commit_and_action_are_wired_for_debug_page(self) -> None:

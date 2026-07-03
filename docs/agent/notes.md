@@ -3391,3 +3391,23 @@ Verification:
 Next:
 - Commit and push.
 - Next Felix P2/P1 candidates: expose score breakdown in doctor/debug CLI, then improve MLX candidateization/prompt flow.
+
+### 2026-07-03 13:46 CST
+Problem:
+- Continue Felix-first work under the no-real-input-source-switch boundary.
+- The previous score breakdown existed only inside candidate metadata, so debug/doctor still made it hard to see why RAG/memory candidates appeared or ranked ahead/behind.
+
+Changes:
+- `/rime-suggest` now attaches `rankingDiagnostics` with candidate counts, source counts, top candidate summary, model `candidate_scores` availability, and RAG `score_breakdown` details.
+- Cached and in-flight `/rime-suggest` responses keep the same diagnostics after session/request metadata refresh.
+- `cache-probe` samples now include `sourceCounts`, `hasRagScoreBreakdown`, and a compact top-candidate summary.
+- `scripts/doctor_squirrel_integration.sh` now prints a RAG ranking diagnostics line when the sidecar exposes the payload. This is observability only, not a new install failure gate.
+
+Verification:
+- Focused tests passed: `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest -v tests.test_debug_server tests.test_doctor_squirrel_integration tests.test_rime_sidecar.RimeSidecarTests.test_rag_display_candidate_exposes_alpha_style_score_breakdown` ran 48 tests OK.
+- `python3 -m py_compile rag_ime/debug_server.py rag_ime/cli.py rag_ime/rime_sidecar.py` passed.
+- `git diff --check` passed.
+
+Next:
+- Run full suite, then commit and push.
+- Continue next Felix-style item after this: MLX prompt/candidateization, while keeping real foreground input-source testing paused until explicitly controlled.

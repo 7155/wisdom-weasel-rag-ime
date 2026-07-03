@@ -217,25 +217,33 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
             }
             for index in range(5)
         ]
+        rag_candidates = [
+            {
+                "label": str(index + 6),
+                "selectionKey": str(index + 6),
+                "selectionRank": index + 6,
+                "text": f"记忆句子{index + 1}",
+                "insertText": f"记忆句子{index + 1}",
+                "sourceType": "rag",
+                "selectionAction": "commit_side_candidate",
+                "sourceIndex": index,
+                "displayLayout": "block",
+                "displayLane": "memory",
+                "metadata": {
+                    "score_breakdown": {
+                        "schemaVersion": "rag-ime.score-breakdown.v1",
+                        "total": 12.3 - index,
+                        "components": {"fts5": 9.0 - index, "accepted": 0.6},
+                        "rawSignals": {"acceptedCount": 1, "effectiveFrequency": 2},
+                    }
+                },
+            }
+            for index in range(3)
+        ]
         self._send_json(
             {
                 "schemaVersion": "rag-ime.rime-sidecar.v1",
-                "displayCandidates": model_candidates
-                + [
-                    {
-                        "label": str(index + 6),
-                        "selectionKey": str(index + 6),
-                        "selectionRank": index + 6,
-                        "text": f"记忆句子{index + 1}",
-                        "insertText": f"记忆句子{index + 1}",
-                        "sourceType": "rag",
-                        "selectionAction": "commit_side_candidate",
-                        "sourceIndex": index,
-                        "displayLayout": "block",
-                        "displayLane": "memory",
-                    }
-                    for index in range(3)
-                ],
+                "displayCandidates": model_candidates + rag_candidates,
                 "modelPredictions": [
                     {
                         "text": item["text"],
@@ -247,6 +255,22 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
                     }
                     for index, item in enumerate(model_candidates)
                 ],
+                "rankingDiagnostics": {
+                    "schemaVersion": "rag-ime.ranking-diagnostics.v1",
+                    "candidateCount": 8,
+                    "sideCandidateCount": 8,
+                    "rimeCandidateCount": 0,
+                    "sourceCounts": {"model": 5, "rag": 3},
+                    "hasRagScoreBreakdown": True,
+                    "hasModelCandidateScores": bool(self.__class__.model_metadata.get("candidate_scores")),
+                    "topCandidate": {
+                        "selectionKey": "1",
+                        "selectionRank": 1,
+                        "text": "模型候选1",
+                        "sourceType": "model",
+                        "displayLane": "model",
+                    },
+                },
                 "mergePolicy": {
                     "rimeFirst": False,
                     "sideFirst": True,
@@ -481,6 +505,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[OK] candidate contract: model inline + rag block + shared selection keys passed", result.stdout)
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("[OK] model generation path: MLX model candidates available", result.stdout)
+        self.assertIn("[OK] RAG ranking diagnostics available", result.stdout)
         self.assertIn("[OK] sidecar LaunchAgent plist: matches current sidecar provider/model env", result.stdout)
         self.assertIn("[OK] MLX predictor LaunchAgent plist: matches text-only MLX model", result.stdout)
         self.assertIn("[OK] tryout runtime path has launchd or healthy HTTP sidecar", result.stdout)

@@ -314,6 +314,10 @@ Current migrated pieces:
 - `rag_ime/suggestion_compiler.py` passes the breakdown into suggestion
   metadata, and `displayCandidates[*].metadata.score_breakdown` exposes it to
   the sidecar/debug path.
+- `rag_ime/debug_server.py` now lifts the same data into `/rime-suggest`
+  `rankingDiagnostics`, cache-probe samples, and Squirrel doctor summaries, so
+  RAG/LLM/memory source counts and top score components can be checked without
+  enlarging the IME candidate window.
 - This ports Felix Alpha's score-breakdown diagnostic idea without porting the
   Windows DLL, ONNX runtime, or Lua filter directly.
 

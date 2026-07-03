@@ -2490,3 +2490,26 @@ Verification:
 Next steps:
 - Commit and push.
 - Follow-up: surface this breakdown through doctor/debug endpoints and continue Felix-style MLX candidateization.
+
+### 2026-07-03
+Topic:
+- Exposed Alpha-style RAG ranking diagnostics through debug and doctor surfaces.
+
+Findings:
+- `/rime-suggest` was already carrying `score_breakdown` inside RAG display-candidate metadata, but operators had to inspect raw nested candidates.
+- `cache-probe` and Squirrel doctor reported candidate counts, model mode, guard state, and backend details, but not why RAG/memory candidates were ranked.
+
+Changes:
+- Added `rankingDiagnostics` to `/rime-suggest`, including source counts, side/Rime counts, top candidate summary, per-candidate `scoreBreakdown`, top scoring components, raw signal summary, and MLX candidate score previews.
+- Cache hit and in-flight response paths retain diagnostics after refreshing session/request metadata.
+- `cache-probe` samples now include `sourceCounts`, `hasRagScoreBreakdown`, and `topCandidate`.
+- Squirrel doctor now prints a RAG ranking diagnostics line when available without turning absence into a failure gate.
+
+Verification:
+- Focused debug/doctor/sidecar tests passed: 48 tests OK.
+- `py_compile` for touched Python entrypoints passed.
+- `git diff --check` passed.
+
+Next steps:
+- Run the full suite, commit, and push.
+- Continue with Felix-style MLX prompt/candidateization after this observability patch.
