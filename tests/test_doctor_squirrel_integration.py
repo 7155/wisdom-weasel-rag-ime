@@ -356,9 +356,9 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             "[OK] sidecar predictor: local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true",
             result.stdout,
         )
-        self.assertIn("doctor_latency_budget_ms: 350", result.stdout)
+        self.assertIn("doctor_latency_budget_ms: 800", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.suggest_payloads)
-        self.assertTrue(all(payload.get("latencyBudgetMs") == 350 for payload in _DoctorSidecarHandler.suggest_payloads))
+        self.assertTrue(all(payload.get("latencyBudgetMs") == 800 for payload in _DoctorSidecarHandler.suggest_payloads))
         main_probe = _DoctorSidecarHandler.suggest_payloads[0]
         self.assertEqual(main_probe.get("rawInput"), "")
         self.assertEqual(main_probe.get("queryBasis"), None)

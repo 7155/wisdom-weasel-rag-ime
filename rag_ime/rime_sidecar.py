@@ -449,7 +449,7 @@ def suggest_rag_with_latency_budget(
 
 
 def _realtime_rag_adapter(*, adapter: InputMethodAdapter, core: CoreClient, budget_ms: int) -> InputMethodAdapter:
-    if budget_ms > 180 or not isinstance(core, LocalSqliteCoreClient):
+    if budget_ms > _REALTIME_MODEL_CONTEXT_BUDGET_MS or not isinstance(core, LocalSqliteCoreClient):
         return adapter
     return InputMethodAdapter(
         LocalSqliteCoreClient(
@@ -599,8 +599,6 @@ def run_side_lanes_with_latency_budget(
 
 def _rag_lane_budget_for_request(latency_budget_ms: int) -> int:
     budget = max(0, int(latency_budget_ms))
-    if budget <= _REALTIME_MODEL_CONTEXT_BUDGET_MS:
-        return min(budget, 100)
     return budget
 
 

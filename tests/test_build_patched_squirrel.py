@@ -353,7 +353,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 8",
-                "  latency_budget_ms: 350",
+                "  latency_budget_ms: 800",
                 "  debounce_ms: 40",
                 "  timeout_ms: 1200",
                 "  frontend_trace: true",

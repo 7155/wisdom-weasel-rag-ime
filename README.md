@@ -191,6 +191,19 @@ scripts/install_sidecar_launch_agent.sh
 
 The installer copies the runtime Python package into `~/Library/Application Support/RagIme/app` and stores the default sidecar database at `~/Library/Application Support/RagIme/rag-ime.sqlite`. This keeps the login service independent of the repository path and avoids launchd startup issues on external volumes.
 
+For the current local-first MLX route, restart both the resident Qwen MLX
+predictor and the sidecar with one user-level command:
+
+```bash
+scripts/restart_rag_ime_runtime.sh
+```
+
+This does not need `sudo`. It defaults to
+`../models/mlx/Qwen3-0.6B-4bit`, enables prompt cache, points the sidecar at
+`127.0.0.1:8767`, enables the local vector baseline, and uses an 800ms
+Squirrel-side budget so RAG/memory candidates are not dropped before the local
+SQLite query returns.
+
 If the IME should use a local model lane at login, export the predictor
 variables before running the installer. The installer writes a whitelist of
 `RAG_IME_PREDICTOR_*`, embedding/vector, history-context, and cache variables

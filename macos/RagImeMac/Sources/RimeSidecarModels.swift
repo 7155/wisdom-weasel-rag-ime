@@ -31,7 +31,7 @@ struct RimeSidecarRequest: Codable {
         project: String? = nil,
         app: String? = "RagImeMac",
         idleMs: Int = 0,
-        latencyBudgetMs: Int = 300,
+        latencyBudgetMs: Int = 800,
         forceSideCandidates: Bool = false,
         predictionFirstMerge: Bool = true,
         maxVisibleCandidates: Int,

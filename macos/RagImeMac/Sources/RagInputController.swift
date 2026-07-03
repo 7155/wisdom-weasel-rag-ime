@@ -616,7 +616,7 @@ final class RagInputController: IMKInputController {
             project: bridge.project,
             app: "RagImeMac",
             idleMs: idleMs,
-            latencyBudgetMs: 300,
+            latencyBudgetMs: 800,
             forceSideCandidates: forceSideCandidates,
             predictionFirstMerge: true,
             maxVisibleCandidates: 8,
