@@ -2580,3 +2580,25 @@ Verification:
 - Focused tests passed: 74 tests OK.
 - Full suite passed: 356 tests OK.
 - Real local 0.6B/1.7B MLX matrix completed without switching the macOS input source.
+
+### 2026-07-03
+Topic:
+- Migrated Felix-style user feedback for side-candidate selections.
+
+Findings:
+- Felix Alpha rerank treats committed text as positive feedback and only skipped higher-ranked candidates as conservative negative feedback.
+- This repo already recorded selected side candidates as input events, but model/recent candidates without a source memory id did not get accepted feedback.
+- The selected model event was retrievable internally after adding query context, but `SuggestionCompiler` still skipped `source:model` rows, so it never reached the final IME candidate list.
+
+Changes:
+- Added committed-event accepted feedback for selected side candidates when no original RAG/memory action exists.
+- Indexed selected side candidates with query plus recent context.
+- Added `sidecar-selected` tags and allowed those selected rows through the compiler while still filtering unselected generated side rows.
+
+Verification:
+- Focused rime-select/debug tests passed: 9 tests OK.
+- Sidecar/debug/local SQLite tests passed: 122 tests OK.
+
+Next steps:
+- Run full suite, commit, and push.
+- Keep 1.7B MLX as a later optional quality lane; do not replace the 0.6B realtime default yet.

@@ -3494,3 +3494,25 @@ Verification:
 Next:
 - Commit and push.
 - Keep 0.6B as realtime default; test 1.7B later as an opt-in slow lane after the live panel flow is stable.
+
+### 2026-07-03 18:48 CST
+Problem:
+- User emphasized that side candidates must become useful personal input memory, not stale clipboard-like snippets.
+- Felix/Wisdom-Weasel Alpha rerank path uses committed text as positive feedback and only treats higher skipped candidates as conservative negative feedback.
+- In this repo, selecting a model side candidate wrote an input event, but if the candidate had no original RAG/memory source id it did not receive accepted feedback; additionally `source:model` rows were filtered out by `SuggestionCompiler`, so the selected model phrase could not resurface as a memory candidate.
+
+Changes:
+- `record_rime_side_candidate_selection()` now records accepted feedback on the newly committed event when no source RAG/memory action exists.
+- Selection memory context now includes the semantic query, so selected side candidates are retrievable by later SQLite/FTS queries instead of being indexed only under a weak recent-context string.
+- Real user-selected side candidates are tagged with `sidecar-selected`.
+- `SuggestionCompiler` still skips generated `source:model` / `source:rag` intermediate rows, but allows rows that were actually selected by the user.
+- Added regression coverage showing a selected model candidate is later ranked ahead of a generic candidate, with `accepted:1` visible in the reason.
+
+Verification:
+- Focused rime-select/debug tests passed: 9 tests OK.
+- Sidecar/debug/local SQLite tests passed: 122 tests OK.
+- `py_compile` passed for touched runtime modules.
+
+Next:
+- Run full suite, commit, and push.
+- Keep Qwen3-0.6B as realtime default; keep Qwen3-1.7B as a later opt-in slow/quality lane after the live panel flow is stable.
