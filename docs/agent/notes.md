@@ -3436,3 +3436,36 @@ Verification:
 Next:
 - Commit and push.
 - Continue with real sidecar/runtime candidate quality probes before touching foreground input-source switching again.
+
+### 2026-07-03 15:03 CST
+Problem:
+- User provided local mlx-community models under `/Volumes/undo 4t/git/learnA/models/mlx/` and asked to stop using Ollama, make MLX/RAG/memory output real, and avoid switching the crashing foreground input source.
+- Runtime probes showed the repo code and installed LaunchAgent copy can diverge, so service health alone is not enough; after code changes the sidecar/MLX LaunchAgents must be reinstalled or restarted.
+
+Findings:
+- Qwen3-0.6B/1.7B/4B are text-only `Qwen3ForCausalLM` models with tokenizer chat templates. They were being treated as base-completion models because their path did not contain `chat` or `instruct`, which caused generic or garbled IME candidates.
+- Qwen3.5-4B/9B are multimodal-style `Qwen3_5ForConditionalGeneration` MLX repos and were much slower for this IME path.
+- Practical default for now is `Qwen3-0.6B-4bit` with prompt cache: roughly 400ms model lane in sidecar probes, while 1.7B/4B/9B were too slow for the current typing loop.
+- Prefix-constrained prediction failed when the model received expanded history text like `历史参考(禁止复读)` / `当前上下文:`. With clean on-screen context plus short pinyin prefix, the same MLX provider returned usable candidates.
+- The old project-specific `com.rag-ime.ollama` LaunchAgent was still running even though sidecar had switched to MLX; it was unloaded and its plist removed to avoid resource use and diagnosis noise.
+
+Changes:
+- MLX model inspection now reads tokenizer chat-template metadata and routes Qwen3 chat-template models through `chat-json` instead of base-completion mode.
+- Dynamic MLX prompts now include hard constraints for pinyin-constrained prediction and Rime reorder requests.
+- Candidate parsing now rejects mojibake replacement characters, low-value short filler such as `测试/分析/假设...`, and splits concatenated Rime candidates such as `设计手机世界数据` back into valid candidate entries.
+- `pinyin_constrained_prediction` now sends the model clean explicit context (`explicit-pinyin-constrained`) while keeping RAG retrieval independent.
+- Reinstalled `com.rag-ime.mlx-predictor` and `com.rag-ime.sidecar` with MLX 0.6B and local vector retrieval enabled. No real input-source switch was performed.
+
+Verification:
+- `/health` shows sidecar provider `local-mlx`, model `/Volumes/undo 4t/git/learnA/models/mlx/Qwen3-0.6B-4bit`, prompt cache enabled, active local vectors `5037`.
+- `/health` on MLX predictor shows `promptMode=chat-json`, `textOnly=true`, `baseCompletion=false`.
+- HTTP `/rime-suggest` post-commit probe for `我想把这个输入法`: model lane returned `把流程跑通`, `接入本地记忆`; RAG returned historical candidates; memory returned user preference candidates.
+- HTTP `/rime-suggest` pinyin probe for `sj` with Wanxiang/Rime candidates: model lane used `explicit-pinyin-constrained` and returned `设计`; RAG returned `设计一个候选展示方式`.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests` passed: 331 tests OK.
+- `python3 -m py_compile rag_ime/*.py scripts/*.py` passed.
+- `git diff --check` passed.
+
+Next:
+- Commit and push this MLX runtime/candidateization batch.
+- Foreground IME validation remains paused until the user explicitly wants a controlled test, because switching apps/input sources was reported to crash other apps.
+- Next product work should target the actual macOS candidate panel lifecycle/positioning and better multi-candidate MLX output under the same no-switch CLI-first debug boundary.

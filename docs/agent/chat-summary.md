@@ -2535,3 +2535,29 @@ Verification:
 Next steps:
 - Commit and push this batch.
 - Continue with sidecar/runtime candidate quality probes; keep real input-source switching paused until controlled manual validation.
+
+### 2026-07-03
+Topic:
+- MLX Qwen3 default model and sidecar runtime validation without switching the real input source.
+
+Findings:
+- Local mlx-community models are available under `/Volumes/undo 4t/git/learnA/models/mlx/`.
+- Qwen3-0.6B/1.7B/4B are text-only chat-template models; Qwen3.5-4B/9B repos are slower and include vision-style config.
+- Qwen3-0.6B-4bit is the current default because it gives usable sidecar model-lane latency around 400ms with prompt cache.
+- Prefix-constrained prediction must keep model context clean; expanded RAG/history wrapper text makes the 0.6B model produce process text instead of candidates.
+
+Changes:
+- Qwen3 chat-template MLX models now use `chat-json` instead of mistaken base-completion mode.
+- MLX prompts and candidate parsing now enforce pinyin/Rime constraints, split concatenated Rime candidates, and filter mojibake/filler.
+- Sidecar now uses `explicit-pinyin-constrained` model context for active pinyin correction.
+- Reinstalled MLX predictor and sidecar LaunchAgents against `Qwen3-0.6B-4bit`; removed the old project Ollama LaunchAgent.
+
+Verification:
+- `/health` confirms sidecar `local-mlx`, prompt cache, text-only Qwen3-0.6B, and 5037 active local vectors.
+- HTTP post-commit probe produced model + RAG + memory candidates together.
+- HTTP `sj` pinyin probe produced a model candidate plus RAG candidate without switching macOS input sources.
+- Full test suite passed: 331 tests OK; `py_compile` and `git diff --check` passed.
+
+Next steps:
+- Commit and push.
+- Continue frontend/panel lifecycle debugging only through controlled tests; do not switch the real input source until the crash risk is isolated.
