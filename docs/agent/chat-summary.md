@@ -2437,3 +2437,31 @@ Verification:
 Next steps:
 - Keep real input-source switching disabled until safe manual testing is agreed, because the user reported app crashes when switching.
 - Next engineering step is controlled Squirrel/frontend trace verification, not more HTTP-only proof.
+
+### 2026-07-03
+Topic:
+- Squirrel frontend lifecycle and observability hardening under the no-GUI-switch boundary.
+
+Findings:
+- The remaining patch set targets stale panels, number-key interception, duplicate/stale input-method app diagnosis, and proof of which Squirrel/RAG-IME process actually launched.
+- This directly addresses the user's reports that panels linger with no input, 1-6 can be trapped, and it is hard to know whether macOS loaded the latest app.
+
+Changes:
+- Squirrel patch now schedules display expiry, clears expired panels, traces `panel_expired_cleared`, and cancels expiry work when display state is cleared.
+- Side-candidate number-key routing now requires a live display session and candidate fingerprint match; raw English candidates are not intercepted.
+- Workspace preparation injects `traceRagImeProcessEvent` into `Main.swift`, producing a local process trace for bundle path, bundle id, connection name, and input source id.
+- Doctor duplicate-app messages now use the configured app basename instead of hard-coded `Squirrel.app`.
+- Added `scripts/install_frontend_launch_agent.sh` with dry-run test coverage for later controlled frontend process testing.
+
+Verification:
+- 27 Squirrel build/doctor/LaunchAgent/prepare tests passed.
+- 35 frontend trace/native input/prediction lifecycle tests passed.
+- 47 Rime sidecar tests passed.
+- Full suite passed: 322 tests.
+- `python3 -m py_compile rag_ime/*.py scripts/*.py` passed.
+- `git diff --check` passed.
+- The mistakenly loaded frontend LaunchAgent was immediately unloaded and removed; no real input-source switching was performed.
+
+Next steps:
+- Commit and push this frontend lifecycle batch.
+- Real foreground validation remains pending and must be explicitly controlled with the user.

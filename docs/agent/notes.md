@@ -3339,3 +3339,27 @@ Next:
 - Do not switch/select the real macOS input source until the crash risk is intentionally accepted by the user.
 - Foreground trace still needs controlled manual testing; do not treat HTTP success as real IME success until the candidate panel, number keys, and app-crash behavior are verified.
 - Continue P0 frontend/Squirrel validation: candidate panel position, auto-hide, no stale panel, number-key routing, English/code passthrough, and real `sidecar_response_applied -> side_candidate_commit` trace.
+
+### 2026-07-03 12:58 CST
+Problem:
+- User granted Full Access, but the current safety boundary remains: do not switch the real input source or run uncontrolled GUI typing because previous foreground switching crashed Edge/Ghostty/Codex.
+
+Findings:
+- Remaining uncommitted work was focused on Squirrel frontend observability and panel lifecycle, not on another sidecar-only backend tweak.
+- The Squirrel patch now has display expiry work items, display-state fingerprints, and `panel_expired_cleared` trace events so stale prediction panels can be cleared instead of trapping number keys.
+- Number-key side-candidate routing is guarded by the live display session, candidate session fingerprint, and non-raw-English source type.
+- `prepare_squirrel_workspace.sh` adds `squirrel-process.jsonl` process trace hooks in `Main.swift`, which helps prove which input-method app macOS actually loaded.
+- A new frontend LaunchAgent installer exists for later testing, but it should be used with dry-run until controlled foreground validation is allowed.
+
+Verification:
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest -v tests.test_build_patched_squirrel tests.test_doctor_squirrel_integration tests.test_launch_agent_script tests.test_prepare_squirrel_workspace` passed: 27 tests OK.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest -v tests.test_squirrel_frontend_trace tests.test_native_input_controller tests.test_prediction_first tests.test_prediction_manager` passed: 35 tests OK.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest -v tests.test_rime_sidecar` passed: 47 tests OK.
+- `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests` passed: 322 tests OK.
+- `python3 -m py_compile rag_ime/*.py scripts/*.py` passed.
+- `git diff --check` passed.
+- A mistaken non-dry-run frontend LaunchAgent install was immediately booted out and the generated plist was removed; `launchctl print gui/$(id -u)/com.rag-ime.frontend` confirmed the service was not loaded.
+
+Next:
+- Commit the frontend lifecycle/observability patch and push.
+- Still do not claim real IME usability until a controlled foreground test verifies panel position, auto-hide, number-key commit, and no app crash.

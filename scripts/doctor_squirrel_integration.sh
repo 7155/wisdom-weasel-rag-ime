@@ -30,7 +30,9 @@ SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmetho
 REFRESH_INPUT_SOURCE="${RAG_IME_DOCTOR_REFRESH_INPUT_SOURCE:-1}"
 REQUIRE_PATCHED_APP_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_PATCHED_APP:-}"
 REQUIRE_PATCHED_APP="${REQUIRE_PATCHED_APP_CONFIGURED:-0}"
-SQUIRREL_DUPLICATE_APP_CANDIDATES="${RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES:-$HOME/Library/Input Methods/Squirrel.app:/Library/Input Methods/Squirrel.app}"
+SQUIRREL_APP_BASENAME="$(basename "$SQUIRREL_APP")"
+DEFAULT_DUPLICATE_APP_CANDIDATES="$HOME/Library/Input Methods/$SQUIRREL_APP_BASENAME:/Library/Input Methods/$SQUIRREL_APP_BASENAME"
+SQUIRREL_DUPLICATE_APP_CANDIDATES="${RAG_IME_SQUIRREL_DUPLICATE_APP_CANDIDATES:-$DEFAULT_DUPLICATE_APP_CANDIDATES}"
 REQUIRE_FRONTEND_TRACE="${RAG_IME_DOCTOR_REQUIRE_FRONTEND_TRACE:-0}"
 FRONTEND_TRACE_WAIT="${RAG_IME_DOCTOR_FRONTEND_TRACE_WAIT:-0}"
 FRONTEND_TRACE_LOG="${RAG_IME_SQUIRREL_FRONTEND_TRACE_LOG:-$HOME/Library/Logs/RagIme/squirrel-frontend.jsonl}"
@@ -144,18 +146,18 @@ check_duplicate_squirrel_apps() {
     [[ "$bundle_id" == "$configured_bundle_id" ]] || continue
     if ! squirrel_app_has_mixed_frontend_trace "$candidate"; then
       found_stale=1
-      require_or_warn "$REQUIRE_PATCHED_APP" "stale Squirrel.app with same bundle id lacks current RAG-IME frontend patch: $candidate; replace it with the patched user app using scripts/replace_system_squirrel_app.sh"
+      require_or_warn "$REQUIRE_PATCHED_APP" "stale input method app with same bundle id lacks current RAG-IME frontend patch: $candidate; replace or remove it before foreground typing validation"
       continue
     fi
     candidate_hash="$(app_binary_hash "$candidate")"
     if [[ -n "$configured_hash" && -n "$candidate_hash" && "$candidate_hash" != "$configured_hash" ]]; then
       found_stale=1
-      require_or_warn "$REQUIRE_PATCHED_APP" "duplicate Squirrel.app with same bundle id differs from configured patched app: $candidate; replace/remove it to avoid macOS loading an older input method binary"
+      require_or_warn "$REQUIRE_PATCHED_APP" "duplicate input method app with same bundle id differs from configured patched app: $candidate; replace/remove it to avoid macOS loading an older input method binary"
     fi
   done
 
   if [[ "$found_stale" == "0" ]]; then
-    ok "no stale same-bundle Squirrel.app detected in duplicate app candidates"
+    ok "no stale same-bundle input method app detected in duplicate app candidates"
   fi
 }
 

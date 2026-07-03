@@ -10,6 +10,47 @@ from pathlib import Path
 
 
 class LaunchAgentScriptTests(unittest.TestCase):
+    def test_install_frontend_launch_agent_dry_run_pins_user_app(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-launchd-test-") as tmp:
+            home = Path(tmp)
+            app = home / "Library" / "Input Methods" / "RAG-IME.app"
+            executable = app / "Contents" / "MacOS" / "Squirrel"
+            executable.parent.mkdir(parents=True)
+            (app / "Contents" / "Info.plist").write_text(
+                "<plist><dict><key>CFBundleIdentifier</key><string>im.rag-ime.inputmethod.RagIme</string></dict></plist>",
+                encoding="utf-8",
+            )
+            executable.write_text("#!/usr/bin/env bash\nsleep 60\n", encoding="utf-8")
+            executable.chmod(0o755)
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "RAG_IME_FRONTEND_LAUNCH_AGENT_DRY_RUN": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "install_frontend_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.frontend.plist"
+            with plist_path.open("rb") as fh:
+                payload = plistlib.load(fh)
+
+        self.assertIn(str(plist_path), result.stdout)
+        self.assertIn("dry-run", result.stdout)
+        self.assertEqual(payload["Label"], "com.rag-ime.frontend")
+        self.assertTrue(payload["RunAtLoad"])
+        self.assertTrue(payload["KeepAlive"])
+        self.assertEqual(payload["LimitLoadToSessionType"], "Aqua")
+        self.assertEqual(payload["ProgramArguments"], [str(executable)])
+        self.assertTrue(payload["WorkingDirectory"].endswith("RAG-IME.app/Contents/MacOS"))
+        self.assertTrue(payload["StandardOutPath"].endswith("Logs/RagIme/frontend.out.log"))
+        self.assertTrue(payload["StandardErrorPath"].endswith("Logs/RagIme/frontend.err.log"))
+
     def test_install_sidecar_launch_agent_dry_run_writes_plist(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-test-") as tmp:

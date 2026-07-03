@@ -149,7 +149,100 @@ app_delegate_path.write_text(app_delegate, encoding="utf-8")
 PY
 }
 
+add_process_trace_hooks() {
+  local main_file="$SQUIRREL_WORKDIR/sources/Main.swift"
+  local controller_file="$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift"
+  if [[ ! -f "$main_file" ]]; then
+    return 0
+  fi
+
+  "$PYTHON_EXECUTABLE" - "$main_file" "$controller_file" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+main_path = Path(sys.argv[1])
+controller_path = Path(sys.argv[2])
+main = main_path.read_text(encoding="utf-8")
+
+trace_func = r'''  static func traceRagImeProcessEvent(_ event: String, fields: [String: Any] = [:]) {
+    var payload = fields
+    payload["event"] = event
+    payload["schemaVersion"] = "rag-ime.squirrel-process-trace.v1"
+    payload["timestampMs"] = Int(Date().timeIntervalSince1970 * 1000)
+    payload["pid"] = ProcessInfo.processInfo.processIdentifier
+    payload["arguments"] = CommandLine.arguments
+    payload["bundlePath"] = Bundle.main.bundleURL.path
+    payload["bundleIdentifier"] = Bundle.main.bundleIdentifier ?? ""
+    payload["connectionName"] = Bundle.main.object(forInfoDictionaryKey: "InputMethodConnectionName") as? String ?? ""
+    payload["inputSourceID"] = Bundle.main.object(forInfoDictionaryKey: "TISInputSourceID") as? String ?? ""
+
+    guard JSONSerialization.isValidJSONObject(payload) else { return }
+    do {
+      let logDirectory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/RagIme", isDirectory: true)
+      try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+      let logFile = logDirectory.appendingPathComponent("squirrel-process.jsonl")
+      var data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+      data.append(0x0a)
+      if !FileManager.default.fileExists(atPath: logFile.path) {
+        FileManager.default.createFile(atPath: logFile.path, contents: nil)
+      }
+      let handle = try FileHandle(forWritingTo: logFile)
+      defer { try? handle.close() }
+      try handle.seekToEnd()
+      handle.write(data)
+    } catch {
+      print("RAG IME process trace failed: \(error)")
+    }
+  }
+'''
+
+if "traceRagImeProcessEvent" not in main:
+    needle = '  static let logDir = FileManager.default.temporaryDirectory.appending(component: "rime.squirrel", directoryHint: .isDirectory)\n'
+    if needle not in main:
+        raise SystemExit("Main.swift did not contain expected logDir line for RAG-IME process tracing")
+    main = main.replace(needle, needle + "\n" + trace_func + "\n", 1)
+
+replacements = [
+    (
+        '      let connectionName = main.object(forInfoDictionaryKey: "InputMethodConnectionName") as! String\n'
+        '      _ = IMKServer(name: connectionName, bundleIdentifier: main.bundleIdentifier!)\n',
+        '      let connectionName = main.object(forInfoDictionaryKey: "InputMethodConnectionName") as! String\n'
+        '      traceRagImeProcessEvent("before_imk_server", fields: [\n'
+        '        "connectionName": connectionName,\n'
+        '        "bundleIdentifier": main.bundleIdentifier ?? "",\n'
+        '      ])\n'
+        '      _ = IMKServer(name: connectionName, bundleIdentifier: main.bundleIdentifier!)\n'
+        '      traceRagImeProcessEvent("after_imk_server")\n',
+    ),
+    (
+        '      app.run()\n'
+        '      print("Squirrel is quitting...")\n',
+        '      traceRagImeProcessEvent("before_app_run")\n'
+        '      app.run()\n'
+        '      print("Squirrel is quitting...")\n'
+        '      traceRagImeProcessEvent("after_app_run")\n',
+    ),
+]
+for old, new in replacements:
+    if old in main and new not in main:
+        main = main.replace(old, new, 1)
+main_path.write_text(main, encoding="utf-8")
+
+if controller_path.is_file():
+    controller = controller_path.read_text(encoding="utf-8")
+    controller = controller.replace(
+        '    guard ragImeSidecarClient?.frontendTrace == true || event == "sidecar_not_configured" else { return }\n',
+        '',
+    )
+    controller_path.write_text(controller, encoding="utf-8")
+PY
+}
+
 make_input_source_prefix_brandable
+add_process_trace_hooks
 git -C "$SQUIRREL_WORKDIR" diff --check
 
 require_patch_file() {
@@ -192,6 +285,7 @@ require_patch_text "sources/SquirrelPanel.swift" "candidateSeparator" "mixed inl
 require_patch_text "sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal panel layout for LLM inline candidates"
 require_patch_text "sources/SquirrelPanel.swift" "traceRagImePanelTextLayout" "actual frontend mixed-layout trace"
 require_patch_text "sources/Main.swift" "static let appDir = Bundle.main.bundleURL" "dynamic input-source registration bundle path"
+require_patch_text "sources/Main.swift" "traceRagImeProcessEvent" "foreground process trace hook"
 if [[ -f "$SQUIRREL_WORKDIR/sources/InputSource.swift" ]]; then
   require_patch_text "sources/InputSource.swift" "static var inputSourceIDPrefix: String" "brandable input-source prefix"
 fi
