@@ -314,10 +314,23 @@ RAG_IME_INPUT_SOURCE_BUNDLE_ID=im.rag-ime.inputmethod.RagIme \
   scripts/check_macos_input_source.sh im.rag-ime.inputmethod.RagIme.Hans
 ```
 
-The branded install does not directly repair macOS input-source preference
-plists or auto-select the input source by default. Add `RAG-IME - Simplified`
-from System Settings, then switch from the macOS input menu. The old direct
-preference repair and automatic selection paths are opt-in debug actions:
+The branded install refreshes LaunchServices registration for the branded bundle
+and calls Squirrel's input-source registration entrypoint. If System Settings or
+the input menu still shows stale blank/duplicate rows, rerun the registration
+refresh against the installed app:
+
+```bash
+RAG_IME_SQUIRREL_APP="$HOME/Library/Input Methods/RAG-IME.app" \
+RAG_IME_SQUIRREL_BUNDLE_ID=im.rag-ime.inputmethod.RagIme \
+RAG_IME_SQUIRREL_INPUT_SOURCE_ID=im.rag-ime.inputmethod.RagIme.Hans \
+  scripts/refresh_squirrel_input_source_registration.sh
+```
+
+The branded install does not force macOS preference plist repair or auto-select
+the input source by default. If `thirdPartyEnabled=false`, add
+`RAG-IME - Simplified` from System Settings, then switch from the macOS input
+menu. The old direct preference repair and automatic selection paths are opt-in
+debug actions:
 
 ```bash
 RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR=1 \
