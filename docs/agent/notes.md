@@ -7,6 +7,31 @@
 
 ## Log
 
+### 2026-07-04 00:47 CST
+Problem:
+- User reported the installed input method still cannot show useful LLM/RAG candidates.
+- Current `curl` checks showed `127.0.0.1:8766` and `127.0.0.1:8767` were not listening, so real LLM/RAG could not appear regardless of frontend code.
+
+Findings:
+- The copied real DB has useful data: `input_events=10032`, `memory_fts=10076`, `memory_vectors=5037`, `phrase_stats=9941`.
+- Codex sandbox cannot `launchctl kickstart`, bind local ports, or access Metal; direct MLX import fails with `No Metal device available`.
+- Offline DB probe proved the RAG path works when given enough budget: with 800ms, `rime-suggest-json` returned relevant memory/RAG candidates such as `LLM、RAG 和记忆候选必须同时可见并且都能用数字键提交` and `设计一个候选展示方式`.
+- The previous 350ms foreground budget often made RAG time out around 350-370ms and return an empty candidate list, matching the user's "RAG 没生效" screenshots.
+
+Changes:
+- Realtime RAG no longer caps itself to 100ms inside a 350ms request; it can use the request budget while still running in parallel with the model lane.
+- Realtime local SQLite RAG disables vector deep retrieval for budgets up to the realtime model context budget, keeping the typing path on the faster FTS/rule layer.
+- Raised Squirrel/native sidecar candidate budget defaults to 800ms for demo usability.
+- Added `scripts/restart_rag_ime_runtime.sh` to restart the user-level MLX predictor and sidecar with Qwen3-0.6B, prompt cache, local vector baseline, and MLX predictor env.
+
+Verification:
+- Focused Rime sidecar tests passed for mid-budget RAG and explicit model context.
+- Squirrel build config, sidecar config, doctor, and native controller tests passed: 39 tests OK.
+- Real copied-DB CLI probe with 800ms returned 5 RAG/memory display candidates.
+
+Pitfalls:
+- Codex cannot start the real MLX service in this sandbox; the user must run the restart script from a normal Terminal session.
+
 ### 2026-07-03 20:47 CST
 Problem:
 - User wants vibecode-style English/code input to be reliable before the LLM/RAG layer is judged usable.

@@ -1,5 +1,28 @@
 # Chat Summary
 
+### 2026-07-04
+Topic:
+- Diagnose why the visible input method still had no useful LLM/RAG candidates.
+
+Decisions:
+- Treat runtime health as P0: no candidate-quality claims unless both sidecar and MLX predictor are listening and `/rime-suggest` returns model/RAG/memory payloads.
+- Prefer demo usability now: raise Squirrel/native sidecar budget to 800ms so the local SQLite RAG path is not silently killed.
+
+Changes:
+- Realtime RAG budget no longer hard-caps at 100ms.
+- Squirrel/native sidecar budgets default to 800ms.
+- Added `scripts/restart_rag_ime_runtime.sh` for no-sudo restart of MLX predictor + sidecar + readiness check.
+- README now documents the MLX-first runtime restart command.
+
+Verification:
+- Copied real DB contains 10032 input events, 10076 FTS rows, and 5037 vectors.
+- 800ms copied-DB `/rime-suggest-json` returned relevant RAG/memory candidates; 350ms previously timed out.
+- Focused sidecar/config/native tests passed.
+
+Next steps:
+- User must run `scripts/restart_rag_ime_runtime.sh` in a normal Terminal because Codex sandbox cannot access Metal, `launchctl`, or bind local ports.
+- After health is green, validate real typing and then continue MLX prompt/candidate quality.
+
 ### 2026-07-03
 Topic:
 - Bring Felix/Wanxiang English fallback into the native debug harness without switching the real input source.

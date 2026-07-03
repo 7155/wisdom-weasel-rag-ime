@@ -1579,6 +1579,40 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["modelPredictions"])
         self.assertTrue(any(item["sourceType"] == "model" for item in response["displayCandidates"]))
 
+    def test_realtime_rag_lane_keeps_mid_budget_memory_candidates(self) -> None:
+        core = SlowSuggestionCore(sleep_s=0.15)
+        adapter = InputMethodAdapter(core)
+        predictor = FakePredictionProvider()
+        started = time.perf_counter()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-mid-budget-rag",
+                "requestSeq": 80,
+                "latencyBudgetMs": 350,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 2,
+                "committedContext": "我想做一个本地记忆 RAG 输入法",
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+        self.assertLess(elapsed_ms, 350)
+        self.assertEqual(core.calls, 1)
+        self.assertTrue(response["ragLane"]["called"])
+        self.assertFalse(response["ragLane"]["timedOut"])
+        self.assertGreaterEqual(response["ragLane"]["latencyBudgetMs"], 300)
+        self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
+        self.assertTrue(any(item["sourceType"] == "model" for item in response["displayCandidates"]))
+
     def test_rag_display_text_is_compressed_and_insert_text_is_short_candidate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-sidecar-surface-") as tmp:
             core = LocalSqliteCoreClient(f"{tmp}/rag-ime.sqlite")
