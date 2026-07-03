@@ -92,6 +92,14 @@ class MlxPredictorServerConfig:
     prompt_cache_max_kv_size: int = 0
 
 
+@dataclass(frozen=True)
+class _ContinuationBranchSpec:
+    label: str
+    temperature: float
+    max_tokens: int
+    max_candidate_chars: int
+
+
 class MlxLmEngine:
     """Resident MLX-LM engine for the IME model lane.
 
@@ -143,6 +151,7 @@ class MlxLmEngine:
                 "sequenceFork": False,
                 "batchCandidates": True,
                 "logitsTopK": True,
+                "continuationBranches": True,
                 "serverTiming": True,
                 "baseCompletion": self._base_completion_mode,
             },
@@ -238,6 +247,22 @@ class MlxLmEngine:
                 "requestMeta": dict(request_metadata or {}),
             }
 
+        if resolved_request_type == PREDICTION_REQUEST_NO_INPUT and not stream_first_candidate:
+            branch_payload = self.predict_no_input_continuation_branches(
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=max_candidates,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                started=started,
+                logits_elapsed_ms=logits_candidates.get("elapsedMs", 0),
+                logits_quality_reason=logits_candidates.get("qualityReason") or "logits_candidates_not_phrase_quality",
+                request_metadata=request_metadata,
+            )
+            if branch_payload["candidates"]:
+                return branch_payload
+
         raw_text = "".join(
             self.stream_text(
                 current_input=current_input,
@@ -276,6 +301,83 @@ class MlxLmEngine:
                 "fallbackJson": True,
                 "fallbackReason": logits_candidates.get("qualityReason") or "logits_candidates_not_phrase_quality",
                 "requestType": resolved_request_type,
+            },
+            "requestMeta": dict(request_metadata or {}),
+        }
+
+    def predict_no_input_continuation_branches(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_candidates: int,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        started: float,
+        logits_elapsed_ms: int,
+        logits_quality_reason: str,
+        request_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        branch_specs = _continuation_branch_specs(temperature=temperature, max_tokens=max_tokens)
+        raw_texts: list[str] = []
+        candidates: list[str] = []
+        seen: set[str] = set()
+        branch_timings: list[dict[str, Any]] = []
+        for branch in branch_specs:
+            branch_started = time.perf_counter()
+            raw_text = "".join(
+                self.stream_text(
+                    current_input=current_input,
+                    recent_context=recent_context,
+                    max_candidates=max_candidates,
+                    max_tokens=branch.max_tokens,
+                    temperature=branch.temperature,
+                    top_p=top_p,
+                    request_type=PREDICTION_REQUEST_NO_INPUT,
+                    rime_candidates=(),
+                    stream_first_candidate=False,
+                    request_metadata=request_metadata,
+                )
+            )
+            raw_texts.append(raw_text)
+            candidate = _branch_continuation_candidate(
+                raw_text,
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidate_chars=branch.max_candidate_chars,
+            )
+            branch_timings.append(
+                {
+                    "label": branch.label,
+                    "temperature": branch.temperature,
+                    "maxTokens": branch.max_tokens,
+                    "elapsedMs": int((time.perf_counter() - branch_started) * 1000),
+                    "candidate": candidate,
+                }
+            )
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+            if len(candidates) >= max(1, int(max_candidates)):
+                break
+        total_ms = int((time.perf_counter() - started) * 1000)
+        return {
+            "ok": True,
+            "model": self.model_id,
+            "rawText": "\n".join(raw_texts),
+            "candidates": candidates[: max(1, int(max_candidates))],
+            "candidateMode": "continuation-branches",
+            "requestType": PREDICTION_REQUEST_NO_INPUT,
+            "totalMs": total_ms,
+            "promptCache": self.prompt_cache_status(),
+            "timing": {
+                "candidateMode": "continuation-branches",
+                "logitsMs": int(logits_elapsed_ms or 0),
+                "fallbackJson": True,
+                "fallbackReason": logits_quality_reason,
+                "requestType": PREDICTION_REQUEST_NO_INPUT,
+                "branches": branch_timings,
             },
             "requestMeta": dict(request_metadata or {}),
         }
@@ -1295,6 +1397,62 @@ def _is_low_value_logits_candidate(text: str) -> bool:
     if any(normalized.startswith(prefix) for prefix in ("当前", "目前", "现在")) and len(normalized) <= 5:
         return True
     return False
+
+
+def _continuation_branch_specs(*, temperature: float, max_tokens: int) -> list[_ContinuationBranchSpec]:
+    low_temperature = max(0.05, min(float(temperature), 0.18))
+    high_temperature = min(1.0, max(float(temperature), 0.72))
+    middle_temperature = min(1.0, max(float(temperature), 0.42))
+    token_budget = max(4, min(64, int(max_tokens)))
+    return [
+        _ContinuationBranchSpec(
+            label="lead",
+            temperature=low_temperature,
+            max_tokens=min(8, token_budget),
+            max_candidate_chars=8,
+        ),
+        _ContinuationBranchSpec(
+            label="diverse-short",
+            temperature=high_temperature,
+            max_tokens=min(10, max(token_budget, 8)),
+            max_candidate_chars=4,
+        ),
+        _ContinuationBranchSpec(
+            label="diverse-phrase",
+            temperature=min(1.0, high_temperature + 0.08),
+            max_tokens=min(14, max(token_budget, 10)),
+            max_candidate_chars=8,
+        ),
+        _ContinuationBranchSpec(
+            label="supplement",
+            temperature=middle_temperature,
+            max_tokens=min(24, max(token_budget, 16)),
+            max_candidate_chars=12,
+        ),
+    ]
+
+
+def _branch_continuation_candidate(
+    raw_text: str,
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidate_chars: int,
+) -> str:
+    parsed = parse_ime_prediction_candidates(
+        raw_text,
+        max_candidates=8,
+        current_input=current_input,
+        recent_context=recent_context,
+        request_type=PREDICTION_REQUEST_NO_INPUT,
+    )
+    if not parsed:
+        return ""
+    limit = max(2, int(max_candidate_chars))
+    eligible = [candidate for candidate in parsed if len(candidate) <= limit]
+    if eligible:
+        return max(eligible, key=len)
+    return parsed[0][:limit]
 
 
 def _prompt_cache_used_for_generation(prompt_cache: dict[str, Any]) -> bool:

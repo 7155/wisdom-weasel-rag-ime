@@ -19,7 +19,11 @@ from rag_ime.mlx_predictor_server import (
     _normalize_prediction_request,
     make_mlx_predictor_handler,
 )
-from rag_ime.predictor import PREDICTION_REQUEST_RIME_REORDER
+from rag_ime.predictor import (
+    PREDICTION_REQUEST_NO_INPUT,
+    PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+    PREDICTION_REQUEST_RIME_REORDER,
+)
 
 
 class _FakeMlxEngine:
@@ -193,6 +197,55 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(payload["candidates"][:3], ["设计", "设计一个", "设计一个候选"])
         self.assertNotIn("我想", "".join(payload["candidates"]))
 
+    def test_no_input_prediction_uses_continuation_branches_when_logits_are_weak(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=[
+                "跑通输入流程。",
+                "接入本地记忆。",
+                "优化候选排序。",
+                "补齐来源诊断。",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(payload["candidates"], ["跑通输入流程", "接入本地", "优化候选排序"])
+        self.assertEqual(payload["timing"]["candidateMode"], "continuation-branches")
+        self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["lead", "diverse-short", "diverse-phrase"])
+        self.assertEqual(calls["sampler_calls"], 3)
+
+    def test_pinyin_constrained_prediction_does_not_use_free_continuation_branches(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=[
+                "设计一个候选展示方式。",
+                "接入本地记忆。",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="sj",
+                recent_context="我想",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+                rime_candidates=("设计", "手机"),
+            )
+
+        self.assertEqual(payload["candidateMode"], "json-generation")
+        self.assertNotEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(calls["sampler_calls"], 1)
+
     def test_engine_rime_reorder_fallback_stays_inside_rime_pool(self) -> None:
         modules, _calls = _fake_mlx_modules(generated_text="[2, 1]")
         with patch.dict(sys.modules, modules):
@@ -349,6 +402,7 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(info["vocabSize"], 151936)
         self.assertEqual(info["quantization"]["bits"], 4)
         self.assertTrue(payload["capabilities"]["textOnlyModel"])
+        self.assertTrue(payload["capabilities"]["continuationBranches"])
 
     def test_engine_health_flags_local_vision_language_model(self) -> None:
         modules, _calls = _fake_mlx_modules(generated_text='["本地"]')
@@ -463,13 +517,15 @@ class _FakeStreamResponse:
         self.text = text
 
 
-def _fake_mlx_modules(*, generated_text: str, logits_tokens: list[str] | None = None):
+def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[str] | None = None):
     calls = {
         "generate_step": 0,
         "load_prompt_cache": 0,
         "stream_generate": 0,
         "prompts": [],
+        "sampler_calls": 0,
     }
+    generated_texts = generated_text if isinstance(generated_text, list) else [generated_text]
     logits_token_ids = {
         token: 1000 + index for index, token in enumerate(logits_tokens or [])
     }
@@ -500,7 +556,10 @@ def _fake_mlx_modules(*, generated_text: str, logits_tokens: list[str] | None = 
         if sampler is None:
             yield _FakeToken(0), None
             return
-        for char in generated_text:
+        sampler_index = calls["sampler_calls"]
+        calls["sampler_calls"] += 1
+        text = generated_texts[min(sampler_index, len(generated_texts) - 1)]
+        for char in text:
             yield _FakeToken(ord(char)), None
 
     generate.generate_step = generate_step
