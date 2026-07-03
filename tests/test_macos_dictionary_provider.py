@@ -124,6 +124,8 @@ class MacOSDictionaryProviderTests(unittest.TestCase):
                     ni\t你\twanxiang\t10
                     ni\t呢\twanxiang\t11
                     wx\t我想\twanxiang\t12
+                    hello\thello\twanxiang_english\t13
+                    py\tpython\twanxiang_english\t14
                     """
                 ),
                 encoding="utf-8",
@@ -144,6 +146,8 @@ class MacOSDictionaryProviderTests(unittest.TestCase):
                         "readyAfterColdLoad": provider.isReady,
                         "ni": provider.candidates(for: "ni", maxCount: 2, allowColdLoad: false).map { $0.text },
                         "wx": provider.candidates(for: "wx", maxCount: 1, allowColdLoad: false).map { $0.text },
+                        "hello": provider.candidates(for: "hello", maxCount: 1, allowColdLoad: false).map { $0.text },
+                        "py": provider.candidates(for: "py", maxCount: 1, allowColdLoad: false).map { $0.text },
                         "missing": provider.candidates(for: "zzzz", maxCount: 1, allowColdLoad: false).map { $0.text }
                     ]
                     let data = try JSONSerialization.data(
@@ -184,6 +188,8 @@ class MacOSDictionaryProviderTests(unittest.TestCase):
         self.assertTrue(payload["readyAfterColdLoad"])
         self.assertEqual(payload["ni"], ["你", "呢"])
         self.assertEqual(payload["wx"], ["我想"])
+        self.assertEqual(payload["hello"], ["hello"])
+        self.assertEqual(payload["py"], ["python"])
         self.assertEqual(payload["missing"], [])
 
 

@@ -119,6 +119,8 @@ class InstallMacosFrontendScriptTests(unittest.TestCase):
         self.assertIn("build_rime_candidate_index.py", source)
         self.assertIn("rime-candidate-index.tsv", source)
         self.assertIn("--max-entries 35000", source)
+        self.assertIn("wanxiang_english.dict.yaml", source)
+        self.assertIn("--max-english-entries 0", source)
         self.assertIn('"rimeCandidateIndexPath": os.environ["RAG_IME_RIME_INDEX_PATH_VALUE"]', source)
 
     def test_install_updates_existing_bundle_without_removing_input_source_path_by_default(self) -> None:
