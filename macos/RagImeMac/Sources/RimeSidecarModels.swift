@@ -145,6 +145,10 @@ struct RimePredictionSessionPayload: Codable {
     let sideCandidateCount: Int?
     let rimeCandidateCount: Int?
     let rawCommitCount: Int?
+    let sessionFingerprint: String?
+    let contextFingerprint: String?
+    let requestSeq: Int?
+    let expiresAfterMs: Int?
 }
 
 struct RimeSelectRequest: Codable {

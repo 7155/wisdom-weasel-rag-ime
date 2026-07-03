@@ -5,6 +5,7 @@ import InputMethodKit
 final class RagInputController: IMKInputController {
     private struct ActivePanelSession {
         let requestSeq: Int
+        let sessionFingerprint: String
         let phase: String
         let committedContext: String
         let composition: String
@@ -263,7 +264,12 @@ final class RagInputController: IMKInputController {
                     guard let self else {
                         return
                     }
-                    guard self.composition == inputSnapshot, self.committedContext == contextSnapshot else {
+                    guard
+                        response.requestSeq == requestSeq,
+                        requestSeq == self.requestSeq,
+                        self.composition == inputSnapshot,
+                        self.committedContext == contextSnapshot
+                    else {
                         return
                     }
                     self.renderSidecarResponse(
@@ -311,7 +317,12 @@ final class RagInputController: IMKInputController {
                     guard let self else {
                         return
                     }
-                    guard self.composition.isEmpty, self.committedContext == contextSnapshot else {
+                    guard
+                        response.requestSeq == requestSeq,
+                        requestSeq == self.requestSeq,
+                        self.composition.isEmpty,
+                        self.committedContext == contextSnapshot
+                    else {
                         return
                     }
                     self.renderSidecarResponse(
@@ -363,6 +374,9 @@ final class RagInputController: IMKInputController {
                 guard let self, let client = self.client() else {
                     return
                 }
+                guard self.canSelectPanelCandidate(candidate, response: response) else {
+                    return
+                }
                 let query = self.composition.isEmpty ? response.semanticQuery : self.composition
                 self.commit(text: candidate.insertText, client: client, selectedDisplayCandidate: candidate, selectedSuggestion: nil, rank: index + 1, queryOverride: query)
             }
@@ -374,6 +388,7 @@ final class RagInputController: IMKInputController {
         let phase = response.predictionSession?.phase ?? ""
         activePanelSession = ActivePanelSession(
             requestSeq: response.requestSeq,
+            sessionFingerprint: response.predictionSession?.sessionFingerprint ?? "",
             phase: phase,
             committedContext: committedContext,
             composition: composition,
@@ -395,6 +410,7 @@ final class RagInputController: IMKInputController {
             guard
                 let current = self.activePanelSession,
                 current.requestSeq == session.requestSeq,
+                current.sessionFingerprint == session.sessionFingerprint,
                 current.phase == session.phase,
                 current.committedContext == session.committedContext,
                 current.composition == session.composition
@@ -524,6 +540,13 @@ final class RagInputController: IMKInputController {
             clearVisiblePredictionPanel()
             return false
         }
+        if let currentFingerprint = latestPredictionSession?.sessionFingerprint,
+           !currentFingerprint.isEmpty,
+           session.sessionFingerprint != currentFingerprint {
+            clearCandidateState()
+            clearVisiblePredictionPanel()
+            return false
+        }
         switch session.phase {
         case "post_commit":
             return composition.isEmpty
@@ -550,6 +573,45 @@ final class RagInputController: IMKInputController {
             return latestDisplayCandidates[number - 1]
         }
         return nil
+    }
+
+    private func canSelectPanelCandidate(_ candidate: RimeDisplayCandidate, response: RimeSidecarResponse) -> Bool {
+        clearExpiredPanelIfNeeded()
+        guard let session = activePanelSession else {
+            return false
+        }
+        guard session.requestSeq == response.requestSeq else {
+            clearCandidateState()
+            clearVisiblePredictionPanel()
+            return false
+        }
+        if let responseFingerprint = response.predictionSession?.sessionFingerprint, !responseFingerprint.isEmpty {
+            guard session.sessionFingerprint == responseFingerprint else {
+                clearCandidateState()
+                clearVisiblePredictionPanel()
+                return false
+            }
+            if let candidateFingerprint = metadataString(candidate, key: "sessionFingerprint"),
+               !candidateFingerprint.isEmpty,
+               candidateFingerprint != responseFingerprint {
+                clearCandidateState()
+                clearVisiblePredictionPanel()
+                return false
+            }
+        }
+        guard session.committedContext == committedContext else {
+            clearCandidateState()
+            clearVisiblePredictionPanel()
+            return false
+        }
+        switch session.phase {
+        case "post_commit":
+            return composition.isEmpty
+        case "prefix_constrained", "anchor_composing":
+            return !composition.isEmpty && session.composition == composition
+        default:
+            return false
+        }
     }
 
     private func firstVisibleDisplayCandidate() -> RimeDisplayCandidate? {
@@ -635,5 +697,19 @@ final class RagInputController: IMKInputController {
             return nil
         }
         return NSPoint(x: rect.minX, y: rect.minY)
+    }
+
+    private func metadataString(_ candidate: RimeDisplayCandidate, key: String) -> String? {
+        guard let value = candidate.metadata[key] else {
+            return nil
+        }
+        switch value {
+        case .string(let text):
+            return text
+        case .number(let number):
+            return String(Int(number))
+        default:
+            return nil
+        }
     }
 }

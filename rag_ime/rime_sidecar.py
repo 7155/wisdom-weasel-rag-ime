@@ -4,7 +4,7 @@ import hashlib
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import BoundedSemaphore, Event, RLock, Thread
 from typing import Any, Mapping
 
@@ -257,6 +257,14 @@ def build_rime_sidecar_response(
         prediction_first_result = manager_result.merge_result
         display_candidates = list(prediction_first_result.display_candidates)
         prediction_session_payload = prediction_session_to_payload(manager_result.session)
+        prediction_session_payload.update(
+            {
+                "sessionFingerprint": manager_result.session_fingerprint,
+                "contextFingerprint": manager_result.context_fingerprint,
+                "requestSeq": snapshot.request_seq,
+                "expiresAfterMs": _prediction_session_expiry_ms(prediction_session_payload),
+            }
+        )
         prediction_first_payload: dict[str, object] = {
             "enabled": True,
             "mode": prediction_first_result.mode.value,
@@ -267,6 +275,7 @@ def build_rime_sidecar_response(
                 "candidatePoolReused": manager_result.reused_candidate_pool,
                 "candidatePoolStale": manager_result.candidate_pool_stale,
                 "candidatePoolContextFingerprint": manager_result.context_fingerprint,
+                "candidatePoolSessionFingerprint": manager_result.session_fingerprint,
             },
         }
     else:
@@ -286,6 +295,14 @@ def build_rime_sidecar_response(
             "clearReason": "",
             "selectionScope": "legacy",
             "rimeCompositionOwnedByRime": input_mode.value.endswith("composing"),
+            "sessionFingerprint": _response_session_fingerprint(
+                snapshot=snapshot,
+                mode=input_mode.value,
+                display_candidates=tuple(display_candidates),
+            ),
+            "contextFingerprint": _context_fingerprint(snapshot.committed_context),
+            "requestSeq": snapshot.request_seq,
+            "expiresAfterMs": 0,
         }
         prediction_first_payload = {
             "enabled": False,
@@ -296,6 +313,11 @@ def build_rime_sidecar_response(
                 "reason": "prediction-first merge is behind explicit flag",
             },
         }
+    display_candidates = _bind_display_candidates_to_session(
+        display_candidates=display_candidates,
+        snapshot=snapshot,
+        prediction_session_payload=prediction_session_payload,
+    )
     return {
         "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
         "sessionId": snapshot.session_id,
@@ -1701,6 +1723,70 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "displayLane": item.display_lane or item.source_type,
         "metadata": dict(item.metadata),
     }
+
+
+def _bind_display_candidates_to_session(
+    *,
+    display_candidates: list[SideCandidateDisplayItem],
+    snapshot: RimeContextSnapshot,
+    prediction_session_payload: Mapping[str, object],
+) -> list[SideCandidateDisplayItem]:
+    session_fingerprint = _string(prediction_session_payload.get("sessionFingerprint"))
+    context_fingerprint = _string(prediction_session_payload.get("contextFingerprint")) or _context_fingerprint(
+        snapshot.committed_context
+    )
+    phase = _string(prediction_session_payload.get("phase"))
+    scope = _string(prediction_session_payload.get("selectionScope"))
+    bound: list[SideCandidateDisplayItem] = []
+    for item in display_candidates:
+        metadata = dict(item.metadata)
+        metadata.update(
+            {
+                "sessionFingerprint": session_fingerprint,
+                "contextFingerprint": context_fingerprint,
+                "requestSeq": snapshot.request_seq,
+                "sessionId": snapshot.session_id,
+                "predictionSessionPhase": phase,
+                "selectionScope": scope,
+            }
+        )
+        bound.append(replace(item, metadata=metadata))
+    return bound
+
+
+def _prediction_session_expiry_ms(prediction_session_payload: Mapping[str, object]) -> int:
+    phase = _string(prediction_session_payload.get("phase"))
+    if phase == "post_commit":
+        return _POST_COMMIT_PANEL_TTL_MS
+    return 0
+
+
+def _response_session_fingerprint(
+    *,
+    snapshot: RimeContextSnapshot,
+    mode: str,
+    display_candidates: tuple[SideCandidateDisplayItem, ...],
+) -> str:
+    visible_material = "\x1e".join(
+        f"{item.label}:{item.selection_action}:{item.source_type}:{item.source_index}:{item.text}"
+        for item in display_candidates[: snapshot.max_visible_candidates]
+    )
+    material = "\x1f".join(
+        (
+            snapshot.session_id,
+            str(snapshot.request_seq),
+            _context_fingerprint(snapshot.committed_context),
+            compact_whitespace(snapshot.raw_input),
+            compact_whitespace(snapshot.preedit),
+            mode,
+            visible_material,
+        )
+    )
+    return hashlib.sha1(material.encode("utf-8")).hexdigest()[:16]
+
+
+def _context_fingerprint(committed_context: str) -> str:
+    return compact_whitespace(committed_context)[-420:]
 
 
 def _parse_rime_candidates(value: object) -> list[RimeCandidate]:

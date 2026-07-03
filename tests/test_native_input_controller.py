@@ -63,6 +63,21 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("latencyBudgetMs: 300", source)
         self.assertIn("latencyBudgetMs: Int = 300", models_source)
 
+    def test_native_frontend_drops_stale_async_responses(self) -> None:
+        source = _controller_source()
+
+        self.assertIn("response.requestSeq == requestSeq", source)
+        self.assertIn("requestSeq == self.requestSeq", source)
+
+    def test_native_frontend_binds_mouse_selection_to_panel_session(self) -> None:
+        source = _controller_source()
+        models_source = _models_source()
+
+        self.assertIn("canSelectPanelCandidate(candidate, response: response)", source)
+        self.assertIn("candidateFingerprint != responseFingerprint", source)
+        self.assertIn("sessionFingerprint: String", source)
+        self.assertIn("let sessionFingerprint: String?", models_source)
+
 
 def _controller_source() -> str:
     root = Path(__file__).resolve().parents[1]

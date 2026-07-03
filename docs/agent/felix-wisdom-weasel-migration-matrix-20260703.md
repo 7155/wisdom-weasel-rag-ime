@@ -427,3 +427,44 @@ For this project, store the same concepts in SQLite rather than JSON side files:
 - `AIAssistantDialog`/ASR/PPT/demo assets are separate product surfaces.
 - The Ollama fast path is useful as an algorithm reference only; the Mac product path remains MLX.
 - The Rust Alpha native library is not a first step. First reproduce the scorer contract in Python/SQLite, then decide whether native acceleration is justified.
+
+## Third Pass: Frontend Session Binding
+
+Time: 2026-07-03
+
+Refs checked:
+
+- GitHub `Felix3322/Wisdom-Weasel` public `main` via `git ls-remote`: still `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`.
+- Local extra remote-tracking ref `upstream/main`: `64ba2fdd484c3fa1c1a87e88591911c3d31b3eb6`, message `Warmup After Compression`.
+
+The extra `64ba2fd` ref is not the public `Felix3322/Wisdom-Weasel` GitHub `main` at the time of this pass. Its transferable idea is narrow: after context compression succeeds, trigger a cache warmup callback asynchronously. That maps to a future MLX prompt-cache warmup task, not to the current broken-candidate UI problem.
+
+### Migrated In This Pass
+
+Felix's P0 lesson is that the visible candidate list and the selection action must share the same request/session snapshot. This project now has the same explicit binding in the native Mac debug path:
+
+- `PredictionManagerResult.session_fingerprint` hashes session id, request sequence, context fingerprint, active raw/preedit input, mode, and visible display rows.
+- `/rime-suggest` now puts `sessionFingerprint`, `contextFingerprint`, `requestSeq`, and `expiresAfterMs` in `predictionSession`.
+- Every `displayCandidates[*].metadata` row now carries the same `sessionFingerprint`, `contextFingerprint`, `requestSeq`, `sessionId`, phase, and selection scope.
+- `RagInputController` now drops async sidecar responses unless `response.requestSeq == requestSeq` and `requestSeq == self.requestSeq`.
+- Mouse/click selection now calls `canSelectPanelCandidate(...)` and verifies active panel request sequence, context, composition, and candidate session fingerprint before committing.
+- Number-key routing also checks the active panel session fingerprint against the latest prediction session.
+
+### Remaining Interpretation
+
+This does not make the native `RagImeMac` path equivalent to real Squirrel/Rime. The native app parses Wanxiang YAML dictionaries for debug previews, which is acceptable for a demo harness but not the final input-method architecture. The product route should still converge back to the branded Squirrel/Rime candidate layer:
+
+```text
+Rime/Wanxiang composition and dictionary candidates
+  -> Prediction-first sidecar response
+  -> one visible candidate list
+  -> request-bound slot mapping
+  -> /rime-select feedback
+```
+
+### Verification Added
+
+- Focused tests prove session metadata is returned and bound to candidates.
+- Native source tests prove stale async responses are discarded and mouse selection is session-bound.
+- Full test suite after this pass: 317 tests OK.
+- `scripts/build_macos_frontend.sh` rebuilds `build/RagImeMac.app` successfully.

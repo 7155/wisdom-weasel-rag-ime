@@ -3213,3 +3213,29 @@ Next:
 - P0: implement or verify frontend-level request sequence, stale response discard, auto-hide, and visible-slot selection mapping in the Mac/Squirrel route.
 - P1: port Felix-style MLX staged generation and candidateization.
 - P1: add Alpha-style score breakdown and feedback-visible ranking to the SQLite scorer.
+
+### 2026-07-03 02:43 CST
+Problem:
+- User asked to repeatedly compare against `Felix3322/Wisdom-Weasel` and not keep shipping an IME whose candidate lifecycle behaves like a stale clipboard panel.
+
+Findings:
+- GitHub public `Felix3322/Wisdom-Weasel` `main` is still `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`.
+- A local extra `upstream/main` ref at `64ba2fd` adds context-compression-complete warmup callbacks; useful later for MLX prompt-cache warmup, but not the current P0 UI bug.
+- Current native `RagImeMac` is IMK + Wanxiang YAML preview + Python sidecar, not a true librime/Squirrel candidate-layer integration. Treat it as a debug/demo adapter, not the final product route.
+
+Changes:
+- Added session fingerprints to `PredictionManagerResult`, `/rime-suggest` `predictionSession`, and every `displayCandidates[*].metadata`.
+- Native Mac adapter now drops stale async sidecar responses unless they match both the response request sequence and the current latest request sequence.
+- Native click selection now verifies active panel request sequence, context, composition, and candidate session fingerprint before commit.
+- Number-key routing also checks the active panel fingerprint against the latest prediction session.
+- Felix migration matrix now records this third pass and keeps Squirrel/Rime as the final architecture route.
+
+Verification:
+- Focused tests passed: prediction manager, post-commit sidecar session binding, stale clear, and native source checks.
+- Full suite passed: `PYTHONWARNINGS='ignore::ResourceWarning' python3 -m unittest discover -s tests` ran 317 tests OK.
+- Mac frontend rebuild passed: `scripts/build_macos_frontend.sh` produced `build/RagImeMac.app`.
+- `git diff --check` passed.
+
+Next:
+- Continue P0 on the real Squirrel/Rime candidate-layer route; native `RagImeMac` should not be treated as final IME quality.
+- P1 remains Felix-style staged MLX candidateization and Alpha-style SQLite score breakdown.

@@ -2327,3 +2327,28 @@ Next steps:
 - P0: close the Mac/Squirrel lifecycle and visible-slot mapping gap before further model-quality work.
 - P1: port Felix-style staged MLX continuation and candidateization.
 - P1: expose SQLite/Alpha-style scoring breakdown and feedback effects in candidate diagnostics.
+
+### 2026-07-03
+Topic:
+- Third-pass Felix comparison focused on candidate lifecycle and stale selection.
+
+Findings:
+- Public GitHub `Felix3322/Wisdom-Weasel` `main` remains `3473284a14b0336d5e6a39d2dfb0ffcbdcfb5a17`.
+- A local extra `upstream/main` ref `64ba2fd` only adds compression-complete warmup plumbing; it is a future MLX prompt-cache idea, not the current UI fix.
+- Native `RagImeMac` is a debug/demo IMK adapter with Wanxiang YAML preview; final product quality still belongs on the Squirrel/Rime candidate layer.
+
+Changes:
+- `/rime-suggest` now returns session fingerprints in `predictionSession` and candidate metadata.
+- `PredictionManager` hashes request sequence, context, active input, mode, and visible rows into a session fingerprint.
+- Native Mac adapter discards stale async responses unless they match the current latest request sequence.
+- Native mouse and number-key selection are now bound to the active panel session fingerprint before commit.
+- Felix migration matrix records the third-pass comparison and this migrated P0 boundary.
+
+Verification:
+- Full test suite passed: 317 tests.
+- `scripts/build_macos_frontend.sh` rebuilt `build/RagImeMac.app`.
+- `git diff --check` passed.
+
+Next steps:
+- Continue moving the same session-bound candidate contract into the branded Squirrel/Rime route.
+- Then port Felix-style staged MLX candidateization and Alpha-style score diagnostics.
