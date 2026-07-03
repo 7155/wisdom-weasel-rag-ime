@@ -32,7 +32,7 @@
   - [x] 弱向量命中加质量门，短弱输入如 `撤旦` 不再被低可信 embedding 召回无关“圣经/使徒”记忆。
   - [x] pinyin-constrained 模型候选硬过滤，不匹配当前拼音前缀的 MLX 输出不进入 `modelPredictions` / 可选候选。
   - [x] pinyin-constrained 模型 lane 只传当前拼音前缀给 `currentInput`，Rime 候选只走 `rimeCandidates`，避免模型拼接/回显 `sj + 设计 + 手机 + 世界`。
-  - [ ] SQLite / FTS5 频率与反馈路径对齐 Felix user-frequency / preference 思路。
+  - [x] SQLite / FTS5 频率与反馈路径对齐 Felix user-frequency / preference 思路。
   - [ ] MLX prompt 与 candidateization 对齐 Felix 的短候选策略。
   - [x] debug / doctor 输出 source、score、guard、latency、backend，能定位 RAG / LLM / memory 是否真的生效。
   - [x] tests 覆盖候选生命周期、反馈、top1 guard、RAG/记忆/LLM 三路候选。
@@ -65,3 +65,4 @@
 - [x] 离线修复 RAG/记忆/MLX 候选质量门：prefix RAG query、生成候选污染上下文、弱向量误召回、off-prefix 模型候选过滤。
 - [x] 修复 prefix-constrained MLX 输入污染：模型现在收到 `sj`，Rime 候选单独传递；离线真实 DB 探针得到 `1 设计本地输入法 [model]`、`2 设计一个候选展示方式 [rag]`。
 - [x] 将 Alpha-style `score_breakdown` 提升到 `/rime-suggest` `rankingDiagnostics`，并让 cache-probe / Squirrel doctor 输出 RAG 排名诊断摘要。
+- [x] 将 rime-select accepted/skipped-higher feedback 聚合到短语级排序信号；同一短语重复上屏的新 event 会继承 accepted/skipped/downranked 偏好。
