@@ -1113,6 +1113,13 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["predictionFirst"]["policy"]["candidatePoolActive"])
         self.assertFalse(response["predictionFirst"]["policy"]["candidatePoolReused"])
         self.assertFalse(any(item["sourceType"] == "rime" for item in response["displayCandidates"]))
+        session_fingerprint = response["predictionSession"]["sessionFingerprint"]
+        self.assertEqual(len(session_fingerprint), 16)
+        self.assertEqual(response["predictionSession"]["requestSeq"], 53)
+        self.assertEqual(response["predictionFirst"]["policy"]["candidatePoolSessionFingerprint"], session_fingerprint)
+        for item in response["displayCandidates"]:
+            self.assertEqual(item["metadata"]["sessionFingerprint"], session_fingerprint)
+            self.assertEqual(item["metadata"]["requestSeq"], 53)
 
     def test_prediction_first_post_commit_clears_stale_empty_panel(self) -> None:
         core = EmptySuggestionCore()

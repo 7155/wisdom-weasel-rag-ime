@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from .models import InputSuggestion, ModelPrediction, RimeContextSnapshot, SideCandidateDisplayItem
@@ -26,6 +27,7 @@ class PredictionManagerResult:
     candidate_pool_active: bool
     candidate_pool_stale: bool
     context_fingerprint: str
+    session_fingerprint: str
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,12 @@ class PredictionManager:
             candidate_pool_active=bool(active_model_predictions or active_suggestions),
             candidate_pool_stale=candidate_pool_stale,
             context_fingerprint=context_fingerprint,
+            session_fingerprint=_session_fingerprint(
+                snapshot=snapshot,
+                context_fingerprint=context_fingerprint,
+                mode=merge_result.mode.value,
+                display_candidates=merge_result.display_candidates,
+            ),
         )
 
     def _updated_cache(
@@ -135,3 +143,28 @@ class PredictionManager:
 
 def _context_fingerprint(committed_context: str) -> str:
     return compact_whitespace(committed_context)[-420:]
+
+
+def _session_fingerprint(
+    *,
+    snapshot: RimeContextSnapshot,
+    context_fingerprint: str,
+    mode: str,
+    display_candidates: tuple[SideCandidateDisplayItem, ...],
+) -> str:
+    visible_material = "\x1e".join(
+        f"{item.label}:{item.selection_action}:{item.source_type}:{item.source_index}:{item.text}"
+        for item in display_candidates[: snapshot.max_visible_candidates]
+    )
+    material = "\x1f".join(
+        (
+            snapshot.session_id,
+            str(snapshot.request_seq),
+            context_fingerprint,
+            compact_whitespace(snapshot.raw_input),
+            compact_whitespace(snapshot.preedit),
+            mode,
+            visible_material,
+        )
+    )
+    return hashlib.sha1(material.encode("utf-8")).hexdigest()[:16]
