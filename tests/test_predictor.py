@@ -420,6 +420,18 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed, ["设计", "手机"])
 
+    def test_parse_ime_prediction_candidates_filters_mojibake_and_splits_rime_concat(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["设计手机世界数据", "验证 LLM �选", "设计一个手机应用"]',
+            current_input="sj",
+            request_type="pinyin_constrained_prediction",
+            rime_candidates=("设计", "手机", "世界", "数据"),
+            max_candidates=5,
+        )
+
+        self.assertEqual(parsed[:4], ["设计", "手机", "世界", "数据"])
+        self.assertNotIn("验证 LLM �选", parsed)
+
     def test_openai_compatible_provider_returns_short_ranked_predictions(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -707,6 +719,8 @@ class PredictionProviderTests(unittest.TestCase):
                     "嗯嗯",
                     "当前",
                     "测试流程",
+                    "假设需要测试",
+                    "分析当前情况",
                     "当前问题",
                     "LLM",
                     "接入",

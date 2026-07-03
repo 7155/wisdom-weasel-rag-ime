@@ -784,6 +784,18 @@ def _inspect_local_mlx_model(model_id: str) -> dict[str, Any]:
             "quantization": _quantization_summary(config),
         }
     )
+    tokenizer_config_path = model_dir / "tokenizer_config.json"
+    if tokenizer_config_path.exists():
+        try:
+            tokenizer_config = json.loads(tokenizer_config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            tokenizer_config = {}
+        chat_template = str(tokenizer_config.get("chat_template") or "")
+        info["hasChatTemplate"] = bool(chat_template)
+        info["chatTemplateSupportsThinking"] = "enable_thinking" in chat_template or "thinking" in chat_template.lower()
+    else:
+        info["hasChatTemplate"] = False
+        info["chatTemplateSupportsThinking"] = False
     return info
 
 
@@ -818,6 +830,8 @@ def _is_base_completion_model(model_id: str, model_info: dict[str, Any]) -> bool
     path_parts = {part.lower() for part in Path(model_id).parts}
     if "base" in normalized_id or any(part.endswith("-base") or part == "base" for part in path_parts):
         return True
+    if model_info.get("hasChatTemplate"):
+        return False
     architecture = str(model_info.get("architecture") or "").lower()
     model_type = str(model_info.get("modelType") or "").lower()
     if "instruct" in normalized_id or "chat" in normalized_id:
@@ -854,8 +868,10 @@ def _build_mlx_dynamic_prompt(
     stream_first_candidate: bool = False,
 ) -> str:
     resolved_request_type = normalize_prediction_request_type(request_type)
-    rime_line = _rime_candidates_prompt_line(rime_candidates)
+    rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
+    rime_line = _rime_candidates_prompt_line(rime_candidate_tuple)
     mode_instruction = _request_type_prompt_instruction(resolved_request_type)
+    constraint_line = _request_type_candidate_constraint(resolved_request_type, rime_candidate_tuple)
     if stream_first_candidate:
         return (
             f"请求类型: {resolved_request_type}\n"
@@ -863,6 +879,7 @@ def _build_mlx_dynamic_prompt(
             f"当前拼音或参考候选: {current_input}\n"
             f"{rime_line}"
             f"模式说明: {mode_instruction}\n"
+            f"{constraint_line}"
             "答案写用户下一步最可能输入的具体短语正文。"
         )
     return (
@@ -871,6 +888,7 @@ def _build_mlx_dynamic_prompt(
         f"当前拼音或参考候选: {current_input}\n"
         f"{rime_line}"
         f"模式说明: {mode_instruction}\n"
+        f"{constraint_line}"
         "要求:\n"
         "- 输出能直接接在已上屏上下文后面的候选, 每个 2 到 16 个汉字为主。\n"
         "- 当前输入如果是拼音、英文串或 Rime 候选列表, 只把它当作约束, 不要复述这些词。\n"
@@ -891,6 +909,15 @@ def _request_type_prompt_instruction(request_type: str) -> str:
     if resolved == PREDICTION_REQUEST_RIME_REORDER:
         return "当前已有 Rime/Wanxiang 候选, 只在候选之间选择或补充极短候选, 不要自由发挥长句。"
     return "根据上下文给出输入法候选。"
+
+
+def _request_type_candidate_constraint(request_type: str, rime_candidates: tuple[str, ...]) -> str:
+    resolved = normalize_prediction_request_type(request_type)
+    if resolved == PREDICTION_REQUEST_PINYIN_CONSTRAINED and rime_candidates:
+        return f"硬约束: 每个候选必须以这些 Rime 候选之一开头: {' / '.join(rime_candidates[:8])}。\n"
+    if resolved == PREDICTION_REQUEST_RIME_REORDER and rime_candidates:
+        return "硬约束: 只能输出 Rime候选 原文或它们的序号, 不要创造新词。\n"
+    return ""
 
 
 def _rime_candidates_prompt_line(rime_candidates: tuple[str, ...] | list[str] | object) -> str:

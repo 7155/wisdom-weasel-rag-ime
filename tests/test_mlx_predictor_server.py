@@ -93,6 +93,14 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertIn("请求类型: pinyin_constrained_prediction", prompt)
         self.assertIn("Rime候选: 设计 / 手机", prompt)
         self.assertIn("拼音约束", prompt)
+        self.assertIn("硬约束: 每个候选必须以这些 Rime 候选之一开头: 设计 / 手机", prompt)
+        self.assertIn("只能输出 Rime候选 原文或它们的序号", _build_mlx_dynamic_prompt(
+            current_input="sj",
+            recent_context="我想",
+            max_candidates=2,
+            request_type="rime_reorder",
+            rime_candidates=("设计", "手机"),
+        ))
         self.assertIn("不要做拼音转汉字", _build_mlx_dynamic_prompt(
             current_input="",
             recent_context="我想",
@@ -217,6 +225,39 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertNotIn("<|im_start|>", prompt)
         self.assertNotIn("已上屏上下文", prompt)
         self.assertNotIn("补后端测试", prompt)
+
+    def test_qwen3_chat_template_model_uses_chat_json_prompt_mode(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text='["把流程跑通","接入本地记忆"]')
+        with tempfile.TemporaryDirectory(prefix="Qwen3-0.6B-4bit-") as tmp, patch.dict(sys.modules, modules):
+            model_dir = Path(tmp)
+            (model_dir / "model.safetensors").write_bytes(b"fake")
+            (model_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "architectures": ["Qwen3ForCausalLM"],
+                        "model_type": "qwen3",
+                        "hidden_size": 1024,
+                        "num_hidden_layers": 28,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (model_dir / "tokenizer_config.json").write_text(
+                json.dumps({"chat_template": "{% if enable_thinking is false %}<think></think>{% endif %}"}),
+                encoding="utf-8",
+            )
+            payload = MlxLmEngine(str(model_dir)).predict(
+                current_input="",
+                recent_context="我想",
+                max_candidates=2,
+                max_tokens=12,
+                temperature=0.15,
+                top_p=0.85,
+            )
+
+        self.assertEqual(payload["candidateMode"], "json-generation")
+        self.assertEqual(payload["candidates"], ["把流程跑通", "接入本地记忆"])
+        self.assertEqual(payload["timing"]["candidateMode"], "json-generation")
 
     def test_health_reports_prepared_prompt_cache_without_claiming_generation_use(self) -> None:
         server, thread = _start_fake_server()

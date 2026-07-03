@@ -56,6 +56,7 @@ class CapturingRequestPredictionProvider:
         self.last_request_type = ""
         self.last_rime_candidates: tuple[str, ...] = ()
         self.last_current_input = ""
+        self.last_recent_context = ""
 
     def predict(
         self,
@@ -66,8 +67,8 @@ class CapturingRequestPredictionProvider:
         request_type: str = "",
         rime_candidates: tuple[str, ...] = (),
     ):
-        _ = recent_context
         self.last_current_input = current_input
+        self.last_recent_context = recent_context
         self.last_request_type = request_type
         self.last_rime_candidates = rime_candidates
         return [
@@ -395,7 +396,9 @@ class RimeSidecarTests(unittest.TestCase):
 
         self.assertEqual(predictor.last_request_type, "pinyin_constrained_prediction")
         self.assertEqual(predictor.last_current_input, "sj")
+        self.assertEqual(predictor.last_recent_context, "我想")
         self.assertEqual(predictor.last_rime_candidates, ("设计", "手机"))
+        self.assertEqual(response["modelLane"]["contextMode"], "explicit-pinyin-constrained")
         self.assertEqual(response["modelLane"]["requestType"], "pinyin_constrained_prediction")
         self.assertEqual(response["modelLane"]["rimeCandidateCount"], 2)
         self.assertEqual(response["ragLane"]["queryInput"], "sj")

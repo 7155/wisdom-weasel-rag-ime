@@ -1467,6 +1467,11 @@ def parse_ime_prediction_candidates(
         )
     if not candidates:
         candidates = _parse_prediction_candidate_texts(texts, max_candidates=max_items)
+    candidates = _expand_rime_concat_candidates(
+        candidates,
+        rime_candidate_tuple,
+        max_candidates=max_items,
+    )
     return _finalize_ime_prediction_candidates(candidates, current_input)[:max_items]
 
 
@@ -1519,6 +1524,8 @@ def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
         normalized = compact_whitespace(candidate)
         if not normalized:
             continue
+        if "\ufffd" in normalized:
+            continue
         if len(normalized) <= 1:
             continue
         if re.fullmatch(r"[A-Za-z0-9_./:-]{1,8}", normalized):
@@ -1529,7 +1536,7 @@ def _filter_low_value_ime_candidates(candidates: list[str]) -> list[str]:
             continue
         if normalized.endswith("候选") and _cjk_char_count(normalized) <= 4:
             continue
-        if any(normalized.startswith(prefix) for prefix in ("测试", "分析")) and len(normalized) <= 4:
+        if any(normalized.startswith(prefix) for prefix in ("测试", "分析", "假设")) and _cjk_char_count(normalized) <= 6:
             continue
         if any(normalized.startswith(prefix) for prefix in ("当前", "目前", "现在")) and len(normalized) <= 5:
             continue
@@ -1692,6 +1699,44 @@ def _normalize_prediction_candidate_text(text: str) -> str:
     item = re.sub(r"^\s*\d+[.)、．]?\s*", "", item)
     item = item.strip(" \t\r\n。.!！?？:\"'“”‘’[]()（）{}<>《》")
     return compact_whitespace(item)
+
+
+def _expand_rime_concat_candidates(
+    candidates: list[str],
+    rime_candidates: tuple[str, ...],
+    *,
+    max_candidates: int,
+) -> list[str]:
+    if not rime_candidates:
+        return candidates
+    max_items = max(1, int(max_candidates))
+    result: list[str] = []
+    seen: set[str] = set()
+
+    def add(item: str) -> None:
+        normalized = _normalize_prediction_candidate_text(item)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+
+    for candidate in candidates:
+        if len(result) >= max_items:
+            break
+        normalized = _normalize_prediction_candidate_text(candidate)
+        if not normalized:
+            continue
+        compacted = re.sub(r"[\s/|,，、;；]+", "", normalized)
+        matches = [item for item in rime_candidates if item and item in compacted]
+        if len(matches) >= 2 and len(compacted) <= sum(len(item) for item in matches) + 2:
+            for match in matches:
+                add(match)
+                if len(result) >= max_items:
+                    break
+            continue
+        if "\ufffd" in normalized:
+            continue
+        add(normalized)
+    return result
 
 
 def _rime_reorder_candidates_from_texts(

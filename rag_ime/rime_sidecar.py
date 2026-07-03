@@ -820,7 +820,13 @@ def predict_model_with_latency_budget(
     def run_prediction() -> None:
         started = time.perf_counter()
         try:
-            if budget_ms <= _REALTIME_MODEL_CONTEXT_BUDGET_MS:
+            if request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED:
+                # Small local IME models follow short prefix-constrained prompts
+                # more reliably when the context is the clean on-screen text,
+                # not the expanded "history/reference" wrapper used for RAG.
+                recent_context = compact_whitespace(explicit_recent_context)[-420:]
+                result["contextMode"] = "explicit-pinyin-constrained"
+            elif budget_ms <= _REALTIME_MODEL_CONTEXT_BUDGET_MS:
                 recent_context = compact_whitespace(explicit_recent_context)[-420:]
                 result["contextMode"] = "explicit-realtime"
             else:
