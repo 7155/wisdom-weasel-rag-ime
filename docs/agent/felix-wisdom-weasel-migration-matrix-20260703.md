@@ -468,3 +468,70 @@ Rime/Wanxiang composition and dictionary candidates
 - Native source tests prove stale async responses are discarded and mouse selection is session-bound.
 - Full test suite after this pass: 317 tests OK.
 - `scripts/build_macos_frontend.sh` rebuilds `build/RagImeMac.app` successfully.
+
+## Fourth Pass: Squirrel Session-Bound Selection
+
+Time: 2026-07-03
+
+### Why This Pass Was Needed
+
+The third pass proved the lifecycle in the native `RagImeMac` debug adapter, but the product route is the branded Squirrel/Rime candidate layer. Felix's hard requirement is stronger than "the backend returned good candidates":
+
+```text
+visible candidate slot
+  -> belongs to one request/session snapshot
+  -> number/click selection checks the same snapshot
+  -> stale or expired rows cannot commit
+```
+
+Without this, old LLM/RAG rows can behave like a stuck clipboard panel and occupy number keys after the user has moved on.
+
+### Migrated In This Pass
+
+The Squirrel patch now carries the same session-bound contract:
+
+- `RagImeSidecarResponse` decodes `predictionSession`.
+- `RagImePredictionSessionPayload` carries phase, input mode, pinyin prefix, clear reason, selection scope, request sequence, session fingerprint, context fingerprint, and expiry.
+- `SquirrelInputController` stores `ragImeDisplaySessionFingerprint` and `ragImeDisplayExpiresAt`.
+- `applyRagImeSidecarResponse(...)` clears immediately when the backend says `shouldClearPredictionPanel`, and rejects response display rows whose candidate metadata fingerprint does not match `predictionSession.sessionFingerprint`.
+- `selectCandidate(_:)` and `selectRagImeSideCandidate(forKey:)` both call candidate-level session checks before committing.
+- `clearRagImeDisplayCandidates()` resets pending fingerprints and expiry.
+- Frontend trace summaries include candidate `sessionFingerprint`.
+
+### Verification Added
+
+- `tests/test_build_patched_squirrel.py` asserts the Squirrel patch contains the prediction-session model, display fingerprint state, expiry checks, clear-response handling, and number-key/session guards.
+- `scripts/check_squirrel_frontend_trace.py` now requires matching `sessionFingerprint` between `number_key_route.candidate` and `side_candidate_commit.candidate` when either side reports a session.
+- `tests/test_squirrel_frontend_trace.py` now proves a matching-session number-key commit passes and a mismatched-session route/commit fails.
+
+Verification commands:
+
+```bash
+python3 -m unittest tests.test_build_patched_squirrel tests.test_squirrel_frontend_trace
+python3 -m unittest tests.test_doctor_squirrel_integration tests.test_rime_sidecar
+git diff --check
+```
+
+Current result:
+
+- 15 Squirrel patch/frontend trace tests OK.
+- 61 doctor/rime-sidecar regression tests OK.
+- `git diff --check` OK.
+
+### Remaining Gap
+
+The patch contract is now covered by tests, but the next proof must be runtime foreground trace from the installed branded Squirrel route:
+
+```text
+sidecar_request_scheduled
+  -> sidecar_response_applied
+  -> panel_text_layout
+  -> number_key_route
+  -> side_candidate_commit
+```
+
+After that, the next Felix migrations are model-quality work:
+
+- MLX pinyin-constrained/logits candidateization instead of brittle instruction-only small-model prompting.
+- Staged no-input continuation branches.
+- Alpha-style SQLite score breakdown, frequency/preference feedback, and top1 guard.

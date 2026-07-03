@@ -2352,3 +2352,25 @@ Verification:
 Next steps:
 - Continue moving the same session-bound candidate contract into the branded Squirrel/Rime route.
 - Then port Felix-style staged MLX candidateization and Alpha-style score diagnostics.
+
+### 2026-07-03
+Topic:
+- Fourth-pass Felix comparison applied to the real Squirrel/Rime patch path.
+
+Findings:
+- Squirrel patch had request fingerprints and holdover, but did not yet bind visible candidates to `predictionSession.sessionFingerprint` all the way through click/number-key commit.
+- This was the same class of bug Felix avoids with request sequence invalidation and one display list whose visible slots map to the producing session.
+
+Changes:
+- Added `predictionSession` decoding, display session fingerprint/expiry state, stale clear handling, candidate session checks, and trace session summaries to `squirrel-patches/0001-add-rag-ime-sidecar.patch`.
+- Tightened `check_squirrel_frontend_trace.py` so a number-key route cannot be treated as valid if its later side commit has a different `sessionFingerprint`.
+- Added tests covering Squirrel patch hooks and mismatched-session trace failure.
+
+Verification:
+- 15 focused Squirrel patch/frontend trace tests passed.
+- 61 doctor/rime-sidecar regression tests passed.
+- `git diff --check` passed.
+
+Next steps:
+- Build/install the branded Squirrel route and verify the real foreground trace.
+- Continue with Felix-style MLX pinyin-constrained candidateization and SQLite/Alpha score diagnostics.

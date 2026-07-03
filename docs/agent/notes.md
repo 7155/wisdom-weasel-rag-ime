@@ -3239,3 +3239,26 @@ Verification:
 Next:
 - Continue P0 on the real Squirrel/Rime candidate-layer route; native `RagImeMac` should not be treated as final IME quality.
 - P1 remains Felix-style staged MLX candidateization and Alpha-style SQLite score breakdown.
+
+### 2026-07-03 10:25 CST
+Problem:
+- After the third pass, the session-bound candidate lifecycle was still only proven in the native debug adapter. User's target requires the same Felix-style stale-candidate protection in the real Squirrel/Rime path.
+
+Findings:
+- Existing Squirrel patch already had `requestSeq`, request fingerprint, display holdover, number-key routing, and frontend trace hooks.
+- Missing Squirrel-side pieces were `predictionSession` decoding, panel session fingerprint/expiry state, clear-response handling, candidate metadata fingerprint checks, and a trace verifier that rejects number-key commits from a different session.
+- Felix/Wisdom-Weasel comparison remains aligned: visible candidate slots must map to the same request/session snapshot that produced them; late or stale model/RAG rows must be dropped rather than left selectable.
+
+Changes:
+- Updated `squirrel-patches/0001-add-rag-ime-sidecar.patch` so Squirrel decodes `predictionSession`, records `sessionFingerprint`/`expiresAfterMs`, clears on `shouldClearPredictionPanel`, rejects response candidates whose metadata fingerprint does not match the response session, and checks candidate session before click/number-key commit.
+- Updated `scripts/check_squirrel_frontend_trace.py` so `number_key_route` and `side_candidate_commit` only match when their candidate `sessionFingerprint` values match.
+- Expanded Squirrel patch and frontend trace tests for the new session-bound contract.
+
+Verification:
+- `python3 -m unittest tests.test_build_patched_squirrel tests.test_squirrel_frontend_trace` passed: 15 tests OK.
+- `python3 -m unittest tests.test_doctor_squirrel_integration tests.test_rime_sidecar` passed: 61 tests OK.
+- `git diff --check` passed.
+
+Next:
+- P0: build/install the branded Squirrel route and collect real foreground trace for `sidecar_request_scheduled -> sidecar_response_applied -> number_key_route -> side_candidate_commit`.
+- P1: port Felix-style MLX pinyin-constrained/logits candidateization and Alpha-style score diagnostics.

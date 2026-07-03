@@ -522,6 +522,7 @@ index 0000000..6a50e72
 +  let modelPredictions: [RagImeModelPrediction]
 +  let ragCandidates: [RagImeSuggestion]
 +  let displayCandidates: [RagImeDisplayCandidate]
++  let predictionSession: RagImePredictionSessionPayload?
 +  let selectionActions: RagImeSelectionActions
 +  let mergePolicy: RagImeMergePolicy
 +}
@@ -532,6 +533,25 @@ index 0000000..6a50e72
 +  let idleMs: Int
 +  let semanticSignalLength: Int
 +  let forceSideCandidates: Bool
++}
++
++struct RagImePredictionSessionPayload: Codable {
++  let phase: String
++  let inputMode: String
++  let pinyinPrefix: String
++  let candidatePanelVisible: Bool
++  let predictionPanelVisible: Bool
++  let shouldClearPredictionPanel: Bool
++  let clearReason: String
++  let selectionScope: String
++  let rimeCompositionOwnedByRime: Bool
++  let sideCandidateCount: Int?
++  let rimeCandidateCount: Int?
++  let rawCommitCount: Int?
++  let sessionFingerprint: String?
++  let contextFingerprint: String?
++  let requestSeq: Int?
++  let expiresAfterMs: Int?
 +}
 +
 +struct RagImeModelPrediction: Codable, Hashable {
@@ -674,6 +694,8 @@ index c2adf74..20bc671 100644
 +  private var ragImeDisplaySemanticQuery: String = ""
 +  private var ragImeDisplayQueryBasis: String = ""
 +  private var ragImeDisplayUpdatedAt: Date = .distantPast
++  private var ragImeDisplayExpiresAt: Date?
++  private var ragImeDisplaySessionFingerprint: String = ""
 +  private let ragImeDisplayHoldoverDuration: TimeInterval = 0.9
 +  private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 0.9
 +  private var ragImeCommittedContext: String = ""
@@ -699,7 +721,15 @@ index c2adf74..20bc671 100644
  
    func selectCandidate(_ index: Int) -> Bool {
 +    if ragImePanelUsesDisplayCandidates && index >= 0 && index < ragImeDisplayCandidates.count {
++      guard canSelectCurrentRagImeDisplayCandidates() else {
++        clearRagImeDisplayCandidates()
++        return false
++      }
 +      let candidate = ragImeDisplayCandidates[index]
++      guard canSelectRagImeDisplayCandidate(candidate) else {
++        clearRagImeDisplayCandidates()
++        return false
++      }
 +      if candidate.selectionAction == "commit_side_candidate" {
 +        let insertText = candidate.insertText.isEmpty ? candidate.text : candidate.insertText
 +        guard !insertText.isEmpty else { return false }
@@ -819,6 +849,10 @@ index c2adf74..20bc671 100644
 +      return false
 +    }
 +    guard ragImeDisplayCandidates[index].sourceType != "raw_english" else {
++      return false
++    }
++    guard canSelectRagImeDisplayCandidate(ragImeDisplayCandidates[index]) else {
++      clearRagImeDisplayCandidates()
 +      return false
 +    }
 +    traceRagImeFrontendEvent("number_key_route", fields: [
@@ -1005,6 +1039,27 @@ index c2adf74..20bc671 100644
 +      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
 +      return
 +    }
++    if response.predictionSession?.shouldClearPredictionPanel == true {
++      clearRagImeDisplayCandidates()
++      traceRagImeFrontendEvent("sidecar_clear_response_applied", fields: [
++        "requestSeq": response.requestSeq,
++        "rawInput": response.rawInput,
++        "preedit": response.preedit,
++        "semanticQuery": response.semanticQuery,
++        "queryBasis": response.queryBasis,
++        "phase": response.predictionSession?.phase ?? "",
++        "clearReason": response.predictionSession?.clearReason ?? "",
++        "sessionFingerprint": response.predictionSession?.sessionFingerprint ?? "",
++      ])
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
++    let responseSessionFingerprint = response.predictionSession?.sessionFingerprint ?? ""
++    if !responseSessionFingerprint.isEmpty && !response.displayCandidates.allSatisfy({ ragImeDisplayCandidateSessionFingerprint($0) == responseSessionFingerprint }) {
++      clearRagImeDisplayCandidates()
++      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      return
++    }
 +
 +    ragImeDisplayCandidates = response.displayCandidates
 +    ragImePanelUsesDisplayCandidates = false
@@ -1013,6 +1068,12 @@ index c2adf74..20bc671 100644
 +    ragImeDisplaySemanticQuery = response.semanticQuery
 +    ragImeDisplayQueryBasis = response.queryBasis
 +    ragImeDisplayUpdatedAt = Date()
++    ragImeDisplaySessionFingerprint = responseSessionFingerprint
++    if let expiresAfterMs = response.predictionSession?.expiresAfterMs, expiresAfterMs > 0 {
++      ragImeDisplayExpiresAt = Date().addingTimeInterval(TimeInterval(expiresAfterMs) / 1000)
++    } else {
++      ragImeDisplayExpiresAt = nil
++    }
 +    traceRagImeFrontendEvent("sidecar_response_applied", fields: [
 +      "requestSeq": response.requestSeq,
 +      "rawInput": response.rawInput,
@@ -1021,6 +1082,12 @@ index c2adf74..20bc671 100644
 +      "queryBasis": response.queryBasis,
 +      "displayCount": response.displayCandidates.count,
 +      "latencyBudgetMs": response.latencyBudgetMs,
++      "predictionSession": [
++        "phase": response.predictionSession?.phase ?? "",
++        "selectionScope": response.predictionSession?.selectionScope ?? "",
++        "sessionFingerprint": ragImeDisplaySessionFingerprint,
++        "expiresAfterMs": response.predictionSession?.expiresAfterMs ?? 0,
++      ],
 +      "candidateCounts": ragImeTraceCandidateCounts(),
 +      "candidates": ragImeTraceCandidateSummaries(),
 +    ])
@@ -1136,6 +1203,7 @@ index c2adf74..20bc671 100644
 +    now: Date = Date()
 +  ) -> Bool {
 +    guard !ragImeDisplayCandidates.isEmpty else { return false }
++    guard ragImeDisplaySessionStillLive(now: now) else { return false }
 +    guard !rawInput.isEmpty || !preedit.isEmpty else { return false }
 +    guard ragImeDisplayRawInput == rawInput && ragImeDisplayPreedit == preedit else { return false }
 +    return now.timeIntervalSince(ragImeDisplayUpdatedAt) <= ragImeDisplayHoldoverDuration
@@ -1146,6 +1214,7 @@ index c2adf74..20bc671 100644
 +    now: Date = Date()
 +  ) -> Bool {
 +    guard !ragImeDisplayCandidates.isEmpty else { return false }
++    guard ragImeDisplaySessionStillLive(now: now) else { return false }
 +    guard ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty else { return false }
 +    guard fallbackCandidates.isEmpty else { return false }
 +    return now.timeIntervalSince(ragImeDisplayUpdatedAt) <= ragImePostCommitDisplayHoldoverDuration
@@ -1153,12 +1222,28 @@ index c2adf74..20bc671 100644
 +
 +  func canSelectCurrentRagImeDisplayCandidates(now: Date = Date()) -> Bool {
 +    guard !ragImeDisplayCandidates.isEmpty else { return false }
++    guard ragImeDisplaySessionStillLive(now: now) else { return false }
 +    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
 +    if currentRawInput.isEmpty && ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty {
 +      return now.timeIntervalSince(ragImeDisplayUpdatedAt) <= ragImePostCommitDisplayHoldoverDuration
 +    }
 +    guard !currentRawInput.isEmpty else { return false }
 +    return currentRawInput == ragImeDisplayRawInput
++  }
++
++  func ragImeDisplaySessionStillLive(now: Date = Date()) -> Bool {
++    guard let expiresAt = ragImeDisplayExpiresAt else { return true }
++    return now <= expiresAt
++  }
++
++  func canSelectRagImeDisplayCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
++    guard ragImeDisplaySessionStillLive() else { return false }
++    guard !ragImeDisplaySessionFingerprint.isEmpty else { return true }
++    return ragImeDisplayCandidateSessionFingerprint(candidate) == ragImeDisplaySessionFingerprint
++  }
++
++  func ragImeDisplayCandidateSessionFingerprint(_ candidate: RagImeDisplayCandidate) -> String {
++    return ragImeJSONValueString(candidate.metadata["sessionFingerprint"]) ?? ""
 +  }
 +
 +  func ragImeDisplayPanelPayload(fallbackLabels: [String]) -> (candidates: [String], comments: [String], labels: [String]) {
@@ -1204,6 +1289,18 @@ index c2adf74..20bc671 100644
 +      return "0"
 +    }
 +    return "\(index + 1)"
++  }
++
++  func ragImeJSONValueString(_ value: RagImeJSONValue?) -> String? {
++    guard let value else { return nil }
++    switch value {
++    case .string(let text):
++      return text
++    case .number(let number):
++      return String(Int(number))
++    default:
++      return nil
++    }
 +  }
 +
 +  func traceRagImeFrontendEvent(_ event: String, fields: [String: Any]) {
@@ -1271,6 +1368,7 @@ index c2adf74..20bc671 100644
 +      "displayLane": candidate.displayLane ?? "",
 +      "rimeIndex": candidate.rimeIndex ?? -1,
 +      "sourceEventId": candidate.sourceEventId ?? 0,
++      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(candidate),
 +    ]
 +  }
 +
@@ -1282,6 +1380,8 @@ index c2adf74..20bc671 100644
 +    ragImeDisplaySemanticQuery = ""
 +    ragImeDisplayQueryBasis = ""
 +    ragImeDisplayUpdatedAt = .distantPast
++    ragImeDisplayExpiresAt = nil
++    ragImeDisplaySessionFingerprint = ""
 +    ragImeLastRequestFingerprint = ""
 +    ragImePendingRequestFingerprint = ""
 +    ragImePendingRequestWorkItem?.cancel()

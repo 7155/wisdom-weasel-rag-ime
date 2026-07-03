@@ -82,6 +82,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "sourceType": "rag",
                             "selectionAction": "commit_side_candidate",
                             "displayLayout": "block",
+                            "sessionFingerprint": "session-a",
                         },
                     },
                     ensure_ascii=False,
@@ -98,6 +99,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "sourceType": "rag",
                             "selectionAction": "commit_side_candidate",
                             "displayLayout": "block",
+                            "sessionFingerprint": "session-a",
                         },
                     },
                     ensure_ascii=False,
@@ -131,6 +133,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["latestNumberKeyRoute"]["key"], "6")
         self.assertEqual(report["latestNumberKeySideCommit"]["key"], "6")
         self.assertEqual(report["latestNumberKeySideCommit"]["commit"]["candidate"]["label"], "6")
+        self.assertEqual(report["latestNumberKeySideCommit"]["commit"]["candidate"]["sessionFingerprint"], "session-a")
 
     def test_trace_check_fails_without_rag_block(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -415,6 +418,88 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         report = json.loads(result.stdout)
         self.assertIsNone(report["latestValidSideCommit"])
+        self.assertIsNone(report["latestNumberKeySideCommit"])
+
+    def test_trace_check_fails_when_number_key_session_does_not_match_commit(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": True,
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "candidates": _mixed_side_first_candidates(),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "panel_text_layout",
+                        "timestampMs": 2,
+                        "forcesHorizontalLayout": True,
+                        "vertical": False,
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "separators": ["", "  ", "  ", "  ", "  ", "\n", "\n", "\n"],
+                        "candidates": _mixed_side_first_candidates(),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "number_key_route",
+                        "timestampMs": 3,
+                        "key": "6",
+                        "candidate": {
+                            "label": "6",
+                            "selectionKey": "6",
+                            "sourceType": "rag",
+                            "selectionAction": "commit_side_candidate",
+                            "sessionFingerprint": "old-session",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_commit",
+                        "timestampMs": 4,
+                        "candidate": {
+                            "label": "6",
+                            "selectionKey": "6",
+                            "sourceType": "rag",
+                            "selectionAction": "commit_side_candidate",
+                            "sessionFingerprint": "new-session",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-mixed-panel",
+                    "--require-side-commit",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertTrue(report["latestSideCommit"])
         self.assertIsNone(report["latestNumberKeySideCommit"])
 
     def test_trace_check_clear_removes_log(self) -> None:

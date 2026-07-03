@@ -223,6 +223,10 @@ def candidates_match_number_route(route_event: dict[str, Any], commit_event: dic
     route_key = str(route_event.get("key") or "")
     route_candidate_key = str(route_candidate.get("selectionKey") or route_candidate.get("label") or "")
     commit_candidate_key = str(commit_candidate.get("selectionKey") or commit_candidate.get("label") or "")
+    route_session = str(route_candidate.get("sessionFingerprint") or "")
+    commit_session = str(commit_candidate.get("sessionFingerprint") or "")
+    if (route_session or commit_session) and route_session != commit_session:
+        return False
     return (
         bool(route_key)
         and route_key == route_candidate_key
