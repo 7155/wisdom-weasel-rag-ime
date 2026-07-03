@@ -409,14 +409,15 @@ final class RagInputController: IMKInputController {
     }
 
     private func activatePanelSession(response: RimeSidecarResponse, postCommit: Bool) {
-        let phase = response.predictionSession?.phase ?? ""
+        let predictionSession = response.predictionSession
+        let phase = predictionSession?.phase ?? ""
         activePanelSession = ActivePanelSession(
             requestSeq: response.requestSeq,
-            sessionFingerprint: response.predictionSession?.sessionFingerprint ?? "",
+            sessionFingerprint: predictionSession?.sessionFingerprint ?? "",
             phase: phase,
             committedContext: committedContext,
             composition: composition,
-            expiresAt: panelExpirationDate(phase: phase, postCommit: postCommit)
+            expiresAt: panelExpirationDate(session: predictionSession, postCommit: postCommit)
         )
         schedulePanelExpiration()
     }
@@ -448,7 +449,11 @@ final class RagInputController: IMKInputController {
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0.05, expiresAt.timeIntervalSinceNow), execute: work)
     }
 
-    private func panelExpirationDate(phase: String, postCommit: Bool) -> Date? {
+    private func panelExpirationDate(session: RimePredictionSessionPayload?, postCommit: Bool) -> Date? {
+        if let expiresAfterMs = session?.expiresAfterMs, expiresAfterMs > 0 {
+            return Date().addingTimeInterval(TimeInterval(expiresAfterMs) / 1000.0)
+        }
+        let phase = session?.phase ?? ""
         if postCommit || phase == "post_commit" || composition.isEmpty || phase.isEmpty {
             return Date().addingTimeInterval(postCommitPanelTtlSeconds)
         }
