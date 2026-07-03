@@ -8,6 +8,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -68,6 +69,10 @@ _LOW_VALUE_IME_CANDIDATES = {
     "当前问题",
     "当前流程",
     "直接输出",
+    "模型相关表达",
+    "调试流程",
+    "继续预测",
+    "预测流程",
     "的",
     "了",
     "和",
@@ -1472,6 +1477,8 @@ def parse_ime_prediction_candidates(
         rime_candidate_tuple,
         max_candidates=max_items,
     )
+    if resolved_request_type == PREDICTION_REQUEST_NO_INPUT:
+        candidates = _filter_repeated_context_candidates(candidates, recent_context)
     return _finalize_ime_prediction_candidates(candidates, current_input)[:max_items]
 
 
@@ -1511,6 +1518,45 @@ def _filter_repeated_input_candidates(candidates: list[str], current_input: str)
         seen.add(candidate)
         result.append(candidate)
     return result
+
+
+def _filter_repeated_context_candidates(candidates: list[str], recent_context: str) -> list[str]:
+    context_norm = _candidate_repeat_norm(recent_context)
+    if not context_norm:
+        return candidates
+    context_chars = _cjk_counter(recent_context)
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_norm = _candidate_repeat_norm(candidate)
+        if not candidate_norm:
+            continue
+        if len(candidate_norm) >= 4 and candidate_norm in context_norm:
+            continue
+        if _candidate_is_context_reorder(candidate, context_chars):
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+    return result
+
+
+def _candidate_is_context_reorder(candidate: str, context_chars: Counter[str]) -> bool:
+    candidate_chars = _cjk_chars(candidate)
+    if len(candidate_chars) < 6 or not context_chars:
+        return False
+    candidate_counter = Counter(candidate_chars)
+    covered = sum(min(count, context_chars.get(char, 0)) for char, count in candidate_counter.items())
+    return covered / max(1, len(candidate_chars)) >= 0.85
+
+
+def _cjk_chars(text: str) -> list[str]:
+    return re.findall(r"[\u3400-\u9fff]", text)
+
+
+def _cjk_counter(text: str) -> Counter[str]:
+    return Counter(_cjk_chars(text))
 
 
 def _finalize_ime_prediction_candidates(candidates: list[str], current_input: str) -> list[str]:

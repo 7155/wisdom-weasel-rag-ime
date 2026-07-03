@@ -27,26 +27,27 @@ from .text_utils import compact_whitespace
 
 
 SYSTEM_PROMPT = (
-    "你是 Prediction-first 中文输入法的本地续写模型。任务是根据用户已经上屏的上下文, "
-    "输出可以直接接在光标后的中文短语或短句。"
+    "你是 Wisdom Weasel 输入法候选生成模型。根据已上屏上下文预测用户下一步要输入的中文候选。"
     '只返回 JSON 字符串数组, 例如 ["把流程跑通","接入本地记忆","验证 LLM 候选"], '
-    "不要解释, 不要编号, 不要输出拼音, 不要输出<think>。"
-    "不要输出泛词或传统词库噪声: 根据、基于、和、测试、分析、验证、假设、或者、现在、目前、当前、然后。"
+    "不要解释, 不要编号, 不要输出拼音, 不要输出思考过程。"
+    "不要输出泛词或传统词库噪声: 根据、基于、和、测试、分析、验证、假设、或者、现在、目前、当前、然后、模型相关表达、调试流程。"
 )
 
 STREAM_FIRST_SYSTEM_PROMPT = (
-    "你是 Prediction-first 中文输入法的本地续写模型。"
+    "你是 Wisdom Weasel 输入法候选生成模型。"
     "答案只能是一段能接在光标后的中文动作短语或对象短语, 3 到 12 个汉字为主。"
     "好例子: 跑通输入流程、接入本地记忆、优化候选排序、支持英文输入。"
     "坏例子: 直接输出、后文候选、输入法候选、模型候选、记忆、需要、当前。"
-    "不要解释, 不要编号, 不要 JSON, 不要拼音, 不要<think>。"
+    "不要解释, 不要编号, 不要 JSON, 不要拼音, 不要思考过程。"
 )
 
 LOGITS_SYSTEM_PROMPT = (
-    "你是 Prediction-first 中文输入法的本地续写模型。根据用户已经上屏的上下文, "
-    "直接给出最可能接在光标后的中文短语。不要解释, 不要编号, 不要 JSON, 不要拼音。"
-    "不要输出泛词: 根据、基于、和、测试、分析、验证、假设、或者、现在、目前、当前、然后。"
+    "你是 Wisdom Weasel 输入法候选生成模型。根据已上屏上下文直接给出最可能接在光标后的中文短语。"
+    "不要解释, 不要编号, 不要 JSON, 不要拼音, 不要思考过程。"
+    "不要输出泛词: 根据、基于、和、测试、分析、验证、假设、或者、现在、目前、当前、然后、模型相关表达、调试流程。"
 )
+
+QWEN_NON_THINKING_ASSISTANT_PREFIX = "<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _LOW_VALUE_LOGITS_CANDIDATES = {
@@ -68,6 +69,10 @@ _LOW_VALUE_LOGITS_CANDIDATES = {
     "当前",
     "当前问题",
     "当前流程",
+    "模型相关表达",
+    "调试流程",
+    "继续预测",
+    "预测流程",
     "的",
     "了",
     "和",
@@ -472,7 +477,9 @@ class MlxLmEngine:
                 decoded = decoded.decode("utf-8", errors="ignore")
             if not isinstance(decoded, str):
                 decoded = str(decoded)
-            delta = decoded[len(emitted) :]
+            if "\ufffd" in decoded:
+                continue
+            delta = decoded[len(emitted) :] if decoded.startswith(emitted) else decoded
             emitted = decoded
             if delta:
                 yield delta
@@ -497,8 +504,8 @@ class MlxLmEngine:
             return _build_base_completion_prompt(current_input=current_input, recent_context=recent_context)
         return (
             f"{_build_mlx_dynamic_prompt(current_input=current_input, recent_context=recent_context, max_candidates=max_candidates, request_type=request_type, rime_candidates=rime_candidates, stream_first_candidate=stream_first_candidate)}"
-            "\n/no_think"
-            "<|im_end|>\n<|im_start|>assistant\n"
+            "<|im_end|>\n"
+            f"{QWEN_NON_THINKING_ASSISTANT_PREFIX}"
         )
 
     def _build_prompt(
@@ -540,8 +547,8 @@ class MlxLmEngine:
             f"{rime_line}"
             f"模式说明: {_request_type_prompt_instruction(resolved_request_type)}\n"
             f"给出 {max_candidates} 个候选中最可能的第一个候选, 直接从候选文本开始。"
-            "\n/no_think"
-            "<|im_end|>\n<|im_start|>assistant\n"
+            "<|im_end|>\n"
+            f"{QWEN_NON_THINKING_ASSISTANT_PREFIX}"
         )
 
     def _prepare_prompt_cache(self) -> None:
@@ -891,6 +898,7 @@ def _build_mlx_dynamic_prompt(
         f"{constraint_line}"
         "要求:\n"
         "- 输出能直接接在已上屏上下文后面的候选, 每个 2 到 16 个汉字为主。\n"
+        "- 不要复述、改写、重排已上屏上下文本身; 候选必须是后文增量。\n"
         "- 当前输入如果是拼音、英文串或 Rime 候选列表, 只把它当作约束, 不要复述这些词。\n"
         "- 拼音约束模式下, 候选语义要符合上下文, 同时尽量满足当前拼音或首字母。\n"
         "- Rime 重排模式下, 优先从 Rime 候选里挑更符合上下文的词, 必要时只补充极短预测。\n"

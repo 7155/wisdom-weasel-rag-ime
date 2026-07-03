@@ -410,6 +410,17 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertNotIn("我想", "".join(parsed))
         self.assertTrue(all(2 <= len(item) <= 16 for item in parsed))
 
+    def test_parse_ime_prediction_candidates_filters_repeated_post_commit_context(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["预测优先个人记忆输入法", "个人记忆输入法预测", "把流程跑通", "接入本地记忆"]',
+            current_input="",
+            recent_context="我想做一个预测优先的个人记忆输入法",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=4,
+        )
+
+        self.assertEqual(parsed, ["把流程跑通", "接入本地记忆"])
+
     def test_parse_ime_prediction_candidates_keeps_rime_reorder_inside_pool(self) -> None:
         parsed = parse_ime_prediction_candidates(
             '我建议顺序是 [2, 1]，不要输出 "随便发挥"',
