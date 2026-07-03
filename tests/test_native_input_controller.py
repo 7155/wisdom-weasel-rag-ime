@@ -90,6 +90,23 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("latencyBudgetMs: 300", source)
         self.assertIn("latencyBudgetMs: Int = 300", models_source)
 
+    def test_native_frontend_uses_backend_prediction_session_expiration(self) -> None:
+        source = _controller_source()
+
+        activate_start = source.index("private func activatePanelSession")
+        activate_end = source.index("private func schedulePanelExpiration")
+        activate_body = source[activate_start:activate_end]
+        self.assertIn("let predictionSession = response.predictionSession", activate_body)
+        self.assertIn("panelExpirationDate(session: predictionSession, postCommit: postCommit)", activate_body)
+
+        expiration_start = source.index("private func panelExpirationDate")
+        expiration_end = source.index("private func shouldShowCandidatePanel")
+        expiration_body = source[expiration_start:expiration_end]
+        self.assertIn("session?.expiresAfterMs", expiration_body)
+        self.assertIn("expiresAfterMs > 0", expiration_body)
+        self.assertIn("TimeInterval(expiresAfterMs) / 1000.0", expiration_body)
+        self.assertIn("postCommitPanelTtlSeconds", expiration_body)
+
     def test_native_frontend_drops_stale_async_responses(self) -> None:
         source = _controller_source()
 

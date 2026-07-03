@@ -3541,3 +3541,28 @@ Verification:
 Next:
 - Run full suite, commit, and push.
 - Continue P0 real frontend lifecycle work: candidate position/lifetime, no-input hide, and controlled foreground validation only when the user explicitly wants to test.
+
+### 2026-07-03 19:28 CST
+Problem:
+- Continue Felix/Wisdom-Weasel candidate lifecycle migration without switching the real macOS input source.
+- The sidecar already exposes `predictionSession.expiresAfterMs`, but the native Swift frontend still used a local fixed post-commit TTL. That made it easier for no-input/post-commit panels to stay visible longer than the backend policy and keep digit keys in candidate-selection mode.
+
+Findings:
+- Felix hides no-input prediction candidates on ordinary typing and arms an auto-hide timer for idle no-input predictions.
+- This repo's backend already centralizes the equivalent policy: post-commit prediction sessions return `expiresAfterMs` and prefix/anchor sessions return `0` to mean "no scheduled expiration; state changes own visibility".
+- Qwen3-1.7B-4bit MLX remains a later quality/slow lane candidate, not the realtime default until the panel flow is stable.
+
+Changes:
+- `RagInputController` now uses backend `predictionSession.expiresAfterMs` when scheduling native panel expiration.
+- `expiresAfterMs == 0` is treated as "no frontend expiration timer", preserving prefix/anchor composition behavior.
+- Added a source-level regression test so Swift cannot silently ignore backend session expiration again.
+
+Verification:
+- Focused native/post-commit lifecycle tests passed: 15 tests OK.
+- `scripts/build_macos_frontend.sh` built and signed `build/RagImeMac.app`.
+- Full suite passed: 359 tests OK.
+- `git diff --check` passed.
+
+Next:
+- Commit and push.
+- Continue P0 real frontend work: candidate panel position, stale no-input hide behavior under real apps, and controlled foreground validation only after the user explicitly wants to test.

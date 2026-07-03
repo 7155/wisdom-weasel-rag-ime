@@ -70,3 +70,4 @@
 - [x] 按 Felix `BuildContinuationCandidates` 思路收紧 MLX candidateization：去解释/编号噪声，普通续写按短候选阶梯输出，stream-first 不再二次切碎结构化候选。
 - [x] 按 Felix continuation branch 思路给 no-input MLX fallback 加多分支合并：低温首候选、高温短词/短语补充，并保留 pinyin/rime 模式硬约束。
 - [x] 给 MLX model matrix dry-run 加模型元信息检查；本机 0.6B/1.7B 均确认是 text-only Qwen3 4bit，后续可安全做质量/延迟对比。
+- [x] 按 Felix no-input auto-hide 生命周期补齐 native Swift 面板过期执行：前端现在尊重后端 `predictionSession.expiresAfterMs`，避免 post-commit/no-input 面板使用固定本地 TTL 卡住数字键。

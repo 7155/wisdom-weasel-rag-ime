@@ -2621,3 +2621,22 @@ Changes:
 Verification:
 - Native source/rime-select focused tests passed: 16 tests OK.
 - `scripts/build_macos_frontend.sh` built and signed `build/RagImeMac.app`.
+
+### 2026-07-03
+Topic:
+- Tightened native macOS prediction-panel expiration using the backend prediction session policy.
+
+Findings:
+- Felix hides no-input prediction candidates on ordinary typing and also uses an auto-hide timer.
+- The RAG IME sidecar already exports `predictionSession.expiresAfterMs`; the Swift frontend was ignoring it and using a local fixed post-commit TTL.
+- Qwen3-1.7B-4bit MLX should remain a later quality/slow lane option until the real panel flow is stable.
+
+Changes:
+- `RagInputController.activatePanelSession()` now passes the full prediction session into `panelExpirationDate`.
+- `panelExpirationDate()` uses positive `expiresAfterMs` values from the backend; `0` means no scheduled frontend expiration, so prefix/anchor composition stays state-driven.
+- Added native source regression coverage for backend-driven expiration.
+
+Verification:
+- Focused lifecycle tests passed: 15 tests OK.
+- macOS frontend build succeeded and signed `build/RagImeMac.app`.
+- Full suite passed: 359 tests OK.
