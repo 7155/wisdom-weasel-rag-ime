@@ -421,6 +421,17 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed, ["把流程跑通", "接入本地记忆"])
 
+    def test_parse_ime_prediction_candidates_keeps_project_technical_candidate_suffix(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["优化 MLX 小模型候选","接入本地记忆","验证 LLM 候选","调试流程"]<|im_end|>',
+            current_input="",
+            recent_context="我想把这个输入法流程跑通，接入本地记忆和 RAG，优化 MLX 小模型候选。",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=4,
+        )
+
+        self.assertEqual(parsed, ["验证 LLM 候选"])
+
     def test_parse_ime_prediction_candidates_keeps_rime_reorder_inside_pool(self) -> None:
         parsed = parse_ime_prediction_candidates(
             '我建议顺序是 [2, 1]，不要输出 "随便发挥"',
