@@ -3469,3 +3469,28 @@ Next:
 - Commit and push this MLX runtime/candidateization batch.
 - Foreground IME validation remains paused until the user explicitly wants a controlled test, because switching apps/input sources was reported to crash other apps.
 - Next product work should target the actual macOS candidate panel lifecycle/positioning and better multi-candidate MLX output under the same no-switch CLI-first debug boundary.
+
+### 2026-07-03 18:28 CST
+Problem:
+- User said 1.7B MLX can be tried later, while the live IME still needs fast, clean, selectable LLM/RAG/memory candidates.
+- Real matrix showed candidates were parsed, but raw MLX text could keep generating Qwen chat-template tails like `<|im_end|>` / `Human:`, making quality evaluation too optimistic before stricter scoring.
+
+Findings:
+- Qwen3-0.6B-4bit is still the better real-time default: after stopping chat-template echo, matrix p50 was about 274ms, p95 about 817ms, quality score 92.
+- Qwen3-1.7B-4bit is viable as a later slow/quality lane: quality score 100 and p50 about 742ms, but no-input continuation still hit about 2.1s, too slow for default live typing.
+- English/code input must not be blocked blindly; short ASCII candidates are allowed only when they come from the Rime/Wanxiang candidate pool.
+
+Changes:
+- MLX generation now stops on tokenizer EOS or decoded chat-template stop markers, and buffers partial stop-marker prefixes so `<|im_end|` fragments are not emitted.
+- IME candidate filtering now preserves Rime-provided ASCII/code candidates in pinyin-constrained mode while still filtering model-invented short ASCII noise.
+- `benchmark_mlx_model_matrix.py` now flags chat-template echo, low-value debug candidates, weak short continuations, and duplicate prefix candidates.
+
+Verification:
+- Focused MLX/predictor/matrix tests passed: 74 tests OK.
+- Real local MLX matrix ran against 0.6B and 1.7B without switching the macOS input source.
+- Full suite passed: 356 tests OK.
+- `py_compile` and `git diff --check` passed.
+
+Next:
+- Commit and push.
+- Keep 0.6B as realtime default; test 1.7B later as an opt-in slow lane after the live panel flow is stable.

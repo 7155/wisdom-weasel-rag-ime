@@ -355,6 +355,24 @@ class MlxPredictorServerTests(unittest.TestCase):
 
         self.assertEqual(text, "验证候选")
 
+    def test_stream_generation_stops_before_chat_template_echo(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text='["本地记忆"]<|im_end|>\n<|endoftext|>Human: 请继续')
+        with patch.dict(sys.modules, modules):
+            text = "".join(
+                MlxLmEngine("fake-qwen").stream_text(
+                    current_input="",
+                    recent_context="我想",
+                    max_candidates=1,
+                    max_tokens=48,
+                    temperature=0.15,
+                    top_p=0.85,
+                )
+            )
+
+        self.assertEqual(text, '["本地记忆"]')
+        self.assertNotIn("<|im_end|>", text)
+        self.assertNotIn("Human:", text)
+
     def test_health_reports_prepared_prompt_cache_without_claiming_generation_use(self) -> None:
         server, thread = _start_fake_server()
         try:

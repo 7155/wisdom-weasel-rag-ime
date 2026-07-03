@@ -2561,3 +2561,22 @@ Verification:
 Next steps:
 - Commit and push.
 - Continue frontend/panel lifecycle debugging only through controlled tests; do not switch the real input source until the crash risk is isolated.
+
+### 2026-07-03
+Topic:
+- Tightened MLX candidate generation and measured Qwen3 0.6B vs 1.7B for the IME model lane.
+
+Findings:
+- The model lane needed a generation stop fix, not just output parsing: Qwen chat-template tails could leak into `rawText` after valid JSON candidates.
+- After the fix, local matrix showed Qwen3-0.6B-4bit is still the realtime default candidate: p50 about 274ms, quality score 92.
+- Qwen3-1.7B-4bit is worth trying later as a slow/quality lane: p50 about 742ms, quality score 100, but no-input continuation around 2.1s is too slow for default live typing.
+
+Changes:
+- Added MLX EOS/chat-template stop handling with partial stop-marker buffering.
+- Allowed English/code candidates only when they originate from Rime/Wanxiang candidates in pinyin-constrained mode.
+- Matrix scoring now penalizes raw chat-template echo, low-value debug candidates, weak candidates, and duplicate prefixes.
+
+Verification:
+- Focused tests passed: 74 tests OK.
+- Full suite passed: 356 tests OK.
+- Real local 0.6B/1.7B MLX matrix completed without switching the macOS input source.
