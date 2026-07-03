@@ -27,6 +27,7 @@ from rag_ime.rime_sidecar import (
     merge_display_candidates,
     parse_rime_context_payload,
     recent_context_memory_suggestions,
+    record_rime_side_candidate_selection,
     wait_for_model_prediction_lane_idle,
 )
 
@@ -1624,6 +1625,84 @@ class RimeSidecarTests(unittest.TestCase):
                     ("统一选择写回接口",),
                 ).fetchone()
             self.assertEqual(row, ("统一选择写回接口", 3, "squirrel_rime_sidecar"))
+
+    def test_rime_select_records_skipped_higher_memory_feedback(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-rime-select-feedback-") as tmp:
+            db_path = f"{tmp}/select.sqlite"
+            core = LocalSqliteCoreClient(db_path)
+            adapter = InputMethodAdapter(core)
+            skipped_event_id = int(
+                adapter.commit_text(
+                    "把 RAG 候选做成可选择的输入片段",
+                    recent_context="反馈测试",
+                    source="fixture",
+                ).split(":", 1)[-1]
+            )
+            selected_event_id = int(
+                adapter.commit_text(
+                    "补齐 selection feedback",
+                    recent_context="反馈测试",
+                    source="fixture",
+                ).split(":", 1)[-1]
+            )
+            shown_candidates = [
+                {
+                    "label": "1",
+                    "selectionKey": "1",
+                    "selectionRank": 1,
+                    "text": "把 RAG 候选做成可选择的输入片段",
+                    "insertText": "把 RAG 候选做成可选择的输入片段",
+                    "sourceType": "rag",
+                    "suggestionId": "sug-skip",
+                    "memoryId": f"event:{skipped_event_id}",
+                    "sourceEventId": skipped_event_id,
+                },
+                {
+                    "label": "2",
+                    "selectionKey": "2",
+                    "selectionRank": 2,
+                    "text": "补齐 selection feedback",
+                    "insertText": "补齐 selection feedback",
+                    "sourceType": "memory",
+                    "suggestionId": "sug-accept",
+                    "memoryId": f"event:{selected_event_id}",
+                    "sourceEventId": selected_event_id,
+                },
+            ]
+
+            response = record_rime_side_candidate_selection(
+                payload={
+                    "candidate": shown_candidates[1],
+                    "shownCandidates": shown_candidates,
+                    "query": "selection feedback",
+                    "recentContext": "用户选择第二个候选",
+                    "preedit": "selection",
+                },
+                adapter=adapter,
+                core=core,
+            )
+
+            self.assertTrue(response["recordedAction"])
+            self.assertEqual(response["recordedActionCount"], 2)
+            self.assertEqual(response["action"]["actionType"], "accepted")
+            self.assertEqual(response["skippedActionCount"], 1)
+            self.assertEqual(response["skippedActions"][0]["actionType"], "skipped")
+            self.assertEqual(response["skippedActions"][0]["memoryId"], f"event:{skipped_event_id}")
+            with sqlite3.connect(db_path) as conn:
+                actions = conn.execute(
+                    """
+                    SELECT memory_id, action_type, suggestion_id
+                    FROM memory_actions
+                    ORDER BY id
+                    """
+                ).fetchall()
+            self.assertEqual(
+                actions,
+                [
+                    (f"event:{selected_event_id}", "accepted", "sug-accept"),
+                    (f"event:{skipped_event_id}", "skipped", "sug-skip"),
+                ],
+            )
 
     def test_cli_rime_select_json_dry_run_does_not_write_database(self) -> None:
         payload = {

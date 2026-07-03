@@ -1185,34 +1185,47 @@ def record_rime_side_candidate_selection(
         )
 
     action_payload: dict[str, object] | None = None
-    memory_id = _string(candidate.get("memoryId") or candidate.get("memory_id"))
-    suggestion_id = _string(candidate.get("suggestionId") or candidate.get("suggestion_id"))
-    source_event_id = _optional_int(candidate.get("sourceEventId") or candidate.get("source_event_id"))
-    if (
-        not dry_run
-        and source_type in {"rag", "memory"}
-        and memory_id
-        and suggestion_id
-        and source_event_id is not None
-        and source_event_id > 0
-    ):
-        action = core.apply_action(
-            MemoryAction(
-                action_id=None,
-                created_at_ms=now_ms(),
-                memory_id=memory_id,
-                action_type="accepted",
-                query=query,
-                suggestion_id=suggestion_id,
-                source_event_id=source_event_id,
-                metadata={
-                    "surface_text": _string(candidate.get("text")) or insert_text,
-                    "insert_text": insert_text,
-                    "source": "rime-sidecar-select",
-                },
-            )
+    skipped_actions: list[dict[str, object]] = []
+    if not dry_run:
+        action_payload = _apply_candidate_memory_action(
+            core=core,
+            candidate=candidate,
+            action_type="accepted",
+            query=query,
+            metadata={
+                "surface_text": _string(candidate.get("text")) or insert_text,
+                "insert_text": insert_text,
+                "source": "rime-sidecar-select",
+            },
         )
-        action_payload = action_response_payload(action)
+        if candidate_rank is not None:
+            for shown_candidate in _shown_candidate_payloads(payload):
+                shown_rank = _candidate_display_rank(shown_candidate)
+                if shown_rank is None or shown_rank >= candidate_rank:
+                    continue
+                if _same_candidate_identity(shown_candidate, candidate):
+                    continue
+                skipped_payload = _apply_candidate_memory_action(
+                    core=core,
+                    candidate=shown_candidate,
+                    action_type="skipped",
+                    query=query,
+                    metadata={
+                        "surface_text": _string(shown_candidate.get("text")),
+                        "insert_text": _string(
+                            shown_candidate.get("insertText")
+                            or shown_candidate.get("insert_text")
+                            or shown_candidate.get("text")
+                        ),
+                        "source": "rime-sidecar-select-skipped-higher",
+                        "selected_text": _string(candidate.get("text")) or insert_text,
+                        "selected_source_type": source_type,
+                        "selected_rank": candidate_rank,
+                        "skipped_rank": shown_rank,
+                    },
+                )
+                if skipped_payload is not None:
+                    skipped_actions.append(skipped_payload)
 
     return {
         "schemaVersion": "rag-ime.rime-selection.v1",
@@ -1223,7 +1236,10 @@ def record_rime_side_candidate_selection(
         "sourceType": source_type,
         "insertText": insert_text,
         "recordedAction": action_payload is not None,
+        "recordedActionCount": (1 if action_payload is not None else 0) + len(skipped_actions),
         "action": action_payload,
+        "skippedActionCount": len(skipped_actions),
+        "skippedActions": skipped_actions,
     }
 
 
@@ -1705,6 +1721,88 @@ def _candidate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(candidate, dict):
         raise ValueError("candidate must be a JSON object")
     return candidate
+
+
+def _shown_candidate_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    value = (
+        payload.get("shownCandidates")
+        or payload.get("displayCandidates")
+        or payload.get("shown_candidates")
+        or payload.get("display_candidates")
+    )
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _candidate_display_rank(candidate: dict[str, Any]) -> int | None:
+    return (
+        _optional_int(candidate.get("selectionRank") or candidate.get("selection_rank"))
+        or _candidate_rank(
+            _string(
+                candidate.get("selectionKey")
+                or candidate.get("selection_key")
+                or candidate.get("label")
+            )
+        )
+    )
+
+
+def _same_candidate_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_id = (
+        _string(left.get("suggestionId") or left.get("suggestion_id")),
+        _optional_int(left.get("sourceEventId") or left.get("source_event_id")),
+        _string(left.get("memoryId") or left.get("memory_id")),
+    )
+    right_id = (
+        _string(right.get("suggestionId") or right.get("suggestion_id")),
+        _optional_int(right.get("sourceEventId") or right.get("source_event_id")),
+        _string(right.get("memoryId") or right.get("memory_id")),
+    )
+    if any(left_id) and left_id == right_id:
+        return True
+    return (
+        _string(left.get("sourceType") or left.get("source_type"))
+        == _string(right.get("sourceType") or right.get("source_type"))
+        and _string(left.get("text")) == _string(right.get("text"))
+        and _string(left.get("insertText") or left.get("insert_text"))
+        == _string(right.get("insertText") or right.get("insert_text"))
+    )
+
+
+def _apply_candidate_memory_action(
+    *,
+    core: CoreClient,
+    candidate: dict[str, Any],
+    action_type: str,
+    query: str,
+    metadata: dict[str, object],
+) -> dict[str, object] | None:
+    source_type = _string(candidate.get("sourceType") or candidate.get("source_type"))
+    memory_id = _string(candidate.get("memoryId") or candidate.get("memory_id"))
+    suggestion_id = _string(candidate.get("suggestionId") or candidate.get("suggestion_id"))
+    source_event_id = _optional_int(candidate.get("sourceEventId") or candidate.get("source_event_id"))
+    if (
+        source_type not in {"rag", "memory"}
+        or not memory_id
+        or not suggestion_id
+        or source_event_id is None
+        or source_event_id <= 0
+    ):
+        return None
+    action = core.apply_action(
+        MemoryAction(
+            action_id=None,
+            created_at_ms=now_ms(),
+            memory_id=memory_id,
+            action_type=action_type,
+            query=query,
+            suggestion_id=suggestion_id,
+            source_event_id=source_event_id,
+            metadata=metadata,
+        )
+    )
+    return action_response_payload(action)
 
 
 def _candidate_rank(label: str) -> int | None:

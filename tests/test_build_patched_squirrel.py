@@ -55,6 +55,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func traceRagImeFrontendEvent(_ event: String, fields: [String: Any])", patch_text)
         self.assertIn('traceRagImeFrontendEvent("panel_display_candidates"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("side_candidate_commit"', patch_text)
+        self.assertIn("shownCandidates: ragImeDisplayCandidates", patch_text)
+        self.assertIn("let shownCandidates: [RagImeDisplayCandidate]", patch_text)
         self.assertIn(
             "+    committedContext: String,\n"
             "+    page: Int,\n"
