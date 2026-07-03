@@ -1293,6 +1293,7 @@ def record_rime_side_candidate_selection(
     project = _string(payload.get("project")) or default_project
     query = _string(payload.get("query") or payload.get("semanticQuery"))
     recent_context = _string(payload.get("recentContext") or payload.get("committedContext"))
+    memory_context = _selection_memory_context(recent_context=recent_context, query=query)
     preedit = _string(payload.get("preedit"))
     label = _string(candidate.get("selectionKey") or candidate.get("label"))
     candidate_rank = _optional_int(candidate.get("selectionRank")) or _candidate_rank(label)
@@ -1301,6 +1302,7 @@ def record_rime_side_candidate_selection(
         for item in (
             "squirrel",
             "rime-sidecar",
+            "sidecar-selected",
             f"source:{source_type}" if source_type else "",
         )
         if item
@@ -1309,7 +1311,7 @@ def record_rime_side_candidate_selection(
     if not dry_run:
         event_id = adapter.commit_text(
             insert_text,
-            recent_context=recent_context,
+            recent_context=memory_context,
             preedit=preedit,
             schema_id="rime_sidecar",
             app=_string(payload.get("app")) or "squirrel",
@@ -1320,6 +1322,7 @@ def record_rime_side_candidate_selection(
             tags=tags,
         )
 
+    commit_action_payload: dict[str, object] | None = None
     action_payload: dict[str, object] | None = None
     skipped_actions: list[dict[str, object]] = []
     if not dry_run:
@@ -1334,6 +1337,22 @@ def record_rime_side_candidate_selection(
                 "source": "rime-sidecar-select",
             },
         )
+        if action_payload is None:
+            commit_action_payload = _apply_committed_event_feedback(
+                core=core,
+                event_id=event_id,
+                action_type="accepted",
+                query=query,
+                suggestion_id=_string(candidate.get("suggestionId") or candidate.get("suggestion_id"))
+                or f"committed:{source_type}:{candidate_rank or 0}",
+                metadata={
+                    "surface_text": _string(candidate.get("text")) or insert_text,
+                    "insert_text": insert_text,
+                    "source": "rime-sidecar-select-committed-event",
+                    "source_type": source_type,
+                    "selection_rank": candidate_rank or 0,
+                },
+            )
         if candidate_rank is not None:
             for shown_candidate in _shown_candidate_payloads(payload):
                 shown_rank = _candidate_display_rank(shown_candidate)
@@ -1372,8 +1391,12 @@ def record_rime_side_candidate_selection(
         "sourceType": source_type,
         "insertText": insert_text,
         "recordedAction": action_payload is not None,
-        "recordedActionCount": (1 if action_payload is not None else 0) + len(skipped_actions),
+        "recordedCommitAction": commit_action_payload is not None,
+        "recordedActionCount": (1 if action_payload is not None else 0)
+        + (1 if commit_action_payload is not None else 0)
+        + len(skipped_actions),
         "action": action_payload,
+        "commitAction": commit_action_payload,
         "skippedActionCount": len(skipped_actions),
         "skippedActions": skipped_actions,
     }
@@ -2003,6 +2026,56 @@ def _apply_candidate_memory_action(
         )
     )
     return action_response_payload(action)
+
+
+def _apply_committed_event_feedback(
+    *,
+    core: CoreClient,
+    event_id: str,
+    action_type: str,
+    query: str,
+    suggestion_id: str,
+    metadata: dict[str, object],
+) -> dict[str, object] | None:
+    source_event_id = _event_id_from_memory_id(event_id)
+    if source_event_id is None:
+        return None
+    action = core.apply_action(
+        MemoryAction(
+            action_id=None,
+            created_at_ms=now_ms(),
+            memory_id=event_id,
+            action_type=action_type,
+            query=query,
+            suggestion_id=suggestion_id,
+            source_event_id=source_event_id,
+            metadata=metadata,
+        )
+    )
+    return action_response_payload(action)
+
+
+def _selection_memory_context(*, recent_context: str, query: str) -> str:
+    context = compact_whitespace(recent_context)
+    query_text = compact_whitespace(query)
+    if not query_text:
+        return context
+    if query_text in context:
+        return context
+    if not context:
+        return query_text
+    return compact_whitespace(f"{context} {query_text}")
+
+
+def _event_id_from_memory_id(memory_id: str) -> int | None:
+    value = _string(memory_id)
+    if not value.startswith("event:"):
+        return None
+    try:
+        event_id = int(value.split(":", 1)[1])
+    except (TypeError, ValueError):
+        return None
+    return event_id if event_id > 0 else None
 
 
 def _candidate_rank(label: str) -> int | None:

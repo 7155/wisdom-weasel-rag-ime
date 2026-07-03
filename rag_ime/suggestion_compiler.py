@@ -246,7 +246,8 @@ def _skip_memory_by_tags(tags: tuple[str, ...]) -> bool:
     tag_set = {str(tag).lower() for tag in tags}
     if "role:event_msg" in tag_set or "role:assistant" in tag_set:
         return True
-    if "source:rag" in tag_set or "source:model" in tag_set:
+    generated_side_candidate = "source:rag" in tag_set or "source:model" in tag_set
+    if generated_side_candidate and "sidecar-selected" not in tag_set:
         return True
     if "runtime-noise" in tag_set:
         return True

@@ -1822,12 +1822,54 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertEqual(response["schemaVersion"], "rag-ime.rime-selection.v1")
             self.assertEqual(response["insertText"], "统一选择写回接口")
             self.assertFalse(response["recordedAction"])
+            self.assertTrue(response["recordedCommitAction"])
+            self.assertEqual(response["commitAction"]["actionType"], "accepted")
             with sqlite3.connect(db_path) as conn:
                 row = conn.execute(
-                    "SELECT committed_text, candidate_rank, source FROM input_events WHERE committed_text = ?",
+                    """
+                    SELECT e.committed_text, e.candidate_rank, e.source, s.accepted_count
+                    FROM input_events e
+                    JOIN memory_state s ON s.event_id = e.id
+                    WHERE e.committed_text = ?
+                    """,
                     ("统一选择写回接口",),
                 ).fetchone()
-            self.assertEqual(row, ("统一选择写回接口", 3, "squirrel_rime_sidecar"))
+            self.assertEqual(row, ("统一选择写回接口", 3, "squirrel_rime_sidecar", 1))
+
+    def test_rime_select_model_candidate_feedback_changes_future_memory_ranking(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-rime-select-model-feedback-") as tmp:
+            db_path = f"{tmp}/select-model.sqlite"
+            core = LocalSqliteCoreClient(db_path)
+            adapter = InputMethodAdapter(core)
+            adapter.commit_text("普通模型候选", recent_context="模型 候选 反馈", source="fixture")
+            response = record_rime_side_candidate_selection(
+                payload={
+                    "candidate": {
+                        "label": "2",
+                        "selectionKey": "2",
+                        "selectionRank": 2,
+                        "text": "模型短候选",
+                        "insertText": "模型短候选",
+                        "sourceType": "model",
+                        "selectionAction": "commit_side_candidate",
+                        "sourceIndex": 0,
+                    },
+                    "query": "模型 候选 反馈",
+                    "recentContext": "用户选择模型候选",
+                    "preedit": "moxing",
+                },
+                adapter=adapter,
+                core=core,
+            )
+            suggestions = core.suggest_for_input(current_input="模型 候选 反馈", top_k=2)
+
+        self.assertFalse(response["recordedAction"])
+        self.assertTrue(response["recordedCommitAction"])
+        self.assertEqual(response["commitAction"]["memoryId"], response["eventId"])
+        self.assertEqual(response["commitAction"]["actionType"], "accepted")
+        self.assertEqual(response["recordedActionCount"], 1)
+        self.assertEqual(suggestions[0].surface_text, "模型短候选")
+        self.assertIn("accepted:1", suggestions[0].metadata["reason"])
 
     def test_rime_select_records_skipped_higher_memory_feedback(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-rime-select-feedback-") as tmp:
