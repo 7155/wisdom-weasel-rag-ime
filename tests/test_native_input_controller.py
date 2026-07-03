@@ -105,6 +105,26 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("sessionFingerprint: String", source)
         self.assertIn("let sessionFingerprint: String?", models_source)
 
+    def test_native_frontend_routes_only_side_candidates_to_rime_select_feedback(self) -> None:
+        source = _controller_source()
+        models_source = _models_source()
+
+        commit_start = source.index("private func commit(")
+        commit_end = source.index("private func commitRawText")
+        commit_body = source[commit_start:commit_end]
+        self.assertIn("let shownDisplayCandidates = latestDisplayCandidates", commit_body)
+        self.assertIn("let shouldRecordSelectedDisplayCandidate = selectedDisplayCandidate.map(shouldRecordSideCandidateSelection) ?? false", commit_body)
+        self.assertIn("if shouldRecordSelectedDisplayCandidate", commit_body)
+        self.assertIn("shownCandidates: shownDisplayCandidates", commit_body)
+        self.assertIn('source: "macos_inputmethod_rime"', commit_body)
+
+        helper_start = source.index("private func shouldRecordSideCandidateSelection")
+        helper_body = source[helper_start:]
+        self.assertIn('candidate.selectionAction == "select_rime_candidate"', helper_body)
+        self.assertIn('candidate.sourceType == "rime"', helper_body)
+
+        self.assertIn("let shownCandidates: [RimeDisplayCandidate]", models_source)
+
     def test_native_bridge_prefers_http_sidecar_for_rime_requests(self) -> None:
         source = _bridge_source()
 

@@ -153,6 +153,7 @@ struct RimePredictionSessionPayload: Codable {
 
 struct RimeSelectRequest: Codable {
     let candidate: RimeDisplayCandidate
+    let shownCandidates: [RimeDisplayCandidate]
     let query: String
     let recentContext: String
     let preedit: String

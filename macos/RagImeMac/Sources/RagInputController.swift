@@ -183,6 +183,8 @@ final class RagInputController: IMKInputController {
 
         let previousContext = committedContext
         let query = queryOverride ?? composition
+        let shownDisplayCandidates = latestDisplayCandidates
+        let shouldRecordSelectedDisplayCandidate = selectedDisplayCandidate.map(shouldRecordSideCandidateSelection) ?? false
         client.insertText(finalText, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
         clearMarkedText(client: client)
         committedContext = appendingContext(previousContext, finalText)
@@ -197,20 +199,25 @@ final class RagInputController: IMKInputController {
         let project = self.bridge.project
         DispatchQueue.global(qos: .utility).async {
             if let selectedDisplayCandidate {
-                let request = RimeSelectRequest(
-                    candidate: selectedDisplayCandidate,
-                    query: query,
-                    recentContext: previousContext,
-                    preedit: query,
-                    project: project,
-                    app: "RagImeMac",
-                    sessionId: sessionId,
-                    requestSeq: requestSeq,
-                    source: "rag-ime-mac-native",
-                    providerName: "rag-ime-mac:\(selectedDisplayCandidate.sourceType)",
-                    dryRun: false
-                )
-                _ = try? bridge.rimeSelect(request: request)
+                if shouldRecordSelectedDisplayCandidate {
+                    let request = RimeSelectRequest(
+                        candidate: selectedDisplayCandidate,
+                        shownCandidates: shownDisplayCandidates,
+                        query: query,
+                        recentContext: previousContext,
+                        preedit: query,
+                        project: project,
+                        app: "RagImeMac",
+                        sessionId: sessionId,
+                        requestSeq: requestSeq,
+                        source: "rag-ime-mac-native",
+                        providerName: "rag-ime-mac:\(selectedDisplayCandidate.sourceType)",
+                        dryRun: false
+                    )
+                    _ = try? bridge.rimeSelect(request: request)
+                } else {
+                    try? bridge.recordCommit(text: finalText, recentContext: previousContext, preedit: query, source: "macos_inputmethod_rime")
+                }
             } else if let selectedSuggestion {
                 _ = try? bridge.apply(actionType: "accepted", suggestion: selectedSuggestion, query: query)
                 try? bridge.recordCommit(text: finalText, recentContext: previousContext, preedit: query, source: "macos_inputmethod")
@@ -629,6 +636,13 @@ final class RagInputController: IMKInputController {
         default:
             return false
         }
+    }
+
+    private func shouldRecordSideCandidateSelection(_ candidate: RimeDisplayCandidate) -> Bool {
+        if candidate.selectionAction == "select_rime_candidate" || candidate.sourceType == "rime" {
+            return false
+        }
+        return true
     }
 
     private func firstVisibleDisplayCandidate() -> RimeDisplayCandidate? {
