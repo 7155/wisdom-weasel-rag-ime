@@ -40,7 +40,7 @@ index 813deae..1bec8e3 100644
  			);
 diff --git a/rag-ime.squirrel.custom.yaml b/rag-ime.squirrel.custom.yaml
 new file mode 100644
-index 0000000..cc2e30b
+index 0000000..44ee9f8
 --- /dev/null
 +++ b/rag-ime.squirrel.custom.yaml
 @@ -0,0 +1,14 @@
@@ -112,10 +112,10 @@ index 89c1214..a240173 100644
    private lazy var inputSources: [String: TISInputSource] = {
      var inputSources = [String: TISInputSource]()
 diff --git a/sources/Main.swift b/sources/Main.swift
-index f998248..a0bf7bd 100644
+index f998248..a56500e 100644
 --- a/sources/Main.swift
 +++ b/sources/Main.swift
-@@ -15,9 +15,7 @@ struct SquirrelApp {
+@@ -15,11 +15,42 @@ struct SquirrelApp {
    } else {
      try! FileManager.default.url(for: .libraryDirectory, in: .userDomainMask, appropriateFor: nil, create: false).appendingPathComponent("Rime", isDirectory: true)
    }
@@ -125,13 +125,72 @@ index f998248..a0bf7bd 100644
 +  static let appDir = Bundle.main.bundleURL
    static let logDir = FileManager.default.temporaryDirectory.appending(component: "rime.squirrel", directoryHint: .isDirectory)
  
++  static func traceRagImeProcessEvent(_ event: String, fields: [String: Any] = [:]) {
++    var payload = fields
++    payload["event"] = event
++    payload["schemaVersion"] = "rag-ime.squirrel-process-trace.v1"
++    payload["timestampMs"] = Int(Date().timeIntervalSince1970 * 1000)
++    payload["pid"] = ProcessInfo.processInfo.processIdentifier
++    payload["arguments"] = CommandLine.arguments
++    payload["bundlePath"] = Bundle.main.bundleURL.path
++    payload["bundleIdentifier"] = Bundle.main.bundleIdentifier ?? ""
++    payload["connectionName"] = Bundle.main.object(forInfoDictionaryKey: "InputMethodConnectionName") as? String ?? ""
++    payload["inputSourceID"] = Bundle.main.object(forInfoDictionaryKey: "TISInputSourceID") as? String ?? ""
++
++    guard JSONSerialization.isValidJSONObject(payload) else { return }
++    do {
++      let logDirectory = FileManager.default.homeDirectoryForCurrentUser
++        .appendingPathComponent("Library/Logs/RagIme", isDirectory: true)
++      try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
++      let logFile = logDirectory.appendingPathComponent("squirrel-process.jsonl")
++      var data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
++      data.append(0x0a)
++      if !FileManager.default.fileExists(atPath: logFile.path) {
++        FileManager.default.createFile(atPath: logFile.path, contents: nil)
++      }
++      let handle = try FileHandle(forWritingTo: logFile)
++      defer { try? handle.close() }
++      try handle.seekToEnd()
++      handle.write(data)
++    } catch {
++      print("RAG IME process trace failed: \(error)")
++    }
++  }
++
++
    // swiftlint:disable:next cyclomatic_complexity
+   static func main() {
+     let rimeAPI: RimeApi_stdbool = rime_get_api_stdbool().pointee
+@@ -125,7 +156,12 @@ struct SquirrelApp {
+     autoreleasepool {
+       let main = Bundle.main
+       let connectionName = main.object(forInfoDictionaryKey: "InputMethodConnectionName") as! String
++      traceRagImeProcessEvent("before_imk_server", fields: [
++        "connectionName": connectionName,
++        "bundleIdentifier": main.bundleIdentifier ?? "",
++      ])
+       _ = IMKServer(name: connectionName, bundleIdentifier: main.bundleIdentifier!)
++      traceRagImeProcessEvent("after_imk_server")
+       let app = NSApplication.shared
+       let delegate = SquirrelApplicationDelegate()
+       app.delegate = delegate
+@@ -150,8 +186,10 @@ struct SquirrelApp {
+         print("Squirrel reporting!")
+       }
+ 
++      traceRagImeProcessEvent("before_app_run")
+       app.run()
+       print("Squirrel is quitting...")
++      traceRagImeProcessEvent("after_app_run")
+       rimeAPI.finalize()
+     }
+     return
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000..e716f28
+index 0000000..e4aaed0
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,331 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -465,10 +524,10 @@ index 0000000..e716f28
 +}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
-index 0000000..6a50e72
+index 0000000..784162d
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,199 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
@@ -526,6 +585,7 @@ index 0000000..6a50e72
 +  let ragCandidates: [RagImeSuggestion]
 +  let displayCandidates: [RagImeDisplayCandidate]
 +  let predictionSession: RagImePredictionSessionPayload?
++  let progressive: RagImeProgressivePayload?
 +  let selectionActions: RagImeSelectionActions
 +  let mergePolicy: RagImeMergePolicy
 +}
@@ -555,6 +615,15 @@ index 0000000..6a50e72
 +  let contextFingerprint: String?
 +  let requestSeq: Int?
 +  let expiresAfterMs: Int?
++}
++
++struct RagImeProgressivePayload: Codable {
++  let enabled: Bool
++  let partial: Bool
++  let shouldFollowUp: Bool
++  let pendingLanes: [String]
++  let firstResponseBudgetMs: Int
++  let retryAfterMs: Int
 +}
 +
 +struct RagImeModelPrediction: Codable, Hashable {
@@ -681,7 +750,7 @@ index 124ef7b..52c6983 100644
        inputController.deactivateServer(inputController.client())
      }
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..20bc671 100644
+index c2adf74..611e461 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
 @@ -27,6 +27,26 @@ final class SquirrelInputController: IMKInputController {
@@ -774,7 +843,7 @@ index c2adf74..20bc671 100644
      let success = rimeAPI.select_candidate_on_current_page(session, index)
      if success {
        rimeUpdate()
-@@ -131,6 +183,47 @@ final class SquirrelInputController: IMKInputController {
+@@ -131,6 +200,47 @@ final class SquirrelInputController: IMKInputController {
      return success
    }
  
@@ -822,7 +891,7 @@ index c2adf74..20bc671 100644
    // swiftlint:disable:next identifier_name
    func page(up: Bool) -> Bool {
      var handled = false
-@@ -301,6 +411,781 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,6 +411,881 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
@@ -1138,9 +1207,69 @@ index c2adf74..20bc671 100644
 +      ],
 +      "candidateCounts": ragImeTraceCandidateCounts(),
 +      "candidates": ragImeTraceCandidateSummaries(),
++      "progressive": ragImeTraceProgressive(response.progressive),
 +    ])
 +    completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: true)
++    scheduleRagImeProgressiveFollowUpIfNeeded(response: response, request: request, fingerprint: fingerprint)
 +    rimeUpdate(clearReservedComments: false, requestSidecar: false)
++  }
++
++  func scheduleRagImeProgressiveFollowUpIfNeeded(
++    response: RagImeSidecarResponse,
++    request: RagImeSidecarRequest,
++    fingerprint: String
++  ) {
++    guard let progressive = response.progressive,
++          progressive.enabled,
++          progressive.shouldFollowUp else {
++      return
++    }
++    let retryAfterMs = max(80, min(1500, progressive.retryAfterMs))
++    let pendingLanes = progressive.pendingLanes
++    let workItem = DispatchWorkItem { [weak self] in
++      guard let self else { return }
++      guard fingerprint == self.ragImeLastRequestFingerprint else {
++        self.traceRagImeFrontendEvent("sidecar_progressive_followup_skipped", fields: [
++          "requestSeq": request.requestSeq,
++          "reason": "stale_fingerprint",
++          "pendingLanes": pendingLanes,
++        ])
++        return
++      }
++      guard self.ragImeCommittedContext == request.committedContext else {
++        self.traceRagImeFrontendEvent("sidecar_progressive_followup_skipped", fields: [
++          "requestSeq": request.requestSeq,
++          "reason": "live_context_changed",
++          "pendingLanes": pendingLanes,
++        ])
++        return
++      }
++      guard let sidecarClient = self.ragImeSidecarClient else {
++        self.traceRagImeFrontendEvent("sidecar_progressive_followup_skipped", fields: [
++          "requestSeq": request.requestSeq,
++          "reason": "sidecar_not_configured",
++          "pendingLanes": pendingLanes,
++        ])
++        return
++      }
++      self.ragImePendingRequestFingerprint = fingerprint
++      self.traceRagImeFrontendEvent("sidecar_progressive_followup_sent", fields: [
++        "requestSeq": request.requestSeq,
++        "retryAfterMs": retryAfterMs,
++        "pendingLanes": pendingLanes,
++      ])
++      self.sendRagImeSidecarRequest(request, fingerprint: fingerprint, sidecarClient: sidecarClient)
++    }
++    ragImePendingRequestWorkItem?.cancel()
++    ragImePendingRequestFingerprint = fingerprint
++    ragImePendingRequestWorkItem = workItem
++    traceRagImeFrontendEvent("sidecar_progressive_followup_scheduled", fields: [
++      "requestSeq": request.requestSeq,
++      "retryAfterMs": retryAfterMs,
++      "pendingLanes": pendingLanes,
++      "partial": progressive.partial,
++    ])
++    DispatchQueue.main.asyncAfter(deadline: .now() + TimeInterval(retryAfterMs) / 1000, execute: workItem)
 +  }
 +
 +  func dropRagImeSidecarResponse(
@@ -1478,6 +1607,25 @@ index c2adf74..20bc671 100644
 +    ]
 +  }
 +
++  func ragImeTraceProgressive(_ progressive: RagImeProgressivePayload?) -> [String: Any] {
++    guard let progressive else {
++      return [
++        "enabled": false,
++        "partial": false,
++        "shouldFollowUp": false,
++        "pendingLanes": [],
++      ]
++    }
++    return [
++      "enabled": progressive.enabled,
++      "partial": progressive.partial,
++      "shouldFollowUp": progressive.shouldFollowUp,
++      "pendingLanes": progressive.pendingLanes,
++      "firstResponseBudgetMs": progressive.firstResponseBudgetMs,
++      "retryAfterMs": progressive.retryAfterMs,
++    ]
++  }
++
 +  func ragImeTraceCandidateSummaries() -> [[String: Any]] {
 +    ragImeDisplayCandidates.enumerated().map { index, candidate in
 +      ragImeTraceCandidateSummary(candidate, index: index)
@@ -1625,7 +1773,7 @@ index c2adf74..20bc671 100644
    func onChordTimer(_: Timer) {
      var processedKeys = false
      if chordKeyCount > 0 && session != 0 {
-@@ -360,6 +939,7 @@ private extension SquirrelInputController {
+@@ -360,6 +1345,7 @@ private extension SquirrelInputController {
  
      if session != 0 {
        updateAppOptions()
@@ -1633,7 +1781,7 @@ index c2adf74..20bc671 100644
      }
    }
  
-@@ -434,7 +1014,7 @@ private extension SquirrelInputController {
+@@ -434,7 +1420,7 @@ private extension SquirrelInputController {
    }
  
    // Preserve reserved comment marks when librime requests a UI-only refresh.
@@ -1642,7 +1790,7 @@ index c2adf74..20bc671 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +1026,7 @@ private extension SquirrelInputController {
+@@ -446,6 +1432,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -1650,7 +1798,7 @@ index c2adf74..20bc671 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +1039,14 @@ private extension SquirrelInputController {
+@@ -458,13 +1445,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -1666,7 +1814,7 @@ index c2adf74..20bc671 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -537,13 +1119,35 @@ private extension SquirrelInputController {
+@@ -537,20 +1525,45 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -1703,19 +1851,16 @@ index c2adf74..20bc671 100644
        hidePalettes()
      }
    }
-@@ -1461,8 +1461,11 @@ private extension SquirrelInputController {
+ 
    func commit(string: String) {
      guard let client = client else { return }
--    client.insertText(string, replacementRange: .empty)
 +    let previousContext = syncRagImeCommittedContextFromClient(excludingMarkedText: preedit)
-+    client.insertText(string, replacementRange: .empty)
+     client.insertText(string, replacementRange: .empty)
 +    ragImeCommittedContext = actualRagImeCommittedContextFromClient(fallback: [previousContext, string].filter { !$0.isEmpty }.joined(separator: " "))
 +    ragImeCommittedContextUpdatedAt = ragImeCommittedContext.isEmpty ? .distantPast : Date()
      preedit = ""
      hidePalettes()
    }
- 
-   func show(preedit: String, selRange: NSRange, caretPos: Int) {
 diff --git a/sources/SquirrelPanel.swift b/sources/SquirrelPanel.swift
 index a9e2dae..dda2cd4 100644
 --- a/sources/SquirrelPanel.swift

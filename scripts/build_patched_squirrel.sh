@@ -231,8 +231,10 @@ prepare_squirrel_dependencies() {
   local should_preinstall=0
   if bool_true "$PREINSTALL"; then
     should_preinstall=1
-  elif [[ "$PREINSTALL" == "auto" && ! deps_ready ]]; then
-    should_preinstall=1
+  elif [[ "$PREINSTALL" == "auto" ]]; then
+    if ! deps_ready; then
+      should_preinstall=1
+    fi
   fi
 
   if [[ "$should_preinstall" == "1" ]]; then

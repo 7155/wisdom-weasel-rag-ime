@@ -2078,6 +2078,54 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["predictionCount"], 0)
         self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
 
+    def test_progressive_response_returns_rag_before_slow_model_then_followup_uses_holdover(self) -> None:
+        slow_predictor = SlowPredictionProvider(sleep_s=0.28)
+        payload = {
+            "sessionId": "squirrel-progressive-rag-first",
+            "requestSeq": 88,
+            "latencyBudgetMs": 1200,
+            "forceSideCandidates": True,
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "committedContext": "我看是能 LLM 和 RAG 输出，就是展示不好，可以一个一个蹦出来",
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                ]
+            },
+        }
+        with patch.dict("os.environ", {"RAG_IME_PROGRESSIVE_FIRST_RESPONSE_MS": "120"}):
+            started = time.perf_counter()
+            response = build_rime_sidecar_response(
+                payload=payload,
+                adapter=self.adapter,
+                core=self.core,
+                predictor=slow_predictor,
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+        self.assertLess(elapsed_ms, 900)
+        self.assertTrue(any(item["sourceType"] == "rag" for item in response["displayCandidates"]))
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertTrue(response["progressive"]["enabled"])
+        self.assertTrue(response["progressive"]["partial"])
+        self.assertTrue(response["progressive"]["shouldFollowUp"])
+        self.assertIn("model", response["progressive"]["pendingLanes"])
+        self.assertEqual(response["modelLane"]["skippedReason"], "model lane pending after progressive first response")
+
+        self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
+        with patch.dict("os.environ", {"RAG_IME_PROGRESSIVE_FIRST_RESPONSE_MS": "120"}):
+            followup = build_rime_sidecar_response(
+                payload={**payload, "requestSeq": 89},
+                adapter=self.adapter,
+                core=self.core,
+                predictor=slow_predictor,
+            )
+
+        self.assertTrue(followup["modelPredictions"])
+        self.assertFalse(followup["progressive"]["shouldFollowUp"])
+        self.assertEqual(followup["displayCandidates"][0]["sourceType"], "model")
+
     def test_rag_lane_timeout_does_not_block_parallel_model_lane(self) -> None:
         core = SlowSuggestionCore(sleep_s=0.12)
         adapter = InputMethodAdapter(core)

@@ -103,6 +103,8 @@ _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 _REALTIME_MODEL_CONTEXT_BUDGET_MS = 500
 _MODEL_HOLDOVER_TTL_MS = 5000
+_PROGRESSIVE_FIRST_RESPONSE_MS = 700
+_PROGRESSIVE_FOLLOW_UP_RETRY_MS = 280
 _POST_COMMIT_PANEL_TTL_MS = 8000
 _PREFIX_CONSTRAINED_PANEL_TTL_MS = 2600
 _MODEL_HOLDOVER_LOCK = RLock()
@@ -254,7 +256,7 @@ def build_rime_sidecar_response(
     )
     if trigger_decision.should_refresh:
         lane_started = time.perf_counter()
-        suggestions, rag_lane, model_predictions, model_lane = run_side_lanes_with_latency_budget(
+        suggestions, rag_lane, model_predictions, model_lane, progressive_state = run_side_lanes_with_latency_budget(
             adapter=adapter,
             core=core,
             predictor=predictor,
@@ -323,6 +325,11 @@ def build_rime_sidecar_response(
         prediction_context = ""
         model_predictions = []
         suggestions = []
+        progressive_state = _progressive_state(
+            enabled=progressive_sidecar_updates_enabled(),
+            partial=False,
+            should_follow_up=False,
+        )
         rag_lane = {
             "called": False,
             "timedOut": False,
@@ -457,6 +464,7 @@ def build_rime_sidecar_response(
             "rime": "select_rime_candidate",
             "side": "commit_side_candidate",
         },
+        "progressive": progressive_state,
         "mergePolicy": {
             "rimeFirst": False,
             "sideFirst": True,
@@ -584,7 +592,8 @@ def run_side_lanes_with_latency_budget(
     top_k: int,
     max_candidates: int,
     latency_budget_ms: int,
-) -> tuple[list[InputSuggestion], dict[str, object], list[ModelPrediction], dict[str, object]]:
+) -> tuple[list[InputSuggestion], dict[str, object], list[ModelPrediction], dict[str, object], dict[str, object]]:
+    started = time.perf_counter()
     rag_result: dict[str, object] = {}
     model_result: dict[str, object] = {}
     rag_budget_ms = _rag_lane_budget_for_request(latency_budget_ms)
@@ -634,27 +643,51 @@ def run_side_lanes_with_latency_budget(
         model_result["predictions"] = predictions
         model_result["lane"] = lane
 
-    threads = [
-        Thread(target=run_rag, name="rag-ime-sidecar-rag-dispatch", daemon=True),
-        Thread(target=run_model, name="rag-ime-sidecar-model-dispatch", daemon=True),
-    ]
+    rag_thread = Thread(target=run_rag, name="rag-ime-sidecar-rag-dispatch", daemon=True)
+    model_thread = Thread(target=run_model, name="rag-ime-sidecar-model-dispatch", daemon=True)
+    threads = [rag_thread, model_thread]
     for thread in threads:
         thread.start()
-    deadline = time.perf_counter() + max(0, latency_budget_ms) / 1000
-    for thread in threads:
-        thread.join(timeout=max(0.0, deadline - time.perf_counter()))
+    deadline = started + max(0, latency_budget_ms) / 1000
+    progressive_enabled = progressive_sidecar_updates_enabled()
+    first_response_budget_ms = progressive_first_response_budget_ms(latency_budget_ms)
+    progressive_deadline = started + first_response_budget_ms / 1000
+    progressive_partial = False
+    while True:
+        now = time.perf_counter()
+        if not rag_thread.is_alive() and not model_thread.is_alive():
+            break
+        if now >= deadline:
+            break
+        if (
+            progressive_enabled
+            and now >= progressive_deadline
+            and _has_progressive_visible_lane_result(
+                rag_result=rag_result,
+                model_result=model_result,
+                snapshot=snapshot,
+            )
+        ):
+            progressive_partial = True
+            break
+        time.sleep(min(0.01, max(0.001, deadline - now)))
 
     suggestions = rag_result.get("suggestions")
     if not isinstance(suggestions, list):
         suggestions = []
     rag_lane = rag_result.get("lane")
+    rag_pending = rag_thread.is_alive()
     if not isinstance(rag_lane, dict):
         rag_lane = _rag_lane_status(
             called=True,
-            timed_out=True,
-                skipped_reason="RAG dispatch exceeded latency budget",
-                budget_ms=rag_budget_ms,
+            timed_out=not (progressive_partial and rag_pending),
+            skipped_reason="RAG lane pending after progressive first response"
+            if progressive_partial and rag_pending
+            else "RAG dispatch exceeded latency budget",
+            budget_ms=rag_budget_ms,
         )
+        if progressive_partial and rag_pending:
+            rag_lane["pending"] = True
     if recent_context_candidate_fallback_enabled():
         recent_fallback = recent_context_memory_suggestions(
             recent_context=explicit_recent_context or recent_context,
@@ -674,6 +707,7 @@ def run_side_lanes_with_latency_budget(
     if not isinstance(predictions, list):
         predictions = []
     model_lane = model_result.get("lane")
+    model_pending = model_thread.is_alive()
     if not isinstance(model_lane, dict):
         predictions = _get_model_holdover_predictions(
             project=project,
@@ -685,8 +719,10 @@ def run_side_lanes_with_latency_budget(
         if predictions:
             model_lane = _model_lane_status(
                 called=True,
-                timed_out=True,
-                skipped_reason="model dispatch exceeded latency budget; reused recent model holdover",
+                timed_out=not (progressive_partial and model_pending),
+                skipped_reason="model lane pending after progressive first response; reused recent model holdover"
+                if progressive_partial and model_pending
+                else "model dispatch exceeded latency budget; reused recent model holdover",
                 budget_ms=max(0, int(latency_budget_ms)),
                 prediction_count=len(predictions),
                 holdover_hit=True,
@@ -697,22 +733,120 @@ def run_side_lanes_with_latency_budget(
         else:
             model_lane = _model_lane_status(
                 called=True,
-                timed_out=True,
-                skipped_reason="model dispatch exceeded latency budget",
+                timed_out=not (progressive_partial and model_pending),
+                skipped_reason="model lane pending after progressive first response"
+                if progressive_partial and model_pending
+                else "model dispatch exceeded latency budget",
                 budget_ms=max(0, int(latency_budget_ms)),
                 request_type=request_type,
                 rime_candidate_count=rime_candidate_count,
                 requested_max_candidates=model_candidate_limit,
             )
+        if progressive_partial and model_pending:
+            model_lane["pending"] = True
 
     if isinstance(model_lane, dict):
         model_lane["requestedMaxCandidates"] = model_candidate_limit
-    return suggestions, rag_lane, predictions, model_lane
+    pending_lanes = _progressive_pending_lanes(rag_lane=rag_lane, model_lane=model_lane)
+    should_follow_up = bool(pending_lanes) and not bool(model_lane.get("holdoverHit"))
+    progressive_state = _progressive_state(
+        enabled=progressive_enabled,
+        partial=progressive_partial,
+        should_follow_up=should_follow_up,
+        pending_lanes=pending_lanes,
+        first_response_budget_ms=first_response_budget_ms,
+        retry_after_ms=progressive_follow_up_retry_ms(),
+    )
+    return suggestions, rag_lane, predictions, model_lane, progressive_state
 
 
 def _rag_lane_budget_for_request(latency_budget_ms: int) -> int:
     budget = max(0, int(latency_budget_ms))
     return budget
+
+
+def progressive_sidecar_updates_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_PROGRESSIVE_DISPLAY", "1")).strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def progressive_first_response_budget_ms(latency_budget_ms: int, env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    configured = _bounded_int(
+        source.get("RAG_IME_PROGRESSIVE_FIRST_RESPONSE_MS"),
+        default=_PROGRESSIVE_FIRST_RESPONSE_MS,
+        minimum=120,
+        maximum=2000,
+    )
+    budget = max(0, int(latency_budget_ms))
+    if budget <= 0:
+        return configured
+    if budget <= configured + 80:
+        return budget
+    return min(configured, max(120, budget - 80))
+
+
+def progressive_follow_up_retry_ms(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS"),
+        default=_PROGRESSIVE_FOLLOW_UP_RETRY_MS,
+        minimum=80,
+        maximum=1500,
+    )
+
+
+def _has_progressive_visible_lane_result(
+    *,
+    rag_result: Mapping[str, object],
+    model_result: Mapping[str, object],
+    snapshot: RimeContextSnapshot,
+) -> bool:
+    suggestions = rag_result.get("suggestions")
+    if isinstance(suggestions, list) and suggestions:
+        return True
+    predictions = model_result.get("predictions")
+    if isinstance(predictions, list) and predictions:
+        return True
+    return bool(snapshot.candidates)
+
+
+def _progressive_pending_lanes(*, rag_lane: Mapping[str, object], model_lane: Mapping[str, object]) -> list[str]:
+    pending: list[str] = []
+    if bool(rag_lane.get("pending")):
+        pending.append("rag")
+    model_reason = _string(model_lane.get("skippedReason"))
+    if bool(model_lane.get("pending")) or (
+        not bool(model_lane.get("holdoverHit"))
+        and model_reason
+        and (
+            "model lane already running" in model_reason
+            or "model lane pending" in model_reason
+            or "model lane exceeded latency budget" in model_reason
+        )
+    ):
+        pending.append("model")
+    return pending
+
+
+def _progressive_state(
+    *,
+    enabled: bool,
+    partial: bool,
+    should_follow_up: bool,
+    pending_lanes: list[str] | None = None,
+    first_response_budget_ms: int = 0,
+    retry_after_ms: int = 0,
+) -> dict[str, object]:
+    return {
+        "enabled": bool(enabled),
+        "partial": bool(partial),
+        "shouldFollowUp": bool(should_follow_up),
+        "pendingLanes": list(pending_lanes or []),
+        "firstResponseBudgetMs": max(0, int(first_response_budget_ms)),
+        "retryAfterMs": max(0, int(retry_after_ms)),
+    }
 
 
 def realtime_model_candidate_limit(max_candidates: int) -> int:

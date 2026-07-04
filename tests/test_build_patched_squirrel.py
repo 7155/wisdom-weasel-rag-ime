@@ -45,7 +45,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("postCommitHoldover", patch_text)
         self.assertIn("ragImePostCommitDisplayHoldoverDuration", patch_text)
         self.assertIn("let predictionSession: RagImePredictionSessionPayload?", patch_text)
+        self.assertIn("let progressive: RagImeProgressivePayload?", patch_text)
         self.assertIn("struct RagImePredictionSessionPayload: Codable", patch_text)
+        self.assertIn("struct RagImeProgressivePayload: Codable", patch_text)
         self.assertIn("let sessionFingerprint: String?", patch_text)
         self.assertIn("let expiresAfterMs: Int?", patch_text)
         self.assertIn("guard !ragImeDisplayCandidates.isEmpty else { return false }", patch_text)
@@ -88,6 +90,11 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("guard ragImeCommittedContext == request.committedContext else {", patch_text)
         self.assertIn("func completeRagImeSidecarRequest(fingerprint: String, keepLastFingerprint: Bool)", patch_text)
         self.assertIn("func scheduleRagImeDisplayExpiry()", patch_text)
+        self.assertIn("func scheduleRagImeProgressiveFollowUpIfNeeded(", patch_text)
+        self.assertIn("func ragImeTraceProgressive(_ progressive: RagImeProgressivePayload?) -> [String: Any]", patch_text)
+        self.assertIn('traceRagImeFrontendEvent("sidecar_progressive_followup_scheduled"', patch_text)
+        self.assertIn('traceRagImeFrontendEvent("sidecar_progressive_followup_sent"', patch_text)
+        self.assertIn('"progressive": ragImeTraceProgressive(response.progressive)', patch_text)
         self.assertIn("func ragImeDisplayStateFingerprint() -> String", patch_text)
         self.assertIn('traceRagImeFrontendEvent("panel_expired_cleared"', patch_text)
         self.assertIn("ragImeDisplayExpiryWorkItem?.cancel()", patch_text)
@@ -170,6 +177,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("preference repair is disabled", source)
         self.assertIn("not selecting branded input source automatically", source)
         self.assertIn("traceRagImeProcessEvent", source)
+        self.assertIn('elif [[ "$PREINSTALL" == "auto" ]]; then', source)
+        self.assertIn("if ! deps_ready; then", source)
+        self.assertNotIn('[[ "$PREINSTALL" == "auto" && ! deps_ready ]]', source)
 
     def test_build_script_uses_xcodebuild_list_and_build(self) -> None:
         root = Path(__file__).resolve().parents[1]
