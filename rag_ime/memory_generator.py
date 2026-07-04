@@ -76,25 +76,28 @@ class MemoryGenerationError(RuntimeError):
 
 
 class VcpRebuildMemoryGenerator:
-    """A small AIMemo-style memory distiller backed by vcp-agent-rebuild config."""
+    """A small AIMemo-style memory distiller backed by an x1api/model config.
+
+    VCP/AIMemo is a design reference here, not the provider identity.
+    """
 
     def __init__(self, config: VcpRebuildConfig):
         if not config.api_key:
-            raise MemoryGenerationError("VCP rebuild API_KEY is not configured")
+            raise MemoryGenerationError("x1api/model API_KEY is not configured")
         self.config = config
 
     @property
     def provider_name(self) -> str:
         host = urllib.parse.urlsplit(self.config.api_base_url).netloc.lower()
-        if "x1api.top" in host:
+        if "x1api.top" in host or "x2app.top" in host:
             return "x1api"
-        return "vcp-rebuild"
+        return "model-api"
 
     @classmethod
     def from_env_path(cls, env_path: str | Path | None = None) -> "VcpRebuildMemoryGenerator":
         resolved = Path(env_path).expanduser() if env_path else default_vcp_rebuild_env_path()
         if resolved is None or not resolved.exists():
-            raise MemoryGenerationError("vcp-agent-rebuild/backend/.env was not found")
+            raise MemoryGenerationError("x1api/model env file was not found")
         values = _read_env_file(resolved)
         config = VcpRebuildConfig(
             api_base_url=_first_env_value(
@@ -256,11 +259,11 @@ class VcpRebuildMemoryGenerator:
                 parsed = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             preview = exc.read(500).decode("utf-8", errors="replace")
-            raise MemoryGenerationError(f"VCP memory generation HTTP {exc.code}: {preview}") from exc
+            raise MemoryGenerationError(f"x1api/model memory generation HTTP {exc.code}: {preview}") from exc
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-            raise MemoryGenerationError(f"VCP memory generation failed: {exc}") from exc
+            raise MemoryGenerationError(f"x1api/model memory generation failed: {exc}") from exc
         if not isinstance(parsed, dict):
-            raise MemoryGenerationError("VCP memory generation returned non-object JSON")
+            raise MemoryGenerationError("x1api/model memory generation returned non-object JSON")
         return parsed
 
 
@@ -280,7 +283,7 @@ def generated_lexicon_dedupe_tag(text: str) -> str:
 
 def generated_memory_context(source_text: str, recent_context: str, reason: str) -> str:
     parts = [
-        "VCP AIMemo-style generated memory",
+        "x1api generated memory inspired by VCP AIMemo",
         f"reason: {compact_whitespace(reason)}" if reason else "",
         f"context: {compact_whitespace(recent_context)}" if recent_context else "",
         f"source: {compact_whitespace(source_text)[:240]}",

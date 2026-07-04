@@ -100,7 +100,7 @@ class BlockingPredictionProvider:
         ][:max_candidates]
 
 
-class FakeVcpMemoryGenerator:
+class FakeX1ApiMemoryGenerator:
     calls: list[dict[str, object]] = []
 
     @classmethod
@@ -117,7 +117,7 @@ class FakeVcpMemoryGenerator:
             }
         )
         return GeneratedMemoryReport(
-            provider="vcp-rebuild",
+            provider="x1api",
             model="fake-gpt",
             elapsed_ms=12,
             items=(
@@ -275,9 +275,9 @@ class DebugImeServiceTests(unittest.TestCase):
         event_id = self.service.adapter.commit_text(
             "API 整理后的输入历史记忆",
             recent_context="历史治理",
-            source="vcp_memory_generator",
-            provider_name="vcp-rebuild:fake",
-            tags=("generated-memory", "vcp-rebuild"),
+            source="api_memory_generator",
+            provider_name="x1api:fake",
+            tags=("generated-memory", "x1api"),
         )
 
         payload = self.service.memory_history({"query": "输入历史", "generatedOnly": True, "limit": 10})
@@ -287,10 +287,10 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["items"][0]["eventId"], int(event_id.removeprefix("event:")))
         self.assertIn("generated-memory", payload["items"][0]["tags"])
 
-    def test_generate_memory_endpoint_uses_vcp_generator_and_records_rows(self) -> None:
+    def test_generate_memory_endpoint_uses_x1api_generator_and_records_rows(self) -> None:
         original = debug_server_module.VcpRebuildMemoryGenerator
-        FakeVcpMemoryGenerator.calls = []
-        debug_server_module.VcpRebuildMemoryGenerator = FakeVcpMemoryGenerator
+        FakeX1ApiMemoryGenerator.calls = []
+        debug_server_module.VcpRebuildMemoryGenerator = FakeX1ApiMemoryGenerator
         try:
             payload = self.service.generate_memory(
                 {
@@ -304,7 +304,7 @@ class DebugImeServiceTests(unittest.TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["recorded"], 1)
-        self.assertEqual(FakeVcpMemoryGenerator.calls[0]["maxItems"], 2)
+        self.assertEqual(FakeX1ApiMemoryGenerator.calls[0]["maxItems"], 2)
         history = self.service.memory_history({"generatedOnly": True, "query": "API 蒸馏"})
         self.assertEqual(history["items"][0]["text"], "用户希望输入历史先经 API 蒸馏后再进入长期记忆")
 

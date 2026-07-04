@@ -205,7 +205,9 @@ class DebugImeService:
         dry_run = _bool(payload.get("dryRun"), default=False)
         allow_duplicates = _bool(payload.get("allowDuplicates"), default=False)
         try:
-            generator = VcpRebuildMemoryGenerator.from_env_path(_string(payload.get("vcpEnvPath")) or None)
+            generator = VcpRebuildMemoryGenerator.from_env_path(
+                _string(payload.get("modelEnvPath")) or _string(payload.get("vcpEnvPath")) or None
+            )
             report = generator.generate(
                 text=source_text,
                 recent_context=recent_context,
@@ -220,7 +222,7 @@ class DebugImeService:
             }
         recorded: list[dict[str, object]] = []
         duplicate_skipped = 0
-        provider_tag = "x1api" if report.provider == "x1api" else "vcp-rebuild"
+        provider_tag = report.provider
         for item in report.items:
             dedupe_tag = generated_memory_dedupe_tag(item.text)
             if not allow_duplicates and self.core.has_event_tag(dedupe_tag):
@@ -244,7 +246,7 @@ class DebugImeService:
                     recent_context=generated_memory_context(source_text, recent_context, item.reason),
                     project=project,
                     app=_string(payload.get("app")) or "debug-memory-console",
-                    source="vcp_memory_generator",
+                    source="api_memory_generator",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
                 )

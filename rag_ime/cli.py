@@ -121,7 +121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     generate_memory = subparsers.add_parser(
         "generate-memory",
-        help="Distill stable long-term memory from text through vcp-agent-rebuild model config",
+        help="Distill stable long-term memory from text through x1api/model config",
     )
     generate_memory.add_argument("text")
     generate_memory.add_argument("--recent-context", default="")
@@ -130,11 +130,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     generate_memory.add_argument("--max-items", type=int, default=3)
     generate_memory.add_argument("--dry-run", action="store_true")
     generate_memory.add_argument("--allow-duplicates", action="store_true")
-    generate_memory.add_argument("--vcp-env-path", default=os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""))
+    generate_memory.add_argument(
+        "--model-env-path",
+        default=os.environ.get("RAG_IME_MODEL_ENV", "")
+        or os.environ.get("RAG_IME_X1API_ENV", "")
+        or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
+        help="x1api/model env file. Prefer this over the legacy --vcp-env-path.",
+    )
+    generate_memory.add_argument("--vcp-env-path", default="", help=argparse.SUPPRESS)
 
     optimize_core = subparsers.add_parser(
         "optimize-core",
-        help="Use an x1api/VCP-compatible model to optimize RAG memory and lexicon phrases from local history",
+        help="Use x1api/model config to optimize RAG memory and lexicon phrases from local history",
     )
     optimize_core.add_argument("--project", default="wisdom-weasel-rag-ime")
     optimize_core.add_argument("--app", default="manual")
@@ -738,7 +745,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "generate-memory":
         try:
-            generator = VcpRebuildMemoryGenerator.from_env_path(args.vcp_env_path or None)
+            generator = VcpRebuildMemoryGenerator.from_env_path(args.model_env_path or args.vcp_env_path or None)
             report = generator.generate(
                 text=args.text,
                 recent_context=args.recent_context,
@@ -756,7 +763,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         recorded: list[dict[str, object]] = []
         duplicate_skipped = 0
-        provider_tag = "x1api" if report.provider == "x1api" else "vcp-rebuild"
+        provider_tag = report.provider
         for item in report.items:
             dedupe_tag = generated_memory_dedupe_tag(item.text)
             if not args.allow_duplicates and _core_has_event_tag(core, dedupe_tag):
@@ -780,7 +787,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     recent_context=generated_memory_context(args.text, args.recent_context, item.reason),
                     project=args.project,
                     app=args.app,
-                    source="vcp_memory_generator",
+                    source="api_memory_generator",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
                 )
@@ -851,7 +858,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         recorded_memories: list[dict[str, object]] = []
         recorded_lexicon: list[dict[str, object]] = []
         duplicate_skipped = 0
-        provider_tag = "x1api" if report.provider == "x1api" else "vcp-rebuild"
+        provider_tag = report.provider
         for item in report.memories:
             dedupe_tag = generated_memory_dedupe_tag(item.text)
             if not args.allow_duplicates and _core_has_event_tag(core, dedupe_tag):

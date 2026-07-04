@@ -120,7 +120,7 @@ python3 -m rag_ime.cli seed-demo --reset
 python3 -m rag_ime.cli debug-server
 ```
 
-Optimize RAG memory and lexicon phrases with an x1api.top/VCP-compatible model:
+Optimize RAG memory and lexicon phrases with x1api.top:
 
 ```bash
 cat > ~/.rag-ime-x1api.env <<'EOF'
@@ -142,6 +142,11 @@ Remove `--dry-run` only after reviewing the JSON. The command writes stable
 API-distilled memories and lexicon phrases back into the local SQLite core, but
 hide/delete suggestions remain advisory so the model cannot silently erase
 history.
+
+`x1api.top` is the recommended current endpoint. `x2app.top` is treated as the
+same x1api provider for compatibility. VCP/AIMemo is only the design reference
+for memory distillation and database organization, not the provider used by the
+RAG optimizer.
 
 Install the default Sichuan fuzzy-pinyin Rime patch:
 
