@@ -1502,6 +1502,8 @@ def parse_ime_prediction_candidates(
         rime_candidate_tuple,
         max_candidates=max_items,
     )
+    if recent_context:
+        candidates = [trim_context_overlap(candidate, recent_context) for candidate in candidates]
     if resolved_request_type == PREDICTION_REQUEST_NO_INPUT:
         candidates = _filter_repeated_context_candidates(candidates, recent_context)
     allowed_ascii_candidates = rime_candidate_tuple if resolved_request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED else ()
@@ -1510,6 +1512,19 @@ def parse_ime_prediction_candidates(
         current_input,
         allowed_ascii_candidates=allowed_ascii_candidates,
     )[:max_items]
+
+
+def trim_context_overlap(candidate: str, recent_context: str) -> str:
+    cand = compact_whitespace(candidate)
+    ctx = compact_whitespace(recent_context)
+    if not cand or not ctx:
+        return cand
+    tail = ctx[-40:]
+    max_k = min(len(cand), len(tail), 16)
+    for count in range(max_k, 1, -1):
+        if tail.endswith(cand[:count]):
+            return cand[count:].lstrip(" \t\r\n,，、:：;；。.!！?？")
+    return cand
 
 
 def _parse_prediction_candidate_texts(texts: list[str], *, max_candidates: int = 5) -> list[str]:

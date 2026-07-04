@@ -99,26 +99,36 @@ class CandidatePool:
     memory: tuple[PredictionCandidate, ...] = ()
 
     def prediction_order(self) -> tuple[PredictionCandidate, ...]:
-        # Keep all semantic lanes visible before pure score sorting can crowd one
-        # out. The IME is only useful if the user can see local model, RAG, and
-        # personal-memory candidates as distinct choices.
         groups = {
+            "model": list(sorted(self.model, key=lambda item: item.score, reverse=True)),
             "rag": list(sorted(self.rag, key=lambda item: item.score, reverse=True)),
             "memory": list(sorted(self.memory, key=lambda item: item.score, reverse=True)),
-            "model": list(sorted(self.model, key=lambda item: item.score, reverse=True)),
         }
         ordered: list[PredictionCandidate] = []
         seen: set[tuple[str, int, str]] = set()
-        for candidate in (
-            tuple(groups["model"])
-            + tuple(groups["rag"])
-            + tuple(groups["memory"])
-        ):
-            key = (candidate.source_type, candidate.source_index, candidate.display_text)
-            if key in seen:
-                continue
-            ordered.append(candidate)
-            seen.add(key)
+
+        def push_one(name: str) -> None:
+            while groups[name]:
+                candidate = groups[name].pop(0)
+                key = (candidate.source_type, candidate.source_index, candidate.display_text)
+                if key in seen:
+                    continue
+                ordered.append(candidate)
+                seen.add(key)
+                return
+
+        # Avoid a panel that starts LLM, LLM, LLM, then hides RAG/Rime. The first
+        # snapshot should expose the three lanes as product choices, not as a
+        # score-sorted assistant answer.
+        push_one("model")
+        push_one("model")
+        push_one("rag")
+        push_one("memory")
+
+        while groups["model"] or groups["rag"] or groups["memory"]:
+            push_one("model")
+            push_one("rag")
+            push_one("memory")
         return tuple(ordered)
 
 
@@ -205,7 +215,7 @@ def merge_prediction_first_candidates(
                 raw_commit_inserted=raw_inserted,
             )
         before_rime = len(display)
-        _append_rime_candidates(display, seen, snapshot, max_visible=max_visible)
+        _append_rime_candidates(display, seen, snapshot, max_visible=max_visible, skip_low_value=True)
         return _merge_result(
             mode=resolved_mode,
             pinyin_prefix=prefix,
@@ -247,11 +257,13 @@ def merge_prediction_first_candidates(
         prediction_candidates = _prefix_lane_order(prediction_candidates, prefix)
     prediction_candidates, top1_guard = _apply_prediction_top1_guard(prediction_candidates)
 
-    side_budget = min(snapshot.max_side_candidates, max_visible)
+    rime_reserve = _rime_reserve_for_mode(snapshot, resolved_mode, max_visible)
+    side_budget = min(snapshot.max_side_candidates, max(0, max_visible - rime_reserve))
+    side_slot_limit = max(0, max_visible - rime_reserve)
     side_inserted = 0
     prefix_matched_side_inserted = 0
     for candidate in prediction_candidates:
-        if len(display) >= max_visible or side_inserted >= side_budget:
+        if len(display) >= side_slot_limit or side_inserted >= side_budget:
             break
         normalized = _display_norm(candidate.display_text)
         if not normalized or normalized in seen:
@@ -265,7 +277,9 @@ def merge_prediction_first_candidates(
             prefix_matched_side_inserted += 1
 
     before_rime = len(display)
-    if side_inserted == 0:
+    if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING:
+        _append_rime_candidates(display, seen, snapshot, max_visible=max_visible, skip_low_value=True)
+    elif side_inserted == 0:
         _append_rime_candidates(display, seen, snapshot, max_visible=max_visible, skip_low_value=True)
     rime_count = len(display) - before_rime
 
@@ -283,6 +297,7 @@ def merge_prediction_first_candidates(
         raw_commit_inserted=raw_inserted,
         prefix_matched_side_inserted=prefix_matched_side_inserted,
         top1_guard=top1_guard,
+        rime_reserve=rime_reserve,
     )
 
 
@@ -622,6 +637,19 @@ def _append_rime_candidates(
         )
 
 
+def _rime_reserve_for_mode(snapshot: RimeContextSnapshot, mode: InputMode, max_visible: int) -> int:
+    if mode not in {InputMode.ANCHOR_COMPOSING, InputMode.PREFIX_CONSTRAINED_COMPOSING}:
+        return 0
+    rime_count = sum(1 for candidate in snapshot.candidates if compact_whitespace(candidate.text))
+    if rime_count <= 0:
+        return 0
+    if max_visible >= 8:
+        return min(3, rime_count)
+    if max_visible >= 5:
+        return min(2, rime_count)
+    return min(1, rime_count)
+
+
 def _is_low_value_wanxiang_fallback(text: str) -> bool:
     normalized = compact_whitespace(text)
     if normalized in _LOW_VALUE_WANXIANG_FALLBACK:
@@ -680,6 +708,7 @@ def _merge_result(
     raw_commit_inserted: int = 0,
     prefix_matched_side_inserted: int = 0,
     top1_guard: dict[str, object] | None = None,
+    rime_reserve: int = 0,
 ) -> PredictionFirstMergeResult:
     return PredictionFirstMergeResult(
         mode=mode,
@@ -701,6 +730,7 @@ def _merge_result(
             "prefixMatchedSideInserted": prefix_matched_side_inserted,
             "rawCommitInserted": raw_commit_inserted,
             "wanxiangFallbackCount": rime_fallback_count,
+            "wanxiangReserve": rime_reserve,
             "rimeCompositionOwnedByRime": mode in {InputMode.ANCHOR_COMPOSING, InputMode.PREFIX_CONSTRAINED_COMPOSING},
             "top1Guard": top1_guard or {"triggered": False},
         },

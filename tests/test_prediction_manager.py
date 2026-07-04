@@ -63,9 +63,9 @@ class PredictionManagerTests(unittest.TestCase):
         self.assertEqual(result.session.selection_scope, "mixed_prediction_first")
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["设计输入法状态机", "设计一个候选展示方式"],
+            ["设计输入法状态机", "设计一个候选展示方式", "手机", "世界"],
         )
-        self.assertEqual([item.source_type for item in result.display_candidates], ["model", "memory"])
+        self.assertEqual([item.source_type for item in result.display_candidates], ["model", "memory", "rime", "rime"])
 
     def test_expired_pool_clears_post_commit_prediction_panel(self) -> None:
         manager = PredictionManager(candidate_pool_ttl_ms=1200)

@@ -1018,9 +1018,10 @@ class RimeSidecarTests(unittest.TestCase):
             predictor=MultiPredictionProvider(),
         )
         side_items = [item for item in response["displayCandidates"] if item["sourceType"] != "rime"]
-        self.assertEqual([item["sourceType"] for item in side_items], ["model", "rag", "rag"])
+        self.assertEqual([item["sourceType"] for item in side_items], ["model", "model", "rag"])
         self.assertEqual(side_items[0]["displayLayout"], "inline")
-        self.assertEqual(side_items[1]["displayLayout"], "block")
+        self.assertEqual(side_items[1]["displayLayout"], "inline")
+        self.assertEqual(side_items[2]["displayLayout"], "block")
         self.assertEqual(len(response["modelPredictions"]), 3)
         self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 3)
 
@@ -1029,6 +1030,8 @@ class RimeSidecarTests(unittest.TestCase):
             payload={
                 "sessionId": "squirrel-mixed-layout",
                 "requestSeq": 11,
+                "rawInput": "erqi",
+                "preedit": "erqi",
                 "maxVisibleCandidates": 8,
                 "maxSideCandidates": 8,
                 "rimeContext": {
@@ -1047,12 +1050,14 @@ class RimeSidecarTests(unittest.TestCase):
         display = response["displayCandidates"]
         self.assertEqual(len(display), 8)
         self.assertEqual([item["label"] for item in display], ["1", "2", "3", "4", "5", "6", "7", "8"])
-        self.assertEqual([item["sourceType"] for item in display[:5]], ["model", "model", "model", "model", "model"])
-        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline", "inline", "inline", "inline", "inline"])
-        self.assertEqual([item["displayLane"] for item in display[:5]], ["model", "model", "model", "model", "model"])
-        self.assertTrue(all(item["sourceType"] == "rag" for item in display[5:8]))
-        self.assertTrue(all(item["displayLayout"] == "block" for item in display[5:8]))
-        self.assertTrue(all(item["displayLane"] == "memory" for item in display[5:8]))
+        self.assertEqual(
+            [item["sourceType"] for item in display],
+            ["model", "model", "rag", "model", "model", "rime", "rime", "rime"],
+        )
+        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline", "inline", "block", "inline", "inline"])
+        self.assertEqual([item["displayLane"] for item in display[:5]], ["model", "model", "memory", "model", "model"])
+        self.assertTrue(all(item["displayLayout"] == "fallback" for item in display[5:8]))
+        self.assertTrue(all(item["displayLane"] == "rime" for item in display[5:8]))
         self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 3)
         self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
         self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 5)
@@ -1256,11 +1261,10 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
         self.assertEqual(response["modelLane"]["predictionCount"], 5)
         self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 5)
-        self.assertEqual([item["sourceType"] for item in display[:5]], ["model", "model", "model", "model", "model"])
+        self.assertEqual([item["sourceType"] for item in display[:6]], ["model", "model", "rag", "model", "model", "model"])
         rag_count = sum(1 for item in display if item["sourceType"] == "rag")
         self.assertGreaterEqual(rag_count, 1)
-        self.assertTrue(all(item["sourceType"] == "rag" for item in display[5 : 5 + rag_count]))
-        self.assertEqual([item["sourceType"] for item in display[5 + rag_count :]], [])
+        self.assertEqual([item["sourceType"] for item in display[-2:]], ["rime", "rime"])
 
     def test_plain_lowercase_pinyin_does_not_get_raw_english_candidate(self) -> None:
         response = build_rime_sidecar_response(
@@ -1316,16 +1320,17 @@ class RimeSidecarTests(unittest.TestCase):
         display = response["displayCandidates"]
         self.assertEqual(
             [item["text"] for item in display],
-            ["设计输入法状态机", "设计一个候选展示方式"],
+            ["设计输入法状态机", "设计一个候选展示方式", "手机", "世界"],
         )
         self.assertEqual(
             [item["sourceType"] for item in display],
-            ["model", "rag"],
+            ["model", "rag", "rime", "rime"],
         )
-        self.assertEqual([item["displayLane"] for item in display], ["model", "memory"])
+        self.assertEqual([item["displayLane"] for item in display], ["model", "memory", "wanxiang", "wanxiang"])
         self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 2)
-        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 2)
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangReserve"], 2)
         self.assertTrue(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
         self.assertEqual(response["predictionSession"]["phase"], "prefix_constrained")
         self.assertTrue(response["predictionSession"]["predictionPanelVisible"])
@@ -1372,7 +1377,8 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[1]["sourceType"], "memory")
         self.assertEqual(display[1]["displayLane"], "memory")
         self.assertEqual(display[1]["metadata"]["initials"], "sjyghxzsfs")
-        self.assertEqual([item["sourceType"] for item in display], ["model", "memory"])
+        self.assertEqual([item["sourceType"] for item in display], ["model", "memory", "rime", "rime"])
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 2)
 
     def test_prediction_first_prefix_without_match_returns_to_wanxiang_fallback(self) -> None:
         core = PrefixSuggestionCore()
@@ -1435,9 +1441,9 @@ class RimeSidecarTests(unittest.TestCase):
 
         display = response["displayCandidates"]
         self.assertGreater(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 0)
-        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
+        self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 1)
         self.assertFalse(any(item["metadata"].get("fallback") == "recent_context" for item in display))
-        self.assertEqual([item["sourceType"] for item in display], ["model"])
+        self.assertEqual([item["sourceType"] for item in display], ["model", "rime"])
         self.assertNotIn("recentContextFallbackCount", response["ragLane"])
 
     def test_prediction_first_post_commit_uses_commit_preview_as_prediction_anchor(self) -> None:
@@ -1884,7 +1890,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(busy_response["displayCandidates"][0]["sourceType"], "model")
         self.assertEqual(busy_response["displayCandidates"][0]["displayLayout"], "inline")
 
-    def test_busy_model_lane_reuses_nearby_post_commit_holdover_after_context_extension(self) -> None:
+    def test_busy_model_lane_does_not_reuse_nearby_post_commit_holdover_after_context_extension(self) -> None:
         payload = {
             "sessionId": "squirrel-model-holdover-context-prime",
             "requestSeq": 1,
@@ -1931,10 +1937,10 @@ class RimeSidecarTests(unittest.TestCase):
             blocking_predictor.release.set()
             worker.join(timeout=2)
 
-        self.assertEqual(busy_response["modelPredictions"][0]["text"], "设计一个候选展示方式")
-        self.assertTrue(busy_response["modelLane"]["holdoverHit"])
-        self.assertIn("reused recent model holdover", busy_response["modelLane"]["skippedReason"])
-        self.assertEqual(busy_response["displayCandidates"][0]["sourceType"], "model")
+        self.assertEqual(busy_response["modelPredictions"], [])
+        self.assertFalse(busy_response["modelLane"]["holdoverHit"])
+        self.assertIn("model lane already running", busy_response["modelLane"]["skippedReason"])
+        self.assertFalse(any(item["sourceType"] == "model" for item in busy_response["displayCandidates"]))
 
     def test_busy_model_lane_does_not_reuse_holdover_after_prefix_changes(self) -> None:
         payload = {

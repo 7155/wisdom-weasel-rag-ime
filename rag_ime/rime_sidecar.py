@@ -714,7 +714,7 @@ def run_side_lanes_with_latency_budget(
             current_input=current_input,
             explicit_recent_context=explicit_recent_context,
             max_candidates=model_candidate_limit,
-            allow_nearby=request_type == PREDICTION_REQUEST_NO_INPUT,
+            allow_nearby=False,
         )
         if predictions:
             model_lane = _model_lane_status(
@@ -1344,7 +1344,7 @@ def predict_model_with_latency_budget(
             current_input=current_input,
             explicit_recent_context=explicit_recent_context,
             max_candidates=max_candidates,
-            allow_nearby=request_type == PREDICTION_REQUEST_NO_INPUT,
+            allow_nearby=False,
         )
         if cached_predictions:
             return cached_predictions, _model_lane_status(
@@ -1448,7 +1448,7 @@ def predict_model_with_latency_budget(
             current_input=current_input,
             explicit_recent_context=explicit_recent_context,
             max_candidates=max_candidates,
-            allow_nearby=request_type == PREDICTION_REQUEST_NO_INPUT,
+            allow_nearby=False,
         )
         if cached_predictions:
             return cached_predictions, _model_lane_status(
@@ -2281,76 +2281,104 @@ def merge_display_candidates(
             )
         )
         return display
-    side_budget = min(snapshot.max_side_candidates, max_visible)
-    rag_reserve = min(rag_block_reserve(side_budget), len(suggestions)) if model_predictions else 0
-    side_limit = min(
-        max(0, max_model_side_candidates(side_budget) - rag_reserve),
-        max(0, max_visible - len(display)),
-        len(model_predictions),
-    )
-    model_count = 0
-    for prediction in model_predictions:
-        if model_count >= side_limit or len(display) >= max_visible:
-            break
-        normalized_text = _display_text_norm(prediction.text)
-        if normalized_text in display_texts:
-            continue
-        display_texts.add(normalized_text)
-        display.append(
-            SideCandidateDisplayItem(
-                label=_display_label("", len(display)),
-                text=prediction.text,
-                insert_text=prediction.text,
-                source_type="model",
-                selection_action="commit_side_candidate",
-                source_index=prediction.rank - 1,
-                comment=prediction.provider_name,
-                display_layout="inline",
-                display_lane="model",
-                metadata={
-                    "providerName": prediction.provider_name,
-                    "latencyMs": prediction.latency_ms,
-                    "confidence": prediction.confidence,
-                    **dict(prediction.metadata),
-                },
-            )
-        )
-        model_count += 1
-    remaining_side_budget = max(0, side_budget - side_limit)
-    rag_count = 0
-    remaining = min(remaining_side_budget, max(0, max_visible - len(display)))
-    for suggestion in suggestions:
-        if rag_count >= remaining or len(display) >= max_visible:
-            break
-        normalized_text = _display_text_norm(suggestion.surface_text)
-        if normalized_text in display_texts:
-            continue
-        display_texts.add(normalized_text)
+    input_mode = infer_input_mode(snapshot)
+    rime_reserve = _display_rime_reserve(snapshot=snapshot, mode=input_mode, max_visible=max_visible)
+    side_budget = min(snapshot.max_side_candidates, max(0, max_visible - rime_reserve))
+    model_items = list(model_predictions)
+    rag_items: list[tuple[int, InputSuggestion]] = []
+    memory_items: list[tuple[int, InputSuggestion]] = []
+    for index, suggestion in enumerate(suggestions):
         metadata = dict(suggestion.metadata)
         source_type = str(metadata.get("source_type") or "rag")
-        if source_type not in {"rag", "memory"}:
-            source_type = "rag"
-        display.append(
-            SideCandidateDisplayItem(
-                label=_display_label("", len(display)),
-                text=suggestion.surface_text,
-                insert_text=str(metadata.get("insert_text") or suggestion.surface_text),
-                source_type=source_type,
-                selection_action="commit_side_candidate",
-                source_index=rag_count,
-                comment=suggestion.suggestion_type,
-                evidence_preview=suggestion.evidence_preview,
-                expanded_evidence=suggestion.expanded_evidence,
-                suggestion_id=suggestion.suggestion_id,
-                memory_id=str(metadata.get("memory_id") or suggestion.suggestion_id),
-                source_event_id=suggestion.source_event_id,
-                display_layout="block",
-                display_lane="memory",
-                metadata=metadata,
+        if source_type == "memory":
+            memory_items.append((index, suggestion))
+        else:
+            rag_items.append((index, suggestion))
+
+    side_inserted = 0
+
+    def append_model() -> bool:
+        nonlocal side_inserted
+        while model_items:
+            if side_inserted >= side_budget or len(display) >= max_visible - rime_reserve:
+                return False
+            prediction = model_items.pop(0)
+            normalized_text = _display_text_norm(prediction.text)
+            if not normalized_text or normalized_text in display_texts:
+                continue
+            display_texts.add(normalized_text)
+            display.append(
+                SideCandidateDisplayItem(
+                    label=_display_label("", len(display)),
+                    text=prediction.text,
+                    insert_text=str(prediction.metadata.get("insert_text") or prediction.text),
+                    source_type="model",
+                    selection_action="commit_side_candidate",
+                    source_index=prediction.rank - 1,
+                    comment=prediction.provider_name,
+                    display_layout="inline",
+                    display_lane="model",
+                    metadata={
+                        "providerName": prediction.provider_name,
+                        "latencyMs": prediction.latency_ms,
+                        "confidence": prediction.confidence,
+                        **dict(prediction.metadata),
+                    },
+                )
             )
+            side_inserted += 1
+            return True
+        return False
+
+    def append_suggestion(group: list[tuple[int, InputSuggestion]]) -> bool:
+        nonlocal side_inserted
+        while group:
+            if side_inserted >= side_budget or len(display) >= max_visible - rime_reserve:
+                return False
+            source_index, suggestion = group.pop(0)
+            normalized_text = _display_text_norm(suggestion.surface_text)
+            if not normalized_text or normalized_text in display_texts:
+                continue
+            display_texts.add(normalized_text)
+            metadata = dict(suggestion.metadata)
+            source_type = str(metadata.get("source_type") or "rag")
+            if source_type not in {"rag", "memory"}:
+                source_type = "rag"
+            display.append(
+                SideCandidateDisplayItem(
+                    label=_display_label("", len(display)),
+                    text=suggestion.surface_text,
+                    insert_text=str(metadata.get("insert_text") or suggestion.surface_text),
+                    source_type=source_type,
+                    selection_action="commit_side_candidate",
+                    source_index=source_index,
+                    comment=suggestion.suggestion_type,
+                    evidence_preview=suggestion.evidence_preview,
+                    expanded_evidence=suggestion.expanded_evidence,
+                    suggestion_id=suggestion.suggestion_id,
+                    memory_id=str(metadata.get("memory_id") or suggestion.suggestion_id),
+                    source_event_id=suggestion.source_event_id,
+                    display_layout="block",
+                    display_lane="memory",
+                    metadata=metadata,
+                )
+            )
+            side_inserted += 1
+            return True
+        return False
+
+    append_model()
+    append_model()
+    append_suggestion(rag_items)
+    append_suggestion(memory_items)
+    while side_inserted < side_budget and len(display) < max_visible - rime_reserve:
+        progressed = (
+            append_model()
+            or append_suggestion(rag_items)
+            or append_suggestion(memory_items)
         )
-        rag_count += 1
-    rime_remaining = max(0, max_visible - len(display))
+        if not progressed:
+            break
     for candidate in snapshot.candidates:
         if len(display) >= max_visible:
             break
@@ -2373,6 +2401,20 @@ def merge_display_candidates(
             )
         )
     return display
+
+
+def _display_rime_reserve(*, snapshot: RimeContextSnapshot, mode: object, max_visible: int) -> int:
+    mode_value = getattr(mode, "value", str(mode))
+    if mode_value not in {"anchor_composing", "prefix_constrained_composing"}:
+        return 0
+    rime_count = sum(1 for candidate in snapshot.candidates if compact_whitespace(candidate.text))
+    if rime_count <= 0:
+        return 0
+    if max_visible >= 8:
+        return min(3, rime_count)
+    if max_visible >= 5:
+        return min(2, rime_count)
+    return min(1, rime_count)
 
 
 def _display_text_norm(text: str) -> str:

@@ -481,6 +481,18 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed, ["补齐来源诊断"])
 
+    def test_parse_ime_prediction_candidates_trims_context_prefix_overlap(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["建议采用分层架构", "建议增加缓存机制"]',
+            current_input="",
+            recent_context="我觉得这个模块建议",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=3,
+        )
+
+        self.assertEqual(parsed, ["采用分层架构", "增加缓存机制"])
+        self.assertFalse(any(item.startswith("建议") for item in parsed))
+
     def test_parse_ime_prediction_candidates_filters_context_reorder_echoes(self) -> None:
         parsed = parse_ime_prediction_candidates(
             '["今天继续使用输入", "我们开始"]',

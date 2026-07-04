@@ -126,16 +126,17 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertTrue(result.policy["rimeCompositionOwnedByRime"])
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["设计输入法状态机", "设计一个候选展示方式"],
+            ["设计输入法状态机", "设计一个候选展示方式", "手机", "世界"],
         )
         self.assertEqual(
             [item.source_type for item in result.display_candidates],
-            ["model", "rag"],
+            ["model", "rag", "rime", "rime"],
         )
-        self.assertEqual([item.label for item in result.display_candidates], ["1", "2"])
+        self.assertEqual([item.label for item in result.display_candidates], ["1", "2", "3", "4"])
         self.assertEqual(result.policy["sideInserted"], 2)
         self.assertEqual(result.policy["prefixMatchedSideInserted"], 2)
-        self.assertEqual(result.policy["wanxiangFallbackCount"], 0)
+        self.assertEqual(result.policy["wanxiangFallbackCount"], 2)
+        self.assertEqual(result.policy["wanxiangReserve"], 2)
         self.assertEqual(result.display_candidates[0].display_lane, "model")
         self.assertEqual(result.display_candidates[1].metadata["candidate_mode"], "prefix_constrained_composing")
         session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
