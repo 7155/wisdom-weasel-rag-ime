@@ -3,6 +3,7 @@ set -euo pipefail
 
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-/Library/Input Methods/Squirrel.app}"
 SQUIRREL_WORKDIR="${RAG_IME_SQUIRREL_WORKDIR:-/tmp/rag-ime-squirrel}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RIME_USER_DIR="${RAG_IME_RIME_USER_DIR:-$HOME/Library/Rime}"
 BACKUP_ENABLED="${RAG_IME_SQUIRREL_BOOTSTRAP_BACKUP:-1}"
 EXPECTED_BUILD_FILES=(
@@ -64,6 +65,8 @@ copy_missing_tree "$SHARED_SUPPORT" "$RIME_USER_DIR"
 if [[ -d "$PLUM_OUTPUT" ]]; then
   copy_missing_tree "$PLUM_OUTPUT" "$RIME_USER_DIR"
 fi
+
+"$ROOT/scripts/install_sichuan_fuzzy_pinyin.sh"
 
 build_log="$(mktemp "${TMPDIR:-/tmp}/rag-ime-squirrel-build.XXXXXX.log")"
 reload_log="$(mktemp "${TMPDIR:-/tmp}/rag-ime-squirrel-reload.XXXXXX.log")"

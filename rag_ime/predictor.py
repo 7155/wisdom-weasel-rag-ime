@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from .models import ModelPrediction
@@ -902,10 +903,26 @@ class CooldownPredictionProvider:
 
 
 def prediction_provider_from_env(env: dict[str, str] | None = None) -> PredictionProvider:
-    source = env or os.environ
-    provider = source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
-    base_url = source.get("RAG_IME_PREDICTOR_BASE_URL", "").strip()
-    model = source.get("RAG_IME_PREDICTOR_MODEL", "").strip() or source.get("RAG_IME_MLX_MODEL", "").strip()
+    source = _prediction_env_with_model_file(env)
+    provider = (
+        source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
+        or source.get("RAG_IME_AI_PROVIDER", "").strip().lower()
+    )
+    base_url = (
+        source.get("RAG_IME_PREDICTOR_BASE_URL", "").strip()
+        or source.get("RAG_IME_AI_BASE_URL", "").strip()
+        or source.get("X1API_BASE_URL", "").strip()
+        or source.get("API_BASE_URL", "").strip()
+    )
+    model = (
+        source.get("RAG_IME_PREDICTOR_MODEL", "").strip()
+        or source.get("RAG_IME_AI_MODEL", "").strip()
+        or source.get("X1API_MODEL", "").strip()
+        or source.get("MODEL", "").strip()
+        or source.get("RAG_IME_MLX_MODEL", "").strip()
+    )
+    if not provider and base_url and model:
+        provider = "openai-compatible"
     if provider == "ollama" and not base_url:
         base_url = "http://127.0.0.1:11434"
     if provider in {"mlx", "mlx-lm", "mlx-service"} and not base_url:
@@ -951,7 +968,12 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
             OpenAICompatiblePredictionConfig(
             base_url=base_url,
             model=model,
-            api_key=source.get("RAG_IME_PREDICTOR_API_KEY", "").strip(),
+            api_key=(
+                source.get("RAG_IME_PREDICTOR_API_KEY", "").strip()
+                or source.get("RAG_IME_AI_API_KEY", "").strip()
+                or source.get("X1API_API_KEY", "").strip()
+                or source.get("API_KEY", "").strip()
+            ),
             profile=profile,
             prompt_mode=source.get("RAG_IME_PREDICTOR_PROMPT_MODE", defaults.prompt_mode).strip(),
             timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", defaults.timeout_ms) / 1000,
@@ -971,6 +993,28 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
         cooldown_ms=cooldown_ms,
         failure_latency_ms=int(_float_env(source, "RAG_IME_PREDICTOR_FAILURE_LATENCY_MS", 250)),
     )
+
+
+def _prediction_env_with_model_file(env: dict[str, str] | None) -> dict[str, str]:
+    source = dict(os.environ if env is None else env)
+    env_path = (
+        source.get("RAG_IME_MODEL_ENV", "").strip()
+        or source.get("RAG_IME_X1API_ENV", "").strip()
+        or source.get("RAG_IME_VCP_REBUILD_ENV", "").strip()
+    )
+    if not env_path:
+        return source
+    path = Path(env_path).expanduser()
+    if not path.exists():
+        return source
+    file_values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        file_values[key.strip()] = value.strip().strip('"').strip("'")
+    return {**file_values, **source}
 
 
 def prediction_provider_status(provider: PredictionProvider, *, probe_capabilities: bool = False) -> dict[str, object]:

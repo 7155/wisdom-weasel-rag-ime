@@ -9,6 +9,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.cli import main
@@ -809,6 +810,32 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertIn("seed", status["extraBodyKeys"])
         self.assertFalse(status["capabilities"]["streaming"])
         self.assertTrue(status["cooldown"]["enabled"])
+
+    def test_prediction_provider_can_use_model_env_file_for_x1api(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "X1API_BASE_URL=https://x1api.top/v1",
+                        "X1API_API_KEY=secret-value",
+                        "X1API_MODEL=deepseek-chat",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_MODEL_ENV": str(env_path),
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+
+        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
+        assert isinstance(provider, OpenAICompatiblePredictionProvider)
+        self.assertEqual(provider.config.base_url, "https://x1api.top/v1")
+        self.assertEqual(provider.config.model, "deepseek-chat")
+        self.assertEqual(provider.config.api_key, "secret-value")
 
     def test_env_can_disable_prediction_failure_cooldown(self) -> None:
         provider = prediction_provider_from_env(

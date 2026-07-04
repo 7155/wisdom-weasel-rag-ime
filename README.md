@@ -120,6 +120,38 @@ python3 -m rag_ime.cli seed-demo --reset
 python3 -m rag_ime.cli debug-server
 ```
 
+Optimize RAG memory and lexicon phrases with an x1api.top/VCP-compatible model:
+
+```bash
+cat > ~/.rag-ime-x1api.env <<'EOF'
+X1API_BASE_URL=https://x1api.top/v1
+X1API_API_KEY=replace-with-your-key
+X1API_MODEL=replace-with-your-model
+RAG_IME_AI_WIRE_API=chat_completions
+EOF
+
+RAG_IME_MODEL_ENV=~/.rag-ime-x1api.env \
+python3 -m rag_ime.cli optimize-core \
+  --db-path "$HOME/Library/Application Support/RagIme/rag-ime.sqlite" \
+  --embedding-provider local-hash \
+  --project wisdom-weasel-rag-ime \
+  --dry-run
+```
+
+Remove `--dry-run` only after reviewing the JSON. The command writes stable
+API-distilled memories and lexicon phrases back into the local SQLite core, but
+hide/delete suggestions remain advisory so the model cannot silently erase
+history.
+
+Install the default Sichuan fuzzy-pinyin Rime patch:
+
+```bash
+RAG_IME_RIME_USER_DIR="$HOME/Library/Rime" scripts/install_sichuan_fuzzy_pinyin.sh
+```
+
+`scripts/bootstrap_squirrel_user_data.sh` runs this by default. Set
+`RAG_IME_SICHUAN_FUZZY_PINYIN=0` to skip it.
+
 Then open:
 
 ```text

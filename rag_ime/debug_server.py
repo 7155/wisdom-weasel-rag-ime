@@ -220,6 +220,7 @@ class DebugImeService:
             }
         recorded: list[dict[str, object]] = []
         duplicate_skipped = 0
+        provider_tag = "x1api" if report.provider == "x1api" else "vcp-rebuild"
         for item in report.items:
             dedupe_tag = generated_memory_dedupe_tag(item.text)
             if not allow_duplicates and self.core.has_event_tag(dedupe_tag):
@@ -229,7 +230,7 @@ class DebugImeService:
                 dict.fromkeys(
                     (
                         "generated-memory",
-                        "vcp-rebuild",
+                        provider_tag,
                         "aimemo",
                         dedupe_tag,
                         *item.tags,
@@ -244,7 +245,7 @@ class DebugImeService:
                     project=project,
                     app=_string(payload.get("app")) or "debug-memory-console",
                     source="vcp_memory_generator",
-                    provider_name=f"vcp-rebuild:{report.model}",
+                    provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
                 )
             recorded.append(

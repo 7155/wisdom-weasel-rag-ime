@@ -745,6 +745,87 @@ class LocalSqliteCoreClient:
             "items": [_memory_event_row_payload(row) for row in rows],
         }
 
+    def core_optimization_snapshot(
+        self,
+        *,
+        project: str = "",
+        recent_limit: int = 80,
+        phrase_limit: int = 60,
+    ) -> dict[str, object]:
+        self.initialize()
+        recent_limit = max(1, min(300, int(recent_limit)))
+        phrase_limit = max(1, min(300, int(phrase_limit)))
+        params: list[Any] = []
+        where = ["s.deleted = 0"]
+        if project:
+            where.append("(e.project = ? OR e.project = '')")
+            params.append(project)
+        recent_sql = f"""
+            SELECT
+                e.id, e.created_at_ms, e.source, e.committed_text, e.recent_context,
+                e.preedit, e.schema_id, e.app, e.project, e.candidate_rank,
+                e.provider_name, e.tags_json,
+                s.deleted, s.accepted_count, s.skipped_count, s.downranked, s.pinned,
+                COALESCE(ps.input_frequency, 0) AS input_frequency
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
+            WHERE {' AND '.join(where)}
+            ORDER BY e.id DESC
+            LIMIT ?
+        """
+        recent_params = [*params, recent_limit]
+        phrase_params: list[Any] = []
+        phrase_where = ["s.deleted = 0", "LENGTH(e.committed_text) BETWEEN 2 AND 40"]
+        if project:
+            phrase_where.append("(e.project = ? OR e.project = '')")
+            phrase_params.append(project)
+        phrase_sql = f"""
+            SELECT
+                e.committed_text,
+                COUNT(*) AS input_frequency,
+                MAX(e.created_at_ms) AS last_seen_ms,
+                SUM(s.accepted_count) AS accepted_count,
+                SUM(s.skipped_count) AS skipped_count,
+                MAX(s.pinned) AS pinned,
+                GROUP_CONCAT(DISTINCT e.source) AS sources,
+                GROUP_CONCAT(DISTINCT e.provider_name) AS providers
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            WHERE {' AND '.join(phrase_where)}
+            GROUP BY e.committed_text
+            ORDER BY input_frequency DESC, last_seen_ms DESC
+            LIMIT ?
+        """
+        phrase_params.append(phrase_limit)
+        with self._connect() as conn:
+            recent_rows = list(conn.execute(recent_sql, recent_params).fetchall())
+            phrase_rows = list(conn.execute(phrase_sql, phrase_params).fetchall())
+            totals = {
+                "active": int(conn.execute("SELECT COUNT(*) FROM memory_state WHERE deleted = 0").fetchone()[0]),
+                "hidden": int(conn.execute("SELECT COUNT(*) FROM memory_state WHERE deleted = 1").fetchone()[0]),
+                "phrases": int(conn.execute("SELECT COUNT(*) FROM phrase_stats").fetchone()[0]),
+            }
+        return {
+            "schemaVersion": "rag-ime.core-optimization-snapshot.v1",
+            "project": project,
+            "totals": totals,
+            "recentEvents": [_memory_event_row_payload(row) for row in recent_rows],
+            "highFrequencyPhrases": [
+                {
+                    "text": str(row["committed_text"]),
+                    "inputFrequency": int(row["input_frequency"] or 0),
+                    "acceptedCount": int(row["accepted_count"] or 0),
+                    "skippedCount": int(row["skipped_count"] or 0),
+                    "pinned": bool(row["pinned"]),
+                    "lastSeenMs": int(row["last_seen_ms"] or 0),
+                    "sources": _csv_field(str(row["sources"] or "")),
+                    "providers": _csv_field(str(row["providers"] or "")),
+                }
+                for row in phrase_rows
+            ],
+        }
+
     def hide_codex_history_noise(
         self,
         *,
@@ -1760,6 +1841,10 @@ def _memory_event_row_payload(row: sqlite3.Row) -> dict[str, object]:
         "pinned": bool(row["pinned"]),
         "inputFrequency": int(row["input_frequency"]),
     }
+
+
+def _csv_field(value: str) -> list[str]:
+    return [item for item in (part.strip() for part in value.split(",")) if item]
 
 
 def _row_has_curated_memory_tags(row: sqlite3.Row) -> bool:

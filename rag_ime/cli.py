@@ -32,6 +32,7 @@ from .local_sqlite_core import LocalSqliteCoreClient
 from .memory_generator import (
     MemoryGenerationError,
     VcpRebuildMemoryGenerator,
+    generated_lexicon_dedupe_tag,
     generated_memory_context,
     generated_memory_dedupe_tag,
 )
@@ -130,6 +131,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     generate_memory.add_argument("--dry-run", action="store_true")
     generate_memory.add_argument("--allow-duplicates", action="store_true")
     generate_memory.add_argument("--vcp-env-path", default=os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""))
+
+    optimize_core = subparsers.add_parser(
+        "optimize-core",
+        help="Use an x1api/VCP-compatible model to optimize RAG memory and lexicon phrases from local history",
+    )
+    optimize_core.add_argument("--project", default="wisdom-weasel-rag-ime")
+    optimize_core.add_argument("--app", default="manual")
+    optimize_core.add_argument("--recent-limit", type=int, default=80)
+    optimize_core.add_argument("--phrase-limit", type=int, default=60)
+    optimize_core.add_argument("--max-memories", type=int, default=4)
+    optimize_core.add_argument("--max-lexicon-phrases", type=int, default=8)
+    optimize_core.add_argument("--max-hide-suggestions", type=int, default=12)
+    optimize_core.add_argument("--dry-run", action="store_true")
+    optimize_core.add_argument("--allow-duplicates", action="store_true")
+    optimize_core.add_argument(
+        "--model-env-path",
+        default=os.environ.get("RAG_IME_MODEL_ENV", "")
+        or os.environ.get("RAG_IME_X1API_ENV", "")
+        or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
+    )
 
     suggest = subparsers.add_parser("suggest", help="Render suggestions for one input")
     suggest.add_argument("current_input")
@@ -735,6 +756,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         recorded: list[dict[str, object]] = []
         duplicate_skipped = 0
+        provider_tag = "x1api" if report.provider == "x1api" else "vcp-rebuild"
         for item in report.items:
             dedupe_tag = generated_memory_dedupe_tag(item.text)
             if not args.allow_duplicates and _core_has_event_tag(core, dedupe_tag):
@@ -744,7 +766,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dict.fromkeys(
                     (
                         "generated-memory",
-                        "vcp-rebuild",
+                        provider_tag,
                         "aimemo",
                         dedupe_tag,
                         *item.tags,
@@ -759,7 +781,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     project=args.project,
                     app=args.app,
                     source="vcp_memory_generator",
-                    provider_name=f"vcp-rebuild:{report.model}",
+                    provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
                 )
             recorded.append(
@@ -784,6 +806,144 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "recorded": 0 if args.dry_run else len(recorded),
                     "duplicateSkipped": duplicate_skipped,
                     "items": recorded,
+                    "metadata": report.metadata,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "optimize-core":
+        snapshot_builder = getattr(core, "core_optimization_snapshot", None)
+        if not callable(snapshot_builder):
+            print(
+                json.dumps(
+                    {"schemaVersion": "rag-ime.core-optimization.v1", "ok": False, "error": "core does not support optimization snapshots"},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        snapshot = snapshot_builder(
+            project=args.project,
+            recent_limit=max(1, int(args.recent_limit)),
+            phrase_limit=max(1, int(args.phrase_limit)),
+        )
+        try:
+            generator = VcpRebuildMemoryGenerator.from_env_path(args.model_env_path or None)
+            report = generator.optimize_core(
+                snapshot=snapshot,
+                project=args.project,
+                max_memories=max(1, args.max_memories),
+                max_lexicon_phrases=max(1, args.max_lexicon_phrases),
+                max_hide_suggestions=max(0, args.max_hide_suggestions),
+            )
+        except MemoryGenerationError as exc:
+            print(
+                json.dumps(
+                    {"schemaVersion": "rag-ime.core-optimization.v1", "ok": False, "error": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        recorded_memories: list[dict[str, object]] = []
+        recorded_lexicon: list[dict[str, object]] = []
+        duplicate_skipped = 0
+        provider_tag = "x1api" if report.provider == "x1api" else "vcp-rebuild"
+        for item in report.memories:
+            dedupe_tag = generated_memory_dedupe_tag(item.text)
+            if not args.allow_duplicates and _core_has_event_tag(core, dedupe_tag):
+                duplicate_skipped += 1
+                continue
+            tags = tuple(
+                dict.fromkeys(
+                    (
+                        "generated-memory",
+                        "api-core-optimized",
+                        provider_tag,
+                        "aimemo",
+                        dedupe_tag,
+                        *item.tags,
+                    )
+                )
+            )
+            event_id = ""
+            if not args.dry_run:
+                event_id = adapter.commit_text(
+                    item.text,
+                    recent_context=generated_memory_context("core optimization snapshot", "", item.reason),
+                    project=args.project,
+                    app=args.app,
+                    source="api_core_optimizer",
+                    provider_name=f"{report.provider}:{report.model}",
+                    tags=tags,
+                )
+            recorded_memories.append(
+                {
+                    "eventId": event_id,
+                    "text": item.text,
+                    "tags": list(tags),
+                    "importance": item.importance,
+                    "reason": item.reason,
+                }
+            )
+        for phrase in report.lexicon_phrases:
+            dedupe_tag = generated_lexicon_dedupe_tag(phrase.text)
+            if not args.allow_duplicates and _core_has_event_tag(core, dedupe_tag):
+                duplicate_skipped += 1
+                continue
+            tags = tuple(
+                dict.fromkeys(
+                    (
+                        "lexicon-phrase",
+                        "api-lexicon",
+                        "api-core-optimized",
+                        dedupe_tag,
+                        *phrase.tags,
+                    )
+                )
+            )
+            event_id = ""
+            if not args.dry_run:
+                event_id = adapter.commit_text(
+                    phrase.text,
+                    recent_context=f"API lexicon optimization | reason: {compact_whitespace(phrase.reason)}",
+                    project=args.project,
+                    app=args.app,
+                    source="api_lexicon_optimizer",
+                    provider_name=f"{report.provider}:{report.model}",
+                    tags=tags,
+                )
+            recorded_lexicon.append(
+                {
+                    "eventId": event_id,
+                    "text": phrase.text,
+                    "tags": list(tags),
+                    "weight": phrase.weight,
+                    "reason": phrase.reason,
+                }
+            )
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.core-optimization.v1",
+                    "ok": True,
+                    "dryRun": bool(args.dry_run),
+                    "provider": report.provider,
+                    "model": report.model,
+                    "elapsedMs": report.elapsed_ms,
+                    "snapshotTotals": snapshot.get("totals"),
+                    "recordedMemories": 0 if args.dry_run else len(recorded_memories),
+                    "recordedLexiconPhrases": 0 if args.dry_run else len(recorded_lexicon),
+                    "duplicateSkipped": duplicate_skipped,
+                    "memories": recorded_memories,
+                    "lexiconPhrases": recorded_lexicon,
+                    "hideEventSuggestions": [
+                        {"eventId": item.event_id, "reason": item.reason}
+                        for item in report.hide_events
+                    ],
                     "metadata": report.metadata,
                 },
                 ensure_ascii=False,

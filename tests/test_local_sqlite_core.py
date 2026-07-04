@@ -76,6 +76,21 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertTrue(all(item.evidence_preview for item in suggestions))
         self.assertTrue(all(item.metadata.get("memory_id", "").startswith("event:") for item in suggestions))
 
+    def test_core_optimization_snapshot_includes_recent_events_and_high_frequency_phrases(self) -> None:
+        for _ in range(3):
+            self.adapter.commit_text("四川模糊音", project="wisdom-weasel-rag-ime", source="manual")
+        self.adapter.commit_text("x1api 词库优化", project="wisdom-weasel-rag-ime", source="manual")
+
+        snapshot = self.core.core_optimization_snapshot(project="wisdom-weasel-rag-ime", recent_limit=5, phrase_limit=5)
+
+        self.assertEqual(snapshot["schemaVersion"], "rag-ime.core-optimization-snapshot.v1")
+        recent_texts = [item["text"] for item in snapshot["recentEvents"]]
+        phrase_texts = [item["text"] for item in snapshot["highFrequencyPhrases"]]
+        self.assertIn("四川模糊音", recent_texts)
+        self.assertIn("四川模糊音", phrase_texts)
+        phrase = next(item for item in snapshot["highFrequencyPhrases"] if item["text"] == "四川模糊音")
+        self.assertGreaterEqual(phrase["inputFrequency"], 3)
+
     def test_initialize_prunes_orphan_memory_state_and_vectors(self) -> None:
         orphan_event_id = 999_999
         with sqlite3.connect(self.db_path) as conn:
