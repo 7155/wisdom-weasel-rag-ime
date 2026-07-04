@@ -1150,17 +1150,6 @@ index c2adf74..3cfc0e5 100644
 +    let responseAgeMs = max(0, Int(Date().timeIntervalSince(sentAt) * 1000))
 +    let phase = response.predictionSession?.phase ?? ""
 +    let applyWindowMs = phase == "post_commit" ? ragImePostCommitResponseApplyWindowMs : ragImeActiveResponseApplyWindowMs
-+    guard inputGeneration == ragImeInputGeneration else {
-+      dropRagImeSidecarResponse(
-+        "input_generation_changed",
-+        response: response,
-+        request: request,
-+        fingerprint: fingerprint,
-+        responseAgeMs: responseAgeMs,
-+        inputGeneration: inputGeneration
-+      )
-+      return
-+    }
 +    guard responseAgeMs <= applyWindowMs else {
 +      dropRagImeSidecarResponse(
 +        "response_too_late_for_foreground",
@@ -1186,6 +1175,34 @@ index c2adf74..3cfc0e5 100644
 +    }
 +    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
 +    let responseContainsRimeFallback = ragImeResponseContainsRimeFallback(response)
++    if inputGeneration != ragImeInputGeneration {
++      let canApplySideOnlyAcrossGeneration = !responseContainsRimeFallback
++        && currentRawInput == request.rawInput
++        && response.preedit == request.preedit
++        && response.committedContext == request.committedContext
++        && ragImeCommittedContext == request.committedContext
++      guard canApplySideOnlyAcrossGeneration else {
++        dropRagImeSidecarResponse(
++          "input_generation_changed",
++          response: response,
++          request: request,
++          fingerprint: fingerprint,
++          currentRawInput: currentRawInput,
++          responseAgeMs: responseAgeMs,
++          inputGeneration: inputGeneration
++        )
++        return
++      }
++      traceRagImeFrontendEvent("sidecar_input_generation_change_allowed", fields: [
++        "requestSeq": response.requestSeq,
++        "inputGeneration": inputGeneration,
++        "liveInputGeneration": ragImeInputGeneration,
++        "responseAgeMs": responseAgeMs,
++        "rawInput": response.rawInput,
++        "preedit": response.preedit,
++        "displayCount": response.displayCandidates.count,
++      ])
++    }
 +    if fingerprint != ragImeLastRequestFingerprint {
 +      if responseContainsRimeFallback || currentRawInput != request.rawInput || ragImeCommittedContext != request.committedContext {
 +        traceRagImeFrontendEvent("sidecar_response_dropped", fields: [
@@ -1358,15 +1375,26 @@ index c2adf74..3cfc0e5 100644
 +        ])
 +        return
 +      }
-+      guard inputGeneration == self.ragImeInputGeneration else {
-+        self.traceRagImeFrontendEvent("sidecar_progressive_followup_skipped", fields: [
++      let currentRawInput = self.rimeAPI.get_input(self.session).map { String(cString: $0) } ?? ""
++      if inputGeneration != self.ragImeInputGeneration {
++        guard currentRawInput == request.rawInput else {
++          self.traceRagImeFrontendEvent("sidecar_progressive_followup_skipped", fields: [
++            "requestSeq": request.requestSeq,
++            "reason": "input_generation_changed",
++            "inputGeneration": inputGeneration,
++            "liveInputGeneration": self.ragImeInputGeneration,
++            "currentRawInput": currentRawInput,
++            "pendingLanes": pendingLanes,
++          ])
++          return
++        }
++        self.traceRagImeFrontendEvent("sidecar_progressive_generation_change_allowed", fields: [
 +          "requestSeq": request.requestSeq,
-+          "reason": "input_generation_changed",
 +          "inputGeneration": inputGeneration,
 +          "liveInputGeneration": self.ragImeInputGeneration,
++          "rawInput": request.rawInput,
 +          "pendingLanes": pendingLanes,
 +        ])
-+        return
 +      }
 +      guard self.ragImeCommittedContext == request.committedContext else {
 +        self.traceRagImeFrontendEvent("sidecar_progressive_followup_skipped", fields: [
