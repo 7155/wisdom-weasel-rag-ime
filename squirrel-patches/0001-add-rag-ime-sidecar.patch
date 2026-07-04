@@ -841,6 +841,7 @@ index c2adf74..3cfc0e5 100644
 +        )
 +        clearRagImeDisplayCandidates()
 +        rimeUpdate(clearReservedComments: false, requestSidecar: false)
++        scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)
 +        return true
 +      }
 +      let rimeIndex = candidate.rimeIndex ?? candidate.sourceIndex
@@ -1069,6 +1070,31 @@ index c2adf74..3cfc0e5 100644
 +    } else {
 +      DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
 +    }
++  }
++
++  func scheduleRagImePostCommitContinuation(committedText: String, sourceCandidate: RagImeDisplayCandidate) {
++    guard ragImeSidecarClient != nil else { return }
++    let committedContext = syncRagImeCommittedContextFromClient(excludingMarkedText: "")
++    guard !committedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
++    traceRagImeFrontendEvent("side_candidate_continuation_scheduled", fields: [
++      "committedText": committedText,
++      "committedContextChars": committedContext.count,
++      "sourceType": sourceCandidate.sourceType,
++      "selectionKey": ragImeSelectionKey(for: sourceCandidate),
++      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(sourceCandidate),
++    ])
++    refreshRagImeSidecar(
++      rawInput: "",
++      preedit: "",
++      commitTextPreview: committedText,
++      candidates: [],
++      comments: [],
++      labels: [],
++      highlighted: 0,
++      page: 0,
++      lastPage: true,
++      requestSidecar: true
++    )
 +  }
 +
 +  func sendRagImeSidecarRequest(
