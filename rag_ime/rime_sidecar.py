@@ -1113,8 +1113,27 @@ def _suggestion_has_positive_user_signal(metadata: Mapping[str, object]) -> bool
     assert isinstance(state, dict)
     raw_signals = state.get("rawSignals") if isinstance(state.get("rawSignals"), dict) else {}
     assert isinstance(raw_signals, dict)
+    generated_side_candidate = _suggestion_is_generated_side_candidate(metadata)
     if bool(state.get("pinned") or raw_signals.get("pinned")):
         return True
+    if generated_side_candidate:
+        generated_accepts = max(
+            _safe_int(state.get("accepted_count")),
+            _safe_int(state.get("event_accepted_count")),
+            _safe_int(state.get("acceptedCount")),
+            _safe_int(raw_signals.get("acceptedCount")),
+        )
+        generated_frequency = max(
+            _safe_int(state.get("input_frequency")),
+            _safe_int(state.get("project_input_frequency")),
+            _safe_int(state.get("app_input_frequency")),
+            _safe_int(state.get("effective_frequency")),
+            _safe_int(raw_signals.get("inputFrequency")),
+            _safe_int(raw_signals.get("projectInputFrequency")),
+            _safe_int(raw_signals.get("appInputFrequency")),
+            _safe_int(raw_signals.get("effectiveFrequency")),
+        )
+        return generated_accepts >= 3 or generated_frequency >= 3
     for key in (
         "accepted_count",
         "event_accepted_count",
@@ -1133,6 +1152,17 @@ def _suggestion_has_positive_user_signal(metadata: Mapping[str, object]) -> bool
         if _safe_int(state.get(key) if key in state else raw_signals.get(key)) >= 2:
             return True
     return False
+
+
+def _suggestion_is_generated_side_candidate(metadata: Mapping[str, object]) -> bool:
+    tags_raw = metadata.get("tags")
+    tags = {compact_whitespace(str(tag)).lower() for tag in tags_raw if str(tag).strip()} if isinstance(tags_raw, list) else set()
+    if tags.intersection({"source:model", "source:rag"}):
+        return True
+    source_ref = compact_whitespace(str(metadata.get("source_ref") or "")).lower()
+    reason = compact_whitespace(str(metadata.get("reason") or "")).lower()
+    provider = compact_whitespace(str(metadata.get("provider_name") or "")).lower()
+    return "rime-sidecar:model" in reason or "rime-sidecar:model" in provider or "source:model" in source_ref
 
 
 def _important_surface_overlap_terms(*, query: str, surface: str) -> list[str]:

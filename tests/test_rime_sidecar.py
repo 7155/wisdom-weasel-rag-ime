@@ -458,6 +458,41 @@ class AcceptedPostCommitSuggestionCore(PostCommitSurfaceSuggestionCore):
         ]
 
 
+class GeneratedAcceptedSuggestionCore(CapturingCore):
+    def __init__(self, *, accepted_count: int) -> None:
+        super().__init__()
+        self.accepted_count = accepted_count
+
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.last_suggest_current_input = current_input
+        self.last_suggest_recent_context = recent_context
+        return [
+            InputSuggestion(
+                suggestion_id="generated:model-once",
+                surface_text="接入真实记忆候选",
+                suggestion_type="phrase",
+                source_event_id=61,
+                evidence_preview="generated model candidate selected from sidecar",
+                confidence=0.94,
+                metadata={
+                    "source_type": "rag",
+                    "tags": ["squirrel", "rime-sidecar", "sidecar-selected", "source:model"],
+                    "state": {
+                        "accepted_count": self.accepted_count,
+                        "event_accepted_count": self.accepted_count,
+                        "input_frequency": self.accepted_count,
+                        "effective_frequency": self.accepted_count,
+                        "rawSignals": {
+                            "acceptedCount": self.accepted_count,
+                            "inputFrequency": self.accepted_count,
+                            "effectiveFrequency": self.accepted_count,
+                        },
+                    },
+                },
+            )
+        ][:top_k]
+
+
 class DirtySuggestionCore(CapturingCore):
     def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
         self.last_suggest_current_input = current_input
@@ -1614,6 +1649,52 @@ class RimeSidecarTests(unittest.TestCase):
 
         self.assertIn("rag", [item["sourceType"] for item in response["displayCandidates"]])
         self.assertEqual(response["ragCandidates"][0]["surfaceText"], "设计一个候选展示方式")
+
+    def test_prediction_first_post_commit_filters_once_accepted_generated_side_memory(self) -> None:
+        core = GeneratedAcceptedSuggestionCore(accepted_count=1)
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-generated-once",
+                "requestSeq": 63,
+                "committedContext": "Felix3322 Wisdom-Weasel 的输入法候选实现需要参考",
+                "commitTextPreview": "参考 Wisdom-Weasel",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=FakePredictionProvider(),
+        )
+
+        self.assertEqual(response["ragCandidates"], [])
+        self.assertNotIn("接入真实记忆候选", [item["text"] for item in response["displayCandidates"]])
+
+    def test_prediction_first_post_commit_keeps_repeated_generated_side_memory(self) -> None:
+        core = GeneratedAcceptedSuggestionCore(accepted_count=3)
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-generated-repeated",
+                "requestSeq": 64,
+                "committedContext": "Felix3322 Wisdom-Weasel 的输入法候选实现需要参考",
+                "commitTextPreview": "参考 Wisdom-Weasel",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=FakePredictionProvider(),
+        )
+
+        self.assertIn("接入真实记忆候选", [item["text"] for item in response["displayCandidates"]])
+        self.assertEqual(response["ragCandidates"][0]["surfaceText"], "接入真实记忆候选")
 
     def test_prediction_first_post_commit_filters_context_echo_model_prediction(self) -> None:
         core = EmptySuggestionCore()
