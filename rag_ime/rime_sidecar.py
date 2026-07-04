@@ -1211,6 +1211,7 @@ def _looks_like_complaint_or_debug_fragment(text: str) -> bool:
         "没有记录",
         "不然这个",
         "感觉随机",
+        "真实生效",
         "输入不了",
         "崩溃",
         "报错",

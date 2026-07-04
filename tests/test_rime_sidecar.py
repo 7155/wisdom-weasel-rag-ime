@@ -388,6 +388,21 @@ class ComplaintSuggestionCore(CapturingCore):
                 metadata={"source_type": "memory"},
             ),
             InputSuggestion(
+                suggestion_id="complaint:4",
+                surface_text="需要真实生效",
+                suggestion_type="phrase",
+                source_event_id=59,
+                evidence_preview="accepted user complaint",
+                confidence=0.93,
+                metadata={
+                    "source_type": "rag",
+                    "state": {
+                        "accepted_count": 1,
+                        "rawSignals": {"acceptedCount": 1},
+                    },
+                },
+            ),
+            InputSuggestion(
                 suggestion_id="meta:1",
                 surface_text="你正在输入一个已经上屏的文本",
                 suggestion_type="phrase",
@@ -1552,6 +1567,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertNotIn("我输入法切成豆包，就是因为你这个输入法没办法输入啊。", display_texts)
         self.assertNotIn("然后我的问题你没有记录呀。", display_texts)
         self.assertNotIn("接下来", display_texts)
+        self.assertNotIn("需要真实生效", display_texts)
         self.assertNotIn("你正在输入一个已经上屏的文本", display_texts)
         self.assertNotIn("你正在看Felix的3322号项目吗", display_texts)
 
