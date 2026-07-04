@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
@@ -29,6 +30,7 @@ from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, d
 from .embeddings import embedding_provider_from_env
 from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
+from .memory_generator import MemoryGenerationError, VcpRebuildMemoryGenerator
 from .models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
 from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import (
@@ -111,6 +113,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     commit.add_argument("--tag", action="append", default=[])
     commit.add_argument("--sensitive", action="store_true", help="Do not record this input")
     commit.add_argument("--recording-disabled", action="store_true", help="Skip recording for this commit")
+
+    generate_memory = subparsers.add_parser(
+        "generate-memory",
+        help="Distill stable long-term memory from text through vcp-agent-rebuild model config",
+    )
+    generate_memory.add_argument("text")
+    generate_memory.add_argument("--recent-context", default="")
+    generate_memory.add_argument("--project", default="wisdom-weasel-rag-ime")
+    generate_memory.add_argument("--app", default="manual")
+    generate_memory.add_argument("--max-items", type=int, default=3)
+    generate_memory.add_argument("--dry-run", action="store_true")
+    generate_memory.add_argument("--allow-duplicates", action="store_true")
+    generate_memory.add_argument("--vcp-env-path", default=os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""))
 
     suggest = subparsers.add_parser("suggest", help="Render suggestions for one input")
     suggest.add_argument("current_input")
@@ -690,6 +705,83 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             json.dumps(
                 {"event_id": event_id, "recorded": not event_id.startswith("skipped:")},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "generate-memory":
+        try:
+            generator = VcpRebuildMemoryGenerator.from_env_path(args.vcp_env_path or None)
+            report = generator.generate(
+                text=args.text,
+                recent_context=args.recent_context,
+                project=args.project,
+                max_items=max(1, args.max_items),
+            )
+        except MemoryGenerationError as exc:
+            print(
+                json.dumps(
+                    {"schemaVersion": "rag-ime.generated-memory.v1", "ok": False, "error": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        recorded: list[dict[str, object]] = []
+        duplicate_skipped = 0
+        for item in report.items:
+            dedupe_tag = _generated_memory_dedupe_tag(item.text)
+            if not args.allow_duplicates and _core_has_event_tag(core, dedupe_tag):
+                duplicate_skipped += 1
+                continue
+            tags = tuple(
+                dict.fromkeys(
+                    (
+                        "generated-memory",
+                        "vcp-rebuild",
+                        "aimemo",
+                        dedupe_tag,
+                        *item.tags,
+                    )
+                )
+            )
+            event_id = ""
+            if not args.dry_run:
+                event_id = adapter.commit_text(
+                    item.text,
+                    recent_context=_generated_memory_context(args.text, args.recent_context, item.reason),
+                    project=args.project,
+                    app=args.app,
+                    source="vcp_memory_generator",
+                    provider_name=f"vcp-rebuild:{report.model}",
+                    tags=tags,
+                )
+            recorded.append(
+                {
+                    "eventId": event_id,
+                    "text": item.text,
+                    "tags": list(tags),
+                    "importance": item.importance,
+                    "reason": item.reason,
+                }
+            )
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.generated-memory.v1",
+                    "ok": True,
+                    "dryRun": bool(args.dry_run),
+                    "provider": report.provider,
+                    "model": report.model,
+                    "elapsedMs": report.elapsed_ms,
+                    "generated": len(report.items),
+                    "recorded": 0 if args.dry_run else len(recorded),
+                    "duplicateSkipped": duplicate_skipped,
+                    "items": recorded,
+                    "metadata": report.metadata,
+                },
                 ensure_ascii=False,
                 indent=2,
             )
@@ -3411,6 +3503,21 @@ def _core_has_event_tag(core, tag: str) -> bool:
     if not callable(checker):
         return False
     return bool(checker(tag))
+
+
+def _generated_memory_dedupe_tag(text: str) -> str:
+    digest = hashlib.sha1(compact_whitespace(text).encode("utf-8")).hexdigest()[:12]
+    return f"vcp-memory:{digest}"
+
+
+def _generated_memory_context(source_text: str, recent_context: str, reason: str) -> str:
+    parts = [
+        "VCP AIMemo-style generated memory",
+        f"reason: {compact_whitespace(reason)}" if reason else "",
+        f"context: {compact_whitespace(recent_context)}" if recent_context else "",
+        f"source: {compact_whitespace(source_text)[:240]}",
+    ]
+    return " | ".join(part for part in parts if part)
 
 
 def _parse_codex_role_filter(value: str) -> tuple[str, ...] | None:
