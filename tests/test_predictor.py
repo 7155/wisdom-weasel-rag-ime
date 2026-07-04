@@ -37,6 +37,7 @@ from rag_ime.predictor import (
 class _MockOpenAIHandler(BaseHTTPRequestHandler):
     captured_payload: dict[str, object] = {}
     captured_headers: dict[str, str] = {}
+    response_content = "本地记忆 输入法候选 RAG上下文 本地记忆"
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         if self.path != "/v1/models":
@@ -61,7 +62,7 @@ class _MockOpenAIHandler(BaseHTTPRequestHandler):
                 "choices": [
                     {
                         "message": {
-                            "content": "本地记忆 输入法候选 RAG上下文 本地记忆",
+                            "content": _MockOpenAIHandler.response_content,
                         }
                     }
                 ]
@@ -583,6 +584,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(parsed, ["module", "memory", "mlx"])
 
     def test_openai_compatible_provider_returns_short_ranked_predictions(self) -> None:
+        _MockOpenAIHandler.response_content = "本地记忆 输入法候选 RAG上下文 本地记忆"
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -625,6 +627,76 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(len(request_meta["currentInputFingerprint"]), 16)
         self.assertEqual(len(request_meta["stablePrefixHash"]), 16)
         self.assertNotIn("contextFingerprint", _MockOpenAIHandler.captured_payload)
+
+    def test_openai_compatible_provider_sends_pinyin_constrained_request_context(self) -> None:
+        _MockOpenAIHandler.response_content = "设计 手机 世界 数据"
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatiblePredictionProvider(
+                OpenAICompatiblePredictionConfig(
+                    base_url=f"http://127.0.0.1:{server.server_port}",
+                    model="quality-ime",
+                    timeout_s=1.0,
+                    max_tokens=12,
+                    provider_name="mock-quality",
+                )
+            )
+            predictions = provider.predict(
+                current_input="sj",
+                recent_context="我准备调试输入法",
+                max_candidates=4,
+                request_type=PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+                rime_candidates=("设计", "手机", "世界", "数据"),
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual([item.text for item in predictions], ["设计", "手机", "世界", "数据"])
+        messages = _MockOpenAIHandler.captured_payload["messages"]
+        self.assertIn("拼音/前缀约束预测", messages[0]["content"])
+        self.assertIn("当前拼音或前缀: sj", messages[1]["content"])
+        self.assertIn("Rime候选: 设计、手机、世界、数据", messages[1]["content"])
+        self.assertEqual(predictions[0].metadata["request_type"], PREDICTION_REQUEST_PINYIN_CONSTRAINED)
+        self.assertEqual(predictions[0].metadata["rime_candidates"], ["设计", "手机", "世界", "数据"])
+        self.assertEqual(predictions[0].metadata["requestMeta"]["rimeCandidateCount"], 4)
+
+    def test_openai_compatible_provider_reorders_only_rime_candidates(self) -> None:
+        _MockOpenAIHandler.response_content = "手机 工具 随机词 设计"
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatiblePredictionProvider(
+                OpenAICompatiblePredictionConfig(
+                    base_url=f"http://127.0.0.1:{server.server_port}",
+                    model="quality-ime",
+                    timeout_s=1.0,
+                    max_tokens=12,
+                    provider_name="mock-quality",
+                )
+            )
+            predictions = provider.predict(
+                current_input="sj",
+                recent_context="我准备调试输入法",
+                max_candidates=3,
+                request_type=PREDICTION_REQUEST_RIME_REORDER,
+                rime_candidates=("设计", "手机", "世界"),
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual([item.text for item in predictions], ["手机", "设计"])
+        messages = _MockOpenAIHandler.captured_payload["messages"]
+        self.assertIn("只允许重排给定 Rime 候选", messages[0]["content"])
+        self.assertIn("请只从 Rime候选 中选出并重排", messages[1]["content"])
+        self.assertNotIn("随机词", [item.text for item in predictions])
+        self.assertEqual(predictions[0].metadata["request_type"], PREDICTION_REQUEST_RIME_REORDER)
 
     def test_completion_prompt_mode_uses_prefix_completion_endpoint(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockCompletionHandler)

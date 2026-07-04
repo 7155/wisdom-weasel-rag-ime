@@ -243,26 +243,43 @@ class OpenAICompatiblePredictionProvider:
         request_type: str = PREDICTION_REQUEST_GENERIC,
         rime_candidates: tuple[str, ...] = (),
     ) -> list[ModelPrediction]:
-        _ = request_type, rime_candidates
         query = compact_whitespace(current_input)
         context = compact_whitespace(recent_context)[-420:]
         if not query and not context:
             return []
+        resolved_request_type = normalize_prediction_request_type(request_type)
+        rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
         max_items = max(1, min(10, int(max_candidates)))
         request_meta = _prediction_request_metadata(
             context=context,
             query=query,
-            stable_prefix=OPENAI_CHAT_SYSTEM_PROMPT
-            if _normalized_prompt_mode(self.config.prompt_mode) == "chat"
-            else "",
+            stable_prefix=_openai_stable_prefix_for_request(self.config.prompt_mode, resolved_request_type),
+            request_type=resolved_request_type,
+            rime_candidates=rime_candidate_tuple,
         )
         self.last_error = ""
         started = time.perf_counter()
-        raw_texts = self._complete(context=context, query=query, max_candidates=max_items)
+        raw_texts = self._complete(
+            context=context,
+            query=query,
+            max_candidates=max_items,
+            request_type=resolved_request_type,
+            rime_candidates=rime_candidate_tuple,
+        )
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_text = "\n".join(raw_texts)
-        candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
-        candidates = _finalize_ime_prediction_candidates(candidates, query)
+        if resolved_request_type == PREDICTION_REQUEST_GENERIC:
+            candidates = _parse_prediction_candidate_texts(raw_texts, max_candidates=max_items)
+            candidates = _finalize_ime_prediction_candidates(candidates, query)
+        else:
+            candidates = parse_ime_prediction_candidates(
+                raw_texts,
+                max_candidates=max_items,
+                current_input=query,
+                recent_context=context,
+                request_type=resolved_request_type,
+                rime_candidates=rime_candidate_tuple,
+            )
         return [
             ModelPrediction(
                 text=item,
@@ -276,6 +293,8 @@ class OpenAICompatiblePredictionProvider:
                             "profile": self.config.profile,
                             "prompt_mode": _normalized_prompt_mode(self.config.prompt_mode),
                             "raw_text": raw_text,
+                            "request_type": resolved_request_type,
+                            "rime_candidates": list(rime_candidate_tuple),
                             "requestMeta": request_meta,
                             **build_pinyin_metadata(item),
                         },
@@ -283,26 +302,58 @@ class OpenAICompatiblePredictionProvider:
             for index, item in enumerate(candidates, start=1)
         ]
 
-    def _complete(self, *, context: str, query: str, max_candidates: int) -> list[str]:
+    def _complete(
+        self,
+        *,
+        context: str,
+        query: str,
+        max_candidates: int,
+        request_type: str,
+        rime_candidates: tuple[str, ...],
+    ) -> list[str]:
         if _normalized_prompt_mode(self.config.prompt_mode) == "completion":
-            return self._complete_with_prefix(context=context, query=query, max_candidates=max_candidates)
-        return self._complete_with_chat(context=context, query=query, max_candidates=max_candidates)
+            return self._complete_with_prefix(
+                context=context,
+                query=query,
+                max_candidates=max_candidates,
+                request_type=request_type,
+                rime_candidates=rime_candidates,
+            )
+        return self._complete_with_chat(
+            context=context,
+            query=query,
+            max_candidates=max_candidates,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
+        )
 
-    def _complete_with_chat(self, *, context: str, query: str, max_candidates: int) -> list[str]:
+    def _complete_with_chat(
+        self,
+        *,
+        context: str,
+        query: str,
+        max_candidates: int,
+        request_type: str,
+        rime_candidates: tuple[str, ...],
+    ) -> list[str]:
+        system_prompt = _openai_prediction_system_prompt(request_type)
+        user_content = _openai_prediction_user_content(
+            context=context,
+            query=query,
+            max_candidates=max_candidates,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
+        )
         body = {
             "model": self.config.model,
             "messages": [
                 {
                     "role": "system",
-                    "content": OPENAI_CHAT_SYSTEM_PROMPT,
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
-                    "content": (
-                        f"上下文: {context}\n"
-                        f"当前输入: {query}\n"
-                        f"请预测 {max_candidates} 个最可能的短候选:"
-                    ),
+                    "content": user_content,
                 },
             ],
             "max_tokens": max(1, min(64, int(self.config.max_tokens))),
@@ -326,8 +377,21 @@ class OpenAICompatiblePredictionProvider:
             return []
         return extract_openai_contents(payload)
 
-    def _complete_with_prefix(self, *, context: str, query: str, max_candidates: int) -> list[str]:
-        prefix = compact_whitespace(f"{context}{query}")
+    def _complete_with_prefix(
+        self,
+        *,
+        context: str,
+        query: str,
+        max_candidates: int,
+        request_type: str,
+        rime_candidates: tuple[str, ...],
+    ) -> list[str]:
+        prefix = _openai_completion_prefix(
+            context=context,
+            query=query,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
+        )
         if not prefix:
             return []
         body = {
@@ -2182,6 +2246,84 @@ def _candidate_parts_from_json_value(value: Any) -> list[str]:
 def _normalized_prompt_mode(mode: str) -> str:
     normalized = mode.strip().lower()
     return "completion" if normalized in {"completion", "base", "prefix"} else "chat"
+
+
+def _openai_stable_prefix_for_request(prompt_mode: str, request_type: str) -> str:
+    if _normalized_prompt_mode(prompt_mode) != "chat":
+        return ""
+    return _openai_prediction_system_prompt(request_type)
+
+
+def _openai_prediction_system_prompt(request_type: str) -> str:
+    resolved = normalize_prediction_request_type(request_type)
+    if resolved == PREDICTION_REQUEST_PINYIN_CONSTRAINED:
+        return (
+            f"{OPENAI_CHAT_SYSTEM_PROMPT} 当前是拼音/前缀约束预测, "
+            "候选必须匹配当前输入或来自 Rime 候选, 不要做自由聊天。"
+        )
+    if resolved == PREDICTION_REQUEST_RIME_REORDER:
+        return (
+            f"{OPENAI_CHAT_SYSTEM_PROMPT} 当前只允许重排给定 Rime 候选, "
+            "不要创造新候选, 不要解释。"
+        )
+    if resolved == PREDICTION_REQUEST_NO_INPUT:
+        return (
+            f"{OPENAI_CHAT_SYSTEM_PROMPT} 当前没有正在编辑的拼音, "
+            "只预测最可能接在已上屏上下文后面的短候选。"
+        )
+    return OPENAI_CHAT_SYSTEM_PROMPT
+
+
+def _openai_prediction_user_content(
+    *,
+    context: str,
+    query: str,
+    max_candidates: int,
+    request_type: str,
+    rime_candidates: tuple[str, ...],
+) -> str:
+    resolved = normalize_prediction_request_type(request_type)
+    rime_line = "、".join(normalized_rime_candidate_texts(rime_candidates))
+    if resolved == PREDICTION_REQUEST_RIME_REORDER and rime_line:
+        return (
+            f"上下文: {context}\n"
+            f"当前输入: {query}\n"
+            f"Rime候选: {rime_line}\n"
+            f"请只从 Rime候选 中选出并重排前 {max_candidates} 个, 用空格分隔。"
+        )
+    if resolved == PREDICTION_REQUEST_PINYIN_CONSTRAINED:
+        return (
+            f"上下文: {context}\n"
+            f"当前拼音或前缀: {query}\n"
+            f"Rime候选: {rime_line}\n"
+            f"请预测 {max_candidates} 个能匹配当前拼音/前缀的短候选, 用空格分隔。"
+        )
+    if resolved == PREDICTION_REQUEST_NO_INPUT:
+        return (
+            f"已上屏上下文: {context}\n"
+            f"请预测 {max_candidates} 个最可能接在上下文后面的短候选, 用空格分隔。"
+        )
+    return (
+        f"上下文: {context}\n"
+        f"当前输入: {query}\n"
+        f"请预测 {max_candidates} 个最可能的短候选, 用空格分隔。"
+    )
+
+
+def _openai_completion_prefix(
+    *,
+    context: str,
+    query: str,
+    request_type: str,
+    rime_candidates: tuple[str, ...],
+) -> str:
+    resolved = normalize_prediction_request_type(request_type)
+    rime_tuple = normalized_rime_candidate_texts(rime_candidates)
+    if resolved == PREDICTION_REQUEST_RIME_REORDER and rime_tuple:
+        return compact_whitespace(f"按上下文重排候选: {' '.join(rime_tuple)}\n排序:")
+    if resolved == PREDICTION_REQUEST_PINYIN_CONSTRAINED and rime_tuple:
+        return compact_whitespace(f"{context}{query} 候选 {' '.join(rime_tuple)}")
+    return compact_whitespace(f"{context}{query}")
 
 
 def _status_prompt_mode(mode: str) -> str:

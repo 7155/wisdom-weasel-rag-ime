@@ -452,11 +452,11 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(prediction_first["predictionFirst"]["pinyinPrefix"], "sj")
         self.assertEqual(
             [item["text"] for item in prediction_first["displayCandidates"]],
-            ["设计输入法状态机", "设计一个候选展示方式"],
+            ["设计输入法状态机", "设计一个候选展示方式", "手机", "世界"],
         )
         self.assertEqual(
             [item["displayLane"] for item in prediction_first["displayCandidates"]],
-            ["model", "memory"],
+            ["model", "memory", "wanxiang", "wanxiang"],
         )
         self.assertEqual(prediction_first["predictionFirst"]["policy"]["sideInserted"], 2)
         self.assertTrue(prediction_first["predictionFirst"]["policy"]["panelVisible"])

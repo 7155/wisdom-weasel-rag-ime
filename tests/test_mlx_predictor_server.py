@@ -311,7 +311,7 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertNotIn("同时", payload["candidates"])
         self.assertEqual(
             payload["candidates"],
-            ["输入法能显著提升输入效率", "通过智能预测用户意图", "减少重复输入", "补齐展示细节", "优化候选排序"],
+            ["能显著提升输入效率", "通过智能预测用户意图", "减少重复输入", "补齐展示细节", "优化候选排序"],
         )
         self.assertEqual(payload["timing"]["branches"][-1]["reason"], "fill-empty-model-slots")
 

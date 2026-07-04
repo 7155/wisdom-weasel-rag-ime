@@ -10,6 +10,7 @@ result, Felix/Wisdom-Weasel reference points, runtime configuration, and the
 handoff checklist for the next model, start with:
 
 - `docs/agent/handoff-5-5pro-20260704.md`
+- `docs/agent/model-quality-and-iteration-route-20260704.md`
 
 ## Current Boundary
 
