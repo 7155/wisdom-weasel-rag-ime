@@ -35,7 +35,7 @@ from .predictor import (
     PredictionProvider,
     predict_with_optional_request_context,
 )
-from .text_utils import compact_whitespace, now_ms
+from .text_utils import compact_whitespace, now_ms, token_terms
 
 
 RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
@@ -103,7 +103,8 @@ _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
 _MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 _REALTIME_MODEL_CONTEXT_BUDGET_MS = 500
 _MODEL_HOLDOVER_TTL_MS = 5000
-_POST_COMMIT_PANEL_TTL_MS = 900
+_POST_COMMIT_PANEL_TTL_MS = 8000
+_PREFIX_CONSTRAINED_PANEL_TTL_MS = 2600
 _MODEL_HOLDOVER_LOCK = RLock()
 _MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
 _PREDICTION_MANAGER_LOCK = RLock()
@@ -134,6 +135,49 @@ _RECENT_MEMORY_LOW_VALUE = {
     "或者",
     "现在",
     "目前",
+    "下一步",
+    "接下来",
+}
+_LOW_INFORMATION_CJK_TOKENS = {
+    "的",
+    "得",
+    "地",
+    "了",
+    "是",
+    "和",
+    "与",
+    "及",
+    "或",
+    "在",
+    "就",
+    "都",
+    "而",
+    "把",
+    "被",
+    "个",
+    "这",
+    "那",
+    "吗",
+    "呢",
+    "啊",
+    "呀",
+    "吧",
+    "嗯",
+    "呃",
+    "额",
+    "哦",
+}
+_PROMPT_EXAMPLE_LEAK_SURFACES = {
+    "把流程跑通",
+    "接入本地",
+    "接入本地记忆",
+    "验证 LLM 候选",
+    "验证LLM候选",
+    "预测流程完成",
+    "部署 RAG 组件",
+    "部署RAG组件",
+    "模型相关表达",
+    "调试流程",
 }
 _RECENT_MEMORY_TRAILING_NOISE = _RECENT_MEMORY_LOW_VALUE | {
     "啊",
@@ -144,9 +188,36 @@ _RECENT_MEMORY_TRAILING_NOISE = _RECENT_MEMORY_LOW_VALUE | {
     "哦",
     "噢",
     "唔",
+    "下一步",
+    "接下来",
     "法",
     "撒旦",
     "深度",
+}
+_POST_COMMIT_GENERIC_QUERY_TERMS = {
+    "一下",
+    "一个",
+    "一些",
+    "以及",
+    "今天",
+    "他们",
+    "你们",
+    "使用",
+    "候选词",
+    "刚刚",
+    "可以",
+    "已经",
+    "我们",
+    "输入",
+    "输入法",
+    "这个",
+    "那个",
+    "继续",
+    "现在",
+    "目前",
+    "用户",
+    "需要",
+    "问题",
 }
 
 
@@ -160,6 +231,8 @@ class RimeSideCandidateTriggerDecision:
 class _ModelPredictionHoldover:
     project: str
     input_state_fingerprint: str
+    explicit_recent_context: str
+    current_input: str
     predictions: tuple[ModelPrediction, ...]
     created_at: float
 
@@ -195,6 +268,39 @@ def build_rime_sidecar_response(
             max_candidates=snapshot.max_side_candidates,
             latency_budget_ms=snapshot.latency_budget_ms,
         )
+        raw_model_prediction_count = len(model_predictions)
+        model_predictions = _filter_model_predictions_for_snapshot(
+            model_predictions,
+            snapshot=snapshot,
+            query_basis=query_basis,
+        )
+        if raw_model_prediction_count != len(model_predictions):
+            model_lane["filteredPredictionCount"] = raw_model_prediction_count - len(model_predictions)
+        model_lane["predictionCount"] = len(model_predictions)
+        raw_suggestion_count = len(suggestions)
+        suggestions = _filter_rag_suggestions_for_query(
+            suggestions,
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            query_basis=query_basis,
+        )
+        post_commit_filtered_suggestions = len(suggestions)
+        suggestions = _filter_post_commit_rag_suggestions_for_query(
+            suggestions,
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            query_basis=query_basis,
+        )
+        if post_commit_filtered_suggestions != len(suggestions):
+            rag_lane["postCommitQualityFilteredCount"] = post_commit_filtered_suggestions - len(suggestions)
+        rag_lane["suggestionCount"] = len(suggestions)
+        if raw_suggestion_count != len(suggestions):
+            rag_lane["filteredSuggestionCount"] = raw_suggestion_count - len(suggestions)
+        if _should_suppress_post_commit_rag_only(snapshot, model_predictions, suggestions):
+            rag_lane["postCommitRagOnlySuppressed"] = True
+            rag_lane["suppressedSuggestionCount"] = len(suggestions)
+            rag_lane["suggestionCount"] = 0
+            suggestions = []
         prediction_context = _string(model_lane.get("historyContext"))
         model_lane.pop("historyContext", None)
         total_elapsed_ms = int((time.perf_counter() - lane_started) * 1000)
@@ -394,6 +500,7 @@ def suggest_rag_with_latency_budget(
             skipped_reason="no side candidate slot",
             budget_ms=budget_ms,
         )
+    retrieval_top_k = max(int(top_k), min(20, int(top_k) * 2 + 4))
     if not _RAG_LANE_SEMAPHORE.acquire(blocking=False):
         return [], _rag_lane_status(
             called=False,
@@ -415,7 +522,7 @@ def suggest_rag_with_latency_budget(
                     recent_context=recent_context,
                     project=project,
                     app=app,
-                    top_k=top_k,
+                    top_k=retrieval_top_k,
                 )
             )
         except Exception as exc:  # pragma: no cover - defensive fail-open guard
@@ -482,6 +589,7 @@ def run_side_lanes_with_latency_budget(
     model_result: dict[str, object] = {}
     rag_budget_ms = _rag_lane_budget_for_request(latency_budget_ms)
     request_type = model_request_type_for_snapshot(snapshot)
+    model_candidate_limit = realtime_model_candidate_limit(max_candidates)
     rime_candidate_count = len(
         [
             item
@@ -520,7 +628,7 @@ def run_side_lanes_with_latency_budget(
             current_input=model_current_input,
             explicit_recent_context=explicit_recent_context,
             project=project,
-            max_candidates=max_candidates,
+            max_candidates=model_candidate_limit,
             latency_budget_ms=latency_budget_ms,
         )
         model_result["predictions"] = predictions
@@ -571,7 +679,8 @@ def run_side_lanes_with_latency_budget(
             project=project,
             current_input=current_input,
             explicit_recent_context=explicit_recent_context,
-            max_candidates=max_candidates,
+            max_candidates=model_candidate_limit,
+            allow_nearby=request_type == PREDICTION_REQUEST_NO_INPUT,
         )
         if predictions:
             model_lane = _model_lane_status(
@@ -583,6 +692,7 @@ def run_side_lanes_with_latency_budget(
                 holdover_hit=True,
                 request_type=request_type,
                 rime_candidate_count=rime_candidate_count,
+                requested_max_candidates=model_candidate_limit,
             )
         else:
             model_lane = _model_lane_status(
@@ -592,14 +702,27 @@ def run_side_lanes_with_latency_budget(
                 budget_ms=max(0, int(latency_budget_ms)),
                 request_type=request_type,
                 rime_candidate_count=rime_candidate_count,
+                requested_max_candidates=model_candidate_limit,
             )
 
+    if isinstance(model_lane, dict):
+        model_lane["requestedMaxCandidates"] = model_candidate_limit
     return suggestions, rag_lane, predictions, model_lane
 
 
 def _rag_lane_budget_for_request(latency_budget_ms: int) -> int:
     budget = max(0, int(latency_budget_ms))
     return budget
+
+
+def realtime_model_candidate_limit(max_candidates: int) -> int:
+    configured = _bounded_int(
+        os.environ.get("RAG_IME_MODEL_LANE_MAX_CANDIDATES"),
+        default=5,
+        minimum=1,
+        maximum=10,
+    )
+    return min(max(0, int(max_candidates)), configured)
 
 
 def recent_context_memory_suggestions(
@@ -734,6 +857,302 @@ def _is_low_value_recent_memory_surface(text: str) -> bool:
     return False
 
 
+def _filter_rag_suggestions_for_query(
+    suggestions: list[InputSuggestion],
+    *,
+    snapshot: RimeContextSnapshot,
+    semantic_query: str,
+    query_basis: str,
+) -> list[InputSuggestion]:
+    _ = snapshot, semantic_query, query_basis
+    result: list[InputSuggestion] = []
+    seen: set[str] = set()
+    for suggestion in suggestions:
+        surface = compact_whitespace(suggestion.surface_text)
+        if not surface:
+            continue
+        if _looks_like_assistant_history_candidate(suggestion):
+            continue
+        if _looks_like_low_quality_memory_candidate(surface):
+            continue
+        key = _display_text_norm(surface)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(suggestion)
+    return result
+
+
+def _filter_post_commit_rag_suggestions_for_query(
+    suggestions: list[InputSuggestion],
+    *,
+    snapshot: RimeContextSnapshot,
+    semantic_query: str,
+    query_basis: str,
+) -> list[InputSuggestion]:
+    if not _is_post_commit_prediction_snapshot(snapshot):
+        return suggestions
+    result: list[InputSuggestion] = []
+    for suggestion in suggestions:
+        if _post_commit_rag_candidate_has_strong_signal(
+            suggestion,
+            semantic_query=semantic_query,
+            query_basis=query_basis,
+        ):
+            result.append(suggestion)
+    return result
+
+
+def _filter_model_predictions_for_snapshot(
+    predictions: list[ModelPrediction],
+    *,
+    snapshot: RimeContextSnapshot,
+    query_basis: str,
+) -> list[ModelPrediction]:
+    if not predictions or not _is_post_commit_prediction_snapshot(snapshot):
+        return predictions
+    if query_basis not in {"committedContext", "commitTextPreview"}:
+        return predictions
+    result: list[ModelPrediction] = []
+    for prediction in predictions:
+        if _post_commit_model_prediction_echoes_context(prediction.text, snapshot.committed_context):
+            continue
+        result.append(prediction)
+    return result
+
+
+def _is_post_commit_prediction_snapshot(snapshot: RimeContextSnapshot) -> bool:
+    if compact_whitespace(snapshot.raw_input) or compact_whitespace(snapshot.preedit):
+        return False
+    if snapshot.candidates:
+        return False
+    return bool(compact_whitespace(snapshot.committed_context) or compact_whitespace(snapshot.commit_text_preview))
+
+
+def _post_commit_model_prediction_echoes_context(candidate: str, committed_context: str) -> bool:
+    surface = compact_whitespace(candidate)
+    context = compact_whitespace(committed_context)
+    if not surface or not context:
+        return False
+    if len(surface) >= 3 and surface in context:
+        return True
+    candidate_chars = re.findall(r"[\u3400-\u9fff]", surface)
+    context_chars = set(re.findall(r"[\u3400-\u9fff]", context))
+    if len(candidate_chars) < 4 or not context_chars:
+        return False
+    covered = sum(1 for char in candidate_chars if char in context_chars)
+    return covered / max(1, len(candidate_chars)) >= 0.65
+
+
+def _post_commit_rag_candidate_has_strong_signal(
+    suggestion: InputSuggestion,
+    *,
+    semantic_query: str,
+    query_basis: str,
+) -> bool:
+    metadata = dict(suggestion.metadata)
+    if _suggestion_has_positive_user_signal(metadata):
+        return True
+
+    query = compact_whitespace(semantic_query)
+    surface = compact_whitespace(suggestion.surface_text)
+    if not query or not surface:
+        return False
+
+    if query_basis == "commitTextPreview" and semantic_signal_length(query) < 4:
+        return False
+
+    hits = _important_surface_overlap_terms(query=query, surface=surface)
+    if query_basis == "commitTextPreview" and hits:
+        return True
+    if len(hits) >= 2:
+        return True
+    if any(len(term) >= 4 for term in hits):
+        return True
+    if any(term in {"agent", "codex", "llm", "mlx", "rag", "rime", "squirrel"} for term in hits):
+        return True
+    return False
+
+
+def _suggestion_has_positive_user_signal(metadata: Mapping[str, object]) -> bool:
+    state = metadata.get("state") if isinstance(metadata.get("state"), dict) else {}
+    assert isinstance(state, dict)
+    raw_signals = state.get("rawSignals") if isinstance(state.get("rawSignals"), dict) else {}
+    assert isinstance(raw_signals, dict)
+    if bool(state.get("pinned") or raw_signals.get("pinned")):
+        return True
+    for key in (
+        "accepted_count",
+        "event_accepted_count",
+        "acceptedCount",
+    ):
+        if _safe_int(state.get(key) if key in state else raw_signals.get(key)) > 0:
+            return True
+    for key in (
+        "input_frequency",
+        "project_input_frequency",
+        "effective_frequency",
+        "inputFrequency",
+        "projectInputFrequency",
+        "effectiveFrequency",
+    ):
+        if _safe_int(state.get(key) if key in state else raw_signals.get(key)) >= 2:
+            return True
+    return False
+
+
+def _important_surface_overlap_terms(*, query: str, surface: str) -> list[str]:
+    surface_lower = compact_whitespace(surface).lower()
+    result: list[str] = []
+    seen: set[str] = set()
+    for term in token_terms(query, max_terms=48):
+        normalized = compact_whitespace(term).lower()
+        if len(normalized) < 2:
+            continue
+        if normalized in _POST_COMMIT_GENERIC_QUERY_TERMS:
+            continue
+        if normalized in seen:
+            continue
+        if normalized in surface_lower:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
+def _safe_int(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _looks_like_low_quality_memory_candidate(surface: str) -> bool:
+    text = compact_whitespace(surface)
+    if not text:
+        return True
+    if _looks_like_prompt_example_leak(text):
+        return True
+    if _looks_like_session_identifier_surface(text):
+        return True
+    if _looks_like_complaint_or_debug_fragment(text):
+        return True
+    if _looks_like_meta_candidate_surface(text):
+        return True
+    if _is_low_value_recent_memory_surface(text):
+        return True
+    if not _text_has_meaningful_ime_signal(text):
+        return True
+    return False
+
+
+def _looks_like_prompt_example_leak(text: str) -> bool:
+    return compact_whitespace(text) in _PROMPT_EXAMPLE_LEAK_SURFACES
+
+
+def _looks_like_session_identifier_surface(text: str) -> bool:
+    surface = compact_whitespace(text)
+    if re.search(
+        r"(?i)(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])",
+        surface,
+    ):
+        return True
+    if re.fullmatch(r"(?i)[0-9a-f]{16,}", surface):
+        return True
+    return False
+
+
+def _looks_like_complaint_or_debug_fragment(text: str) -> bool:
+    surface = compact_whitespace(text)
+    lowered = surface.lower()
+    if "…" in surface or "..." in surface:
+        return True
+    complaint_markers = (
+        "不能用",
+        "用不了",
+        "没办法",
+        "没法",
+        "没区别",
+        "没意义",
+        "没记录",
+        "没有记录",
+        "不然这个",
+        "感觉随机",
+        "输入不了",
+        "崩溃",
+        "报错",
+        "错误",
+        "失败",
+        "切成豆包",
+    )
+    if any(marker in surface for marker in complaint_markers):
+        return True
+    debug_markers = (
+        "exception",
+        "traceback",
+        "brokenpipe",
+        "timeout",
+        "failure",
+        "error",
+    )
+    if any(marker in lowered for marker in debug_markers):
+        return True
+    if surface.startswith(("现在的话", "然后可以再查", "不然")):
+        return True
+    return False
+
+
+def _looks_like_meta_candidate_surface(text: str) -> bool:
+    surface = compact_whitespace(text)
+    if not surface:
+        return True
+    meta_prefixes = (
+        "你正在输入",
+        "你正在尝试",
+        "你正在使用",
+        "你正在看",
+        "你正在查看",
+        "你当前正在",
+        "您正在输入",
+        "您正在尝试",
+        "您正在使用",
+        "您正在看",
+        "您正在查看",
+        "您当前正在",
+        "用户正在输入",
+        "用户正在尝试",
+        "用户正在使用",
+        "用户正在看",
+        "用户正在查看",
+        "正在输入一个",
+        "正在查看",
+        "正在看",
+    )
+    if surface.startswith(meta_prefixes):
+        return True
+    meta_markers = (
+        "已经上屏的文本",
+        "上屏的文本",
+        "作为输入法候选",
+        "这是一个候选",
+        "这个项目",
+        "号项目",
+    )
+    return any(marker in surface for marker in meta_markers)
+
+
+def _looks_like_assistant_history_candidate(suggestion: InputSuggestion) -> bool:
+    metadata = dict(suggestion.metadata)
+    material = "\n".join(
+        compact_whitespace(str(value or ""))
+        for value in (
+            suggestion.evidence_preview,
+            suggestion.expanded_evidence,
+            metadata.get("preview_text"),
+        )
+    )
+    return bool(re.search(r"(?m)^\[\d+\]\s*assistant:", material))
+
+
 def _short_stable_id(*parts: str) -> str:
     material = "\x1f".join(parts)
     return hashlib.sha1(material.encode("utf-8")).hexdigest()[:10]
@@ -791,6 +1210,7 @@ def predict_model_with_latency_budget(
             current_input=current_input,
             explicit_recent_context=explicit_recent_context,
             max_candidates=max_candidates,
+            allow_nearby=request_type == PREDICTION_REQUEST_NO_INPUT,
         )
         if cached_predictions:
             return cached_predictions, _model_lane_status(
@@ -894,6 +1314,7 @@ def predict_model_with_latency_budget(
             current_input=current_input,
             explicit_recent_context=explicit_recent_context,
             max_candidates=max_candidates,
+            allow_nearby=request_type == PREDICTION_REQUEST_NO_INPUT,
         )
         if cached_predictions:
             return cached_predictions, _model_lane_status(
@@ -1024,6 +1445,8 @@ def _clean_model_prediction_text(
         return ""
     if _looks_like_model_prompt_echo(surface):
         return ""
+    if _looks_like_meta_candidate_surface(surface):
+        return ""
     if _model_prediction_repeats_context(
         surface,
         current_input=current_input,
@@ -1039,6 +1462,8 @@ def _clean_model_prediction_text(
 def _looks_like_model_prompt_echo(surface: str) -> bool:
     normalized = compact_whitespace(surface)
     lowered = normalized.lower()
+    if _looks_like_prompt_example_leak(normalized):
+        return True
     markers = (
         "已上屏上下文",
         "当前拼音",
@@ -1122,6 +1547,7 @@ def _model_lane_status(
     context_mode: str = "",
     request_type: str = "",
     rime_candidate_count: int = 0,
+    requested_max_candidates: int = 0,
 ) -> dict[str, object]:
     return {
         "called": called,
@@ -1135,6 +1561,7 @@ def _model_lane_status(
         "contextMode": context_mode,
         "requestType": request_type,
         "rimeCandidateCount": max(0, int(rime_candidate_count)),
+        "requestedMaxCandidates": max(0, int(requested_max_candidates)),
     }
 
 
@@ -1190,6 +1617,7 @@ def _should_clear_prediction_pool(
         "skip: stale post-commit continuation",
         "skip: raw pinyin fallback",
         "skip: empty semantic signal",
+        "skip: low-information Rime candidates",
     }:
         return True
     return False
@@ -1206,6 +1634,8 @@ def _store_model_holdover_predictions(
         explicit_recent_context=explicit_recent_context,
         current_input=current_input,
     )
+    context = _holdover_context_text(explicit_recent_context)
+    query = _holdover_query_text(current_input)
     if not fingerprint:
         return
     visible = tuple(predictions[:10])
@@ -1215,6 +1645,8 @@ def _store_model_holdover_predictions(
         _MODEL_HOLDOVERS[(project, fingerprint)] = _ModelPredictionHoldover(
             project=project,
             input_state_fingerprint=fingerprint,
+            explicit_recent_context=context,
+            current_input=query,
             predictions=visible,
             created_at=time.monotonic(),
         )
@@ -1226,6 +1658,7 @@ def _get_model_holdover_predictions(
     current_input: str,
     explicit_recent_context: str,
     max_candidates: int,
+    allow_nearby: bool = False,
 ) -> list[ModelPrediction]:
     fingerprint = _holdover_input_state_fingerprint(
         explicit_recent_context=explicit_recent_context,
@@ -1233,22 +1666,88 @@ def _get_model_holdover_predictions(
     )
     if not fingerprint:
         return []
+    now = time.monotonic()
+    limit = max(1, min(10, int(max_candidates)))
     with _MODEL_HOLDOVER_LOCK:
         cached = _MODEL_HOLDOVERS.get((project, fingerprint))
-        if cached is None:
-            return []
-        if time.monotonic() - cached.created_at > _MODEL_HOLDOVER_TTL_MS / 1000:
+        if cached is not None and now - cached.created_at > _MODEL_HOLDOVER_TTL_MS / 1000:
             _MODEL_HOLDOVERS.pop((project, fingerprint), None)
             return []
-        return list(cached.predictions[: max(1, min(10, int(max_candidates)))])
+        if cached is not None:
+            return list(cached.predictions[:limit])
+        if not allow_nearby:
+            return []
+        context = _holdover_context_text(explicit_recent_context)
+        query = _holdover_query_text(current_input)
+        stale_keys: list[tuple[str, str]] = []
+        nearby: _ModelPredictionHoldover | None = None
+        for key, candidate in _MODEL_HOLDOVERS.items():
+            if key[0] != project:
+                continue
+            if now - candidate.created_at > _MODEL_HOLDOVER_TTL_MS / 1000:
+                stale_keys.append(key)
+                continue
+            if not _nearby_holdover_input_state_matches(
+                candidate,
+                explicit_recent_context=context,
+                current_input=query,
+            ):
+                continue
+            if nearby is None or candidate.created_at > nearby.created_at:
+                nearby = candidate
+        for key in stale_keys:
+            _MODEL_HOLDOVERS.pop(key, None)
+        if nearby is None:
+            return []
+        return list(nearby.predictions[:limit])
 
 
 def _holdover_input_state_fingerprint(*, explicit_recent_context: str, current_input: str) -> str:
-    context = compact_whitespace(explicit_recent_context)[-420:]
-    query = compact_whitespace(current_input)[:240]
+    context = _holdover_context_text(explicit_recent_context)
+    query = _holdover_query_text(current_input)
     if not context and not query:
         return ""
     return _short_stable_id(context, query)
+
+
+def _holdover_context_text(explicit_recent_context: str) -> str:
+    return compact_whitespace(explicit_recent_context)[-420:]
+
+
+def _holdover_query_text(current_input: str) -> str:
+    return compact_whitespace(current_input)[:240]
+
+
+def _nearby_holdover_input_state_matches(
+    cached: _ModelPredictionHoldover,
+    *,
+    explicit_recent_context: str,
+    current_input: str,
+) -> bool:
+    if not cached.explicit_recent_context or not explicit_recent_context:
+        return False
+    if not _nearby_holdover_text_match(cached.explicit_recent_context, explicit_recent_context):
+        return False
+    if cached.current_input and current_input:
+        return _nearby_holdover_text_match(cached.current_input, current_input)
+    return True
+
+
+def _nearby_holdover_text_match(previous: str, current: str) -> bool:
+    previous_norm = compact_whitespace(previous)
+    current_norm = compact_whitespace(current)
+    if not previous_norm or not current_norm:
+        return False
+    if previous_norm == current_norm:
+        return True
+    min_len = min(len(previous_norm), len(current_norm))
+    if min_len < 8:
+        return False
+    if current_norm.startswith(previous_norm):
+        return len(current_norm) - len(previous_norm) <= 24
+    if previous_norm.startswith(current_norm):
+        return len(previous_norm) - len(current_norm) <= 16
+    return False
 
 
 def _predictor_last_error(predictor: PredictionProvider) -> str:
@@ -1499,12 +1998,18 @@ def decide_side_candidate_refresh(
     if raw_english_candidate_text(snapshot):
         return RimeSideCandidateTriggerDecision(False, "skip: raw ascii passthrough")
 
-    if snapshot.force_side_candidates:
-        return RimeSideCandidateTriggerDecision(True, "force: explicit side candidate refresh")
+    if query_basis == "rimeCandidates" and _active_rime_candidates_are_low_information(snapshot):
+        return RimeSideCandidateTriggerDecision(False, "skip: low-information Rime candidates")
 
     signal_len = semantic_signal_length(semantic_query)
     if signal_len <= 0:
         return RimeSideCandidateTriggerDecision(False, "skip: empty semantic signal")
+
+    if query_basis == "committedContext" and _committed_context_is_low_information(snapshot, semantic_query):
+        return RimeSideCandidateTriggerDecision(False, "skip: low-information committed context")
+
+    if snapshot.force_side_candidates:
+        return RimeSideCandidateTriggerDecision(True, "force: explicit side candidate refresh")
 
     if query_basis == "rawInputFallback":
         return RimeSideCandidateTriggerDecision(False, "skip: raw pinyin fallback")
@@ -1516,6 +2021,8 @@ def decide_side_candidate_refresh(
         return RimeSideCandidateTriggerDecision(True, "refresh: commit preview")
 
     if query_basis == "rimeCandidates":
+        if not _rime_candidates_have_meaningful_signal(snapshot):
+            return RimeSideCandidateTriggerDecision(False, "skip: low-information Rime candidates")
         if signal_len >= 3:
             return RimeSideCandidateTriggerDecision(True, "refresh: stable Rime candidates")
         if snapshot.idle_ms >= 300 and signal_len >= 2:
@@ -1545,6 +2052,58 @@ def decide_side_candidate_refresh(
 
 def semantic_signal_length(text: str) -> int:
     return sum(1 for char in compact_whitespace(text) if not char.isspace())
+
+
+def _committed_context_is_low_information(snapshot: RimeContextSnapshot, semantic_query: str) -> bool:
+    if compact_whitespace(snapshot.raw_input) or compact_whitespace(snapshot.preedit):
+        return False
+    if compact_whitespace(snapshot.commit_text_preview) or snapshot.candidates:
+        return False
+    return semantic_signal_length(semantic_query) < 8
+
+
+def _should_suppress_post_commit_rag_only(
+    snapshot: RimeContextSnapshot,
+    model_predictions: list[ModelPrediction],
+    suggestions: list[InputSuggestion],
+) -> bool:
+    _ = snapshot, model_predictions, suggestions
+    # Weak post-commit retrieval is filtered before this point. If a RAG/memory
+    # item survives, it is either semantically aligned with the current text or
+    # backed by explicit user feedback, so it should remain selectable even when
+    # the local model has no live candidate.
+    return False
+
+
+def _active_rime_candidates_are_low_information(snapshot: RimeContextSnapshot) -> bool:
+    active_input = compact_whitespace(snapshot.preedit or snapshot.raw_input)
+    if not active_input or not snapshot.candidates:
+        return False
+    return not _rime_candidates_have_meaningful_signal(snapshot)
+
+
+def _rime_candidates_have_meaningful_signal(snapshot: RimeContextSnapshot) -> bool:
+    for candidate in snapshot.candidates[:6]:
+        if _text_has_meaningful_ime_signal(candidate.text):
+            return True
+    return False
+
+
+def _text_has_meaningful_ime_signal(text: str) -> bool:
+    surface = compact_whitespace(text)
+    if not surface:
+        return False
+    lowered = surface.lower()
+    if lowered in _SEMANTIC_ASCII_TERMS:
+        return True
+    ascii_terms = re.findall(r"[A-Za-z][A-Za-z0-9_+-]{1,}", surface)
+    if any(term.lower() in _SEMANTIC_ASCII_TERMS for term in ascii_terms):
+        return True
+    cjk_runs = re.findall(r"[\u3400-\u9fff]+", surface)
+    for run in cjk_runs:
+        if len(run) >= 2 and any(char not in _LOW_INFORMATION_CJK_TOKENS for char in run):
+            return True
+    return False
 
 
 def stable_short_pinyin_prefix(snapshot: RimeContextSnapshot) -> str:
@@ -1832,6 +2391,8 @@ def _prediction_session_expiry_ms(prediction_session_payload: Mapping[str, objec
     phase = _string(prediction_session_payload.get("phase"))
     if phase == "post_commit":
         return _POST_COMMIT_PANEL_TTL_MS
+    if phase == "prefix_constrained":
+        return _PREFIX_CONSTRAINED_PANEL_TTL_MS
     return 0
 
 

@@ -842,12 +842,15 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _serve_static(self, request_path: str) -> None:
         relative = "index.html" if request_path in ("", "/") else unquote(request_path.lstrip("/"))

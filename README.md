@@ -5,6 +5,12 @@ Local-first RAG input method MVP inspired by Wisdom-Weasel.
 This repository is a standalone product repo, not a fork/PR branch of `scukeqi/Wisdom-Weasel`.
 Wisdom-Weasel remains an upstream reference for the existing LLM input method flow.
 
+For the current project state, unresolved user feedback, expected product
+result, Felix/Wisdom-Weasel reference points, runtime configuration, and the
+handoff checklist for the next model, start with:
+
+- `docs/agent/handoff-5-5pro-20260704.md`
+
 ## Current Boundary
 
 The RAG/memory layer is being extracted into a shared core so PI and this input method do not build duplicate databases or ranking logic.
@@ -200,9 +206,9 @@ scripts/restart_rag_ime_runtime.sh
 
 This does not need `sudo`. It defaults to
 `../models/mlx/Qwen3-0.6B-4bit`, enables prompt cache, points the sidecar at
-`127.0.0.1:8767`, enables the local vector baseline, and uses an 800ms
+`127.0.0.1:8767`, enables the local vector baseline, and uses a 1200ms
 Squirrel-side budget so RAG/memory candidates are not dropped before the local
-SQLite query returns.
+SQLite query returns and the resident MLX lane is not cut off at the 900ms edge.
 
 If the IME should use a local model lane at login, export the predictor
 variables before running the installer. The installer writes a whitelist of
@@ -415,7 +421,8 @@ scripts/wait_squirrel_typing_ready.sh
 
 Then run the foreground AppKit trace gate. It opens a small TextEdit test file,
 waits for the patched Squirrel panel to render horizontal MLX/LLM candidates plus
-vertical RAG/memory rows, and requires a number-key side-candidate commit:
+vertical RAG/memory rows, requires a non-legacy `predictionSession`, and requires
+a number-key side-candidate commit:
 
 ```bash
 scripts/verify_squirrel_foreground_trace.sh
@@ -431,6 +438,10 @@ scripts/verify_squirrel_foreground_trace.sh --auto-type
 If macOS rejects simulated keystrokes, the script prints the Accessibility
 permission path and keeps the manual fallback: click the editor, type `er qi`,
 then press `6`, `7`, or `8`.
+
+The foreground trace gate only requires the input source to be actually selected
+for the focused app by default. Add `--require-hitoolbox-enabled` when you are
+testing the stricter install/add flow rather than the live AppKit panel.
 
 After switching to Squirrel, run the machine-readable tryout gate:
 
@@ -723,7 +734,7 @@ request, so `promptCache.usedForGeneration` can turn true without mutating the
 shared stable-prefix cache file. This still needs real-model TTFT and quality
 verification before enabling the MLX lane by default.
 
-The model lane also has a default failure cooldown. If the configured endpoint times out or returns a slow empty result, subsequent prediction calls are skipped for a short window so composing refreshes do not pay one model timeout per key event:
+The model lane also has a default failure cooldown. If the configured endpoint times out or fails at the transport layer, subsequent prediction calls are skipped for a short window so composing refreshes do not pay one model timeout per key event. Empty-but-successful generations are not cooled down, because small local models can produce a filtered candidate once and recover on the next request:
 
 ```bash
 export RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS=5000

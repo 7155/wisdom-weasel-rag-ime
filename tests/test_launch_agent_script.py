@@ -68,6 +68,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_PREDICTOR_TIMEOUT_MS": "350",
                 "RAG_IME_HISTORY_CONTEXT_EVENTS": "6",
                 "RAG_IME_MODEL_CONTEXT_CHARS": "120",
+                "RAG_IME_MODEL_LANE_MAX_CANDIDATES": "2",
                 "RAG_IME_RIME_CACHE_TTL_MS": "400",
                 "RAG_IME_EMBEDDING_PROVIDER": "openai-compatible",
                 "RAG_IME_EMBEDDING_BASE_URL": "http://127.0.0.1:18000",
@@ -104,6 +105,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PREDICTOR_STREAM_FIRST"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_HISTORY_CONTEXT_EVENTS"], "6")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_MODEL_CONTEXT_CHARS"], "120")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_MODEL_LANE_MAX_CANDIDATES"], "2")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_RIME_CACHE_TTL_MS"], "400")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_PROVIDER"], "openai-compatible")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_BASE_URL"], "http://127.0.0.1:18000")

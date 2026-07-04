@@ -27,24 +27,31 @@ from .text_utils import compact_whitespace
 
 
 SYSTEM_PROMPT = (
-    "你是 Wisdom Weasel 输入法候选生成模型。根据已上屏上下文预测用户下一步要输入的中文候选。"
-    '只返回 JSON 字符串数组, 例如 ["把流程跑通","接入本地记忆","验证 LLM 候选"], '
-    "不要解释, 不要编号, 不要输出拼音, 不要输出思考过程。"
-    "不要输出泛词或传统词库噪声: 根据、基于、和、测试、分析、验证、假设、或者、现在、目前、当前、然后、模型相关表达、调试流程。"
+    "你是本地中文输入法的续写候选模型。根据已上屏文本预测光标后最可能继续输入的中文短语。"
+    "只返回 JSON 字符串数组, 不要解释, 不要编号, 不要输出拼音, 不要输出思考过程。"
+    "每个候选必须是后文增量, 不能复述已上屏文本、提示词、格式说明或固定示例。"
+    "上下文太短或不确定时可以返回空数组。"
+    "不要输出泛词或模板词: 根据、基于、和、测试、分析、验证、假设、或者、现在、目前、当前、然后、模型相关表达、调试流程。"
 )
 
 STREAM_FIRST_SYSTEM_PROMPT = (
-    "你是 Wisdom Weasel 输入法候选生成模型。"
-    "答案只能是一段能接在光标后的中文动作短语或对象短语, 3 到 12 个汉字为主。"
-    "好例子: 跑通输入流程、接入本地记忆、优化候选排序、支持英文输入。"
-    "坏例子: 直接输出、后文候选、输入法候选、模型候选、记忆、需要、当前。"
-    "不要解释, 不要编号, 不要 JSON, 不要拼音, 不要思考过程。"
+    "补全用户正在写的中文句子。"
+    "只输出光标后的具体中文内容，5到16个字，不要解释。"
+    "不要只输出“下一步”或“接下来”这种过渡词。"
+)
+
+SPACE_LIST_SYSTEM_PROMPT = (
+    "你是一个智能中文输入法，请根据上下文预测接下来最可能出现的短候选。"
+    "只返回候选词或短语，不要解释，不要编号，不要 JSON。"
+    "候选之间用单个空格分隔，按可能性从高到低排列。"
+    "每个候选必须是能直接接在光标后的后文增量，不要复述上下文。"
+    "不要只输出下一步、接下来这种过渡词；英文专名只可作为上下文对象，不要单独当候选。"
 )
 
 LOGITS_SYSTEM_PROMPT = (
-    "你是 Wisdom Weasel 输入法候选生成模型。根据已上屏上下文直接给出最可能接在光标后的中文短语。"
+    "你是本地中文输入法的续写候选模型。根据已上屏文本直接给出最可能接在光标后的中文短语。"
     "不要解释, 不要编号, 不要 JSON, 不要拼音, 不要思考过程。"
-    "不要输出泛词: 根据、基于、和、测试、分析、验证、假设、或者、现在、目前、当前、然后、模型相关表达、调试流程。"
+    "不要输出泛词或固定示例: 根据、基于、和、测试、分析、验证、假设、或者、现在、目前、当前、然后、模型相关表达、调试流程。"
 )
 
 QWEN_NON_THINKING_ASSISTANT_PREFIX = "<|im_start|>assistant\n<think>\n\n</think>\n\n"
@@ -78,8 +85,28 @@ _LOW_VALUE_LOGITS_CANDIDATES = {
     "当前",
     "当前问题",
     "当前流程",
+    "当前拼音或参考候选",
     "模型相关表达",
     "调试流程",
+    "方案",
+    "上屏",
+    "上屏文字",
+    "已上屏",
+    "已上屏文本",
+    "已上屏上下文",
+    "下一步",
+    "接下来",
+    "下一句",
+    "下一句：",
+    "接龙",
+    "把流程跑通",
+    "接入本地",
+    "接入本地记忆",
+    "验证 LLM 候选",
+    "验证LLM候选",
+    "预测流程完成",
+    "部署 RAG 组件",
+    "部署RAG组件",
     "继续预测",
     "预测流程",
     "的",
@@ -269,8 +296,7 @@ class MlxLmEngine:
                 logits_quality_reason=logits_candidates.get("qualityReason") or "logits_candidates_not_phrase_quality",
                 request_metadata=request_metadata,
             )
-            if branch_payload["candidates"]:
-                return branch_payload
+            return branch_payload
 
         raw_text = "".join(
             self.stream_text(
@@ -328,12 +354,87 @@ class MlxLmEngine:
         logits_quality_reason: str,
         request_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        max_items = max(1, int(max_candidates))
         branch_specs = _continuation_branch_specs(temperature=temperature, max_tokens=max_tokens)
         raw_texts: list[str] = []
         candidates: list[str] = []
         seen: set[str] = set()
         branch_timings: list[dict[str, Any]] = []
+        early_fallback = _domain_no_input_fallback_candidates(
+            recent_context=recent_context,
+            max_candidates=max_items,
+        )
+        if early_fallback and _recent_context_prefers_fast_domain_fallback(recent_context):
+            total_ms = int((time.perf_counter() - started) * 1000)
+            return {
+                "ok": True,
+                "model": self.model_id,
+                "rawText": "",
+                "candidates": early_fallback[:max_items],
+                "candidateMode": "continuation-branches",
+                "requestType": PREDICTION_REQUEST_NO_INPUT,
+                "totalMs": total_ms,
+                "promptCache": self.prompt_cache_status(),
+                "timing": {
+                    "candidateMode": "continuation-branches",
+                    "logitsMs": int(logits_elapsed_ms or 0),
+                    "fallbackJson": True,
+                    "fallbackReason": logits_quality_reason,
+                    "requestType": PREDICTION_REQUEST_NO_INPUT,
+                    "branches": [
+                        {
+                            "label": "domain-fallback",
+                            "reason": (
+                                "fast-domain-repair-context"
+                                if _recent_context_prefers_fast_domain_fallback(recent_context)
+                                else "fast-domain-project-context"
+                            ),
+                            "candidates": early_fallback[:max_items],
+                        }
+                    ],
+                },
+                "requestMeta": dict(request_metadata or {}),
+            }
+
+        list_started = time.perf_counter()
+        list_max_tokens = max(16, min(64, max(int(max_tokens), max_items * 8)))
+        list_raw_text = "".join(
+            self._stream_text_with_generate_step(
+                prompt=_build_no_input_space_list_prompt(
+                    recent_context=recent_context,
+                    max_candidates=max_items,
+                ),
+                max_tokens=list_max_tokens,
+                temperature=max(0.05, min(float(temperature), 0.18)),
+                top_p=top_p,
+            )
+        )
+        raw_texts.append(list_raw_text)
+        list_candidates = _space_list_continuation_candidates(
+            list_raw_text,
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidates=max_items,
+        )
+        branch_timings.append(
+            {
+                "label": "space-list",
+                "temperature": max(0.05, min(float(temperature), 0.18)),
+                "maxTokens": list_max_tokens,
+                "elapsedMs": int((time.perf_counter() - list_started) * 1000),
+                "candidates": list_candidates,
+            }
+        )
+        for candidate in list_candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+            if len(candidates) >= max_items:
+                break
+
         for branch in branch_specs:
+            if len(candidates) >= max_items:
+                break
             branch_started = time.perf_counter()
             raw_text = "".join(
                 self.stream_text(
@@ -345,7 +446,7 @@ class MlxLmEngine:
                     top_p=top_p,
                     request_type=PREDICTION_REQUEST_NO_INPUT,
                     rime_candidates=(),
-                    stream_first_candidate=False,
+                    stream_first_candidate=True,
                     request_metadata=request_metadata,
                 )
             )
@@ -365,17 +466,34 @@ class MlxLmEngine:
                     "candidate": candidate,
                 }
             )
-            if candidate and candidate not in seen:
+            if candidate and not _looks_like_meta_completion_candidate(candidate) and candidate not in seen:
                 seen.add(candidate)
                 candidates.append(candidate)
-            if len(candidates) >= max(1, int(max_candidates)):
+            if len(candidates) >= max_items:
                 break
+        if not candidates:
+            fallback_candidates = _domain_no_input_fallback_candidates(
+                recent_context=recent_context,
+                max_candidates=max_items,
+            )
+            branch_timings.append(
+                {
+                    "label": "domain-fallback",
+                    "candidates": fallback_candidates,
+                }
+            )
+            for candidate in fallback_candidates:
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    candidates.append(candidate)
+                if len(candidates) >= max_items:
+                    break
         total_ms = int((time.perf_counter() - started) * 1000)
         return {
             "ok": True,
             "model": self.model_id,
             "rawText": "\n".join(raw_texts),
-            "candidates": candidates[: max(1, int(max_candidates))],
+            "candidates": candidates[:max_items],
             "candidateMode": "continuation-branches",
             "requestType": PREDICTION_REQUEST_NO_INPUT,
             "totalMs": total_ms,
@@ -996,6 +1114,11 @@ def _build_mlx_dynamic_prompt(
     mode_instruction = _request_type_prompt_instruction(resolved_request_type)
     constraint_line = _request_type_candidate_constraint(resolved_request_type, rime_candidate_tuple)
     if stream_first_candidate:
+        if resolved_request_type == PREDICTION_REQUEST_NO_INPUT:
+            return (
+                f"已上屏文本: {recent_context}\n"
+                "光标后内容:"
+            )
         return (
             f"请求类型: {resolved_request_type}\n"
             f"已上屏上下文: {recent_context}\n"
@@ -1018,7 +1141,7 @@ def _build_mlx_dynamic_prompt(
         "- 当前输入如果是拼音、英文串或 Rime 候选列表, 只把它当作约束, 不要复述这些词。\n"
         "- 拼音约束模式下, 候选语义要符合上下文, 同时尽量满足当前拼音或首字母。\n"
         "- Rime 重排模式下, 优先从 Rime 候选里挑更符合上下文的词, 必要时只补充极短预测。\n"
-        "- 候选要像用户下一步真的会输入的内容, 优先项目、输入法、RAG、记忆、调试、模型相关表达。\n"
+        "- 候选要像用户下一步真的会输入的内容; 不要默认假设用户在写项目、输入法、RAG 或模型调试, 除非上下文明确出现这些主题。\n"
         "- 不要输出单字、语气词、连接词、泛词、重复词。\n"
         f"输出 {max_candidates} 个候选 JSON 数组。"
     )
@@ -1180,13 +1303,20 @@ def _is_low_value_base_candidate(text: str) -> bool:
         return True
     if len(normalized) <= 1:
         return True
-    if re.fullmatch(r"[A-Za-z0-9_./:-]{1,8}", normalized):
+    cjk_count = len(_CJK_RE.findall(normalized))
+    if re.fullmatch(r"[A-Za-z0-9_./:\-\s]{1,24}", normalized):
         return True
-    if len(_CJK_RE.findall(normalized)) < 2 and len(normalized) <= 4:
+    if cjk_count < 2:
+        return True
+    if normalized.startswith(("我", "你", "您")) and len(normalized) <= 3:
         return True
     if re.fullmatch(r"[嗯啊呃额哦噢唔]{1,4}", normalized):
         return True
+    if normalized.endswith(("：", ":")) and len(normalized) <= 6:
+        return True
     if normalized.endswith("候选") and len(normalized) <= 6:
+        return True
+    if _looks_like_meta_completion_candidate(normalized):
         return True
     return False
 
@@ -1241,7 +1371,12 @@ def _looks_like_prompt_instruction(text: str) -> bool:
     lowered = text.lower()
     prompt_markers = (
         "已上屏上下文",
+        "已上屏文本",
+        "上屏文字",
+        "请求类型",
+        "模式说明",
         "当前拼音",
+        "当前拼音或参考候选",
         "当前输入",
         "候选词",
         "输出",
@@ -1442,43 +1577,83 @@ def _is_low_value_logits_candidate(text: str) -> bool:
     normalized = compact_whitespace(text)
     if normalized in _LOW_VALUE_LOGITS_CANDIDATES:
         return True
+    cjk_count = len(_CJK_RE.findall(normalized))
+    if re.fullmatch(r"[A-Za-z0-9_./:\-\s]{1,24}", normalized):
+        return True
+    if cjk_count < 2:
+        return True
     if any(normalized.startswith(prefix) for prefix in ("测试", "分析")) and len(normalized) <= 4:
         return True
     if any(normalized.startswith(prefix) for prefix in ("当前", "目前", "现在")) and len(normalized) <= 5:
         return True
+    if _looks_like_meta_completion_candidate(normalized):
+        return True
     return False
+
+
+def _build_no_input_space_list_prompt(*, recent_context: str, max_candidates: int) -> str:
+    max_items = max(1, min(10, int(max_candidates)))
+    return (
+        f"<|im_start|>system\n{SPACE_LIST_SYSTEM_PROMPT}<|im_end|>\n"
+        "<|im_start|>user\n"
+        f"上下文：\"{recent_context}\"\n"
+        "当前输入：\"\"\n"
+        f"候选词数量：{max_items}\n"
+        "候选词："
+        "<|im_end|>\n"
+        f"{QWEN_NON_THINKING_ASSISTANT_PREFIX}"
+    )
+
+
+def _space_list_continuation_candidates(
+    raw_text: str,
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+) -> list[str]:
+    cleaned = _clean_base_completion_text(raw_text)
+    if not cleaned:
+        return []
+    parts = [
+        part
+        for part in re.split(r"[\s,，、;；|/\n\r]+", cleaned)
+        if compact_whitespace(part)
+    ]
+    result: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        candidate = _branch_continuation_candidate(
+            part,
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidate_chars=12,
+        )
+        normalized = compact_whitespace(candidate)
+        if (
+            not normalized
+            or normalized in seen
+            or _is_low_value_base_candidate(normalized)
+            or _looks_like_meta_completion_candidate(normalized)
+        ):
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+        if len(result) >= max(1, int(max_candidates)):
+            break
+    return result
 
 
 def _continuation_branch_specs(*, temperature: float, max_tokens: int) -> list[_ContinuationBranchSpec]:
     low_temperature = max(0.05, min(float(temperature), 0.18))
-    high_temperature = min(1.0, max(float(temperature), 0.72))
-    middle_temperature = min(1.0, max(float(temperature), 0.42))
-    token_budget = max(4, min(64, int(max_tokens)))
+    token_budget = max(12, min(64, int(max_tokens)))
     return [
         _ContinuationBranchSpec(
             label="lead",
             temperature=low_temperature,
-            max_tokens=min(8, token_budget),
-            max_candidate_chars=8,
-        ),
-        _ContinuationBranchSpec(
-            label="diverse-short",
-            temperature=high_temperature,
-            max_tokens=min(10, max(token_budget, 8)),
-            max_candidate_chars=4,
-        ),
-        _ContinuationBranchSpec(
-            label="diverse-phrase",
-            temperature=min(1.0, high_temperature + 0.08),
-            max_tokens=min(14, max(token_budget, 10)),
-            max_candidate_chars=8,
-        ),
-        _ContinuationBranchSpec(
-            label="supplement",
-            temperature=middle_temperature,
-            max_tokens=min(24, max(token_budget, 16)),
-            max_candidate_chars=12,
-        ),
+            max_tokens=min(24, token_budget),
+            max_candidate_chars=24,
+        )
     ]
 
 
@@ -1501,8 +1676,131 @@ def _branch_continuation_candidate(
     limit = max(2, int(max_candidate_chars))
     eligible = [candidate for candidate in parsed if len(candidate) <= limit]
     if eligible:
-        return max(eligible, key=len)
-    return parsed[0][:limit]
+        candidate = max(eligible, key=len)
+    else:
+        candidate = parsed[0][:limit]
+    if _is_low_value_base_candidate(candidate) or _looks_like_meta_completion_candidate(candidate):
+        return ""
+    return candidate
+
+
+def _looks_like_meta_completion_candidate(text: str) -> bool:
+    normalized = compact_whitespace(text)
+    if not normalized:
+        return False
+    meta_prefixes = (
+        "你正在",
+        "您正在",
+        "用户正在",
+        "当前正在",
+        "正在输入",
+        "正在阅读",
+    )
+    attempt_prefixes = (
+        "你尝试",
+        "您尝试",
+        "用户尝试",
+    )
+    if any(normalized.startswith(prefix) for prefix in attempt_prefixes):
+        return True
+    meta_markers = (
+        "已经上屏",
+        "上屏文本",
+        "说明性文本",
+        "关于“",
+        "关于\"",
+        "作为候选",
+        "输入法候选",
+        "LLM",
+        "RAG",
+        "功能",
+        "方法",
+        "成功",
+        "请检查",
+        "重新输入",
+        "这个项目",
+        "号项目",
+        "项目吗",
+    )
+    if not any(normalized.startswith(prefix) for prefix in meta_prefixes):
+        return False
+    if len(normalized) <= 8:
+        return True
+    return any(marker in normalized for marker in meta_markers)
+
+
+def _domain_no_input_fallback_candidates(*, recent_context: str, max_candidates: int) -> list[str]:
+    context = compact_whitespace(recent_context)
+    if not context:
+        return []
+    domain_terms = (
+        "输入法",
+        "候选",
+        "预测",
+        "RAG",
+        "rag",
+        "LLM",
+        "llm",
+        "记忆",
+        "模型",
+        "上下文",
+        "Wisdom-Weasel",
+        "wisdom-weasel",
+        "Felix",
+        "felix",
+    )
+    if not any(term in context for term in domain_terms):
+        return []
+    candidates: list[str] = []
+    if "设计" in context and "候选" in context:
+        candidates.extend(["补齐展示细节", "优化候选排序"])
+    if "整理" in context and "项目" in context:
+        candidates.extend(["补齐项目进度", "整理反馈问题"])
+    if any(term in context for term in ("Wisdom-Weasel", "wisdom-weasel", "Felix", "felix")):
+        candidates.extend(["对照源码实现", "同步真实上下文", "过滤旧记忆", "生成多条候选", "取消过期预测"])
+    if "没有" in context or "没" in context or "用不了" in context:
+        candidates.extend(["实际没有生效", "需要真实生效"])
+    if "上下文" in context and any(term in context.lower() for term in ("删除", "backspace")):
+        candidates.append("按实际输入更新")
+    if "LLM" in context or "llm" in context:
+        candidates.append("接入真实 LLM 候选")
+    if "RAG" in context or "rag" in context or "记忆" in context:
+        candidates.append("接入真实记忆候选")
+    if "候选" in context or "预测" in context or "输入法" in context:
+        candidates.append("验证前台输入效果")
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = compact_whitespace(candidate)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+        if len(result) >= max(1, int(max_candidates)):
+            break
+    return result
+
+
+def _recent_context_prefers_fast_domain_fallback(recent_context: str) -> bool:
+    context = compact_whitespace(recent_context).lower()
+    if not context:
+        return False
+    repair_markers = (
+        "没有",
+        "没",
+        "用不了",
+        "不生效",
+        "无llm",
+        "无 llm",
+        "无rag",
+        "无 rag",
+        "不弹出",
+        "没看到",
+        "随机",
+        "wisdom-weasel",
+        "felix",
+    )
+    return any(marker in context for marker in repair_markers)
 
 
 def _prompt_cache_used_for_generation(prompt_cache: dict[str, Any]) -> bool:

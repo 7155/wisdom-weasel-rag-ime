@@ -128,6 +128,9 @@ class MlxPredictorServerTests(unittest.TestCase):
         prompt = calls["prompts"][-1]
         self.assertIn(QWEN_NON_THINKING_ASSISTANT_PREFIX, prompt)
         self.assertNotIn("/no_think", prompt)
+        self.assertNotIn("把流程跑通", prompt)
+        self.assertNotIn("接入本地记忆", prompt)
+        self.assertNotIn("验证 LLM 候选", prompt)
         self.assertEqual(payload["candidates"], ["跑通输入法", "优化候选排序"])
 
     def test_engine_uses_loaded_prompt_cache_for_streaming_generation(self) -> None:
@@ -200,9 +203,33 @@ class MlxPredictorServerTests(unittest.TestCase):
     def test_no_input_prediction_uses_continuation_branches_when_logits_are_weak(self) -> None:
         modules, calls = _fake_mlx_modules(
             generated_text=[
-                "跑通输入流程。",
-                "接入本地记忆。",
-                "优化候选排序。",
+                "跑通输入流程 优化候选排序 补齐来源诊断",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(payload["candidates"], ["跑通输入流程", "优化候选排序", "补齐来源诊断"])
+        self.assertEqual(payload["timing"]["candidateMode"], "continuation-branches")
+        self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["space-list"])
+        self.assertEqual(calls["sampler_calls"], 1)
+        self.assertGreaterEqual(calls["sampler_max_tokens"][0], 12)
+        self.assertIn("候选之间用单个空格分隔", calls["prompts"][-1])
+        self.assertNotIn("输出 3 个候选 JSON 数组", calls["prompts"][-1])
+
+    def test_no_input_prediction_falls_back_to_single_branch_when_space_list_is_empty(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=[
+                "接下来",
                 "补齐来源诊断。",
             ]
         )
@@ -218,10 +245,83 @@ class MlxPredictorServerTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["candidateMode"], "continuation-branches")
-        self.assertEqual(payload["candidates"], ["跑通输入流程", "接入本地", "优化候选排序"])
-        self.assertEqual(payload["timing"]["candidateMode"], "continuation-branches")
-        self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["lead", "diverse-short", "diverse-phrase"])
-        self.assertEqual(calls["sampler_calls"], 3)
+        self.assertEqual(payload["candidates"], ["补齐来源诊断"])
+        self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["space-list", "lead"])
+        self.assertEqual(calls["sampler_calls"], 2)
+        self.assertIn("候选之间用单个空格分隔", calls["prompts"][1])
+        self.assertIn("光标后内容:", calls["prompts"][-1])
+        self.assertNotIn("请求类型:", calls["prompts"][-1])
+
+    def test_no_input_prediction_filters_meta_description_and_uses_domain_fallback(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                "您正在阅读关于“中国”的说明性文本。",
+                "您尝试了多种技术栈，需要进一步调整模型配置。",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我输入依旧没有 LLM 和 RAG 以及记忆",
+                max_candidates=2,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(payload["candidates"], ["实际没有生效", "需要真实生效"])
+        self.assertEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
+        self.assertNotIn("您正在阅读", "".join(payload["candidates"]))
+        self.assertNotIn("你正在输入", "".join(payload["candidates"]))
+
+    def test_no_input_prediction_filters_short_fragments_before_project_fallback(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                "方案",
+                "我设",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想设计一个候选展示方式",
+                max_candidates=2,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidates"], ["补齐展示细节", "优化候选排序"])
+        self.assertEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
+
+    def test_no_input_prediction_filters_felix_meta_question_and_returns_multiple_fallbacks(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                "你正在看Felix的3322号项目吗",
+                "您正在查看这个项目的实现。",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="Felix3322/Wisdom-Weasel 预测和上下文管理要考虑删除后的实际输入",
+                max_candidates=5,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(
+            payload["candidates"],
+            ["对照源码实现", "同步真实上下文", "过滤旧记忆", "生成多条候选", "取消过期预测"],
+        )
+        self.assertEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
+        self.assertNotIn("你正在看", "".join(payload["candidates"]))
 
     def test_pinyin_constrained_prediction_does_not_use_free_continuation_branches(self) -> None:
         modules, calls = _fake_mlx_modules(
@@ -297,8 +397,8 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertNotIn("已上屏上下文", prompt)
         self.assertNotIn("补后端测试", prompt)
 
-    def test_qwen3_chat_template_model_uses_chat_json_prompt_mode(self) -> None:
-        modules, _calls = _fake_mlx_modules(generated_text='["把流程跑通","接入本地记忆"]')
+    def test_qwen3_chat_template_model_filters_prompt_example_leaks(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text='["把流程跑通","接入本地记忆","上屏文字","当前拼音或参考候选","接龙"]')
         with tempfile.TemporaryDirectory(prefix="Qwen3-0.6B-4bit-") as tmp, patch.dict(sys.modules, modules):
             model_dir = Path(tmp)
             (model_dir / "model.safetensors").write_bytes(b"fake")
@@ -320,14 +420,14 @@ class MlxPredictorServerTests(unittest.TestCase):
             payload = MlxLmEngine(str(model_dir)).predict(
                 current_input="",
                 recent_context="我想",
-                max_candidates=2,
+                max_candidates=5,
                 max_tokens=12,
                 temperature=0.15,
                 top_p=0.85,
             )
 
         self.assertEqual(payload["candidateMode"], "json-generation")
-        self.assertEqual(payload["candidates"], ["把流程跑通", "接入本地记忆"])
+        self.assertEqual(payload["candidates"], [])
         self.assertEqual(payload["timing"]["candidateMode"], "json-generation")
 
     def test_stream_decode_skips_replacement_character_intermediate_chunks(self) -> None:
@@ -541,6 +641,7 @@ def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[st
         "load_prompt_cache": 0,
         "stream_generate": 0,
         "prompts": [],
+        "sampler_max_tokens": [],
         "sampler_calls": 0,
     }
     generated_texts = generated_text if isinstance(generated_text, list) else [generated_text]
@@ -574,6 +675,7 @@ def _fake_mlx_modules(*, generated_text: str | list[str], logits_tokens: list[st
         if sampler is None:
             yield _FakeToken(0), None
             return
+        calls["sampler_max_tokens"].append(max_tokens)
         sampler_index = calls["sampler_calls"]
         calls["sampler_calls"] += 1
         text = generated_texts[min(sampler_index, len(generated_texts) - 1)]

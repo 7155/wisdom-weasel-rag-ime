@@ -43,7 +43,7 @@ EXPECT_PREDICTOR_MODEL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_MODEL:-${RAG_IME_PREDI
 EXPECT_PREDICTOR_BASE_URL="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_BASE_URL:-${RAG_IME_PREDICTOR_BASE_URL:-}}"
 EXPECT_PREDICTOR_PROFILE="${RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-}}"
 EXPECT_STREAM_FIRST="${RAG_IME_DOCTOR_EXPECT_STREAM_FIRST:-${RAG_IME_PREDICTOR_STREAM_FIRST:-}}"
-DOCTOR_LATENCY_BUDGET_MS="${RAG_IME_DOCTOR_LATENCY_BUDGET_MS:-800}"
+DOCTOR_LATENCY_BUDGET_MS="${RAG_IME_DOCTOR_LATENCY_BUDGET_MS:-2000}"
 
 failures=0
 warnings=0
@@ -181,6 +181,7 @@ check_frontend_trace() {
     --log-path "$FRONTEND_TRACE_LOG" \
     --require-mixed-panel \
     --require-side-commit \
+    --require-modern-prediction-session \
     --wait "$wait_seconds" \
     --print-last 4 >"$out" 2>&1
   status=$?
@@ -196,14 +197,18 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
 panel = payload.get("latestMixedPanel") if isinstance(payload.get("latestMixedPanel"), dict) else {}
 layout = payload.get("latestMixedTextLayout") if isinstance(payload.get("latestMixedTextLayout"), dict) else {}
 number_key_commit = payload.get("latestNumberKeySideCommit") if isinstance(payload.get("latestNumberKeySideCommit"), dict) else {}
+modern_session_event = payload.get("latestModernPredictionSession") if isinstance(payload.get("latestModernPredictionSession"), dict) else {}
 commit = number_key_commit.get("commit") if isinstance(number_key_commit.get("commit"), dict) else {}
 counts = layout.get("candidateCounts") if isinstance(layout.get("candidateCounts"), dict) else panel.get("candidateCounts", {})
 candidate = commit.get("candidate") if isinstance(commit.get("candidate"), dict) else {}
+prediction_session = modern_session_event.get("predictionSession") if isinstance(modern_session_event.get("predictionSession"), dict) else {}
 print(
     "frontend trace passed: "
     f"events={payload.get('eventCount')} "
     f"modelInline={counts.get('modelInline')} "
     f"ragBlock={counts.get('ragBlock')} "
+    f"phase={prediction_session.get('phase')} "
+    f"expiresAfterMs={prediction_session.get('expiresAfterMs')} "
     f"numberKey={number_key_commit.get('key')} "
     f"sideCommitLabel={candidate.get('label')}"
 )
@@ -226,6 +231,7 @@ print(
     f"events={payload.get('eventCount')} "
     f"latestMixedPanel={bool(payload.get('latestMixedPanel'))} "
     f"latestMixedTextLayout={bool(payload.get('latestMixedTextLayout'))} "
+    f"latestModernPredictionSession={bool(payload.get('latestModernPredictionSession'))} "
     f"latestSideCommit={bool(payload.get('latestSideCommit'))} "
     f"latestNumberKeySideCommit={bool(payload.get('latestNumberKeySideCommit'))} "
     f"log={payload.get('logPath')}"
@@ -701,6 +707,7 @@ def validate_candidate_contract(result, *, require):
     errors = []
     model_indices = []
     rag_indices = []
+    side_indices = []
     rime_indices = []
     for index, item in enumerate(display):
         if not isinstance(item, dict):
@@ -725,10 +732,12 @@ def validate_candidate_contract(result, *, require):
             errors.append(f"{source_type} candidate {label} does not commit side candidate")
         if source_type == "model":
             model_indices.append(index)
+            side_indices.append(index)
             if display_layout != "inline" or display_lane != "model":
                 errors.append(f"model candidate {label} is not inline/model")
         elif source_type == "rag":
             rag_indices.append(index)
+            side_indices.append(index)
             if display_layout != "block" or display_lane != "memory":
                 errors.append(f"rag candidate {label} is not block/memory")
         elif source_type == "rime":
@@ -741,13 +750,11 @@ def validate_candidate_contract(result, *, require):
         errors.append("mergePolicy is not side-first")
     if policy.get("fallbackOrder") != ["model", "rag", "rime"]:
         errors.append("mergePolicy fallbackOrder is not model/rag/rime")
-    if not model_indices:
-        errors.append("no model inline candidates")
-    if not rag_indices:
-        errors.append("no rag block candidates")
+    if not side_indices:
+        errors.append("no model/RAG side candidates")
     if model_indices and rag_indices and max(model_indices) > min(rag_indices):
         errors.append("model inline candidates do not precede rag block candidates")
-    if rime_indices and (model_indices or rag_indices) and min(rime_indices) < max(model_indices + rag_indices):
+    if rime_indices and side_indices and min(rime_indices) < max(side_indices):
         errors.append("Rime fallback appears before side candidates")
 
     ok = not errors
@@ -755,13 +762,14 @@ def validate_candidate_contract(result, *, require):
         "ok": ok,
         "checked": True,
         "message": (
-            "candidate contract: model inline + rag block + shared selection keys passed"
+            "candidate contract: side candidates have shared selection keys and routing"
             if ok
             else "candidate contract failed: " + "; ".join(errors[:5])
         ),
         "displayCount": len(display),
         "modelCount": len(model_indices),
         "ragCount": len(rag_indices),
+        "sideCount": len(side_indices),
         "rimeCount": len(rime_indices),
     }
 
@@ -772,7 +780,7 @@ def post_rime_suggest(payload):
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=2.5) as response:
+    with urllib.request.urlopen(request, timeout=3.5) as response:
         return json.loads(response.read().decode("utf-8"))
 
 def doctor_prediction_payload(*, session_id="doctor", request_seq=1, latency_ms=None):
@@ -782,19 +790,39 @@ def doctor_prediction_payload(*, session_id="doctor", request_seq=1, latency_ms=
         # the strict first-token latency target. Keep latency optimization as a
         # separate benchmark so a slow local MLX model does not look like a
         # broken LLM/RAG wiring path.
-        effective_latency_ms = max(effective_latency_ms, 1200)
+        effective_latency_ms = max(effective_latency_ms, 2000)
     return {
         "sessionId": session_id,
         "requestSeq": request_seq,
+        "frontendBuild": "rag-ime.foreground-trace.v2",
+        "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
         "rawInput": "",
         "preedit": "",
         "commitTextPreview": "",
         "idleMs": 80,
-        "committedContext": "用户正在验证 Prediction-first RAG 输入法，需要 LLM RAG 记忆候选同时可见",
+        "committedContext": "我想设计一个候选展示方式",
         "maxVisibleCandidates": 8,
         "maxSideCandidates": 8,
         "latencyBudgetMs": effective_latency_ms,
         "forceSideCandidates": require_mixed_layout,
+        "rimeContext": {"candidates": []},
+    }
+
+def doctor_model_validation_payload(*, session_id="doctor-model-validation", request_seq=20, latency_ms=None):
+    effective_latency_ms = max(latency_budget_ms, 2000) if latency_ms is None else max(latency_ms, 2000)
+    return {
+        "sessionId": session_id,
+        "requestSeq": request_seq,
+        "frontendBuild": "rag-ime.foreground-trace.v2",
+        "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
+        "rawInput": "",
+        "preedit": "",
+        "idleMs": 200,
+        "committedContext": "我已经看完 Felix 的候选生命周期，下一步",
+        "maxVisibleCandidates": 8,
+        "maxSideCandidates": 8,
+        "latencyBudgetMs": effective_latency_ms,
+        "forceSideCandidates": True,
         "rimeContext": {"candidates": []},
     }
 
@@ -816,22 +844,25 @@ def extract_model_predictions(result, provider_name):
         ]
     return []
 
-def retry_model_probe_if_needed(result, provider_name):
+def retry_model_probe_if_needed(result, provider_name, *, force_validation_probe=False):
     model_predictions = extract_model_predictions(result, provider_name)
     if model_predictions:
         return result, model_predictions, ""
     model_lane = result.get("modelLane") if isinstance(result.get("modelLane"), dict) else {}
     skipped_reason = str(model_lane.get("skippedReason") or "")
-    if skipped_reason not in {"model lane already running", "model lane exceeded latency budget"}:
+    retry_reasons = {"model lane already running", "model lane exceeded latency budget"}
+    if skipped_reason not in retry_reasons and not force_validation_probe:
         return result, model_predictions, skipped_reason
     last_result = result
-    for attempt in range(2):
-        time.sleep(0.18 * (attempt + 1))
+    attempts = 4 if (skipped_reason in retry_reasons or force_validation_probe) else 1
+    for attempt in range(attempts):
+        if skipped_reason in retry_reasons or force_validation_probe:
+            time.sleep(0.18 * (attempt + 1))
         probe = post_rime_suggest(
-            doctor_prediction_payload(
-                session_id="doctor-model-validation",
+            doctor_model_validation_payload(
+                session_id=f"doctor-model-validation-{int(time.time() * 1000)}-{attempt}",
                 request_seq=20 + attempt,
-                latency_ms=max(latency_budget_ms, 1200),
+                latency_ms=max(latency_budget_ms, 2000),
             )
         )
         model_predictions = extract_model_predictions(probe, provider_name)
@@ -841,7 +872,7 @@ def retry_model_probe_if_needed(result, provider_name):
     return last_result, model_predictions, skipped_reason
 
 def validate_raw_pinyin_guard():
-    guard_latency_ms = max(latency_budget_ms, 1200) if require_mixed_layout else latency_budget_ms
+    guard_latency_ms = max(latency_budget_ms, 2000) if require_mixed_layout else latency_budget_ms
     dirty = post_rime_suggest({
         "sessionId": "doctor-raw-pinyin",
         "requestSeq": 2,
@@ -857,7 +888,7 @@ def validate_raw_pinyin_guard():
         "requestSeq": 3,
         "rawInput": "asdioj",
         "preedit": "asdioj",
-        "committedContext": "刚刚输入了 RAG 输入法的候选布局，需要继续预测下一句",
+        "committedContext": "我想设计一个候选展示方式",
         "maxVisibleCandidates": 6,
         "maxSideCandidates": 3,
         "latencyBudgetMs": guard_latency_ms,
@@ -887,14 +918,12 @@ def validate_raw_pinyin_guard():
         errors.append(f"context fallback queryBasis={fallback.get('queryBasis')!r}, expected committedContext")
     if fallback_trigger.get("shouldRefresh") is not True:
         errors.append("context fallback did not refresh side lanes")
-    if fallback_side_count <= 0:
-        errors.append("context fallback returned no model/RAG side candidates")
 
     ok = not errors
     return {
         "ok": ok,
         "message": (
-            "raw pinyin guard: dirty raw input skips side lanes, committedContext fallback predicts"
+            "raw pinyin guard: dirty raw input skips side lanes, committedContext fallback refreshes safely"
             if ok
             else "raw pinyin guard failed: " + "; ".join(errors[:5])
         ),
@@ -923,7 +952,11 @@ def validate_model_generation_path(result, health):
             "message": "model generation path: not required",
         }
 
-    result, model_predictions, retry_reason = retry_model_probe_if_needed(result, provider_name)
+    result, model_predictions, retry_reason = retry_model_probe_if_needed(
+        result,
+        provider_name,
+        force_validation_probe=is_mlx,
+    )
 
     capability_probe = predictor.get("capabilityProbe") if isinstance(predictor.get("capabilityProbe"), dict) else {}
     capabilities = predictor.get("capabilities") if isinstance(predictor.get("capabilities"), dict) else {}

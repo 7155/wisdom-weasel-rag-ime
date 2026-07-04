@@ -26,7 +26,45 @@ final class RagInputController: IMKInputController {
     private var lastRenderedRequestSeq = 0
     private var pendingRefresh: DispatchWorkItem?
     private var panelExpiration: DispatchWorkItem?
-    private let postCommitPanelTtlSeconds: TimeInterval = 0.85
+    private let committedContextLimit = 900
+    private let postCommitPanelTtlSeconds: TimeInterval = 8.0
+
+    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        guard let event, event.type == .keyDown, let client = sender as? IMKTextInput else {
+            return false
+        }
+
+        clearExpiredPanelIfNeeded()
+
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let hasCommandLikeModifier = modifiers.contains(.command)
+            || modifiers.contains(.control)
+            || modifiers.contains(.option)
+
+        if event.keyCode == 51 && !hasCommandLikeModifier {
+            return handleBackspace(client: client)
+        }
+
+        if let key = event.charactersIgnoringModifiers,
+           selectionNumber(forKey: key) != nil,
+           !hasCommandLikeModifier {
+            let hadVisiblePanel = RagCandidatePanel.shared.isVisible || !latestDisplayCandidates.isEmpty
+            if selectCandidateIfNeeded(key, client: client) {
+                return true
+            }
+            if hadVisiblePanel {
+                clearCandidateState()
+                clearVisiblePredictionPanel()
+                return true
+            }
+            return false
+        }
+
+        guard !hasCommandLikeModifier, let text = event.characters, !text.isEmpty else {
+            return false
+        }
+        return inputText(text, client: sender)
+    }
 
     override func inputText(_ string: String!, client sender: Any!) -> Bool {
         guard let string, let client = sender as? IMKTextInput else {
@@ -37,6 +75,10 @@ final class RagInputController: IMKInputController {
 
         if selectCandidateIfNeeded(string, client: client) {
             return true
+        }
+
+        if isBackspaceText(string) {
+            return handleBackspace(client: client)
         }
 
         if string == "\u{1b}" {
@@ -130,6 +172,10 @@ final class RagInputController: IMKInputController {
         string.count == 1 && string.unicodeScalars.allSatisfy { CharacterSet.decimalDigits.contains($0) }
     }
 
+    private func isBackspaceText(_ string: String) -> Bool {
+        string == "\u{8}" || string == "\u{7f}"
+    }
+
     private func updateMarkedText(client: IMKTextInput) {
         let range = NSRange(location: composition.utf16.count, length: 0)
         client.setMarkedText(
@@ -140,16 +186,30 @@ final class RagInputController: IMKInputController {
     }
 
     private func selectCandidateIfNeeded(_ string: String, client: IMKTextInput) -> Bool {
+        guard let number = selectionNumber(forKey: string) else {
+            return false
+        }
         if canRouteNumberToVisiblePanel(),
-           let number = Int(string),
-           number >= 1,
-           let candidate = displayCandidate(matchingSelectionNumber: number) {
+           let candidate = displayCandidate(matchingSelectionNumber: number, selectionKey: string) {
             let query = composition.isEmpty ? candidate.text : composition
             commit(text: candidate.insertText, client: client, selectedDisplayCandidate: candidate, selectedSuggestion: nil, rank: number, queryOverride: query)
             return true
         }
 
         return false
+    }
+
+    private func selectionNumber(forKey key: String) -> Int? {
+        guard key.count == 1, let scalar = key.unicodeScalars.first else {
+            return nil
+        }
+        guard CharacterSet.decimalDigits.contains(scalar) else {
+            return nil
+        }
+        if key == "0" {
+            return 10
+        }
+        return Int(key)
     }
 
     private func selectFirstCandidateIfAvailable(client: IMKTextInput) -> Bool {
@@ -183,13 +243,14 @@ final class RagInputController: IMKInputController {
             return
         }
 
-        let previousContext = committedContext
+        let previousContext = actualCommittedContext(client: client, fallback: committedContext, excludingMarkedText: composition)
+        committedContext = previousContext
         let query = queryOverride ?? composition
         let shownDisplayCandidates = latestDisplayCandidates
         let shouldRecordSelectedDisplayCandidate = selectedDisplayCandidate.map(shouldRecordSideCandidateSelection) ?? false
         client.insertText(finalText, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
         clearMarkedText(client: client)
-        committedContext = appendingContext(previousContext, finalText)
+        committedContext = actualCommittedContext(client: client, fallback: appendingContext(previousContext, finalText))
         composition = ""
         clearCandidateState()
         cancelPendingRefresh(invalidateResponses: true)
@@ -237,10 +298,14 @@ final class RagInputController: IMKInputController {
             return
         }
 
-        let previousContext = committedContext
+        let previousContext = actualCommittedContext(client: client, fallback: committedContext, excludingMarkedText: composition)
+        committedContext = previousContext
         client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
         clearMarkedText(client: client)
-        committedContext = appendingContext(previousContext, text.trimmingCharacters(in: .whitespacesAndNewlines))
+        committedContext = actualCommittedContext(
+            client: client,
+            fallback: appendingContext(previousContext, text.trimmingCharacters(in: .whitespacesAndNewlines))
+        )
         composition = ""
         clearCandidateState()
         cancelPendingRefresh(invalidateResponses: true)
@@ -261,6 +326,27 @@ final class RagInputController: IMKInputController {
         clearVisiblePredictionPanel()
     }
 
+    private func handleBackspace(client: IMKTextInput) -> Bool {
+        clearCandidateState()
+        cancelPendingRefresh(invalidateResponses: true)
+        clearVisiblePredictionPanel()
+
+        guard !composition.isEmpty else {
+            removeLastCommittedContextCharacter()
+            return false
+        }
+
+        composition.removeLast()
+        if composition.isEmpty {
+            clearMarkedText(client: client)
+            return true
+        }
+        updateMarkedText(client: client)
+        showLocalRimeFallbackCandidates(for: composition, client: client)
+        scheduleSuggestionRefresh(client: client)
+        return true
+    }
+
     private func scheduleSuggestionRefresh(client providedClient: IMKTextInput? = nil) {
         pendingRefresh?.cancel()
         let inputSnapshot = composition
@@ -269,7 +355,7 @@ final class RagInputController: IMKInputController {
             clearVisiblePredictionPanel()
             return
         }
-        let contextSnapshot = committedContext
+        let contextSnapshot = syncCommittedContextFromClient(providedClient ?? client(), excludingMarkedText: inputSnapshot)
         let requestSeq = nextRequestSeq()
 
         let work = DispatchWorkItem { [weak self] in
@@ -284,7 +370,7 @@ final class RagInputController: IMKInputController {
                     commitTextPreview: "",
                     committedContext: contextSnapshot,
                     idleMs: 180,
-                    forceSideCandidates: false
+                    forceSideCandidates: !contextSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ))
                 DispatchQueue.main.async { [weak self] in
                     guard let self else {
@@ -326,7 +412,7 @@ final class RagInputController: IMKInputController {
     private func schedulePostCommitPrediction(client providedClient: IMKTextInput, committedText: String) {
         pendingRefresh?.cancel()
         panelExpiration?.cancel()
-        let contextSnapshot = committedContext
+        let contextSnapshot = syncCommittedContextFromClient(providedClient)
         guard !contextSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
@@ -343,7 +429,7 @@ final class RagInputController: IMKInputController {
                     commitTextPreview: committedText,
                     committedContext: contextSnapshot,
                     idleMs: 80,
-                    forceSideCandidates: false
+                    forceSideCandidates: true
                 ))
                 DispatchQueue.main.async { [weak self] in
                     guard let self else {
@@ -389,6 +475,13 @@ final class RagInputController: IMKInputController {
         }
         lastRenderedRequestSeq = response.requestSeq
         latestPredictionSession = response.predictionSession
+        if response.displayCandidates.isEmpty {
+            if response.predictionSession?.shouldClearPredictionPanel == true {
+                clearCandidateState()
+                clearVisiblePredictionPanel()
+            }
+            return
+        }
         if !shouldShowCandidatePanel(response) {
             clearCandidateState()
             clearVisiblePredictionPanel()
@@ -488,7 +581,7 @@ final class RagInputController: IMKInputController {
             requestSeq: response.requestSeq,
             sessionFingerprint: predictionSession?.sessionFingerprint ?? "",
             phase: phase,
-            committedContext: committedContext,
+            committedContext: response.committedContext,
             composition: composition,
             expiresAt: panelExpirationDate(session: predictionSession, postCommit: postCommit)
         )
@@ -616,7 +709,7 @@ final class RagInputController: IMKInputController {
             project: bridge.project,
             app: "RagImeMac",
             idleMs: idleMs,
-            latencyBudgetMs: 800,
+            latencyBudgetMs: 2000,
             forceSideCandidates: forceSideCandidates,
             predictionFirstMerge: true,
             maxVisibleCandidates: 8,
@@ -631,7 +724,12 @@ final class RagInputController: IMKInputController {
     }
 
     private func canRouteNumberToVisiblePanel() -> Bool {
-        guard RagCandidatePanel.shared.isVisible, let session = activePanelSession else {
+        guard RagCandidatePanel.shared.isVisible || !latestDisplayCandidates.isEmpty else {
+            return false
+        }
+        guard let session = activePanelSession else {
+            clearCandidateState()
+            clearVisiblePredictionPanel()
             return false
         }
         if let expiresAt = session.expiresAt, expiresAt <= Date() {
@@ -661,7 +759,11 @@ final class RagInputController: IMKInputController {
         }
     }
 
-    private func displayCandidate(matchingSelectionNumber number: Int) -> RimeDisplayCandidate? {
+    private func displayCandidate(matchingSelectionNumber number: Int, selectionKey: String? = nil) -> RimeDisplayCandidate? {
+        if let selectionKey,
+           let candidate = latestDisplayCandidates.first(where: { $0.selectionKey == selectionKey }) {
+            return candidate
+        }
         if let candidate = latestDisplayCandidates.first(where: { candidate in
             if candidate.selectionRank == number {
                 return true
@@ -784,10 +886,63 @@ final class RagInputController: IMKInputController {
         } else {
             next = "\(context) \(text)"
         }
-        if next.count <= 900 {
-            return next
+        return boundedContext(next)
+    }
+
+    private func removeLastCommittedContextCharacter() {
+        var context = committedContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !context.isEmpty else {
+            committedContext = ""
+            return
         }
-        return String(next.suffix(900))
+        context.removeLast()
+        committedContext = context.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @discardableResult
+    private func syncCommittedContextFromClient(_ client: IMKTextInput?, excludingMarkedText markedText: String = "") -> String {
+        let actualContext = actualCommittedContext(client: client, fallback: committedContext, excludingMarkedText: markedText)
+        committedContext = actualContext
+        return actualContext
+    }
+
+    private func actualCommittedContext(
+        client: IMKTextInput?,
+        fallback: String,
+        excludingMarkedText markedText: String = ""
+    ) -> String {
+        guard let client else {
+            return boundedContext(fallback)
+        }
+        let selectedRange = client.selectedRange()
+        guard selectedRange.location != NSNotFound, selectedRange.location > 0 else {
+            return boundedContext(fallback)
+        }
+
+        let readLimit = committedContextLimit + markedText.utf16.count
+        let length = min(selectedRange.location, readLimit)
+        let range = NSRange(location: selectedRange.location - length, length: length)
+        guard let attributed = client.attributedSubstring(from: range) else {
+            return boundedContext(fallback)
+        }
+
+        var text = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !markedText.isEmpty, text.hasSuffix(markedText) {
+            text.removeLast(markedText.count)
+            text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !text.isEmpty else {
+            return boundedContext(fallback)
+        }
+        return boundedContext(text)
+    }
+
+    private func boundedContext(_ text: String) -> String {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > committedContextLimit else {
+            return normalized
+        }
+        return String(normalized.suffix(committedContextLimit))
     }
 
     private func panelAnchor(client: IMKTextInput?) -> NSPoint? {

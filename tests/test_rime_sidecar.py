@@ -51,6 +51,63 @@ class FakePredictionProvider:
         ][:max_candidates]
 
 
+class ContextEchoPredictionProvider:
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        return [
+            ModelPrediction(
+                text="今天继续使用输入",
+                rank=1,
+                provider_name="echo-model",
+                latency_ms=8,
+                confidence=0.86,
+            )
+        ][:max_candidates]
+
+
+class CleanPostCommitPredictionProvider:
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        return [
+            ModelPrediction(
+                text="我们开始",
+                rank=1,
+                provider_name="clean-model",
+                latency_ms=8,
+                confidence=0.9,
+            )
+        ][:max_candidates]
+
+
+class MetaPredictionProvider:
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        return [
+            ModelPrediction(
+                text="你正在输入一个已经上屏的文本",
+                rank=1,
+                provider_name="meta-model",
+                latency_ms=8,
+                confidence=0.9,
+            ),
+            ModelPrediction(
+                text="继续调整真实候选",
+                rank=2,
+                provider_name="meta-model",
+                latency_ms=8,
+                confidence=0.86,
+            ),
+        ][:max_candidates]
+
+
+class EmptyPredictionProvider:
+    def __init__(self) -> None:
+        self.last_current_input = ""
+        self.last_recent_context = ""
+
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.last_current_input = current_input
+        self.last_recent_context = recent_context
+        return []
+
+
 class CapturingRequestPredictionProvider:
     def __init__(self) -> None:
         self.last_request_type = ""
@@ -150,6 +207,19 @@ class FailingPredictionProvider:
         return []
 
 
+class EmptyPredictionProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.last_current_input = ""
+        self.last_recent_context = ""
+
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.calls += 1
+        self.last_current_input = current_input
+        self.last_recent_context = recent_context
+        return []
+
+
 class SlowPredictionProvider:
     def __init__(self, sleep_s: float = 0.1) -> None:
         self.sleep_s = sleep_s
@@ -246,6 +316,173 @@ class PrefixSuggestionCore(CapturingCore):
                 evidence_preview="不匹配 sj，应被 prefix 过滤",
                 confidence=0.99,
                 metadata={"source_type": "rag", "initials": "bbdjy zr agent scyx sxw"},
+            ),
+        ][:top_k]
+
+
+class PostCommitSurfaceSuggestionCore(CapturingCore):
+    def __init__(self, surface_text: str = "设计一个候选展示方式") -> None:
+        super().__init__()
+        self.surface_text = surface_text
+
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.last_suggest_current_input = current_input
+        self.last_suggest_recent_context = recent_context
+        self.last_suggest_app = app
+        return [
+            InputSuggestion(
+                suggestion_id="post-commit:surface",
+                surface_text=self.surface_text,
+                suggestion_type="phrase",
+                source_event_id=41,
+                evidence_preview="用户之前写过这个可提交短语",
+                confidence=0.92,
+                metadata={
+                    "source_type": "rag",
+                    "insert_text": self.surface_text,
+                    "reason": "test-post-commit-surface",
+                },
+            )
+        ][:top_k]
+
+
+class ComplaintSuggestionCore(CapturingCore):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.last_suggest_current_input = current_input
+        self.last_suggest_recent_context = recent_context
+        return [
+            InputSuggestion(
+                suggestion_id="complaint:1",
+                surface_text="不然这个输入法，和传统输入法没区别",
+                suggestion_type="sentence",
+                source_event_id=51,
+                evidence_preview="old complaint",
+                confidence=0.95,
+                metadata={"source_type": "rag"},
+            ),
+            InputSuggestion(
+                suggestion_id="complaint:2",
+                surface_text="我输入法切成豆包，就是因为你这个输入法没办法输入啊。",
+                suggestion_type="sentence",
+                source_event_id=52,
+                evidence_preview="old complaint",
+                confidence=0.94,
+                metadata={"source_type": "rag"},
+            ),
+            InputSuggestion(
+                suggestion_id="complaint:3",
+                surface_text="然后我的问题你没有记录呀。",
+                suggestion_type="sentence",
+                source_event_id=54,
+                evidence_preview="old complaint",
+                confidence=0.94,
+                metadata={"source_type": "rag"},
+            ),
+            InputSuggestion(
+                suggestion_id="transition:1",
+                surface_text="接下来",
+                suggestion_type="phrase",
+                source_event_id=56,
+                evidence_preview="low value transition",
+                confidence=0.93,
+                metadata={"source_type": "memory"},
+            ),
+            InputSuggestion(
+                suggestion_id="meta:1",
+                surface_text="你正在输入一个已经上屏的文本",
+                suggestion_type="phrase",
+                source_event_id=57,
+                evidence_preview="model meta output stored by mistake",
+                confidence=0.92,
+                metadata={"source_type": "memory"},
+            ),
+            InputSuggestion(
+                suggestion_id="meta:2",
+                surface_text="你正在看Felix的3322号项目吗",
+                suggestion_type="phrase",
+                source_event_id=58,
+                evidence_preview="model meta output stored by mistake",
+                confidence=0.92,
+                metadata={"source_type": "memory"},
+            ),
+            InputSuggestion(
+                suggestion_id="clean:1",
+                surface_text="候选应该预测用户接下来想表达的短语",
+                suggestion_type="phrase",
+                source_event_id=55,
+                evidence_preview="clean memory",
+                confidence=0.9,
+                metadata={"source_type": "memory"},
+            ),
+        ][:top_k]
+
+
+class AcceptedPostCommitSuggestionCore(PostCommitSurfaceSuggestionCore):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        suggestions = super().suggest_for_input(
+            current_input=current_input,
+            recent_context=recent_context,
+            project=project,
+            app=app,
+            top_k=top_k,
+        )
+        return [
+            InputSuggestion(
+                suggestion_id=item.suggestion_id,
+                surface_text=item.surface_text,
+                suggestion_type=item.suggestion_type,
+                source_event_id=item.source_event_id,
+                evidence_preview=item.evidence_preview,
+                confidence=item.confidence,
+                metadata={
+                    **dict(item.metadata),
+                    "state": {"accepted_count": 1, "input_frequency": 1},
+                },
+            )
+            for item in suggestions
+        ]
+
+
+class DirtySuggestionCore(CapturingCore):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.last_suggest_current_input = current_input
+        self.last_suggest_recent_context = recent_context
+        return [
+            InputSuggestion(
+                suggestion_id="dirty:prompt",
+                surface_text="接入本地记忆",
+                suggestion_type="phrase",
+                source_event_id=1,
+                evidence_preview="old prompt example leak",
+                confidence=0.99,
+                metadata={"source_type": "rag"},
+            ),
+            InputSuggestion(
+                suggestion_id="dirty:uuid",
+                surface_text="019f1228-34de-74b3-a627-c546f091e87e这个会话，继续调试",
+                suggestion_type="sentence",
+                source_event_id=2,
+                evidence_preview="session id should not be an IME candidate",
+                confidence=0.98,
+                metadata={"source_type": "rag"},
+            ),
+            InputSuggestion(
+                suggestion_id="dirty:assistant-history",
+                surface_text="但即便无意义串，也不应该被 Rime 泛词占满。",
+                suggestion_type="paragraph",
+                source_event_id=4,
+                evidence_preview="[445] assistant: 模型本身对“阿斯顿…”这种无语义测试串只会复读泛词。",
+                confidence=0.97,
+                metadata={"source_type": "rag"},
+            ),
+            InputSuggestion(
+                suggestion_id="clean:1",
+                surface_text="候选应该预测用户接下来想表达的短语",
+                suggestion_type="sentence",
+                source_event_id=3,
+                evidence_preview="clean memory",
+                confidence=0.9,
+                metadata={"source_type": "memory"},
             ),
         ][:top_k]
 
@@ -381,7 +618,7 @@ class RimeSidecarTests(unittest.TestCase):
                 "committedContext": "我想",
                 "forceSideCandidates": True,
                 "maxVisibleCandidates": 5,
-                "maxSideCandidates": 3,
+                "maxSideCandidates": 4,
                 "rimeContext": {
                     "candidates": [
                         {"label": "1", "text": "设计", "comment": "rime"},
@@ -403,6 +640,73 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["rimeCandidateCount"], 2)
         self.assertEqual(response["ragLane"]["queryInput"], "sj")
 
+    def test_low_information_rime_candidates_skip_side_lanes_even_when_forced(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        predictor = CapturingRequestPredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-low-info-rime",
+                "requestSeq": 462,
+                "rawInput": "de",
+                "preedit": "de",
+                "committedContext": "预测感觉随机，无 LLM",
+                "forceSideCandidates": True,
+                "predictionFirstMerge": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 6,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "的", "comment": "wanxiang"},
+                        {"label": "2", "text": "得", "comment": "wanxiang"},
+                        {"label": "3", "text": "地", "comment": "wanxiang"},
+                    ]
+                },
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(response["queryBasis"], "rimeCandidates")
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: low-information Rime candidates")
+        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
+        self.assertFalse(response["ragLane"]["called"])
+        self.assertFalse(response["modelLane"]["called"])
+        self.assertEqual(core.last_suggest_current_input, "")
+        self.assertEqual(predictor.last_current_input, "")
+        self.assertEqual([item["text"] for item in response["displayCandidates"]], ["得", "地"])
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime", "rime"])
+        self.assertFalse(response["predictionFirst"]["policy"]["candidatePoolActive"])
+
+    def test_rag_prompt_leaks_and_session_ids_are_filtered_from_display(self) -> None:
+        core = DirtySuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-dirty-rag-filter",
+                "requestSeq": 463,
+                "commitTextPreview": "输入法预测",
+                "committedContext": "这个输入法预测感觉随机，需要真实候选",
+                "forceSideCandidates": True,
+                "predictionFirstMerge": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 6,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=CleanPostCommitPredictionProvider(),
+        )
+
+        self.assertEqual(response["ragLane"]["filteredSuggestionCount"], 3)
+        self.assertEqual([item["surfaceText"] for item in response["ragCandidates"]], ["候选应该预测用户接下来想表达的短语"])
+        display_texts = [item["text"] for item in response["displayCandidates"]]
+        self.assertIn("候选应该预测用户接下来想表达的短语", display_texts)
+        self.assertNotIn("019f1228-34de-74b3-a627-c546f091e87e这个会话，继续调试", display_texts)
+        self.assertNotIn("接入本地记忆", display_texts)
+        self.assertNotIn("但即便无意义串，也不应该被 Rime 泛词占满。", display_texts)
+
     def test_post_commit_model_lane_uses_clean_screen_context_not_history_wrapper(self) -> None:
         predictor = CapturingRequestPredictionProvider()
         response = build_rime_sidecar_response(
@@ -416,7 +720,7 @@ class RimeSidecarTests(unittest.TestCase):
                 "forceSideCandidates": True,
                 "latencyBudgetMs": 650,
                 "maxVisibleCandidates": 5,
-                "maxSideCandidates": 3,
+                "maxSideCandidates": 4,
                 "rimeContext": {"candidates": []},
             },
             adapter=self.adapter,
@@ -484,13 +788,14 @@ class RimeSidecarTests(unittest.TestCase):
         rag_items = [item for item in display if item["sourceType"] == "rag"]
         rime_items = [item for item in display if item["sourceType"] == "rime"]
         self.assertEqual(len(model_items), 5)
-        self.assertEqual(len(rag_items), 3)
-        self.assertEqual(rime_items, [])
+        self.assertGreaterEqual(len(rag_items), 3)
+        self.assertFalse(rime_items)
         self.assertTrue(all(item["displayLayout"] == "inline" for item in model_items))
         self.assertTrue(all(item["displayLane"] == "model" for item in model_items))
         self.assertTrue(all(item["displayLayout"] == "block" for item in rag_items))
         self.assertTrue(all(item["displayLane"] == "memory" for item in rag_items))
         self.assertEqual(response["mergePolicy"]["fallbackOrder"], ["model", "rag", "rime"])
+        self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 5)
 
     def test_tenth_shared_candidate_uses_zero_key_with_rank_ten(self) -> None:
         response = build_rime_sidecar_response(
@@ -513,7 +818,6 @@ class RimeSidecarTests(unittest.TestCase):
 
         display = response["displayCandidates"]
         self.assertEqual(len(display), 10)
-        self.assertIn(display[9]["sourceType"], {"model", "rag"})
         self.assertEqual(display[9]["label"], "0")
         self.assertEqual(display[9]["selectionKey"], "0")
         self.assertEqual(display[9]["selectionRank"], 10)
@@ -718,6 +1022,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(side_items[0]["displayLayout"], "inline")
         self.assertEqual(side_items[1]["displayLayout"], "block")
         self.assertEqual(len(response["modelPredictions"]), 3)
+        self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 3)
 
     def test_eight_slot_panel_uses_horizontal_model_lane_and_vertical_memory_rows(self) -> None:
         response = build_rime_sidecar_response(
@@ -742,15 +1047,15 @@ class RimeSidecarTests(unittest.TestCase):
         display = response["displayCandidates"]
         self.assertEqual(len(display), 8)
         self.assertEqual([item["label"] for item in display], ["1", "2", "3", "4", "5", "6", "7", "8"])
-        self.assertEqual([item["sourceType"] for item in display[:5]], ["model"] * 5)
-        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline"] * 5)
-        self.assertEqual([item["displayLane"] for item in display[:5]], ["model"] * 5)
-        self.assertEqual([item["sourceType"] for item in display[5:]], ["rag", "rag", "rag"])
-        self.assertEqual([item["displayLayout"] for item in display[5:]], ["block", "block", "block"])
-        self.assertEqual([item["displayLane"] for item in display[5:]], ["memory", "memory", "memory"])
-        self.assertFalse(any(item["sourceType"] == "rime" for item in display))
+        self.assertEqual([item["sourceType"] for item in display[:5]], ["model", "model", "model", "model", "model"])
+        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline", "inline", "inline", "inline", "inline"])
+        self.assertEqual([item["displayLane"] for item in display[:5]], ["model", "model", "model", "model", "model"])
+        self.assertTrue(all(item["sourceType"] == "rag" for item in display[5:8]))
+        self.assertTrue(all(item["displayLayout"] == "block" for item in display[5:8]))
+        self.assertTrue(all(item["displayLane"] == "memory" for item in display[5:8]))
         self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 3)
         self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
+        self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 5)
 
     def test_display_merge_deduplicates_sources_and_fills_later_candidates(self) -> None:
         snapshot = parse_rime_context_payload(
@@ -949,10 +1254,13 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["queryBasis"], "rawSemanticInput")
         self.assertTrue(response["triggerDecision"]["shouldRefresh"])
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
-        self.assertEqual(response["modelLane"]["predictionCount"], 8)
-        self.assertEqual([item["sourceType"] for item in display[:5]], ["model"] * 5)
-        self.assertEqual([item["sourceType"] for item in display[5:]], ["rag", "rag", "rag"])
-        self.assertFalse(any(item["sourceType"] == "rime" for item in display))
+        self.assertEqual(response["modelLane"]["predictionCount"], 5)
+        self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 5)
+        self.assertEqual([item["sourceType"] for item in display[:5]], ["model", "model", "model", "model", "model"])
+        rag_count = sum(1 for item in display if item["sourceType"] == "rag")
+        self.assertGreaterEqual(rag_count, 1)
+        self.assertTrue(all(item["sourceType"] == "rag" for item in display[5 : 5 + rag_count]))
+        self.assertEqual([item["sourceType"] for item in display[5 + rag_count :]], [])
 
     def test_plain_lowercase_pinyin_does_not_get_raw_english_candidate(self) -> None:
         response = build_rime_sidecar_response(
@@ -1023,6 +1331,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["predictionSession"]["predictionPanelVisible"])
         self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
         self.assertEqual(response["predictionSession"]["selectionScope"], "mixed_prediction_first")
+        self.assertEqual(response["predictionSession"]["expiresAfterMs"], 2600)
 
     def test_prediction_first_prefix_uses_compiled_memory_pinyin_index(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-prefix-memory-") as tmp:
@@ -1160,9 +1469,153 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(predictor.last_current_input, "我想")
         self.assertEqual(core.last_suggest_recent_context, "用户刚刚上屏了 我想")
         self.assertEqual(response["modelPredictions"][0]["text"], "我想续写")
-        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["model", "rag"])
-        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["model"])
+        self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 1)
+        self.assertEqual(response["ragLane"]["postCommitQualityFilteredCount"], 1)
         self.assertFalse(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
+
+    def test_prediction_first_post_commit_filters_weak_rag_when_model_exists(self) -> None:
+        core = PostCommitSurfaceSuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-weak-rag",
+                "requestSeq": 58,
+                "committedContext": "今天我们继续调输入法",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=CleanPostCommitPredictionProvider(),
+        )
+
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["model"])
+        self.assertEqual(response["ragCandidates"], [])
+        self.assertEqual(response["ragLane"]["postCommitQualityFilteredCount"], 1)
+
+    def test_prediction_first_filters_meta_model_descriptions(self) -> None:
+        core = PostCommitSurfaceSuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-meta-model",
+                "requestSeq": 61,
+                "committedContext": "我输入依旧没有 LLM 和 RAG",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=MetaPredictionProvider(),
+        )
+
+        display_texts = [item["text"] for item in response["displayCandidates"]]
+        self.assertIn("继续调整真实候选", display_texts)
+        self.assertNotIn("你正在输入一个已经上屏的文本", display_texts)
+
+    def test_prediction_first_filters_old_complaint_fragments_from_rag(self) -> None:
+        core = ComplaintSuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-complaint-rag",
+                "requestSeq": 62,
+                "commitTextPreview": "输入法预测",
+                "committedContext": "这个输入法预测感觉随机，需要真实候选",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 6,
+                "maxSideCandidates": 6,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=CleanPostCommitPredictionProvider(),
+        )
+
+        display_texts = [item["text"] for item in response["displayCandidates"]]
+        self.assertIn("候选应该预测用户接下来想表达的短语", display_texts)
+        self.assertNotIn("不然这个输入法，和传统输入法没区别", display_texts)
+        self.assertNotIn("我输入法切成豆包，就是因为你这个输入法没办法输入啊。", display_texts)
+        self.assertNotIn("然后我的问题你没有记录呀。", display_texts)
+        self.assertNotIn("接下来", display_texts)
+        self.assertNotIn("你正在输入一个已经上屏的文本", display_texts)
+        self.assertNotIn("你正在看Felix的3322号项目吗", display_texts)
+
+    def test_prediction_first_post_commit_keeps_semantically_matched_rag(self) -> None:
+        core = PostCommitSurfaceSuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-strong-rag",
+                "requestSeq": 59,
+                "committedContext": "我想设计一个候选展示方式",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=CleanPostCommitPredictionProvider(),
+        )
+
+        self.assertIn("rag", [item["sourceType"] for item in response["displayCandidates"]])
+        self.assertEqual(response["ragCandidates"][0]["surfaceText"], "设计一个候选展示方式")
+
+    def test_prediction_first_post_commit_keeps_accepted_memory_even_without_overlap(self) -> None:
+        core = AcceptedPostCommitSuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-accepted-memory",
+                "requestSeq": 60,
+                "committedContext": "今天我们继续调输入法",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=FakePredictionProvider(),
+        )
+
+        self.assertIn("rag", [item["sourceType"] for item in response["displayCandidates"]])
+        self.assertEqual(response["ragCandidates"][0]["surfaceText"], "设计一个候选展示方式")
+
+    def test_prediction_first_post_commit_filters_context_echo_model_prediction(self) -> None:
+        core = EmptySuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-echo-model",
+                "requestSeq": 61,
+                "committedContext": "今天我们继续调输入法",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=ContextEchoPredictionProvider(),
+        )
+
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertEqual(response["modelLane"]["filteredPredictionCount"], 1)
+        self.assertEqual(response["displayCandidates"], [])
+        self.assertEqual(response["predictionSession"]["phase"], "hidden")
 
     def test_prediction_first_post_commit_refreshes_without_idle_delay(self) -> None:
         core = EmptySuggestionCore()
@@ -1199,10 +1652,80 @@ class RimeSidecarTests(unittest.TestCase):
         session_fingerprint = response["predictionSession"]["sessionFingerprint"]
         self.assertEqual(len(session_fingerprint), 16)
         self.assertEqual(response["predictionSession"]["requestSeq"], 53)
+        self.assertEqual(response["predictionSession"]["expiresAfterMs"], 8000)
         self.assertEqual(response["predictionFirst"]["policy"]["candidatePoolSessionFingerprint"], session_fingerprint)
         for item in response["displayCandidates"]:
             self.assertEqual(item["metadata"]["sessionFingerprint"], session_fingerprint)
             self.assertEqual(item["metadata"]["requestSeq"], 53)
+
+    def test_prediction_first_short_committed_context_skips_even_when_forced(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        predictor = FakePredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-short-post-commit",
+                "requestSeq": 531,
+                "frontendBuild": "rag-ime.foreground-trace.v2",
+                "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
+                "rawInput": "",
+                "preedit": "",
+                "idleMs": 80,
+                "committedContext": "阿斯顿",
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 5,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(response["queryBasis"], "committedContext")
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: low-information committed context")
+        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
+        self.assertFalse(response["ragLane"]["called"])
+        self.assertFalse(response["modelLane"]["called"])
+        self.assertEqual(response["displayCandidates"], [])
+        self.assertEqual(predictor.last_current_input, "")
+        self.assertEqual(core.last_suggest_current_input, "")
+        self.assertEqual(response["predictionSession"]["phase"], "hidden")
+        self.assertTrue(response["predictionSession"]["shouldClearPredictionPanel"])
+
+    def test_prediction_first_post_commit_suppresses_rag_only_when_model_empty(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        predictor = EmptyPredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-rag-only-post-commit",
+                "requestSeq": 532,
+                "frontendBuild": "rag-ime.foreground-trace.v2",
+                "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
+                "rawInput": "",
+                "preedit": "",
+                "idleMs": 80,
+                "committedContext": "阿斯顿 但即便无意义串，也不应该被 Rime 泛词占满。 撒旦 继续 现在用不了",
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 5,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertEqual(response["ragCandidates"], [])
+        self.assertEqual(response["ragLane"]["postCommitQualityFilteredCount"], 1)
+        self.assertEqual(response["displayCandidates"], [])
+        self.assertEqual(response["predictionSession"]["phase"], "hidden")
+        self.assertTrue(response["predictionSession"]["shouldClearPredictionPanel"])
+        self.assertEqual(predictor.last_current_input, response["semanticQuery"])
+        self.assertEqual(core.last_suggest_current_input, response["semanticQuery"])
 
     def test_prediction_first_post_commit_clears_stale_empty_panel(self) -> None:
         core = EmptySuggestionCore()
@@ -1215,7 +1738,7 @@ class RimeSidecarTests(unittest.TestCase):
                 "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
                 "rawInput": "",
                 "preedit": "",
-                "idleMs": 1500,
+                "idleMs": 9000,
                 "committedContext": "我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
                 "maxVisibleCandidates": 5,
                 "maxSideCandidates": 5,
@@ -1268,7 +1791,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(live["predictionFirst"]["policy"]["candidatePoolActive"])
 
         stale = build_rime_sidecar_response(
-            payload={**live_payload, "requestSeq": 2, "idleMs": 1500},
+            payload={**live_payload, "requestSeq": 2, "idleMs": 9000},
             adapter=adapter,
             core=core,
             predictor=predictor,
@@ -1360,6 +1883,58 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertIn("reused recent model holdover", busy_response["modelLane"]["skippedReason"])
         self.assertEqual(busy_response["displayCandidates"][0]["sourceType"], "model")
         self.assertEqual(busy_response["displayCandidates"][0]["displayLayout"], "inline")
+
+    def test_busy_model_lane_reuses_nearby_post_commit_holdover_after_context_extension(self) -> None:
+        payload = {
+            "sessionId": "squirrel-model-holdover-context-prime",
+            "requestSeq": 1,
+            "committedContext": "我们正在修输入法候选真实生效",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "forceSideCandidates": True,
+            "rimeContext": {"candidates": []},
+        }
+        primed = build_rime_sidecar_response(
+            payload=payload,
+            adapter=self.adapter,
+            core=self.core,
+            predictor=CapturingRequestPredictionProvider(),
+        )
+        self.assertEqual(primed["modelPredictions"][0]["text"], "设计一个候选展示方式")
+
+        blocking_predictor = BlockingPredictionProvider()
+        worker = Thread(
+            target=build_rime_sidecar_response,
+            kwargs={
+                "payload": {**payload, "sessionId": "squirrel-model-holdover-context-block", "requestSeq": 2},
+                "adapter": self.adapter,
+                "core": self.core,
+                "predictor": blocking_predictor,
+            },
+            daemon=True,
+        )
+        worker.start()
+        self.assertTrue(blocking_predictor.entered.wait(timeout=2))
+        try:
+            busy_response = build_rime_sidecar_response(
+                payload={
+                    **payload,
+                    "sessionId": "squirrel-model-holdover-context-extended",
+                    "requestSeq": 3,
+                    "committedContext": "我们正在修输入法候选真实生效以及记忆",
+                },
+                adapter=self.adapter,
+                core=self.core,
+                predictor=MultiPredictionProvider(),
+            )
+        finally:
+            blocking_predictor.release.set()
+            worker.join(timeout=2)
+
+        self.assertEqual(busy_response["modelPredictions"][0]["text"], "设计一个候选展示方式")
+        self.assertTrue(busy_response["modelLane"]["holdoverHit"])
+        self.assertIn("reused recent model holdover", busy_response["modelLane"]["skippedReason"])
+        self.assertEqual(busy_response["displayCandidates"][0]["sourceType"], "model")
 
     def test_busy_model_lane_does_not_reuse_holdover_after_prefix_changes(self) -> None:
         payload = {
@@ -1779,7 +2354,7 @@ class RimeSidecarTests(unittest.TestCase):
             query_basis=query_basis,
         )
         self.assertFalse(decision.should_refresh)
-        self.assertEqual(decision.reason, "skip: Rime candidate signal too short")
+        self.assertEqual(decision.reason, "skip: low-information Rime candidates")
 
     def test_force_side_candidates_refreshes_even_for_raw_fallback(self) -> None:
         response = build_rime_sidecar_response(

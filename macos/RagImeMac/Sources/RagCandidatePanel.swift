@@ -492,9 +492,9 @@ final class RagCandidatePanel {
         case "rag":
             return "RAG"
         case "memory":
-            return "memory"
+            return "RAG"
         case "rime":
-            return "Rime"
+            return "词库"
         case "raw_english":
             return "input"
         default:
@@ -508,6 +508,8 @@ final class RagCandidatePanel {
             return .systemBlue
         case "rag", "memory":
             return .systemTeal
+        case "rime":
+            return .systemOrange
         case "raw_english":
             return .systemGray
         default:

@@ -60,6 +60,7 @@ _LOW_VALUE_IME_CANDIDATES = {
     "记忆",
     "模型",
     "需要",
+    "接下来",
     "输入法",
     "呐",
     "然后",
@@ -68,9 +69,26 @@ _LOW_VALUE_IME_CANDIDATES = {
     "当前",
     "当前问题",
     "当前流程",
+    "当前拼音或参考候选",
     "直接输出",
     "模型相关表达",
+    "调试",
     "调试流程",
+    "上屏",
+    "上屏文字",
+    "已上屏",
+    "已上屏文本",
+    "已上屏上下文",
+    "下一步",
+    "接龙",
+    "把流程跑通",
+    "接入本地",
+    "接入本地记忆",
+    "验证 LLM 候选",
+    "验证LLM候选",
+    "预测流程完成",
+    "部署 RAG 组件",
+    "部署RAG组件",
     "继续预测",
     "预测流程",
     "的",
@@ -84,6 +102,9 @@ _LOW_VALUE_IME_CANDIDATES = {
     "记忆候选",
     "RAG候选",
     "LLM候选",
+    "candidate",
+    "candidates",
+    "cand",
     "预测",
     "RAG",
     "rag",
@@ -97,7 +118,7 @@ _LOW_VALUE_IME_CANDIDATES = {
     "以下是候选",
     "给出候选",
 }
-_CONTINUATION_PREFERRED_LENGTHS = (2, 4, 6, 8, 12, 16)
+_CONTINUATION_PREFERRED_LENGTHS = (2, 4, 6, 8, 12, 16, 20, 24)
 
 
 class PredictionProvider(Protocol):
@@ -519,36 +540,37 @@ class MlxPredictionServiceProvider:
                 request_type=resolved_request_type,
                 rime_candidates=rime_candidate_tuple,
             )
-            if streamed:
-                streamed_candidates = _finalize_ime_prediction_candidates([streamed["candidate"]], query)
-                if not streamed_candidates:
-                    return []
-                streamed_candidate = streamed_candidates[0]
-                latency_ms = int((time.perf_counter() - started) * 1000)
-                return [
-                    ModelPrediction(
-                        text=streamed_candidate,
-                        rank=1,
-                        provider_name=self.config.provider_name,
-                        latency_ms=latency_ms,
-                        confidence=1.0,
-                        metadata={
-                            "model": self.config.model,
-                            "base_url": self.config.base_url,
-                            "profile": self.config.profile,
-                            "prompt_mode": self.config.prompt_mode,
-                            "raw_text": streamed["raw_text"],
-                            "stream_first_candidate": True,
-                            "first_candidate_ms": streamed["first_candidate_ms"],
-                            "prompt_cache": streamed.get("prompt_cache", {}),
-                            "server_timing": streamed.get("server_timing", {}),
-                            "request_type": resolved_request_type,
-                            "rime_candidates": list(rime_candidate_tuple),
-                            "requestMeta": request_meta,
-                            **build_pinyin_metadata(streamed_candidate),
-                        },
-                    )
-                ]
+            if not streamed:
+                return []
+            streamed_candidates = _finalize_ime_prediction_candidates([streamed["candidate"]], query)
+            if not streamed_candidates:
+                return []
+            streamed_candidate = streamed_candidates[0]
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            return [
+                ModelPrediction(
+                    text=streamed_candidate,
+                    rank=1,
+                    provider_name=self.config.provider_name,
+                    latency_ms=latency_ms,
+                    confidence=1.0,
+                    metadata={
+                        "model": self.config.model,
+                        "base_url": self.config.base_url,
+                        "profile": self.config.profile,
+                        "prompt_mode": self.config.prompt_mode,
+                        "raw_text": streamed["raw_text"],
+                        "stream_first_candidate": True,
+                        "first_candidate_ms": streamed["first_candidate_ms"],
+                        "prompt_cache": streamed.get("prompt_cache", {}),
+                        "server_timing": streamed.get("server_timing", {}),
+                        "request_type": resolved_request_type,
+                        "rime_candidates": list(rime_candidate_tuple),
+                        "requestMeta": request_meta,
+                        **build_pinyin_metadata(streamed_candidate),
+                    },
+                )
+            ]
         payload = self._predict_payload(
             context=context,
             query=query,
@@ -728,7 +750,9 @@ class CooldownPredictionProvider:
 
     The OpenAI-compatible provider already fails open, but a dead endpoint can
     still cost one timeout per composing refresh. This wrapper skips temporary
-    repeat calls after transport failures or slow empty responses.
+    repeat calls after transport failures; empty-but-successful generations are
+    allowed to recover on the next request because small local models can be
+    noisy without being down.
     """
 
     def __init__(
@@ -773,10 +797,9 @@ class CooldownPredictionProvider:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         delegate_error = str(getattr(self.delegate, "last_error", "") or "")
         failed_transport = bool(delegate_error)
-        slow_empty = not predictions and elapsed_ms >= self.failure_latency_ms
-        if failed_transport or slow_empty:
+        if failed_transport:
             self._state.failure_count += 1
-            self._state.last_error = delegate_error or "slow_empty_prediction"
+            self._state.last_error = delegate_error
             self._state.last_failure_elapsed_ms = elapsed_ms
             if self.cooldown_ms > 0:
                 self._state.cooldown_until = time.perf_counter() + self.cooldown_ms / 1000.0
@@ -1527,6 +1550,7 @@ def _filter_repeated_input_candidates(candidates: list[str], current_input: str)
 
 
 def _filter_repeated_context_candidates(candidates: list[str], recent_context: str) -> list[str]:
+    context_surface = compact_whitespace(recent_context)
     context_norm = _candidate_repeat_norm(recent_context)
     if not context_norm:
         return candidates
@@ -1534,27 +1558,30 @@ def _filter_repeated_context_candidates(candidates: list[str], recent_context: s
     result: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
-        candidate_norm = _candidate_repeat_norm(candidate)
+        surface = compact_whitespace(candidate)
+        if context_surface and surface.startswith(context_surface):
+            surface = surface[len(context_surface) :].lstrip(" \t\r\n,，、:：;；。.!！?？")
+        candidate_norm = _candidate_repeat_norm(surface)
         if not candidate_norm:
             continue
-        if len(candidate_norm) >= 4 and candidate_norm in context_norm:
+        if len(candidate_norm) >= 2 and candidate_norm in context_norm:
             continue
-        if _candidate_is_context_reorder(candidate, context_chars):
+        if _candidate_is_context_reorder(surface, context_chars):
             continue
-        if candidate in seen:
+        if surface in seen:
             continue
-        seen.add(candidate)
-        result.append(candidate)
+        seen.add(surface)
+        result.append(surface)
     return result
 
 
 def _candidate_is_context_reorder(candidate: str, context_chars: Counter[str]) -> bool:
     candidate_chars = _cjk_chars(candidate)
-    if len(candidate_chars) < 6 or not context_chars:
+    if len(candidate_chars) < 4 or not context_chars:
         return False
     candidate_counter = Counter(candidate_chars)
     covered = sum(min(count, context_chars.get(char, 0)) for char, count in candidate_counter.items())
-    return covered / max(1, len(candidate_chars)) >= 0.85
+    return covered / max(1, len(candidate_chars)) >= 0.65
 
 
 def _cjk_chars(text: str) -> list[str]:
@@ -1594,11 +1621,16 @@ def _filter_low_value_ime_candidates(
         if len(normalized) <= 1:
             continue
         is_allowed_ascii = normalized.lower() in allowed_ascii
-        if re.fullmatch(r"[A-Za-z0-9_./:-]{1,8}", normalized) and not is_allowed_ascii:
+        cjk_count = _cjk_char_count(normalized)
+        if re.fullmatch(r"[A-Za-z0-9_./:\-\s]{1,24}", normalized) and not is_allowed_ascii:
             continue
-        if _cjk_char_count(normalized) < 2 and len(normalized) <= 4 and not is_allowed_ascii:
+        if cjk_count < 2 and not is_allowed_ascii:
             continue
         if normalized in _LOW_VALUE_IME_CANDIDATES:
+            continue
+        if _looks_like_meta_ime_candidate(normalized):
+            continue
+        if _looks_like_incomplete_ime_candidate(normalized):
             continue
         if any(normalized.startswith(prefix) for prefix in ("测试", "分析", "假设")) and _cjk_char_count(normalized) <= 6:
             continue
@@ -1611,6 +1643,80 @@ def _filter_low_value_ime_candidates(
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def _looks_like_meta_ime_candidate(text: str) -> bool:
+    normalized = compact_whitespace(text)
+    if not normalized:
+        return True
+    meta_prefixes = (
+        "你正在输入",
+        "你正在尝试",
+        "你正在使用",
+        "你正在看",
+        "你正在查看",
+        "你当前正在",
+        "您正在输入",
+        "您正在尝试",
+        "您正在使用",
+        "您正在看",
+        "您正在查看",
+        "您当前正在",
+        "用户正在输入",
+        "用户正在尝试",
+        "用户正在使用",
+        "用户正在看",
+        "用户正在查看",
+        "正在输入一个",
+        "正在查看",
+        "正在看",
+    )
+    if normalized.startswith(meta_prefixes):
+        return True
+    meta_markers = (
+        "已经上屏的文本",
+        "上屏的文本",
+        "作为输入法候选",
+        "这是一个候选",
+        "这个项目",
+        "号项目",
+    )
+    return any(marker in normalized for marker in meta_markers)
+
+
+def _looks_like_incomplete_ime_candidate(text: str) -> bool:
+    normalized = compact_whitespace(text)
+    if not normalized:
+        return True
+    cjk_count = _cjk_char_count(normalized)
+    if cjk_count <= 5 and normalized.endswith(
+        (
+            "的",
+            "得",
+            "地",
+            "了",
+            "着",
+            "过",
+            "在",
+            "和",
+            "与",
+            "及",
+            "或",
+            "把",
+            "被",
+            "将",
+            "下",
+            "上",
+            "这个",
+            "那个",
+        )
+    ):
+        return True
+    if cjk_count > 0 and re.search(r"[A-Za-z]{2,}$", normalized):
+        return True
+    if cjk_count <= 4 and normalized.startswith("将"):
+        return True
+    return False
 
 
 def _cjk_char_count(text: str) -> int:
@@ -1633,7 +1739,12 @@ def _looks_like_prompt_instruction(text: str) -> bool:
     lowered = compact_whitespace(text).lower()
     prompt_markers = (
         "已上屏上下文",
+        "已上屏文本",
+        "上屏文字",
+        "请求类型",
+        "模式说明",
         "当前拼音",
+        "当前拼音或参考候选",
         "当前输入",
         "候选词",
         "输出要求",
@@ -1727,7 +1838,10 @@ def _continuation_prediction_candidates_from_texts(
     seen: set[str] = set()
     for text in texts:
         cleaned = _remove_prediction_prompt_echo(_clean_prediction_output(text), current_input=current_input, recent_context=recent_context)
-        for item in _continuation_candidate_spans(cleaned):
+        spans = _continuation_candidate_spans(cleaned)
+        if max_items == 1 and spans:
+            spans = [max(spans, key=len)]
+        for item in spans:
             if item in seen:
                 continue
             seen.add(item)
@@ -1767,7 +1881,7 @@ def _continuation_candidate_spans(text: str) -> list[str]:
     for length in _CONTINUATION_PREFERRED_LENGTHS:
         if len(compacted) >= length:
             spans.append(compacted[:length])
-    spans.append(compacted[:16])
+    spans.append(compacted[:24])
     result: list[str] = []
     seen: set[str] = set()
     for span in spans:
@@ -1806,6 +1920,8 @@ def _strip_leading_prediction_fillers(text: str) -> str:
         "给出候选",
         "我会",
         "我将",
+        "我们会",
+        "我们将",
         "然后",
         "而且",
         "并且",

@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -257,6 +258,7 @@ class _MockMlxHandler(BaseHTTPRequestHandler):
     captured_path = ""
     captured_payload: dict[str, object] = {}
     health_payload: dict[str, object] = {}
+    stream_chunks: list[dict[str, object]] | None = None
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         if self.path == "/v1/models":
@@ -283,7 +285,7 @@ class _MockMlxHandler(BaseHTTPRequestHandler):
         _MockMlxHandler.captured_path = self.path
         _MockMlxHandler.captured_payload = json.loads(self.rfile.read(length).decode("utf-8"))
         if self.path == "/predict-stream":
-            chunks = [
+            chunks = _MockMlxHandler.stream_chunks or [
                 {"delta": '["本地记忆"'},
                 {"delta": ',"输入法候选"]'},
                 {"done": True, "candidates": ["本地记忆", "输入法候选"], "totalMs": 19},
@@ -420,7 +422,7 @@ class PredictionProviderTests(unittest.TestCase):
             max_candidates=3,
         )
 
-        self.assertEqual(parsed, ["设计一个候选展示方式", "接入本地记忆", "优化候选排序"])
+        self.assertEqual(parsed, ["设计一个候选展示方式", "优化候选排序"])
 
     def test_parse_ime_prediction_candidates_skips_filler_clause_before_useful_continuation(self) -> None:
         parsed = parse_ime_prediction_candidates(
@@ -433,7 +435,7 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed[:3], ["优化", "优化候选", "优化候选排序"])
 
-    def test_parse_ime_prediction_candidates_filters_repeated_post_commit_context(self) -> None:
+    def test_parse_ime_prediction_candidates_filters_prompt_example_leaks(self) -> None:
         parsed = parse_ime_prediction_candidates(
             '["预测优先个人记忆输入法", "个人记忆输入法预测", "把流程跑通", "接入本地记忆"]',
             current_input="",
@@ -442,9 +444,9 @@ class PredictionProviderTests(unittest.TestCase):
             max_candidates=4,
         )
 
-        self.assertEqual(parsed, ["把流程跑通", "接入本地记忆"])
+        self.assertEqual(parsed, [])
 
-    def test_parse_ime_prediction_candidates_keeps_project_technical_candidate_suffix(self) -> None:
+    def test_parse_ime_prediction_candidates_rejects_project_prompt_examples(self) -> None:
         parsed = parse_ime_prediction_candidates(
             '["优化 MLX 小模型候选","接入本地记忆","验证 LLM 候选","调试流程"]<|im_end|>',
             current_input="",
@@ -453,7 +455,73 @@ class PredictionProviderTests(unittest.TestCase):
             max_candidates=4,
         )
 
-        self.assertEqual(parsed, ["验证 LLM 候选"])
+        self.assertEqual(parsed, [])
+
+    def test_parse_ime_prediction_candidates_filters_context_echoes(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["我想","我想的","补齐来源诊断"]',
+            current_input="",
+            recent_context="我想",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=3,
+        )
+
+        self.assertEqual(parsed, ["补齐来源诊断"])
+
+    def test_parse_ime_prediction_candidates_filters_context_reorder_echoes(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["今天继续使用输入", "我们开始"]',
+            current_input="",
+            recent_context="今天我们继续调输入法",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=3,
+        )
+
+        self.assertEqual(parsed, ["我们开始"])
+
+    def test_parse_ime_prediction_candidates_filters_incomplete_short_fragments(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["将进入下", "讨论Felix的", "开始描述Feli", "我们开始"]',
+            current_input="",
+            recent_context="这个输入法的核心流程已经跑通，接下来",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=4,
+        )
+
+        self.assertEqual(parsed, ["我们开始"])
+
+    def test_parse_ime_prediction_candidates_keeps_complete_medium_continuation(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            "接下来，我将开始分析 Felix 生命周期中的关键节点。",
+            current_input="",
+            recent_context="我已经看完 Felix 的候选生命周期，下一步",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=1,
+        )
+
+        self.assertEqual(parsed, ["开始分析Felix生命周期中的关键节点"])
+
+    def test_parse_ime_prediction_candidates_rejects_model_field_names(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["今天","candidate","cand","Model de","想...Mode","上屏文字","当前拼音或参考候选","接龙","继续吃饭"]',
+            current_input="",
+            recent_context="今天晚上我们去吃",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=9,
+        )
+
+        self.assertEqual(parsed, ["继续吃饭"])
+
+    def test_parse_ime_prediction_candidates_filters_single_topic_debug_word(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["调试","优化候选排序"]',
+            current_input="",
+            recent_context="这个输入法预测感觉随机，需要",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=2,
+        )
+
+        self.assertEqual(parsed, ["优化候选排序"])
 
     def test_parse_ime_prediction_candidates_keeps_rime_reorder_inside_pool(self) -> None:
         parsed = parse_ime_prediction_candidates(
@@ -784,6 +852,12 @@ class PredictionProviderTests(unittest.TestCase):
                     "RAG",
                     "后文候选",
                     "模型候选",
+                    "你正在输入一个已经上屏的文本",
+                    "你正在看Felix的3322号项目吗",
+                    "您正在查看这个项目的实现",
+                    "用户正在尝试使用LLM和RAG来构建记忆",
+                    "Model de",
+                    "想...Mode",
                     "候选展示方式",
                 ]
             ),
@@ -896,6 +970,7 @@ class PredictionProviderTests(unittest.TestCase):
             thread.join(timeout=2)
             server.server_close()
             _MockMlxHandler.health_payload = {}
+            _MockMlxHandler.stream_chunks = None
 
         self.assertTrue(status["capabilityProbe"]["ok"])
         self.assertTrue(status["capabilities"]["promptCache"])
@@ -1060,6 +1135,44 @@ class PredictionProviderTests(unittest.TestCase):
         status = prediction_provider_status(provider)
         self.assertTrue(status["streamFirstCandidate"])
 
+    def test_mlx_stream_first_candidate_does_not_fallback_to_slow_predict_when_empty(self) -> None:
+        _MockMlxHandler.captured_path = ""
+        _MockMlxHandler.captured_payload = {}
+        _MockMlxHandler.health_payload = {}
+        _MockMlxHandler.stream_chunks = [
+            {"delta": "想"},
+            {"done": True, "candidates": [], "totalMs": 19},
+        ]
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_STREAM_FIRST": "1",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+            predictions = provider.predict(
+                current_input="",
+                recent_context="我想",
+                max_candidates=3,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+            _MockMlxHandler.stream_chunks = None
+
+        self.assertEqual(predictions, [])
+        self.assertEqual(_MockMlxHandler.captured_path, "/predict-stream")
+
     def test_prediction_cooldown_skips_repeat_failures(self) -> None:
         class FailingProvider:
             config = OpenAICompatiblePredictionConfig(
@@ -1089,6 +1202,36 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(status["cooldown"]["failureCount"], 1)
         self.assertEqual(status["cooldown"]["skippedCount"], 1)
         self.assertEqual(status["cooldown"]["lastError"], "timeout")
+
+    def test_prediction_cooldown_does_not_skip_after_empty_success(self) -> None:
+        class EmptyProvider:
+            config = OpenAICompatiblePredictionConfig(
+                base_url="http://127.0.0.1:9",
+                model="Qwen3-0.6B",
+                provider_name="empty-provider",
+                profile="instant",
+            )
+
+            def __init__(self) -> None:
+                self.calls = 0
+                self.last_error = ""
+
+            def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+                self.calls += 1
+                time.sleep(0.003)
+                self.last_error = ""
+                return []
+
+        delegate = EmptyProvider()
+        provider = CooldownPredictionProvider(delegate, cooldown_ms=1000, failure_latency_ms=1)
+
+        self.assertEqual(provider.predict(current_input="RAG 输入法"), [])
+        self.assertEqual(provider.predict(current_input="RAG 输入法"), [])
+        self.assertEqual(delegate.calls, 2)
+        status = prediction_provider_status(provider)
+        self.assertFalse(status["cooldown"]["active"])
+        self.assertEqual(status["cooldown"]["failureCount"], 0)
+        self.assertEqual(status["cooldown"]["skippedCount"], 0)
 
     def test_predictor_doctor_reports_cooldown_after_failed_probe(self) -> None:
         class FailingProvider:

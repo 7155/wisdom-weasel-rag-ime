@@ -17,6 +17,10 @@ CLEAR_TRACE=1
 OPEN_TEST_FILE=1
 SELECT_INPUT_SOURCE=1
 REQUIRE_SIDE_COMMIT=1
+REQUIRE_MIXED_PANEL=1
+REQUIRE_SIDE_PANEL=0
+REQUIRE_HITOOLBOX_ENABLED="${RAG_IME_FOREGROUND_TRACE_REQUIRE_HITOOLBOX_ENABLED:-0}"
+REQUIRE_MODERN_PREDICTION_SESSION=1
 DRY_RUN=0
 AUTO_TYPE=0
 AUTO_QUERY="${RAG_IME_FOREGROUND_TRACE_AUTO_QUERY:-er qi}"
@@ -35,9 +39,13 @@ typing test file, then waits for real foreground AppKit evidence:
 Options:
   --wait SECONDS        Seconds to wait for trace evidence (default: 60)
   --mixed-only          Require mixed panel layout but not number-key side commit
+  --side-panel-only     Require any model/RAG/memory side panel instead of mixed model+RAG layout
   --no-clear            Do not clear the existing frontend trace first
   --no-open             Do not open the TextEdit test file
   --no-select           Do not try to select the Squirrel input source
+  --require-hitoolbox-enabled
+                       Also require the HIToolbox preference gate before typing
+  --no-modern-session   Do not require a non-legacy predictionSession trace
   --auto-type           Try to type the test query and side-candidate key with AppleScript
   --auto-query TEXT     Text used by --auto-type (default: er qi)
   --auto-key KEY        Number key used by --auto-type (default: 6)
@@ -59,6 +67,10 @@ while [[ $# -gt 0 ]]; do
     --mixed-only)
       REQUIRE_SIDE_COMMIT=0
       ;;
+    --side-panel-only)
+      REQUIRE_MIXED_PANEL=0
+      REQUIRE_SIDE_PANEL=1
+      ;;
     --no-clear)
       CLEAR_TRACE=0
       ;;
@@ -67,6 +79,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-select)
       SELECT_INPUT_SOURCE=0
+      ;;
+    --require-hitoolbox-enabled)
+      REQUIRE_HITOOLBOX_ENABLED=1
+      ;;
+    --no-modern-session)
+      REQUIRE_MODERN_PREDICTION_SESSION=0
       ;;
     --auto-type)
       AUTO_TYPE=1
@@ -107,11 +125,19 @@ trace_args=(
   "$TRACE_CHECK_SCRIPT"
   --log-path "$TRACE_LOG"
   --wait "$WAIT_SECONDS"
-  --require-mixed-panel
   --print-last 8
 )
+if [[ "$REQUIRE_MIXED_PANEL" == "1" ]]; then
+  trace_args+=(--require-mixed-panel)
+fi
+if [[ "$REQUIRE_SIDE_PANEL" == "1" ]]; then
+  trace_args+=(--require-side-panel)
+fi
 if [[ "$REQUIRE_SIDE_COMMIT" == "1" ]]; then
   trace_args+=(--require-side-commit)
+fi
+if [[ "$REQUIRE_MODERN_PREDICTION_SESSION" == "1" ]]; then
+  trace_args+=(--require-modern-prediction-session)
 fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
@@ -126,6 +152,10 @@ clear_trace=$CLEAR_TRACE
 open_test_file=$OPEN_TEST_FILE
 select_input_source=$SELECT_INPUT_SOURCE
 require_side_commit=$REQUIRE_SIDE_COMMIT
+require_mixed_panel=$REQUIRE_MIXED_PANEL
+require_side_panel=$REQUIRE_SIDE_PANEL
+require_hitoolbox_enabled=$REQUIRE_HITOOLBOX_ENABLED
+require_modern_prediction_session=$REQUIRE_MODERN_PREDICTION_SESSION
 auto_type=$AUTO_TYPE
 auto_query=$AUTO_QUERY
 auto_key=$AUTO_KEY
@@ -137,7 +167,11 @@ EOF
   exit 0
 fi
 
-"$CHECK_INPUT_SOURCE_SCRIPT" --require-hitoolbox-enabled "$INPUT_SOURCE_ID"
+if [[ "$REQUIRE_HITOOLBOX_ENABLED" == "1" ]]; then
+  "$CHECK_INPUT_SOURCE_SCRIPT" --require-hitoolbox-enabled "$INPUT_SOURCE_ID"
+else
+  "$CHECK_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
+fi
 
 if [[ "$SELECT_INPUT_SOURCE" == "1" ]]; then
   "$SELECT_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"

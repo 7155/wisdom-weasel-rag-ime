@@ -15,7 +15,7 @@ from .prediction_first import (
 from .text_utils import compact_whitespace
 
 
-DEFAULT_CANDIDATE_POOL_TTL_MS = 900
+DEFAULT_CANDIDATE_POOL_TTL_MS = 2600
 
 
 @dataclass(frozen=True)

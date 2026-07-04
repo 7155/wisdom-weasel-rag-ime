@@ -125,13 +125,100 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("displayCandidate(matchingSelectionNumber:", source)
         self.assertIn("candidate.selectionRank == number", source)
         self.assertIn("candidate.selectionKey == \"\\(number)\"", source)
+        self.assertIn("selectionNumber(forKey:", source)
+        self.assertIn('if key == "0"', source)
+        self.assertIn("return 10", source)
+
+    def test_native_frontend_routes_digits_from_raw_keydown_before_text_insertion(self) -> None:
+        source = _controller_source()
+
+        handle_start = source.index("override func handle")
+        handle_end = source.index("override func inputText")
+        handle_body = source[handle_start:handle_end]
+        self.assertIn("event.type == .keyDown", handle_body)
+        self.assertIn("event.charactersIgnoringModifiers", handle_body)
+        self.assertIn("selectCandidateIfNeeded(key, client: client)", handle_body)
+        self.assertIn("hadVisiblePanel", handle_body)
+        self.assertIn("return true", handle_body)
+        self.assertIn("return inputText(text, client: sender)", handle_body)
+
+    def test_native_frontend_backspace_updates_composition_or_committed_context(self) -> None:
+        source = _controller_source()
+
+        handle_start = source.index("override func handle")
+        handle_end = source.index("override func inputText")
+        handle_body = source[handle_start:handle_end]
+        self.assertIn("event.keyCode == 51", handle_body)
+        self.assertIn("handleBackspace(client: client)", handle_body)
+
+        input_start = source.index("override func inputText")
+        input_end = source.index("override func commitComposition")
+        input_body = source[input_start:input_end]
+        self.assertIn("isBackspaceText(string)", input_body)
+        self.assertIn("handleBackspace(client: client)", input_body)
+
+        backspace_start = source.index("private func handleBackspace")
+        backspace_end = source.index("private func scheduleSuggestionRefresh")
+        backspace_body = source[backspace_start:backspace_end]
+        self.assertIn("removeLastCommittedContextCharacter()", backspace_body)
+        self.assertIn("return false", backspace_body)
+        self.assertIn("composition.removeLast()", backspace_body)
+        self.assertIn("scheduleSuggestionRefresh(client: client)", backspace_body)
+        self.assertIn("clearVisiblePredictionPanel()", backspace_body)
+
+        context_start = source.index("private func removeLastCommittedContextCharacter")
+        context_body = source[context_start:]
+        self.assertIn("context.removeLast()", context_body)
+        self.assertIn("committedContext = context.trimmingCharacters", context_body)
+
+    def test_native_frontend_syncs_committed_context_from_actual_client_text(self) -> None:
+        source = _controller_source()
+
+        commit_start = source.index("private func commit(")
+        commit_end = source.index("private func commitRawText")
+        commit_body = source[commit_start:commit_end]
+        self.assertIn("actualCommittedContext(client: client, fallback: committedContext, excludingMarkedText: composition)", commit_body)
+        self.assertIn("actualCommittedContext(client: client, fallback: appendingContext(previousContext, finalText))", commit_body)
+
+        refresh_start = source.index("private func scheduleSuggestionRefresh")
+        refresh_end = source.index("private func schedulePostCommitPrediction")
+        refresh_body = source[refresh_start:refresh_end]
+        self.assertIn("syncCommittedContextFromClient(providedClient ?? client(), excludingMarkedText: inputSnapshot)", refresh_body)
+
+        post_start = source.index("private func schedulePostCommitPrediction")
+        post_end = source.index("private func renderSidecarResponse")
+        post_body = source[post_start:post_end]
+        self.assertIn("syncCommittedContextFromClient(providedClient)", post_body)
+
+        actual_start = source.index("private func actualCommittedContext")
+        actual_end = source.index("private func boundedContext")
+        actual_body = source[actual_start:actual_end]
+        self.assertIn("client.selectedRange()", actual_body)
+        self.assertIn("client.attributedSubstring(from: range)", actual_body)
+        self.assertIn("text.hasSuffix(markedText)", actual_body)
+        self.assertIn("text.removeLast(markedText.count)", actual_body)
+
+    def test_native_frontend_empty_sidecar_response_keeps_existing_panel_unless_clear_requested(self) -> None:
+        source = _controller_source()
+
+        render_start = source.index("private func renderSidecarResponse")
+        render_end = source.index("private func showLocalRimeFallbackCandidates")
+        render_body = source[render_start:render_end]
+        empty_index = render_body.index("if response.displayCandidates.isEmpty")
+        should_show_index = render_body.index("if !shouldShowCandidatePanel(response)")
+        self.assertLess(empty_index, should_show_index)
+        empty_body = render_body[empty_index:should_show_index]
+        self.assertIn("response.predictionSession?.shouldClearPredictionPanel == true", empty_body)
+        self.assertIn("clearCandidateState()", empty_body)
+        self.assertIn("clearVisiblePredictionPanel()", empty_body)
+        self.assertIn("return", empty_body)
 
     def test_native_frontend_keeps_ime_latency_budget_for_streaming_mlx(self) -> None:
         source = _controller_source()
         models_source = _models_source()
 
-        self.assertIn("latencyBudgetMs: 800", source)
-        self.assertIn("latencyBudgetMs: Int = 800", models_source)
+        self.assertIn("latencyBudgetMs: 2000", source)
+        self.assertIn("latencyBudgetMs: Int = 2000", models_source)
 
     def test_native_frontend_uses_backend_prediction_session_expiration(self) -> None:
         source = _controller_source()
@@ -149,6 +236,20 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("expiresAfterMs > 0", expiration_body)
         self.assertIn("TimeInterval(expiresAfterMs) / 1000.0", expiration_body)
         self.assertIn("postCommitPanelTtlSeconds", expiration_body)
+        self.assertIn("private let postCommitPanelTtlSeconds: TimeInterval = 8.0", source)
+
+    def test_native_frontend_forces_side_candidates_for_post_commit_and_contextual_prefix(self) -> None:
+        source = _controller_source()
+
+        refresh_start = source.index("private func scheduleSuggestionRefresh")
+        refresh_end = source.index("private func schedulePostCommitPrediction")
+        refresh_body = source[refresh_start:refresh_end]
+        self.assertIn("forceSideCandidates: !contextSnapshot.trimmingCharacters", refresh_body)
+
+        post_start = source.index("private func schedulePostCommitPrediction")
+        post_end = source.index("private func renderSidecarResponse")
+        post_body = source[post_start:post_end]
+        self.assertIn("forceSideCandidates: true", post_body)
 
     def test_native_frontend_drops_stale_async_responses(self) -> None:
         source = _controller_source()

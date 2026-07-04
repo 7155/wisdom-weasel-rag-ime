@@ -356,13 +356,16 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             "[OK] sidecar predictor: local-ollama qwen3.5:0.8b-mlx streamFirstCandidate=true",
             result.stdout,
         )
-        self.assertIn("doctor_latency_budget_ms: 800", result.stdout)
+        self.assertIn("doctor_latency_budget_ms: 2000", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.suggest_payloads)
-        self.assertTrue(all(payload.get("latencyBudgetMs") == 800 for payload in _DoctorSidecarHandler.suggest_payloads))
+        self.assertTrue(all(payload.get("latencyBudgetMs") == 2000 for payload in _DoctorSidecarHandler.suggest_payloads))
         main_probe = _DoctorSidecarHandler.suggest_payloads[0]
+        self.assertEqual(main_probe.get("frontendBuild"), "rag-ime.foreground-trace.v2")
+        self.assertEqual(main_probe.get("schemaVersion"), "rag-ime.squirrel-frontend-trace.v1")
         self.assertEqual(main_probe.get("rawInput"), "")
+        self.assertEqual(main_probe.get("commitTextPreview"), "")
         self.assertEqual(main_probe.get("queryBasis"), None)
-        self.assertIn("Prediction-first RAG 输入法", str(main_probe.get("committedContext") or ""))
+        self.assertIn("候选展示方式", str(main_probe.get("committedContext") or ""))
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
@@ -405,7 +408,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertGreaterEqual(len(_DoctorSidecarHandler.suggest_payloads), 4)
         self.assertEqual(_DoctorSidecarHandler.suggest_payloads[0].get("sessionId"), "doctor")
         self.assertTrue(
-            any(payload.get("sessionId") == "doctor-model-validation" for payload in _DoctorSidecarHandler.suggest_payloads),
+            any(
+                str(payload.get("sessionId") or "").startswith("doctor-model-validation-")
+                for payload in _DoctorSidecarHandler.suggest_payloads
+            ),
             _DoctorSidecarHandler.suggest_payloads,
         )
         self.assertIn("[OK] model generation path: MLX model candidates available", result.stdout)
@@ -502,7 +508,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[OK] Squirrel workdir is a git checkout", result.stdout)
         self.assertIn("[OK] xcodebuild can inspect patched Squirrel project", result.stdout)
         self.assertIn("[OK] HTTP sidecar health, rime-suggest, and rime-select passed", result.stdout)
-        self.assertIn("[OK] candidate contract: model inline + rag block + shared selection keys passed", result.stdout)
+        self.assertIn("[OK] candidate contract: side candidates have shared selection keys and routing", result.stdout)
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("[OK] model generation path: MLX model candidates available", result.stdout)
         self.assertIn("[OK] RAG ranking diagnostics available", result.stdout)
@@ -833,7 +839,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             )
 
         self.assertIn("require_frontend_trace: 1", result.stdout)
-        self.assertIn("[OK] frontend trace passed: events=4 modelInline=5 ragBlock=3 numberKey=6 sideCommitLabel=6", result.stdout)
+        self.assertIn(
+            "[OK] frontend trace passed: events=5 modelInline=5 ragBlock=3 phase=post_commit expiresAfterMs=8000 numberKey=6 sideCommitLabel=6",
+            result.stdout,
+        )
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_fails_required_frontend_trace_without_events(self) -> None:
@@ -861,6 +870,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("[FAIL] frontend trace missing mixed panel or number-key side commit", result.stdout)
         self.assertIn("latestMixedPanel=False", result.stdout)
+        self.assertIn("latestModernPredictionSession=False", result.stdout)
         self.assertIn("latestSideCommit=False", result.stdout)
         self.assertIn("latestNumberKeySideCommit=False", result.stdout)
 
@@ -1067,6 +1077,22 @@ def _write_mlx_launch_agent_plist(path: Path, *, root: Path, model: str, port: s
 def _write_frontend_trace_log(path: Path) -> None:
     path.write_text(
         json.dumps(
+            {
+                "event": "sidecar_response_applied",
+                "timestampMs": 0,
+                "displayCount": 8,
+                "latencyBudgetMs": 2000,
+                "predictionSession": {
+                    "phase": "post_commit",
+                    "selectionScope": "prediction",
+                    "sessionFingerprint": "session-a",
+                    "expiresAfterMs": 8000,
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+        + json.dumps(
             {
                 "event": "panel_display_candidates",
                 "timestampMs": 1,

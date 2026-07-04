@@ -14,6 +14,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
 
         self.assertIn("fallback: 8, range: 0...10", patch_text)
+        self.assertIn("fallback: 9000, range: 100...15000", patch_text)
         self.assertIn("let displayLayout: String?", patch_text)
         self.assertIn("let displayLane: String?", patch_text)
         self.assertIn("func candidateSeparator(before index: Int) -> String", patch_text)
@@ -27,11 +28,14 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("var candidateSeparators = [String]()", patch_text)
         self.assertIn('traceRagImeFrontendEvent("panel_text_layout"', patch_text)
         self.assertIn("traceRagImePanelTextLayout(", patch_text)
-        self.assertIn('if candidate.sourceType == "model" && layout == "inline" && lane == "model"', patch_text)
+        self.assertIn('case "model":', patch_text)
+        self.assertIn('return "LLM"', patch_text)
+        self.assertIn('return "RAG"', patch_text)
+        self.assertIn('return "词库"', patch_text)
         self.assertIn("let maxTextHeight = ragImePanelVertical", patch_text)
         self.assertIn("let maxWidth = if ragImePanelVertical", patch_text)
-        self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 0.9", patch_text)
-        self.assertIn("private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 0.9", patch_text)
+        self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 2.6", patch_text)
+        self.assertIn("private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 8.0", patch_text)
         self.assertIn("func canUseRagImeDisplayHoldover(", patch_text)
         self.assertIn("func canUseRagImePostCommitDisplayHoldover(", patch_text)
         self.assertIn("func canSelectCurrentRagImeDisplayCandidates(", patch_text)
@@ -47,15 +51,35 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("guard !ragImeDisplayCandidates.isEmpty else { return false }", patch_text)
         self.assertNotIn('ragImeDisplayQueryBasis == "committedContext"', patch_text)
         self.assertIn("forceSideCandidates: true", patch_text)
+        self.assertIn("let frontendBuild: String", patch_text)
+        self.assertIn("let schemaVersion: String", patch_text)
+        self.assertIn("let predictionFirstMerge: Bool", patch_text)
+        self.assertIn('frontendBuild: "rag-ime.foreground-trace.v2"', patch_text)
+        self.assertIn('schemaVersion: "rag-ime.squirrel-frontend-trace.v1"', patch_text)
+        self.assertIn("predictionFirstMerge: true", patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_request_scheduled"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_empty_response_cleared"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_clear_response_applied"', patch_text)
         self.assertIn("response.predictionSession?.shouldClearPredictionPanel == true", patch_text)
+        self.assertIn("let shouldClearEmptyResponse = response.predictionSession?.shouldClearPredictionPanel == true", patch_text)
+        self.assertIn('"keptExistingPanel": !shouldClearEmptyResponse', patch_text)
         self.assertIn("response.displayCandidates.allSatisfy({ ragImeDisplayCandidateSessionFingerprint($0) == responseSessionFingerprint })", patch_text)
         self.assertIn("clearRagImeDisplayCandidates()", patch_text)
         self.assertIn("rag-ime.foreground-trace.v2", patch_text)
         self.assertIn("guard !response.displayCandidates.isEmpty else {", patch_text)
         self.assertIn("committedContext: ragImeCommittedContext", patch_text)
+        self.assertIn("removeLastRagImeCommittedContextCharacterIfNoComposition()", patch_text)
+        self.assertIn("func removeLastRagImeCommittedContextCharacter()", patch_text)
+        self.assertIn("func boundedRagImeCommittedContext(_ text: String) -> String", patch_text)
+        self.assertIn("func syncRagImeCommittedContextFromClient(excludingMarkedText markedText: String = \"\") -> String", patch_text)
+        self.assertIn("client.attributedSubstring(from: range)", patch_text)
+        self.assertIn('traceRagImeFrontendEvent("sidecar_response_dropped"', patch_text)
+        self.assertIn("func ragImeResponseContainsRimeFallback(_ response: RagImeSidecarResponse) -> Bool", patch_text)
+        self.assertIn("func ragImeDisplayCandidatesContainComposableSideCandidate() -> Bool", patch_text)
+        self.assertIn('selectionScope == "mixed_prediction_first"', patch_text)
+        self.assertIn('traceRagImeFrontendEvent("sidecar_rime_candidate_change_allowed"', patch_text)
+        self.assertIn('dropRagImeSidecarResponse("rime_candidates_changed"', patch_text)
+        self.assertIn('dropRagImeSidecarResponse("raw_input_changed"', patch_text)
         self.assertIn("private var ragImePendingRequestFingerprint: String = \"\"", patch_text)
         self.assertIn("private var ragImeDisplayExpiryWorkItem: DispatchWorkItem?", patch_text)
         self.assertIn("fingerprint == ragImeLastRequestFingerprint || fingerprint == ragImePendingRequestFingerprint", patch_text)
@@ -353,9 +377,9 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 8",
-                "  latency_budget_ms: 800",
+                "  latency_budget_ms: 2000",
                 "  debounce_ms: 40",
-                "  timeout_ms: 1200",
+                "  timeout_ms: 9000",
                 "  frontend_trace: true",
             ]
         )

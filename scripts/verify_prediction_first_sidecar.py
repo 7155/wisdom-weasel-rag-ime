@@ -89,7 +89,7 @@ def retry_post_commit_model_if_needed(
     payload = dict(case["payload"])
     payload["sessionId"] = "verify-post-commit-model-retry"
     payload["requestSeq"] = int(payload.get("requestSeq") or 1) + 100
-    payload["latencyBudgetMs"] = max(latency_budget_ms, 1200)
+    payload["latencyBudgetMs"] = max(latency_budget_ms, 2000)
     for attempt in range(2):
         time.sleep(0.18 * (attempt + 1))
         retry_payload = dict(payload)

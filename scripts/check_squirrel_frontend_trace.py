@@ -17,7 +17,9 @@ def main() -> int:
     parser.add_argument("--clear", action="store_true", help="Delete the current trace log and exit unless --wait is set.")
     parser.add_argument("--wait", type=float, default=0.0, help="Wait this many seconds for required events.")
     parser.add_argument("--require-mixed-panel", action="store_true")
+    parser.add_argument("--require-side-panel", action="store_true")
     parser.add_argument("--require-side-commit", action="store_true")
+    parser.add_argument("--require-modern-prediction-session", action="store_true")
     parser.add_argument("--print-last", type=int, default=5)
     args = parser.parse_args()
 
@@ -30,7 +32,13 @@ def main() -> int:
     while True:
         events = load_events(log_path)
         report = build_report(events, log_path=log_path, print_last=max(0, args.print_last))
-        if report_passes(report, require_mixed_panel=args.require_mixed_panel, require_side_commit=args.require_side_commit):
+        if report_passes(
+            report,
+            require_mixed_panel=args.require_mixed_panel,
+            require_side_panel=args.require_side_panel,
+            require_side_commit=args.require_side_commit,
+            require_modern_prediction_session=args.require_modern_prediction_session,
+        ):
             break
         if time.monotonic() >= deadline:
             break
@@ -38,12 +46,16 @@ def main() -> int:
 
     report["required"] = {
         "mixedPanel": bool(args.require_mixed_panel),
+        "sidePanel": bool(args.require_side_panel),
         "sideCommit": bool(args.require_side_commit),
+        "modernPredictionSession": bool(args.require_modern_prediction_session),
     }
     report["passed"] = report_passes(
         report,
         require_mixed_panel=args.require_mixed_panel,
+        require_side_panel=args.require_side_panel,
         require_side_commit=args.require_side_commit,
+        require_modern_prediction_session=args.require_modern_prediction_session,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["passed"] else 1
@@ -67,21 +79,36 @@ def load_events(log_path: Path) -> list[dict[str, Any]]:
 
 def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: int) -> dict[str, Any]:
     mixed_panel = latest_matching(events, is_mixed_panel_event)
+    side_panel = latest_matching(events, is_side_panel_event)
     mixed_text_layout = latest_matching(events, is_mixed_text_layout_event)
     side_commit = latest_matching(events, lambda event: event.get("event") == "side_candidate_commit")
     valid_side_commit = latest_matching(events, is_valid_side_commit_event)
     number_route = latest_matching(events, lambda event: event.get("event") == "number_key_route")
-    number_key_side_commit = latest_number_key_side_commit(events)
+    sidecar_response = latest_matching(events, lambda event: event.get("event") == "sidecar_response_applied")
+    modern_prediction_session = latest_matching(events, is_modern_prediction_session_event)
+    side_commit_barrier_ms = max(
+        event_timestamp_ms(mixed_panel),
+        event_timestamp_ms(side_panel),
+        event_timestamp_ms(mixed_text_layout),
+        event_timestamp_ms(modern_prediction_session),
+    )
+    historical_number_key_side_commit = latest_number_key_side_commit(events)
+    number_key_side_commit = latest_number_key_side_commit(events, min_timestamp_ms=side_commit_barrier_ms)
     return {
         "schemaVersion": "rag-ime.squirrel-frontend-trace-check.v1",
         "logPath": str(log_path),
         "eventCount": len(events),
+        "latestSidecarResponse": summarize_event(sidecar_response),
+        "latestModernPredictionSession": summarize_event(modern_prediction_session),
         "latestMixedPanel": summarize_event(mixed_panel),
+        "latestSidePanel": summarize_event(side_panel),
         "latestMixedTextLayout": summarize_event(mixed_text_layout),
         "latestNumberKeyRoute": summarize_event(number_route),
         "latestSideCommit": summarize_event(side_commit),
         "latestValidSideCommit": summarize_event(valid_side_commit),
+        "sideCommitBarrierTimestampMs": side_commit_barrier_ms,
         "latestNumberKeySideCommit": summarize_number_key_side_commit(number_key_side_commit),
+        "latestHistoricalNumberKeySideCommit": summarize_number_key_side_commit(historical_number_key_side_commit),
         "lastEvents": [summarize_event(event) for event in events[-print_last:]] if print_last else [],
     }
 
@@ -91,6 +118,15 @@ def latest_matching(events: list[dict[str, Any]], predicate: Any) -> dict[str, A
         if predicate(event):
             return event
     return None
+
+
+def event_timestamp_ms(event: dict[str, Any] | None) -> int:
+    if not event:
+        return 0
+    try:
+        return int(event.get("timestampMs") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def is_mixed_panel_event(event: dict[str, Any]) -> bool:
@@ -105,6 +141,21 @@ def is_mixed_panel_event(event: dict[str, Any]) -> bool:
         and bool(event.get("forcesHorizontalLayout"))
         and visible_candidates_are_side_first(candidates)
     )
+
+
+def is_side_panel_event(event: dict[str, Any]) -> bool:
+    if event.get("event") != "panel_display_candidates":
+        return False
+    counts = event.get("candidateCounts")
+    if not isinstance(counts, dict):
+        return False
+    side_count = int(counts.get("modelInline") or 0) + int(counts.get("ragBlock") or 0)
+    if side_count <= 0:
+        return False
+    candidates = event.get("candidates")
+    if isinstance(candidates, list):
+        return visible_candidates_have_selectable_side(candidates)
+    return True
 
 
 def is_mixed_text_layout_event(event: dict[str, Any]) -> bool:
@@ -129,6 +180,45 @@ def is_mixed_text_layout_event(event: dict[str, Any]) -> bool:
         if str(separators[index]) == "\n":
             return False
     return str(separators[model_inline]) == "\n"
+
+
+def visible_candidates_have_selectable_side(candidates: Any) -> bool:
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    side_indices: list[int] = []
+    rime_indices: list[int] = []
+    for index, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict):
+            return False
+        label = str(candidate.get("label") or "")
+        selection_key = str(candidate.get("selectionKey") or label)
+        expected_label = "0" if index == 9 else str(index + 1)
+        if label and label != expected_label:
+            return False
+        if selection_key and label and selection_key != label:
+            return False
+
+        source_type = str(candidate.get("sourceType") or "")
+        selection_action = str(candidate.get("selectionAction") or "")
+        if source_type == "model":
+            side_indices.append(index)
+            if selection_action != "commit_side_candidate":
+                return False
+        elif source_type in {"rag", "memory"}:
+            side_indices.append(index)
+            if selection_action != "commit_side_candidate":
+                return False
+        elif source_type == "rime":
+            rime_indices.append(index)
+            if selection_action and selection_action != "select_rime_candidate":
+                return False
+        else:
+            return False
+    if not side_indices:
+        return False
+    if rime_indices and min(rime_indices) < max(side_indices):
+        return False
+    return True
 
 
 def visible_candidates_are_side_first(candidates: Any) -> bool:
@@ -185,16 +275,34 @@ def is_valid_side_commit_event(event: dict[str, Any]) -> bool:
         return False
     if str(candidate.get("selectionAction") or "") != "commit_side_candidate":
         return False
-    if str(candidate.get("sourceType") or "") not in {"model", "rag"}:
+    if str(candidate.get("sourceType") or "") not in {"model", "rag", "memory"}:
         return False
     selection_key = str(candidate.get("selectionKey") or candidate.get("label") or "")
     return bool(selection_key)
 
 
-def latest_number_key_side_commit(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+def is_modern_prediction_session_event(event: dict[str, Any]) -> bool:
+    if event.get("event") != "sidecar_response_applied":
+        return False
+    session = event.get("predictionSession")
+    if not isinstance(session, dict):
+        return False
+    phase = str(session.get("phase") or "")
+    selection_scope = str(session.get("selectionScope") or "")
+    expires_after_ms = int(session.get("expiresAfterMs") or 0)
+    return phase not in {"", "legacy"} and bool(selection_scope) and expires_after_ms > 0
+
+
+def latest_number_key_side_commit(
+    events: list[dict[str, Any]],
+    *,
+    min_timestamp_ms: int = 0,
+) -> dict[str, Any] | None:
     latest: dict[str, Any] | None = None
     for route_index, route_event in enumerate(events):
         if route_event.get("event") != "number_key_route":
+            continue
+        if event_timestamp_ms(route_event) < min_timestamp_ms:
             continue
         route_candidate = route_event.get("candidate")
         if not isinstance(route_candidate, dict):
@@ -203,6 +311,8 @@ def latest_number_key_side_commit(events: list[dict[str, Any]]) -> dict[str, Any
         if not key:
             continue
         for commit_event in events[route_index + 1 :]:
+            if event_timestamp_ms(commit_event) < min_timestamp_ms:
+                continue
             if not is_valid_side_commit_event(commit_event):
                 continue
             if candidates_match_number_route(route_event, commit_event):
@@ -252,6 +362,9 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "candidateCounts": event.get("candidateCounts"),
         "separators": event.get("separators"),
         "key": event.get("key"),
+        "displayCount": event.get("displayCount"),
+        "latencyBudgetMs": event.get("latencyBudgetMs"),
+        "predictionSession": event.get("predictionSession"),
     }
     candidates = event.get("candidates")
     if isinstance(candidates, list):
@@ -272,12 +385,23 @@ def summarize_number_key_side_commit(match: dict[str, Any] | None) -> dict[str, 
     }
 
 
-def report_passes(report: dict[str, Any], *, require_mixed_panel: bool, require_side_commit: bool) -> bool:
+def report_passes(
+    report: dict[str, Any],
+    *,
+    require_mixed_panel: bool,
+    require_side_panel: bool,
+    require_side_commit: bool,
+    require_modern_prediction_session: bool,
+) -> bool:
     if require_mixed_panel and not report.get("latestMixedPanel"):
         return False
     if require_mixed_panel and not report.get("latestMixedTextLayout"):
         return False
+    if require_side_panel and not report.get("latestSidePanel"):
+        return False
     if require_side_commit and not report.get("latestNumberKeySideCommit"):
+        return False
+    if require_modern_prediction_session and not report.get("latestModernPredictionSession"):
         return False
     return True
 

@@ -99,8 +99,8 @@ rag_ime:
   project: wisdom-weasel-rag-ime
   max_visible_candidates: 8
   max_side_candidates: 8
-  latency_budget_ms: 350
-  timeout_ms: 1200
+  latency_budget_ms: 2000
+  timeout_ms: 9000
 ```
 
 `rag_ime/enabled` defaults to false. If it is false, Squirrel falls back to the original Rime candidate list. If `sidecar_url` fails, the patch falls back to `python -m rag_ime.cli`; if that also fails, Squirrel keeps the original Rime list.
