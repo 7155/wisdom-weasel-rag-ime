@@ -292,6 +292,58 @@ class EmptySuggestionCore(CapturingCore):
         return []
 
 
+class ContextRepeatingCore(CapturingCore):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.last_suggest_current_input = current_input
+        self.last_suggest_recent_context = recent_context
+        return [
+            InputSuggestion(
+                suggestion_id="repeat:1",
+                surface_text="RAG 输入法本地记忆",
+                suggestion_type="rag_candidate",
+                source_event_id=1,
+                evidence_preview="same as current context",
+                confidence=0.9,
+                metadata={"tags": [], "state": {}},
+            ),
+            InputSuggestion(
+                suggestion_id="repeat:2",
+                surface_text="上下文窗口治理",
+                suggestion_type="rag_candidate",
+                source_event_id=2,
+                evidence_preview="new memory",
+                confidence=0.8,
+                metadata={"tags": [], "state": {"accepted_count": 3}},
+            ),
+        ][:top_k]
+
+
+class HistoryRepeatingCore(CapturingCore):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.last_suggest_current_input = current_input
+        self.last_suggest_recent_context = recent_context
+        return [
+            InputSuggestion(
+                suggestion_id="history:1",
+                surface_text="历史输入会进入模型预测",
+                suggestion_type="rag_candidate",
+                source_event_id=1,
+                evidence_preview="raw recent history echo",
+                confidence=0.9,
+                metadata={"tags": [], "state": {}},
+            ),
+            InputSuggestion(
+                suggestion_id="history:2",
+                surface_text="长期记忆候选保留",
+                suggestion_type="rag_candidate",
+                source_event_id=2,
+                evidence_preview="durable memory",
+                confidence=0.8,
+                metadata={"tags": ["generated-memory"], "state": {}},
+            ),
+        ][:top_k]
+
+
 class PrefixSuggestionCore(CapturingCore):
     def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
         return [
@@ -1004,6 +1056,59 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["historyContext"], predictor.last_recent_context)
         self.assertEqual(core.last_suggest_recent_context, "当前正在写 RAG 输入法 sidecar")
         self.assertNotIn("很长的历史输入上下文" * 3, predictor.last_recent_context)
+
+    def test_rag_candidates_do_not_repeat_current_committed_context(self) -> None:
+        core = ContextRepeatingCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-rag-repeat-current-context",
+                "requestSeq": 47,
+                "committedContext": "RAG 输入法本地记忆",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 3,
+                "latencyBudgetMs": 800,
+            },
+            adapter=adapter,
+            core=core,
+            predictor=CleanPostCommitPredictionProvider(),
+        )
+
+        rag_surfaces = [item["surfaceText"] for item in response["ragCandidates"]]
+        display_surfaces = [item["text"] for item in response["displayCandidates"]]
+        self.assertNotIn("RAG 输入法本地记忆", rag_surfaces)
+        self.assertNotIn("RAG 输入法本地记忆", display_surfaces)
+        self.assertIn("上下文窗口治理", rag_surfaces)
+        self.assertEqual(response["ragLane"]["filteredSuggestionCount"], 1)
+
+    def test_rag_candidates_do_not_echo_model_history_reference_without_durable_signal(self) -> None:
+        core = HistoryRepeatingCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-rag-repeat-history-context",
+                "requestSeq": 48,
+                "rawInput": "rag",
+                "preedit": "rag",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 3,
+                "latencyBudgetMs": 800,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=adapter,
+            core=core,
+            predictor=FakePredictionProvider(),
+        )
+
+        rag_surfaces = [item["surfaceText"] for item in response["ragCandidates"]]
+        self.assertNotIn("历史输入会进入模型预测", rag_surfaces)
+        self.assertIn("长期记忆候选保留", rag_surfaces)
+        self.assertEqual(response["ragLane"]["filteredSuggestionCount"], 1)
+        self.assertIn("历史参考", response["historyContext"])
 
     def test_zero_side_candidates_does_not_call_model(self) -> None:
         response = build_rime_sidecar_response(

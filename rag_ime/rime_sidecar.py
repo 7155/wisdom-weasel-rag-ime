@@ -279,12 +279,14 @@ def build_rime_sidecar_response(
         if raw_model_prediction_count != len(model_predictions):
             model_lane["filteredPredictionCount"] = raw_model_prediction_count - len(model_predictions)
         model_lane["predictionCount"] = len(model_predictions)
+        prediction_context = _string(model_lane.get("historyContext"))
         raw_suggestion_count = len(suggestions)
         suggestions = _filter_rag_suggestions_for_query(
             suggestions,
             snapshot=snapshot,
             semantic_query=semantic_query,
             query_basis=query_basis,
+            prediction_context=prediction_context,
         )
         post_commit_filtered_suggestions = len(suggestions)
         suggestions = _filter_post_commit_rag_suggestions_for_query(
@@ -303,7 +305,6 @@ def build_rime_sidecar_response(
             rag_lane["suppressedSuggestionCount"] = len(suggestions)
             rag_lane["suggestionCount"] = 0
             suggestions = []
-        prediction_context = _string(model_lane.get("historyContext"))
         model_lane.pop("historyContext", None)
         total_elapsed_ms = int((time.perf_counter() - lane_started) * 1000)
         rag_lane.update(
@@ -997,13 +998,21 @@ def _filter_rag_suggestions_for_query(
     snapshot: RimeContextSnapshot,
     semantic_query: str,
     query_basis: str,
+    prediction_context: str = "",
 ) -> list[InputSuggestion]:
-    _ = snapshot, semantic_query, query_basis
     result: list[InputSuggestion] = []
     seen: set[str] = set()
     for suggestion in suggestions:
         surface = compact_whitespace(suggestion.surface_text)
         if not surface:
+            continue
+        if _rag_suggestion_repeats_context(
+            suggestion,
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            query_basis=query_basis,
+            prediction_context=prediction_context,
+        ):
             continue
         if _looks_like_assistant_history_candidate(suggestion):
             continue
@@ -1015,6 +1024,107 @@ def _filter_rag_suggestions_for_query(
         seen.add(key)
         result.append(suggestion)
     return result
+
+
+def _rag_suggestion_repeats_context(
+    suggestion: InputSuggestion,
+    *,
+    snapshot: RimeContextSnapshot,
+    semantic_query: str,
+    query_basis: str,
+    prediction_context: str,
+) -> bool:
+    surface = compact_whitespace(suggestion.surface_text)
+    if not surface:
+        return True
+    if _surface_repeats_current_context(
+        surface,
+        snapshot=snapshot,
+        semantic_query=semantic_query,
+        query_basis=query_basis,
+    ):
+        return True
+    if _suggestion_has_durable_memory_signal(dict(suggestion.metadata)):
+        return False
+    return _surface_repeats_history_reference(surface, prediction_context)
+
+
+def _surface_repeats_current_context(
+    surface: str,
+    *,
+    snapshot: RimeContextSnapshot,
+    semantic_query: str,
+    query_basis: str,
+) -> bool:
+    surface_norm = _repeat_norm(surface)
+    if len(surface_norm) < 3:
+        return False
+    anchors = [
+        compact_whitespace(snapshot.committed_context),
+        compact_whitespace(snapshot.commit_text_preview),
+    ]
+    if query_basis in {"committedContext", "commitTextPreview"}:
+        anchors.append(compact_whitespace(semantic_query))
+    for anchor in anchors:
+        anchor_norm = _repeat_norm(anchor)
+        if len(anchor_norm) < 3:
+            continue
+        if surface_norm == anchor_norm:
+            return True
+        if surface_norm in anchor_norm:
+            coverage = len(surface_norm) / max(1, len(anchor_norm))
+            if coverage >= 0.9:
+                return True
+        if len(anchor_norm) >= 4 and anchor_norm in surface_norm:
+            coverage = len(anchor_norm) / max(1, len(surface_norm))
+            if coverage >= 0.75:
+                return True
+    return False
+
+
+def _surface_repeats_history_reference(surface: str, prediction_context: str) -> bool:
+    if "历史参考" not in prediction_context and "历史输入:" not in prediction_context:
+        return False
+    surface_norm = _repeat_norm(surface)
+    context_norm = _repeat_norm(prediction_context)
+    if len(surface_norm) < 4 or not context_norm:
+        return False
+    if surface_norm in context_norm:
+        return True
+    if len(surface_norm) >= 8 and _cjk_context_overlap_ratio(surface, prediction_context) >= 0.8:
+        return True
+    return False
+
+
+def _suggestion_has_durable_memory_signal(metadata: Mapping[str, object]) -> bool:
+    tags = {
+        compact_whitespace(str(tag)).lower()
+        for tag in metadata.get("tags", [])
+        if compact_whitespace(str(tag))
+    } if isinstance(metadata.get("tags"), list) else set()
+    if tags.intersection({"generated-memory", "api-core-optimized", "api-lexicon", "lexicon-phrase", "phrase-memory", "curated"}):
+        return True
+    state = metadata.get("state") if isinstance(metadata.get("state"), dict) else {}
+    assert isinstance(state, dict)
+    if bool(state.get("pinned")):
+        return True
+    durable_count = max(
+        _safe_int(state.get("accepted_count")),
+        _safe_int(state.get("event_accepted_count")),
+        _safe_int(state.get("effective_frequency")),
+        _safe_int(state.get("project_input_frequency")),
+        _safe_int(state.get("app_input_frequency")),
+    )
+    return durable_count >= 3
+
+
+def _cjk_context_overlap_ratio(surface: str, context: str) -> float:
+    candidate_chars = re.findall(r"[\u3400-\u9fff]", surface)
+    context_chars = set(re.findall(r"[\u3400-\u9fff]", context))
+    if len(candidate_chars) < 4 or not context_chars:
+        return 0.0
+    covered = sum(1 for char in candidate_chars if char in context_chars)
+    return covered / max(1, len(candidate_chars))
 
 
 def _filter_post_commit_rag_suggestions_for_query(
