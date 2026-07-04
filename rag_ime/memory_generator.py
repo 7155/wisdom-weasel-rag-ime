@@ -162,6 +162,23 @@ class VcpRebuildMemoryGenerator:
         return parsed
 
 
+def generated_memory_dedupe_tag(text: str) -> str:
+    import hashlib
+
+    digest = hashlib.sha1(compact_whitespace(text).encode("utf-8")).hexdigest()[:12]
+    return f"vcp-memory:{digest}"
+
+
+def generated_memory_context(source_text: str, recent_context: str, reason: str) -> str:
+    parts = [
+        "VCP AIMemo-style generated memory",
+        f"reason: {compact_whitespace(reason)}" if reason else "",
+        f"context: {compact_whitespace(recent_context)}" if recent_context else "",
+        f"source: {compact_whitespace(source_text)[:240]}",
+    ]
+    return " | ".join(part for part in parts if part)
+
+
 def default_vcp_rebuild_env_path() -> Path | None:
     env_override = os.environ.get("RAG_IME_VCP_REBUILD_ENV", "").strip()
     if env_override:

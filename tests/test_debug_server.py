@@ -15,8 +15,10 @@ from urllib.request import Request, urlopen
 
 from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.core_client import FixtureCoreClient
+import rag_ime.debug_server as debug_server_module
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.memory_generator import GeneratedMemoryItem, GeneratedMemoryReport
 from rag_ime.models import InputSuggestion, MemoryAction, ModelPrediction
 from rag_ime.predictor import OllamaPredictionConfig, OllamaPredictionProvider
 
@@ -96,6 +98,38 @@ class BlockingPredictionProvider:
                 confidence=0.9,
             )
         ][:max_candidates]
+
+
+class FakeVcpMemoryGenerator:
+    calls: list[dict[str, object]] = []
+
+    @classmethod
+    def from_env_path(cls, env_path=None):
+        return cls()
+
+    def generate(self, *, text: str, recent_context: str = "", project: str = "wisdom-weasel-rag-ime", max_items: int = 3):
+        self.__class__.calls.append(
+            {
+                "text": text,
+                "recentContext": recent_context,
+                "project": project,
+                "maxItems": max_items,
+            }
+        )
+        return GeneratedMemoryReport(
+            provider="vcp-rebuild",
+            model="fake-gpt",
+            elapsed_ms=12,
+            items=(
+                GeneratedMemoryItem(
+                    text="用户希望输入历史先经 API 蒸馏后再进入长期记忆",
+                    tags=("project_requirement", "memory"),
+                    importance=0.9,
+                    reason="稳定项目要求",
+                ),
+            ),
+            metadata={"wireApi": "responses"},
+        )
 
 
 class MockOllamaStreamingHandler(BaseHTTPRequestHandler):
@@ -236,6 +270,50 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["indexed"], 1)
         self.assertEqual(report["vectorStats"]["activeProviderVectors"], 1)
+
+    def test_memory_history_lists_recent_rows_and_generated_stats(self) -> None:
+        event_id = self.service.adapter.commit_text(
+            "API 整理后的输入历史记忆",
+            recent_context="历史治理",
+            source="vcp_memory_generator",
+            provider_name="vcp-rebuild:fake",
+            tags=("generated-memory", "vcp-rebuild"),
+        )
+
+        payload = self.service.memory_history({"query": "输入历史", "generatedOnly": True, "limit": 10})
+
+        self.assertTrue(payload["ok"])
+        self.assertGreaterEqual(payload["totals"]["generated"], 1)
+        self.assertEqual(payload["items"][0]["eventId"], int(event_id.removeprefix("event:")))
+        self.assertIn("generated-memory", payload["items"][0]["tags"])
+
+    def test_generate_memory_endpoint_uses_vcp_generator_and_records_rows(self) -> None:
+        original = debug_server_module.VcpRebuildMemoryGenerator
+        FakeVcpMemoryGenerator.calls = []
+        debug_server_module.VcpRebuildMemoryGenerator = FakeVcpMemoryGenerator
+        try:
+            payload = self.service.generate_memory(
+                {
+                    "text": "输入历史和记忆需要 API 整理",
+                    "recentContext": "用户希望可视化治理历史数据",
+                    "maxItems": 2,
+                }
+            )
+        finally:
+            debug_server_module.VcpRebuildMemoryGenerator = original
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["recorded"], 1)
+        self.assertEqual(FakeVcpMemoryGenerator.calls[0]["maxItems"], 2)
+        history = self.service.memory_history({"generatedOnly": True, "query": "API 蒸馏"})
+        self.assertEqual(history["items"][0]["text"], "用户希望输入历史先经 API 蒸馏后再进入长期记忆")
+
+    def test_organize_rag_database_endpoint_reports_dry_run(self) -> None:
+        report = self.service.organize_rag_database({"dryRun": True, "sampleSize": 2})
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["dryRun"])
+        self.assertIn("matchedNoise", report)
 
     def test_suggest_returns_native_frontend_payload(self) -> None:
         predictor = FakePredictionProvider()

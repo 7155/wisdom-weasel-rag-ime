@@ -537,6 +537,83 @@ button {
   line-height: 1.45;
 }
 
+.memory-console .controls {
+  margin: 8px 0 10px;
+}
+
+.memory-input,
+.memory-textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.memory-input {
+  height: 30px;
+  padding: 0 9px;
+  margin-bottom: 7px;
+}
+
+.memory-textarea {
+  min-height: 56px;
+  max-height: 96px;
+  padding: 8px 9px;
+  resize: vertical;
+}
+
+.memory-list {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.memory-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.memory-row input {
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.memory-row-main {
+  min-width: 0;
+}
+
+.memory-row-text,
+.memory-row-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.memory-row-text {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.memory-row-meta {
+  margin-top: 3px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 #debugJson {
   max-height: 260px;
   margin: 0;

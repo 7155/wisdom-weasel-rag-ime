@@ -16,6 +16,11 @@ const state = {
   inputSource: null,
   inputSourceChecking: false,
   inputSourceTimer: 0,
+  memoryHistory: null,
+  memorySelectedIds: new Set(),
+  memoryBusy: false,
+  memoryTimer: 0,
+  memoryLastAction: null,
   health: null,
   lastPayload: null,
   timer: 0,
@@ -104,6 +109,16 @@ const elements = {
   inputSelected: document.getElementById("inputSelected"),
   inputCurrent: document.getElementById("inputCurrent"),
   inputSourceHint: document.getElementById("inputSourceHint"),
+  memoryActive: document.getElementById("memoryActive"),
+  memoryGenerated: document.getElementById("memoryGenerated"),
+  memoryHidden: document.getElementById("memoryHidden"),
+  memoryQuery: document.getElementById("memoryQuery"),
+  memorySourceText: document.getElementById("memorySourceText"),
+  memoryRefreshButton: document.getElementById("memoryRefreshButton"),
+  memoryGenerateButton: document.getElementById("memoryGenerateButton"),
+  memoryOrganizeButton: document.getElementById("memoryOrganizeButton"),
+  memoryList: document.getElementById("memoryList"),
+  memoryHint: document.getElementById("memoryHint"),
 };
 
 function keyNumber(event) {
@@ -260,6 +275,14 @@ function render() {
             samples: state.cacheProbe.samples,
           }
         : null,
+      memoryHistory: state.memoryHistory
+        ? {
+            totals: state.memoryHistory.totals,
+            itemCount: state.memoryHistory.items?.length || 0,
+            selected: Array.from(state.memorySelectedIds),
+            lastAction: state.memoryLastAction,
+          }
+        : null,
       inputSource: state.inputSource
         ? {
             ok: state.inputSource.ok,
@@ -288,6 +311,7 @@ function render() {
   renderCacheProbe();
   renderPredictionFirst();
   renderInputSource();
+  renderMemoryConsole();
 }
 
 function escapeHtml(value) {
@@ -609,6 +633,125 @@ async function refreshHealth() {
   }
 }
 
+async function refreshMemoryHistory() {
+  state.memoryBusy = true;
+  renderMemoryConsole();
+  try {
+    const response = await fetch("/api/memory-history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: elements.memoryQuery.value.trim(),
+        project: "wisdom-weasel-rag-ime",
+        limit: 30,
+      }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    state.memoryHistory = await response.json();
+    state.apiOnline = true;
+  } catch (error) {
+    state.memoryHistory = { ok: false, error: String(error), items: [], totals: {} };
+    state.apiOnline = false;
+  } finally {
+    state.memoryBusy = false;
+    render();
+  }
+}
+
+function renderMemoryConsole() {
+  const history = state.memoryHistory || {};
+  const totals = history.totals || {};
+  const items = Array.isArray(history.items) ? history.items : [];
+  elements.memoryActive.textContent = Number.isFinite(totals.active) ? String(totals.active) : "--";
+  elements.memoryGenerated.textContent = Number.isFinite(totals.generated) ? String(totals.generated) : "--";
+  elements.memoryHidden.textContent = Number.isFinite(totals.hidden) ? String(totals.hidden) : "--";
+  elements.memoryRefreshButton.disabled = state.memoryBusy;
+  elements.memoryGenerateButton.disabled = state.memoryBusy;
+  elements.memoryOrganizeButton.disabled = state.memoryBusy;
+  elements.memoryRefreshButton.textContent = state.memoryBusy ? "loading" : "refresh";
+  const selectedCount = state.memorySelectedIds.size;
+  const last = state.memoryLastAction;
+  elements.memoryHint.textContent = [
+    history.error,
+    selectedCount ? `${selectedCount} selected` : `${items.length} rows`,
+    last?.message,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  elements.memoryList.replaceChildren(
+    ...items.slice(0, 8).map((item) => {
+      const row = document.createElement("label");
+      row.className = "memory-row";
+      const checked = state.memorySelectedIds.has(item.eventId);
+      row.innerHTML = `
+        <input type="checkbox" ${checked ? "checked" : ""} />
+        <span class="memory-row-main">
+          <span class="memory-row-text">${escapeHtml(item.text || "")}</span>
+          <span class="memory-row-meta">${escapeHtml([item.eventId, item.source, item.providerName].filter(Boolean).join(" · "))}</span>
+        </span>
+      `;
+      row.querySelector("input").addEventListener("change", (event) => {
+        if (event.target.checked) state.memorySelectedIds.add(item.eventId);
+        else state.memorySelectedIds.delete(item.eventId);
+        renderMemoryConsole();
+      });
+      return row;
+    }),
+  );
+}
+
+async function generateMemoryFromConsole() {
+  state.memoryBusy = true;
+  renderMemoryConsole();
+  try {
+    const response = await fetch("/api/generate-memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: elements.memorySourceText.value.trim(),
+        eventIds: Array.from(state.memorySelectedIds),
+        recentContext: state.committed.slice(-260),
+        project: "wisdom-weasel-rag-ime",
+        maxItems: 3,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
+    state.memoryLastAction = { message: `recorded ${payload.recorded}, skipped ${payload.duplicateSkipped}` };
+    state.memorySelectedIds.clear();
+    await refreshMemoryHistory();
+  } catch (error) {
+    state.memoryLastAction = { message: String(error) };
+  } finally {
+    state.memoryBusy = false;
+    render();
+  }
+}
+
+async function organizeMemoryDryRun() {
+  state.memoryBusy = true;
+  renderMemoryConsole();
+  try {
+    const response = await fetch("/api/organize-rag-db", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project: "wisdom-weasel-rag-ime",
+        dryRun: true,
+        sampleSize: 5,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
+    state.memoryLastAction = { message: `noise ${payload.matchedNoise}, stale vectors ${payload.staleHiddenVectors}` };
+  } catch (error) {
+    state.memoryLastAction = { message: String(error) };
+  } finally {
+    state.memoryBusy = false;
+    render();
+  }
+}
+
 function renderTtfc() {
   const summary = state.predictorTtfc?.benchmark?.summary || {};
   const supported = state.predictorTtfc?.benchmark?.supported;
@@ -802,6 +945,13 @@ elements.evidenceButton.addEventListener("click", () => {
 });
 elements.ttfcButton.addEventListener("click", probePredictorTtfc);
 elements.cacheButton.addEventListener("click", probeCache);
+elements.memoryRefreshButton.addEventListener("click", refreshMemoryHistory);
+elements.memoryGenerateButton.addEventListener("click", generateMemoryFromConsole);
+elements.memoryOrganizeButton.addEventListener("click", organizeMemoryDryRun);
+elements.memoryQuery.addEventListener("input", () => {
+  window.clearTimeout(state.memoryTimer);
+  state.memoryTimer = window.setTimeout(refreshMemoryHistory, 250);
+});
 elements.predictionFirstToggle.addEventListener("change", () => {
   state.predictionFirstMerge = elements.predictionFirstToggle.checked;
   state.rimeSidecar = null;
@@ -813,6 +963,7 @@ elements.inputSourceButton.addEventListener("click", refreshInputSource);
 
 render();
 refreshHealth().then(render);
+refreshMemoryHistory();
 refreshInputSource({ silent: true });
 startInputSourcePolling();
 suggestNow();

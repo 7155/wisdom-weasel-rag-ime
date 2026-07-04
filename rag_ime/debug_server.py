@@ -21,6 +21,12 @@ from .cli import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
 from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
+from .memory_generator import (
+    MemoryGenerationError,
+    VcpRebuildMemoryGenerator,
+    generated_memory_context,
+    generated_memory_dedupe_tag,
+)
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import (
@@ -40,7 +46,7 @@ from .rime_sidecar import (
     rime_context_to_payload,
     semantic_signal_length,
 )
-from .text_utils import now_ms
+from .text_utils import compact_whitespace, now_ms
 
 
 @dataclass(frozen=True)
@@ -143,6 +149,146 @@ class DebugImeService:
             **report,
             "vectorStats": self._vector_index_stats(),
         }
+
+    def memory_history(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.memory-history.v1",
+                "ok": False,
+                "error": "memory history is only available for local SQLite core",
+                "items": [],
+            }
+        report = self.core.list_memory_events(
+            project=_string(payload.get("project")) or self.config.project,
+            query=_string(payload.get("query")),
+            source=_string(payload.get("source")),
+            include_deleted=_bool(payload.get("includeDeleted"), default=False),
+            generated_only=_bool(payload.get("generatedOnly"), default=False),
+            limit=_bounded_int(payload.get("limit"), default=80, minimum=1, maximum=500),
+        )
+        return {"ok": True, **report}
+
+    def organize_rag_database(self, payload: dict[str, Any]) -> dict[str, object]:
+        organizer = getattr(self.core, "organize_rag_database", None)
+        if not callable(organizer):
+            return {
+                "schemaVersion": "rag-ime.rag-db-organize.v1",
+                "ok": False,
+                "error": "core does not support RAG database organization",
+            }
+        report = organizer(
+            project=_string(payload.get("project")) or self.config.project,
+            dry_run=_bool(payload.get("dryRun"), default=False),
+            min_generated_accepts=_bounded_int(payload.get("minGeneratedAccepts"), default=3, minimum=1, maximum=100),
+            sample_size=_bounded_int(payload.get("sampleSize"), default=12, minimum=0, maximum=50),
+        )
+        if not report.get("dryRun"):
+            self._clear_rime_cache()
+        return {"schemaVersion": "rag-ime.rag-db-organize.v1", "ok": True, **report}
+
+    def generate_memory(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.generated-memory.v1",
+                "ok": False,
+                "error": "generated memory writeback is only available for local SQLite core",
+            }
+        project = _string(payload.get("project")) or self.config.project
+        source_text = self._memory_generation_source_text(payload, project=project)
+        if not compact_whitespace(source_text):
+            return {
+                "schemaVersion": "rag-ime.generated-memory.v1",
+                "ok": False,
+                "error": "text or eventIds are required",
+            }
+        recent_context = _string(payload.get("recentContext"))
+        dry_run = _bool(payload.get("dryRun"), default=False)
+        allow_duplicates = _bool(payload.get("allowDuplicates"), default=False)
+        try:
+            generator = VcpRebuildMemoryGenerator.from_env_path(_string(payload.get("vcpEnvPath")) or None)
+            report = generator.generate(
+                text=source_text,
+                recent_context=recent_context,
+                project=project,
+                max_items=_bounded_int(payload.get("maxItems"), default=3, minimum=1, maximum=8),
+            )
+        except MemoryGenerationError as exc:
+            return {
+                "schemaVersion": "rag-ime.generated-memory.v1",
+                "ok": False,
+                "error": str(exc),
+            }
+        recorded: list[dict[str, object]] = []
+        duplicate_skipped = 0
+        for item in report.items:
+            dedupe_tag = generated_memory_dedupe_tag(item.text)
+            if not allow_duplicates and self.core.has_event_tag(dedupe_tag):
+                duplicate_skipped += 1
+                continue
+            tags = tuple(
+                dict.fromkeys(
+                    (
+                        "generated-memory",
+                        "vcp-rebuild",
+                        "aimemo",
+                        dedupe_tag,
+                        *item.tags,
+                    )
+                )
+            )
+            event_id = ""
+            if not dry_run:
+                event_id = self.adapter.commit_text(
+                    item.text,
+                    recent_context=generated_memory_context(source_text, recent_context, item.reason),
+                    project=project,
+                    app=_string(payload.get("app")) or "debug-memory-console",
+                    source="vcp_memory_generator",
+                    provider_name=f"vcp-rebuild:{report.model}",
+                    tags=tags,
+                )
+            recorded.append(
+                {
+                    "eventId": event_id,
+                    "text": item.text,
+                    "tags": list(tags),
+                    "importance": item.importance,
+                    "reason": item.reason,
+                }
+            )
+        if not dry_run and recorded:
+            self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.generated-memory.v1",
+            "ok": True,
+            "dryRun": dry_run,
+            "provider": report.provider,
+            "model": report.model,
+            "elapsedMs": report.elapsed_ms,
+            "generated": len(report.items),
+            "recorded": 0 if dry_run else len(recorded),
+            "duplicateSkipped": duplicate_skipped,
+            "items": recorded,
+            "metadata": report.metadata,
+        }
+
+    def _memory_generation_source_text(self, payload: dict[str, Any], *, project: str) -> str:
+        text = _string(payload.get("text"))
+        if text:
+            return text
+        event_ids = [_optional_int(item) for item in payload.get("eventIds", [])] if isinstance(payload.get("eventIds"), list) else []
+        event_ids = [item for item in event_ids if item]
+        if not event_ids or not isinstance(self.core, LocalSqliteCoreClient):
+            return ""
+        report = self.core.list_memory_events(project=project, include_deleted=False, limit=500)
+        by_id = {int(item["eventId"]): item for item in report.get("items", []) if isinstance(item, dict) and item.get("eventId")}
+        chunks: list[str] = []
+        for event_id in event_ids[:20]:
+            item = by_id.get(event_id)
+            if not item:
+                continue
+            chunks.append(f"- {item.get('text')} | context: {item.get('recentContext')}")
+        return "\n".join(chunks)
 
     def input_source_status(self) -> dict[str, object]:
         script = self._input_source_check_script()
@@ -816,6 +962,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.cache_probe(payload))
             elif path in ("/api/rebuild-vector-index", "/rebuild-vector-index"):
                 self._write_json(HTTPStatus.OK, self.service.rebuild_vector_index(payload))
+            elif path in ("/api/memory-history", "/memory-history"):
+                self._write_json(HTTPStatus.OK, self.service.memory_history(payload))
+            elif path in ("/api/generate-memory", "/generate-memory"):
+                self._write_json(HTTPStatus.OK, self.service.generate_memory(payload))
+            elif path in ("/api/organize-rag-db", "/organize-rag-db"):
+                self._write_json(HTTPStatus.OK, self.service.organize_rag_database(payload))
             elif path in ("/api/commit", "/commit"):
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
             elif path in ("/api/action", "/action"):

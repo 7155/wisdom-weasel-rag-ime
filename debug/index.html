@@ -126,6 +126,24 @@
           <button id="cacheButton" class="wide-button" type="button">probe</button>
         </section>
 
+        <section class="panel-card memory-console">
+          <h2>Memory Console</h2>
+          <div class="ttfc-readout" id="memoryReadout">
+            <span class="metric"><b id="memoryActive">--</b><small>active</small></span>
+            <span class="metric"><b id="memoryGenerated">--</b><small>api</small></span>
+            <span class="metric"><b id="memoryHidden">--</b><small>hidden</small></span>
+          </div>
+          <input id="memoryQuery" class="memory-input" placeholder="filter history" />
+          <textarea id="memorySourceText" class="memory-textarea" placeholder="text to distill"></textarea>
+          <div class="controls">
+            <button id="memoryRefreshButton" type="button">refresh</button>
+            <button id="memoryGenerateButton" type="button">api整理</button>
+            <button id="memoryOrganizeButton" type="button">dry-run</button>
+          </div>
+          <div class="memory-list" id="memoryList"></div>
+          <p class="panel-hint" id="memoryHint">waiting for memory history</p>
+        </section>
+
         <section class="panel-card">
           <h2>Debug</h2>
           <div class="controls">

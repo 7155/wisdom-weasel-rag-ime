@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import plistlib
@@ -30,7 +29,12 @@ from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, d
 from .embeddings import embedding_provider_from_env
 from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
-from .memory_generator import MemoryGenerationError, VcpRebuildMemoryGenerator
+from .memory_generator import (
+    MemoryGenerationError,
+    VcpRebuildMemoryGenerator,
+    generated_memory_context,
+    generated_memory_dedupe_tag,
+)
 from .models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
 from .payloads import action_response_payload, suggestions_response_payload
 from .predictor import (
@@ -732,7 +736,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         recorded: list[dict[str, object]] = []
         duplicate_skipped = 0
         for item in report.items:
-            dedupe_tag = _generated_memory_dedupe_tag(item.text)
+            dedupe_tag = generated_memory_dedupe_tag(item.text)
             if not args.allow_duplicates and _core_has_event_tag(core, dedupe_tag):
                 duplicate_skipped += 1
                 continue
@@ -751,7 +755,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not args.dry_run:
                 event_id = adapter.commit_text(
                     item.text,
-                    recent_context=_generated_memory_context(args.text, args.recent_context, item.reason),
+                    recent_context=generated_memory_context(args.text, args.recent_context, item.reason),
                     project=args.project,
                     app=args.app,
                     source="vcp_memory_generator",
@@ -3503,21 +3507,6 @@ def _core_has_event_tag(core, tag: str) -> bool:
     if not callable(checker):
         return False
     return bool(checker(tag))
-
-
-def _generated_memory_dedupe_tag(text: str) -> str:
-    digest = hashlib.sha1(compact_whitespace(text).encode("utf-8")).hexdigest()[:12]
-    return f"vcp-memory:{digest}"
-
-
-def _generated_memory_context(source_text: str, recent_context: str, reason: str) -> str:
-    parts = [
-        "VCP AIMemo-style generated memory",
-        f"reason: {compact_whitespace(reason)}" if reason else "",
-        f"context: {compact_whitespace(recent_context)}" if recent_context else "",
-        f"source: {compact_whitespace(source_text)[:240]}",
-    ]
-    return " | ".join(part for part in parts if part)
 
 
 def _parse_codex_role_filter(value: str) -> tuple[str, ...] | None:

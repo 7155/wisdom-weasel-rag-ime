@@ -675,6 +675,76 @@ class LocalSqliteCoreClient:
                 return True
         return False
 
+    def list_memory_events(
+        self,
+        *,
+        project: str = "",
+        query: str = "",
+        source: str = "",
+        include_deleted: bool = False,
+        generated_only: bool = False,
+        limit: int = 80,
+    ) -> dict[str, object]:
+        self.initialize()
+        params: list[Any] = []
+        where = ["1 = 1"]
+        if not include_deleted:
+            where.append("s.deleted = 0")
+        if project:
+            where.append("(e.project = ? OR e.project = '')")
+            params.append(project)
+        if source:
+            where.append("e.source = ?")
+            params.append(source)
+        if generated_only:
+            where.append("e.tags_json LIKE ?")
+            params.append('%"generated-memory"%')
+        normalized_query = compact_whitespace(query)
+        if normalized_query:
+            like = f"%{normalized_query}%"
+            where.append("(e.committed_text LIKE ? OR e.recent_context LIKE ? OR e.tags_json LIKE ?)")
+            params.extend([like, like, like])
+        capped_limit = max(1, min(500, int(limit)))
+        sql = f"""
+            SELECT
+                e.id, e.created_at_ms, e.source, e.committed_text, e.recent_context,
+                e.preedit, e.schema_id, e.app, e.project, e.candidate_rank,
+                e.provider_name, e.tags_json,
+                s.deleted, s.accepted_count, s.skipped_count, s.downranked, s.pinned,
+                COALESCE(ps.input_frequency, 0) AS input_frequency
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
+            WHERE {' AND '.join(where)}
+            ORDER BY e.id DESC
+            LIMIT ?
+        """
+        params.append(capped_limit)
+        with self._connect() as conn:
+            rows = list(conn.execute(sql, params).fetchall())
+            totals = {
+                "active": int(conn.execute("SELECT COUNT(*) AS count FROM memory_state WHERE deleted = 0").fetchone()["count"]),
+                "hidden": int(conn.execute("SELECT COUNT(*) AS count FROM memory_state WHERE deleted = 1").fetchone()["count"]),
+                "generated": int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*) AS count
+                        FROM input_events e
+                        JOIN memory_state s ON s.event_id = e.id
+                        WHERE s.deleted = 0 AND e.tags_json LIKE '%"generated-memory"%'
+                        """
+                    ).fetchone()["count"]
+                ),
+            }
+        return {
+            "schemaVersion": "rag-ime.memory-history.v1",
+            "project": project,
+            "query": normalized_query,
+            "limit": capped_limit,
+            "totals": totals,
+            "items": [_memory_event_row_payload(row) for row in rows],
+        }
+
     def hide_codex_history_noise(
         self,
         *,
@@ -1667,6 +1737,29 @@ def _rag_database_noise_reason(row: sqlite3.Row, *, min_generated_accepts: int) 
     ):
         return "generated_side_candidate_oneoff"
     return ""
+
+
+def _memory_event_row_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "eventId": int(row["id"]),
+        "createdAtMs": int(row["created_at_ms"]),
+        "source": str(row["source"]),
+        "text": str(row["committed_text"]),
+        "recentContext": str(row["recent_context"]),
+        "preedit": str(row["preedit"]),
+        "schemaId": str(row["schema_id"]),
+        "app": str(row["app"]),
+        "project": str(row["project"]),
+        "candidateRank": int(row["candidate_rank"]) if row["candidate_rank"] is not None else None,
+        "providerName": str(row["provider_name"]),
+        "tags": _row_tags(row),
+        "deleted": bool(row["deleted"]),
+        "acceptedCount": int(row["accepted_count"]),
+        "skippedCount": int(row["skipped_count"]),
+        "downranked": int(row["downranked"]),
+        "pinned": bool(row["pinned"]),
+        "inputFrequency": int(row["input_frequency"]),
+    }
 
 
 def _row_has_curated_memory_tags(row: sqlite3.Row) -> bool:
