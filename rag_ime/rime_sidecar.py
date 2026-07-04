@@ -1933,7 +1933,7 @@ def parse_rime_context_payload(payload: dict[str, Any], *, default_project: str)
         ),
         page=_bounded_int(rime_context.get("page", payload.get("page")), default=0, minimum=0, maximum=999),
         is_last_page=_bool(rime_context.get("isLastPage", payload.get("isLastPage")), default=True),
-        latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=300, minimum=30, maximum=2000),
+        latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=300, minimum=30, maximum=4000),
         max_visible_candidates=_bounded_int(payload.get("maxVisibleCandidates"), default=8, minimum=1, maximum=10),
         max_side_candidates=_bounded_int(payload.get("maxSideCandidates"), default=8, minimum=0, maximum=10),
         idle_ms=_bounded_int(_first_present(payload, rime_context, "idleMs"), default=0, minimum=0, maximum=10000),

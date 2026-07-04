@@ -435,6 +435,19 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed[:3], ["优化", "优化候选", "优化候选排序"])
 
+    def test_parse_ime_prediction_candidates_strips_analysis_preface(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            "基于上述分析，我们开始整理项目文档",
+            current_input="",
+            recent_context="现在完整整理本项目，包括文档、进度和反馈问题",
+            request_type=PREDICTION_REQUEST_NO_INPUT,
+            max_candidates=3,
+        )
+
+        self.assertEqual(parsed, [])
+        self.assertNotIn("基于", "".join(parsed))
+        self.assertNotIn("我们开始", "".join(parsed))
+
     def test_parse_ime_prediction_candidates_filters_prompt_example_leaks(self) -> None:
         parsed = parse_ime_prediction_candidates(
             '["预测优先个人记忆输入法", "个人记忆输入法预测", "把流程跑通", "接入本地记忆"]',

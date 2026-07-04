@@ -14,6 +14,7 @@ from unittest.mock import patch
 from rag_ime.mlx_predictor_server import (
     MlxLmEngine,
     _PromptCacheState,
+    _branch_continuation_candidates,
     _build_mlx_dynamic_prompt,
     QWEN_NON_THINKING_ASSISTANT_PREFIX,
     _normalize_prediction_request,
@@ -251,6 +252,68 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertIn("候选之间用单个空格分隔", calls["prompts"][1])
         self.assertIn("光标后内容:", calls["prompts"][-1])
         self.assertNotIn("请求类型:", calls["prompts"][-1])
+
+    def test_no_input_lead_branch_splits_bad_prefixed_model_sentence(self) -> None:
+        candidates = _branch_continuation_candidates(
+            "预测：\n基于预测优先的 RAG 输入法，将候选词库与生成模型深度耦合，实现输入时即时生成",
+            current_input="",
+            recent_context="我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+            max_candidate_chars=24,
+            max_candidates=5,
+        )
+
+        self.assertEqual(candidates, ["将候选词库与生成模型深度耦合", "实现输入时即时生成"])
+
+    def test_no_input_prediction_fills_partial_model_candidates(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                "接下来",
+                "预测：\n基于预测优先的 RAG 输入法，将候选词预测为输入框中的文本，并自动完成后续文本",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+                max_candidates=5,
+                max_tokens=32,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(
+            payload["candidates"],
+            ["将候选词预测为输入框中的文本", "并自动完成后续文本", "补齐展示细节", "优化候选排序", "接入真实记忆候选"],
+        )
+        self.assertEqual(payload["timing"]["branches"][-1]["reason"], "fill-empty-model-slots")
+
+    def test_no_input_prediction_filters_prompt_fragments_and_connector_words(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                "接下来",
+                "预测：RAG\n基于预测优先的 RAG 输入法能显著提升输入效率，通过智能预测用户意图，减少重复输入，同时",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+                max_candidates=5,
+                max_tokens=32,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        joined = "\n".join(payload["candidates"])
+        self.assertNotIn("预测：R", joined)
+        self.assertNotIn("同时", payload["candidates"])
+        self.assertEqual(
+            payload["candidates"],
+            ["输入法能显著提升输入效率", "通过智能预测用户意图", "减少重复输入", "补齐展示细节", "优化候选排序"],
+        )
+        self.assertEqual(payload["timing"]["branches"][-1]["reason"], "fill-empty-model-slots")
 
     def test_no_input_prediction_filters_meta_description_and_uses_domain_fallback(self) -> None:
         modules, _calls = _fake_mlx_modules(

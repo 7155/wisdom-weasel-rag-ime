@@ -74,6 +74,7 @@ _LOW_VALUE_LOGITS_CANDIDATES = {
     "验证",
     "并且",
     "但是",
+    "同时",
     "或者",
     "基于",
     "根据",
@@ -451,11 +452,12 @@ class MlxLmEngine:
                 )
             )
             raw_texts.append(raw_text)
-            candidate = _branch_continuation_candidate(
+            branch_candidates = _branch_continuation_candidates(
                 raw_text,
                 current_input=current_input,
                 recent_context=recent_context,
                 max_candidate_chars=branch.max_candidate_chars,
+                max_candidates=max_items - len(candidates),
             )
             branch_timings.append(
                 {
@@ -463,31 +465,39 @@ class MlxLmEngine:
                     "temperature": branch.temperature,
                     "maxTokens": branch.max_tokens,
                     "elapsedMs": int((time.perf_counter() - branch_started) * 1000),
-                    "candidate": candidate,
+                    "candidates": branch_candidates,
+                    "candidate": branch_candidates[0] if branch_candidates else "",
                 }
             )
-            if candidate and not _looks_like_meta_completion_candidate(candidate) and candidate not in seen:
-                seen.add(candidate)
-                candidates.append(candidate)
-            if len(candidates) >= max_items:
-                break
-        if not candidates:
-            fallback_candidates = _domain_no_input_fallback_candidates(
-                recent_context=recent_context,
-                max_candidates=max_items,
-            )
-            branch_timings.append(
-                {
-                    "label": "domain-fallback",
-                    "candidates": fallback_candidates,
-                }
-            )
-            for candidate in fallback_candidates:
-                if candidate and candidate not in seen:
+            for candidate in branch_candidates:
+                if candidate and not _looks_like_meta_completion_candidate(candidate) and candidate not in seen:
                     seen.add(candidate)
                     candidates.append(candidate)
                 if len(candidates) >= max_items:
                     break
+        if len(candidates) < max_items:
+            fallback_candidates = _domain_no_input_fallback_candidates(
+                recent_context=recent_context,
+                max_candidates=max_items,
+            )
+            appended_fallbacks: list[str] = []
+            if fallback_candidates:
+                branch_timings.append(
+                    {
+                        "label": "domain-fallback",
+                        "reason": "fill-empty-model-slots" if candidates else "no-usable-model-candidates",
+                        "candidates": fallback_candidates,
+                    }
+                )
+            for candidate in fallback_candidates:
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    candidates.append(candidate)
+                    appended_fallbacks.append(candidate)
+                if len(candidates) >= max_items:
+                    break
+            if branch_timings and branch_timings[-1].get("label") == "domain-fallback":
+                branch_timings[-1]["appendedCandidates"] = appended_fallbacks
         total_ms = int((time.perf_counter() - started) * 1000)
         return {
             "ok": True,
@@ -1301,6 +1311,8 @@ def _is_low_value_base_candidate(text: str) -> bool:
     normalized = compact_whitespace(text)
     if normalized in _LOW_VALUE_LOGITS_CANDIDATES:
         return True
+    if re.fullmatch(r"(?:候选|预测|建议)[:：]\s*[A-Za-z0-9_-]{0,8}", normalized):
+        return True
     if len(normalized) <= 1:
         return True
     cjk_count = len(_CJK_RE.findall(normalized))
@@ -1577,6 +1589,8 @@ def _is_low_value_logits_candidate(text: str) -> bool:
     normalized = compact_whitespace(text)
     if normalized in _LOW_VALUE_LOGITS_CANDIDATES:
         return True
+    if re.fullmatch(r"(?:候选|预测|建议)[:：]\s*[A-Za-z0-9_-]{0,8}", normalized):
+        return True
     cjk_count = len(_CJK_RE.findall(normalized))
     if re.fullmatch(r"[A-Za-z0-9_./:\-\s]{1,24}", normalized):
         return True
@@ -1682,6 +1696,39 @@ def _branch_continuation_candidate(
     if _is_low_value_base_candidate(candidate) or _looks_like_meta_completion_candidate(candidate):
         return ""
     return candidate
+
+
+def _branch_continuation_candidates(
+    raw_text: str,
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidate_chars: int,
+    max_candidates: int,
+) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    parts = [
+        compact_whitespace(part)
+        for part in re.split(r"[\s,，、;；。.!！?？\n\r]+", _clean_base_completion_text(raw_text))
+        if compact_whitespace(part)
+    ]
+    if len(parts) <= 1:
+        parts = [raw_text]
+    for part in parts:
+        candidate = _branch_continuation_candidate(
+            part,
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidate_chars=max_candidate_chars,
+        )
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+        if len(result) >= max(1, int(max_candidates)):
+            break
+    return result
 
 
 def _looks_like_meta_completion_candidate(text: str) -> bool:

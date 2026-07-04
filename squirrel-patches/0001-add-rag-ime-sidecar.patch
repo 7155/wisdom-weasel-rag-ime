@@ -54,7 +54,7 @@ index 0000000..cc2e30b
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 8
-+  latency_budget_ms: 2000
++  latency_budget_ms: 3200
 +  debounce_ms: 40
 +  timeout_ms: 9000
 +  frontend_trace: true
@@ -170,7 +170,7 @@ index 0000000..e716f28
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 8, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 2000, range: 30...2000)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 3200, range: 30...4000)
 +    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 40, range: 0...500)
 +    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 9000, range: 100...15000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)

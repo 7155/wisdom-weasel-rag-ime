@@ -64,6 +64,7 @@ _LOW_VALUE_IME_CANDIDATES = {
     "输入法",
     "呐",
     "然后",
+    "同时",
     "现在",
     "目前",
     "当前",
@@ -1901,6 +1902,8 @@ def _first_useful_continuation_clause(text: str) -> str:
             continue
         if compacted in _LOW_VALUE_IME_CANDIDATES:
             continue
+        if re.fullmatch(r"(?:候选|预测|建议)[:：]\s*[A-Za-z0-9_-]{0,8}", compacted):
+            continue
         if _looks_like_prompt_instruction(compacted):
             continue
         return compacted
@@ -1918,10 +1921,22 @@ def _strip_leading_prediction_fillers(text: str) -> str:
         "以下是",
         "候选如下",
         "给出候选",
+        "候选：",
+        "候选:",
+        "预测：",
+        "预测:",
+        "建议：",
+        "建议:",
+        "基于",
+        "根据",
+        "上述分析",
+        "上述",
         "我会",
         "我将",
         "我们会",
         "我们将",
+        "我们开始",
+        "我们来",
         "然后",
         "而且",
         "并且",
@@ -1931,12 +1946,14 @@ def _strip_leading_prediction_fillers(text: str) -> str:
         "就是",
         "继续",
         "接下来",
+        "开始整理",
     )
     for _ in range(4):
         stripped = False
+        result = result.lstrip(" \t\r\n,，、:：;；。.!！?？")
         for prefix in prefixes:
             if result.startswith(prefix) and _cjk_char_count(result[len(prefix):]) >= 2:
-                result = result[len(prefix):]
+                result = result[len(prefix):].lstrip(" \t\r\n,，、:：;；。.!！?？")
                 stripped = True
                 break
         if not stripped:

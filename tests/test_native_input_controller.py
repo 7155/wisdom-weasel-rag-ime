@@ -217,8 +217,8 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         source = _controller_source()
         models_source = _models_source()
 
-        self.assertIn("latencyBudgetMs: 2000", source)
-        self.assertIn("latencyBudgetMs: Int = 2000", models_source)
+        self.assertIn("latencyBudgetMs: 3200", source)
+        self.assertIn("latencyBudgetMs: Int = 3200", models_source)
 
     def test_native_frontend_uses_backend_prediction_session_expiration(self) -> None:
         source = _controller_source()
