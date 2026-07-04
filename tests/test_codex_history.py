@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.cli import _launchctl_field, _sidecar_lane_timeout_checks, main
+from rag_ime.adapter import InputMethodAdapter
 from rag_ime.codex_history import (
     evaluate_suggestions,
     input_event_from_codex_record,
@@ -753,6 +754,12 @@ class CodexHistoryTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(import_code, 0)
+        InputMethodAdapter(LocalSqliteCoreClient(db_path), project="wisdom-weasel-rag-ime").commit_text(
+            "Squirrel 本地记忆",
+            recent_context="结构化 RAG 候选用于 sidecar eval, raw Codex history 不直接作为输入法候选。",
+            project="wisdom-weasel-rag-ime",
+            tags=("structure", "rag-ime"),
+        )
 
         cases_file = self.root / "rime-sidecar-cases.jsonl"
         cases_file.write_text(

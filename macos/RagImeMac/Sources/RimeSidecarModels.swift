@@ -92,6 +92,7 @@ struct RimeSidecarResponse: Codable {
     let displayCandidates: [RimeDisplayCandidate]
     let predictionFirst: RimePredictionFirstPayload?
     let predictionSession: RimePredictionSessionPayload?
+    let progressive: RimeProgressivePayload?
     let selectionActions: RimeSelectionActions
     let mergePolicy: RimeMergePolicy
 }
@@ -149,6 +150,15 @@ struct RimePredictionSessionPayload: Codable {
     let contextFingerprint: String?
     let requestSeq: Int?
     let expiresAfterMs: Int?
+}
+
+struct RimeProgressivePayload: Codable {
+    let enabled: Bool
+    let partial: Bool
+    let shouldFollowUp: Bool
+    let pendingLanes: [String]
+    let firstResponseBudgetMs: Int
+    let retryAfterMs: Int
 }
 
 struct RimeSelectRequest: Codable {

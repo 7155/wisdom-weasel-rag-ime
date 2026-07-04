@@ -25,6 +25,7 @@ final class RagInputController: IMKInputController {
     private var requestSeq = 0
     private var lastRenderedRequestSeq = 0
     private var pendingRefresh: DispatchWorkItem?
+    private var pendingProgressiveFollowUp: DispatchWorkItem?
     private var panelExpiration: DispatchWorkItem?
     private let committedContextLimit = 900
     private let postCommitPanelTtlSeconds: TimeInterval = 8.0
@@ -363,7 +364,7 @@ final class RagInputController: IMKInputController {
                 return
             }
             do {
-                let response = try self.bridge.rimeSuggest(request: self.makeRimeSuggestRequest(
+                let request = self.makeRimeSuggestRequest(
                     requestSeq: requestSeq,
                     rawInput: inputSnapshot,
                     preedit: inputSnapshot,
@@ -371,7 +372,8 @@ final class RagInputController: IMKInputController {
                     committedContext: contextSnapshot,
                     idleMs: 180,
                     forceSideCandidates: !contextSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ))
+                )
+                let response = try self.bridge.rimeSuggest(request: request)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else {
                         return
@@ -388,7 +390,8 @@ final class RagInputController: IMKInputController {
                         response,
                         currentInput: inputSnapshot,
                         client: providedClient ?? self.client(),
-                        postCommit: false
+                        postCommit: false,
+                        originalRequest: request
                     )
                 }
             } catch {
@@ -422,7 +425,7 @@ final class RagInputController: IMKInputController {
                 return
             }
             do {
-                let response = try self.bridge.rimeSuggest(request: self.makeRimeSuggestRequest(
+                let request = self.makeRimeSuggestRequest(
                     requestSeq: requestSeq,
                     rawInput: "",
                     preedit: "",
@@ -430,7 +433,8 @@ final class RagInputController: IMKInputController {
                     committedContext: contextSnapshot,
                     idleMs: 80,
                     forceSideCandidates: true
-                ))
+                )
+                let response = try self.bridge.rimeSuggest(request: request)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else {
                         return
@@ -447,7 +451,8 @@ final class RagInputController: IMKInputController {
                         response,
                         currentInput: committedText,
                         client: providedClient,
-                        postCommit: true
+                        postCommit: true,
+                        originalRequest: request
                     )
                 }
             } catch {
@@ -465,7 +470,8 @@ final class RagInputController: IMKInputController {
         _ response: RimeSidecarResponse,
         currentInput: String,
         client providedClient: IMKTextInput?,
-        postCommit: Bool
+        postCommit: Bool,
+        originalRequest: RimeSidecarRequest
     ) {
         guard response.sessionId == sessionId else {
             return
@@ -475,6 +481,13 @@ final class RagInputController: IMKInputController {
         }
         lastRenderedRequestSeq = response.requestSeq
         latestPredictionSession = response.predictionSession
+        scheduleProgressiveFollowUpIfNeeded(
+            response: response,
+            originalRequest: originalRequest,
+            currentInput: currentInput,
+            client: providedClient,
+            postCommit: postCommit
+        )
         if response.displayCandidates.isEmpty {
             if response.predictionSession?.shouldClearPredictionPanel == true {
                 clearCandidateState()
@@ -507,6 +520,79 @@ final class RagInputController: IMKInputController {
             }
         )
         activatePanelSession(response: response, postCommit: postCommit)
+    }
+
+    private func scheduleProgressiveFollowUpIfNeeded(
+        response: RimeSidecarResponse,
+        originalRequest: RimeSidecarRequest,
+        currentInput: String,
+        client providedClient: IMKTextInput?,
+        postCommit: Bool
+    ) {
+        guard let progressive = response.progressive,
+              progressive.enabled,
+              progressive.shouldFollowUp else {
+            return
+        }
+        let retryAfterMs = max(80, min(1500, progressive.retryAfterMs))
+        pendingProgressiveFollowUp?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+            guard originalRequest.requestSeq == self.requestSeq else {
+                return
+            }
+            guard self.committedContext == originalRequest.committedContext else {
+                return
+            }
+            if postCommit {
+                guard self.composition.isEmpty else {
+                    return
+                }
+            } else {
+                let liveInput = originalRequest.preedit.isEmpty ? originalRequest.rawInput : originalRequest.preedit
+                guard self.composition == liveInput else {
+                    return
+                }
+            }
+            do {
+                let followUp = try self.bridge.rimeSuggest(request: originalRequest)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else {
+                        return
+                    }
+                    guard originalRequest.requestSeq == self.requestSeq,
+                          self.committedContext == originalRequest.committedContext else {
+                        return
+                    }
+                    if postCommit {
+                        guard self.composition.isEmpty else {
+                            return
+                        }
+                    } else {
+                        let liveInput = originalRequest.preedit.isEmpty ? originalRequest.rawInput : originalRequest.preedit
+                        guard self.composition == liveInput else {
+                            return
+                        }
+                    }
+                    self.renderSidecarResponse(
+                        followUp,
+                        currentInput: currentInput,
+                        client: providedClient ?? self.client(),
+                        postCommit: postCommit,
+                        originalRequest: originalRequest
+                    )
+                }
+            } catch {
+                NSLog("RAG IME progressive follow-up failed: \(error.localizedDescription)")
+            }
+        }
+        pendingProgressiveFollowUp = work
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + TimeInterval(retryAfterMs) / 1000.0,
+            execute: work
+        )
     }
 
     private func showLocalRimeFallbackCandidates(for input: String, client providedClient: IMKTextInput?) {
@@ -865,6 +951,8 @@ final class RagInputController: IMKInputController {
     }
 
     private func clearVisiblePredictionPanel() {
+        pendingProgressiveFollowUp?.cancel()
+        pendingProgressiveFollowUp = nil
         panelExpiration?.cancel()
         panelExpiration = nil
         activePanelSession = nil
@@ -874,6 +962,8 @@ final class RagInputController: IMKInputController {
     private func cancelPendingRefresh(invalidateResponses: Bool) {
         pendingRefresh?.cancel()
         pendingRefresh = nil
+        pendingProgressiveFollowUp?.cancel()
+        pendingProgressiveFollowUp = nil
         if invalidateResponses {
             requestSeq += 1
         }

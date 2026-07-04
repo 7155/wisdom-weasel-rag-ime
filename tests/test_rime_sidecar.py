@@ -398,6 +398,49 @@ class PostCommitSurfaceSuggestionCore(CapturingCore):
         ][:top_k]
 
 
+class LongRawHistorySuggestionCore(CapturingCore):
+    def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.last_suggest_current_input = current_input
+        self.last_suggest_recent_context = recent_context
+        return [
+            InputSuggestion(
+                suggestion_id="sug-event:9001",
+                surface_text="然后我还有个需求，就是目前我正在做另一个输入法，就是你也可以看到那个项目的具体要求。",
+                suggestion_type="sentence",
+                source_event_id=9001,
+                evidence_preview="old raw input event",
+                confidence=0.99,
+                metadata={
+                    "source_type": "rag",
+                    "source_ref": "input_event:9001",
+                    "state": {"project_input_frequency": 5, "effective_frequency": 5},
+                },
+            ),
+            InputSuggestion(
+                suggestion_id="phrase:1",
+                surface_text="整理项目进度",
+                suggestion_type="phrase",
+                source_event_id=9002,
+                evidence_preview="compiled short phrase",
+                confidence=0.9,
+                metadata={"source_type": "rag", "source_ref": "input_event:9002"},
+            ),
+            InputSuggestion(
+                suggestion_id="sug-event:9003",
+                surface_text="先不碰win，我正在配置",
+                suggestion_type="phrase",
+                source_event_id=9003,
+                evidence_preview="short raw input event with punctuation",
+                confidence=0.88,
+                metadata={
+                    "source_type": "rag",
+                    "source_ref": "input_event:9003",
+                    "state": {"project_input_frequency": 5, "effective_frequency": 5},
+                },
+            ),
+        ][:top_k]
+
+
 class ComplaintSuggestionCore(CapturingCore):
     def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
         self.last_suggest_current_input = current_input
@@ -1732,6 +1775,31 @@ class RimeSidecarTests(unittest.TestCase):
 
         self.assertIn("rag", [item["sourceType"] for item in response["displayCandidates"]])
         self.assertEqual(response["ragCandidates"][0]["surfaceText"], "设计一个候选展示方式")
+
+    def test_prediction_first_filters_long_uncompiled_raw_history_from_rag(self) -> None:
+        core = LongRawHistorySuggestionCore()
+        adapter = InputMethodAdapter(core)
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-post-commit-long-raw-history",
+                "requestSeq": 65,
+                "committedContext": "我正在整理项目文档，包括进度和问题",
+                "predictionFirstMerge": True,
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 5,
+                "rimeContext": {"candidates": []},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=CleanPostCommitPredictionProvider(),
+        )
+
+        display_texts = [item["text"] for item in response["displayCandidates"]]
+        self.assertNotIn("然后我还有个需求，就是目前我正在做另一个输入法，就是你也可以看到那个项目的具体要求。", display_texts)
+        self.assertNotIn("先不碰win，我正在配置", display_texts)
+        self.assertIn("整理项目进度", display_texts)
+        self.assertEqual(response["ragLane"]["filteredSuggestionCount"], 2)
 
     def test_prediction_first_post_commit_keeps_accepted_memory_even_without_overlap(self) -> None:
         core = AcceptedPostCommitSuggestionCore()

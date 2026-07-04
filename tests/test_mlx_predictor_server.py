@@ -220,12 +220,38 @@ class MlxPredictorServerTests(unittest.TestCase):
 
         self.assertEqual(payload["candidateMode"], "continuation-branches")
         self.assertEqual(payload["candidates"], ["跑通输入流程", "优化候选排序", "补齐来源诊断"])
+        self.assertEqual([item["text"] for item in payload["candidateScores"]], payload["candidates"])
+        self.assertEqual(payload["candidateScores"][0]["source"], "space-list")
         self.assertEqual(payload["timing"]["candidateMode"], "continuation-branches")
+        self.assertFalse(payload["timing"]["fallbackJson"])
         self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["space-list"])
         self.assertEqual(calls["sampler_calls"], 1)
         self.assertGreaterEqual(calls["sampler_max_tokens"][0], 12)
         self.assertIn("候选之间用单个空格分隔", calls["prompts"][-1])
         self.assertNotIn("输出 3 个候选 JSON 数组", calls["prompts"][-1])
+
+    def test_no_input_prediction_does_not_use_hardcoded_domain_fallback(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                "真实模型候选 优化上下文 连续预测",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="Felix3322/Wisdom-Weasel 需要参考上下文管理，删除后按实际输入预测",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(payload["candidates"], ["优化上下文", "连续预测"])
+        self.assertNotIn("对照源码实现", payload["candidates"])
+        self.assertFalse(payload["timing"]["fallbackJson"])
+        self.assertEqual(payload["timing"]["branches"][0]["label"], "space-list")
 
     def test_no_input_prediction_falls_back_to_single_branch_when_space_list_is_empty(self) -> None:
         modules, calls = _fake_mlx_modules(
@@ -284,9 +310,10 @@ class MlxPredictorServerTests(unittest.TestCase):
 
         self.assertEqual(
             payload["candidates"],
-            ["将候选词预测为输入框中的文本", "并自动完成后续文本", "补齐展示细节", "优化候选排序", "接入真实记忆候选"],
+            ["将候选词预测为输入框中的文本", "并自动完成后续文本"],
         )
-        self.assertEqual(payload["timing"]["branches"][-1]["reason"], "fill-empty-model-slots")
+        self.assertFalse(payload["timing"]["fallbackJson"])
+        self.assertNotEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
 
     def test_no_input_prediction_filters_prompt_fragments_and_connector_words(self) -> None:
         modules, _calls = _fake_mlx_modules(
@@ -311,11 +338,12 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertNotIn("同时", payload["candidates"])
         self.assertEqual(
             payload["candidates"],
-            ["能显著提升输入效率", "通过智能预测用户意图", "减少重复输入", "补齐展示细节", "优化候选排序"],
+            ["能显著提升输入效率", "通过智能预测用户意图", "减少重复输入"],
         )
-        self.assertEqual(payload["timing"]["branches"][-1]["reason"], "fill-empty-model-slots")
+        self.assertFalse(payload["timing"]["fallbackJson"])
+        self.assertNotEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
 
-    def test_no_input_prediction_filters_meta_description_and_uses_domain_fallback(self) -> None:
+    def test_no_input_prediction_filters_meta_description_without_domain_fallback(self) -> None:
         modules, _calls = _fake_mlx_modules(
             generated_text=[
                 "您正在阅读关于“中国”的说明性文本。",
@@ -334,12 +362,13 @@ class MlxPredictorServerTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["candidateMode"], "continuation-branches")
-        self.assertEqual(payload["candidates"], ["实际没有生效", "需要真实生效"])
-        self.assertEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
+        self.assertEqual(payload["candidates"], ["进一步调整模型配置"])
+        self.assertFalse(payload["timing"]["fallbackJson"])
+        self.assertNotEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
         self.assertNotIn("您正在阅读", "".join(payload["candidates"]))
         self.assertNotIn("你正在输入", "".join(payload["candidates"]))
 
-    def test_no_input_prediction_filters_short_fragments_before_project_fallback(self) -> None:
+    def test_no_input_prediction_filters_short_fragments_without_project_fallback(self) -> None:
         modules, _calls = _fake_mlx_modules(
             generated_text=[
                 "方案",
@@ -357,10 +386,11 @@ class MlxPredictorServerTests(unittest.TestCase):
                 request_type=PREDICTION_REQUEST_NO_INPUT,
             )
 
-        self.assertEqual(payload["candidates"], ["补齐展示细节", "优化候选排序"])
-        self.assertEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
+        self.assertEqual(payload["candidates"], [])
+        self.assertFalse(payload["timing"]["fallbackJson"])
+        self.assertNotEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
 
-    def test_no_input_prediction_filters_felix_meta_question_and_returns_multiple_fallbacks(self) -> None:
+    def test_no_input_prediction_filters_felix_meta_question_without_domain_fallback(self) -> None:
         modules, _calls = _fake_mlx_modules(
             generated_text=[
                 "你正在看Felix的3322号项目吗",
@@ -379,11 +409,9 @@ class MlxPredictorServerTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["candidateMode"], "continuation-branches")
-        self.assertEqual(
-            payload["candidates"],
-            ["对照源码实现", "同步真实上下文", "过滤旧记忆", "生成多条候选", "取消过期预测"],
-        )
-        self.assertEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
+        self.assertEqual(payload["candidates"], [])
+        self.assertFalse(payload["timing"]["fallbackJson"])
+        self.assertNotEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
         self.assertNotIn("你正在看", "".join(payload["candidates"]))
 
     def test_pinyin_constrained_prediction_does_not_use_free_continuation_branches(self) -> None:

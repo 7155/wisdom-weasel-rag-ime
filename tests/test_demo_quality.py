@@ -114,6 +114,16 @@ class RagImeDemoQualityTests(unittest.TestCase):
                 "用户输入 sj 前缀时, 只能优先展示拼音前缀匹配的历史短语。",
                 ("pinyin-prefix", "phrase-memory"),
             ),
+            (
+                "RAG 输入法结构化候选",
+                "Prediction-first RAG 输入法需要展示结构化 RAG 候选，而不是直接展示旧输入原文。",
+                ("structure", "rag-ime"),
+            ),
+            (
+                "LLM RAG memory 都成功",
+                "Prediction-first demo 要同时出现模型候选、RAG 候选和记忆短语。",
+                ("phrase-memory", "memory"),
+            ),
         ]
         for text, context, tags in good_rows:
             self.adapter.commit_text(
@@ -282,13 +292,13 @@ class RagImeDemoQualityTests(unittest.TestCase):
         display = response["displayCandidates"]
         source_types = {item["sourceType"] for item in display}
         self.assertIn("model", source_types)
-        self.assertIn("rag", source_types)
+        self.assertTrue(source_types.intersection({"rag", "memory"}), source_types)
         self.assertIn("rime", source_types)
         self.assertTrue(
             all(
                 item["selectionAction"] == "commit_side_candidate"
                 for item in display
-                if item["sourceType"] in {"model", "rag"}
+                if item["sourceType"] in {"model", "rag", "memory"}
             )
         )
         self.assertTrue(

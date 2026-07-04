@@ -201,6 +201,7 @@ _POST_COMMIT_GENERIC_QUERY_TERMS = {
     "一个",
     "一些",
     "以及",
+    "包括",
     "今天",
     "他们",
     "你们",
@@ -210,6 +211,9 @@ _POST_COMMIT_GENERIC_QUERY_TERMS = {
     "可以",
     "已经",
     "我们",
+    "文档",
+    "项目",
+    "正在",
     "输入",
     "输入法",
     "这个",
@@ -1018,6 +1022,8 @@ def _filter_rag_suggestions_for_query(
             continue
         if _looks_like_low_quality_memory_candidate(surface):
             continue
+        if _looks_like_uncompiled_raw_history_candidate(suggestion):
+            continue
         key = _display_text_norm(surface)
         if key in seen:
             continue
@@ -1102,7 +1108,7 @@ def _suggestion_has_durable_memory_signal(metadata: Mapping[str, object]) -> boo
         for tag in metadata.get("tags", [])
         if compact_whitespace(str(tag))
     } if isinstance(metadata.get("tags"), list) else set()
-    if tags.intersection({"generated-memory", "api-core-optimized", "api-lexicon", "lexicon-phrase", "phrase-memory", "curated"}):
+    if tags.intersection({"generated-memory", "api-core-optimized", "api-lexicon", "lexicon-phrase", "phrase-memory", "curated", "structure"}):
         return True
     state = metadata.get("state") if isinstance(metadata.get("state"), dict) else {}
     assert isinstance(state, dict)
@@ -1116,6 +1122,60 @@ def _suggestion_has_durable_memory_signal(metadata: Mapping[str, object]) -> boo
         _safe_int(state.get("app_input_frequency")),
     )
     return durable_count >= 3
+
+
+def _looks_like_uncompiled_raw_history_candidate(suggestion: InputSuggestion) -> bool:
+    surface = compact_whitespace(suggestion.surface_text)
+    if not surface:
+        return True
+    metadata = dict(suggestion.metadata)
+    if _suggestion_has_curated_or_repeated_accept_signal(metadata):
+        return False
+
+    source_ref = compact_whitespace(str(metadata.get("source_ref") or metadata.get("memory_id") or "")).lower()
+    suggestion_id = compact_whitespace(suggestion.suggestion_id).lower()
+    raw_event_like = (
+        suggestion.source_event_id is not None
+        or source_ref.startswith(("input_event:", "event:", "committed:"))
+        or suggestion_id.startswith(("sug-event:", "event:", "input_event:", "committed:"))
+    )
+    if not raw_event_like:
+        return False
+
+    cjk_count = len(re.findall(r"[\u3400-\u9fff]", surface))
+    punctuation_count = len(re.findall(r"[，。！？；：,.!?;:]", surface))
+    if punctuation_count > 0:
+        return True
+    if len(surface) > 42:
+        return True
+    if cjk_count >= 18 and punctuation_count > 0:
+        return True
+    if compact_whitespace(suggestion.suggestion_type).lower() in {"paragraph", "history", "input_event"} and cjk_count >= 14:
+        return True
+    return False
+
+
+def _suggestion_has_curated_or_repeated_accept_signal(metadata: Mapping[str, object]) -> bool:
+    tags = {
+        compact_whitespace(str(tag)).lower()
+        for tag in metadata.get("tags", [])
+        if compact_whitespace(str(tag))
+    } if isinstance(metadata.get("tags"), list) else set()
+    if tags.intersection({"generated-memory", "api-core-optimized", "api-lexicon", "lexicon-phrase", "phrase-memory", "curated", "structure"}):
+        return True
+    state = metadata.get("state") if isinstance(metadata.get("state"), dict) else {}
+    assert isinstance(state, dict)
+    raw_signals = state.get("rawSignals") if isinstance(state.get("rawSignals"), dict) else {}
+    assert isinstance(raw_signals, dict)
+    if bool(state.get("pinned") or raw_signals.get("pinned")):
+        return True
+    accepted_count = max(
+        _safe_int(state.get("accepted_count")),
+        _safe_int(state.get("event_accepted_count")),
+        _safe_int(state.get("acceptedCount")),
+        _safe_int(raw_signals.get("acceptedCount")),
+    )
+    return accepted_count >= 3
 
 
 def _cjk_context_overlap_ratio(surface: str, context: str) -> float:

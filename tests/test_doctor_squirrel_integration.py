@@ -70,6 +70,24 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
             },
         }
 
+    @classmethod
+    def use_mlx_continuation_branches(cls) -> None:
+        cls.use_mlx_logits()
+        cls.model_metadata = {
+            "candidate_mode": "continuation-branches",
+            "candidate_scores": [
+                {"text": "真实模型候选", "rank": 1, "source": "space-list", "confidence": 1.0}
+            ],
+            "server_timing": {
+                "candidateMode": "continuation-branches",
+                "fallbackJson": False,
+            },
+            "prompt_cache": {
+                "enabled": True,
+                "prepared": True,
+            },
+        }
+
     def log_message(self, format: str, *args: object) -> None:
         return
 
@@ -416,6 +434,47 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         )
         self.assertIn("[OK] model generation path: MLX model candidates available", result.stdout)
         self.assertNotIn("no MLX model predictions to validate", result.stdout)
+        self.assertIn("summary: failures=0", result.stdout)
+
+    def test_doctor_strict_model_gate_accepts_scored_continuation_branches(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        _DoctorSidecarHandler.reset()
+        _DoctorSidecarHandler.use_mlx_continuation_branches()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-branches-") as tmp:
+                env = {
+                    **os.environ,
+                    "RAG_IME_PYTHON": sys.executable,
+                    "RAG_IME_SQUIRREL_WORKDIR": str(Path(tmp) / "missing-squirrel"),
+                    "RAG_IME_SIDECAR_HOST": "127.0.0.1",
+                    "RAG_IME_SIDECAR_PORT": str(server.server_port),
+                    "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                    "RAG_IME_DOCTOR_REQUIRE_PREDICTOR": "1",
+                    "RAG_IME_DOCTOR_REQUIRE_LOGITS_MODEL": "1",
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_MODEL": _DoctorSidecarHandler.model,
+                    "RAG_IME_PREDICTOR_STREAM_FIRST": "0",
+                }
+                result = subprocess.run(
+                    ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                    cwd="/tmp",
+                    env=env,
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertIn(
+            "[OK] model generation path: MLX candidates use verified continuation-branches with prepared prompt cache",
+            result.stdout,
+        )
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_tryout_mode_requires_prepared_squirrel_xcode_and_sidecar(self) -> None:

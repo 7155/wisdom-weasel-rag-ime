@@ -238,6 +238,38 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("postCommitPanelTtlSeconds", expiration_body)
         self.assertIn("private let postCommitPanelTtlSeconds: TimeInterval = 8.0", source)
 
+    def test_native_frontend_schedules_progressive_follow_up_for_pending_model_lane(self) -> None:
+        source = _controller_source()
+        models_source = _models_source()
+
+        self.assertIn("let progressive: RimeProgressivePayload?", models_source)
+        self.assertIn("struct RimeProgressivePayload: Codable", models_source)
+        self.assertIn("private var pendingProgressiveFollowUp", source)
+        self.assertIn("scheduleProgressiveFollowUpIfNeeded(", source)
+
+        render_start = source.index("private func renderSidecarResponse")
+        render_end = source.index("private func showLocalRimeFallbackCandidates")
+        render_body = source[render_start:render_end]
+        self.assertIn("scheduleProgressiveFollowUpIfNeeded(", render_body)
+        self.assertLess(
+            render_body.index("scheduleProgressiveFollowUpIfNeeded("),
+            render_body.index("if response.displayCandidates.isEmpty"),
+        )
+
+        follow_start = source.index("private func scheduleProgressiveFollowUpIfNeeded")
+        follow_end = source.index("private func showLocalRimeFallbackCandidates")
+        follow_body = source[follow_start:follow_end]
+        self.assertIn("progressive.shouldFollowUp", follow_body)
+        self.assertIn("let retryAfterMs = max(80, min(1500, progressive.retryAfterMs))", follow_body)
+        self.assertIn("originalRequest.requestSeq == self.requestSeq", follow_body)
+        self.assertIn("try self.bridge.rimeSuggest(request: originalRequest)", follow_body)
+        self.assertIn("originalRequest.committedContext", follow_body)
+        self.assertIn("self.renderSidecarResponse(", follow_body)
+
+        cancel_start = source.index("private func cancelPendingRefresh")
+        cancel_body = source[cancel_start:]
+        self.assertIn("pendingProgressiveFollowUp?.cancel()", cancel_body)
+
     def test_native_frontend_forces_side_candidates_for_post_commit_and_contextual_prefix(self) -> None:
         source = _controller_source()
 

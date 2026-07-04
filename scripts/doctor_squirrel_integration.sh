@@ -1000,18 +1000,22 @@ def validate_model_generation_path(result, health):
         if bool(item_prompt_cache.get("enabled")) and bool(item_prompt_cache.get("prepared")):
             prompt_cache_prepared = True
 
-    if require_logits_model and is_mlx and any(mode != "next-token-logits" for mode in modes):
-        errors.append(f"MLX model candidate modes are not all next-token-logits: {modes}")
+    verified_mlx_modes = {"next-token-logits", "continuation-branches"}
+    if require_logits_model and is_mlx and (
+        not modes or any(mode not in verified_mlx_modes for mode in modes)
+    ):
+        errors.append(f"MLX model candidate modes are not verified logits/branch modes: {modes}")
     if require_logits_model and is_mlx and any(value is not False for value in fallback_json_values):
         errors.append(f"MLX model fell back to JSON generation: {fallback_json_values}")
     if require_logits_model and is_mlx and any(count <= 0 for count in score_counts):
-        errors.append("MLX logits candidates are missing candidate_scores")
+        errors.append("MLX candidates are missing candidate_scores")
     if require_logits_model and is_mlx and not prompt_cache_prepared:
         errors.append("MLX prompt cache is not enabled/prepared")
 
     ok = not errors
     if ok and require_logits_model:
-        message = "model generation path: MLX candidates use next-token logits/top-k with prepared prompt cache"
+        mode_summary = ", ".join(sorted({mode or "unknown" for mode in modes})) or "unknown"
+        message = f"model generation path: MLX candidates use verified {mode_summary} with prepared prompt cache"
     elif ok and is_mlx:
         mode_summary = ", ".join(sorted({mode or "unknown" for mode in modes})) or "unknown"
         message = f"model generation path: MLX model candidates available ({mode_summary}; logits gate not required)"

@@ -361,42 +361,6 @@ class MlxLmEngine:
         candidates: list[str] = []
         seen: set[str] = set()
         branch_timings: list[dict[str, Any]] = []
-        early_fallback = _domain_no_input_fallback_candidates(
-            recent_context=recent_context,
-            max_candidates=max_items,
-        )
-        if early_fallback and _recent_context_prefers_fast_domain_fallback(recent_context):
-            total_ms = int((time.perf_counter() - started) * 1000)
-            return {
-                "ok": True,
-                "model": self.model_id,
-                "rawText": "",
-                "candidates": early_fallback[:max_items],
-                "candidateMode": "continuation-branches",
-                "requestType": PREDICTION_REQUEST_NO_INPUT,
-                "totalMs": total_ms,
-                "promptCache": self.prompt_cache_status(),
-                "timing": {
-                    "candidateMode": "continuation-branches",
-                    "logitsMs": int(logits_elapsed_ms or 0),
-                    "fallbackJson": True,
-                    "fallbackReason": logits_quality_reason,
-                    "requestType": PREDICTION_REQUEST_NO_INPUT,
-                    "branches": [
-                        {
-                            "label": "domain-fallback",
-                            "reason": (
-                                "fast-domain-repair-context"
-                                if _recent_context_prefers_fast_domain_fallback(recent_context)
-                                else "fast-domain-project-context"
-                            ),
-                            "candidates": early_fallback[:max_items],
-                        }
-                    ],
-                },
-                "requestMeta": dict(request_metadata or {}),
-            }
-
         list_started = time.perf_counter()
         list_max_tokens = max(16, min(64, max(int(max_tokens), max_items * 8)))
         list_raw_text = "".join(
@@ -475,35 +439,17 @@ class MlxLmEngine:
                     candidates.append(candidate)
                 if len(candidates) >= max_items:
                     break
-        if len(candidates) < max_items:
-            fallback_candidates = _domain_no_input_fallback_candidates(
-                recent_context=recent_context,
-                max_candidates=max_items,
-            )
-            appended_fallbacks: list[str] = []
-            if fallback_candidates:
-                branch_timings.append(
-                    {
-                        "label": "domain-fallback",
-                        "reason": "fill-empty-model-slots" if candidates else "no-usable-model-candidates",
-                        "candidates": fallback_candidates,
-                    }
-                )
-            for candidate in fallback_candidates:
-                if candidate and candidate not in seen:
-                    seen.add(candidate)
-                    candidates.append(candidate)
-                    appended_fallbacks.append(candidate)
-                if len(candidates) >= max_items:
-                    break
-            if branch_timings and branch_timings[-1].get("label") == "domain-fallback":
-                branch_timings[-1]["appendedCandidates"] = appended_fallbacks
+        candidate_scores = _continuation_branch_candidate_scores(
+            candidates[:max_items],
+            branch_timings=branch_timings,
+        )
         total_ms = int((time.perf_counter() - started) * 1000)
         return {
             "ok": True,
             "model": self.model_id,
             "rawText": "\n".join(raw_texts),
             "candidates": candidates[:max_items],
+            "candidateScores": candidate_scores,
             "candidateMode": "continuation-branches",
             "requestType": PREDICTION_REQUEST_NO_INPUT,
             "totalMs": total_ms,
@@ -511,7 +457,7 @@ class MlxLmEngine:
             "timing": {
                 "candidateMode": "continuation-branches",
                 "logitsMs": int(logits_elapsed_ms or 0),
-                "fallbackJson": True,
+                "fallbackJson": False,
                 "fallbackReason": logits_quality_reason,
                 "requestType": PREDICTION_REQUEST_NO_INPUT,
                 "branches": branch_timings,
@@ -1776,78 +1722,37 @@ def _looks_like_meta_completion_candidate(text: str) -> bool:
     return any(marker in normalized for marker in meta_markers)
 
 
-def _domain_no_input_fallback_candidates(*, recent_context: str, max_candidates: int) -> list[str]:
-    context = compact_whitespace(recent_context)
-    if not context:
-        return []
-    domain_terms = (
-        "输入法",
-        "候选",
-        "预测",
-        "RAG",
-        "rag",
-        "LLM",
-        "llm",
-        "记忆",
-        "模型",
-        "上下文",
-        "Wisdom-Weasel",
-        "wisdom-weasel",
-        "Felix",
-        "felix",
-    )
-    if not any(term in context for term in domain_terms):
-        return []
-    candidates: list[str] = []
-    if "设计" in context and "候选" in context:
-        candidates.extend(["补齐展示细节", "优化候选排序"])
-    if "整理" in context and "项目" in context:
-        candidates.extend(["补齐项目进度", "整理反馈问题"])
-    if any(term in context for term in ("Wisdom-Weasel", "wisdom-weasel", "Felix", "felix")):
-        candidates.extend(["对照源码实现", "同步真实上下文", "过滤旧记忆", "生成多条候选", "取消过期预测"])
-    if "没有" in context or "没" in context or "用不了" in context:
-        candidates.extend(["实际没有生效", "需要真实生效"])
-    if "上下文" in context and any(term in context.lower() for term in ("删除", "backspace")):
-        candidates.append("按实际输入更新")
-    if "LLM" in context or "llm" in context:
-        candidates.append("接入真实 LLM 候选")
-    if "RAG" in context or "rag" in context or "记忆" in context:
-        candidates.append("接入真实记忆候选")
-    if "候选" in context or "预测" in context or "输入法" in context:
-        candidates.append("验证前台输入效果")
-    result: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        normalized = compact_whitespace(candidate)
-        if not normalized or normalized in seen:
+def _continuation_branch_candidate_scores(
+    candidates: list[str],
+    *,
+    branch_timings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    branch_by_candidate: dict[str, str] = {}
+    for branch in branch_timings:
+        label = str(branch.get("label") or "branch")
+        branch_candidates = branch.get("candidates")
+        if not isinstance(branch_candidates, list):
             continue
-        seen.add(normalized)
-        result.append(normalized)
-        if len(result) >= max(1, int(max_candidates)):
-            break
+        for item in branch_candidates:
+            text = compact_whitespace(str(item))
+            if text and text not in branch_by_candidate:
+                branch_by_candidate[text] = label
+    total = max(1, len(candidates))
+    result: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        text = compact_whitespace(candidate)
+        if not text:
+            continue
+        result.append(
+            {
+                "text": text,
+                "rank": index,
+                "source": branch_by_candidate.get(text, "branch"),
+                "mode": "continuation-branches",
+                "confidence": max(0.0, min(1.0, 1.0 - ((index - 1) / max(3, total + 1)) * 0.35)),
+            }
+        )
     return result
-
-
-def _recent_context_prefers_fast_domain_fallback(recent_context: str) -> bool:
-    context = compact_whitespace(recent_context).lower()
-    if not context:
-        return False
-    repair_markers = (
-        "没有",
-        "没",
-        "用不了",
-        "不生效",
-        "无llm",
-        "无 llm",
-        "无rag",
-        "无 rag",
-        "不弹出",
-        "没看到",
-        "随机",
-        "wisdom-weasel",
-        "felix",
-    )
-    return any(marker in context for marker in repair_markers)
 
 
 def _prompt_cache_used_for_generation(prompt_cache: dict[str, Any]) -> bool:
