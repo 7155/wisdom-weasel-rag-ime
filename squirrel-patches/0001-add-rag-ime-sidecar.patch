@@ -1146,20 +1146,6 @@ index c2adf74..3cfc0e5 100644
 +      )
 +      return
 +    }
-+    guard fingerprint == ragImeLastRequestFingerprint else {
-+      traceRagImeFrontendEvent("sidecar_response_dropped", fields: [
-+        "requestSeq": response.requestSeq,
-+        "reason": "stale_fingerprint",
-+        "inputGeneration": inputGeneration,
-+        "liveInputGeneration": ragImeInputGeneration,
-+        "responseAgeMs": responseAgeMs,
-+        "requestRawInput": request.rawInput,
-+        "responseRawInput": response.rawInput,
-+        "requestPreedit": request.preedit,
-+        "responsePreedit": response.preedit,
-+      ])
-+      return
-+    }
 +    guard response.requestSeq == request.requestSeq else {
 +      dropRagImeSidecarResponse("request_seq_mismatch", response: response, request: request, fingerprint: fingerprint)
 +      return
@@ -1173,6 +1159,33 @@ index c2adf74..3cfc0e5 100644
 +      return
 +    }
 +    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
++    let responseContainsRimeFallback = ragImeResponseContainsRimeFallback(response)
++    if fingerprint != ragImeLastRequestFingerprint {
++      if responseContainsRimeFallback || currentRawInput != request.rawInput || ragImeCommittedContext != request.committedContext {
++        traceRagImeFrontendEvent("sidecar_response_dropped", fields: [
++          "requestSeq": response.requestSeq,
++          "reason": "stale_fingerprint",
++          "inputGeneration": inputGeneration,
++          "liveInputGeneration": ragImeInputGeneration,
++          "responseAgeMs": responseAgeMs,
++          "requestRawInput": request.rawInput,
++          "responseRawInput": response.rawInput,
++          "requestPreedit": request.preedit,
++          "responsePreedit": response.preedit,
++          "containsRimeFallback": responseContainsRimeFallback,
++        ])
++        return
++      }
++      traceRagImeFrontendEvent("sidecar_stale_fingerprint_allowed", fields: [
++        "requestSeq": response.requestSeq,
++        "inputGeneration": inputGeneration,
++        "liveInputGeneration": ragImeInputGeneration,
++        "responseAgeMs": responseAgeMs,
++        "rawInput": response.rawInput,
++        "preedit": response.preedit,
++        "displayCount": response.displayCandidates.count,
++      ])
++    }
 +    guard currentRawInput == request.rawInput else {
 +      dropRagImeSidecarResponse("raw_input_changed", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput, clearDisplay: true)
 +      return
@@ -1194,7 +1207,7 @@ index c2adf74..3cfc0e5 100644
 +      return
 +    }
 +    if ragImeCandidateFingerprint(response.rimeContext.candidates) != ragImeCandidateFingerprint(request.rimeContext.candidates) {
-+      if ragImeResponseContainsRimeFallback(response) {
++      if responseContainsRimeFallback {
 +        dropRagImeSidecarResponse("rime_candidates_changed", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput)
 +        return
 +      }
@@ -1205,7 +1218,7 @@ index c2adf74..3cfc0e5 100644
 +        "displayCount": response.displayCandidates.count,
 +      ])
 +    }
-+    guard currentRagImeContextMatches(request) else {
++    guard currentRagImeContextMatches(request, requireRimeFallback: responseContainsRimeFallback) else {
 +      dropRagImeSidecarResponse("rime_context_changed", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput)
 +      return
 +    }
@@ -1414,12 +1427,15 @@ index c2adf74..3cfc0e5 100644
 +    }
 +  }
 +
-+  func currentRagImeContextMatches(_ request: RagImeSidecarRequest) -> Bool {
++  func currentRagImeContextMatches(_ request: RagImeSidecarRequest, requireRimeFallback: Bool = true) -> Bool {
 +    var ctx = RimeContext_stdbool.rimeStructInit()
 +    guard rimeAPI.get_context(session, &ctx) else { return false }
 +    defer { _ = rimeAPI.free_context(&ctx) }
 +    let currentPreedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
 +    guard currentPreedit == request.preedit else { return false }
++    if !requireRimeFallback {
++      return true
++    }
 +    guard Int(ctx.menu.page_no) == request.rimeContext.page else { return false }
 +    return true
 +  }
