@@ -99,15 +99,18 @@ class VcpRebuildMemoryGenerator:
         if resolved is None or not resolved.exists():
             raise MemoryGenerationError("x1api/model env file was not found")
         values = _read_env_file(resolved)
-        config = VcpRebuildConfig(
-            api_base_url=_first_env_value(
+        api_base_url = _canonical_x1api_base_url(
+            _first_env_value(
                 values,
                 "RAG_IME_AI_BASE_URL",
                 "RAG_IME_PREDICTOR_BASE_URL",
                 "X1API_BASE_URL",
                 "API_BASE_URL",
                 default="https://x1api.top/v1",
-            ),
+            )
+        )
+        config = VcpRebuildConfig(
+            api_base_url=api_base_url,
             api_key=_first_env_value(values, "RAG_IME_AI_API_KEY", "RAG_IME_PREDICTOR_API_KEY", "X1API_API_KEY", "API_KEY"),
             model=_first_env_value(values, "RAG_IME_AI_MODEL", "RAG_IME_PREDICTOR_MODEL", "X1API_MODEL", "MODEL", default="gpt-5.5"),
             upstream_wire_api=_wire_api(
@@ -312,6 +315,13 @@ def default_vcp_rebuild_env_path() -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def _canonical_x1api_base_url(value: str) -> str:
+    parsed = urllib.parse.urlsplit(compact_whitespace(value))
+    if parsed.netloc.lower() != "x2app.top":
+        return compact_whitespace(value)
+    return urllib.parse.urlunsplit((parsed.scheme or "https", "x1api.top", parsed.path, parsed.query, parsed.fragment))
 
 
 def _memory_generation_system_prompt(*, max_count: int) -> str:

@@ -34,6 +34,35 @@ detect_python() {
   return 1
 }
 
+detect_ssl_cert_file() {
+  local candidate
+  local cert_path
+  local candidates=()
+  candidates+=("$PYTHON_EXECUTABLE")
+  candidates+=("$(command -v python3 2>/dev/null || true)")
+  candidates+=("/opt/homebrew/bin/python3")
+  candidates+=("/opt/homebrew/opt/python@3.14/bin/python3.14")
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -z "$candidate" || ! -x "$candidate" ]]; then
+      continue
+    fi
+    cert_path="$("$candidate" - <<'PY' 2>/dev/null || true
+try:
+    import certifi
+except Exception:
+    raise SystemExit(1)
+print(certifi.where())
+PY
+)"
+    if [[ -n "$cert_path" && -f "$cert_path" ]]; then
+      printf '%s\n' "$cert_path"
+      return 0
+    fi
+  done
+  return 1
+}
+
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(detect_python || true)}"
 
 if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
@@ -45,6 +74,8 @@ if [[ ! -f "$ROOT/scripts/sidecar_launch.py" ]]; then
   echo "sidecar launch wrapper not found: $ROOT/scripts/sidecar_launch.py" >&2
   exit 1
 fi
+
+SSL_CERT_FILE_DEFAULT="${SSL_CERT_FILE:-$(detect_ssl_cert_file || true)}"
 
 mkdir -p "$PLIST_DIR" "$LOG_DIR" "$(dirname "$DB_PATH")" "$APP_CODE_DIR"
 rm -rf "$APP_CODE_DIR/rag_ime"
@@ -66,6 +97,7 @@ PORT="$PORT" \
 CORE_MODE="$CORE_MODE" \
 CORE_COMMAND="$CORE_COMMAND" \
 NO_SEED="$NO_SEED" \
+SSL_CERT_FILE_DEFAULT="$SSL_CERT_FILE_DEFAULT" \
 "$PYTHON_EXECUTABLE" - <<'PY'
 import os
 import plistlib
@@ -108,6 +140,9 @@ env_vars = {
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],
     "RAG_IME_CORE_MODE": os.environ["CORE_MODE"],
 }
+ssl_cert_file = os.environ.get("SSL_CERT_FILE_DEFAULT", "")
+if ssl_cert_file:
+    env_vars["SSL_CERT_FILE"] = ssl_cert_file
 for key in (
     "RAG_IME_RIME_CACHE_TTL_MS",
     "RAG_IME_SUGGESTION_CACHE_SIZE",
@@ -116,6 +151,21 @@ for key in (
     "RAG_IME_MODEL_CONTEXT_EVENTS",
     "RAG_IME_MODEL_CONTEXT_CHARS",
     "RAG_IME_MODEL_LANE_MAX_CANDIDATES",
+    "SSL_CERT_FILE",
+    "RAG_IME_MODEL_ENV",
+    "RAG_IME_X1API_ENV",
+    "RAG_IME_VCP_REBUILD_ENV",
+    "RAG_IME_AI_PROVIDER",
+    "RAG_IME_AI_BASE_URL",
+    "RAG_IME_AI_MODEL",
+    "RAG_IME_AI_WIRE_API",
+    "RAG_IME_AI_TIMEOUT_SECONDS",
+    "RAG_IME_AI_REASONING_EFFORT",
+    "RAG_IME_AI_DISABLE_RESPONSE_STORAGE",
+    "RAG_IME_AI_API_KEY",
+    "X1API_BASE_URL",
+    "X1API_MODEL",
+    "X1API_API_KEY",
     "RAG_IME_PREDICTOR_PROVIDER",
     "RAG_IME_PREDICTOR_BASE_URL",
     "RAG_IME_PREDICTOR_MODEL",

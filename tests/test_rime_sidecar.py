@@ -2392,13 +2392,14 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         with patch.dict("os.environ", {"RAG_IME_PROGRESSIVE_FIRST_RESPONSE_MS": "120"}):
             followup = build_rime_sidecar_response(
-                payload={**payload, "requestSeq": 89},
+                payload={**payload, "requestSeq": 89, "progressiveFollowUp": True},
                 adapter=self.adapter,
                 core=self.core,
                 predictor=slow_predictor,
-            )
+        )
 
         self.assertTrue(followup["modelPredictions"])
+        self.assertTrue(followup["progressive"]["enabled"])
         self.assertFalse(followup["progressive"]["shouldFollowUp"])
         self.assertEqual(followup["displayCandidates"][0]["sourceType"], "model")
 

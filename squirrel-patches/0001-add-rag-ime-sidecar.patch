@@ -54,9 +54,9 @@ index 0000000..44ee9f8
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 8
-+  latency_budget_ms: 3200
++  latency_budget_ms: 6500
 +  debounce_ms: 40
-+  timeout_ms: 9000
++  timeout_ms: 12000
 +  frontend_trace: true
 diff --git a/sources/InputSource.swift b/sources/InputSource.swift
 index 89c1214..a240173 100644
@@ -229,9 +229,9 @@ index 0000000..e4aaed0
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 8, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 3200, range: 30...4000)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 6500, range: 30...10000)
 +    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 40, range: 0...500)
-+    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 9000, range: 100...15000)) / 1000
++    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 12000, range: 100...20000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
 +    self.frontendTrace = config?.getBool("rag_ime/frontend_trace") == true
 +  }
@@ -550,6 +550,7 @@ index 0000000..784162d
 +  let maxVisibleCandidates: Int
 +  let maxSideCandidates: Int
 +  let forceSideCandidates: Bool
++  let progressiveFollowUp: Bool
 +  let rimeContext: RagImeRimeContextPayload
 +}
 +
@@ -770,8 +771,8 @@ index c2adf74..3cfc0e5 100644
 +  private var ragImeDisplaySessionFingerprint: String = ""
 +  private let ragImeDisplayHoldoverDuration: TimeInterval = 2.6
 +  private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 8.0
-+  private let ragImeActiveResponseApplyWindowMs: Int = 900
-+  private let ragImePostCommitResponseApplyWindowMs: Int = 2500
++  private let ragImeActiveResponseApplyWindowMs: Int = 2200
++  private let ragImePostCommitResponseApplyWindowMs: Int = 10000
 +  private var ragImeCommittedContext: String = ""
 +  private var ragImeCommittedContextUpdatedAt: Date = .distantPast
 +  private let ragImeCommittedContextLimit: Int = 800
@@ -1023,6 +1024,7 @@ index c2adf74..3cfc0e5 100644
 +      maxVisibleCandidates: sidecarClient.maxVisibleCandidates,
 +      maxSideCandidates: sidecarClient.maxSideCandidates,
 +      forceSideCandidates: true,
++      progressiveFollowUp: false,
 +      rimeContext: RagImeRimeContextPayload(
 +        candidates: rimeCandidates,
 +        highlightedIndex: highlighted,
@@ -1249,23 +1251,37 @@ index c2adf74..3cfc0e5 100644
 +      dropRagImeSidecarResponse("rime_page_changed", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput)
 +      return
 +    }
++    var displayCandidatesToApply = response.displayCandidates
 +    if ragImeCandidateFingerprint(response.rimeContext.candidates) != ragImeCandidateFingerprint(request.rimeContext.candidates) {
 +      if responseContainsRimeFallback {
-+        dropRagImeSidecarResponse("rime_candidates_changed", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput)
-+        return
++        let sideOnlyCandidates = displayCandidatesToApply.filter { candidate in
++          candidate.sourceType != "rime" && candidate.selectionAction != "select_rime_candidate"
++        }
++        if sideOnlyCandidates.isEmpty {
++          dropRagImeSidecarResponse("rime_candidates_changed", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput)
++          return
++        }
++        displayCandidatesToApply = sideOnlyCandidates
++        traceRagImeFrontendEvent("sidecar_rime_fallback_stripped", fields: [
++          "requestSeq": response.requestSeq,
++          "rawInput": response.rawInput,
++          "preedit": response.preedit,
++          "originalDisplayCount": response.displayCandidates.count,
++          "sideDisplayCount": displayCandidatesToApply.count,
++        ])
 +      }
 +      traceRagImeFrontendEvent("sidecar_rime_candidate_change_allowed", fields: [
 +        "requestSeq": response.requestSeq,
 +        "rawInput": response.rawInput,
 +        "preedit": response.preedit,
-+        "displayCount": response.displayCandidates.count,
++        "displayCount": displayCandidatesToApply.count,
 +      ])
 +    }
 +    guard currentRagImeContextMatches(request, requireRimeFallback: responseContainsRimeFallback) else {
 +      dropRagImeSidecarResponse("rime_context_changed", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput)
 +      return
 +    }
-+    guard !response.displayCandidates.isEmpty else {
++    guard !displayCandidatesToApply.isEmpty else {
 +      let shouldClearEmptyResponse = response.predictionSession?.shouldClearPredictionPanel == true
 +      if shouldClearEmptyResponse {
 +        clearRagImeDisplayCandidates()
@@ -1299,13 +1315,13 @@ index c2adf74..3cfc0e5 100644
 +      return
 +    }
 +    let responseSessionFingerprint = response.predictionSession?.sessionFingerprint ?? ""
-+    if !responseSessionFingerprint.isEmpty && !response.displayCandidates.allSatisfy({ ragImeDisplayCandidateSessionFingerprint($0) == responseSessionFingerprint }) {
++    if !responseSessionFingerprint.isEmpty && !displayCandidatesToApply.allSatisfy({ ragImeDisplayCandidateSessionFingerprint($0) == responseSessionFingerprint }) {
 +      dropRagImeSidecarResponse("candidate_session_fingerprint_mismatch", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput, clearDisplay: true)
 +      return
 +    }
 +
-+    ragImeDisplayCandidates = response.displayCandidates
-+    ragImePanelUsesDisplayCandidates = !response.displayCandidates.isEmpty
++    ragImeDisplayCandidates = displayCandidatesToApply
++    ragImePanelUsesDisplayCandidates = !displayCandidatesToApply.isEmpty
 +    ragImeDisplayRawInput = response.rawInput
 +    ragImeDisplayPreedit = response.preedit
 +    ragImeDisplaySemanticQuery = response.semanticQuery
@@ -1324,7 +1340,7 @@ index c2adf74..3cfc0e5 100644
 +      "preedit": response.preedit,
 +      "semanticQuery": response.semanticQuery,
 +      "queryBasis": response.queryBasis,
-+      "displayCount": response.displayCandidates.count,
++      "displayCount": displayCandidatesToApply.count,
 +      "panelUsesDisplayCandidates": ragImePanelUsesDisplayCandidates,
 +      "inputGeneration": inputGeneration,
 +      "responseAgeMs": responseAgeMs,
@@ -1412,6 +1428,24 @@ index c2adf74..3cfc0e5 100644
 +        ])
 +        return
 +      }
++      let followUpRequest = RagImeSidecarRequest(
++        frontendBuild: request.frontendBuild,
++        schemaVersion: request.schemaVersion,
++        predictionFirstMerge: request.predictionFirstMerge,
++        sessionId: request.sessionId,
++        requestSeq: request.requestSeq,
++        rawInput: request.rawInput,
++        preedit: request.preedit,
++        commitTextPreview: request.commitTextPreview,
++        committedContext: request.committedContext,
++        project: request.project,
++        latencyBudgetMs: request.latencyBudgetMs,
++        maxVisibleCandidates: request.maxVisibleCandidates,
++        maxSideCandidates: request.maxSideCandidates,
++        forceSideCandidates: request.forceSideCandidates,
++        progressiveFollowUp: true,
++        rimeContext: request.rimeContext
++      )
 +      self.ragImePendingRequestFingerprint = fingerprint
 +      self.traceRagImeFrontendEvent("sidecar_progressive_followup_sent", fields: [
 +        "requestSeq": request.requestSeq,
@@ -1420,7 +1454,7 @@ index c2adf74..3cfc0e5 100644
 +        "pendingLanes": pendingLanes,
 +      ])
 +      self.sendRagImeSidecarRequest(
-+        request,
++        followUpRequest,
 +        fingerprint: fingerprint,
 +        inputGeneration: inputGeneration,
 +        sentAt: Date(),

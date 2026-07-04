@@ -26,6 +26,7 @@ AUTO_TYPE=0
 AUTO_QUERY="${RAG_IME_FOREGROUND_TRACE_AUTO_QUERY:-er qi}"
 AUTO_KEY="${RAG_IME_FOREGROUND_TRACE_AUTO_KEY:-6}"
 AUTO_TYPE_DELAY="${RAG_IME_FOREGROUND_TRACE_AUTO_DELAY_SECONDS:-2.5}"
+AUTO_CHAR_DELAY="${RAG_IME_FOREGROUND_TRACE_AUTO_CHAR_DELAY_SECONDS:-0.04}"
 
 usage() {
   cat <<'USAGE'
@@ -49,6 +50,7 @@ Options:
   --auto-type           Try to type the test query and side-candidate key with AppleScript
   --auto-query TEXT     Text used by --auto-type (default: er qi)
   --auto-key KEY        Number key used by --auto-type (default: 6)
+  --auto-char-delay SEC Delay between simulated characters (default: 0.04)
   --dry-run             Print resolved commands without changing local state
   -h, --help            Show this help
 USAGE
@@ -103,6 +105,14 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       AUTO_KEY="$2"
+      shift
+      ;;
+    --auto-char-delay)
+      if [[ $# -lt 2 ]]; then
+        echo "--auto-char-delay requires a value" >&2
+        exit 2
+      fi
+      AUTO_CHAR_DELAY="$2"
       shift
       ;;
     --dry-run)
@@ -160,6 +170,7 @@ auto_type=$AUTO_TYPE
 auto_query=$AUTO_QUERY
 auto_key=$AUTO_KEY
 auto_type_delay=$AUTO_TYPE_DELAY
+auto_char_delay=$AUTO_CHAR_DELAY
 check_input_source_script=$CHECK_INPUT_SOURCE_SCRIPT
 select_input_source_script=$SELECT_INPUT_SOURCE_SCRIPT
 trace_check_command=$PYTHON_EXECUTABLE ${trace_args[*]}
@@ -185,17 +196,19 @@ fi
 
 if [[ "$OPEN_TEST_FILE" == "1" ]]; then
   mkdir -p "$(dirname "$TEST_FILE")"
-  "$PYTHON_EXECUTABLE" - "$TEST_FILE" <<'PY'
+  "$PYTHON_EXECUTABLE" - "$TEST_FILE" "$AUTO_QUERY" "$INPUT_SOURCE_ID" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1]).expanduser()
+query = sys.argv[2]
+input_source = sys.argv[3]
 path.write_text(
     "RAG-IME foreground trace test\n\n"
-    "1. Make sure the active input source is Squirrel - Simplified.\n"
-    "2. Type a semantic pinyin prefix such as: er qi, xian zai, rag shu ru fa.\n"
-    "3. Wait for the mixed panel: 1-5 horizontal MLX/LLM, 6-8 vertical RAG/memory.\n"
-    "4. Press 6, 7, or 8 to accept a side sentence candidate.\n\n",
+    f"1. Make sure the active input source is {input_source}.\n"
+    f"2. Type: {query}.\n"
+    "3. Wait for LLM/model, RAG, and memory candidates in the panel.\n"
+    "4. Press a visible candidate number to accept a side candidate.\n\n",
     encoding="utf-8",
 )
 PY
@@ -207,18 +220,22 @@ fi
 
 if [[ "$AUTO_TYPE" == "1" ]]; then
   set +e
-  osascript - "$OPEN_APP" "$AUTO_QUERY" "$AUTO_KEY" "$AUTO_TYPE_DELAY" <<'APPLESCRIPT'
+  osascript - "$OPEN_APP" "$AUTO_QUERY" "$AUTO_KEY" "$AUTO_TYPE_DELAY" "$AUTO_CHAR_DELAY" <<'APPLESCRIPT'
 on run argv
   set appName to item 1 of argv
   set queryText to item 2 of argv
   set sideKey to item 3 of argv
   set waitSeconds to (item 4 of argv) as number
+  set charDelaySeconds to (item 5 of argv) as number
   tell application appName to activate
   delay 0.8
   tell application "System Events"
     keystroke return
     delay 0.2
-    keystroke queryText
+    repeat with charIndex from 1 to length of queryText
+      keystroke (character charIndex of queryText)
+      delay charDelaySeconds
+    end repeat
     delay waitSeconds
     keystroke sideKey
   end tell
@@ -236,7 +253,7 @@ command, usually Codex and/or your terminal:
   System Settings -> Privacy & Security -> Accessibility
 
 Manual fallback:
-  click the opened editor, type "er qi", then press 6, 7, or 8.
+  click the opened editor, type "$AUTO_QUERY", then press a visible side-candidate number.
 EOF
   fi
 fi
@@ -246,9 +263,9 @@ Foreground trace gate is waiting for real Squirrel AppKit events.
 
 Manual action now:
   1. Click the opened editor or any normal text field.
-  2. Type: er qi
-  3. Wait for 1-5 horizontal MLX/LLM candidates and 6-8 vertical RAG/memory rows.
-  4. Press 6, 7, or 8 to commit a side candidate.
+  2. Type: $AUTO_QUERY
+  3. Wait for LLM/model, RAG, and memory candidates in the panel.
+  4. Press a visible candidate number to commit a side candidate.
 
 Trace log:
   $TRACE_LOG

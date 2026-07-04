@@ -22,6 +22,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 "xian zai",
                 "--auto-key",
                 "7",
+                "--auto-char-delay",
+                "0.08",
                 "--wait",
                 "12",
             ],
@@ -39,6 +41,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("auto_type=1", result.stdout)
         self.assertIn("auto_query=xian zai", result.stdout)
         self.assertIn("auto_key=7", result.stdout)
+        self.assertIn("auto_char_delay=0.08", result.stdout)
         self.assertIn("require_hitoolbox_enabled=0", result.stdout)
         self.assertIn("require_modern_prediction_session=1", result.stdout)
         self.assertIn("--require-mixed-panel", result.stdout)
@@ -256,6 +259,55 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["latestSidePanel"]["candidateCounts"]["ragBlock"], 1)
         self.assertIsNone(report["latestMixedPanel"])
         self.assertEqual(report["latestNumberKeySideCommit"]["key"], "1")
+
+    def test_trace_check_reports_sidecar_drop_reason_and_live_input(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "sidecar_response_dropped",
+                        "timestampMs": 10,
+                        "reason": "response_too_late_for_foreground",
+                        "requestRawInput": "woxiang",
+                        "responseRawInput": "woxiang",
+                        "currentRawInput": "woxiang",
+                        "requestPreedit": "wo xiang",
+                        "responsePreedit": "wo xiang",
+                        "displayCount": 8,
+                        "responseAgeMs": 1376,
+                        "inputGeneration": 3,
+                        "liveInputGeneration": 3,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--print-last",
+                    "1",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        event = report["lastEvents"][0]
+        self.assertEqual(event["reason"], "response_too_late_for_foreground")
+        self.assertEqual(event["currentRawInput"], "woxiang")
+        self.assertEqual(event["responseAgeMs"], 1376)
+        self.assertEqual(event["inputGeneration"], 3)
+        self.assertEqual(event["liveInputGeneration"], 3)
 
     def test_trace_check_rejects_side_commit_from_older_panel_session(self) -> None:
         root = Path(__file__).resolve().parents[1]

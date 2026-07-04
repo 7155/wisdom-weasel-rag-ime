@@ -88,7 +88,7 @@ class MemoryGeneratorTests(unittest.TestCase):
         self.assertEqual(generator.config.api_key, "secret-value")
         self.assertEqual(generator.provider_name, "x1api")
 
-    def test_from_env_path_treats_x2app_as_x1api_provider(self) -> None:
+    def test_from_env_path_canonicalizes_x2app_to_current_x1api_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / ".env"
             env_path.write_text(
@@ -105,6 +105,7 @@ class MemoryGeneratorTests(unittest.TestCase):
             generator = VcpRebuildMemoryGenerator.from_env_path(env_path)
 
         self.assertEqual(generator.provider_name, "x1api")
+        self.assertEqual(generator.config.api_base_url, "https://x1api.top/v1")
 
     def test_parse_core_optimization_payload(self) -> None:
         raw = """

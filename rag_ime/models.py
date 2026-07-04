@@ -100,6 +100,7 @@ class RimeContextSnapshot:
     max_side_candidates: int = 8
     idle_ms: int = 0
     force_side_candidates: bool = False
+    progressive_follow_up: bool = False
 
 
 @dataclass(frozen=True)

@@ -353,8 +353,14 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
     result = {
         "event": event.get("event"),
         "timestampMs": event.get("timestampMs"),
+        "reason": event.get("reason"),
         "rawInput": event.get("rawInput"),
         "preedit": event.get("preedit"),
+        "requestRawInput": event.get("requestRawInput"),
+        "responseRawInput": event.get("responseRawInput"),
+        "currentRawInput": event.get("currentRawInput"),
+        "requestPreedit": event.get("requestPreedit"),
+        "responsePreedit": event.get("responsePreedit"),
         "queryBasis": event.get("queryBasis"),
         "forcesHorizontalLayout": event.get("forcesHorizontalLayout"),
         "linear": event.get("linear"),
@@ -364,6 +370,9 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "key": event.get("key"),
         "displayCount": event.get("displayCount"),
         "latencyBudgetMs": event.get("latencyBudgetMs"),
+        "responseAgeMs": event.get("responseAgeMs"),
+        "inputGeneration": event.get("inputGeneration"),
+        "liveInputGeneration": event.get("liveInputGeneration"),
         "predictionSession": event.get("predictionSession"),
     }
     candidates = event.get("candidates")

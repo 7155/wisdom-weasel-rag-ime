@@ -655,6 +655,7 @@ def run_side_lanes_with_latency_budget(
         thread.start()
     deadline = started + max(0, latency_budget_ms) / 1000
     progressive_enabled = progressive_sidecar_updates_enabled()
+    allow_progressive_first_response = progressive_enabled and not snapshot.progressive_follow_up
     first_response_budget_ms = progressive_first_response_budget_ms(latency_budget_ms)
     progressive_deadline = started + first_response_budget_ms / 1000
     progressive_partial = False
@@ -665,7 +666,7 @@ def run_side_lanes_with_latency_budget(
         if now >= deadline:
             break
         if (
-            progressive_enabled
+            allow_progressive_first_response
             and now >= progressive_deadline
             and _has_progressive_visible_lane_result(
                 rag_result=rag_result,
@@ -2268,12 +2269,16 @@ def parse_rime_context_payload(payload: dict[str, Any], *, default_project: str)
         ),
         page=_bounded_int(rime_context.get("page", payload.get("page")), default=0, minimum=0, maximum=999),
         is_last_page=_bool(rime_context.get("isLastPage", payload.get("isLastPage")), default=True),
-        latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=300, minimum=30, maximum=4000),
+        latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=300, minimum=30, maximum=10000),
         max_visible_candidates=_bounded_int(payload.get("maxVisibleCandidates"), default=8, minimum=1, maximum=10),
         max_side_candidates=_bounded_int(payload.get("maxSideCandidates"), default=8, minimum=0, maximum=10),
         idle_ms=_bounded_int(_first_present(payload, rime_context, "idleMs"), default=0, minimum=0, maximum=10000),
         force_side_candidates=_bool(
             _first_present(payload, rime_context, "forceSideCandidates"),
+            default=False,
+        ),
+        progressive_follow_up=_bool(
+            _first_present(payload, rime_context, "progressiveFollowUp"),
             default=False,
         ),
     )

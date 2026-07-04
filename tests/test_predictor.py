@@ -833,9 +833,34 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
         assert isinstance(provider, OpenAICompatiblePredictionProvider)
-        self.assertEqual(provider.config.base_url, "https://x1api.top/v1")
+        self.assertEqual(provider.config.base_url, "https://x1api.top")
         self.assertEqual(provider.config.model, "deepseek-chat")
         self.assertEqual(provider.config.api_key, "secret-value")
+
+    def test_prediction_provider_canonicalizes_legacy_model_env_to_x1api_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "API_BASE_URL=https://x2app.top/v1",
+                        "API_KEY=secret-value",
+                        "MODEL=gpt-5.5",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_MODEL_ENV": str(env_path),
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+
+        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
+        assert isinstance(provider, OpenAICompatiblePredictionProvider)
+        self.assertEqual(provider.config.base_url, "https://x1api.top")
+        self.assertEqual(provider.config.model, "gpt-5.5")
 
     def test_env_can_disable_prediction_failure_cooldown(self) -> None:
         provider = prediction_provider_from_env(

@@ -7,6 +7,7 @@ import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass
@@ -908,7 +909,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
         source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
         or source.get("RAG_IME_AI_PROVIDER", "").strip().lower()
     )
-    base_url = (
+    base_url = _canonical_x1api_base_url(
         source.get("RAG_IME_PREDICTOR_BASE_URL", "").strip()
         or source.get("RAG_IME_AI_BASE_URL", "").strip()
         or source.get("X1API_BASE_URL", "").strip()
@@ -1014,7 +1015,25 @@ def _prediction_env_with_model_file(env: dict[str, str] | None) -> dict[str, str
             continue
         key, value = line.split("=", 1)
         file_values[key.strip()] = value.strip().strip('"').strip("'")
-    return {**file_values, **source}
+    merged = {**file_values, **source}
+    for key in ("RAG_IME_PREDICTOR_BASE_URL", "RAG_IME_AI_BASE_URL", "X1API_BASE_URL", "API_BASE_URL"):
+        if merged.get(key):
+            merged[key] = _canonical_x1api_base_url(str(merged[key]))
+    return merged
+
+
+def _canonical_x1api_base_url(value: str) -> str:
+    cleaned = compact_whitespace(value)
+    if not cleaned:
+        return ""
+    parsed = urllib.parse.urlsplit(cleaned)
+    netloc = parsed.netloc.lower()
+    if netloc not in {"x1api.top", "x2app.top"}:
+        return cleaned
+    path = parsed.path.rstrip("/")
+    if path == "/v1":
+        path = ""
+    return urllib.parse.urlunsplit((parsed.scheme or "https", "x1api.top", path, parsed.query, parsed.fragment))
 
 
 def prediction_provider_status(provider: PredictionProvider, *, probe_capabilities: bool = False) -> dict[str, object]:

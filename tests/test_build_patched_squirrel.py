@@ -14,7 +14,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
 
         self.assertIn("fallback: 8, range: 0...10", patch_text)
-        self.assertIn("fallback: 9000, range: 100...15000", patch_text)
+        self.assertIn("fallback: 12000, range: 100...20000", patch_text)
         self.assertIn("let displayLayout: String?", patch_text)
         self.assertIn("let displayLane: String?", patch_text)
         self.assertIn("func candidateSeparator(before index: Int) -> String", patch_text)
@@ -25,8 +25,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func ragImePanelForcesHorizontalLayout() -> Bool", patch_text)
         self.assertIn("func ragImeDisplaySourceType(at index: Int) -> String?", patch_text)
         self.assertIn("private var ragImeInputGeneration: Int = 0", patch_text)
-        self.assertIn("private let ragImeActiveResponseApplyWindowMs: Int = 900", patch_text)
-        self.assertIn("private let ragImePostCommitResponseApplyWindowMs: Int = 2500", patch_text)
+        self.assertIn("private let ragImeActiveResponseApplyWindowMs: Int = 2200", patch_text)
+        self.assertIn("private let ragImePostCommitResponseApplyWindowMs: Int = 10000", patch_text)
         self.assertIn("var ragImePanelLinear: Bool", patch_text)
         self.assertIn("view.textView.setLayoutOrientation(ragImePanelVertical ? .vertical : .horizontal)", patch_text)
         self.assertIn("var candidateSeparators = [String]()", patch_text)
@@ -50,6 +50,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("ragImePostCommitDisplayHoldoverDuration", patch_text)
         self.assertIn("let predictionSession: RagImePredictionSessionPayload?", patch_text)
         self.assertIn("let progressive: RagImeProgressivePayload?", patch_text)
+        self.assertIn("let progressiveFollowUp: Bool", patch_text)
         self.assertIn("struct RagImePredictionSessionPayload: Codable", patch_text)
         self.assertIn("struct RagImeProgressivePayload: Codable", patch_text)
         self.assertIn("let sessionFingerprint: String?", patch_text)
@@ -69,10 +70,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("response.predictionSession?.shouldClearPredictionPanel == true", patch_text)
         self.assertIn("let shouldClearEmptyResponse = response.predictionSession?.shouldClearPredictionPanel == true", patch_text)
         self.assertIn('"keptExistingPanel": !shouldClearEmptyResponse', patch_text)
-        self.assertIn("response.displayCandidates.allSatisfy({ ragImeDisplayCandidateSessionFingerprint($0) == responseSessionFingerprint })", patch_text)
+        self.assertIn("displayCandidatesToApply.allSatisfy({ ragImeDisplayCandidateSessionFingerprint($0) == responseSessionFingerprint })", patch_text)
         self.assertIn("clearRagImeDisplayCandidates()", patch_text)
         self.assertIn("rag-ime.foreground-trace.v2", patch_text)
-        self.assertIn("guard !response.displayCandidates.isEmpty else {", patch_text)
+        self.assertIn("guard !displayCandidatesToApply.isEmpty else {", patch_text)
         self.assertIn("committedContext: ragImeCommittedContext", patch_text)
         self.assertIn("removeLastRagImeCommittedContextCharacterIfNoComposition()", patch_text)
         self.assertIn("func removeLastRagImeCommittedContextCharacter()", patch_text)
@@ -88,6 +89,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func ragImeDisplayCandidatesContainComposableSideCandidate() -> Bool", patch_text)
         self.assertIn('selectionScope == "mixed_prediction_first"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_rime_candidate_change_allowed"', patch_text)
+        self.assertIn('traceRagImeFrontendEvent("sidecar_rime_fallback_stripped"', patch_text)
+        self.assertIn('candidate.sourceType != "rime" && candidate.selectionAction != "select_rime_candidate"', patch_text)
+        self.assertIn("displayCandidatesToApply = sideOnlyCandidates", patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_stale_fingerprint_allowed"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_input_generation_change_allowed"', patch_text)
         self.assertIn("let canApplySideOnlyAcrossGeneration = !responseContainsRimeFallback", patch_text)
@@ -109,9 +113,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func ragImeTraceProgressive(_ progressive: RagImeProgressivePayload?) -> [String: Any]", patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_progressive_followup_scheduled"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_progressive_followup_sent"', patch_text)
+        self.assertIn("progressiveFollowUp: true", patch_text)
         self.assertIn('"progressive": ragImeTraceProgressive(response.progressive)', patch_text)
         self.assertIn('"panelUsesDisplayCandidates": ragImePanelUsesDisplayCandidates', patch_text)
-        self.assertIn("ragImePanelUsesDisplayCandidates = !response.displayCandidates.isEmpty", patch_text)
+        self.assertIn("ragImePanelUsesDisplayCandidates = !displayCandidatesToApply.isEmpty", patch_text)
         self.assertIn("func ragImeDisplayStateFingerprint() -> String", patch_text)
         self.assertIn('traceRagImeFrontendEvent("panel_expired_cleared"', patch_text)
         self.assertIn("ragImeDisplayExpiryWorkItem?.cancel()", patch_text)
@@ -412,9 +417,9 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 8",
-                "  latency_budget_ms: 3200",
+                "  latency_budget_ms: 6500",
                 "  debounce_ms: 40",
-                "  timeout_ms: 9000",
+                "  timeout_ms: 12000",
                 "  frontend_trace: true",
             ]
         )
