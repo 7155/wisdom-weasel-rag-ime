@@ -524,6 +524,119 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertIsNone(hidden_status_stat)
         self.assertEqual(action_count, 2)
 
+    def test_organize_rag_database_hides_generated_oneoffs_and_complaints(self) -> None:
+        self.core.reset()
+        now = 1_900_000_010_000
+        user_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now,
+                source="manual_commit",
+                committed_text="真实用户输入要保留",
+                recent_context="用户正在写输入法设计",
+                project="wisdom-weasel-rag-ime",
+                tags=("user-input",),
+            )
+        )
+        generated_once_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now + 1,
+                source="squirrel_rime_sidecar",
+                committed_text="接入真实记忆候选",
+                recent_context="模型候选被选中一次",
+                project="wisdom-weasel-rag-ime",
+                provider_name="rime-sidecar:model",
+                tags=("squirrel", "rime-sidecar", "sidecar-selected", "source:model"),
+            )
+        )
+        generated_repeated_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now + 2,
+                source="squirrel_rime_sidecar",
+                committed_text="常用模型短语",
+                recent_context="模型候选多次被选中",
+                project="wisdom-weasel-rag-ime",
+                provider_name="rime-sidecar:model",
+                tags=("squirrel", "rime-sidecar", "sidecar-selected", "source:model"),
+            )
+        )
+        complaint_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now + 3,
+                source="manual_commit",
+                committed_text="需要真实生效",
+                recent_context="用户反馈 RAG 老是之前输入",
+                project="wisdom-weasel-rag-ime",
+                tags=("user-input",),
+            )
+        )
+        curated_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now + 4,
+                source="curated_user_feedback",
+                committed_text="RAG 候选不应直接显示 Codex 工具日志",
+                recent_context="人工整理的质量门样例",
+                project="wisdom-weasel-rag-ime",
+                tags=("curated", "demo-quality", "rag", "noise-filter", "user-input"),
+            )
+        )
+        for memory_id, count in ((generated_once_id, 1), (generated_repeated_id, 3), (complaint_id, 1)):
+            for _ in range(count):
+                self.core.apply_action(
+                    MemoryAction(
+                        action_id=None,
+                        created_at_ms=0,
+                        memory_id=memory_id,
+                        action_type="accepted",
+                        query="输入法 RAG 整理",
+                    )
+                )
+
+        dry_run = self.core.organize_rag_database(project="wisdom-weasel-rag-ime", dry_run=True)
+        report = self.core.organize_rag_database(project="wisdom-weasel-rag-ime")
+
+        self.assertEqual(dry_run["hidden"], 0)
+        self.assertEqual(dry_run["wouldHide"], 2)
+        self.assertEqual(report["hidden"], 2)
+        self.assertEqual(report["reasonCounts"]["generated_side_candidate_oneoff"], 1)
+        self.assertEqual(report["reasonCounts"]["ime_complaint_or_debug_feedback"], 1)
+        with sqlite3.connect(self.db_path) as conn:
+            active = {
+                row[0]
+                for row in conn.execute(
+                    """
+                    SELECT e.committed_text
+                    FROM input_events e
+                    JOIN memory_state s ON s.event_id = e.id
+                    WHERE s.deleted = 0
+                    """
+                ).fetchall()
+            }
+            action_count = conn.execute(
+                "SELECT COUNT(*) FROM memory_actions WHERE action_type = 'hide' AND query = 'rag-db-organize'"
+            ).fetchone()[0]
+            user_deleted = conn.execute(
+                "SELECT s.deleted FROM memory_state s WHERE s.event_id = ?",
+                (int(user_id.removeprefix("event:")),),
+            ).fetchone()[0]
+            curated_deleted = conn.execute(
+                "SELECT s.deleted FROM memory_state s WHERE s.event_id = ?",
+                (int(curated_id.removeprefix("event:")),),
+            ).fetchone()[0]
+
+        self.assertIn("真实用户输入要保留", active)
+        self.assertIn("RAG 候选不应直接显示 Codex 工具日志", active)
+        self.assertIn("常用模型短语", active)
+        self.assertNotIn("接入真实记忆候选", active)
+        self.assertNotIn("需要真实生效", active)
+        self.assertEqual(action_count, 2)
+        self.assertEqual(user_deleted, 0)
+        self.assertEqual(curated_deleted, 0)
+
     def test_project_phrase_frequency_does_not_leak_between_projects(self) -> None:
         self.core.reset()
         now = now_ms()

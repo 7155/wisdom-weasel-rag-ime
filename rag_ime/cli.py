@@ -203,6 +203,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     prune_codex.add_argument("--dry-run", action="store_true", help="Report rows that would be hidden without changing the database")
 
+    organize_rag = subparsers.add_parser(
+        "organize-rag-db",
+        help="Hide noisy local RAG rows such as one-off generated side candidates and IME complaint/debug feedback",
+    )
+    organize_rag.add_argument("--project", default="wisdom-weasel-rag-ime")
+    organize_rag.add_argument("--dry-run", action="store_true", help="Report rows that would be hidden without changing the database")
+    organize_rag.add_argument(
+        "--min-generated-accepts",
+        type=int,
+        default=3,
+        help="Generated model/RAG side candidates need this many accepts/frequency before they survive cleanup.",
+    )
+    organize_rag.add_argument("--sample-size", type=int, default=12)
+
     eval_codex = subparsers.add_parser("eval-codex-history", help="Evaluate retrieval against explicit JSONL cases")
     eval_codex.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
     eval_codex.add_argument("--project", default="wisdom-weasel-rag-ime")
@@ -918,6 +932,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             keep_roles = ("user",)
         report = pruner(project=args.project, keep_roles=keep_roles, dry_run=bool(args.dry_run))
         print(json.dumps({"schemaVersion": "rag-ime.codex-history-prune.v1", **report}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "organize-rag-db":
+        organizer = getattr(core, "organize_rag_database", None)
+        if not callable(organizer):
+            print(json.dumps({"ok": False, "error": "core does not support RAG database organization"}, ensure_ascii=False, indent=2))
+            return 2
+        report = organizer(
+            project=args.project,
+            dry_run=bool(args.dry_run),
+            min_generated_accepts=max(1, int(args.min_generated_accepts)),
+            sample_size=max(0, int(args.sample_size)),
+        )
+        print(json.dumps({"schemaVersion": "rag-ime.rag-db-organize.v1", **report}, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "eval-codex-history":

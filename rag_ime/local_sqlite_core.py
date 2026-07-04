@@ -756,6 +756,139 @@ class LocalSqliteCoreClient:
             "roleCounts": role_counts,
         }
 
+    def organize_rag_database(
+        self,
+        *,
+        project: str = "",
+        dry_run: bool = False,
+        min_generated_accepts: int = 3,
+        sample_size: int = 12,
+    ) -> dict[str, object]:
+        self.initialize()
+        min_accepts = max(1, int(min_generated_accepts))
+        params: list[Any] = []
+        where = ["s.deleted = 0"]
+        if project:
+            where.append("e.project = ?")
+            params.append(project)
+        sql = f"""
+            SELECT
+                e.id, e.committed_text, e.recent_context, e.preedit, e.source,
+                e.provider_name, e.tags_json, e.project, e.app, e.schema_id,
+                s.deleted, s.accepted_count, s.skipped_count, s.downranked,
+                s.pinned,
+                COALESCE(ps.input_frequency, 0) AS input_frequency,
+                COALESCE(pps.input_frequency, 0) AS project_input_frequency,
+                COALESCE(pas.input_frequency, 0) AS app_input_frequency
+            FROM input_events e
+            JOIN memory_state s ON s.event_id = e.id
+            LEFT JOIN phrase_stats ps ON ps.committed_text = e.committed_text
+            LEFT JOIN phrase_project_stats pps
+                ON pps.committed_text = e.committed_text AND pps.project = e.project
+            LEFT JOIN phrase_app_stats pas
+                ON pas.committed_text = e.committed_text AND pas.app = e.app
+            WHERE {' AND '.join(where)}
+            ORDER BY e.id
+        """
+        matched: dict[int, tuple[str, sqlite3.Row]] = {}
+        reason_counts: dict[str, int] = {}
+        samples: list[dict[str, object]] = []
+        with self._connect() as conn:
+            rows = list(conn.execute(sql, params).fetchall())
+            for row in rows:
+                reason = _rag_database_noise_reason(row, min_generated_accepts=min_accepts)
+                if not reason:
+                    continue
+                event_id = int(row["id"])
+                matched[event_id] = (reason, row)
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                if len(samples) < max(0, int(sample_size)):
+                    samples.append(
+                        {
+                            "eventId": event_id,
+                            "reason": reason,
+                            "text": truncate_text(str(row["committed_text"]), 80),
+                            "source": str(row["source"]),
+                            "providerName": str(row["provider_name"]),
+                            "tags": _row_tags(row),
+                            "acceptedCount": int(row["accepted_count"]),
+                            "inputFrequency": int(row["input_frequency"]),
+                        }
+                    )
+            hidden_vector_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM memory_vectors v
+                    JOIN memory_state s ON s.event_id = v.event_id
+                    WHERE s.deleted = 1
+                    """
+                ).fetchone()[0]
+            )
+            if (matched or hidden_vector_count) and not dry_run:
+                updated_at = now_ms()
+                event_ids = sorted(matched)
+                if event_ids:
+                    conn.executemany(
+                        "UPDATE memory_state SET deleted = 1, updated_at_ms = ? WHERE event_id = ?",
+                        [(updated_at, event_id) for event_id in event_ids],
+                    )
+                    action_rows = []
+                    for event_id in event_ids:
+                        reason, row = matched[event_id]
+                        metadata_json = json.dumps(
+                            {
+                                "reason": reason,
+                                "organizer": "rag-db-organize",
+                                "minGeneratedAccepts": min_accepts,
+                                "tags": _row_tags(row),
+                                "providerName": str(row["provider_name"]),
+                                "source": str(row["source"]),
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                        action_rows.append((updated_at, f"event:{event_id}", event_id, metadata_json))
+                    conn.executemany(
+                        """
+                        INSERT INTO memory_actions (
+                            created_at_ms, memory_id, event_id, action_type, query, suggestion_id, metadata_json
+                        )
+                        VALUES (?, ?, ?, 'hide', 'rag-db-organize', '', ?)
+                        """,
+                        action_rows,
+                    )
+                removed_hidden_vectors = int(
+                    conn.execute(
+                        """
+                        DELETE FROM memory_vectors
+                        WHERE event_id IN (
+                            SELECT event_id FROM memory_state WHERE deleted = 1
+                        )
+                        """
+                    ).rowcount
+                    or 0
+                )
+                if event_ids:
+                    self._rebuild_all_phrase_stats(conn)
+            else:
+                removed_hidden_vectors = 0
+        if (matched or removed_hidden_vectors) and not dry_run:
+            self._clear_suggestion_cache()
+        return {
+            "project": project,
+            "dryRun": dry_run,
+            "scanned": len(rows),
+            "matchedNoise": len(matched),
+            "hidden": 0 if dry_run else len(matched),
+            "wouldHide": len(matched),
+            "staleHiddenVectors": hidden_vector_count,
+            "removedHiddenVectors": 0 if dry_run else removed_hidden_vectors,
+            "minGeneratedAccepts": min_accepts,
+            "reasonCounts": reason_counts,
+            "samples": samples,
+        }
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1509,6 +1642,99 @@ def _row_should_skip_recent_context(row: sqlite3.Row) -> bool:
         )
     )
     return _looks_like_retrieval_noise(text)
+
+
+def _rag_database_noise_reason(row: sqlite3.Row, *, min_generated_accepts: int) -> str:
+    protected = _row_has_curated_memory_tags(row)
+    if protected and not _row_is_generated_side_candidate(row):
+        return ""
+    if _row_looks_like_retrieval_noise(row):
+        return "runtime_or_import_noise"
+    text = compact_whitespace(
+        " ".join(
+            [
+                str(row["committed_text"]),
+                str(row["recent_context"]),
+                str(row["preedit"]),
+            ]
+        )
+    )
+    if _looks_like_ime_complaint_or_debug_memory(text):
+        return "ime_complaint_or_debug_feedback"
+    if _row_is_generated_side_candidate(row) and not _row_has_durable_generated_signal(
+        row,
+        min_generated_accepts=min_generated_accepts,
+    ):
+        return "generated_side_candidate_oneoff"
+    return ""
+
+
+def _row_has_curated_memory_tags(row: sqlite3.Row) -> bool:
+    tags = {tag.lower() for tag in _row_tags(row)}
+    return bool(tags.intersection({"curated", "demo-quality", "phrase-memory"}))
+
+
+def _row_is_generated_side_candidate(row: sqlite3.Row) -> bool:
+    tags = {tag.lower() for tag in _row_tags(row)}
+    if tags.intersection({"source:model", "source:rag"}):
+        return True
+    provider_name = compact_whitespace(str(row["provider_name"])).lower()
+    source = compact_whitespace(str(row["source"])).lower()
+    return provider_name.startswith("rime-sidecar:") or source == "squirrel_rime_sidecar"
+
+
+def _row_has_durable_generated_signal(row: sqlite3.Row, *, min_generated_accepts: int) -> bool:
+    if int(row["pinned"]):
+        return True
+    values = (
+        int(row["accepted_count"]),
+        int(row["input_frequency"]),
+        int(row["project_input_frequency"]),
+        int(row["app_input_frequency"]),
+    )
+    return max(values) >= max(1, int(min_generated_accepts))
+
+
+def _looks_like_ime_complaint_or_debug_memory(text: str) -> bool:
+    surface = compact_whitespace(text)
+    lowered = surface.lower()
+    if not surface:
+        return False
+    complaint_markers = (
+        "不能用",
+        "用不了",
+        "没办法",
+        "没法",
+        "没区别",
+        "没意义",
+        "没记录",
+        "没有记录",
+        "感觉随机",
+        "真实生效",
+        "输入不了",
+        "依旧没有",
+        "老是我之前输入",
+        "展示不好",
+        "不会弹出",
+        "崩溃",
+        "报错",
+        "错误",
+        "失败",
+        "切成豆包",
+    )
+    if any(marker in surface for marker in complaint_markers):
+        return True
+    debug_markers = (
+        "traceback",
+        "brokenpipe",
+        "stale_fingerprint",
+        "sidecar_response_dropped",
+        "fallbackjson",
+        "doctor",
+        "failure",
+        "timeout",
+    )
+    return any(marker in lowered for marker in debug_markers)
 
 
 def _recent_fill_enabled() -> bool:
