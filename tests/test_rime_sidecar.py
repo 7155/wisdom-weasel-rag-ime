@@ -2670,6 +2670,13 @@ class RimeSidecarTests(unittest.TestCase):
         payload = {
             "sessionId": "squirrel-progressive-rag-first",
             "requestSeq": 88,
+            "frontendBuild": "rag-ime.foreground-trace.v2",
+            "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
+            "frontendRevision": 12,
+            "selectionEpoch": 3,
+            "frontAppBundleId": "com.apple.TextEdit",
+            "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+            "panelSessionId": "panel-progressive-rag-first",
             "latencyBudgetMs": 1200,
             "forceSideCandidates": True,
             "maxVisibleCandidates": 5,
@@ -2713,6 +2720,18 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(followup["progressive"]["enabled"])
         self.assertFalse(followup["progressive"]["shouldFollowUp"])
         self.assertEqual(followup["displayCandidates"][0]["sourceType"], "model")
+        self.assertEqual(followup["predictionSession"]["stablePanelAction"], "progressive_replace")
+        self.assertIn(
+            "candidate_snapshot_progressive_replace",
+            [item["event"] for item in followup["predictionTraceEvents"]],
+        )
+        replace_event = next(
+            item
+            for item in followup["predictionTraceEvents"]
+            if item["event"] == "candidate_snapshot_progressive_replace"
+        )
+        self.assertEqual(replace_event["fields"]["preservedOrdinalCount"], 0)
+        self.assertIn("previousSnapshotId", replace_event["fields"])
 
     def test_rag_lane_timeout_does_not_block_parallel_model_lane(self) -> None:
         core = SlowSuggestionCore(sleep_s=0.12)

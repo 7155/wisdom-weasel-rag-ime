@@ -120,6 +120,78 @@ class PredictionStabilityTests(unittest.TestCase):
         self.assertEqual(diag["action"], "soft_hide")
         self.assertEqual(diag["reason"], "snapshot_expired")
 
+    def test_candidate_ordinals_do_not_change_during_progressive_update(self) -> None:
+        state = StablePanelState()
+        anchors = _anchors()
+        first, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=anchors,
+            mode="post_commit_predicting",
+            fresh_candidates=(
+                _candidate("继续预测", "model", source_index=0),
+                _candidate("整理 RAG 记忆", "rag", source_index=0),
+            ),
+            now_ms=1000,
+        )
+
+        updated, _, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=anchors,
+            mode="post_commit_predicting",
+            fresh_candidates=(
+                _candidate("继续预测", "model", source_index=0),
+                _candidate("整理 RAG 记忆", "rag", source_index=0),
+                _candidate("补一个后续预测", "model", source_index=1),
+            ),
+            now_ms=1200,
+            progressive_update=True,
+            max_visible_candidates=5,
+        )
+
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(updated)
+        self.assertEqual(diag["action"], "progressive_append")
+        self.assertEqual(updated.snapshot_id, first.snapshot_id)
+        self.assertEqual([item.text for item in updated.candidates[:2]], ["继续预测", "整理 RAG 记忆"])
+        self.assertEqual([item.text for item in updated.candidates], ["继续预测", "整理 RAG 记忆", "补一个后续预测"])
+        self.assertEqual(diag["preservedOrdinalCount"], 2)
+        self.assertEqual(diag["appendedCandidateCount"], 1)
+
+    def test_progressive_update_can_append_but_not_reorder_visible_candidates(self) -> None:
+        state = StablePanelState()
+        anchors = _anchors()
+        first, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=anchors,
+            mode="post_commit_predicting",
+            fresh_candidates=(
+                _candidate("先显示 RAG", "rag", source_index=0),
+                _candidate("第二个记忆", "memory", source_index=0),
+            ),
+            now_ms=1000,
+        )
+
+        replaced, _, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=anchors,
+            mode="post_commit_predicting",
+            fresh_candidates=(
+                _candidate("模型回来后想排第一", "model", source_index=0),
+                _candidate("先显示 RAG", "rag", source_index=0),
+                _candidate("第二个记忆", "memory", source_index=0),
+            ),
+            now_ms=1300,
+            progressive_update=True,
+            max_visible_candidates=5,
+        )
+
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(replaced)
+        self.assertEqual(diag["action"], "progressive_replace")
+        self.assertNotEqual(replaced.snapshot_id, first.snapshot_id)
+        self.assertEqual([item.text for item in replaced.candidates], ["模型回来后想排第一", "先显示 RAG", "第二个记忆"])
+        self.assertEqual(diag["preservedOrdinalCount"], 0)
+
 
 def _anchors(
     *,
@@ -142,14 +214,14 @@ def _anchors(
     )
 
 
-def _candidate(text: str, source_type: str) -> SideCandidateDisplayItem:
+def _candidate(text: str, source_type: str, *, source_index: int = 0) -> SideCandidateDisplayItem:
     return SideCandidateDisplayItem(
         label="1",
         text=text,
         insert_text=text,
         source_type=source_type,
         selection_action="commit_side_candidate",
-        source_index=0,
+        source_index=source_index,
     )
 
 

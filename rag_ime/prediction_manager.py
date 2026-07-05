@@ -145,6 +145,8 @@ class PredictionManager:
                 rag_lane={"called": source_update, "suggestionCount": len(active_suggestions)},
                 model_lane={"called": source_update, "predictionCount": len(active_model_predictions)},
                 now_ms=now_ms,
+                progressive_update=snapshot.progressive_follow_up,
+                max_visible_candidates=snapshot.max_visible_candidates,
             )
             display_candidates = (
                 tuple(item for item in stable_snapshot.candidates if isinstance(item, SideCandidateDisplayItem))

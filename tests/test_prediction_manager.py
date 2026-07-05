@@ -160,6 +160,44 @@ class PredictionManagerTests(unittest.TestCase):
         self.assertEqual([item.text for item in result.display_candidates], ["git status"])
         self.assertEqual(result.display_candidates[0].source_type, "raw_english")
 
+    def test_progressive_follow_up_appends_without_changing_existing_ordinals(self) -> None:
+        manager = PredictionManager(candidate_pool_ttl_ms=1200)
+        first = manager.render(
+            snapshot=RimeContextSnapshot(
+                session_id="s1",
+                request_seq=1,
+                committed_context="我想",
+                max_visible_candidates=5,
+                max_side_candidates=5,
+            ),
+            model_predictions=[_model("做一个本地 RAG 输入法", initials="zygbdragsrf")],
+            now_ms=100,
+        )
+
+        second = manager.render(
+            snapshot=RimeContextSnapshot(
+                session_id="s1",
+                request_seq=2,
+                committed_context="我想",
+                max_visible_candidates=5,
+                max_side_candidates=5,
+                progressive_follow_up=True,
+            ),
+            model_predictions=[
+                _model("做一个本地 RAG 输入法", initials="zygbdragsrf"),
+                _model("连续弹出下一个预测", rank=2, initials="lxtcxygyc"),
+            ],
+            now_ms=250,
+        )
+
+        self.assertIsNotNone(first.stable_snapshot)
+        self.assertIsNotNone(second.stable_snapshot)
+        self.assertEqual(second.stability["action"], "progressive_append")
+        self.assertEqual(second.stable_snapshot.snapshot_id, first.stable_snapshot.snapshot_id)
+        self.assertEqual([item.text for item in second.display_candidates], ["做一个本地 RAG 输入法", "连续弹出下一个预测"])
+        self.assertEqual(second.stability["preservedOrdinalCount"], 1)
+        self.assertEqual(second.stability["appendedCandidateCount"], 1)
+
 
 def _model(text: str, *, rank: int = 1, initials: str = "") -> ModelPrediction:
     return ModelPrediction(

@@ -3465,6 +3465,19 @@ def prediction_trace_events_payload(
         "modelTimedOut": bool(model_lane.get("timedOut")),
         "holdoverHit": bool(model_lane.get("holdoverHit")) or bool(rag_lane.get("holdoverHit")),
         "hardClearReason": _string(show_decision.get("hardClearReason")),
+        "previousSnapshotId": _string(stable_panel.get("previousSnapshotId")),
+        "preservedOrdinalCount": _bounded_int(
+            stable_panel.get("preservedOrdinalCount"),
+            default=0,
+            minimum=0,
+            maximum=99,
+        ),
+        "appendedCandidateCount": _bounded_int(
+            stable_panel.get("appendedCandidateCount"),
+            default=0,
+            minimum=0,
+            maximum=99,
+        ),
     }
 
     events: list[dict[str, object]] = [
@@ -3480,6 +3493,11 @@ def prediction_trace_events_payload(
     ]
 
     if action == "fresh" and snapshot_id:
+        events.append({"event": "prediction_snapshot_created", "fields": _non_empty_trace_fields(common)})
+    elif action == "progressive_append" and snapshot_id:
+        events.append({"event": "candidate_snapshot_progressive_append", "fields": _non_empty_trace_fields(common)})
+    elif action == "progressive_replace" and snapshot_id:
+        events.append({"event": "candidate_snapshot_progressive_replace", "fields": _non_empty_trace_fields(common)})
         events.append({"event": "prediction_snapshot_created", "fields": _non_empty_trace_fields(common)})
     elif action in {"soft_hold", "reuse_last_good"} and snapshot_id:
         events.append({"event": "prediction_snapshot_reused", "fields": _non_empty_trace_fields(common)})

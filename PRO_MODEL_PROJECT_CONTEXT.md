@@ -419,10 +419,13 @@ Backspace/Delete/app/input-source changes can hard-clear old candidates while
 ordinary preedit/Rime candidate changes can refresh without flashing the panel.
 `rag_ime/prediction_stability.py` creates `StableCandidateSnapshot` records and
 returns explicit actions such as `fresh`, `soft_hold`, `reuse_last_good`,
-`soft_hide`, and `hard_clear`. `PredictionManager.render(...)` applies this
-only in post-commit and prefix-constrained prediction modes, then exposes the
-diagnostics through `predictionFirst.policy.stability` and anchor fields through
-`predictionSession`.
+`soft_hide`, and `hard_clear`. It now also handles progressive follow-up:
+same visible-prefix candidates may append under the same `snapshotId`, while any
+follow-up that would reorder or replace visible ordinals becomes
+`progressive_replace` with a new `snapshotId`. `PredictionManager.render(...)`
+applies this only in post-commit and prefix-constrained prediction modes, then
+exposes the diagnostics through `predictionFirst.policy.stability` and anchor
+fields through `predictionSession`.
 
 The sidecar now also exposes PR-B/PR-C/PR-D payload contracts:
 `refreshDecision`, `showDecision`, and `keyPolicy` are top-level response
@@ -444,7 +447,9 @@ Prediction explainability now has an explicit response-to-frontend path:
 `predictionTraceEvents` is emitted by the sidecar, decoded by the Squirrel patch,
 and forwarded into the frontend JSONL trace. The events include anchors,
 snapshot ids, source counts, action/reason, debounce/holdover flags, and lane
-timeout fields without raw text by default.
+timeout fields without raw text by default. Progressive snapshot actions emit
+`candidate_snapshot_progressive_append` or
+`candidate_snapshot_progressive_replace`.
 
 ### Sidecar merge path
 
@@ -683,6 +688,21 @@ class StableCandidateSnapshot:
 def render_stable_prediction_panel(...):
     if hard_clear_reason:
         return None, cleared_state, {"action": "hard_clear", ...}
+    if fresh_candidates and progressive_update and previous:
+        if previous.hard_context_anchor != anchors.hard_context_anchor:
+            pass  # normal fresh path handles the hard boundary
+        elif previous.display_anchor == anchors.display_anchor and not expired:
+            if fresh_keys start with previous_keys:
+                # Existing visible ordinals remain identical. Only append empty slots.
+                return same_snapshot_id_with_appended_candidates, state, {
+                    "action": "progressive_append",
+                    "preservedOrdinalCount": len(previous_keys),
+                    "appendedCandidateCount": appended_count,
+                }
+            return new_snapshot, state, {
+                "action": "progressive_replace",
+                "reason": "progressive_reordered_visible_ordinals",
+            }
     if fresh_candidates:
         return fresh_snapshot, next_state, {"action": "fresh", ...}
     if previous.hard_context_anchor != anchors.hard_context_anchor:
@@ -710,6 +730,8 @@ if merge_result.mode in {InputMode.POST_COMMIT_PREDICTING, InputMode.PREFIX_CONS
         rag_lane={"called": source_update, "suggestionCount": len(active_suggestions)},
         model_lane={"called": source_update, "predictionCount": len(active_model_predictions)},
         now_ms=now_ms,
+        progressive_update=snapshot.progressive_follow_up,
+        max_visible_candidates=snapshot.max_visible_candidates,
     )
     display_candidates = tuple(item for item in stable_snapshot.candidates if isinstance(item, SideCandidateDisplayItem)) if stable_snapshot else ()
     merge_result = replace(
@@ -880,6 +902,8 @@ prediction_panel_hard_clear
 prediction_empty_lane_did_not_clear_panel
 prediction_lane_timeout_with_holdover
 prediction_lane_timeout_without_holdover
+candidate_snapshot_progressive_append
+candidate_snapshot_progressive_replace
 ```
 
 Squirrel forwarding contract:

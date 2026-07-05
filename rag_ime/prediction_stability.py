@@ -56,6 +56,8 @@ def render_stable_prediction_panel(
     model_lane: Mapping[str, object] | None = None,
     now_ms: int,
     hard_clear_reason: str = "",
+    progressive_update: bool = False,
+    max_visible_candidates: int | None = None,
 ) -> tuple[StableCandidateSnapshot | None, StablePanelState, dict[str, object]]:
     now = max(0, int(now_ms))
     lane_status = {
@@ -81,6 +83,19 @@ def render_stable_prediction_panel(
         )
 
     if fresh_candidates:
+        if progressive_update and previous is not None:
+            progressive_result = _render_progressive_fresh_candidates(
+                state=state,
+                previous=previous,
+                anchors=anchors,
+                mode=mode,
+                fresh_candidates=tuple(fresh_candidates),
+                lane_status=lane_status,
+                now_ms=now,
+                max_visible_candidates=max_visible_candidates,
+            )
+            if progressive_result is not None:
+                return progressive_result
         generation = state.generation + 1
         snapshot = StableCandidateSnapshot(
             snapshot_id=_snapshot_id(
@@ -289,6 +304,160 @@ def _reuse_snapshot(
     )
 
 
+def _render_progressive_fresh_candidates(
+    *,
+    state: StablePanelState,
+    previous: StableCandidateSnapshot,
+    anchors: PredictionAnchors,
+    mode: str,
+    fresh_candidates: tuple[object, ...],
+    lane_status: dict[str, object],
+    now_ms: int,
+    max_visible_candidates: int | None,
+) -> tuple[StableCandidateSnapshot | None, StablePanelState, dict[str, object]] | None:
+    if previous.hard_context_anchor != anchors.hard_context_anchor:
+        return None
+    if previous.display_anchor != anchors.display_anchor:
+        return None
+    if now_ms > previous.expires_at_ms:
+        return None
+
+    previous_keys = [_candidate_key(item) for item in previous.candidates]
+    fresh_keys = [_candidate_key(item) for item in fresh_candidates]
+    preserved_count = _preserved_prefix_count(previous_keys, fresh_keys)
+    if preserved_count < len(previous_keys):
+        generation = max(state.generation, previous.generation) + 1
+        snapshot = _new_snapshot(
+            generation=generation,
+            anchors=anchors,
+            mode=mode,
+            candidates=fresh_candidates,
+            lane_status=lane_status,
+            now_ms=now_ms,
+        )
+        next_state = StablePanelState(last_snapshot=snapshot, generation=generation)
+        return snapshot, next_state, _diagnostics(
+            action="progressive_replace",
+            reason="progressive_reordered_visible_ordinals",
+            anchors=anchors,
+            snapshot=snapshot,
+            previous=previous,
+            now_ms=now_ms,
+            extra={
+                "preservedOrdinalCount": preserved_count,
+                "previousCandidateCount": len(previous.candidates),
+                "freshCandidateCount": len(fresh_candidates),
+                "appendedCandidateCount": 0,
+            },
+        )
+
+    visible_limit = len(fresh_candidates)
+    if max_visible_candidates is not None:
+        try:
+            visible_limit = max(len(previous.candidates), max(0, int(max_visible_candidates)))
+        except (TypeError, ValueError):
+            visible_limit = len(fresh_candidates)
+    merged_candidates = previous.candidates + fresh_candidates[len(previous.candidates) : visible_limit]
+    appended_count = max(0, len(merged_candidates) - len(previous.candidates))
+    if appended_count <= 0:
+        snapshot = replace(
+            previous,
+            query_anchor=anchors.query_anchor,
+            mode=compact_whitespace(mode),
+            updated_at_ms=now_ms,
+            expires_at_ms=max(previous.expires_at_ms, now_ms + _ttl_for_mode(mode)),
+            lane_status=lane_status,
+            reused_last_good=False,
+            holdover_hit=False,
+            stale_level="fresh",
+        )
+        next_state = StablePanelState(last_snapshot=snapshot, generation=max(state.generation, previous.generation))
+        return snapshot, next_state, _diagnostics(
+            action="progressive_noop",
+            reason="progressive_same_visible_ordinals",
+            anchors=anchors,
+            snapshot=snapshot,
+            previous=previous,
+            now_ms=now_ms,
+            extra={
+                "preservedOrdinalCount": preserved_count,
+                "previousCandidateCount": len(previous.candidates),
+                "freshCandidateCount": len(fresh_candidates),
+                "appendedCandidateCount": 0,
+            },
+        )
+
+    snapshot = replace(
+        previous,
+        query_anchor=anchors.query_anchor,
+        mode=compact_whitespace(mode),
+        updated_at_ms=now_ms,
+        min_visible_until_ms=max(previous.min_visible_until_ms, now_ms + MIN_VISIBLE_MS),
+        expires_at_ms=max(previous.expires_at_ms, now_ms + _ttl_for_mode(mode)),
+        candidates=tuple(merged_candidates),
+        source_summary=source_summary(tuple(merged_candidates)),
+        lane_status=lane_status,
+        reused_last_good=False,
+        holdover_hit=False,
+        stale_level="fresh",
+    )
+    next_state = StablePanelState(last_snapshot=snapshot, generation=max(state.generation, previous.generation))
+    return snapshot, next_state, _diagnostics(
+        action="progressive_append",
+        reason="progressive_appended_empty_slots",
+        anchors=anchors,
+        snapshot=snapshot,
+        previous=previous,
+        now_ms=now_ms,
+        extra={
+            "preservedOrdinalCount": preserved_count,
+            "previousCandidateCount": len(previous.candidates),
+            "freshCandidateCount": len(fresh_candidates),
+            "appendedCandidateCount": appended_count,
+        },
+    )
+
+
+def _new_snapshot(
+    *,
+    generation: int,
+    anchors: PredictionAnchors,
+    mode: str,
+    candidates: tuple[object, ...],
+    lane_status: dict[str, object],
+    now_ms: int,
+) -> StableCandidateSnapshot:
+    return StableCandidateSnapshot(
+        snapshot_id=_snapshot_id(
+            generation=generation,
+            anchors=anchors,
+            candidates=candidates,
+            now_ms=now_ms,
+        ),
+        generation=generation,
+        hard_context_anchor=anchors.hard_context_anchor,
+        query_anchor=anchors.query_anchor,
+        display_anchor=anchors.display_anchor,
+        mode=compact_whitespace(mode),
+        created_at_ms=now_ms,
+        updated_at_ms=now_ms,
+        min_visible_until_ms=now_ms + MIN_VISIBLE_MS,
+        expires_at_ms=now_ms + _ttl_for_mode(mode),
+        candidates=tuple(candidates),
+        source_summary=source_summary(tuple(candidates)),
+        lane_status=lane_status,
+    )
+
+
+def _preserved_prefix_count(previous_keys: list[dict[str, object]], fresh_keys: list[dict[str, object]]) -> int:
+    count = 0
+    for previous_key, fresh_key in zip(previous_keys, fresh_keys):
+        if previous_key != fresh_key:
+            break
+        count += 1
+    return count
+
+
 def _ttl_for_mode(mode: str) -> int:
     family = prediction_mode_family(mode)
     if family == "post_commit":
@@ -376,8 +545,9 @@ def _diagnostics(
     snapshot: StableCandidateSnapshot | None,
     previous: StableCandidateSnapshot | None,
     now_ms: int,
+    extra: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    payload = {
         "action": action,
         "reason": reason,
         "nowMs": now_ms,
@@ -390,3 +560,6 @@ def _diagnostics(
         "previousExpiresAtMs": previous.expires_at_ms if previous else 0,
         "previousMinVisibleUntilMs": previous.min_visible_until_ms if previous else 0,
     }
+    if extra:
+        payload.update(dict(extra))
+    return payload
