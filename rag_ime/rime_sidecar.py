@@ -1498,7 +1498,9 @@ def model_request_type_for_snapshot(snapshot: RimeContextSnapshot) -> str:
     active_prefix = compact_whitespace(snapshot.preedit or snapshot.raw_input)
     committed_context = compact_whitespace(snapshot.committed_context)
     if active_prefix and committed_context:
-        return PREDICTION_REQUEST_PINYIN_CONSTRAINED
+        if stable_short_pinyin_prefix(snapshot):
+            return PREDICTION_REQUEST_PINYIN_CONSTRAINED
+        return PREDICTION_REQUEST_NO_INPUT
     if active_prefix and snapshot.candidates:
         return PREDICTION_REQUEST_RIME_REORDER
     return PREDICTION_REQUEST_NO_INPUT
@@ -2269,7 +2271,7 @@ def parse_rime_context_payload(payload: dict[str, Any], *, default_project: str)
         ),
         page=_bounded_int(rime_context.get("page", payload.get("page")), default=0, minimum=0, maximum=999),
         is_last_page=_bool(rime_context.get("isLastPage", payload.get("isLastPage")), default=True),
-        latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=300, minimum=30, maximum=10000),
+        latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=300, minimum=30, maximum=20000),
         max_visible_candidates=_bounded_int(payload.get("maxVisibleCandidates"), default=8, minimum=1, maximum=10),
         max_side_candidates=_bounded_int(payload.get("maxSideCandidates"), default=8, minimum=0, maximum=10),
         idle_ms=_bounded_int(_first_present(payload, rime_context, "idleMs"), default=0, minimum=0, maximum=10000),
@@ -2502,6 +2504,20 @@ def merge_display_candidates(
             rag_items.append((index, suggestion))
 
     side_inserted = 0
+    has_suggestion_items = bool(rag_items or memory_items)
+    suggestion_count = len(rag_items) + len(memory_items)
+    if side_budget <= 1:
+        suggestion_reserve = 0
+    elif side_budget == 2:
+        suggestion_reserve = min(suggestion_count, 1)
+    else:
+        minimum_model_slots = min(2, len(model_items))
+        suggestion_reserve = min(
+            suggestion_count,
+            rag_block_reserve(side_budget),
+            max(0, side_budget - minimum_model_slots),
+        )
+    model_before_suggestions_limit = max(0, side_budget - suggestion_reserve)
 
     def append_model() -> bool:
         nonlocal side_inserted
@@ -2573,16 +2589,16 @@ def merge_display_candidates(
             return True
         return False
 
-    append_model()
-    append_model()
+    while side_inserted < model_before_suggestions_limit and len(display) < max_visible - rime_reserve:
+        if not append_model():
+            break
     append_suggestion(rag_items)
     append_suggestion(memory_items)
     while side_inserted < side_budget and len(display) < max_visible - rime_reserve:
-        progressed = (
-            append_model()
-            or append_suggestion(rag_items)
-            or append_suggestion(memory_items)
-        )
+        if has_suggestion_items:
+            progressed = append_suggestion(rag_items) or append_suggestion(memory_items)
+        else:
+            progressed = append_model()
         if not progressed:
             break
     for candidate in snapshot.candidates:

@@ -904,7 +904,7 @@ class CooldownPredictionProvider:
 
 
 def prediction_provider_from_env(env: dict[str, str] | None = None) -> PredictionProvider:
-    source = _prediction_env_with_model_file(env)
+    source = _prediction_env_with_predictor_file(env)
     provider = (
         source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
         or source.get("RAG_IME_AI_PROVIDER", "").strip().lower()
@@ -996,12 +996,12 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
     )
 
 
-def _prediction_env_with_model_file(env: dict[str, str] | None) -> dict[str, str]:
+def _prediction_env_with_predictor_file(env: dict[str, str] | None) -> dict[str, str]:
     source = dict(os.environ if env is None else env)
     env_path = (
-        source.get("RAG_IME_MODEL_ENV", "").strip()
+        source.get("RAG_IME_PREDICTOR_ENV", "").strip()
+        or source.get("RAG_IME_MODEL_ENV", "").strip()
         or source.get("RAG_IME_X1API_ENV", "").strip()
-        or source.get("RAG_IME_VCP_REBUILD_ENV", "").strip()
     )
     if not env_path:
         return source

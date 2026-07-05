@@ -2,7 +2,24 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MODEL_DIR="${RAG_IME_MLX_MODEL:-$ROOT/../models/mlx/Qwen3-0.6B-4bit}"
+
+detect_mlx_model() {
+  local candidate
+  for candidate in \
+    "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local" \
+    "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit" \
+    "/Volumes/undo 4t/models/mlx-community-Qwen3-0.6B-4bit-local" \
+    "$ROOT/../models/mlx/Qwen3-0.6B-4bit"
+  do
+    if [[ -d "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+MODEL_DIR="${RAG_IME_MLX_MODEL:-$(detect_mlx_model || true)}"
 MLX_PYTHON="${RAG_IME_MLX_PYTHON:-$ROOT/.venv-mlx314sys/bin/python}"
 
 if [[ ! -d "$MODEL_DIR" ]]; then
@@ -41,8 +58,10 @@ export RAG_IME_VECTOR_CANDIDATES="${RAG_IME_VECTOR_CANDIDATES:-80}"
 export RAG_IME_VECTOR_WEIGHT="${RAG_IME_VECTOR_WEIGHT:-1.4}"
 export RAG_IME_VECTOR_AUTO_REBUILD_LIMIT="${RAG_IME_VECTOR_AUTO_REBUILD_LIMIT:-5000}"
 
-export RAG_IME_SQUIRREL_LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-6500}"
-export RAG_IME_SQUIRREL_TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-12000}"
+export RAG_IME_SQUIRREL_LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-20000}"
+export RAG_IME_SQUIRREL_TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-25000}"
+export RAG_IME_SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rag-ime.inputmethod.RagIme.Hans}"
+export RAG_IME_INPUT_SOURCE_BUNDLE_ID="${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-im.rag-ime.inputmethod.RagIme}"
 
 "$ROOT/scripts/install_mlx_predictor_launch_agent.sh"
 "$ROOT/scripts/install_sidecar_launch_agent.sh"

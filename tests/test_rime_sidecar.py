@@ -785,6 +785,39 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["rimeCandidateCount"], 2)
         self.assertEqual(response["ragLane"]["queryInput"], "sj")
 
+    def test_long_pinyin_with_context_uses_continuation_model_request(self) -> None:
+        predictor = CapturingRequestPredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-long-pinyin-request-type",
+                "requestSeq": 463,
+                "rawInput": "woxiangshejiyigehouxuan",
+                "preedit": "wo xiang she ji yi ge hou xuan",
+                "committedContext": "我正在整理 RAG 输入法，要求 LLM 和 RAG 都能显示",
+                "forceSideCandidates": True,
+                "predictionFirstMerge": True,
+                "maxVisibleCandidates": 6,
+                "maxSideCandidates": 4,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "我想设计一个候选", "comment": "rime"},
+                        {"label": "2", "text": "我想设计", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(predictor.last_request_type, "no_input_prediction")
+        self.assertIn("我正在整理 RAG 输入法", predictor.last_current_input)
+        self.assertIn("我想设计一个候选", predictor.last_current_input)
+        self.assertIn(response["modelLane"]["contextMode"], {"explicit-realtime", "explicit-post-commit"})
+        self.assertEqual(response["modelLane"]["requestType"], "no_input_prediction")
+        self.assertGreaterEqual(response["predictionFirst"]["policy"]["sideInserted"], 1)
+        self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
+
     def test_low_information_rime_candidates_skip_side_lanes_even_when_forced(self) -> None:
         core = CapturingCore()
         adapter = InputMethodAdapter(core)
@@ -1250,10 +1283,10 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in display], ["1", "2", "3", "4", "5", "6", "7", "8"])
         self.assertEqual(
             [item["sourceType"] for item in display],
-            ["model", "model", "rag", "model", "model", "rime", "rime", "rime"],
+            ["model", "model", "model", "rag", "rag", "rime", "rime", "rime"],
         )
-        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline", "inline", "block", "inline", "inline"])
-        self.assertEqual([item["displayLane"] for item in display[:5]], ["model", "model", "memory", "model", "model"])
+        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline", "inline", "inline", "block", "block"])
+        self.assertEqual([item["displayLane"] for item in display[:5]], ["model", "model", "model", "memory", "memory"])
         self.assertTrue(all(item["displayLayout"] == "fallback" for item in display[5:8]))
         self.assertTrue(all(item["displayLane"] == "rime" for item in display[5:8]))
         self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 3)
@@ -1459,7 +1492,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
         self.assertEqual(response["modelLane"]["predictionCount"], 5)
         self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 5)
-        self.assertEqual([item["sourceType"] for item in display[:6]], ["model", "model", "rag", "model", "model", "model"])
+        self.assertEqual([item["sourceType"] for item in display[:6]], ["model", "model", "model", "rag", "rag", "rag"])
         rag_count = sum(1 for item in display if item["sourceType"] == "rag")
         self.assertGreaterEqual(rag_count, 1)
         self.assertEqual([item["sourceType"] for item in display[-2:]], ["rime", "rime"])

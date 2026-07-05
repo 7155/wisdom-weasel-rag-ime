@@ -98,7 +98,7 @@ class CandidatePool:
     model: tuple[PredictionCandidate, ...] = ()
     memory: tuple[PredictionCandidate, ...] = ()
 
-    def prediction_order(self) -> tuple[PredictionCandidate, ...]:
+    def prediction_order(self, *, side_budget: int | None = None) -> tuple[PredictionCandidate, ...]:
         groups = {
             "model": list(sorted(self.model, key=lambda item: item.score, reverse=True)),
             "rag": list(sorted(self.rag, key=lambda item: item.score, reverse=True)),
@@ -106,6 +106,23 @@ class CandidatePool:
         }
         ordered: list[PredictionCandidate] = []
         seen: set[tuple[str, int, str]] = set()
+        model_count = len(groups["model"])
+        suggestion_count = len(groups["rag"]) + len(groups["memory"])
+        if side_budget is None:
+            side_budget = model_count + suggestion_count
+        budget = max(0, int(side_budget))
+        if budget <= 1:
+            suggestion_reserve = 0 if model_count else min(suggestion_count, 1)
+        elif budget == 2:
+            suggestion_reserve = min(suggestion_count, 1)
+        else:
+            minimum_model_slots = min(2, model_count)
+            suggestion_reserve = min(
+                suggestion_count,
+                _prediction_rag_block_reserve(budget),
+                max(0, budget - minimum_model_slots),
+            )
+        model_limit = max(0, budget - suggestion_reserve)
 
         def push_one(name: str) -> None:
             while groups[name]:
@@ -117,18 +134,17 @@ class CandidatePool:
                 seen.add(key)
                 return
 
-        # Avoid a panel that starts LLM, LLM, LLM, then hides RAG/Rime. The first
-        # snapshot should expose the three lanes as product choices, not as a
-        # score-sorted assistant answer.
-        push_one("model")
-        push_one("model")
-        push_one("rag")
-        push_one("memory")
-
-        while groups["model"] or groups["rag"] or groups["memory"]:
+        while len([item for item in ordered if item.source_type == "model"]) < model_limit and groups["model"]:
+            before = len(ordered)
             push_one("model")
+            if len(ordered) == before:
+                break
+        while groups["rag"] or groups["memory"]:
             push_one("rag")
             push_one("memory")
+        if not suggestion_count:
+            while groups["model"]:
+                push_one("model")
         return tuple(ordered)
 
 
@@ -138,6 +154,21 @@ class PredictionFirstMergeResult:
     pinyin_prefix: str
     display_candidates: tuple[SideCandidateDisplayItem, ...]
     policy: dict[str, object]
+
+
+def _prediction_rag_block_reserve(side_budget: int) -> int:
+    if side_budget <= 1:
+        return 0
+    if side_budget <= 3:
+        return side_budget - 1
+    return min(3, max(0, side_budget // 2))
+
+
+def _allow_semantic_side_candidates_for_prefix(prefix: str) -> bool:
+    """Long active pinyin should not hide semantic RAG/LLM candidates."""
+
+    normalized = _pinyin_norm(prefix)
+    return len(normalized) >= 6
 
 
 def infer_input_mode(snapshot: RimeContextSnapshot) -> InputMode:
@@ -248,18 +279,18 @@ def merge_prediction_first_candidates(
             reason="raw ascii/code input is directly commit-able; prediction lanes are suspended",
             raw_commit_inserted=raw_inserted,
         )
-    prediction_candidates = pool.prediction_order()
+    rime_reserve = _rime_reserve_for_mode(snapshot, resolved_mode, max_visible)
+    side_budget = min(snapshot.max_side_candidates, max(0, max_visible - rime_reserve))
+    side_slot_limit = max(0, max_visible - rime_reserve)
+    prediction_candidates = pool.prediction_order(side_budget=side_budget)
     strict_prefix_constraint = (
         resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING
         and not raw_inserted
+        and not _allow_semantic_side_candidates_for_prefix(prefix)
     )
     if strict_prefix_constraint:
         prediction_candidates = _prefix_lane_order(prediction_candidates, prefix)
     prediction_candidates, top1_guard = _apply_prediction_top1_guard(prediction_candidates)
-
-    rime_reserve = _rime_reserve_for_mode(snapshot, resolved_mode, max_visible)
-    side_budget = min(snapshot.max_side_candidates, max(0, max_visible - rime_reserve))
-    side_slot_limit = max(0, max_visible - rime_reserve)
     side_inserted = 0
     prefix_matched_side_inserted = 0
     for candidate in prediction_candidates:
@@ -290,7 +321,11 @@ def merge_prediction_first_candidates(
         side_inserted=side_inserted,
         rime_fallback_count=rime_count,
         reason=(
-            "prefix-constrained predictions are hard-filtered by user pinyin; wanxiang/rime handles fallback"
+            (
+                "long pinyin composition allows semantic LLM/RAG side candidates before wanxiang fallback"
+                if not strict_prefix_constraint
+                else "prefix-constrained predictions are hard-filtered by user pinyin; wanxiang/rime handles fallback"
+            )
             if resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING
             else "post-commit predictions shown before fallback candidates"
         ),

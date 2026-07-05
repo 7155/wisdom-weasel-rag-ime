@@ -182,6 +182,58 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual(session.phase, PredictionSessionPhase.ANCHOR_COMPOSING)
         self.assertTrue(session.should_clear_prediction_panel)
 
+    def test_long_pinyin_composition_allows_semantic_side_candidates(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=34,
+            raw_input="woxiangshejiyigehouxuan",
+            preedit="wo xiang she ji yi ge hou xuan",
+            committed_context="我正在调试 RAG 输入法，要求 LLM 和记忆真实显示",
+            candidates=(
+                RimeCandidate(text="我想设计一个候选", label="1", comment="wanxiang", index=0),
+                RimeCandidate(text="我想设计", label="2", comment="wanxiang", index=1),
+            ),
+            max_visible_candidates=6,
+            max_side_candidates=4,
+        )
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(
+                    text="继续优化候选展示",
+                    rank=1,
+                    provider_name="x1api",
+                    latency_ms=1200,
+                    metadata={"initials": "jx yhhxzs"},
+                )
+            ],
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="rag-long-1",
+                    surface_text="设计一个候选展示方式",
+                    suggestion_type="rag",
+                    source_event_id=7,
+                    evidence_preview="用户要求参考 Wisdom-Weasel 的候选展示",
+                    confidence=0.92,
+                    metadata={"source_type": "rag", "initials": "sjyg hxzsfs"},
+                )
+            ],
+        )
+
+        self.assertEqual(result.mode, InputMode.PREFIX_CONSTRAINED_COMPOSING)
+        self.assertEqual(
+            [item.source_type for item in result.display_candidates],
+            ["model", "rag", "rime", "rime"],
+        )
+        self.assertEqual(result.policy["sideInserted"], 2)
+        self.assertEqual(result.policy["prefixMatchedSideInserted"], 0)
+        self.assertIn("long pinyin composition", result.policy["reason"])
+        session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
+        self.assertEqual(session.phase, PredictionSessionPhase.PREFIX_CONSTRAINED)
+        self.assertTrue(session.prediction_panel_visible)
+        self.assertFalse(session.should_clear_prediction_panel)
+
     def test_prefix_constrained_raw_command_keeps_raw_commit_first(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",

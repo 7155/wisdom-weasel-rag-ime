@@ -347,7 +347,7 @@ class DebugImeService:
         cases = self._predictor_ttfc_cases(payload)
         repeat = _bounded_int(payload.get("repeat"), default=3, minimum=1, maximum=50)
         max_candidates = _bounded_int(payload.get("maxCandidates"), default=3, minimum=1, maximum=10)
-        latency_budget_ms = _bounded_int(payload.get("latencyBudgetMs"), default=200, minimum=1, maximum=10_000)
+        latency_budget_ms = _bounded_int(payload.get("latencyBudgetMs"), default=200, minimum=1, maximum=20_000)
         report = benchmark_streaming_ttft_provider(
             self.predictor,
             cases,

@@ -16,6 +16,7 @@ from rag_ime.cli import main
 from rag_ime.predictor import (
     CooldownPredictionProvider,
     MlxPredictionServiceProvider,
+    NullPredictionProvider,
     OllamaPredictionProvider,
     OpenAICompatiblePredictionConfig,
     OpenAICompatiblePredictionProvider,
@@ -837,6 +838,33 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(provider.config.model, "deepseek-chat")
         self.assertEqual(provider.config.api_key, "secret-value")
 
+    def test_prediction_provider_can_use_explicit_predictor_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "RAG_IME_PREDICTOR_PROVIDER=openai-compatible",
+                        "RAG_IME_PREDICTOR_BASE_URL=https://x2app.top/v1",
+                        "RAG_IME_PREDICTOR_API_KEY=secret-value",
+                        "RAG_IME_PREDICTOR_MODEL=local-proxy-model",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_PREDICTOR_ENV": str(env_path),
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+
+        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
+        assert isinstance(provider, OpenAICompatiblePredictionProvider)
+        self.assertEqual(provider.config.base_url, "https://x1api.top")
+        self.assertEqual(provider.config.model, "local-proxy-model")
+        self.assertEqual(provider.config.api_key, "secret-value")
+
     def test_prediction_provider_canonicalizes_legacy_model_env_to_x1api_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / ".env"
@@ -861,6 +889,7 @@ class PredictionProviderTests(unittest.TestCase):
         assert isinstance(provider, OpenAICompatiblePredictionProvider)
         self.assertEqual(provider.config.base_url, "https://x1api.top")
         self.assertEqual(provider.config.model, "gpt-5.5")
+        self.assertEqual(provider.config.api_key, "secret-value")
 
     def test_env_can_disable_prediction_failure_cooldown(self) -> None:
         provider = prediction_provider_from_env(
