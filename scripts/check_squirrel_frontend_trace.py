@@ -19,6 +19,7 @@ def main() -> int:
     parser.add_argument("--require-mixed-panel", action="store_true")
     parser.add_argument("--require-side-panel", action="store_true")
     parser.add_argument("--require-side-commit", action="store_true")
+    parser.add_argument("--require-post-commit-followup", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
     parser.add_argument("--print-last", type=int, default=5)
     args = parser.parse_args()
@@ -37,6 +38,7 @@ def main() -> int:
             require_mixed_panel=args.require_mixed_panel,
             require_side_panel=args.require_side_panel,
             require_side_commit=args.require_side_commit,
+            require_post_commit_followup=args.require_post_commit_followup,
             require_modern_prediction_session=args.require_modern_prediction_session,
         ):
             break
@@ -48,6 +50,7 @@ def main() -> int:
         "mixedPanel": bool(args.require_mixed_panel),
         "sidePanel": bool(args.require_side_panel),
         "sideCommit": bool(args.require_side_commit),
+        "postCommitFollowup": bool(args.require_post_commit_followup),
         "modernPredictionSession": bool(args.require_modern_prediction_session),
     }
     report["passed"] = report_passes(
@@ -55,6 +58,7 @@ def main() -> int:
         require_mixed_panel=args.require_mixed_panel,
         require_side_panel=args.require_side_panel,
         require_side_commit=args.require_side_commit,
+        require_post_commit_followup=args.require_post_commit_followup,
         require_modern_prediction_session=args.require_modern_prediction_session,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -94,6 +98,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     )
     historical_number_key_side_commit = latest_number_key_side_commit(events)
     number_key_side_commit = latest_number_key_side_commit(events, min_timestamp_ms=side_commit_barrier_ms)
+    post_commit_followup = latest_post_commit_followup(events, min_timestamp_ms=side_commit_barrier_ms)
     return {
         "schemaVersion": "rag-ime.squirrel-frontend-trace-check.v1",
         "logPath": str(log_path),
@@ -109,6 +114,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "sideCommitBarrierTimestampMs": side_commit_barrier_ms,
         "latestNumberKeySideCommit": summarize_number_key_side_commit(number_key_side_commit),
         "latestHistoricalNumberKeySideCommit": summarize_number_key_side_commit(historical_number_key_side_commit),
+        "latestPostCommitFollowup": summarize_post_commit_followup(post_commit_followup),
         "lastEvents": [summarize_event(event) for event in events[-print_last:]] if print_last else [],
     }
 
@@ -325,6 +331,56 @@ def latest_number_key_side_commit(
     return latest
 
 
+def latest_post_commit_followup(
+    events: list[dict[str, Any]],
+    *,
+    min_timestamp_ms: int = 0,
+) -> dict[str, Any] | None:
+    latest: dict[str, Any] | None = None
+    for commit_index, commit_event in enumerate(events):
+        if event_timestamp_ms(commit_event) < min_timestamp_ms:
+            continue
+        if not is_valid_side_commit_event(commit_event):
+            continue
+        schedule_event: dict[str, Any] | None = None
+        for event in events[commit_index + 1 :]:
+            if event_timestamp_ms(event) < event_timestamp_ms(commit_event):
+                continue
+            if event.get("event") == "side_candidate_continuation_scheduled":
+                schedule_event = event
+                continue
+            if event.get("event") != "sidecar_request_scheduled":
+                continue
+            if not is_post_commit_followup_request(event, commit_event):
+                continue
+            latest = {
+                "commit": commit_event,
+                "scheduled": schedule_event,
+                "request": event,
+            }
+            break
+    return latest
+
+
+def is_post_commit_followup_request(request_event: dict[str, Any], commit_event: dict[str, Any]) -> bool:
+    raw_input = str(request_event.get("rawInput") or "")
+    preedit = str(request_event.get("preedit") or "")
+    if raw_input or preedit:
+        return False
+    if int(request_event.get("committedContextChars") or 0) <= 0:
+        return False
+    commit_text = committed_candidate_text(commit_event)
+    request_preview = str(request_event.get("commitTextPreview") or "")
+    return not commit_text or not request_preview or request_preview == commit_text
+
+
+def committed_candidate_text(commit_event: dict[str, Any]) -> str:
+    candidate = commit_event.get("candidate")
+    if not isinstance(candidate, dict):
+        return ""
+    return str(candidate.get("insertText") or candidate.get("text") or "")
+
+
 def candidates_match_number_route(route_event: dict[str, Any], commit_event: dict[str, Any]) -> bool:
     route_candidate = route_event.get("candidate")
     commit_candidate = commit_event.get("candidate")
@@ -368,6 +424,8 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "candidateCounts": event.get("candidateCounts"),
         "separators": event.get("separators"),
         "key": event.get("key"),
+        "commitTextPreview": event.get("commitTextPreview"),
+        "committedContextChars": event.get("committedContextChars"),
         "displayCount": event.get("displayCount"),
         "latencyBudgetMs": event.get("latencyBudgetMs"),
         "responseAgeMs": event.get("responseAgeMs"),
@@ -394,12 +452,23 @@ def summarize_number_key_side_commit(match: dict[str, Any] | None) -> dict[str, 
     }
 
 
+def summarize_post_commit_followup(match: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not match:
+        return None
+    return {
+        "commit": summarize_event(match.get("commit")),
+        "scheduled": summarize_event(match.get("scheduled")),
+        "request": summarize_event(match.get("request")),
+    }
+
+
 def report_passes(
     report: dict[str, Any],
     *,
     require_mixed_panel: bool,
     require_side_panel: bool,
     require_side_commit: bool,
+    require_post_commit_followup: bool,
     require_modern_prediction_session: bool,
 ) -> bool:
     if require_mixed_panel and not report.get("latestMixedPanel"):
@@ -409,6 +478,8 @@ def report_passes(
     if require_side_panel and not report.get("latestSidePanel"):
         return False
     if require_side_commit and not report.get("latestNumberKeySideCommit"):
+        return False
+    if require_post_commit_followup and not report.get("latestPostCommitFollowup"):
         return False
     if require_modern_prediction_session and not report.get("latestModernPredictionSession"):
         return False

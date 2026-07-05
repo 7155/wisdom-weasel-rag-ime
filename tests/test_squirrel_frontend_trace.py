@@ -36,6 +36,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("wait_seconds=12", result.stdout)
         self.assertIn("open_test_file=0", result.stdout)
         self.assertIn("require_side_commit=0", result.stdout)
+        self.assertIn("require_post_commit_followup=0", result.stdout)
         self.assertIn("require_mixed_panel=1", result.stdout)
         self.assertIn("require_side_panel=0", result.stdout)
         self.assertIn("auto_type=1", result.stdout)
@@ -47,6 +48,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("--require-mixed-panel", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
         self.assertNotIn("--require-side-commit", result.stdout)
+        self.assertNotIn("--require-post-commit-followup", result.stdout)
 
     def test_foreground_trace_wrapper_can_require_side_panel_without_mixed_layout(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -66,7 +68,9 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
 
         self.assertIn("require_mixed_panel=0", result.stdout)
         self.assertIn("require_side_panel=1", result.stdout)
+        self.assertIn("require_post_commit_followup=1", result.stdout)
         self.assertIn("--require-side-panel", result.stdout)
+        self.assertIn("--require-post-commit-followup", result.stdout)
         self.assertNotIn("--require-mixed-panel", result.stdout)
 
     def test_foreground_trace_wrapper_can_require_hitoolbox_when_requested(self) -> None:
@@ -129,6 +133,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "selectionRank": 6,
                             "sourceType": "rag",
+                            "text": "继续预测",
+                            "insertText": "继续预测",
                             "selectionAction": "commit_side_candidate",
                             "displayLayout": "block",
                             "sessionFingerprint": "session-a",
@@ -146,10 +152,38 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "selectionRank": 6,
                             "sourceType": "rag",
+                            "text": "继续预测",
+                            "insertText": "继续预测",
                             "selectionAction": "commit_side_candidate",
                             "displayLayout": "block",
                             "sessionFingerprint": "session-a",
                         },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_continuation_scheduled",
+                        "timestampMs": 5,
+                        "committedText": "继续预测",
+                        "committedContextChars": 18,
+                        "sourceType": "rag",
+                        "selectionKey": "6",
+                        "sessionFingerprint": "session-a",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 6,
+                        "rawInput": "",
+                        "preedit": "",
+                        "commitTextPreview": "继续预测",
+                        "committedContextChars": 18,
+                        "candidateCount": 0,
                     },
                     ensure_ascii=False,
                 )
@@ -165,6 +199,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     str(log_path),
                     "--require-mixed-panel",
                     "--require-side-commit",
+                    "--require-post-commit-followup",
                 ],
                 cwd=root,
                 text=True,
@@ -183,10 +218,14 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["latestNumberKeySideCommit"]["key"], "6")
         self.assertEqual(report["latestNumberKeySideCommit"]["commit"]["candidate"]["label"], "6")
         self.assertEqual(report["latestNumberKeySideCommit"]["commit"]["candidate"]["sessionFingerprint"], "session-a")
+        self.assertEqual(report["latestPostCommitFollowup"]["request"]["commitTextPreview"], "继续预测")
+        self.assertEqual(report["latestPostCommitFollowup"]["request"]["committedContextChars"], 18)
 
     def test_trace_check_passes_for_rag_only_side_panel_and_side_commit(self) -> None:
         root = Path(__file__).resolve().parents[1]
         candidates = [_side_candidate(label="1", source_type="rag", session_fingerprint="session-rag")]
+        candidates[0]["text"] = "继续写"
+        candidates[0]["insertText"] = "继续写"
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
             log_path = Path(tmp) / "trace.jsonl"
             log_path.write_text(
@@ -234,6 +273,32 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     },
                     ensure_ascii=False,
                 )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_continuation_scheduled",
+                        "timestampMs": 5,
+                        "committedText": "继续写",
+                        "committedContextChars": 12,
+                        "sourceType": "rag",
+                        "selectionKey": "1",
+                        "sessionFingerprint": "session-rag",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 6,
+                        "rawInput": "",
+                        "preedit": "",
+                        "commitTextPreview": "继续写",
+                        "committedContextChars": 12,
+                        "candidateCount": 0,
+                    },
+                    ensure_ascii=False,
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -246,6 +311,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     str(log_path),
                     "--require-side-panel",
                     "--require-side-commit",
+                    "--require-post-commit-followup",
                     "--require-modern-prediction-session",
                 ],
                 cwd=root,
@@ -259,6 +325,91 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["latestSidePanel"]["candidateCounts"]["ragBlock"], 1)
         self.assertIsNone(report["latestMixedPanel"])
         self.assertEqual(report["latestNumberKeySideCommit"]["key"], "1")
+        self.assertEqual(report["latestPostCommitFollowup"]["request"]["rawInput"], "")
+
+    def test_trace_check_fails_when_side_commit_has_no_post_commit_followup(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": True,
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "candidates": _mixed_side_first_candidates(session_fingerprint="session-a"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "panel_text_layout",
+                        "timestampMs": 2,
+                        "forcesHorizontalLayout": True,
+                        "linear": True,
+                        "vertical": False,
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "separators": ["", "  ", "  ", "  ", "  ", "\n", "\n", "\n"],
+                        "candidates": _mixed_side_first_candidates(session_fingerprint="session-a"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "number_key_route",
+                        "timestampMs": 3,
+                        "key": "6",
+                        "candidate": {
+                            "label": "6",
+                            "selectionKey": "6",
+                            "sourceType": "rag",
+                            "selectionAction": "commit_side_candidate",
+                            "sessionFingerprint": "session-a",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_commit",
+                        "timestampMs": 4,
+                        "candidate": {
+                            "label": "6",
+                            "selectionKey": "6",
+                            "sourceType": "rag",
+                            "selectionAction": "commit_side_candidate",
+                            "sessionFingerprint": "session-a",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-mixed-panel",
+                    "--require-side-commit",
+                    "--require-post-commit-followup",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertIsNone(report["latestPostCommitFollowup"])
 
     def test_trace_check_reports_sidecar_drop_reason_and_live_input(self) -> None:
         root = Path(__file__).resolve().parents[1]

@@ -972,7 +972,8 @@ index c2adf74..3cfc0e5 100644
 +    highlighted: Int,
 +    page: Int,
 +    lastPage: Bool,
-+    requestSidecar: Bool
++    requestSidecar: Bool,
++    immediate: Bool = false
 +  ) {
 +    guard requestSidecar else { return }
 +    guard let sidecarClient = ragImeSidecarClient else {
@@ -1066,7 +1067,7 @@ index c2adf74..3cfc0e5 100644
 +    ragImeLastRequestFingerprint = fingerprint
 +    ragImePendingRequestFingerprint = fingerprint
 +    ragImePendingRequestWorkItem = workItem
-+    let delay = TimeInterval(sidecarClient.debounceMs) / 1000
++    let delay = immediate ? 0 : TimeInterval(sidecarClient.debounceMs) / 1000
 +    if delay <= 0 {
 +      DispatchQueue.main.async(execute: workItem)
 +    } else {
@@ -1095,7 +1096,8 @@ index c2adf74..3cfc0e5 100644
 +      highlighted: 0,
 +      page: 0,
 +      lastPage: true,
-+      requestSidecar: true
++      requestSidecar: true,
++      immediate: true
 +    )
 +  }
 +
