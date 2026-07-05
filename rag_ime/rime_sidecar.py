@@ -3110,7 +3110,12 @@ def _record_memory_feedback_event(*, core: CoreClient, event: dict[str, object])
     recorder = getattr(core, "record_memory_feedback", None)
     if not callable(recorder):
         return
-    recorder(dict(event))
+    try:
+        recorder(dict(event))
+    except Exception:
+        # Feedback is a governance signal; typing and selection must stay live if
+        # the memory store or future shared core is temporarily unavailable.
+        return
 
 
 def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]:
@@ -3364,18 +3369,21 @@ def _apply_candidate_memory_action(
         or source_event_id <= 0
     ):
         return None
-    action = core.apply_action(
-        MemoryAction(
-            action_id=None,
-            created_at_ms=now_ms(),
-            memory_id=memory_id,
-            action_type=action_type,
-            query=query,
-            suggestion_id=suggestion_id,
-            source_event_id=source_event_id,
-            metadata=metadata,
+    try:
+        action = core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=now_ms(),
+                memory_id=memory_id,
+                action_type=action_type,
+                query=query,
+                suggestion_id=suggestion_id,
+                source_event_id=source_event_id,
+                metadata=metadata,
+            )
         )
-    )
+    except Exception:
+        return None
     return action_response_payload(action)
 
 
@@ -3391,18 +3399,21 @@ def _apply_committed_event_feedback(
     source_event_id = _event_id_from_memory_id(event_id)
     if source_event_id is None:
         return None
-    action = core.apply_action(
-        MemoryAction(
-            action_id=None,
-            created_at_ms=now_ms(),
-            memory_id=event_id,
-            action_type=action_type,
-            query=query,
-            suggestion_id=suggestion_id,
-            source_event_id=source_event_id,
-            metadata=metadata,
+    try:
+        action = core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=now_ms(),
+                memory_id=event_id,
+                action_type=action_type,
+                query=query,
+                suggestion_id=suggestion_id,
+                source_event_id=source_event_id,
+                metadata=metadata,
+            )
         )
-    )
+    except Exception:
+        return None
     return action_response_payload(action)
 
 

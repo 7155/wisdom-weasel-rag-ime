@@ -42,6 +42,7 @@ def main() -> int:
     parser.add_argument("--min-panel-displays", type=int, default=1)
     parser.add_argument("--min-side-commits", type=int, default=1)
     parser.add_argument("--min-post-commit-followups", type=int, default=1)
+    parser.add_argument("--max-stale-applied", type=int, default=0)
     parser.add_argument(
         "--manual-required",
         action="append",
@@ -74,6 +75,7 @@ def main() -> int:
             min_panel_displays=max(0, args.min_panel_displays),
             min_side_commits=max(0, args.min_side_commits),
             min_post_commit_followups=max(0, args.min_post_commit_followups),
+            max_stale_applied=max(0, args.max_stale_applied),
         )
         if soak_report["passed"] or time.monotonic() >= deadline:
             break
@@ -102,6 +104,7 @@ def build_soak_report(
     min_panel_displays: int,
     min_side_commits: int,
     min_post_commit_followups: int,
+    max_stale_applied: int,
 ) -> dict[str, Any]:
     event_counts = Counter(str(event.get("event") or "") for event in events if isinstance(event, dict))
     side_commit_pairs, unmatched_routes = collect_number_key_side_commit_pairs(events)
@@ -124,6 +127,7 @@ def build_soak_report(
         "minPanelDisplays": min_panel_displays,
         "minSideCommits": min_side_commits,
         "minPostCommitFollowups": min_post_commit_followups,
+        "maxStaleApplied": max_stale_applied,
     }
     threshold_results = {
         "sidecarRequests": int(event_counts.get("sidecar_request_scheduled", 0)) >= min_sidecar_requests,
@@ -131,6 +135,7 @@ def build_soak_report(
         "panelDisplays": int(event_counts.get("panel_display_candidates", 0)) >= min_panel_displays,
         "sideCommits": len(side_commit_pairs) >= min_side_commits,
         "postCommitFollowups": len(post_commit_followups) >= min_post_commit_followups,
+        "staleApplied": len(stale_applied) <= max_stale_applied,
     }
 
     violations: list[dict[str, Any]] = []
@@ -145,8 +150,9 @@ def build_soak_report(
                     "candidate": violation.get("candidate"),
                 }
             )
-    for violation in stale_applied:
-        violations.append(violation)
+    if len(stale_applied) > max_stale_applied:
+        for violation in stale_applied:
+            violations.append(violation)
     for route in unmatched_routes:
         violations.append(
             {
@@ -201,6 +207,7 @@ def build_soak_report(
             "pairedSideCommitCount": len(side_commit_pairs),
             "unmatchedNumberKeyRouteCount": len(unmatched_routes),
             "postCommitFollowupCount": len(post_commit_followups),
+            "staleAppliedResponseCount": len(stale_applied),
             "staleResponseDropCount": int(event_counts.get("sidecar_response_dropped_stale", 0))
             + int(event_counts.get("sidecar_response_dropped", 0)),
             "staleSelectionRejectedCount": int(event_counts.get("stale_candidate_selection_rejected", 0)),

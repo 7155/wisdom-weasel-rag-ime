@@ -683,6 +683,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--max-sidecar-noise-rate", type=float, default=1.0)
     quality_gate.add_argument("--max-sidecar-rag-timeout-rate", type=float, default=1.0)
     quality_gate.add_argument("--max-sidecar-model-timeout-rate", type=float, default=1.0)
+    quality_gate.add_argument("--max-old-input-echo-rate", type=float, default=1.0)
     quality_gate.add_argument("--require-model-ttfc", action="store_true")
     quality_gate.add_argument("--model-ttfc-cases-file", default="docs/eval/ime-ttfc-cases.example.jsonl")
     quality_gate.add_argument(
@@ -763,6 +764,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     squirrel_tryout_gate.add_argument("--max-sidecar-noise-rate", type=float, default=1.0)
     squirrel_tryout_gate.add_argument("--max-sidecar-rag-timeout-rate", type=float, default=1.0)
     squirrel_tryout_gate.add_argument("--max-sidecar-model-timeout-rate", type=float, default=1.0)
+    squirrel_tryout_gate.add_argument("--max-old-input-echo-rate", type=float, default=1.0)
     squirrel_tryout_gate.add_argument("--cache-repeat", type=int, default=3)
     squirrel_tryout_gate.add_argument("--cache-current-input", default="RAG 输入法")
     squirrel_tryout_gate.add_argument("--cache-recent-context", default="squirrel tryout cache probe")
@@ -2259,6 +2261,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_sidecar_noise_rate=max(0.0, min(1.0, args.max_sidecar_noise_rate)),
             max_sidecar_rag_timeout_rate=max(0.0, min(1.0, args.max_sidecar_rag_timeout_rate)),
             max_sidecar_model_timeout_rate=max(0.0, min(1.0, args.max_sidecar_model_timeout_rate)),
+            max_old_input_echo_rate=max(0.0, min(1.0, args.max_old_input_echo_rate)),
             require_model_ttfc=bool(args.require_model_ttfc),
             model_ttfc_cases_file=Path(args.model_ttfc_cases_file),
             model_ttfc_provider=args.model_ttfc_provider,
@@ -2309,6 +2312,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_sidecar_noise_rate=max(0.0, min(1.0, args.max_sidecar_noise_rate)),
             max_sidecar_rag_timeout_rate=max(0.0, min(1.0, args.max_sidecar_rag_timeout_rate)),
             max_sidecar_model_timeout_rate=max(0.0, min(1.0, args.max_sidecar_model_timeout_rate)),
+            max_old_input_echo_rate=max(0.0, min(1.0, args.max_old_input_echo_rate)),
             require_model_ttfc=bool(args.require_model_ttfc),
             model_ttfc_cases_file=Path(args.model_ttfc_cases_file),
             model_ttfc_provider=args.model_ttfc_provider,
@@ -2629,6 +2633,7 @@ def run_squirrel_tryout_gate(
     max_sidecar_noise_rate: float,
     max_sidecar_rag_timeout_rate: float,
     max_sidecar_model_timeout_rate: float,
+    max_old_input_echo_rate: float,
     require_model_ttfc: bool,
     model_ttfc_cases_file: Path,
     model_ttfc_provider: str,
@@ -2728,6 +2733,7 @@ def run_squirrel_tryout_gate(
             max_sidecar_noise_rate=max_sidecar_noise_rate,
             max_sidecar_rag_timeout_rate=max_sidecar_rag_timeout_rate,
             max_sidecar_model_timeout_rate=max_sidecar_model_timeout_rate,
+            max_old_input_echo_rate=max_old_input_echo_rate,
             require_model_ttfc=require_model_ttfc,
             model_ttfc_cases_file=model_ttfc_cases_file,
             model_ttfc_provider=model_ttfc_provider,
@@ -3265,6 +3271,7 @@ def run_quality_gate(
     input_source_check_script: Path | None,
     required_predictor_capabilities: tuple[str, ...],
     include_cases: bool,
+    max_old_input_echo_rate: float = 1.0,
 ) -> dict[str, object]:
     from .debug_server import DebugImeService, DebugServerConfig
 
@@ -3359,6 +3366,7 @@ def run_quality_gate(
         max_sidecar_noise_rate=max_sidecar_noise_rate,
         max_sidecar_rag_timeout_rate=max_sidecar_rag_timeout_rate,
         max_sidecar_model_timeout_rate=max_sidecar_model_timeout_rate,
+        max_old_input_echo_rate=max_old_input_echo_rate,
         require_model_ttfc=require_model_ttfc,
         max_model_ttfc_p95_ms=max_model_ttfc_p95_ms,
         max_model_ttfc_over_budget_rate=max_model_ttfc_over_budget_rate,
@@ -3384,6 +3392,7 @@ def run_quality_gate(
             "maxSidecarNoiseRate": max_sidecar_noise_rate,
             "maxSidecarRagTimeoutRate": max_sidecar_rag_timeout_rate,
             "maxSidecarModelTimeoutRate": max_sidecar_model_timeout_rate,
+            "maxOldInputEchoRate": max_old_input_echo_rate,
             "requireModelTtfc": require_model_ttfc,
             "modelTtfcProvider": model_ttfc_provider,
             "modelTtfcBaseUrl": model_ttfc_base_url,
@@ -3463,6 +3472,7 @@ def _quality_gate_checks(
     max_sidecar_noise_rate: float,
     max_sidecar_rag_timeout_rate: float,
     max_sidecar_model_timeout_rate: float,
+    max_old_input_echo_rate: float,
     require_model_ttfc: bool,
     max_model_ttfc_p95_ms: int,
     max_model_ttfc_over_budget_rate: float,
@@ -3509,6 +3519,16 @@ def _quality_gate_checks(
             rime_report,
             max_rag_timeout_rate=max_sidecar_rag_timeout_rate,
             max_model_timeout_rate=max_sidecar_model_timeout_rate,
+        ),
+        *_old_input_echo_rate_checks(
+            "rag",
+            rag_report,
+            max_old_input_echo_rate=max_old_input_echo_rate,
+        ),
+        *_old_input_echo_rate_checks(
+            "rime-sidecar",
+            rime_report,
+            max_old_input_echo_rate=max_old_input_echo_rate,
         ),
         {
             "name": "rime-sidecar-has-side-candidates",
@@ -3623,6 +3643,29 @@ def _sidecar_lane_timeout_checks(
             "timeoutCount": int(sidecar.get("modelLaneTimeoutCount") or 0),
             "calledCount": int(sidecar.get("modelLaneCalledCount") or 0),
         },
+    ]
+
+
+def _old_input_echo_rate_checks(
+    prefix: str,
+    report: dict[str, object],
+    *,
+    max_old_input_echo_rate: float,
+) -> list[dict[str, object]]:
+    metrics = report.get("metrics") if isinstance(report.get("metrics"), dict) else {}
+    product_metrics = report.get("productMetrics") if isinstance(report.get("productMetrics"), dict) else {}
+    old_input_echo_rate = float(
+        product_metrics.get("oldInputEchoRate")
+        if product_metrics.get("oldInputEchoRate") is not None
+        else metrics.get("oldInputEchoRate") or 0.0
+    )
+    return [
+        {
+            "name": f"{prefix}-old-input-echo-rate",
+            "passed": old_input_echo_rate <= max_old_input_echo_rate,
+            "actual": old_input_echo_rate,
+            "expectedAtMost": max_old_input_echo_rate,
+        }
     ]
 
 

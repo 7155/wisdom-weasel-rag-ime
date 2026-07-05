@@ -294,6 +294,23 @@ def optimize_suggestions_if_enabled(
         raw_hits=raw_hits,
         result=result,
     )
+    if result.degraded:
+        warnings = list(result.warnings)
+        if "optimizer_degraded_timeout" not in warnings:
+            warnings.append("optimizer_degraded_timeout")
+        return [], {
+            "enabled": True,
+            "traceEnabled": config.trace_enabled,
+            "maxMs": config.max_ms,
+            "traceId": result.trace_id,
+            "latencyMs": round(result.latency_ms, 3),
+            "degraded": True,
+            "failClosed": True,
+            "warnings": warnings,
+            "blocked": [asdict(item) for item in result.blocked],
+            "contextFrame": asdict(context) if config.trace_enabled else {},
+            "queryPlan": asdict(plan) if config.trace_enabled else {},
+        }
     suggestion_lookup = {
         str(item.metadata.get("memory_id") or item.suggestion_id): item
         for item in suggestions

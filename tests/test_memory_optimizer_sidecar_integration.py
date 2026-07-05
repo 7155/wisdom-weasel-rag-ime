@@ -13,7 +13,7 @@ from rag_ime.adapter import InputMethodAdapter
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.predictor import PredictionProvider
-from rag_ime.rime_sidecar import build_rime_sidecar_response
+from rag_ime.rime_sidecar import build_rime_sidecar_response, record_rime_side_candidate_selection
 
 
 class _NoopPredictionProvider(PredictionProvider):
@@ -64,6 +64,23 @@ class _TraceWriteFailingCore(FixtureCoreClient):
     def store_memory_optimizer_trace(self, trace):
         del trace
         raise RuntimeError("simulated trace write failure")
+
+
+class _DegradedOptimizerCore(FixtureCoreClient):
+    def optimize_memory_candidates(self, context, base_hits, *, top_k: int, latency_budget_ms: int):
+        result = super().optimize_memory_candidates(
+            context,
+            base_hits,
+            top_k=top_k,
+            latency_budget_ms=latency_budget_ms,
+        )
+        return replace(result, trace_id="trace-degraded", latency_ms=float(latency_budget_ms + 1), degraded=True)
+
+
+class _FeedbackWriteFailingCore(FixtureCoreClient):
+    def record_memory_feedback(self, event):
+        del event
+        raise RuntimeError("simulated feedback write failure")
 
 
 class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
@@ -230,6 +247,96 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
         self.assertTrue(optimizer["enabled"])
         self.assertEqual(optimizer["traceId"], "trace-write-fails")
         self.assertTrue(response["ragCandidates"])
+
+    def test_sidecar_fail_closes_when_optimizer_returns_degraded(self) -> None:
+        os.environ["RAG_IME_MEMORY_OPTIMIZER"] = "1"
+        os.environ["RAG_IME_MEMORY_OPTIMIZER_TRACE"] = "1"
+        core = _DegradedOptimizerCore()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "optimizer-degraded",
+                "requestSeq": 32,
+                "forceSideCandidates": True,
+                "committedContext": "我想设计一个输入法",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "rimeContext": {"candidates": [{"label": "1", "text": "设计", "comment": "rime"}]},
+            },
+            adapter=InputMethodAdapter(core),
+            core=core,
+            predictor=_NoopPredictionProvider(),
+        )
+
+        optimizer = response["ragLane"]["memoryOptimizer"]
+        self.assertTrue(optimizer["enabled"])
+        self.assertEqual(optimizer["traceId"], "trace-degraded")
+        self.assertTrue(optimizer["degraded"])
+        self.assertTrue(optimizer["failClosed"])
+        self.assertIn("optimizer_degraded_timeout", optimizer["warnings"])
+        self.assertEqual(response["ragCandidates"], [])
+
+    def test_sidecar_display_feedback_write_failure_does_not_block_suggestions(self) -> None:
+        os.environ["RAG_IME_MEMORY_OPTIMIZER"] = "1"
+        os.environ["RAG_IME_MEMORY_OPTIMIZER_TRACE"] = "1"
+        core = _FeedbackWriteFailingCore()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "optimizer-feedback-write-fail",
+                "requestSeq": 33,
+                "forceSideCandidates": True,
+                "committedContext": "我想设计一个输入法",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "rimeContext": {"candidates": [{"label": "1", "text": "设计", "comment": "rime"}]},
+            },
+            adapter=InputMethodAdapter(core),
+            core=core,
+            predictor=_NoopPredictionProvider(),
+        )
+
+        self.assertEqual(response["schemaVersion"], "rag-ime.rime-sidecar.v1")
+        self.assertTrue(response["ragCandidates"])
+
+    def test_selection_feedback_write_failure_does_not_block_commit(self) -> None:
+        core = _FeedbackWriteFailingCore()
+        result = record_rime_side_candidate_selection(
+            payload={
+                "sessionId": "selection-feedback-write-fail",
+                "requestSeq": 34,
+                "project": "wisdom-weasel-rag-ime",
+                "query": "连续",
+                "committedContext": "我们继续写 RAG 输入法",
+                "candidate": {
+                    "text": "连续预测",
+                    "insertText": "连续预测",
+                    "sourceType": "memory",
+                    "memoryId": "mem-feedback",
+                    "selectionKey": "2",
+                    "selectionRank": 2,
+                },
+                "shownCandidates": [
+                    {
+                        "text": "候选排序",
+                        "sourceType": "memory",
+                        "memoryId": "mem-local-privacy",
+                        "selectionKey": "1",
+                        "selectionRank": 1,
+                    },
+                    {
+                        "text": "连续预测",
+                        "sourceType": "memory",
+                        "memoryId": "mem-feedback",
+                        "selectionKey": "2",
+                        "selectionRank": 2,
+                    },
+                ],
+            },
+            adapter=InputMethodAdapter(core),
+            core=core,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["insertText"], "连续预测")
 
     def test_realtime_sidecar_does_not_call_x1top_or_http_when_optimizer_enabled(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-no-cloud-realtime-") as tmp:

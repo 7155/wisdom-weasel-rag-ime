@@ -183,7 +183,17 @@ chain readiness, and `rerank-demo` exposes a source-aware Rime/model/RAG/memory
 ranking path that preserves Rime fallback. PR-10 has started: `debug-server`
 now exposes localhost management APIs for candidate explain, history audit,
 memory/lexicon review, cleanup diff apply/rollback, redacted-by-default raw
-history, and action audit logging.
+history, and action audit logging. The final integrated product gate has also
+started: `scripts/run_product_readiness_gate.sh` now runs unit tests,
+deterministic acceptance, backend `quality-gate`, and, when
+`RAG_IME_REQUIRE_MACOS_FRONTEND=1`, the real Squirrel tryout plus soak-report
+checker. `quality-gate` now has `--max-old-input-echo-rate`, and
+`check_squirrel_soak_report.py` now has `--max-stale-applied`. The memory
+optimizer fail-closed path also now treats explicit degraded optimizer results
+as lane failures: the sidecar reports `failClosed=true` and returns no RAG
+candidates from that degraded optimizer pass. Memory feedback and governance
+action writes are best-effort as well, so failed local DB/action writes cannot
+block candidate display or `insertText` commit.
 
 ## Source Repository Structure
 
@@ -253,6 +263,10 @@ Scripts:
 - `scripts/install_sidecar_launch_agent.sh`: user LaunchAgent for sidecar.
 - `scripts/install_mlx_predictor_launch_agent.sh`: user LaunchAgent for MLX.
 - `scripts/benchmark_mlx_model_matrix.py`: local model benchmark helper.
+- `scripts/run_product_readiness_gate.sh`: one-command product-readiness gate.
+  Default path runs unit tests, `scripts/acceptance.py`, and backend
+  `quality-gate`; `RAG_IME_REQUIRE_MACOS_FRONTEND=1` also requires real
+  Squirrel tryout and soak-report evidence.
 
 Useful PR-5 review CLI now present in `rag_ime/cli.py`:
 
@@ -1192,6 +1206,28 @@ Ran 514 tests in 74.169s
 OK
 ```
 
+Additional final-gate verification after adding the integrated product gate:
+
+```bash
+python3 -m unittest tests.test_product_readiness_gate
+python3 -m unittest tests.test_memory_optimizer_sidecar_integration
+python3 -m py_compile rag_ime/cli.py rag_ime/rime_sidecar.py scripts/check_squirrel_soak_report.py
+```
+
+Product gate targeted result:
+
+```text
+Ran 3 tests in 0.158s
+OK
+```
+
+Latest full-suite result after the final-gate/fail-closed checkpoint:
+
+```text
+Ran 522 tests in 84.691s
+OK
+```
+
 Recent project-public cleanup:
 
 - Added root `AGENTS.md`.
@@ -1535,6 +1571,8 @@ Important test files:
 - `tests/test_prediction_first.py`: source-lane merge.
 - `tests/test_debug_management_api.py`: PR-10 management API, redaction, audit,
   and cleanup diff review.
+- `tests/test_product_readiness_gate.py`: final product gate script, CLI flag,
+  dry-run, and optional macOS foreground-gate coverage.
 - `tests/test_install_squirrel_rag_config.py`: Rime/Squirrel config install.
 - `tests/test_check_macos_input_source.py`: macOS input source checking.
 
