@@ -9,11 +9,16 @@ for prediction flow, candidate lifecycle, and UI behavior.
 
 ## Start Here
 
+- `AGENTS.md`: concise instructions for AI/code agents reviewing this public repo.
 - `docs/project-status.md`: product goal, user requirements, current state, and next priorities.
 - `docs/design-decisions.md`: architecture decisions and boundaries.
 - `docs/runtime-and-debug.md`: commands for local run, install, checks, and evaluation.
 - `squirrel-patches/README.md`: patch-pack details for the Squirrel frontend.
 - `docs/eval/*.jsonl`: small regression/evaluation cases.
+
+For a Pro model or external reviewer, read `AGENTS.md` first, then
+`docs/project-status.md`, then `docs/runtime-and-debug.md`. The current public
+branch is `codex/wisdom-weasel-rag-ime-mvp`.
 
 ## Product Goal
 
@@ -86,3 +91,12 @@ scripts/verify_squirrel_foreground_trace.sh
 ```
 
 More commands live in `docs/runtime-and-debug.md`.
+
+## Public Repo Notes
+
+- No model weights, local SQLite databases, built `.app` bundles, API keys, or
+  personal input history should be committed.
+- `x1api.top` examples are placeholders for offline memory cleanup only; the
+  realtime predictor must stay local.
+- The repo currently has no final production license decision. Choose one before
+  inviting broad reuse beyond code review and model analysis.
