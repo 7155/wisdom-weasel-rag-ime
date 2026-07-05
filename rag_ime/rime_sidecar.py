@@ -589,6 +589,8 @@ def suggest_rag_with_latency_budget(
             )
         except Exception as exc:  # pragma: no cover - defensive fail-open guard
             result["error"] = exc.__class__.__name__
+            result["failClosed"] = True
+            result["warnings"] = [f"rag_exception:{exc.__class__.__name__}"]
         finally:
             result["elapsedMs"] = int((time.perf_counter() - started) * 1000)
             done.set()
@@ -614,6 +616,8 @@ def suggest_rag_with_latency_budget(
         budget_ms=budget_ms,
         elapsed_ms=_optional_int(result.get("elapsedMs")) or 0,
         suggestion_count=len(suggestions),
+        fail_closed=bool(result.get("failClosed")),
+        warnings=tuple(str(item) for item in result.get("warnings", []) if str(item)),
     )
 
 
@@ -1971,8 +1975,10 @@ def _rag_lane_status(
     budget_ms: int,
     elapsed_ms: int = 0,
     suggestion_count: int = 0,
+    fail_closed: bool = False,
+    warnings: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "called": called,
         "timedOut": timed_out,
         "skippedReason": skipped_reason,
@@ -1980,6 +1986,11 @@ def _rag_lane_status(
         "latencyBudgetMs": budget_ms,
         "elapsedMs": elapsed_ms,
     }
+    if fail_closed:
+        payload["failClosed"] = True
+    if warnings:
+        payload["warnings"] = list(warnings)
+    return payload
 
 
 def _model_lane_status(

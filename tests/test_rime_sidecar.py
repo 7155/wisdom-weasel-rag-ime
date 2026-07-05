@@ -671,6 +671,11 @@ class SlowSuggestionCore(CapturingCore):
         )
 
 
+class FailingSuggestionAdapter(InputMethodAdapter):
+    def suggest(self, request):
+        raise RuntimeError("simulated sqlite retrieval failure")
+
+
 class SlowHistoryCore(CapturingCore):
     def __init__(self, sleep_s: float = 0.1) -> None:
         super().__init__()
@@ -780,6 +785,42 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertFalse(response["modelLane"]["timedOut"])
         self.assertEqual(response["modelLane"]["predictionCount"], 1)
         self.assertEqual(response["modelLane"]["totalLatencyBudgetMs"], 300)
+
+    def test_rag_database_exception_fails_closed_to_model_and_rime(self) -> None:
+        payload = {
+            "sessionId": "squirrel-rag-db-fail",
+            "requestSeq": 43,
+            "rawInput": "ragshurufa",
+            "preedit": "ragshurufa",
+            "committedContext": "RAG 输入法需要本地记忆",
+            "maxVisibleCandidates": 4,
+            "maxSideCandidates": 2,
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                    {"label": "2", "text": "输入法", "comment": "rime"},
+                ],
+                "highlightedIndex": 0,
+            },
+        }
+
+        response = build_rime_sidecar_response(
+            payload=payload,
+            adapter=FailingSuggestionAdapter(self.core),
+            core=self.core,
+            predictor=self.predictor,
+        )
+
+        self.assertEqual(response["ragCandidates"], [])
+        self.assertTrue(response["ragLane"]["failClosed"])
+        self.assertEqual(response["ragLane"]["suggestionCount"], 0)
+        self.assertEqual(response["ragLane"]["skippedReason"], "error: RuntimeError")
+        self.assertIn("rag_exception:RuntimeError", response["ragLane"]["warnings"])
+        display = response["displayCandidates"]
+        self.assertEqual(display[0]["sourceType"], "model")
+        self.assertEqual(display[1]["sourceType"], "rime")
+        self.assertEqual(display[1]["selectionAction"], "select_rime_candidate")
+        self.assertEqual(response["modelLane"]["predictionCount"], 1)
 
     def test_display_candidates_hide_diagnostics_by_default_but_can_enable_them(self) -> None:
         payload = {

@@ -197,7 +197,10 @@ optimizer fail-closed path also now treats explicit degraded optimizer results
 as lane failures: the sidecar reports `failClosed=true` and returns no RAG
 candidates from that degraded optimizer pass. Memory feedback and governance
 action writes are best-effort as well, so failed local DB/action writes cannot
-block candidate display or `insertText` commit. The gate now seeds demo and
+block candidate display or `insertText` commit. The realtime RAG lane now also
+turns retrieval/database exceptions into `failClosed=true` with a
+`rag_exception:*` warning while preserving model predictions and Rime fallback.
+The gate now seeds demo and
 eval-case fixture memories into its isolated DB before backend quality-gate, and
 predictor capability checks are explicit via
 `RAG_IME_REQUIRE_PREDICTOR_CAPABILITY=seededPromptReplay` rather than required
