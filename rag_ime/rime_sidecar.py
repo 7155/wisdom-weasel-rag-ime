@@ -532,6 +532,14 @@ def build_rime_sidecar_response(
         prediction_session=prediction_session_payload,
         display_candidates=display_candidates,
     )
+    prediction_trace_events = prediction_trace_events_payload(
+        prediction_session=prediction_session_payload,
+        refresh_decision=refresh_decision,
+        show_decision=show_decision,
+        rag_lane=rag_lane,
+        model_lane=model_lane,
+        display_candidates=display_candidates,
+    )
     return {
         "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
         "sessionId": snapshot.session_id,
@@ -561,6 +569,7 @@ def build_rime_sidecar_response(
         },
         "refreshDecision": refresh_decision,
         "showDecision": show_decision,
+        "predictionTraceEvents": prediction_trace_events,
         "historyContext": prediction_context,
         "historyContextMeta": prediction_context_metadata(prediction_context),
         "latencyBudgetMs": snapshot.latency_budget_ms,
@@ -3425,6 +3434,115 @@ def show_decision_payload(
         if isinstance(stable_panel.get("snapshot"), Mapping)
         else {},
     }
+
+
+def prediction_trace_events_payload(
+    *,
+    prediction_session: Mapping[str, object],
+    refresh_decision: Mapping[str, object],
+    show_decision: Mapping[str, object],
+    rag_lane: Mapping[str, object],
+    model_lane: Mapping[str, object],
+    display_candidates: list[SideCandidateDisplayItem],
+) -> list[dict[str, object]]:
+    stable_panel = prediction_session.get("stablePanel")
+    stable_panel = stable_panel if isinstance(stable_panel, Mapping) else {}
+    action = _string(prediction_session.get("stablePanelAction") or stable_panel.get("action"))
+    reason = _string(prediction_session.get("stablePanelReason") or stable_panel.get("reason"))
+    snapshot_id = _string(prediction_session.get("snapshotId") or prediction_session.get("stableSnapshotId"))
+    common = {
+        "mode": _string(prediction_session.get("inputMode")),
+        "phase": _string(prediction_session.get("phase")),
+        "hardContextAnchor": _string(prediction_session.get("hardContextAnchor")),
+        "queryAnchor": _string(prediction_session.get("queryAnchor")),
+        "displayAnchor": _string(prediction_session.get("displayAnchor")),
+        "snapshotId": snapshot_id,
+        "visibleCandidateCount": len(display_candidates),
+        "sourceSummary": _display_source_summary(display_candidates),
+        "action": action,
+        "reason": reason,
+        "ragTimedOut": bool(rag_lane.get("timedOut")),
+        "modelTimedOut": bool(model_lane.get("timedOut")),
+        "holdoverHit": bool(model_lane.get("holdoverHit")) or bool(rag_lane.get("holdoverHit")),
+        "hardClearReason": _string(show_decision.get("hardClearReason")),
+    }
+
+    events: list[dict[str, object]] = [
+        {"event": "prediction_anchor_computed", "fields": _non_empty_trace_fields(common)},
+        {
+            "event": "prediction_refresh_decision",
+            "fields": _non_empty_trace_fields({**common, **dict(refresh_decision)}),
+        },
+        {
+            "event": "prediction_show_decision",
+            "fields": _non_empty_trace_fields({**common, **dict(show_decision)}),
+        },
+    ]
+
+    if action == "fresh" and snapshot_id:
+        events.append({"event": "prediction_snapshot_created", "fields": _non_empty_trace_fields(common)})
+    elif action in {"soft_hold", "reuse_last_good"} and snapshot_id:
+        events.append({"event": "prediction_snapshot_reused", "fields": _non_empty_trace_fields(common)})
+    if action == "soft_hold":
+        events.append({"event": "prediction_panel_soft_hold", "fields": _non_empty_trace_fields(common)})
+    elif action == "soft_hide":
+        events.append({"event": "prediction_panel_soft_hide", "fields": _non_empty_trace_fields(common)})
+    elif action == "hard_clear":
+        events.append({"event": "prediction_panel_hard_clear", "fields": _non_empty_trace_fields(common)})
+
+    if bool(show_decision.get("shouldShow")) and _lane_empty_or_timed_out_for_trace(rag_lane, model_lane):
+        events.append(
+            {
+                "event": "prediction_empty_lane_did_not_clear_panel",
+                "fields": _non_empty_trace_fields(common),
+            }
+        )
+    if (bool(rag_lane.get("timedOut")) or bool(model_lane.get("timedOut"))) and bool(show_decision.get("shouldShow")):
+        events.append(
+            {
+                "event": "prediction_lane_timeout_with_holdover",
+                "fields": _non_empty_trace_fields(common),
+            }
+        )
+    elif bool(rag_lane.get("timedOut")) or bool(model_lane.get("timedOut")):
+        events.append(
+            {
+                "event": "prediction_lane_timeout_without_holdover",
+                "fields": _non_empty_trace_fields(common),
+            }
+        )
+    return events
+
+
+def _display_source_summary(display_candidates: list[SideCandidateDisplayItem]) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for item in display_candidates:
+        source = compact_whitespace(item.source_type)
+        if not source:
+            continue
+        summary[source] = summary.get(source, 0) + 1
+    return summary
+
+
+def _lane_empty_or_timed_out_for_trace(
+    rag_lane: Mapping[str, object],
+    model_lane: Mapping[str, object],
+) -> bool:
+    return (
+        bool(rag_lane.get("timedOut"))
+        or bool(model_lane.get("timedOut"))
+        or (bool(rag_lane.get("called")) and int(rag_lane.get("suggestionCount") or 0) <= 0)
+        or (bool(model_lane.get("called")) and int(model_lane.get("predictionCount") or 0) <= 0)
+    )
+
+
+def _non_empty_trace_fields(fields: Mapping[str, object]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in fields.items():
+        if value in ("", None):
+            continue
+        result[key] = value
+    return result
 
 
 def _bind_display_candidates_to_session(

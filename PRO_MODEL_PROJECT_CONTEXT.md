@@ -440,6 +440,11 @@ per-session debounce/coalescing guard keyed by hard context and query family.
 When a request is coalesced inside `RAG_IME_REFRESH_DEBOUNCE_MS`, the sidecar
 skips RAG/LLM lane execution but still calls `PredictionManager` so an existing
 legal snapshot can remain visible.
+Prediction explainability now has an explicit response-to-frontend path:
+`predictionTraceEvents` is emitted by the sidecar, decoded by the Squirrel patch,
+and forwarded into the frontend JSONL trace. The events include anchors,
+snapshot ids, source counts, action/reason, debounce/holdover flags, and lane
+timeout fields without raw text by default.
 
 ### Sidecar merge path
 
@@ -842,6 +847,55 @@ def apply_refresh_debounce(...):
             "coalescedWithAgeMs": age_ms,
             "debounceKey": _short_stable_id(*key),
         }
+```
+
+### Prediction Trace Events
+
+Files: `rag_ime/rime_sidecar.py`,
+`squirrel-patches/0001-add-rag-ime-sidecar.patch`,
+`scripts/check_squirrel_frontend_trace.py`
+
+```python
+prediction_trace_events = prediction_trace_events_payload(
+    prediction_session=prediction_session_payload,
+    refresh_decision=refresh_decision,
+    show_decision=show_decision,
+    rag_lane=rag_lane,
+    model_lane=model_lane,
+    display_candidates=display_candidates,
+)
+```
+
+Event names include:
+
+```text
+prediction_anchor_computed
+prediction_refresh_decision
+prediction_show_decision
+prediction_snapshot_created
+prediction_snapshot_reused
+prediction_panel_soft_hold
+prediction_panel_soft_hide
+prediction_panel_hard_clear
+prediction_empty_lane_did_not_clear_panel
+prediction_lane_timeout_with_holdover
+prediction_lane_timeout_without_holdover
+```
+
+Squirrel forwarding contract:
+
+```swift
+struct RagImePredictionTraceEvent: Codable {
+  let event: String
+  let fields: [String: RagImeJSONValue]
+}
+
+func traceRagImePredictionEvents(_ events: [RagImePredictionTraceEvent]?) {
+  guard let events else { return }
+  for item in events {
+    traceRagImeFrontendEvent(item.event, fields: ragImeJSONValueDictionary(item.fields))
+  }
+}
 ```
 
 ### PR-1 frontend transaction model

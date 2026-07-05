@@ -596,6 +596,7 @@ index 0000000..784162d
 +  let triggerDecision: RagImeTriggerDecision?
 +  let refreshDecision: RagImeRefreshDecision?
 +  let showDecision: RagImeShowDecision?
++  let predictionTraceEvents: [RagImePredictionTraceEvent]?
 +  let historyContext: String
 +  let latencyBudgetMs: Int
 +  let rimeContext: RagImeRimeContextPayload
@@ -650,6 +651,11 @@ index 0000000..784162d
 +  let tab: String
 +  let optionNumber: String
 +  let escape: String
++}
++
++struct RagImePredictionTraceEvent: Codable {
++  let event: String
++  let fields: [String: RagImeJSONValue]
 +}
 +
 +struct RagImePredictionSessionPayload: Codable {
@@ -1634,6 +1640,7 @@ index c2adf74..3cfc0e5 100644
 +      "candidates": ragImeTraceCandidateSummaries(),
 +      "progressive": ragImeTraceProgressive(response.progressive),
 +    ])
++    traceRagImePredictionEvents(response.predictionTraceEvents)
 +    if phase == "post_commit" {
 +      traceRagImeFrontendEvent("post_commit_prediction_applied", fields: [
 +        "requestSeq": response.requestSeq,
@@ -2216,6 +2223,38 @@ index c2adf74..3cfc0e5 100644
 +      return String(Int(number))
 +    default:
 +      return nil
++    }
++  }
++
++  func traceRagImePredictionEvents(_ events: [RagImePredictionTraceEvent]?) {
++    guard let events else { return }
++    for item in events {
++      traceRagImeFrontendEvent(item.event, fields: ragImeJSONValueDictionary(item.fields))
++    }
++  }
++
++  func ragImeJSONValueDictionary(_ dictionary: [String: RagImeJSONValue]) -> [String: Any] {
++    var result: [String: Any] = [:]
++    for (key, value) in dictionary {
++      result[key] = ragImeJSONValueToAny(value)
++    }
++    return result
++  }
++
++  func ragImeJSONValueToAny(_ value: RagImeJSONValue) -> Any {
++    switch value {
++    case .string(let text):
++      return text
++    case .number(let number):
++      return number
++    case .bool(let bool):
++      return bool
++    case .array(let array):
++      return array.map { ragImeJSONValueToAny($0) }
++    case .object(let object):
++      return ragImeJSONValueDictionary(object)
++    case .null:
++      return NSNull()
 +    }
 +  }
 +

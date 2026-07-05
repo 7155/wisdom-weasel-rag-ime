@@ -1814,6 +1814,10 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(second["showDecision"]["shouldShow"])
         self.assertEqual(second["showDecision"]["action"], "fresh")
         self.assertTrue(second["displayCandidates"])
+        trace_events = second["predictionTraceEvents"]
+        refresh_event = next(item for item in trace_events if item["event"] == "prediction_refresh_decision")
+        self.assertTrue(refresh_event["fields"]["debounced"])
+        self.assertIn("prediction_snapshot_created", [item["event"] for item in trace_events])
 
     def test_prediction_first_prefix_uses_compiled_memory_pinyin_index(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-prefix-memory-") as tmp:
@@ -2221,6 +2225,15 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["refreshDecision"]["shouldRefresh"])
         self.assertTrue(response["showDecision"]["shouldShow"])
         self.assertFalse(response["showDecision"]["softHold"])
+        trace_events = response["predictionTraceEvents"]
+        trace_event_names = [item["event"] for item in trace_events]
+        self.assertIn("prediction_anchor_computed", trace_event_names)
+        self.assertIn("prediction_refresh_decision", trace_event_names)
+        self.assertIn("prediction_show_decision", trace_event_names)
+        self.assertIn("prediction_snapshot_created", trace_event_names)
+        snapshot_event = next(item for item in trace_events if item["event"] == "prediction_snapshot_created")
+        self.assertEqual(snapshot_event["fields"]["snapshotId"], response["predictionSession"]["snapshotId"])
+        self.assertEqual(snapshot_event["fields"]["sourceSummary"]["model"], len(response["displayCandidates"]))
         self.assertEqual(response["predictionFirst"]["policy"]["candidatePoolSessionFingerprint"], session_fingerprint)
         for ordinal, item in enumerate(response["displayCandidates"], start=1):
             self.assertEqual(item["metadata"]["sessionFingerprint"], session_fingerprint)

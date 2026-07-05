@@ -114,6 +114,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     stale_response_drop = latest_matching(events, is_stale_response_drop_event)
     stale_selection_rejected = latest_matching(events, lambda event: event.get("event") == "stale_candidate_selection_rejected")
     modern_prediction_session = latest_matching(events, is_modern_prediction_session_event)
+    prediction_trace_events = [event for event in events if is_prediction_trace_event(event)]
     commit_observed = latest_matching(events, lambda event: event.get("event") == "commit_observed")
     delete_resync = latest_delete_resync(events)
     side_commit_barrier_ms = max(
@@ -134,6 +135,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestStaleSelectionRejected": summarize_event(stale_selection_rejected),
         "frontendTransactionViolations": frontend_transaction_violations(events),
         "latestModernPredictionSession": summarize_event(modern_prediction_session),
+        "latestPredictionTraceEvents": [summarize_event(event) for event in prediction_trace_events[-8:]],
         "latestCommitObserved": summarize_event(commit_observed),
         "latestDeleteResync": summarize_delete_resync(delete_resync),
         "latestMixedPanel": summarize_event(mixed_panel),
@@ -350,6 +352,11 @@ def is_modern_prediction_session_event(event: dict[str, Any]) -> bool:
 
 def is_stale_response_drop_event(event: dict[str, Any]) -> bool:
     return str(event.get("event") or "") in {"sidecar_response_dropped", "sidecar_response_dropped_stale"}
+
+
+def is_prediction_trace_event(event: dict[str, Any]) -> bool:
+    name = str(event.get("event") or "")
+    return name.startswith("prediction_") or name.startswith("candidate_snapshot_")
 
 
 def latest_delete_resync(events: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -579,6 +586,20 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "commitTextPreview": event.get("commitTextPreview"),
         "committedContextChars": event.get("committedContextChars"),
         "displayCount": event.get("displayCount"),
+        "visibleCandidateCount": event.get("visibleCandidateCount"),
+        "sourceSummary": event.get("sourceSummary"),
+        "action": event.get("action"),
+        "shouldRefresh": event.get("shouldRefresh"),
+        "refreshReason": event.get("refreshReason"),
+        "shouldShow": event.get("shouldShow"),
+        "showReason": event.get("showReason"),
+        "debounced": event.get("debounced"),
+        "debounceMs": event.get("debounceMs"),
+        "coalescedWithAgeMs": event.get("coalescedWithAgeMs"),
+        "ragTimedOut": event.get("ragTimedOut"),
+        "modelTimedOut": event.get("modelTimedOut"),
+        "holdoverHit": event.get("holdoverHit"),
+        "hardClearReason": event.get("hardClearReason"),
         "latencyBudgetMs": event.get("latencyBudgetMs"),
         "responseAgeMs": event.get("responseAgeMs"),
         "inputGeneration": event.get("inputGeneration"),

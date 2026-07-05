@@ -1324,23 +1324,31 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
             log_path = Path(tmp) / "trace.jsonl"
-            log_path.write_text(
-                json.dumps(
-                    {
-                        "event": "sidecar_response_applied",
-                        "timestampMs": 1,
-                        "displayCount": 3,
-                        "latencyBudgetMs": 1200,
-                        "predictionSession": {
-                            "phase": "post_commit",
-                            "selectionScope": "mixed_prediction_first",
-                            "sessionFingerprint": "session-a",
-                            "expiresAfterMs": 8000,
-                        },
+            events = [
+                {
+                    "event": "sidecar_response_applied",
+                    "timestampMs": 1,
+                    "displayCount": 3,
+                    "latencyBudgetMs": 1200,
+                    "predictionSession": {
+                        "phase": "post_commit",
+                        "selectionScope": "mixed_prediction_first",
+                        "sessionFingerprint": "session-a",
+                        "expiresAfterMs": 8000,
                     },
-                    ensure_ascii=False,
-                )
-                + "\n",
+                },
+                {
+                    "event": "prediction_snapshot_created",
+                    "timestampMs": 2,
+                    "snapshotId": "snap:trace",
+                    "visibleCandidateCount": 3,
+                    "sourceSummary": {"model": 2, "rag": 1},
+                    "action": "fresh",
+                    "shouldShow": True,
+                },
+            ]
+            log_path.write_text(
+                "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n",
                 encoding="utf-8",
             )
 
@@ -1362,6 +1370,9 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual(report["latestModernPredictionSession"]["predictionSession"]["phase"], "post_commit")
         self.assertEqual(report["latestModernPredictionSession"]["predictionSession"]["expiresAfterMs"], 8000)
+        self.assertEqual(report["latestPredictionTraceEvents"][-1]["event"], "prediction_snapshot_created")
+        self.assertEqual(report["latestPredictionTraceEvents"][-1]["snapshotId"], "snap:trace")
+        self.assertEqual(report["latestPredictionTraceEvents"][-1]["visibleCandidateCount"], 3)
 
     def test_trace_check_rejects_legacy_prediction_session(self) -> None:
         root = Path(__file__).resolve().parents[1]
