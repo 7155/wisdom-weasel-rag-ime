@@ -7,6 +7,19 @@ PREF_DOMAIN="${RAG_IME_HITOOLBOX_DOMAIN:-com.apple.HIToolbox}"
 INPUTSOURCES_DOMAIN="${RAG_IME_INPUTSOURCES_DOMAIN:-com.apple.inputsources}"
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$(dirname "${BASH_SOURCE[0]}")/check_macos_input_source.sh}"
+DRY_RUN=0
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      exit 64
+      ;;
+  esac
+done
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-hitoolbox.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -27,12 +40,9 @@ if ! defaults export "$PREF_DOMAIN" "$before" >/dev/null 2>&1; then
   echo "cannot export $PREF_DOMAIN" >&2
   exit 2
 fi
-cp "$before" "$backup"
-echo "backup: $backup"
 
 if defaults export "$INPUTSOURCES_DOMAIN" "$inputs_before" >/dev/null 2>&1; then
-  cp "$inputs_before" "$inputs_backup"
-  echo "backup: $inputs_backup"
+  inputsources_existed=1
 else
   /usr/bin/python3 - "$inputs_before" <<'PY'
 import plistlib
@@ -41,7 +51,7 @@ import sys
 with open(sys.argv[1], "wb") as handle:
     plistlib.dump({}, handle)
 PY
-  echo "backup: <none; $INPUTSOURCES_DOMAIN did not exist>"
+  inputsources_existed=0
 fi
 
 /usr/bin/python3 - "$before" "$after" "$BUNDLE_ID" "$INPUT_SOURCE_ID" <<'PY'
@@ -139,6 +149,28 @@ with open(after_path, "wb") as handle:
 
 print("third_party_changed=true" if changed else "third_party_changed=false")
 PY
+
+if [[ "$DRY_RUN" == "1" ]]; then
+  echo "dry-run: would import $PREF_DOMAIN from $after"
+  if [[ "$inputsources_existed" == "1" ]]; then
+    echo "dry-run: would import $INPUTSOURCES_DOMAIN from $inputs_after"
+  else
+    echo "dry-run: would create $INPUTSOURCES_DOMAIN with Squirrel third-party entries"
+  fi
+  echo "dry-run: no preference files imported, no backups written, no input source registered"
+  echo "Current strict readiness:"
+  RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" "$CHECK_INPUT_SOURCE_SCRIPT" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" || true
+  exit 0
+fi
+
+cp "$before" "$backup"
+echo "backup: $backup"
+if [[ "$inputsources_existed" == "1" ]]; then
+  cp "$inputs_before" "$inputs_backup"
+  echo "backup: $inputs_backup"
+else
+  echo "backup: <none; $INPUTSOURCES_DOMAIN did not exist>"
+fi
 
 killall cfprefsd >/dev/null 2>&1 || true
 defaults import "$PREF_DOMAIN" "$after"
