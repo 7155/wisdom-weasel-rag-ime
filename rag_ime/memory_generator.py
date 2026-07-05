@@ -264,11 +264,13 @@ class VcpRebuildMemoryGenerator:
                 parsed = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             preview = exc.read(500).decode("utf-8", errors="replace")
-            raise MemoryGenerationError(f"x1api/model memory generation HTTP {exc.code}: {preview}") from exc
+            raise MemoryGenerationError(
+                f"x1top/x1api-compatible memory generation HTTP {exc.code}: {preview}"
+            ) from exc
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-            raise MemoryGenerationError(f"x1api/model memory generation failed: {exc}") from exc
+            raise MemoryGenerationError(f"x1top/x1api-compatible memory generation failed: {exc}") from exc
         if not isinstance(parsed, dict):
-            raise MemoryGenerationError("x1api/model memory generation returned non-object JSON")
+            raise MemoryGenerationError("x1top/x1api-compatible memory generation returned non-object JSON")
         return parsed
 
 
@@ -288,7 +290,7 @@ def generated_lexicon_dedupe_tag(text: str) -> str:
 
 def generated_memory_context(source_text: str, recent_context: str, reason: str) -> str:
     parts = [
-        "x1api generated memory inspired by VCP AIMemo",
+        "x1top GPT-series generated memory inspired by VCP AIMemo",
         f"reason: {compact_whitespace(reason)}" if reason else "",
         f"context: {compact_whitespace(recent_context)}" if recent_context else "",
         f"source: {compact_whitespace(source_text)[:240]}",

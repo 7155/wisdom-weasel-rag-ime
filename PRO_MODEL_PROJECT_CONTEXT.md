@@ -21,8 +21,9 @@ concrete fixes in the repository if available. Preserve these hard boundaries:
   candidates, paging, and fallback.
 - This project adds side candidates from local LLM prediction and local
   RAG/memory.
-- Realtime prediction must use a local small model. `x1api.top` is only for
-  offline memory/RAG/lexicon cleanup.
+- Realtime prediction must use a local small model. The high-intelligence
+  `x1top` GPT-series lane, currently configured through `x1api.top`-compatible
+  env variables, is only for offline memory/RAG/lexicon cleanup.
 - The final UX needs visible LLM/RAG/dictionary source distinction, number-key
   selection, correct Backspace/Delete context, and continuous prediction after
   selecting a side candidate.
@@ -66,7 +67,7 @@ Most important unfinished item:
 ```text
 real foreground continuous selection
 -> local model top-3 logits seed branching
--> RAG/x1api offline database cleanup
+-> RAG/x1top offline database cleanup
 -> source-colored candidate display polish
 ```
 
@@ -84,7 +85,8 @@ Preserve these user statements as product requirements:
   candidates, not insert literal digits when a side panel is active.
 - "预测只有一个的话还不如 Tab" means one LLM candidate is not enough; the local
   model must produce multiple useful next-word or next-phrase candidates.
-- "x1api 不要用来预测" means x1api is only for offline memory/RAG/lexicon
+- "x1api 不要用来预测" means the `x1top` GPT-series lane, currently wired
+  through `x1api.top`-compatible config, is only for offline memory/RAG/lexicon
   optimization.
 - "预测是本地的小模型" means realtime inference must remain local.
 - "本地模型还能 KV" means the provider path should evolve toward prompt/KV cache
@@ -138,14 +140,14 @@ The current goal is to implement the attached PR roadmap in order:
 4. PR-4 MLX `seededPromptReplay` top-k seed replay, while keeping
    `sequenceFork=false` and `kvFork=false`.
 5. PR-5 RAG anti-echo and governance layering.
-6. PR-6 x1api/GPT-5.5 offline cleanup pipeline with dry-run, review, apply,
-   and rollback.
+6. PR-6 x1top GPT-series offline cleanup pipeline with dry-run, review, apply,
+   and rollback through the `x1api-compatible` config boundary.
 7. PR-7 Squirrel product candidate source badges/colors.
 8. PR-8 Sichuan mild fuzzy profile check/apply scripts.
 9. PR-9 model matrix, reranker, and quality eval.
 10. PR-10 localhost-only management UI v1.
 
-Current checkpoint: PR-1 through PR-7 have active implementation work in-tree.
+Current checkpoint: PR-1 through PR-8 have active implementation work in-tree.
 Python sidecar transaction parsing/echo and trace checker transaction
 validation are implemented; Squirrel patch text now contains the matching
 transaction fields, response validation, stale selection rejection, hash-only
@@ -172,7 +174,9 @@ backfill when the exported bundle contains a strong matching source event.
 PR-7 has started: `displayCandidates` now carry compact source badges and color
 tokens (`模/查/忆/词/input`), the Squirrel patch traces those fields without
 changing selection keys, and the foreground trace checker rejects source visual
-mismatches.
+mismatches. PR-8 has started: the Sichuan fuzzy-pinyin helper is now split into
+JSON check and explicit dry-run/apply scripts with backup, and the default
+profile is mild (`z_zh/c_ch/s_sh/en_eng/in_ing` on, `n_l/f_h` off).
 
 ## Source Repository Structure
 
@@ -205,8 +209,8 @@ Core Python modules:
 - `rag_ime/predictor.py`: predictor client abstraction and candidate parsing for
   OpenAI-compatible/Ollama/MLX services.
 - `rag_ime/mlx_predictor_server.py`: resident local MLX model server.
-- `rag_ime/memory_generator.py`: offline x1api-compatible memory/RAG/lexicon
-  distillation.
+- `rag_ime/memory_generator.py`: offline `x1top` / `x1api-compatible`
+  memory/RAG/lexicon distillation.
 - `rag_ime/debug_server.py`: debug and management endpoints.
 - `rag_ime/history_context.py`: bounded recent-context construction and
   fingerprints.
@@ -233,7 +237,12 @@ Scripts:
 - `scripts/check_squirrel_frontend_trace.py`: parse frontend JSONL trace.
 - `scripts/check_squirrel_soak_report.py`: validate the soak JSON report and
   fail on stale application, wrong commit, or missing commit barrier events.
-- `scripts/install_sichuan_fuzzy_pinyin.sh`: Rime fuzzy-pinyin helper.
+- `scripts/check_sichuan_fuzzy_profile.sh`: JSON checker for the managed
+  Sichuan mild fuzzy-pinyin profile.
+- `scripts/apply_sichuan_fuzzy_profile.sh`: dry-run/apply/backup installer for
+  the managed Sichuan mild fuzzy-pinyin profile.
+- `scripts/install_sichuan_fuzzy_pinyin.sh`: compatibility wrapper around
+  `apply_sichuan_fuzzy_profile.sh --apply`.
 - `scripts/install_sidecar_launch_agent.sh`: user LaunchAgent for sidecar.
 - `scripts/install_mlx_predictor_launch_agent.sh`: user LaunchAgent for MLX.
 - `scripts/benchmark_mlx_model_matrix.py`: local model benchmark helper.
@@ -412,9 +421,10 @@ Data principles:
 
 Offline cleanup:
 
-- `x1api.top` can be used for memory distillation, phrase extraction, and cleanup
-  suggestions.
-- x1api must not be configured as the realtime predictor.
+- `x1top` can be used for memory distillation, phrase extraction, and cleanup
+  suggestions through the existing `x1api.top`-compatible endpoint/config
+  layer.
+- `x1top` must not be configured as the realtime predictor.
 - Destructive cleanup should be advisory/dry-run until reviewed.
 
 ### Predictor client path
@@ -1084,7 +1094,7 @@ tail -f "$HOME/Library/Logs/RagIme/squirrel-frontend.jsonl"
 scripts/check_squirrel_frontend_trace.py "$HOME/Library/Logs/RagIme/squirrel-frontend.jsonl"
 ```
 
-x1api offline optimization only:
+x1top offline optimization only:
 
 ```bash
 cat > ~/.rag-ime-x1api.env <<'EOF'
@@ -1152,7 +1162,7 @@ install, not only in JSON trace and patch tests.
 
 ### 4. RAG database cleanup is only conservative so far
 
-Some stale generated/complaint rows were filtered or hidden, but full x1api
+Some stale generated/complaint rows were filtered or hidden, but full `x1top`
 offline cleanup is still pending:
 
 - the PR-6 CLI path now exists, and strong source-event matches now backfill
@@ -1175,11 +1185,20 @@ Next steps:
 - optionally train/LoRA/rerank after collecting real logs:
   `context -> shown candidates -> accepted/skipped -> next user text`.
 
-### 6. Fuzzy pinyin needs final user-level confirmation
+### 6. Fuzzy pinyin has PR-8 scripts, but still needs real Rime confirmation
 
-There is `scripts/install_sichuan_fuzzy_pinyin.sh`, and docs say Sichuan fuzzy
-pinyin should be enabled by default. Confirm the actual user Rime config has the
-expected fuzzy options after install.
+PR-8 now has machine-readable scripts:
+
+```bash
+scripts/check_sichuan_fuzzy_profile.sh
+scripts/apply_sichuan_fuzzy_profile.sh --dry-run
+scripts/apply_sichuan_fuzzy_profile.sh --apply
+```
+
+Default mild profile enables `z_zh`, `c_ch`, `s_sh`, `en_eng`, and `in_ing`.
+It intentionally keeps `n_l` and `f_h` disabled by default. The remaining check
+is real Rime/Squirrel confirmation after applying the profile and rebuilding
+user data.
 
 ### 7. Visual management UI is not final
 
@@ -1250,7 +1269,7 @@ Implementation sketch:
 7. Return fallback to existing continuation-branches if no branch quality passes.
 ```
 
-Do not route x1api into this path.
+Do not route `x1top` into this path.
 
 ### Step 3: RAG offline cleanup pass
 
@@ -1299,7 +1318,8 @@ Important test files:
 - `tests/test_squirrel_frontend_trace.py`: frontend trace parsing and session
   assertions.
 - `tests/test_local_sqlite_core.py`: RAG/memory ranking, cleanup, feedback.
-- `tests/test_memory_generator.py`: x1api-style offline memory generation.
+- `tests/test_memory_generator.py`: `x1top` / `x1api-compatible` offline memory
+  generation.
 - `tests/test_predictor.py`: predictor config boundaries and candidate parsing.
 - `tests/test_prediction_first.py`: source-lane merge.
 - `tests/test_install_squirrel_rag_config.py`: Rime/Squirrel config install.
@@ -1337,7 +1357,7 @@ Useful answer format:
    current remaining problem.
 2. Point to exact files/functions to change.
 3. Give a minimal patch plan.
-4. Preserve the realtime-local-model and x1api-offline boundary.
+4. Preserve the realtime-local-model and `x1top`-offline boundary.
 5. Include verification commands and real foreground acceptance evidence.
 
 The best next code contribution is likely either:
