@@ -40,8 +40,10 @@ macOS Rime/Squirrel candidate-layer adapter plus a local sidecar. The
 `macos/RagImeMac` app is the native InputMethodKit debug harness, used only for
 bridge, panel rendering, and JSON contract checks.
 
-Cloud APIs are not used for realtime prediction. `x1api.top` is reserved for
-offline memory/database/lexicon distillation, not for per-keystroke completion.
+Cloud APIs are not used for realtime prediction. The high-intelligence
+`x1top` GPT-series lane, currently wired through `x1api.top`-compatible
+settings, is reserved for offline memory/RAG/database/lexicon distillation,
+not for per-keystroke completion.
 Realtime prediction should come from a local small model with room for KV-cache
 and native inference optimization.
 
@@ -64,7 +66,8 @@ macOS Squirrel / Rime
 - Prediction-first merge logic for model, RAG/memory, and Rime candidates.
 - HTTP sidecar endpoints for `/rime-suggest`, `/rime-select`, health, and debug checks.
 - Local predictor clients, including Ollama/OpenAI-compatible baselines and resident MLX service.
-- Memory optimization command intended for x1api-compatible offline distillation.
+- Memory/RAG optimization command intended for x1top / x1api-compatible
+  offline distillation.
 - Squirrel patch pack for sidecar integration and side-candidate selection.
 - Native macOS debug harness and AppKit candidate panel preview.
 - Sichuan fuzzy-pinyin install helper enabled by default in the Rime bootstrap path.
@@ -96,7 +99,7 @@ More commands live in `docs/runtime-and-debug.md`.
 
 - No model weights, local SQLite databases, built `.app` bundles, API keys, or
   personal input history should be committed.
-- `x1api.top` examples are placeholders for offline memory cleanup only; the
-  realtime predictor must stay local.
+- `x1api.top` examples are placeholders for offline memory/RAG/lexicon cleanup
+  only; the realtime predictor must stay local.
 - The repo currently has no final production license decision. Choose one before
   inviting broad reuse beyond code review and model analysis.

@@ -197,10 +197,20 @@ block candidate display or `insertText` commit. The gate now seeds demo and
 eval-case fixture memories into its isolated DB before backend quality-gate, and
 predictor capability checks are explicit via
 `RAG_IME_REQUIRE_PREDICTOR_CAPABILITY=seededPromptReplay` rather than required
-on machines without a running local MLX service. Cleanup diff apply now
-re-validates stored diffs before writing, and memory optimizer evidence avoids
-leaking long stable-memory source sentences when the compiled IME candidate is
-short.
+on machines without a running local MLX service. The product gate now also
+separates backend eval DB from installed frontend runtime DB:
+`--db-path` / `RAG_IME_GATE_DB_PATH` remains for backend quality-gate, while
+`--frontend-db-path` / `RAG_IME_FRONTEND_DB_PATH` is passed to
+`squirrel-tryout-gate` and defaults to
+`~/Library/Application Support/RagIme/rag-ime.sqlite`. Latest foreground-gate
+evidence: LaunchAgent, sidecar health, local MLX predictor config, Rime
+defaults, and Rime build artifacts are healthy; the remaining machine blocker
+is that `/Users/undo/Library/Input Methods/Squirrel.app` is missing and macOS
+does not expose `im.rime.inputmethod.Squirrel.Hans`, so true foreground soak
+still requires patched Squirrel installation/input-source registration. Cleanup
+diff apply now re-validates stored diffs before writing, and memory optimizer
+evidence avoids leaking long stable-memory source sentences when the compiled
+IME candidate is short.
 
 ## Source Repository Structure
 
@@ -471,7 +481,8 @@ Data principles:
 
 Offline cleanup:
 
-- `x1top` can be used for memory distillation, phrase extraction, and cleanup
+- `x1top` is the high-intelligence GPT-series offline lane. It can be used for
+  memory distillation, RAG organization, phrase extraction, and cleanup
   suggestions through the existing `x1api.top`-compatible endpoint/config
   layer.
 - `x1top` must not be configured as the realtime predictor.

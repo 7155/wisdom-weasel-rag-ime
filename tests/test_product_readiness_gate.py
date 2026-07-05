@@ -77,6 +77,8 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
 
         self.assertIn("python3 -W error::ResourceWarning -m unittest discover -s tests", result.stdout)
         self.assertIn("python3 scripts/acceptance.py", result.stdout)
+        self.assertIn("db_path=/tmp/rag-ime-product-gate.sqlite", result.stdout)
+        self.assertIn("frontend_db_path=", result.stdout)
         self.assertIn("seed demo memories into gate DB", result.stdout)
         self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-product-gate.sqlite seed-demo", result.stdout)
         self.assertIn("seed eval-case memories into gate DB", result.stdout)
@@ -108,6 +110,10 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                 "--skip-unit-tests",
                 "--skip-acceptance",
                 "--skip-quality-gate",
+                "--db-path",
+                "/tmp/rag-ime-backend-gate.sqlite",
+                "--frontend-db-path",
+                "/tmp/rag-ime-frontend-runtime.sqlite",
                 "--soak-report",
                 "/tmp/custom-rag-ime-soak-report.json",
             ],
@@ -121,8 +127,12 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("unit tests skipped", result.stdout)
         self.assertIn("acceptance skipped", result.stdout)
         self.assertIn("quality gate skipped", result.stdout)
+        self.assertIn("db_path=/tmp/rag-ime-backend-gate.sqlite", result.stdout)
+        self.assertIn("frontend_db_path=/tmp/rag-ime-frontend-runtime.sqlite", result.stdout)
         self.assertIn("require_predictor_capability=seededPromptReplay", result.stdout)
         self.assertIn("squirrel-tryout-gate", result.stdout)
+        self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-frontend-runtime.sqlite squirrel-tryout-gate", result.stdout)
+        self.assertNotIn("-m rag_ime.cli --db-path /tmp/rag-ime-backend-gate.sqlite squirrel-tryout-gate", result.stdout)
         self.assertIn("--require-predictor-capability seededPromptReplay", result.stdout)
         self.assertIn("scripts/check_squirrel_soak_report.py", result.stdout)
         self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)

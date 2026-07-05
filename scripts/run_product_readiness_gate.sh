@@ -6,6 +6,7 @@ cd "$ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DB_PATH="${RAG_IME_GATE_DB_PATH:-.rag-ime-data/product-readiness-gate.sqlite}"
+FRONTEND_DB_PATH="${RAG_IME_FRONTEND_DB_PATH:-$HOME/Library/Application Support/RagIme/rag-ime.sqlite}"
 CASES_FILE="${RAG_IME_GATE_CASES_FILE:-docs/eval/codex-history-cases.example.jsonl}"
 SOAK_REPORT="${RAG_IME_SQUIRREL_SOAK_REPORT:-/tmp/rag-ime-squirrel-soak-report.json}"
 REQUIRE_MACOS_FRONTEND="${RAG_IME_REQUIRE_MACOS_FRONTEND:-0}"
@@ -29,12 +30,14 @@ Options:
   --skip-quality-gate     Skip rag_ime.cli quality-gate.
   --skip-seed-demo        Do not seed demo memories into the gate DB.
   --db-path PATH          SQLite DB path for quality-gate.
+  --frontend-db-path PATH SQLite DB path expected by the installed Squirrel/Rime config.
   --cases-file PATH       Eval cases file for quality-gate.
   --soak-report PATH      Squirrel foreground soak report path.
   -h, --help              Show this help.
 
 Environment:
   RAG_IME_REQUIRE_MACOS_FRONTEND=1  Require Squirrel tryout + soak report checks.
+  RAG_IME_FRONTEND_DB_PATH=PATH      Installed frontend runtime DB path.
   RAG_IME_REQUIRE_PREDICTOR_CAPABILITY=name
                                     Add a local predictor capability requirement,
                                     for example seededPromptReplay.
@@ -65,6 +68,10 @@ while (($#)); do
       ;;
     --db-path)
       DB_PATH="${2:?--db-path requires a value}"
+      shift 2
+      ;;
+    --frontend-db-path)
+      FRONTEND_DB_PATH="${2:?--frontend-db-path requires a value}"
       shift 2
       ;;
     --cases-file)
@@ -102,6 +109,7 @@ run_cmd() {
 
 log "root=$ROOT"
 log "db_path=$DB_PATH"
+log "frontend_db_path=$FRONTEND_DB_PATH"
 log "cases_file=$CASES_FILE"
 log "require_macos_frontend=$REQUIRE_MACOS_FRONTEND"
 log "require_predictor_capability=${REQUIRE_PREDICTOR_CAPABILITY:-none}"
@@ -158,7 +166,7 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
   log "macOS Squirrel tryout gate"
   TRYOUT_CMD=(
     "$PYTHON_BIN" -m rag_ime.cli
-    --db-path "$DB_PATH"
+    --db-path "$FRONTEND_DB_PATH"
     squirrel-tryout-gate
     --cases-file "$CASES_FILE"
     --min-rag-pass-rate 0.9
