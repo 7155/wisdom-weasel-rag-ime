@@ -320,6 +320,12 @@ def optimize_suggestions_if_enabled(
         for candidate in result.candidates
         if candidate.id in suggestion_lookup
     ]
+    optimized_suggestions = _merge_protected_retrieval_hits(
+        raw_suggestions=suggestions,
+        optimized_suggestions=optimized_suggestions,
+        top_k=max(1, top_k),
+        blocked_ids={item.id for item in result.blocked},
+    )
     return optimized_suggestions[: max(1, top_k)], {
         "enabled": True,
         "traceEnabled": config.trace_enabled,
@@ -332,6 +338,57 @@ def optimize_suggestions_if_enabled(
         "contextFrame": asdict(context) if config.trace_enabled else {},
         "queryPlan": asdict(plan) if config.trace_enabled else {},
     }
+
+
+def _merge_protected_retrieval_hits(
+    *,
+    raw_suggestions: list[InputSuggestion],
+    optimized_suggestions: list[InputSuggestion],
+    top_k: int,
+    blocked_ids: set[str] | None = None,
+) -> list[InputSuggestion]:
+    protected: list[InputSuggestion] = []
+    blocked = set(blocked_ids or set())
+    for suggestion in raw_suggestions[: min(3, max(1, top_k))]:
+        candidate_id = str(suggestion.metadata.get("memory_id") or suggestion.suggestion_id)
+        if candidate_id in blocked:
+            continue
+        if _is_protected_retrieval_hit(suggestion):
+            protected.append(suggestion)
+    if not protected:
+        return optimized_suggestions
+    merged: list[InputSuggestion] = []
+    seen: set[str] = set()
+    for suggestion in [*protected, *optimized_suggestions]:
+        key = _normalize_candidate_text(suggestion.surface_text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(suggestion)
+        if len(merged) >= max(1, top_k):
+            break
+    return merged
+
+
+def _is_protected_retrieval_hit(suggestion: InputSuggestion) -> bool:
+    metadata = dict(suggestion.metadata)
+    try:
+        rank = int(metadata.get("rank") or 0)
+    except (TypeError, ValueError):
+        rank = 0
+    if rank <= 0 or rank > 3:
+        return False
+    if suggestion.confidence < 0.55:
+        return False
+    tags = {
+        compact_whitespace(str(tag)).lower()
+        for tag in metadata.get("tags", [])
+        if compact_whitespace(str(tag))
+    } if isinstance(metadata.get("tags"), list) else set()
+    if tags.intersection({"curated", "generated-memory", "api-core-optimized", "api-lexicon", "phrase-memory"}):
+        return True
+    source_type = compact_whitespace(str(metadata.get("source_type") or "")).lower()
+    return source_type in {"memory", "phrase"}
 
 
 def _raw_hits_from_suggestions(suggestions: list[InputSuggestion]) -> list[RawRetrievalHit]:

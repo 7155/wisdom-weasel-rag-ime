@@ -3054,7 +3054,9 @@ def rag_block_reserve(side_budget: int) -> int:
         return 0
     if side_budget <= 3:
         return side_budget - 1
-    return min(3, max(0, side_budget // 2))
+    if side_budget <= 4:
+        return 2
+    return 3
 
 
 def rime_context_to_payload(snapshot: RimeContextSnapshot) -> dict[str, object]:

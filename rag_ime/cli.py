@@ -521,6 +521,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_rime_sidecar.add_argument("--repeat", type=int, default=1)
     eval_rime_sidecar.add_argument("--max-visible-candidates", type=int, default=6)
     eval_rime_sidecar.add_argument("--max-side-candidates", type=int, default=3)
+    eval_rime_sidecar.add_argument("--sidecar-latency-budget-ms", type=int, default=300)
     eval_rime_sidecar.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
     eval_rime_sidecar.add_argument("--force-side-candidates", action="store_true")
 
@@ -730,9 +731,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--rime-candidate", action="append", default=[])
     quality_gate.add_argument("--max-visible-candidates", type=int, default=6)
     quality_gate.add_argument("--max-side-candidates", type=int, default=3)
+    quality_gate.add_argument("--sidecar-latency-budget-ms", type=int, default=300)
     quality_gate.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
     quality_gate.add_argument("--force-side-candidates", action="store_true")
     quality_gate.add_argument("--require-suggestion-cache", action="store_true")
+    quality_gate.add_argument("--skip-acceptance-check", action="store_true")
     quality_gate.add_argument(
         "--require-input-source-ready",
         action="store_true",
@@ -783,6 +786,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     squirrel_tryout_gate.add_argument("--rime-candidate", action="append", default=[])
     squirrel_tryout_gate.add_argument("--max-visible-candidates", type=int, default=6)
     squirrel_tryout_gate.add_argument("--max-side-candidates", type=int, default=3)
+    squirrel_tryout_gate.add_argument("--sidecar-latency-budget-ms", type=int, default=300)
     squirrel_tryout_gate.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
     squirrel_tryout_gate.add_argument(
         "--no-force-side-candidates",
@@ -794,6 +798,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Do not require warm local-core suggestion-cache hits.",
     )
+    squirrel_tryout_gate.add_argument("--skip-acceptance-check", action="store_true")
     squirrel_tryout_gate.add_argument(
         "--input-source-id",
         default=os.environ.get("RAG_IME_SQUIRREL_INPUT_SOURCE_ID", "im.rime.inputmethod.Squirrel.Hans"),
@@ -1917,6 +1922,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             repeat=max(1, args.repeat),
             max_visible_candidates=max(1, min(10, args.max_visible_candidates)),
             max_side_candidates=max(0, min(10, args.max_side_candidates)),
+            sidecar_latency_budget_ms=max(30, args.sidecar_latency_budget_ms),
             rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
             force_side_candidates=bool(args.force_side_candidates),
         )
@@ -2314,9 +2320,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             rime_candidates=list(args.rime_candidate),
             max_visible_candidates=max(1, min(10, args.max_visible_candidates)),
             max_side_candidates=max(0, min(10, args.max_side_candidates)),
+            sidecar_latency_budget_ms=max(30, args.sidecar_latency_budget_ms),
             rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
             force_side_candidates=bool(args.force_side_candidates),
             require_suggestion_cache=bool(args.require_suggestion_cache),
+            require_acceptance_check=not bool(args.skip_acceptance_check),
             require_input_source_ready=bool(args.require_input_source_ready),
             input_source_id=args.input_source_id,
             input_source_check_script=Path(args.input_source_check_script) if args.input_source_check_script else None,
@@ -2365,9 +2373,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             rime_candidates=list(args.rime_candidate),
             max_visible_candidates=max(1, min(10, args.max_visible_candidates)),
             max_side_candidates=max(0, min(10, args.max_side_candidates)),
+            sidecar_latency_budget_ms=max(30, args.sidecar_latency_budget_ms),
             rime_cache_ttl_ms=max(0, args.rime_cache_ttl_ms),
             force_side_candidates=not bool(args.no_force_side_candidates),
             require_suggestion_cache=not bool(args.no_require_suggestion_cache),
+            require_acceptance_check=not bool(args.skip_acceptance_check),
             input_source_id=args.input_source_id,
             input_source_check_script=Path(args.input_source_check_script) if args.input_source_check_script else None,
             squirrel_app=Path(args.squirrel_app) if args.squirrel_app else None,
@@ -2563,6 +2573,7 @@ def run_rime_sidecar_eval(
     repeat: int,
     max_visible_candidates: int,
     max_side_candidates: int,
+    sidecar_latency_budget_ms: int,
     rime_cache_ttl_ms: int,
     force_side_candidates: bool,
 ) -> dict[str, object]:
@@ -2599,6 +2610,7 @@ def run_rime_sidecar_eval(
                 project=eval_case.project or project,
                 max_visible_candidates=max_visible_candidates,
                 max_side_candidates=max_side_candidates,
+                latency_budget_ms=sidecar_latency_budget_ms,
                 force_side_candidates=force_side_candidates,
             )
             started = time.perf_counter()
@@ -2640,6 +2652,7 @@ def run_rime_sidecar_eval(
     report["sidecar"] = {
         "maxVisibleCandidates": max_visible_candidates,
         "maxSideCandidates": max_side_candidates,
+        "latencyBudgetMs": max(30, int(sidecar_latency_budget_ms)),
         "forceSideCandidates": force_side_candidates,
         "triggerRefreshCount": trigger_refresh_count,
         "totalSideCandidates": sum(side_counts),
@@ -2738,9 +2751,11 @@ def run_squirrel_tryout_gate(
     rime_candidates: list[str],
     max_visible_candidates: int,
     max_side_candidates: int,
+    sidecar_latency_budget_ms: int,
     rime_cache_ttl_ms: int,
     force_side_candidates: bool,
     require_suggestion_cache: bool,
+    require_acceptance_check: bool,
     input_source_id: str,
     input_source_check_script: Path | None,
     squirrel_app: Path | None,
@@ -2838,9 +2853,11 @@ def run_squirrel_tryout_gate(
             rime_candidates=rime_candidates,
             max_visible_candidates=max_visible_candidates,
             max_side_candidates=max_side_candidates,
+            sidecar_latency_budget_ms=sidecar_latency_budget_ms,
             rime_cache_ttl_ms=rime_cache_ttl_ms,
             force_side_candidates=force_side_candidates,
             require_suggestion_cache=require_suggestion_cache,
+            require_acceptance_check=require_acceptance_check,
             require_input_source_ready=True,
             input_source_id=input_source_id,
             input_source_check_script=input_source_check_script,
@@ -3350,9 +3367,11 @@ def run_quality_gate(
     rime_candidates: list[str],
     max_visible_candidates: int,
     max_side_candidates: int,
+    sidecar_latency_budget_ms: int,
     rime_cache_ttl_ms: int,
     force_side_candidates: bool,
     require_suggestion_cache: bool,
+    require_acceptance_check: bool,
     require_input_source_ready: bool,
     input_source_id: str,
     input_source_check_script: Path | None,
@@ -3381,6 +3400,7 @@ def run_quality_gate(
         repeat=repeat,
         max_visible_candidates=max_visible_candidates,
         max_side_candidates=max_side_candidates,
+        sidecar_latency_budget_ms=sidecar_latency_budget_ms,
         rime_cache_ttl_ms=rime_cache_ttl_ms,
         force_side_candidates=force_side_candidates,
     )
@@ -3397,7 +3417,11 @@ def run_quality_gate(
         rime_cache_ttl_ms=rime_cache_ttl_ms,
         force_side_candidates=force_side_candidates,
     )
-    acceptance_report = run_acceptance(adapter)
+    acceptance_report = (
+        run_acceptance(adapter)
+        if require_acceptance_check
+        else {"schemaVersion": "rag-ime.acceptance.v1", "skipped": True, "passed": True}
+    )
     input_source_report: dict[str, object] | None = None
     if require_input_source_ready:
         input_source_report = DebugImeService(
@@ -3458,6 +3482,7 @@ def run_quality_gate(
         max_model_ttfc_p95_ms=max_model_ttfc_p95_ms,
         max_model_ttfc_over_budget_rate=max_model_ttfc_over_budget_rate,
         require_suggestion_cache=require_suggestion_cache,
+        require_acceptance_check=require_acceptance_check,
         require_input_source_ready=require_input_source_ready,
         required_predictor_capabilities=required_predictor_capabilities,
     )
@@ -3479,6 +3504,7 @@ def run_quality_gate(
             "maxSidecarNoiseRate": max_sidecar_noise_rate,
             "maxSidecarRagTimeoutRate": max_sidecar_rag_timeout_rate,
             "maxSidecarModelTimeoutRate": max_sidecar_model_timeout_rate,
+            "sidecarLatencyBudgetMs": max(30, int(sidecar_latency_budget_ms)),
             "maxOldInputEchoRate": max_old_input_echo_rate,
             "requireModelTtfc": require_model_ttfc,
             "modelTtfcProvider": model_ttfc_provider,
@@ -3491,6 +3517,7 @@ def run_quality_gate(
             "maxModelTtfcP95Ms": max_model_ttfc_p95_ms,
             "maxModelTtfcOverBudgetRate": max_model_ttfc_over_budget_rate,
             "requireSuggestionCache": require_suggestion_cache,
+            "requireAcceptanceCheck": require_acceptance_check,
             "requireInputSourceReady": require_input_source_ready,
             "inputSourceId": input_source_id,
             "requiredPredictorCapabilities": list(required_predictor_capabilities),
@@ -3564,6 +3591,7 @@ def _quality_gate_checks(
     max_model_ttfc_p95_ms: int,
     max_model_ttfc_over_budget_rate: float,
     require_suggestion_cache: bool,
+    require_acceptance_check: bool,
     require_input_source_ready: bool,
     required_predictor_capabilities: tuple[str, ...],
 ) -> list[dict[str, object]]:
@@ -3574,7 +3602,9 @@ def _quality_gate_checks(
     checks = [
         {
             "name": "acceptance",
-            "passed": _acceptance_report_passed(acceptance_report),
+            "passed": (not require_acceptance_check) or _acceptance_report_passed(acceptance_report),
+            "required": require_acceptance_check,
+            "skipped": not require_acceptance_check,
         },
         {
             "name": "rag-pass-rate",
@@ -4054,6 +4084,7 @@ def _rime_eval_payload(
     project: str,
     max_visible_candidates: int,
     max_side_candidates: int,
+    latency_budget_ms: int,
     force_side_candidates: bool,
 ) -> dict[str, object]:
     return {
@@ -4065,6 +4096,7 @@ def _rime_eval_payload(
         "project": project,
         "maxVisibleCandidates": max_visible_candidates,
         "maxSideCandidates": max_side_candidates,
+        "latencyBudgetMs": max(30, int(latency_budget_ms)),
         "forceSideCandidates": force_side_candidates,
         "rimeContext": {
             "candidates": [

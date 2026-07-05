@@ -54,8 +54,9 @@ Current state:
   harness.
 - The sidecar, local SQLite memory/RAG core, MLX local predictor, source-lane
   merge, feedback recording, and many tests exist.
-- Current verification after the PR-5 default-optimizer plus core-v2-recovery
-  checkpoint shows `481 tests OK`.
+- Current verification after the latest product-gate/optimizer repair:
+  `python3 -W error::ResourceWarning -m unittest discover -s tests` reports
+  `Ran 534 tests in 98.077s`, `OK`.
 - Earlier runtime repair verified selected input source
   `im.rag-ime.inputmethod.RagIme.Hans`, sidecar `127.0.0.1:8766`, MLX predictor
   `127.0.0.1:8767`, and mixed model/RAG candidates.
@@ -66,7 +67,7 @@ Most important unfinished item:
 
 ```text
 real foreground continuous selection
--> local model top-3 logits seed branching
+-> true KV/cache fork beyond seeded prompt replay
 -> RAG/x1top offline database cleanup
 -> source-colored candidate display polish
 ```
@@ -227,6 +228,23 @@ System Settings Add flow for `Squirrel - Simplified`. Cleanup diff apply now
 re-validates stored diffs before writing, and memory optimizer evidence avoids
 leaking long stable-memory source sentences when the compiled IME candidate is
 short.
+
+Latest backend product-gate evidence with the installed local MLX runtime:
+`RAG_IME_REQUIRE_PREDICTOR_CAPABILITY=seededPromptReplay scripts/run_product_readiness_gate.sh --skip-unit-tests --skip-acceptance`
+passes. The script recovers predictor env from
+`~/Library/LaunchAgents/com.rag-ime.sidecar.plist`, uses the installed
+`RAG_IME_PREDICTOR_TIMEOUT_MS=6500` as the sidecar eval budget, verifies
+`seededPromptReplay=true`, and reports `rag-pass-rate=0.9706`,
+`rime-sidecar-pass-rate=0.9706`, `rime-sidecar-model-timeout-rate=0.0`, and
+`rime-sidecar-rag-timeout-rate=0.0`. The gate now resets its isolated backend
+eval DB by default before seeding fixtures and skips the embedded acceptance
+subcheck inside `quality-gate` because `scripts/acceptance.py` already runs
+before eval fixtures are inserted. The memory optimizer now protects
+high-confidence curated top retrieval hits unless governance blocked them, so
+exact RAG hits such as `rimeSuggestCache / cacheStats` are no longer hidden by
+optimizer reranking. The display merge also reserves more side slots for
+RAG/memory when the model is active: with 5 side slots, the model gets at most
+two early rows before protected RAG/memory rows.
 
 ## Source Repository Structure
 
@@ -1429,18 +1447,24 @@ Backspace/Delete text
 Confirm next sidecar request uses the deleted-current context
 ```
 
-### 2. Local top-3 seed branching is not implemented
+### 2. Local seeded top-3 replay exists; true KV fork is still pending
 
-Current MLX path has `next-token-logits` and `continuation-branches`, but not:
+Current MLX path now exposes `seededPromptReplay=true`, `kvFork=false`, and
+`sequenceFork=false`. It can take top next-token seeds, replay each seed against
+the prepared prompt, and return multiple phrase candidates in
+`candidate_mode=seeded-prompt-replay`.
+
+Still missing:
 
 ```text
-top-3 next-token logprobs
--> fork/replay each seed
--> extend each to a phrase
--> return 3 branch candidates
+true KV/cache fork
+-> no repeated prompt replay per seed
+-> better latency under continuous no-input prediction
+-> better model-quality filtering/reranking for generic local 0.8B outputs
 ```
 
-This is the user's most important model-quality request.
+This remains important because the local 0.8B model still produces generic
+filler in some contexts even though it is now real local MLX output.
 
 ### 3. Source colors have a first product pass, but need real foreground QA
 
@@ -1528,10 +1552,12 @@ Files likely involved:
 - `scripts/check_squirrel_frontend_trace.py`
 - `tests/test_squirrel_frontend_trace.py`
 
-### Step 2: Implement local top-3 seed branching
+### Step 2: Upgrade seeded replay toward true KV fork and better model quality
 
-Goal: upgrade `MlxLmEngine` to produce phrase candidates from top-3 next-token
-seeds.
+Goal: keep the existing `seeded-prompt-replay` multi-candidate path, then make
+it faster and smarter with true KV/cache fork if MLX-LM exposes a practical API,
+or with stronger local reranking/model matrix selection if cache fork is not yet
+available.
 
 Likely target:
 

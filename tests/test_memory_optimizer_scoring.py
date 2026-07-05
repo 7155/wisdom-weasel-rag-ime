@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from rag_ime.memory_optimizer import MemoryOptimizerConfig, RagMemoryOptimizer
+from rag_ime.memory_optimizer import MemoryOptimizerConfig, RagMemoryOptimizer, _merge_protected_retrieval_hits
 from rag_ime.memory_optimizer_models import ContextFrame, RawRetrievalHit
+from rag_ime.models import InputSuggestion
 
 
 class MemoryOptimizerScoringTests(unittest.TestCase):
@@ -70,3 +71,31 @@ class MemoryOptimizerScoringTests(unittest.TestCase):
         self.assertGreater(result.candidates[0].score, result.candidates[1].score)
         self.assertGreater(result.candidates[0].debug_features["pinyinMatch"], result.candidates[1].debug_features["pinyinMatch"])
         self.assertGreater(result.candidates[0].debug_features["acceptedBonus"], result.candidates[1].debug_features["acceptedBonus"])
+
+    def test_protected_curated_retrieval_hits_survive_optimizer_reorder(self) -> None:
+        protected = InputSuggestion(
+            suggestion_id="sug-event:1",
+            surface_text="rimeSuggestCache / cacheStats",
+            suggestion_type="sentence",
+            source_event_id=1,
+            evidence_preview="exact curated eval memory",
+            confidence=0.91,
+            metadata={"rank": 1, "source_type": "memory", "tags": ["curated"]},
+        )
+        weak = InputSuggestion(
+            suggestion_id="sug-event:2",
+            surface_text="泛化缓存建议",
+            suggestion_type="sentence",
+            source_event_id=2,
+            evidence_preview="optimizer preferred item",
+            confidence=0.95,
+            metadata={"rank": 2, "source_type": "memory", "tags": ["curated"]},
+        )
+
+        merged = _merge_protected_retrieval_hits(
+            raw_suggestions=[protected, weak],
+            optimized_suggestions=[weak],
+            top_k=2,
+        )
+
+        self.assertEqual([item.surface_text for item in merged], ["rimeSuggestCache / cacheStats", "泛化缓存建议"])

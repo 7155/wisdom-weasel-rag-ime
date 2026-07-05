@@ -1449,10 +1449,10 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in display], ["1", "2", "3", "4", "5", "6", "7", "8"])
         self.assertEqual(
             [item["sourceType"] for item in display],
-            ["model", "model", "model", "rag", "rag", "rime", "rime", "rime"],
+            ["model", "model", "rag", "rag", "rag", "rime", "rime", "rime"],
         )
-        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline", "inline", "inline", "block", "block"])
-        self.assertEqual([item["displayLane"] for item in display[:5]], ["model", "model", "model", "memory", "memory"])
+        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline", "inline", "block", "block", "block"])
+        self.assertEqual([item["displayLane"] for item in display[:5]], ["model", "model", "memory", "memory", "memory"])
         self.assertTrue(all(item["displayLayout"] == "fallback" for item in display[5:8]))
         self.assertTrue(all(item["displayLane"] == "rime" for item in display[5:8]))
         self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 3)

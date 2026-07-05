@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -79,11 +80,15 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("python3 scripts/acceptance.py", result.stdout)
         self.assertIn("db_path=/tmp/rag-ime-product-gate.sqlite", result.stdout)
         self.assertIn("frontend_db_path=", result.stdout)
+        self.assertIn("sidecar_latency_budget_ms=300", result.stdout)
+        self.assertIn("reset_gate_db=1", result.stdout)
         self.assertIn("seed demo memories into gate DB", result.stdout)
-        self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-product-gate.sqlite seed-demo", result.stdout)
+        self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-product-gate.sqlite seed-demo --reset", result.stdout)
         self.assertIn("seed eval-case memories into gate DB", result.stdout)
         self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-product-gate.sqlite seed-eval-cases", result.stdout)
         self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-product-gate.sqlite quality-gate", result.stdout)
+        self.assertIn("--skip-acceptance-check", result.stdout)
+        self.assertIn("--sidecar-latency-budget-ms 300", result.stdout)
         self.assertIn("--force-side-candidates", result.stdout)
         self.assertIn("--require-suggestion-cache", result.stdout)
         self.assertIn("--max-visible-candidates 8", result.stdout)
@@ -141,6 +146,80 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--min-post-commit-followups 30", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
+
+    def test_product_gate_recovers_predictor_env_from_sidecar_launch_agent_plist(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = root / "scripts" / "run_product_readiness_gate.sh"
+        with tempfile.TemporaryDirectory(prefix="rag-ime-product-gate-plist-") as tmp:
+            tmp_path = Path(tmp)
+            plist_path = tmp_path / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist"
+            plist_path.parent.mkdir(parents=True)
+            plist_path.write_bytes(
+                plistlib.dumps(
+                    {
+                        "Label": "com.rag-ime.sidecar",
+                        "EnvironmentVariables": {
+                            "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                            "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:8767",
+                            "RAG_IME_PREDICTOR_MODEL": "/tmp/local-mlx-model",
+                            "RAG_IME_PREDICTOR_PROFILE": "instant",
+                            "RAG_IME_PREDICTOR_TIMEOUT_MS": "4321",
+                        },
+                    }
+                )
+            )
+            env = dict(os.environ)
+            env["HOME"] = str(tmp_path)
+            env["RAG_IME_REQUIRE_PREDICTOR_CAPABILITY"] = "seededPromptReplay"
+            for key in list(env):
+                if key.startswith("RAG_IME_PREDICTOR_"):
+                    env.pop(key)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script),
+                    "--dry-run",
+                    "--skip-unit-tests",
+                    "--skip-acceptance",
+                    "--skip-quality-gate",
+                ],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        self.assertIn("predictor_env_source=launch-agent-plist", result.stdout)
+        self.assertIn("predictor_provider=mlx", result.stdout)
+        self.assertIn("predictor_base_url=http://127.0.0.1:8767", result.stdout)
+        self.assertIn("sidecar_latency_budget_ms=4321", result.stdout)
+        self.assertIn(f"sidecar_plist={plist_path}", result.stdout)
+
+    def test_product_gate_can_preserve_gate_db_when_explicitly_requested(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = root / "scripts" / "run_product_readiness_gate.sh"
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dry-run",
+                "--skip-unit-tests",
+                "--skip-acceptance",
+                "--skip-quality-gate",
+                "--no-reset-gate-db",
+                "--db-path",
+                "/tmp/rag-ime-product-gate.sqlite",
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertIn("reset_gate_db=0", result.stdout)
 
     def test_product_gate_backend_path_passes_against_temp_eval_db(self) -> None:
         root = Path(__file__).resolve().parents[1]
