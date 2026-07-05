@@ -219,15 +219,20 @@ defaults, and Rime build artifacts are healthy. Patched Squirrel now builds
 with Xcode 26.6 and is installed at
 `/Users/undo/Library/Input Methods/Squirrel.app`; `installed-bundle` passes and
 LaunchServices stale registrations for old temp/backup/system/derived-data
-Squirrel bundles were removed. The remaining machine blocker is macOS user
-input-source activation: `im.rime.inputmethod.Squirrel.Hans` is visible,
-enabled, selectable, and HIToolbox-enabled, but `thirdPartyEnabled=false`,
-selection returns `TISSelectInputSource failed: -50`, and the current source is
-still `com.apple.keylayout.ABC`. True foreground soak still requires the manual
-System Settings Add flow for `Squirrel - Simplified`. Cleanup diff apply now
-re-validates stored diffs before writing, and memory optimizer evidence avoids
-leaking long stable-memory source sentences when the compiled IME candidate is
-short.
+Squirrel bundles have been reduced to a single live path. A command-line
+preference repair backed up HIToolbox/inputsource plists but macOS denied direct
+persistence of `com.apple.inputsources`; the remaining machine blocker is
+macOS user input-source activation. `im.rime.inputmethod.Squirrel.Hans` is
+visible, enabled, selectable, and HIToolbox-enabled, but
+`thirdPartyEnabled=false`; the current source is
+`com.bytedance.inputmethod.doubaoime.pinyin`. The latest read-only audit reports
+`readiness.state=third-party-missing`, `wouldChangeHitoolbox=false`,
+`wouldChangeThirdParty=true`, `duplicatePathCount=0`, and only
+`/Users/undo/Library/Input Methods/Squirrel.app` in LaunchServices. True
+foreground soak still requires the System Settings Add flow for
+`Squirrel - Simplified`. Cleanup diff apply now re-validates stored diffs before
+writing, and memory optimizer evidence avoids leaking long stable-memory source
+sentences when the compiled IME candidate is short.
 
 Latest backend product-gate evidence with the installed local MLX runtime:
 `RAG_IME_REQUIRE_PREDICTOR_CAPABILITY=seededPromptReplay scripts/run_product_readiness_gate.sh --skip-unit-tests --skip-acceptance`
