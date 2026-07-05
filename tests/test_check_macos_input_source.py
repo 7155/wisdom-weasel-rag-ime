@@ -9,6 +9,39 @@ from pathlib import Path
 
 
 class CheckMacosInputSourceScriptTests(unittest.TestCase):
+    def test_defaults_to_product_squirrel_input_source(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-check-input-source-") as tmp:
+            tmp_path = Path(tmp)
+            home = tmp_path / "home"
+            _write_preferences(home, include_squirrel_hitoolbox=True, include_squirrel_third_party=True)
+            fake_bin = _write_fake_swift(tmp_path)
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+            }
+            env.pop("RAG_IME_SQUIRREL_INPUT_SOURCE_ID", None)
+            env.pop("RAG_IME_MACOS_INPUT_SOURCE_ID", None)
+            env.pop("RAG_IME_INPUT_SOURCE_BUNDLE_ID", None)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "check_macos_input_source.sh"),
+                    "--require-hitoolbox-enabled",
+                ],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertIn("id=im.rime.inputmethod.Squirrel.Hans", result.stdout)
+        self.assertIn("hitoolboxEnabled=true", result.stdout)
+        self.assertIn("thirdPartyEnabled=true", result.stdout)
+
     def test_requires_third_party_inputsources_for_real_enabled_status(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-check-input-source-") as tmp:
@@ -77,7 +110,8 @@ def _write_fake_swift(tmp_path: Path) -> Path:
         "\n".join(
             [
                 "#!/usr/bin/env bash",
-                "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=false current=com.apple.keylayout.ABC'",
+                'target="${@: -1}"',
+                'echo "id=$target name=Squirrel - Simplified enabled=true selectable=true selected=false current=com.apple.keylayout.ABC"',
             ]
         )
         + "\n",

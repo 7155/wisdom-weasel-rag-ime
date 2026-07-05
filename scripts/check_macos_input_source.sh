@@ -19,10 +19,10 @@ while [[ "${1:-}" == --* ]]; do
       ;;
   esac
 done
-INPUT_SOURCE_ID="${1:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac.Hans}}}"
+INPUT_SOURCE_ID="${1:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}}}"
 if [[ -n "${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-}" ]]; then
   INPUT_SOURCE_BUNDLE_ID="$RAG_IME_INPUT_SOURCE_BUNDLE_ID"
-elif [[ "$INPUT_SOURCE_ID" == "${RAG_IME_MACOS_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac.Hans}" ]]; then
+elif [[ -n "${RAG_IME_MACOS_INPUT_SOURCE_ID:-}" && "$INPUT_SOURCE_ID" == "$RAG_IME_MACOS_INPUT_SOURCE_ID" ]]; then
   INPUT_SOURCE_BUNDLE_ID="${RAG_IME_MACOS_BUNDLE_ID:-dev.local.inputmethod.RagImeMac}"
 else
   INPUT_SOURCE_BUNDLE_ID="${INPUT_SOURCE_ID%.*}"
