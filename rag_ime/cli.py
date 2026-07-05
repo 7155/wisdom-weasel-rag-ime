@@ -807,6 +807,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--input-source-check-script",
         default=os.environ.get("RAG_IME_INPUT_SOURCE_CHECK_SCRIPT", ""),
     )
+    squirrel_tryout_gate.add_argument(
+        "--include-input-source-audit",
+        action="store_true",
+        help="Attach the read-only Squirrel input-source audit report to the tryout JSON.",
+    )
     squirrel_tryout_gate.add_argument("--squirrel-app", default=os.environ.get("RAG_IME_SQUIRREL_APP", ""))
     squirrel_tryout_gate.add_argument(
         "--squirrel-config-path",
@@ -2380,6 +2385,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             require_acceptance_check=not bool(args.skip_acceptance_check),
             input_source_id=args.input_source_id,
             input_source_check_script=Path(args.input_source_check_script) if args.input_source_check_script else None,
+            include_input_source_audit=bool(args.include_input_source_audit),
             squirrel_app=Path(args.squirrel_app) if args.squirrel_app else None,
             squirrel_config_path=Path(args.squirrel_config_path),
             expected_rime_primary_schema=args.expected_rime_primary_schema,
@@ -2758,6 +2764,7 @@ def run_squirrel_tryout_gate(
     require_acceptance_check: bool,
     input_source_id: str,
     input_source_check_script: Path | None,
+    include_input_source_audit: bool,
     squirrel_app: Path | None,
     squirrel_config_path: Path,
     expected_rime_primary_schema: str,
@@ -2796,6 +2803,11 @@ def run_squirrel_tryout_gate(
             input_source_require_hitoolbox=True,
         )
     ).input_source_status()
+    input_source_audit = (
+        _tryout_input_source_audit(input_source_id=input_source_id, input_source_check_script=input_source_check_script)
+        if include_input_source_audit
+        else None
+    )
     input_ready = bool(input_source_report.get("typingReady"))
     launch_agent_report = (
         {"schemaVersion": "rag-ime.tryout-launch-agent.v1", "skipped": True, "ok": True, "label": launch_agent_label}
@@ -2942,10 +2954,44 @@ def run_squirrel_tryout_gate(
         "installedRimeDefaults": defaults_report,
         "installedRimeBuild": build_report,
         "inputSource": input_source_report,
+        "inputSourceAudit": input_source_audit,
         "launchAgent": launch_agent_report,
         "sidecar": sidecar_report,
         "qualityGate": quality_report,
     }
+
+
+def _tryout_input_source_audit(*, input_source_id: str, input_source_check_script: Path | None) -> dict[str, object]:
+    script = Path(__file__).resolve().parents[1] / "scripts" / "audit_squirrel_input_source.py"
+    payload: dict[str, object] = {
+        "schemaVersion": "rag-ime.macos-input-source-audit.v1",
+        "available": script.exists(),
+        "exitCode": None,
+        "error": "",
+    }
+    if not script.exists():
+        return {**payload, "error": "audit script is missing"}
+    cmd = [sys.executable, str(script), "--input-source-id", input_source_id]
+    if input_source_check_script is not None:
+        cmd.extend(["--check-script", str(input_source_check_script)])
+    try:
+        completed = subprocess.run(cmd, check=False, text=True, capture_output=True, timeout=15)
+    except Exception as exc:
+        return {**payload, "error": str(exc)}
+    try:
+        report = json.loads(completed.stdout)
+    except Exception as exc:
+        return {
+            **payload,
+            "exitCode": completed.returncode,
+            "error": f"cannot parse audit JSON: {exc}",
+            "rawOutput": "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part),
+        }
+    if isinstance(report, dict):
+        report.setdefault("available", True)
+        report["exitCode"] = completed.returncode
+        return report
+    return {**payload, "exitCode": completed.returncode, "error": "audit JSON root is not an object"}
 
 
 def _tryout_installed_bundle(squirrel_app: Path | None) -> dict[str, object]:

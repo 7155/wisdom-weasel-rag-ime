@@ -7,6 +7,9 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from rag_ime.cli import _tryout_input_source_audit
 
 
 class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
@@ -51,6 +54,25 @@ class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
         self.assertEqual(report["launchServices"]["duplicatePathCount"], 1)
         self.assertEqual(before_hitoolbox, after_hitoolbox)
         self.assertEqual(before_inputsources, after_inputsources)
+
+    def test_tryout_audit_helper_attaches_readiness_report(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-tryout-audit-") as tmp:
+            tmp_path = Path(tmp)
+            home = tmp_path / "home"
+            _write_preferences(home)
+            check_script = _write_fake_check_script(tmp_path)
+            lsregister = _write_fake_lsregister(tmp_path)
+
+            with patch.dict(os.environ, {"HOME": str(home), "RAG_IME_LSREGISTER": str(lsregister)}):
+                report = _tryout_input_source_audit(
+                    input_source_id="im.rime.inputmethod.Squirrel.Hans",
+                    input_source_check_script=check_script,
+                )
+
+        self.assertEqual(report["schemaVersion"], "rag-ime.macos-input-source-audit.v1")
+        self.assertEqual(report["readiness"]["state"], "third-party-missing")
+        self.assertTrue(report["preferences"]["wouldChangeThirdParty"])
+        self.assertEqual(report["launchServices"]["duplicatePathCount"], 1)
 
 
 def _write_preferences(home: Path) -> None:

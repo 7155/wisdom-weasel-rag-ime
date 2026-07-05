@@ -1212,6 +1212,7 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(report["schemaVersion"], "rag-ime.squirrel-tryout-gate.v1")
         self.assertFalse(report["passed"])
         self.assertEqual(report["inputSource"]["readinessState"], "switch")
+        self.assertIsNone(report["inputSourceAudit"])
         self.assertTrue(report["installedBundle"]["ok"])
         self.assertTrue(report["installedRimeConfig"]["ok"])
         self.assertTrue(report["installedRimeDefaults"]["ok"])

@@ -138,6 +138,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("squirrel-tryout-gate", result.stdout)
         self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-frontend-runtime.sqlite squirrel-tryout-gate", result.stdout)
         self.assertNotIn("-m rag_ime.cli --db-path /tmp/rag-ime-backend-gate.sqlite squirrel-tryout-gate", result.stdout)
+        self.assertIn("--include-input-source-audit", result.stdout)
         self.assertIn("--require-predictor-capability seededPromptReplay", result.stdout)
         self.assertIn("scripts/check_squirrel_soak_report.py", result.stdout)
         self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)

@@ -273,6 +273,7 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     --max-sidecar-noise-rate 0.05
     --max-sidecar-rag-timeout-rate 0
     --max-sidecar-model-timeout-rate 0
+    --include-input-source-audit
     --report-path /tmp/rag-ime-squirrel-tryout-gate.json
   )
   if [[ -n "$REQUIRE_PREDICTOR_CAPABILITY" ]]; then
