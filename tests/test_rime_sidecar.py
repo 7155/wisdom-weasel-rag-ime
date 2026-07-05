@@ -169,6 +169,26 @@ class PrefixConstrainedPredictionProvider:
         ][:max_candidates]
 
 
+class XiangPrefixPredictionProvider:
+    def __init__(self) -> None:
+        self.last_current_input = ""
+        self.last_recent_context = ""
+
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.last_current_input = current_input
+        self.last_recent_context = recent_context
+        return [
+            ModelPrediction(
+                text="想继续写候选展示方式",
+                rank=1,
+                provider_name="xiang-prefix-model",
+                latency_ms=6,
+                confidence=0.91,
+                metadata={"initials": "xjx hxz fs".replace(" ", ""), "full_pinyin": ["xiangjixuxiehouxuanzhanshifangshi"]},
+            )
+        ][:max_candidates]
+
+
 class OffPrefixPredictionProvider:
     def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
         return [
@@ -2714,6 +2734,41 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertFalse(decision.should_refresh)
         self.assertEqual(decision.reason, "skip: low-information Rime candidates")
 
+    def test_force_side_candidates_overrides_low_information_rime_candidates(self) -> None:
+        predictor = XiangPrefixPredictionProvider()
+        response = build_rime_sidecar_response(
+            payload={
+                "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
+                "frontendBuild": "rag-ime.foreground-trace.v2",
+                "sessionId": "squirrel-force-low-info-rime",
+                "requestSeq": 14,
+                "rawInput": "xiang",
+                "preedit": "xiang",
+                "committedContext": "我",
+                "forceSideCandidates": True,
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 8,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "", "text": "想", "comment": "", "index": 0},
+                        {"label": "", "text": "先", "comment": "", "index": 1},
+                        {"label": "", "text": "向", "comment": "", "index": 2},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=predictor,
+        )
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["triggerDecision"]["reason"], "force: explicit side candidate refresh")
+        self.assertEqual(predictor.last_current_input, "xiang")
+        self.assertEqual(response["modelLane"]["requestType"], "pinyin_constrained_prediction")
+        self.assertGreaterEqual(response["modelLane"]["predictionCount"], 1)
+        self.assertTrue(
+            any(item["sourceType"] in {"model", "rag", "memory"} for item in response["displayCandidates"])
+        )
+
     def test_force_side_candidates_refreshes_even_for_raw_fallback(self) -> None:
         response = build_rime_sidecar_response(
             payload={
@@ -2731,7 +2786,7 @@ class RimeSidecarTests(unittest.TestCase):
             predictor=self.predictor,
         )
         self.assertTrue(response["triggerDecision"]["shouldRefresh"])
-        self.assertEqual(response["triggerDecision"]["reason"], "force: explicit side candidate refresh")
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
         self.assertEqual(self.predictor.last_current_input, "rag")
         self.assertEqual(response["displayCandidates"][0]["sourceType"], "model")
 

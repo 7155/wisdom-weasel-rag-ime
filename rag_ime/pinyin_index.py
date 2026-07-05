@@ -89,6 +89,23 @@ _CJK_INITIALS: dict[str, str] = {
     "转": "z",
 }
 
+_CJK_FULL_PINYIN: dict[str, str] = {
+    "白": "bai",
+    "楚": "chu",
+    "继": "ji",
+    "看": "kan",
+    "来": "lai",
+    "明": "ming",
+    "起": "qi",
+    "清": "qing",
+    "下": "xia",
+    "想": "xiang",
+    "向": "xiang",
+    "先": "xian",
+    "续": "xu",
+    "一": "yi",
+}
+
 
 _PHRASE_INITIALS: tuple[tuple[str, str], ...] = (
     ("RAG", "rag"),
@@ -136,10 +153,12 @@ def build_pinyin_metadata(text: str) -> dict[str, object]:
         return {"initials": "", "pinyin_prefixes": []}
     initials = text_initials(compact)
     prefixes = pinyin_prefixes(compact, initials=initials)
+    full_pinyin = text_full_pinyin(compact)
     return {
         "initials": initials,
         "pinyin_initials": initials,
         "pinyin_prefixes": prefixes,
+        "full_pinyin": full_pinyin,
     }
 
 
@@ -203,6 +222,22 @@ def pinyin_prefixes(text: str, *, initials: str | None = None) -> list[str]:
             add("".join(_CJK_INITIALS.get(char, "") for char in cjk_chars[index : index + size]))
 
     return keys[:32]
+
+
+def text_full_pinyin(text: str) -> list[str]:
+    parts: list[str] = []
+    for char in compact_whitespace(text):
+        if char.isspace():
+            continue
+        if char.isascii() and char.isalnum():
+            parts.append(char.lower())
+            continue
+        pinyin = _CJK_FULL_PINYIN.get(char)
+        if pinyin:
+            parts.append(pinyin)
+        elif parts:
+            break
+    return parts[:16]
 
 
 def _pinyin_key(value: str) -> str:

@@ -15,6 +15,7 @@ from unittest.mock import patch
 from rag_ime.cli import main
 from rag_ime.predictor import (
     CooldownPredictionProvider,
+    MlxPredictionConfig,
     MlxPredictionServiceProvider,
     NullPredictionProvider,
     OllamaPredictionProvider,
@@ -572,6 +573,44 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed[:4], ["设计", "手机", "世界", "数据"])
         self.assertNotIn("验证 LLM �选", parsed)
+
+    def test_parse_ime_prediction_candidates_falls_back_when_mlx_returns_pinyin_only(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            "[xiàng]",
+            current_input="xiang",
+            recent_context="我",
+            request_type=PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+            rime_candidates=("想", "先", "向"),
+            max_candidates=5,
+        )
+
+        self.assertEqual(parsed[:3], ["想继续", "想一下", "想看看"])
+        self.assertTrue(all(len(item) >= 2 for item in parsed))
+
+    def test_pinyin_fallback_candidates_carry_full_pinyin_metadata(self) -> None:
+        provider = MlxPredictionServiceProvider(
+            MlxPredictionConfig(
+                base_url="http://127.0.0.1:9",
+                model="unused",
+            )
+        )
+        provider._predict_payload = lambda **_: {  # type: ignore[method-assign]
+            "ok": True,
+            "rawText": "[xiàng]",
+            "candidates": ["想继续", "想一下"],
+            "requestType": PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+        }
+
+        predictions = provider.predict(
+            current_input="xiang",
+            recent_context="我",
+            request_type=PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+            rime_candidates=("想", "先", "向"),
+            max_candidates=3,
+        )
+
+        self.assertEqual([item.text for item in predictions], ["想继续", "想一下"])
+        self.assertEqual(predictions[0].metadata["full_pinyin"][0], "xiang")
 
     def test_parse_ime_prediction_candidates_keeps_ascii_rime_candidates_for_code_lane(self) -> None:
         parsed = parse_ime_prediction_candidates(

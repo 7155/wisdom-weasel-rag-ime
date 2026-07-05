@@ -1614,11 +1614,52 @@ def parse_ime_prediction_candidates(
     if resolved_request_type == PREDICTION_REQUEST_NO_INPUT:
         candidates = _filter_repeated_context_candidates(candidates, recent_context)
     allowed_ascii_candidates = rime_candidate_tuple if resolved_request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED else ()
-    return _finalize_ime_prediction_candidates(
+    finalized = _finalize_ime_prediction_candidates(
         candidates,
         current_input,
         allowed_ascii_candidates=allowed_ascii_candidates,
-    )[:max_items]
+    )
+    if resolved_request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED and not finalized:
+        finalized = _pinyin_constrained_rime_phrase_fallback(
+            rime_candidate_tuple,
+            recent_context=recent_context,
+            max_candidates=max_items,
+        )
+    return finalized[:max_items]
+
+
+def _pinyin_constrained_rime_phrase_fallback(
+    rime_candidates: tuple[str, ...],
+    *,
+    recent_context: str,
+    max_candidates: int,
+) -> list[str]:
+    """Build short selectable phrases when the local model only emits pinyin noise."""
+
+    suffixes = (
+        "继续",
+        "一下",
+        "看看",
+        "清楚",
+        "明白",
+        "起来",
+    )
+    context = compact_whitespace(recent_context)
+    result: list[str] = []
+    seen: set[str] = set()
+    for base in rime_candidates:
+        base = compact_whitespace(base)
+        if not base or _cjk_char_count(base) != 1:
+            continue
+        for suffix in suffixes:
+            candidate = f"{base}{suffix}"
+            if candidate in seen or candidate in context:
+                continue
+            seen.add(candidate)
+            result.append(candidate)
+            if len(result) >= max(1, int(max_candidates)):
+                return result
+    return result
 
 
 def trim_context_overlap(candidate: str, recent_context: str) -> str:
@@ -1812,6 +1853,8 @@ def _looks_like_incomplete_ime_candidate(text: str) -> bool:
     if not normalized:
         return True
     cjk_count = _cjk_char_count(normalized)
+    if cjk_count >= 3 and normalized.endswith("一下"):
+        return False
     if cjk_count <= 5 and normalized.endswith(
         (
             "的",

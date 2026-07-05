@@ -266,6 +266,7 @@ def build_rime_sidecar_response(
             predictor=predictor,
             snapshot=snapshot,
             current_input=semantic_query,
+            query_basis=query_basis,
             recent_context=snapshot.committed_context,
             explicit_recent_context=snapshot.committed_context,
             project=snapshot.project or default_project,
@@ -590,6 +591,7 @@ def run_side_lanes_with_latency_budget(
     predictor: PredictionProvider,
     snapshot: RimeContextSnapshot,
     current_input: str,
+    query_basis: str,
     recent_context: str,
     explicit_recent_context: str,
     project: str,
@@ -672,6 +674,8 @@ def run_side_lanes_with_latency_budget(
                 rag_result=rag_result,
                 model_result=model_result,
                 snapshot=snapshot,
+                semantic_query=current_input,
+                query_basis=query_basis,
             )
         ):
             progressive_partial = True
@@ -808,13 +812,25 @@ def _has_progressive_visible_lane_result(
     rag_result: Mapping[str, object],
     model_result: Mapping[str, object],
     snapshot: RimeContextSnapshot,
+    semantic_query: str = "",
+    query_basis: str = "",
 ) -> bool:
     suggestions = rag_result.get("suggestions")
     if isinstance(suggestions, list) and suggestions:
-        return True
+        visible_suggestions = _filter_rag_suggestions_for_query(
+            suggestions,
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            query_basis=query_basis,
+            prediction_context="",
+        )
+        if visible_suggestions:
+            return True
     predictions = model_result.get("predictions")
     if isinstance(predictions, list) and predictions:
         return True
+    if snapshot.force_side_candidates:
+        return False
     return bool(snapshot.candidates)
 
 
@@ -2337,21 +2353,21 @@ def decide_side_candidate_refresh(
     if snapshot.max_side_candidates <= 0:
         return RimeSideCandidateTriggerDecision(False, "skip: side candidates disabled")
 
+    signal_len = semantic_signal_length(semantic_query)
+    if signal_len <= 0:
+        return RimeSideCandidateTriggerDecision(False, "skip: empty semantic signal")
+
+    if snapshot.force_side_candidates and _forced_refresh_has_side_signal(snapshot, query_basis, semantic_query):
+        return RimeSideCandidateTriggerDecision(True, "force: explicit side candidate refresh")
+
     if raw_english_candidate_text(snapshot):
         return RimeSideCandidateTriggerDecision(False, "skip: raw ascii passthrough")
 
     if query_basis == "rimeCandidates" and _active_rime_candidates_are_low_information(snapshot):
         return RimeSideCandidateTriggerDecision(False, "skip: low-information Rime candidates")
 
-    signal_len = semantic_signal_length(semantic_query)
-    if signal_len <= 0:
-        return RimeSideCandidateTriggerDecision(False, "skip: empty semantic signal")
-
     if query_basis == "committedContext" and _committed_context_is_low_information(snapshot, semantic_query):
         return RimeSideCandidateTriggerDecision(False, "skip: low-information committed context")
-
-    if snapshot.force_side_candidates:
-        return RimeSideCandidateTriggerDecision(True, "force: explicit side candidate refresh")
 
     if query_basis == "rawInputFallback":
         return RimeSideCandidateTriggerDecision(False, "skip: raw pinyin fallback")
@@ -2424,6 +2440,20 @@ def _active_rime_candidates_are_low_information(snapshot: RimeContextSnapshot) -
     return not _rime_candidates_have_meaningful_signal(snapshot)
 
 
+def _forced_refresh_has_side_signal(snapshot: RimeContextSnapshot, query_basis: str, semantic_query: str) -> bool:
+    if query_basis == "commitTextPreview":
+        return semantic_signal_length(semantic_query) >= 2
+    active_input = compact_whitespace(snapshot.preedit or snapshot.raw_input)
+    if not active_input:
+        return False
+    if query_basis == "rawInputFallback":
+        return True
+    if query_basis not in {"rimeCandidates", "rawSemanticInput", "preedit"}:
+        return False
+    pinyin_signal = re.sub(r"[^A-Za-z0-9]+", "", active_input)
+    return len(pinyin_signal) >= 4
+
+
 def _rime_candidates_have_meaningful_signal(snapshot: RimeContextSnapshot) -> bool:
     for candidate in snapshot.candidates[:6]:
         if _text_has_meaningful_ime_signal(candidate.text):
@@ -2449,17 +2479,96 @@ def _text_has_meaningful_ime_signal(text: str) -> bool:
 
 
 def stable_short_pinyin_prefix(snapshot: RimeContextSnapshot) -> str:
-    """Return a short user pinyin prefix that can constrain RAG/memory lookup.
+    """Return a stable user pinyin prefix that can constrain model/RAG lookup.
 
     Long raw strings are often typo-heavy pinyin fragments; those should not be
-    used as semantic RAG queries. A short prefix such as "sj" is different: it is
-    the user's active constraint and should match the phrase-memory pinyin index.
+    used as semantic RAG queries. A short prefix such as "sj" and a complete
+    single syllable such as "xiang" are different: they are the user's active
+    constraint and should match the phrase-memory pinyin index.
     """
 
     prefix = compact_whitespace(snapshot.preedit or snapshot.raw_input).lower()
     if not prefix or not prefix.isascii() or not prefix.isalnum():
         return ""
-    return prefix if 1 <= len(prefix) <= 4 else ""
+    if 1 <= len(prefix) <= 4:
+        return prefix
+    return prefix if _looks_like_single_pinyin_syllable(prefix) else ""
+
+
+_PINYIN_SYLLABLE_FINALS = (
+    "iang",
+    "iong",
+    "uang",
+    "ang",
+    "eng",
+    "ing",
+    "ong",
+    "iao",
+    "ian",
+    "uan",
+    "uai",
+    "uei",
+    "ui",
+    "uo",
+    "ua",
+    "ue",
+    "ve",
+    "ai",
+    "ei",
+    "ao",
+    "ou",
+    "an",
+    "en",
+    "in",
+    "un",
+    "er",
+    "a",
+    "o",
+    "e",
+    "i",
+    "u",
+    "v",
+)
+
+
+_PINYIN_SYLLABLE_INITIALS = (
+    "zh",
+    "ch",
+    "sh",
+    "b",
+    "p",
+    "m",
+    "f",
+    "d",
+    "t",
+    "n",
+    "l",
+    "g",
+    "k",
+    "h",
+    "j",
+    "q",
+    "x",
+    "r",
+    "z",
+    "c",
+    "s",
+    "y",
+    "w",
+    "",
+)
+
+
+def _looks_like_single_pinyin_syllable(prefix: str) -> bool:
+    if not 5 <= len(prefix) <= 6:
+        return False
+    for initial in _PINYIN_SYLLABLE_INITIALS:
+        if not prefix.startswith(initial):
+            continue
+        final = prefix[len(initial) :]
+        if final in _PINYIN_SYLLABLE_FINALS:
+            return True
+    return False
 
 
 def merge_display_candidates(

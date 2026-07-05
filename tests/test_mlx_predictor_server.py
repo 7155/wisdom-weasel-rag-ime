@@ -315,6 +315,35 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertFalse(payload["timing"]["fallbackJson"])
         self.assertNotEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
 
+    def test_no_input_prediction_splits_single_model_continuation_when_many_requested(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                "方案",
+                "以优化用户决策",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想设计一个候选展示方式",
+                max_candidates=5,
+                max_tokens=32,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(
+            payload["candidates"],
+            ["以优化用户决策", "优化用户决策", "用户决策"],
+        )
+        self.assertNotIn("优化", payload["candidates"])
+        self.assertNotIn("用户", payload["candidates"])
+        self.assertGreaterEqual(len(payload["candidates"]), 3)
+        self.assertEqual(payload["timing"]["branches"][-1]["label"], "model-output-splits")
+        self.assertFalse(payload["timing"]["fallbackJson"])
+
     def test_no_input_prediction_filters_prompt_fragments_and_connector_words(self) -> None:
         modules, _calls = _fake_mlx_modules(
             generated_text=[
@@ -388,6 +417,30 @@ class MlxPredictorServerTests(unittest.TestCase):
 
         self.assertEqual(payload["candidates"], [])
         self.assertFalse(payload["timing"]["fallbackJson"])
+        self.assertNotEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
+
+    def test_no_input_prediction_rejects_short_intent_fragments_and_continues_branching(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=[
+                "方案",
+                "我打算设",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想设计一个候选展示方式",
+                max_candidates=5,
+                max_tokens=32,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(payload["candidates"], [])
+        self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["space-list", "lead"])
+        self.assertEqual(calls["sampler_calls"], 2)
         self.assertNotEqual(payload["timing"]["branches"][-1]["label"], "domain-fallback")
 
     def test_no_input_prediction_filters_felix_meta_question_without_domain_fallback(self) -> None:

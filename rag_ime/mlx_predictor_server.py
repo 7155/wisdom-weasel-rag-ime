@@ -439,6 +439,29 @@ class MlxLmEngine:
                     candidates.append(candidate)
                 if len(candidates) >= max_items:
                     break
+        if max_items >= 5 and len(candidates) == 1:
+            expanded_candidates = _expand_continuation_candidates_from_model_output(
+                candidates,
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=max_items,
+            )
+            for candidate in expanded_candidates:
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    candidates.append(candidate)
+                if len(candidates) >= max_items:
+                    break
+            if expanded_candidates:
+                branch_timings.append(
+                    {
+                        "label": "model-output-splits",
+                        "temperature": temperature,
+                        "maxTokens": 0,
+                        "elapsedMs": 0,
+                        "candidates": expanded_candidates,
+                    }
+                )
         candidate_scores = _continuation_branch_candidate_scores(
             candidates[:max_items],
             branch_timings=branch_timings,
@@ -1268,6 +1291,8 @@ def _is_low_value_base_candidate(text: str) -> bool:
         return True
     if normalized.startswith(("我", "你", "您")) and len(normalized) <= 3:
         return True
+    if re.fullmatch(r"(?:我|你|您)?(?:想|打算|准备|准备要|要|想要|计划)(?:设|写|做|改|看|试|用|把|让|给)?", normalized):
+        return True
     if re.fullmatch(r"[嗯啊呃额哦噢唔]{1,4}", normalized):
         return True
     if normalized.endswith(("：", ":")) and len(normalized) <= 6:
@@ -1675,6 +1700,106 @@ def _branch_continuation_candidates(
         if len(result) >= max(1, int(max_candidates)):
             break
     return result
+
+
+def _expand_continuation_candidates_from_model_output(
+    candidates: list[str],
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+) -> list[str]:
+    """Split a real model continuation into several selectable IME candidates.
+
+    This keeps post-commit prediction local-model based even when the small MLX
+    model emits one fluent continuation instead of a candidate list.
+    """
+
+    max_items = max(1, int(max_candidates))
+    result: list[str] = []
+    seen = {compact_whitespace(item) for item in candidates if compact_whitespace(item)}
+    for candidate in candidates:
+        normalized = compact_whitespace(candidate)
+        if not normalized or _looks_like_meta_completion_candidate(normalized):
+            continue
+        splits = _continuation_candidate_splits(normalized)
+        if not splits:
+            splits = parse_ime_prediction_candidates(
+                normalized,
+                max_candidates=max_items,
+                current_input=current_input,
+                recent_context=recent_context,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+        for item in splits:
+            item = compact_whitespace(item)
+            if (
+                not item
+                or item in seen
+                or _is_low_value_base_candidate(item)
+                or _looks_like_meta_completion_candidate(item)
+            ):
+                continue
+            seen.add(item)
+            result.append(item)
+            if len(seen) >= max_items:
+                return result
+    return result
+
+
+def _continuation_candidate_splits(text: str) -> list[str]:
+    normalized = compact_whitespace(text)
+    compacted = re.sub(r"\s+", "", normalized)
+    if _CJK_RE.search(compacted) is None or len(compacted) < 5:
+        return []
+    base = _strip_leading_continuation_connector(compacted)
+    variants = [base]
+    for match in re.finditer(r"(更直观|看到|优化|完成|继续|实现|提升|减少|帮助|方便|用于|接入|整理|修复|验证)", base):
+        if 0 < match.start() <= len(base) - 4:
+            variants.append(base[match.start() :])
+        if 0 < match.end() <= len(base) - 4:
+            variants.append(base[match.end() :])
+    result: list[str] = []
+    seen: set[str] = set()
+    for variant in variants:
+        if len(variant) < 4:
+            continue
+        full_variant = _normalize_continuation_split_candidate(variant[:12])
+        if (
+            full_variant
+            and full_variant not in seen
+            and len(full_variant) >= 4
+            and not _is_low_value_base_candidate(full_variant)
+            and not _looks_like_meta_completion_candidate(full_variant)
+        ):
+            seen.add(full_variant)
+            result.append(full_variant)
+        if len(variant) >= 4:
+            tail = _normalize_continuation_split_candidate(variant[-min(6, len(variant)) :])
+            if (
+                tail
+                and tail not in seen
+                and len(tail) >= 3
+                and not _is_low_value_base_candidate(tail)
+                and not _looks_like_meta_completion_candidate(tail)
+            ):
+                seen.add(tail)
+                result.append(tail)
+    return result
+
+
+def _strip_leading_continuation_connector(text: str) -> str:
+    result = compact_whitespace(text)
+    for prefix in ("从而", "用于", "以便", "为了", "并且", "然后", "接着", "以", "并", "来", "将"):
+        if result.startswith(prefix) and len(result) - len(prefix) >= 4:
+            return result[len(prefix) :]
+    return result
+
+
+def _normalize_continuation_split_candidate(text: str) -> str:
+    item = compact_whitespace(str(text))
+    item = item.strip(" \t\r\n。.!！?？:\"'“”‘’[]()（）{}<>《》")
+    return compact_whitespace(item)
 
 
 def _looks_like_meta_completion_candidate(text: str) -> bool:
