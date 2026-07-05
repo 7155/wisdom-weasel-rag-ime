@@ -12,6 +12,7 @@ from unittest.mock import patch
 from rag_ime.adapter import InputMethodAdapter
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.memory_ingest import normalize_text, upsert_memory_item
 from rag_ime.predictor import PredictionProvider
 from rag_ime.rime_sidecar import build_rime_sidecar_response, record_rime_side_candidate_selection
 
@@ -491,6 +492,96 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             self.assertEqual(explanation["candidateId"], "phrase:连续预测")
             self.assertEqual(explanation["recentTrace"]["traceId"], trace_id)
             self.assertTrue(any(item["reason"] == "recent_committed_echo" for item in explanation["recentTrace"]["blocked"]))
+
+    def test_tag_graph_candidate_explanation_links_trace_and_activation(self) -> None:
+        os.environ["RAG_IME_MEMORY_OPTIMIZER"] = "1"
+        os.environ["RAG_IME_MEMORY_OPTIMIZER_TRACE"] = "1"
+        with tempfile.TemporaryDirectory(prefix="rag-ime-tag-explain-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
+            core.initialize()
+            created_at = 1_900_000_200_001
+            with core._connect() as conn:
+                upsert_memory_item(
+                    conn,
+                    memory_id="stable:tag-seed",
+                    kind="stable_memory",
+                    text="输入法基础入口",
+                    normalized_text=normalize_text("输入法基础入口"),
+                    summary="seed memory",
+                    source_event_id=None,
+                    project="wisdom-weasel-rag-ime",
+                    app="",
+                    confidence=0.9,
+                    quality_score=0.9,
+                    status="approved",
+                    privacy_class="local",
+                    created_at_ms=created_at,
+                    updated_at_ms=created_at,
+                    metadata={"direct_candidate_allowed": True},
+                    tags=("输入法", "候选排序"),
+                    embedding_provider=core.embedding_provider,
+                )
+                upsert_memory_item(
+                    conn,
+                    memory_id="stable:tag-related",
+                    kind="stable_memory",
+                    text="候选排序能量传播",
+                    normalized_text=normalize_text("候选排序能量传播"),
+                    summary="related through tag graph",
+                    source_event_id=None,
+                    project="wisdom-weasel-rag-ime",
+                    app="",
+                    confidence=0.9,
+                    quality_score=0.9,
+                    status="approved",
+                    privacy_class="local",
+                    created_at_ms=created_at + 1,
+                    updated_at_ms=created_at + 1,
+                    metadata={"direct_candidate_allowed": True},
+                    tags=("候选排序", "能量传播"),
+                    embedding_provider=core.embedding_provider,
+                )
+            core.recompute_memory_tags(project="wisdom-weasel-rag-ime")
+
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "optimizer-tag-explain",
+                    "requestSeq": 35,
+                    "forceSideCandidates": True,
+                    "rawInput": "shurufa",
+                    "preedit": "shurufa",
+                    "committedContext": "我们讨论",
+                    "maxVisibleCandidates": 4,
+                    "maxSideCandidates": 2,
+                    "rimeContext": {"candidates": [{"label": "1", "text": "输入法", "comment": "rime"}]},
+                },
+                adapter=InputMethodAdapter(core),
+                core=core,
+                predictor=_NoopPredictionProvider(),
+            )
+            explanation = core.explain_memory_candidate(
+                "stable:tag-related",
+                context_hash=response["committedContextHash"],
+            )
+
+        candidate_texts = [
+            item.get("surfaceText") or item.get("text") or item.get("insertText")
+            for item in response["ragCandidates"]
+        ]
+        self.assertIn("候选排序能量传播", candidate_texts)
+        self.assertIsNotNone(explanation)
+        assert explanation is not None
+        recent_trace = explanation["recentTrace"]
+        self.assertEqual(recent_trace["traceId"], response["ragLane"]["memoryOptimizer"]["traceId"])
+        self.assertIn("tag_graph", recent_trace["queryPlan"]["retrievers"])
+        self.assertIn("输入法", recent_trace["contextFrame"]["active_tags"])
+        optimized = [item for item in recent_trace["optimizedCandidates"] if item["id"] == "stable:tag-related"]
+        raw_related = [item for item in recent_trace["rawResults"] if item["id"] == "stable:tag-related"]
+        self.assertTrue(optimized)
+        self.assertTrue(raw_related)
+        self.assertIn("候选排序", optimized[0]["tags"])
+        self.assertIn("tag:", raw_related[0]["metadata"]["reason"])
+        self.assertGreater(raw_related[0]["metadata"]["score_breakdown"]["components"]["tag"], 0)
 
     def test_repeated_skips_create_optimizer_cooldown_suppression(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-optimizer-feedback-") as tmp:

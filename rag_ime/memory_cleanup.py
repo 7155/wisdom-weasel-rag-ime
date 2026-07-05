@@ -127,6 +127,8 @@ def apply_cleanup_run(conn: sqlite3.Connection, *, run_id: str, only_approved: b
         (run_id,),
     ).fetchall()
     for row in rows:
+        _validate_cleanup_diff_row_for_apply(row)
+    for row in rows:
         _apply_cleanup_diff_row(conn, row=row)
     _sync_cleanup_run_status(conn, run_id=run_id)
     return cleanup_run_payload(conn, run_id=run_id)
@@ -165,6 +167,7 @@ def apply_cleanup_diff(conn: sqlite3.Connection, *, diff_id: int) -> dict[str, o
         return cleanup_diff_payload(conn, diff_id=diff_id)
     if current_status not in {"pending", "approved"}:
         raise ValueError(f"cleanup diff {diff_id} cannot be applied from status {current_status}")
+    _validate_cleanup_diff_row_for_apply(row)
     _apply_cleanup_diff_row(conn, row=row)
     _sync_cleanup_run_status(conn, run_id=str(row["run_id"]))
     return cleanup_diff_payload(conn, diff_id=diff_id)
@@ -427,6 +430,22 @@ def validate_cleanup_plan(plan: CleanupRunPlan) -> None:
             target_value = compact_whitespace(str(diff.payload.get("targetValue", "")))
             if not target_type or not target_value:
                 raise ValueError("tombstone requires targetType and targetValue")
+
+
+def _validate_cleanup_diff_row_for_apply(row: sqlite3.Row) -> None:
+    diff = CleanupDiffEntry(
+        op=compact_whitespace(str(row["op"])),
+        target_memory_id=compact_whitespace(str(row["target_memory_id"])),
+        payload=dict(json.loads(row["payload_json"] or "{}")),
+        status=compact_whitespace(str(row["status"])),
+    )
+    plan = CleanupRunPlan(run_id="stored_cleanup_apply_validation", diffs=(diff,))
+    validate_cleanup_plan(plan)
+    report = inspect_cleanup_plan(plan)
+    if report["ok"]:
+        return
+    codes = ", ".join(str(item.get("code") or "invalid") for item in report["errors"])
+    raise ValueError(f"cleanup diff {int(row['id'])} validation failed: {codes}")
 
 
 def _cleanup_issue(*, diff_id: int, op: str, field: str, code: str, value: object = None, preview: str = "") -> dict[str, object]:

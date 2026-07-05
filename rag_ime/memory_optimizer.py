@@ -566,6 +566,12 @@ def _build_optimized_candidate(
     metadata["compiled_text"] = compiled_text
     metadata["memory_optimizer_score"] = round(total_score, 4)
     metadata["memory_optimizer_features"] = {key: round(value, 4) for key, value in debug_features.items()}
+    evidence_preview = _candidate_evidence_preview(hit=hit, compiled_text=compiled_text)
+    metadata["expanded_evidence"] = _candidate_expanded_evidence(
+        hit=hit,
+        compiled_text=compiled_text,
+        evidence_preview=evidence_preview,
+    )
     return OptimizedMemoryCandidate(
         id=hit.id,
         text=compiled_text,
@@ -573,7 +579,7 @@ def _build_optimized_candidate(
         lane=_optimized_lane(hit),
         score=round(total_score, 4),
         confidence=_optimizer_confidence(total_score=total_score, base_score=hit.score),
-        evidence_preview=_candidate_evidence_preview(hit=hit, compiled_text=compiled_text),
+        evidence_preview=evidence_preview,
         memory_atom_ids=[hit.memory_atom_id] if hit.memory_atom_id else [],
         tags=_candidate_tags(hit),
         debug_features={key: round(value, 4) for key, value in debug_features.items()},
@@ -670,7 +676,7 @@ def _apply_optimized_candidate(base: InputSuggestion, candidate: OptimizedMemory
         evidence_preview=candidate.evidence_preview or base.evidence_preview,
         confidence=max(0.0, min(1.0, candidate.confidence)),
         actions=base.actions,
-        expanded_evidence=base.expanded_evidence,
+        expanded_evidence=compact_whitespace(str(metadata.get("expanded_evidence") or "")) or base.expanded_evidence,
         metadata=metadata,
     )
 
@@ -955,9 +961,33 @@ def _downrank_penalty(metadata: dict[str, Any]) -> float:
 
 def _candidate_evidence_preview(*, hit: RawRetrievalHit, compiled_text: str) -> str:
     preview = compact_whitespace(str(hit.metadata.get("preview_text") or hit.evidence or hit.text or ""))
+    if _evidence_preview_leaks_long_source(preview=preview, hit=hit, compiled_text=compiled_text):
+        return truncate_text(f"压缩自稳定记忆：{compiled_text}", 180)
     if preview:
         return truncate_text(preview, 180)
     return truncate_text(compiled_text, 180)
+
+
+def _candidate_expanded_evidence(*, hit: RawRetrievalHit, compiled_text: str, evidence_preview: str) -> str:
+    expanded = compact_whitespace(str(hit.metadata.get("expanded_evidence") or ""))
+    if _evidence_preview_leaks_long_source(preview=expanded, hit=hit, compiled_text=compiled_text):
+        return evidence_preview
+    return expanded or evidence_preview
+
+
+def _evidence_preview_leaks_long_source(*, preview: str, hit: RawRetrievalHit, compiled_text: str) -> bool:
+    preview_norm = _normalize_candidate_text(preview)
+    source_norm = _normalize_candidate_text(_candidate_source_text(hit) or hit.text)
+    compiled_norm = _normalize_candidate_text(compiled_text)
+    if not preview_norm or not source_norm or not compiled_norm:
+        return False
+    if preview_norm == compiled_norm:
+        return False
+    if len(source_norm) <= max(12, len(compiled_norm) + 4):
+        return False
+    if source_norm in preview_norm or preview_norm in source_norm:
+        return True
+    return _overlap_ratio(preview_norm, source_norm) >= 0.85
 
 
 def _select_diverse_candidates(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -110,3 +111,41 @@ class MemoryCleanupDiffTests(unittest.TestCase):
 
         self.assertEqual(rolled_back["diff"]["status"], "rolled_back")
         self.assertNotIn("stable:连续预测", final_memory_ids)
+
+    def test_invalid_stored_cleanup_diff_is_not_applied(self) -> None:
+        with self.core._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_runs(run_id, created_at_ms, provider, model, status, summary, metadata_json)
+                VALUES ('cleanup_invalid_apply', 1, 'x1top', 'fake-gpt', 'draft', 'stable=1', '{}')
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_diffs(run_id, op, target_memory_id, payload_json, status, created_at_ms, rollback_json)
+                VALUES (?, 'add_stable_memory', ?, ?, 'pending', 2, '{}')
+                """,
+                (
+                    "cleanup_invalid_apply",
+                    "stable:无证据记忆",
+                    json.dumps(
+                        {
+                            "memoryId": "stable:无证据记忆",
+                            "text": "无证据记忆",
+                            "project": "wisdom-weasel-rag-ime",
+                            "confidence": 0.9,
+                            "evidenceEventIds": [],
+                        },
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+
+        with self.assertRaisesRegex(ValueError, "missing_evidence_event_ids"):
+            self.core.apply_memory_cleanup_plan(run_id="cleanup_invalid_apply")
+
+        inspect_after = self.core.inspect_memory_v2(project="wisdom-weasel-rag-ime", limit=20)
+        stored_run = self.core.list_memory_cleanup_runs(run_id="cleanup_invalid_apply", limit=5)
+
+        self.assertNotIn("stable:无证据记忆", {item["memoryId"] for item in inspect_after["items"]})
+        self.assertEqual(stored_run["items"][0]["diffs"][0]["status"], "pending")

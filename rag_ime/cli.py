@@ -332,6 +332,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     seed = subparsers.add_parser("seed-demo", help="Seed local DB with deterministic demo memories")
     seed.add_argument("--reset", action="store_true", help="Reset local DB before seeding")
 
+    seed_eval_cases = subparsers.add_parser(
+        "seed-eval-cases",
+        help="Seed local DB with deterministic memories derived from eval cases",
+    )
+    seed_eval_cases.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
+    seed_eval_cases.add_argument("--project", default="wisdom-weasel-rag-ime")
+
     commit = subparsers.add_parser("commit", help="Record one committed input event")
     commit.add_argument("text")
     commit.add_argument("--recent-context", default="")
@@ -1352,6 +1359,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             json.dumps(
                 {"db_path": str(core.db_path), "event_count": core.event_count(), "seeded": True},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "seed-eval-cases":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("seed-eval-cases requires --core-mode local")
+        cases = load_eval_cases(Path(args.cases_file))
+        event_ids = seed_eval_case_memories(adapter, cases, project=args.project)
+        print(
+            json.dumps(
+                {
+                    "db_path": str(core.db_path),
+                    "cases_file": str(Path(args.cases_file)),
+                    "project": args.project,
+                    "event_count": core.event_count(),
+                    "seeded_eval_cases": len(event_ids),
+                    "seeded": True,
+                },
                 ensure_ascii=False,
                 indent=2,
             )
@@ -2421,6 +2449,58 @@ def seed_demo_memories(adapter: InputMethodAdapter, memories: list[CoreMemory]) 
             )
         )
     return event_ids
+
+
+def seed_eval_case_memories(adapter: InputMethodAdapter, cases: list[CodexEvalCase], *, project: str) -> list[str]:
+    event_ids: list[str] = []
+    created_at = now_ms()
+    for index, case in enumerate(cases):
+        expected = " ".join(case.expected_terms)
+        committed_text = compact_whitespace(f"{expected} {case.query}" if expected else case.query)
+        if not committed_text:
+            continue
+        event_id = adapter.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=created_at + index,
+                source="eval_case_seed",
+                committed_text=committed_text,
+                recent_context=compact_whitespace(f"eval_case:{case.case_id} expected:{expected}"),
+                preedit="",
+                schema_id="eval_case",
+                app="product-readiness-gate",
+                project=case.project or project or adapter.project,
+                provider_name="eval-case-fixture",
+                tags=("eval-case", "curated", f"case:{case.case_id}"),
+            )
+        )
+        event_ids.append(event_id)
+        recorder = getattr(adapter.core, "record_memory_feedback", None)
+        source_event_id = _event_id_from_memory_id_for_seed(event_id)
+        if callable(recorder) and source_event_id is not None:
+            recorder(
+                {
+                    "event": "accepted",
+                    "candidateId": event_id,
+                    "candidateText": committed_text,
+                    "sourceType": "memory",
+                    "contextHash": f"eval-case:{case.case_id}",
+                    "timestampMs": created_at + index,
+                    "project": case.project or project or adapter.project,
+                    "sourceEventId": source_event_id,
+                    "query": case.query,
+                }
+            )
+    return event_ids
+
+
+def _event_id_from_memory_id_for_seed(memory_id: str) -> int | None:
+    if not memory_id.startswith("event:"):
+        return None
+    try:
+        return int(memory_id.split(":", 1)[1])
+    except ValueError:
+        return None
 
 
 def run_codex_history_eval(
@@ -3812,9 +3892,14 @@ def run_acceptance(adapter: InputMethodAdapter) -> dict[str, object]:
         top_k=3,
     )
     before = adapter.suggest(request)
-    adapter.pin(before[-1], query=action_scenario.current_input)
-    adapter.delete(before[0], query=action_scenario.current_input)
-    after = adapter.suggest(request)
+    if before:
+        adapter.pin(before[-1], query=action_scenario.current_input)
+        adapter.delete(before[0], query=action_scenario.current_input)
+        after = adapter.suggest(request)
+        deleted_removed = before[0].surface_text not in [item.surface_text for item in after]
+    else:
+        after = []
+        deleted_removed = False
     injection = build_first_run_injection(adapter, project="wisdom-weasel-rag-ime", top_k=3)
     trigger_cases = {
         "single_char": should_refresh_rag(TypingState(current_input="项", idle_ms=500)).should_refresh,
@@ -3831,7 +3916,7 @@ def run_acceptance(adapter: InputMethodAdapter) -> dict[str, object]:
         "action_result": {
             "before": [item.surface_text for item in before],
             "after": [item.surface_text for item in after],
-            "deleted_removed": before[0].surface_text not in [item.surface_text for item in after],
+            "deleted_removed": deleted_removed,
         },
         "agent_hook": {
             "has_project_memory_block": "PROJECT_MEMORY_BLOCK" in injection.block,
@@ -3967,8 +4052,8 @@ def _rime_eval_payload(
     return {
         "sessionId": f"eval-rime-sidecar:{case.case_id}",
         "requestSeq": request_seq,
-        "rawInput": case.query,
-        "preedit": case.query,
+        "rawInput": "",
+        "preedit": "",
         "committedContext": case.recent_context,
         "project": project,
         "maxVisibleCandidates": max_visible_candidates,

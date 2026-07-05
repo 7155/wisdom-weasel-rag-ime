@@ -67,10 +67,12 @@ class MemoryOptimizerEvalTests(unittest.TestCase):
 
         self.assertTrue(report["gatePassed"])
         self.assertEqual(report["failedCases"], 0)
-        self.assertEqual(report["repeat"]["baseCaseCount"], 14)
+        self.assertEqual(report["repeat"]["baseCaseCount"], 16)
         cases = {item["caseId"]: item for item in report["cases"]}
         self.assertEqual(cases["old-raw-input-echo-blocked"]["filteredSuggestionCount"], 1)
         self.assertEqual(cases["accepted-phrase-not-promoted-in-unrelated-context"]["ragCandidateCount"], 0)
+        self.assertEqual(cases["downranked-candidate-cooldown"]["blockedReasons"], ["suppressed_memory_id"])
+        self.assertIn("前台稳定性", cases["long-stable-memory-compiled-short"]["ragCandidateSurfaces"])
         self.assertEqual(cases["cold-knowledge-disabled-by-default"]["blockedReasons"], ["cold_knowledge_disabled"])
         self.assertEqual(cases["rollback-cleanup-diff"]["cleanup"]["applyRollback"]["rollbackStatus"], "rolled_back")
 

@@ -193,7 +193,14 @@ optimizer fail-closed path also now treats explicit degraded optimizer results
 as lane failures: the sidecar reports `failClosed=true` and returns no RAG
 candidates from that degraded optimizer pass. Memory feedback and governance
 action writes are best-effort as well, so failed local DB/action writes cannot
-block candidate display or `insertText` commit.
+block candidate display or `insertText` commit. The gate now seeds demo and
+eval-case fixture memories into its isolated DB before backend quality-gate, and
+predictor capability checks are explicit via
+`RAG_IME_REQUIRE_PREDICTOR_CAPABILITY=seededPromptReplay` rather than required
+on machines without a running local MLX service. Cleanup diff apply now
+re-validates stored diffs before writing, and memory optimizer evidence avoids
+leaking long stable-memory source sentences when the compiled IME candidate is
+short.
 
 ## Source Repository Structure
 
@@ -270,6 +277,8 @@ Scripts:
 
 Useful PR-5 review CLI now present in `rag_ime/cli.py`:
 
+- `seed-eval-cases --cases-file ...`: seed deterministic curated eval memories
+  into a local DB for reproducible product quality gates.
 - `governance-report`: inspect active suppressions/tombstones.
 - `tombstone`: add one manual tombstone row to the local governance store.
 - `anti-echo-demo`: run ad-hoc candidate texts through the anti-echo governor
@@ -1217,14 +1226,30 @@ python3 -m py_compile rag_ime/cli.py rag_ime/rime_sidecar.py scripts/check_squir
 Product gate targeted result:
 
 ```text
-Ran 3 tests in 0.158s
+Ran 5 tests in 2.649s
 OK
+```
+
+Backend product gate command now verified:
+
+```bash
+scripts/run_product_readiness_gate.sh --skip-unit-tests --skip-acceptance
+```
+
+Observed gate result:
+
+```text
+rag-pass-rate: 1.0
+rime-sidecar-pass-rate: 1.0
+rime-sidecar-noise-rate: 0.0
+suggestion-cache-warm-hit: true
+rime-cache-warm-hit: true
 ```
 
 Latest full-suite result after the final-gate/fail-closed checkpoint:
 
 ```text
-Ran 522 tests in 84.691s
+Ran 525 tests in 86.582s
 OK
 ```
 

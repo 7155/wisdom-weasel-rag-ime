@@ -13,6 +13,8 @@ DRY_RUN=0
 RUN_UNIT_TESTS="${RAG_IME_GATE_RUN_UNIT_TESTS:-1}"
 RUN_ACCEPTANCE="${RAG_IME_GATE_RUN_ACCEPTANCE:-1}"
 RUN_QUALITY_GATE="${RAG_IME_GATE_RUN_QUALITY_GATE:-1}"
+SEED_DEMO="${RAG_IME_GATE_SEED_DEMO:-1}"
+REQUIRE_PREDICTOR_CAPABILITY="${RAG_IME_REQUIRE_PREDICTOR_CAPABILITY:-}"
 
 usage() {
   cat <<'USAGE'
@@ -25,6 +27,7 @@ Options:
   --skip-unit-tests       Skip python3 -m unittest discover -s tests.
   --skip-acceptance       Skip scripts/acceptance.py.
   --skip-quality-gate     Skip rag_ime.cli quality-gate.
+  --skip-seed-demo        Do not seed demo memories into the gate DB.
   --db-path PATH          SQLite DB path for quality-gate.
   --cases-file PATH       Eval cases file for quality-gate.
   --soak-report PATH      Squirrel foreground soak report path.
@@ -32,6 +35,9 @@ Options:
 
 Environment:
   RAG_IME_REQUIRE_MACOS_FRONTEND=1  Require Squirrel tryout + soak report checks.
+  RAG_IME_REQUIRE_PREDICTOR_CAPABILITY=name
+                                    Add a local predictor capability requirement,
+                                    for example seededPromptReplay.
 USAGE
 }
 
@@ -51,6 +57,10 @@ while (($#)); do
       ;;
     --skip-quality-gate)
       RUN_QUALITY_GATE=0
+      shift
+      ;;
+    --skip-seed-demo)
+      SEED_DEMO=0
       shift
       ;;
     --db-path)
@@ -94,6 +104,7 @@ log "root=$ROOT"
 log "db_path=$DB_PATH"
 log "cases_file=$CASES_FILE"
 log "require_macos_frontend=$REQUIRE_MACOS_FRONTEND"
+log "require_predictor_capability=${REQUIRE_PREDICTOR_CAPABILITY:-none}"
 
 if [[ "$RUN_UNIT_TESTS" == "1" ]]; then
   log "unit tests"
@@ -110,37 +121,59 @@ else
 fi
 
 if [[ "$RUN_QUALITY_GATE" == "1" ]]; then
+  if [[ "$SEED_DEMO" == "1" ]]; then
+    log "seed demo memories into gate DB"
+    run_cmd "$PYTHON_BIN" -m rag_ime.cli --db-path "$DB_PATH" seed-demo
+    log "seed eval-case memories into gate DB"
+    run_cmd "$PYTHON_BIN" -m rag_ime.cli --db-path "$DB_PATH" seed-eval-cases --cases-file "$CASES_FILE"
+  else
+    log "seed demo skipped"
+  fi
   log "backend quality gate"
-  run_cmd "$PYTHON_BIN" -m rag_ime.cli \
-    --db-path "$DB_PATH" \
-    quality-gate \
-    --cases-file "$CASES_FILE" \
-    --force-side-candidates \
-    --require-suggestion-cache \
-    --min-rag-pass-rate 0.9 \
-    --min-sidecar-pass-rate 0.9 \
-    --max-sidecar-noise-rate 0.05 \
-    --max-sidecar-rag-timeout-rate 0 \
-    --max-sidecar-model-timeout-rate 0 \
-    --max-old-input-echo-rate 0.01 \
-    --require-predictor-capability seededPromptReplay
+  QUALITY_CMD=(
+    "$PYTHON_BIN" -m rag_ime.cli
+    --db-path "$DB_PATH"
+    quality-gate
+    --cases-file "$CASES_FILE"
+    --force-side-candidates
+    --require-suggestion-cache
+    --max-visible-candidates 8
+    --max-side-candidates 5
+    --min-rag-pass-rate 0.9
+    --min-sidecar-pass-rate 0.9
+    --max-sidecar-noise-rate 0.05
+    --max-sidecar-rag-timeout-rate 0
+    --max-sidecar-model-timeout-rate 0
+    --max-old-input-echo-rate 0.01
+  )
+  if [[ -n "$REQUIRE_PREDICTOR_CAPABILITY" ]]; then
+    QUALITY_CMD+=(--require-predictor-capability "$REQUIRE_PREDICTOR_CAPABILITY")
+  fi
+  run_cmd "${QUALITY_CMD[@]}"
 else
   log "quality gate skipped"
 fi
 
 if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
   log "macOS Squirrel tryout gate"
-  run_cmd "$PYTHON_BIN" -m rag_ime.cli \
-    --db-path "$DB_PATH" \
-    squirrel-tryout-gate \
-    --cases-file "$CASES_FILE" \
-    --min-rag-pass-rate 0.9 \
-    --min-sidecar-pass-rate 0.9 \
-    --max-sidecar-noise-rate 0.05 \
-    --max-sidecar-rag-timeout-rate 0 \
-    --max-sidecar-model-timeout-rate 0 \
-    --require-predictor-capability seededPromptReplay \
+  TRYOUT_CMD=(
+    "$PYTHON_BIN" -m rag_ime.cli
+    --db-path "$DB_PATH"
+    squirrel-tryout-gate
+    --cases-file "$CASES_FILE"
+    --min-rag-pass-rate 0.9
+    --min-sidecar-pass-rate 0.9
+    --max-visible-candidates 8
+    --max-side-candidates 5
+    --max-sidecar-noise-rate 0.05
+    --max-sidecar-rag-timeout-rate 0
+    --max-sidecar-model-timeout-rate 0
     --report-path /tmp/rag-ime-squirrel-tryout-gate.json
+  )
+  if [[ -n "$REQUIRE_PREDICTOR_CAPABILITY" ]]; then
+    TRYOUT_CMD+=(--require-predictor-capability "$REQUIRE_PREDICTOR_CAPABILITY")
+  fi
+  run_cmd "${TRYOUT_CMD[@]}"
 
   log "foreground soak report check"
   run_cmd "$PYTHON_BIN" scripts/check_squirrel_soak_report.py \

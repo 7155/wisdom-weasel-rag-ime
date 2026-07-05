@@ -1107,6 +1107,8 @@ def _filter_rag_suggestions_for_query(
         surface = compact_whitespace(suggestion.surface_text)
         if not surface:
             continue
+        metadata = dict(suggestion.metadata)
+        durable_memory = _suggestion_has_durable_memory_signal(metadata)
         if _rag_suggestion_repeats_context(
             suggestion,
             snapshot=snapshot,
@@ -1117,7 +1119,7 @@ def _filter_rag_suggestions_for_query(
             continue
         if _looks_like_assistant_history_candidate(suggestion):
             continue
-        if _looks_like_low_quality_memory_candidate(surface):
+        if not durable_memory and _looks_like_low_quality_memory_candidate(surface):
             continue
         if _looks_like_uncompiled_raw_history_candidate(suggestion):
             continue
@@ -1200,6 +1202,8 @@ def _surface_repeats_history_reference(surface: str, prediction_context: str) ->
 
 
 def _suggestion_has_durable_memory_signal(metadata: Mapping[str, object]) -> bool:
+    if _metadata_memory_kind(metadata) in {"stable_memory", "phrase", "memory_alias"}:
+        return True
     tags = {
         compact_whitespace(str(tag)).lower()
         for tag in metadata.get("tags", [])
@@ -1226,6 +1230,8 @@ def _looks_like_uncompiled_raw_history_candidate(suggestion: InputSuggestion) ->
     if not surface:
         return True
     metadata = dict(suggestion.metadata)
+    if _metadata_memory_kind(metadata) in {"stable_memory", "phrase", "memory_alias"}:
+        return False
     if _suggestion_has_curated_or_repeated_accept_signal(metadata):
         return False
 
@@ -1253,6 +1259,8 @@ def _looks_like_uncompiled_raw_history_candidate(suggestion: InputSuggestion) ->
 
 
 def _suggestion_has_curated_or_repeated_accept_signal(metadata: Mapping[str, object]) -> bool:
+    if _metadata_memory_kind(metadata) in {"stable_memory", "phrase", "memory_alias"}:
+        return True
     tags = {
         compact_whitespace(str(tag)).lower()
         for tag in metadata.get("tags", [])
@@ -1273,6 +1281,12 @@ def _suggestion_has_curated_or_repeated_accept_signal(metadata: Mapping[str, obj
         _safe_int(raw_signals.get("acceptedCount")),
     )
     return accepted_count >= 3
+
+
+def _metadata_memory_kind(metadata: Mapping[str, object]) -> str:
+    state = metadata.get("state") if isinstance(metadata.get("state"), dict) else {}
+    assert isinstance(state, dict)
+    return compact_whitespace(str(metadata.get("memory_kind") or state.get("memory_kind") or "")).lower()
 
 
 def _cjk_context_overlap_ratio(surface: str, context: str) -> float:

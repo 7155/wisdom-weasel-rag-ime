@@ -54,3 +54,4 @@ class MemoryOptimizerCandidateCompilerTests(unittest.TestCase):
         self.assertEqual(candidate.source_type, "memory")
         self.assertEqual(candidate.debug_features["compiledCandidate"], 1.0)
         self.assertLessEqual(len(candidate.text), 12)
+        self.assertNotIn("用户长期关注 RAG-IME、MLX、本地输入法、候选排序、前台稳定性。", candidate.evidence_preview or "")
