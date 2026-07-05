@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from .prediction_anchors import PredictionAnchors, prediction_mode_family
+from .pinyin_index import text_initials
 from .text_utils import compact_whitespace
 
 
@@ -186,6 +187,17 @@ def render_stable_prediction_panel(
             now_ms=now,
         )
 
+    prefix_filter_result = _render_prefix_filtered_snapshot(
+        state=state,
+        previous=previous,
+        anchors=anchors,
+        mode=mode,
+        lane_status=lane_status,
+        now_ms=now,
+    )
+    if prefix_filter_result is not None:
+        return prefix_filter_result
+
     if now <= previous.min_visible_until_ms:
         reason = "min_visible_window"
         snapshot = _reuse_snapshot(previous, anchors=anchors, lane_status=lane_status, now_ms=now, stale_level="holdover")
@@ -301,6 +313,95 @@ def _reuse_snapshot(
         reused_last_good=True,
         holdover_hit=True,
         stale_level=stale_level,
+    )
+
+
+def _render_prefix_filtered_snapshot(
+    *,
+    state: StablePanelState,
+    previous: StableCandidateSnapshot,
+    anchors: PredictionAnchors,
+    mode: str,
+    lane_status: dict[str, object],
+    now_ms: int,
+) -> tuple[StableCandidateSnapshot | None, StablePanelState, dict[str, object]] | None:
+    if prediction_mode_family(mode) != "prefix_composing":
+        return None
+    prefix = _active_prefix_from_anchors(anchors)
+    if not prefix or _allow_semantic_holdover_for_prefix(prefix):
+        return None
+    kept: list[object] = []
+    removed_count = 0
+    side_seen = 0
+    side_kept = 0
+    for candidate in previous.candidates:
+        if _candidate_is_side_prediction(candidate):
+            side_seen += 1
+            if not _candidate_matches_prefix(candidate, prefix):
+                removed_count += 1
+                continue
+            side_kept += 1
+        kept.append(candidate)
+    if removed_count <= 0:
+        return None
+
+    if not kept:
+        reason = "prefix_incompatible_candidates_removed"
+        next_state = StablePanelState(
+            last_snapshot=None,
+            last_soft_hold_reason=reason,
+            generation=state.generation,
+        )
+        return None, next_state, _diagnostics(
+            action="soft_hide",
+            reason=reason,
+            anchors=anchors,
+            snapshot=None,
+            previous=previous,
+            now_ms=now_ms,
+            extra={
+                "prefixFiltered": True,
+                "activePinyinPrefix": prefix,
+                "prefixRemovedCandidateCount": removed_count,
+                "prefixKeptSideCandidateCount": side_kept,
+                "previousSideCandidateCount": side_seen,
+            },
+        )
+
+    generation = max(state.generation, previous.generation) + 1
+    snapshot = _new_snapshot(
+        generation=generation,
+        anchors=anchors,
+        mode=mode,
+        candidates=tuple(kept),
+        lane_status=lane_status,
+        now_ms=now_ms,
+    )
+    snapshot = replace(
+        snapshot,
+        min_visible_until_ms=max(previous.min_visible_until_ms, snapshot.min_visible_until_ms),
+        expires_at_ms=max(previous.expires_at_ms, snapshot.expires_at_ms),
+        stale_level="soft_stale",
+    )
+    next_state = StablePanelState(
+        last_snapshot=snapshot,
+        last_soft_hold_reason="prefix_filtered_last_good_snapshot",
+        generation=generation,
+    )
+    return snapshot, next_state, _diagnostics(
+        action="prefix_filter",
+        reason="prefix_incompatible_candidates_removed",
+        anchors=anchors,
+        snapshot=snapshot,
+        previous=previous,
+        now_ms=now_ms,
+        extra={
+            "prefixFiltered": True,
+            "activePinyinPrefix": prefix,
+            "prefixRemovedCandidateCount": removed_count,
+            "prefixKeptSideCandidateCount": side_kept,
+            "previousSideCandidateCount": side_seen,
+        },
     )
 
 
@@ -506,6 +607,68 @@ def _candidate_source(candidate: object) -> str:
     if isinstance(candidate, Mapping):
         return compact_whitespace(str(candidate.get("sourceType") or candidate.get("source_type") or ""))
     return compact_whitespace(str(getattr(candidate, "source_type", "")))
+
+
+def _candidate_metadata(candidate: object) -> dict[str, object]:
+    if isinstance(candidate, Mapping):
+        metadata = candidate.get("metadata")
+    else:
+        metadata = getattr(candidate, "metadata", {})
+    return dict(metadata) if isinstance(metadata, Mapping) else {}
+
+
+def _candidate_text(candidate: object, key: str) -> str:
+    if isinstance(candidate, Mapping):
+        return compact_whitespace(str(candidate.get(key) or ""))
+    return compact_whitespace(str(getattr(candidate, key, "") or ""))
+
+
+def _candidate_is_side_prediction(candidate: object) -> bool:
+    return _candidate_source(candidate) in {"model", "rag", "memory"}
+
+
+def _active_prefix_from_anchors(anchors: PredictionAnchors) -> str:
+    return _pinyin_norm(str(anchors.query_fields.get("stableShortPinyinPrefix") or ""))
+
+
+def _allow_semantic_holdover_for_prefix(prefix: str) -> bool:
+    return len(_pinyin_norm(prefix)) >= 6
+
+
+def _candidate_matches_prefix(candidate: object, prefix: str) -> bool:
+    prefix_norm = _pinyin_norm(prefix)
+    if not prefix_norm:
+        return True
+    keys = _candidate_pinyin_keys(candidate)
+    return any(key.startswith(prefix_norm) for key in keys)
+
+
+def _candidate_pinyin_keys(candidate: object) -> tuple[str, ...]:
+    metadata = _candidate_metadata(candidate)
+    keys: list[str] = []
+    for key in ("initials", "pinyin_initials"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            keys.append(_pinyin_norm(value))
+    for key in ("full_pinyin", "pinyin"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            parts = value.replace("'", " ").split()
+            keys.append(_pinyin_norm("".join(parts)))
+            keys.extend(_pinyin_norm(part) for part in parts)
+        elif isinstance(value, (list, tuple)):
+            parts = [_pinyin_norm(str(item)) for item in value]
+            keys.append(_pinyin_norm("".join(parts)))
+            keys.extend(parts)
+    for key in ("text", "insert_text", "insertText"):
+        text = _candidate_text(candidate, key)
+        if text:
+            keys.append(_pinyin_norm(text_initials(text)))
+    return tuple(item for item in dict.fromkeys(keys) if item)
+
+
+def _pinyin_norm(value: str) -> str:
+    return "".join(char.lower() for char in compact_whitespace(value) if char.isascii() and char.isalnum())
 
 
 def _lane_summary(lane: Mapping[str, object]) -> dict[str, object]:

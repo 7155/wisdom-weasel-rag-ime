@@ -419,13 +419,17 @@ Backspace/Delete/app/input-source changes can hard-clear old candidates while
 ordinary preedit/Rime candidate changes can refresh without flashing the panel.
 `rag_ime/prediction_stability.py` creates `StableCandidateSnapshot` records and
 returns explicit actions such as `fresh`, `soft_hold`, `reuse_last_good`,
-`soft_hide`, and `hard_clear`. It now also handles progressive follow-up:
-same visible-prefix candidates may append under the same `snapshotId`, while any
+`soft_hide`, and `hard_clear`. It also handles progressive follow-up: same
+visible-prefix candidates may append under the same `snapshotId`, while any
 follow-up that would reorder or replace visible ordinals becomes
-`progressive_replace` with a new `snapshotId`. `PredictionManager.render(...)`
-applies this only in post-commit and prefix-constrained prediction modes, then
-exposes the diagnostics through `predictionFirst.policy.stability` and anchor
-fields through `predictionSession`.
+`progressive_replace` with a new `snapshotId`. PR-E prefix-compatible holdover
+filtering has started too: if no fresh candidates are available during the same
+composition transaction, stale model/RAG/memory rows are filtered by the active
+short pinyin prefix before reuse, and any removal creates a new `snapshotId` for
+atomic panel replacement. `PredictionManager.render(...)` applies this only in
+post-commit and prefix-constrained prediction modes, then exposes the diagnostics
+through `predictionFirst.policy.stability` and anchor fields through
+`predictionSession`.
 
 The sidecar now also exposes PR-B/PR-C/PR-D payload contracts:
 `refreshDecision`, `showDecision`, and `keyPolicy` are top-level response
@@ -709,6 +713,15 @@ def render_stable_prediction_panel(...):
         return None, cleared_state, {"action": "hard_clear", ...}
     if previous.display_anchor != anchors.display_anchor or now > previous.expires_at_ms:
         return None, next_state, {"action": "soft_hide", ...}
+    if mode_family == "prefix_composing" and no_fresh_candidates:
+        kept = [candidate for candidate in previous.candidates if prefix_compatible(candidate, active_prefix)]
+        if kept != previous.candidates:
+            # Removal changes visible ordinals, so this is a new snapshot.
+            return new_snapshot_with_kept_candidates, state, {
+                "action": "prefix_filter",
+                "reason": "prefix_incompatible_candidates_removed",
+                "prefixRemovedCandidateCount": removed_count,
+            }
     if now <= previous.min_visible_until_ms:
         return reused_snapshot, next_state, {"action": "soft_hold", ...}
     if lane_empty_or_timed_out:
@@ -904,6 +917,7 @@ prediction_lane_timeout_with_holdover
 prediction_lane_timeout_without_holdover
 candidate_snapshot_progressive_append
 candidate_snapshot_progressive_replace
+prediction_prefix_filter_applied
 ```
 
 Squirrel forwarding contract:

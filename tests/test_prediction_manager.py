@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from rag_ime.models import InputSuggestion, ModelPrediction, RimeCandidate, RimeContextSnapshot
+from rag_ime.models import FrontendTransaction, InputSuggestion, ModelPrediction, RimeCandidate, RimeContextSnapshot
 from rag_ime.prediction_first import PredictionSessionPhase
 from rag_ime.prediction_manager import PredictionManager
+from rag_ime.text_utils import stable_text_hash
 
 
 class PredictionManagerTests(unittest.TestCase):
@@ -198,6 +199,49 @@ class PredictionManagerTests(unittest.TestCase):
         self.assertEqual(second.stability["preservedOrdinalCount"], 1)
         self.assertEqual(second.stability["appendedCandidateCount"], 1)
 
+    def test_stale_prefix_pool_filters_incompatible_holdover_candidates(self) -> None:
+        manager = PredictionManager(candidate_pool_ttl_ms=1)
+        transaction = _composition_transaction()
+        first = manager.render(
+            snapshot=RimeContextSnapshot(
+                session_id="s1",
+                request_seq=1,
+                raw_input="s",
+                preedit="s",
+                committed_context="我想",
+                max_visible_candidates=5,
+                max_side_candidates=5,
+                frontend_transaction=transaction,
+            ),
+            model_predictions=[
+                _model("设计输入法状态机", initials="sjsrfztj"),
+                _model("输入候选", rank=2, initials="srhx"),
+            ],
+            now_ms=100,
+        )
+
+        second = manager.render(
+            snapshot=RimeContextSnapshot(
+                session_id="s1",
+                request_seq=2,
+                raw_input="sj",
+                preedit="sj",
+                committed_context="我想",
+                max_visible_candidates=5,
+                max_side_candidates=5,
+                frontend_transaction=transaction,
+            ),
+            now_ms=200,
+        )
+
+        self.assertEqual([item.text for item in first.display_candidates], ["设计输入法状态机", "输入候选"])
+        self.assertTrue(second.candidate_pool_stale)
+        self.assertEqual(second.stability["action"], "prefix_filter")
+        self.assertEqual(second.stability["prefixRemovedCandidateCount"], 1)
+        self.assertEqual([item.text for item in second.display_candidates], ["设计输入法状态机"])
+        self.assertEqual(second.session.phase, PredictionSessionPhase.PREFIX_CONSTRAINED)
+        self.assertFalse(second.session.should_clear_prediction_panel)
+
 
 def _model(text: str, *, rank: int = 1, initials: str = "") -> ModelPrediction:
     return ModelPrediction(
@@ -219,6 +263,18 @@ def _suggestion(text: str, *, source_type: str, initials: str = "") -> InputSugg
         evidence_preview="fixture",
         confidence=0.85,
         metadata={"source_type": source_type, "initials": initials},
+    )
+
+
+def _composition_transaction() -> FrontendTransaction:
+    return FrontendTransaction(
+        frontend_revision=12,
+        selection_epoch=3,
+        front_app_bundle_id="com.apple.TextEdit",
+        input_source_id="im.rime.inputmethod.Squirrel.Hans",
+        composition_hash="sha256:composition-session",
+        committed_context_hash=stable_text_hash("我想"),
+        panel_session_id="panel-prefix-filter",
     )
 
 

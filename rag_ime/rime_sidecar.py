@@ -3413,7 +3413,7 @@ def show_decision_payload(
         default=False,
     )
     hard_clear = action == "hard_clear"
-    soft_hold = action in {"soft_hold", "reuse_last_good"}
+    soft_hold = action in {"soft_hold", "reuse_last_good", "prefix_filter"}
     if should_show:
         show_reason = reason or "visible_candidates"
     elif hard_clear:
@@ -3478,6 +3478,19 @@ def prediction_trace_events_payload(
             minimum=0,
             maximum=99,
         ),
+        "prefixFiltered": bool(stable_panel.get("prefixFiltered")),
+        "prefixRemovedCandidateCount": _bounded_int(
+            stable_panel.get("prefixRemovedCandidateCount"),
+            default=0,
+            minimum=0,
+            maximum=99,
+        ),
+        "prefixKeptSideCandidateCount": _bounded_int(
+            stable_panel.get("prefixKeptSideCandidateCount"),
+            default=0,
+            minimum=0,
+            maximum=99,
+        ),
     }
 
     events: list[dict[str, object]] = [
@@ -3499,8 +3512,10 @@ def prediction_trace_events_payload(
     elif action == "progressive_replace" and snapshot_id:
         events.append({"event": "candidate_snapshot_progressive_replace", "fields": _non_empty_trace_fields(common)})
         events.append({"event": "prediction_snapshot_created", "fields": _non_empty_trace_fields(common)})
-    elif action in {"soft_hold", "reuse_last_good"} and snapshot_id:
+    elif action in {"soft_hold", "reuse_last_good", "prefix_filter"} and snapshot_id:
         events.append({"event": "prediction_snapshot_reused", "fields": _non_empty_trace_fields(common)})
+    if action == "prefix_filter":
+        events.append({"event": "prediction_prefix_filter_applied", "fields": _non_empty_trace_fields(common)})
     if action == "soft_hold":
         events.append({"event": "prediction_panel_soft_hold", "fields": _non_empty_trace_fields(common)})
     elif action == "soft_hide":

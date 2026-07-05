@@ -28,6 +28,7 @@ from rag_ime.rime_sidecar import (
     decide_side_candidate_refresh,
     merge_display_candidates,
     parse_rime_context_payload,
+    prediction_trace_events_payload,
     recent_context_memory_suggestions,
     record_rime_side_candidate_selection,
     wait_for_model_prediction_lane_idle,
@@ -1763,6 +1764,40 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertEqual(item["snapshotId"], response["predictionSession"]["snapshotId"])
             self.assertEqual(item["hardContextAnchor"], response["predictionSession"]["hardContextAnchor"])
             self.assertEqual(item["metadata"]["keyPolicy"]["numberKeys"], "select_visible_candidate")
+
+    def test_prediction_trace_events_include_prefix_filter_diagnostics(self) -> None:
+        events = prediction_trace_events_payload(
+            prediction_session={
+                "inputMode": "prefix_constrained_composing",
+                "phase": "prefix_constrained",
+                "snapshotId": "snap:prefix-filter",
+                "hardContextAnchor": "sha256:hard",
+                "queryAnchor": "sha256:query",
+                "displayAnchor": "sha256:display",
+                "stablePanelAction": "prefix_filter",
+                "stablePanelReason": "prefix_incompatible_candidates_removed",
+                "stablePanel": {
+                    "previousSnapshotId": "snap:previous",
+                    "prefixFiltered": True,
+                    "prefixRemovedCandidateCount": 1,
+                    "prefixKeptSideCandidateCount": 1,
+                },
+            },
+            refresh_decision={"shouldRefresh": False},
+            show_decision={"shouldShow": True},
+            rag_lane={"called": False},
+            model_lane={"called": False},
+            display_candidates=[],
+        )
+
+        names = [item["event"] for item in events]
+        self.assertIn("prediction_snapshot_reused", names)
+        self.assertIn("prediction_prefix_filter_applied", names)
+        prefix_event = next(item for item in events if item["event"] == "prediction_prefix_filter_applied")
+        self.assertTrue(prefix_event["fields"]["prefixFiltered"])
+        self.assertEqual(prefix_event["fields"]["prefixRemovedCandidateCount"], 1)
+        self.assertEqual(prefix_event["fields"]["prefixKeptSideCandidateCount"], 1)
+        self.assertEqual(prefix_event["fields"]["previousSnapshotId"], "snap:previous")
 
     def test_prediction_first_debounces_repeated_composition_refresh_but_keeps_snapshot(self) -> None:
         core = PrefixSuggestionCore()

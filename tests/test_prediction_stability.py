@@ -192,12 +192,45 @@ class PredictionStabilityTests(unittest.TestCase):
         self.assertEqual([item.text for item in replaced.candidates], ["模型回来后想排第一", "先显示 RAG", "第二个记忆"])
         self.assertEqual(diag["preservedOrdinalCount"], 0)
 
+    def test_prefix_filter_removes_only_incompatible_holdover_candidates(self) -> None:
+        state = StablePanelState()
+        first, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(mode="prefix_constrained_composing", semantic_query="s 世界", pinyin_prefix="s"),
+            mode="prefix_constrained_composing",
+            fresh_candidates=(
+                _candidate("设计输入法状态机", "model", source_index=0, initials="sjsrfztj"),
+                _candidate("输入候选", "model", source_index=1, initials="srhx"),
+                _candidate("手机", "rime", source_index=0),
+            ),
+            now_ms=1000,
+        )
+
+        filtered, _, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(mode="prefix_constrained_composing", semantic_query="sj 世界", pinyin_prefix="sj"),
+            mode="prefix_constrained_composing",
+            fresh_candidates=(),
+            rag_lane={"called": True, "suggestionCount": 0},
+            model_lane={"called": True, "predictionCount": 0},
+            now_ms=1300,
+        )
+
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(filtered)
+        self.assertEqual(diag["action"], "prefix_filter")
+        self.assertEqual(diag["prefixRemovedCandidateCount"], 1)
+        self.assertEqual(diag["prefixKeptSideCandidateCount"], 1)
+        self.assertNotEqual(filtered.snapshot_id, first.snapshot_id)
+        self.assertEqual([item.text for item in filtered.candidates], ["设计输入法状态机", "手机"])
+
 
 def _anchors(
     *,
     mode: str = "post_commit_predicting",
     semantic_query: str = "继续 输入法",
     selection_epoch: int = 1,
+    pinyin_prefix: str = "sj",
 ):
     return build_prediction_anchors(
         session_id="squirrel-session",
@@ -210,11 +243,17 @@ def _anchors(
         mode=mode,
         semantic_query=semantic_query,
         query_basis="committedContext",
-        stable_short_pinyin_prefix="sj",
+        stable_short_pinyin_prefix=pinyin_prefix,
     )
 
 
-def _candidate(text: str, source_type: str, *, source_index: int = 0) -> SideCandidateDisplayItem:
+def _candidate(
+    text: str,
+    source_type: str,
+    *,
+    source_index: int = 0,
+    initials: str = "",
+) -> SideCandidateDisplayItem:
     return SideCandidateDisplayItem(
         label="1",
         text=text,
@@ -222,6 +261,7 @@ def _candidate(text: str, source_type: str, *, source_index: int = 0) -> SideCan
         source_type=source_type,
         selection_action="commit_side_candidate",
         source_index=source_index,
+        metadata={"initials": initials} if initials else {},
     )
 
 
