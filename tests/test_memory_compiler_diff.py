@@ -139,7 +139,7 @@ class MemoryCompilerDiffTests(unittest.TestCase):
         self.assertIn("[REDACTED_PATH]", serialized)
         self.assertIn("[REDACTED_EMAIL]", serialized)
 
-    def test_memory_compile_cli_builds_draft_plan_and_apply_rollback(self) -> None:
+    def test_memory_compile_cli_is_dry_run_by_default_and_apply_rollback_uses_diff(self) -> None:
         original = memory_compiler_module.VcpRebuildMemoryGenerator
         FakeCompilerGenerator.calls = []
         memory_compiler_module.VcpRebuildMemoryGenerator = FakeCompilerGenerator
@@ -185,31 +185,20 @@ class MemoryCompilerDiffTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertTrue(compile_payload["dryRun"])
+            self.assertFalse(compile_payload["storedDraft"])
             self.assertTrue(plan_path.exists())
-            self.assertEqual(compile_payload["run"]["status"], "draft")
+            self.assertTrue(compile_payload["run"]["runId"])
+            self.assertEqual(self.core.list_memory_cleanup_runs(limit=10)["items"], [])
             ops = [item["op"] for item in compile_payload["run"]["diffs"]]
             self.assertEqual(ops, ["add_stable_memory", "add_phrase", "tombstone"])
             self.assertEqual(FakeCompilerGenerator.calls[-1]["model"], "fake-gpt-compiler")
             stable_diff = next(item for item in compile_payload["run"]["diffs"] if item["op"] == "add_stable_memory")
             self.assertEqual(stable_diff["payload"]["evidenceEventIds"], [2])
 
-            code, review_payload = self._run_cli_json(
-                "memory-compile-review",
-                "--run-id",
-                compile_payload["run"]["runId"],
-                "--status",
-                "approved",
-            )
-            self.assertEqual(code, 0)
-            self.assertEqual(review_payload["schemaVersion"], "rag-ime.memory-cleanup-review.v1")
-            self.assertEqual(review_payload["run"]["status"], "reviewed")
-            self.assertTrue(all(item["status"] == "approved" for item in review_payload["run"]["diffs"]))
-
             code, apply_payload = self._run_cli_json(
                 "memory-compile-apply",
-                "--run-id",
-                compile_payload["run"]["runId"],
-                "--only-approved",
+                "--diff",
+                str(plan_path),
             )
             self.assertEqual(code, 0)
             self.assertEqual(apply_payload["run"]["status"], "applied")
@@ -246,5 +235,79 @@ class MemoryCompilerDiffTests(unittest.TestCase):
             memory_ids_after = {item["memoryId"] for item in inspect_after["items"]}
             self.assertNotIn("stable:本地检索优先", memory_ids_after)
             self.assertNotIn("phrase:连续预测", memory_ids_after)
+        finally:
+            memory_compiler_module.VcpRebuildMemoryGenerator = original
+
+    def test_memory_compile_save_draft_preserves_review_workflow(self) -> None:
+        original = memory_compiler_module.VcpRebuildMemoryGenerator
+        FakeCompilerGenerator.calls = []
+        memory_compiler_module.VcpRebuildMemoryGenerator = FakeCompilerGenerator
+        try:
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=1_900_000_000_201,
+                    source="manual",
+                    committed_text="这是旧的 raw input 长句，后续应该被编译器建议 tombstone",
+                    recent_context="RAG 输入法 old raw event",
+                    project="wisdom-weasel-rag-ime",
+                    app="manual",
+                    tags=("user-input",),
+                )
+            )
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=1_900_000_000_202,
+                    source="manual",
+                    committed_text="本地检索优先",
+                    recent_context="这是项目里长期稳定的输入法偏好",
+                    project="wisdom-weasel-rag-ime",
+                    app="manual",
+                    tags=("project_requirement", "memory"),
+                )
+            )
+
+            code, compile_payload = self._run_cli_json(
+                "memory-compile",
+                "--project",
+                "wisdom-weasel-rag-ime",
+                "--model-env-path",
+                str(Path(self.tmp.name) / "fake.env"),
+                "--provider",
+                "x1api",
+                "--model",
+                "fake-gpt-compiler",
+                "--save-draft",
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue(compile_payload["storedDraft"])
+            self.assertTrue(
+                any(
+                    item["runId"] == compile_payload["run"]["runId"]
+                    for item in self.core.list_memory_cleanup_runs(limit=10)["items"]
+                )
+            )
+
+            code, review_payload = self._run_cli_json(
+                "memory-compile-review",
+                "--run-id",
+                compile_payload["run"]["runId"],
+                "--status",
+                "approved",
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(review_payload["schemaVersion"], "rag-ime.memory-cleanup-review.v1")
+            self.assertEqual(review_payload["run"]["status"], "reviewed")
+            self.assertTrue(all(item["status"] == "approved" for item in review_payload["run"]["diffs"]))
+
+            code, apply_payload = self._run_cli_json(
+                "memory-compile-apply",
+                "--run-id",
+                compile_payload["run"]["runId"],
+                "--only-approved",
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(apply_payload["run"]["status"], "applied")
         finally:
             memory_compiler_module.VcpRebuildMemoryGenerator = original

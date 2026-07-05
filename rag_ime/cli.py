@@ -316,6 +316,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     memory_compile.add_argument("--output", default="", help="Optional JSON path. When set, writes the dry-run diff plan.")
     memory_compile.add_argument("--allow-private-paths", action="store_true")
     memory_compile.add_argument("--dry-run", action="store_true", help="Accepted for compatibility; memory-compile is always dry-run.")
+    memory_compile.add_argument(
+        "--save-draft",
+        action="store_true",
+        help="Store the generated diff as a reviewable draft run. Default memory-compile does not modify the DB.",
+    )
 
     memory_compile_apply = subparsers.add_parser("memory-compile-apply", help="Apply a reviewed diff emitted by memory-compile")
     memory_compile_apply.add_argument("--diff", default="")
@@ -1286,7 +1291,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_hide_suggestions=max(0, int(args.max_hide_suggestions)),
             )
             plan = cleanup_plan_from_compiler_report(project=args.project, bundle=bundle, report=report)
-            stored_run = core.store_memory_cleanup_plan(plan)
+            stored_run = core.store_memory_cleanup_plan(plan) if bool(args.save_draft) else None
         except MemoryGenerationError as exc:
             print(
                 json.dumps(
@@ -1306,7 +1311,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             plan=plan,
             output_path=str(args.output or ""),
         )
-        payload["run"] = stored_run
+        payload["storedDraft"] = stored_run is not None
+        if stored_run is not None:
+            payload["run"] = stored_run
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 

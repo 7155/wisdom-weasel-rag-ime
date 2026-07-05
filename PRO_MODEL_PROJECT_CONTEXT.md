@@ -171,6 +171,10 @@ can be validated before apply, `cleanup-apply` requires explicit `--apply`, and
 rollback is exposed as a first-class command. Generated stable memory also now
 supports explicit `evidenceEventIds` from the model plus local event-evidence
 backfill when the exported bundle contains a strong matching source event.
+PR-8 `memory-compile` is dry-run by default as well: it emits a sanitized,
+reviewable JSON diff and does not store a cleanup run unless `--save-draft` is
+explicitly passed; applying still requires `memory-compile-apply --diff` or a
+reviewed stored run.
 PR-7 has started: `displayCandidates` now carry compact source badges and color
 tokens (`模/查/忆/词/input`), the Squirrel patch traces those fields without
 changing selection keys, and the foreground trace checker rejects source visual
@@ -204,13 +208,19 @@ separates backend eval DB from installed frontend runtime DB:
 `squirrel-tryout-gate` and defaults to
 `~/Library/Application Support/RagIme/rag-ime.sqlite`. Latest foreground-gate
 evidence: LaunchAgent, sidecar health, local MLX predictor config, Rime
-defaults, and Rime build artifacts are healthy; the remaining machine blocker
-is that `/Users/undo/Library/Input Methods/Squirrel.app` is missing and macOS
-does not expose `im.rime.inputmethod.Squirrel.Hans`, so true foreground soak
-still requires patched Squirrel installation/input-source registration. Cleanup
-diff apply now re-validates stored diffs before writing, and memory optimizer
-evidence avoids leaking long stable-memory source sentences when the compiled
-IME candidate is short.
+defaults, and Rime build artifacts are healthy. Patched Squirrel now builds
+with Xcode 26.6 and is installed at
+`/Users/undo/Library/Input Methods/Squirrel.app`; `installed-bundle` passes and
+LaunchServices stale registrations for old temp/backup/system/derived-data
+Squirrel bundles were removed. The remaining machine blocker is macOS user
+input-source activation: `im.rime.inputmethod.Squirrel.Hans` is visible,
+enabled, selectable, and HIToolbox-enabled, but `thirdPartyEnabled=false`,
+selection returns `TISSelectInputSource failed: -50`, and the current source is
+still `com.apple.keylayout.ABC`. True foreground soak still requires the manual
+System Settings Add flow for `Squirrel - Simplified`. Cleanup diff apply now
+re-validates stored diffs before writing, and memory optimizer evidence avoids
+leaking long stable-memory source sentences when the compiled IME candidate is
+short.
 
 ## Source Repository Structure
 
