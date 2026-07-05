@@ -36,6 +36,37 @@ inputs_after="$tmpdir/inputs-after.plist"
 backup="$HOME/Desktop/com.apple.HIToolbox.rag-ime-backup.$(date +%Y%m%d-%H%M%S).plist"
 inputs_backup="$HOME/Desktop/com.apple.inputsources.rag-ime-backup.$(date +%Y%m%d-%H%M%S).plist"
 
+write_plist_directly() {
+  local source_path="$1"
+  local target_path="$2"
+  /usr/bin/python3 - "$source_path" "$target_path" <<'PY'
+from __future__ import annotations
+
+import os
+import shutil
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+target.parent.mkdir(parents=True, exist_ok=True)
+mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o600
+tmp = target.with_name(f".{target.name}.rag-ime-tmp")
+shutil.copyfile(source, tmp)
+os.chmod(tmp, mode)
+try:
+    os.replace(tmp, target)
+except PermissionError:
+    tmp.unlink(missing_ok=True)
+    with source.open("rb") as src, target.open("wb") as dst:
+        shutil.copyfileobj(src, dst)
+        dst.flush()
+        os.fsync(dst.fileno())
+    os.chmod(target, mode)
+PY
+}
+
 if ! defaults export "$PREF_DOMAIN" "$before" >/dev/null 2>&1; then
   echo "cannot export $PREF_DOMAIN" >&2
   exit 2
@@ -184,11 +215,13 @@ if ! plutil -extract AppleEnabledInputSources xml1 -o "$tmpdir/hitoolbox-after-i
   ! grep -Fq "<string>$INPUT_SOURCE_ID</string>" "$tmpdir/hitoolbox-after-import.plist" ||
   ! grep -Fq "<string>$BUNDLE_ID</string>" "$tmpdir/hitoolbox-after-import.plist"; then
   echo "warning: defaults import did not persist $PREF_DOMAIN; writing user plist directly" >&2
-  if cp "$after" "$HOME/Library/Preferences/$PREF_DOMAIN.plist" 2>/dev/null; then
+  direct_err="$tmpdir/hitoolbox-direct-write.err"
+  if write_plist_directly "$after" "$HOME/Library/Preferences/$PREF_DOMAIN.plist" 2>"$direct_err"; then
     killall cfprefsd >/dev/null 2>&1 || true
     sleep 0.5
   else
     echo "warning: macOS denied direct write to $HOME/Library/Preferences/$PREF_DOMAIN.plist" >&2
+    sed 's/^/warning: direct write detail: /' "$direct_err" >&2
     echo "warning: add $INPUT_SOURCE_ID from System Settings -> Keyboard -> Input Sources -> Add." >&2
   fi
 fi
@@ -197,11 +230,13 @@ if ! plutil -extract AppleEnabledThirdPartyInputSources xml1 -o "$tmpdir/third-p
   ! grep -Fq "<string>$INPUT_SOURCE_ID</string>" "$tmpdir/third-party-after-import.plist" ||
   ! grep -Fq "<string>$BUNDLE_ID</string>" "$tmpdir/third-party-after-import.plist"; then
   echo "warning: defaults import did not persist $INPUTSOURCES_DOMAIN; writing user plist directly" >&2
-  if cp "$inputs_after" "$HOME/Library/Preferences/$INPUTSOURCES_DOMAIN.plist" 2>/dev/null; then
+  direct_err="$tmpdir/third-party-direct-write.err"
+  if write_plist_directly "$inputs_after" "$HOME/Library/Preferences/$INPUTSOURCES_DOMAIN.plist" 2>"$direct_err"; then
     killall cfprefsd >/dev/null 2>&1 || true
     sleep 0.5
   else
     echo "warning: macOS denied direct write to $HOME/Library/Preferences/$INPUTSOURCES_DOMAIN.plist" >&2
+    sed 's/^/warning: direct write detail: /' "$direct_err" >&2
     echo "warning: add $INPUT_SOURCE_ID from System Settings -> Keyboard -> Input Sources -> Add." >&2
   fi
 fi

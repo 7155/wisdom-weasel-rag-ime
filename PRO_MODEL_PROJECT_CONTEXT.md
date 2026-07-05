@@ -221,10 +221,11 @@ with Xcode 26.6 and is installed at
 LaunchServices stale registrations for old temp/backup/system/derived-data
 Squirrel bundles have been reduced to a single live path. A command-line
 preference repair backed up HIToolbox/inputsource plists but macOS denied direct
-persistence of `com.apple.inputsources`; the remaining machine blocker is
-macOS user input-source activation. `im.rime.inputmethod.Squirrel.Hans` is
-visible, enabled, selectable, and HIToolbox-enabled, but
-`thirdPartyEnabled=false`; the current source is
+persistence of `com.apple.inputsources`; atomic replace and in-place write both
+returned `PermissionError: Operation not permitted`. The remaining machine
+blocker is macOS user input-source activation.
+`im.rime.inputmethod.Squirrel.Hans` is visible, enabled, selectable, and
+HIToolbox-enabled, but `thirdPartyEnabled=false`; the current source is
 `com.bytedance.inputmethod.doubaoime.pinyin`. The latest read-only audit reports
 `readiness.state=third-party-missing`, `wouldChangeHitoolbox=false`,
 `wouldChangeThirdParty=true`, `duplicatePathCount=0`, and only
