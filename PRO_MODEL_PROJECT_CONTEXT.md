@@ -766,6 +766,37 @@ if merge_result.mode in {InputMode.POST_COMMIT_PREDICTING, InputMode.PREFIX_CONS
     )
 ```
 
+### Prediction-First Display Contract
+
+File: `rag_ime/prediction_first.py`
+
+The visible candidate text is now bounded separately from commit text. This is
+important for IME usability: a RAG or memory candidate must not render a whole
+evidence sentence in the candidate bar, but selecting it should still commit the
+full intended phrase when appropriate.
+
+```python
+_COMPOSITION_DISPLAY_LIMITS = {"model": 16, "rag": 18, "memory": 18}
+_POST_COMMIT_DISPLAY_LIMITS = {"model": 22, "rag": 20, "memory": 20}
+
+def _side_display_item(candidate, zero_based_index, mode, prefix):
+    display_text, truncated = _bounded_side_display_text(
+        candidate.display_text,
+        source_type=candidate.source_type,
+        mode=mode,
+    )
+    metadata["display_text_truncated"] = truncated
+    if truncated:
+        metadata["full_display_text"] = candidate.display_text
+        metadata["display_text_limit"] = _side_display_text_limit(candidate.source_type, mode)
+    return SideCandidateDisplayItem(
+        text=display_text,
+        insert_text=candidate.insert_text,
+        source_type=candidate.source_type,
+        ...
+    )
+```
+
 ### Snapshot lock and key policy payload
 
 File: `rag_ime/rime_sidecar.py`

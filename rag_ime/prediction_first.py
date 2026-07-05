@@ -39,6 +39,8 @@ _LOW_VALUE_PREDICTION_TOP1 = _LOW_VALUE_WANXIANG_FALLBACK | {
     "这个",
     "那个",
 }
+_COMPOSITION_DISPLAY_LIMITS = {"model": 16, "rag": 18, "memory": 18}
+_POST_COMMIT_DISPLAY_LIMITS = {"model": 22, "rag": 20, "memory": 20}
 
 
 class InputMode(str, Enum):
@@ -627,6 +629,11 @@ def _side_display_item(
     prefix: str,
 ) -> SideCandidateDisplayItem:
     metadata = dict(candidate.metadata)
+    display_text, truncated = _bounded_side_display_text(
+        candidate.display_text,
+        source_type=candidate.source_type,
+        mode=mode,
+    )
     metadata.update(
         {
             "candidate_mode": mode.value,
@@ -634,11 +641,15 @@ def _side_display_item(
             "prediction_first": True,
             "score": candidate.score,
             "confidence": candidate.confidence,
+            "display_text_truncated": truncated,
         }
     )
+    if truncated:
+        metadata["full_display_text"] = candidate.display_text
+        metadata["display_text_limit"] = _side_display_text_limit(candidate.source_type, mode)
     return SideCandidateDisplayItem(
         label=_display_label(zero_based_index),
-        text=candidate.display_text,
+        text=display_text,
         insert_text=candidate.insert_text,
         source_type=candidate.source_type,
         selection_action="commit_side_candidate",
@@ -653,6 +664,22 @@ def _side_display_item(
         display_lane="memory" if candidate.source_type in {"rag", "memory"} else "model",
         metadata=metadata,
     )
+
+
+def _bounded_side_display_text(text: str, *, source_type: str, mode: InputMode) -> tuple[str, bool]:
+    normalized = compact_whitespace(text)
+    limit = _side_display_text_limit(source_type, mode)
+    if limit <= 0 or len(normalized) <= limit:
+        return normalized, False
+    return normalized[:limit].rstrip() + "...", True
+
+
+def _side_display_text_limit(source_type: str, mode: InputMode) -> int:
+    if mode == InputMode.POST_COMMIT_PREDICTING:
+        return _POST_COMMIT_DISPLAY_LIMITS.get(source_type, 0)
+    if mode == InputMode.PREFIX_CONSTRAINED_COMPOSING:
+        return _COMPOSITION_DISPLAY_LIMITS.get(source_type, 0)
+    return 0
 
 
 def _append_rime_candidates(

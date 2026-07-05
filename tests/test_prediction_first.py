@@ -356,6 +356,80 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertFalse(session.should_clear_prediction_panel)
         self.assertEqual(session.selection_scope, "prediction")
 
+    def test_long_rag_evidence_is_not_rendered_as_candidate_text(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=45,
+            committed_context="我想继续优化候选栏",
+            candidates=(),
+            max_visible_candidates=4,
+            max_side_candidates=4,
+        )
+        long_surface = "这是很长的 RAG 证据说明，不应该整段塞进输入法候选栏，只能作为完整提交文本保留"
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[],
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="rag-long-display",
+                    surface_text=long_surface,
+                    suggestion_type="rag",
+                    source_event_id=10,
+                    evidence_preview="完整证据应进入 explain UI",
+                    confidence=0.9,
+                    metadata={"source_type": "rag"},
+                )
+            ],
+        )
+
+        item = result.display_candidates[0]
+        self.assertEqual(item.source_type, "rag")
+        self.assertLessEqual(len(item.text), 23)
+        self.assertTrue(item.text.endswith("..."))
+        self.assertEqual(item.insert_text, long_surface)
+        self.assertTrue(item.metadata["display_text_truncated"])
+        self.assertEqual(item.metadata["full_display_text"], long_surface)
+        self.assertEqual(item.metadata["display_text_limit"], 20)
+
+    def test_composition_model_candidate_text_is_bounded_but_rime_is_original(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=46,
+            raw_input="sj",
+            preedit="sj",
+            committed_context="我想",
+            candidates=(RimeCandidate(text="世界世界世界世界世界世界世界", comment="wanxiang", index=0),),
+            max_visible_candidates=5,
+            max_side_candidates=3,
+        )
+        long_model = "设计输入法状态机并继续优化候选显示稳定性"
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(
+                    text=long_model,
+                    rank=1,
+                    provider_name="qwen-mlx",
+                    latency_ms=20,
+                    confidence=0.9,
+                    metadata={"initials": "sjsrfztjbjxyhhxxswdx"},
+                )
+            ],
+            suggestions=[],
+        )
+
+        model_item = result.display_candidates[0]
+        rime_item = result.display_candidates[1]
+        self.assertEqual(model_item.source_type, "model")
+        self.assertLessEqual(len(model_item.text), 19)
+        self.assertTrue(model_item.text.endswith("..."))
+        self.assertEqual(model_item.insert_text, long_model)
+        self.assertEqual(model_item.metadata["display_text_limit"], 16)
+        self.assertEqual(rime_item.source_type, "rime")
+        self.assertEqual(rime_item.text, "世界世界世界世界世界世界世界")
+
     def test_post_commit_top1_guard_promotes_content_over_low_value_prediction(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",
