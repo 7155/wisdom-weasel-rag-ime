@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .models import InputSuggestion, ModelPrediction, RimeContextSnapshot, SideCandidateDisplayItem
+from .prediction_anchors import PredictionAnchors, build_prediction_anchors_from_snapshot
 from .prediction_first import (
     InputMode,
     PredictionFirstMergeResult,
@@ -11,6 +12,12 @@ from .prediction_first import (
     infer_input_mode,
     merge_prediction_first_candidates,
     resolve_prediction_session,
+)
+from .prediction_stability import (
+    StableCandidateSnapshot,
+    StablePanelState,
+    render_stable_prediction_panel,
+    stable_snapshot_to_payload,
 )
 from .text_utils import compact_whitespace
 
@@ -28,6 +35,9 @@ class PredictionManagerResult:
     candidate_pool_stale: bool
     context_fingerprint: str
     session_fingerprint: str
+    anchors: PredictionAnchors
+    stable_snapshot: StableCandidateSnapshot | None
+    stability: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -50,9 +60,11 @@ class PredictionManager:
     def __init__(self, *, candidate_pool_ttl_ms: int = DEFAULT_CANDIDATE_POOL_TTL_MS) -> None:
         self.candidate_pool_ttl_ms = max(0, int(candidate_pool_ttl_ms))
         self._cache: _CandidateSourceCache | None = None
+        self._panel_state = StablePanelState()
 
     def clear(self) -> None:
         self._cache = None
+        self._panel_state = StablePanelState()
 
     def render(
         self,
@@ -102,11 +114,69 @@ class PredictionManager:
             mode=mode,
             raw_commit_text=raw_commit_text,
         )
+        anchors = build_prediction_anchors_from_snapshot(
+            snapshot=snapshot,
+            mode=merge_result.mode.value,
+            semantic_query=context_fingerprint,
+            query_basis="prediction-manager-context",
+            stable_short_pinyin_prefix=merge_result.pinyin_prefix,
+        )
+        stable_snapshot: StableCandidateSnapshot | None = None
+        stability: dict[str, object] = {
+            "action": "bypass",
+            "reason": "non_prediction_mode",
+            "snapshot": stable_snapshot_to_payload(None),
+            "hardContextAnchor": anchors.hard_context_anchor,
+            "queryAnchor": anchors.query_anchor,
+            "displayAnchor": anchors.display_anchor,
+        }
+        display_candidates = merge_result.display_candidates
+        if merge_result.mode in {InputMode.POST_COMMIT_PREDICTING, InputMode.PREFIX_CONSTRAINED_COMPOSING}:
+            stable_snapshot, self._panel_state, stability = render_stable_prediction_panel(
+                state=self._panel_state,
+                anchors=anchors,
+                mode=merge_result.mode.value,
+                fresh_candidates=merge_result.display_candidates,
+                trigger_decision={
+                    "sourceUpdate": source_update,
+                    "candidatePoolStale": candidate_pool_stale,
+                    "candidatePoolActive": bool(active_model_predictions or active_suggestions),
+                },
+                rag_lane={"called": source_update, "suggestionCount": len(active_suggestions)},
+                model_lane={"called": source_update, "predictionCount": len(active_model_predictions)},
+                now_ms=now_ms,
+            )
+            display_candidates = (
+                tuple(item for item in stable_snapshot.candidates if isinstance(item, SideCandidateDisplayItem))
+                if stable_snapshot
+                else ()
+            )
+            side_count = _side_candidate_count(display_candidates)
+            rime_count = _rime_candidate_count(display_candidates)
+            merge_result = replace(
+                merge_result,
+                display_candidates=display_candidates,
+                policy={
+                    **merge_result.policy,
+                    "panelVisible": bool(display_candidates),
+                    "predictionPanelVisible": side_count > 0,
+                    "shouldClearPredictionPanel": side_count <= 0,
+                    "sideInserted": side_count,
+                    "wanxiangFallbackCount": rime_count,
+                    "stabilityAction": str(stability.get("action") or ""),
+                    "stabilityReason": str(stability.get("reason") or ""),
+                    "stabilityReusedLastGood": bool(stable_snapshot.reused_last_good if stable_snapshot else False),
+                    "stabilitySnapshotId": stable_snapshot.snapshot_id if stable_snapshot else "",
+                },
+            )
+        else:
+            self._panel_state = StablePanelState(generation=self._panel_state.generation)
+
         session = resolve_prediction_session(snapshot=snapshot, merge_result=merge_result)
         return PredictionManagerResult(
             merge_result=merge_result,
             session=session,
-            display_candidates=merge_result.display_candidates,
+            display_candidates=display_candidates,
             reused_candidate_pool=reused_candidate_pool,
             candidate_pool_active=bool(active_model_predictions or active_suggestions),
             candidate_pool_stale=candidate_pool_stale,
@@ -115,8 +185,11 @@ class PredictionManager:
                 snapshot=snapshot,
                 context_fingerprint=context_fingerprint,
                 mode=merge_result.mode.value,
-                display_candidates=merge_result.display_candidates,
+                display_candidates=display_candidates,
             ),
+            anchors=anchors,
+            stable_snapshot=stable_snapshot,
+            stability=stability,
         )
 
     def _updated_cache(
@@ -168,3 +241,11 @@ def _session_fingerprint(
         )
     )
     return hashlib.sha1(material.encode("utf-8")).hexdigest()[:16]
+
+
+def _side_candidate_count(display_candidates: tuple[SideCandidateDisplayItem, ...]) -> int:
+    return sum(1 for item in display_candidates if item.source_type not in {"rime", "raw_english"})
+
+
+def _rime_candidate_count(display_candidates: tuple[SideCandidateDisplayItem, ...]) -> int:
+    return sum(1 for item in display_candidates if item.source_type == "rime")

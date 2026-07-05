@@ -411,6 +411,12 @@ def build_rime_sidecar_response(
             {
                 "sessionFingerprint": manager_result.session_fingerprint,
                 "contextFingerprint": manager_result.context_fingerprint,
+                "hardContextAnchor": manager_result.anchors.hard_context_anchor,
+                "queryAnchor": manager_result.anchors.query_anchor,
+                "displayAnchor": manager_result.anchors.display_anchor,
+                "stableSnapshotId": (
+                    manager_result.stable_snapshot.snapshot_id if manager_result.stable_snapshot else ""
+                ),
                 "requestSeq": snapshot.request_seq,
                 "expiresAfterMs": _prediction_session_expiry_ms(prediction_session_payload),
                 **frontend_transaction_to_payload(snapshot.frontend_transaction),
@@ -427,6 +433,7 @@ def build_rime_sidecar_response(
                 "candidatePoolStale": manager_result.candidate_pool_stale,
                 "candidatePoolContextFingerprint": manager_result.context_fingerprint,
                 "candidatePoolSessionFingerprint": manager_result.session_fingerprint,
+                "stability": manager_result.stability,
             },
         }
     else:
@@ -3184,6 +3191,10 @@ def _bind_display_candidates_to_session(
     context_fingerprint = _string(prediction_session_payload.get("contextFingerprint")) or _context_fingerprint(
         snapshot.committed_context
     )
+    hard_context_anchor = _string(prediction_session_payload.get("hardContextAnchor"))
+    query_anchor = _string(prediction_session_payload.get("queryAnchor"))
+    display_anchor = _string(prediction_session_payload.get("displayAnchor"))
+    stable_snapshot_id = _string(prediction_session_payload.get("stableSnapshotId"))
     phase = _string(prediction_session_payload.get("phase"))
     scope = _string(prediction_session_payload.get("selectionScope"))
     transaction = snapshot.frontend_transaction
@@ -3194,6 +3205,10 @@ def _bind_display_candidates_to_session(
             {
                 "sessionFingerprint": session_fingerprint,
                 "contextFingerprint": context_fingerprint,
+                "hardContextAnchor": hard_context_anchor,
+                "queryAnchor": query_anchor,
+                "displayAnchor": display_anchor,
+                "stableSnapshotId": stable_snapshot_id,
                 "requestSeq": snapshot.request_seq,
                 "sessionId": snapshot.session_id,
                 "predictionSessionPhase": phase,

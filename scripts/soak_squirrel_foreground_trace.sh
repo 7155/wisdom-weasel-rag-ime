@@ -23,6 +23,7 @@ REQUIRE_SIDE_PANEL=0
 REQUIRE_SIDE_COMMIT=1
 REQUIRE_COMMIT_OBSERVED=1
 REQUIRE_POST_COMMIT_FOLLOWUP=1
+REQUIRE_DELETE_RESYNC="${RAG_IME_FOREGROUND_SOAK_REQUIRE_DELETE_RESYNC:-0}"
 REQUIRE_MODERN_PREDICTION_SESSION=1
 AUTO_TYPE=1
 AUTO_QUERY="${RAG_IME_FOREGROUND_SOAK_AUTO_QUERY:-er qi}"
@@ -51,6 +52,8 @@ Options:
   --side-panel-only     Require any side panel instead of mixed layout
   --no-followup         Do not require post-commit follow-up
   --no-commit-observed  Do not require a commit_observed trace before follow-up
+  --require-delete-resync
+                       Require delete/backspace invalidation followed by committed-context resync
   --no-clear            Do not clear the existing frontend trace first
   --no-open             Do not open the test editor file
   --no-select           Do not auto-select the Squirrel input source
@@ -86,6 +89,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-commit-observed)
       REQUIRE_COMMIT_OBSERVED=0
+      ;;
+    --require-delete-resync)
+      REQUIRE_DELETE_RESYNC=1
       ;;
     --no-clear)
       CLEAR_TRACE=0
@@ -160,6 +166,9 @@ fi
 if [[ "$REQUIRE_POST_COMMIT_FOLLOWUP" == "1" ]]; then
   soak_args+=(--require-post-commit-followup)
 fi
+if [[ "$REQUIRE_DELETE_RESYNC" == "1" ]]; then
+  soak_args+=(--require-delete-resync)
+fi
 if [[ "$REQUIRE_MODERN_PREDICTION_SESSION" == "1" ]]; then
   soak_args+=(--require-modern-prediction-session)
 fi
@@ -186,6 +195,7 @@ require_side_panel=$REQUIRE_SIDE_PANEL
 require_side_commit=$REQUIRE_SIDE_COMMIT
 require_commit_observed=$REQUIRE_COMMIT_OBSERVED
 require_post_commit_followup=$REQUIRE_POST_COMMIT_FOLLOWUP
+require_delete_resync=$REQUIRE_DELETE_RESYNC
 require_modern_prediction_session=$REQUIRE_MODERN_PREDICTION_SESSION
 min_sidecar_requests=$MIN_SIDECAR_REQUESTS
 min_sidecar_applied=$MIN_SIDECAR_APPLIED

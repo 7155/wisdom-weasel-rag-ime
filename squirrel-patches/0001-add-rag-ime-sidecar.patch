@@ -1950,6 +1950,9 @@ index c2adf74..3cfc0e5 100644
 +      self.traceRagImeFrontendEvent("committed_context_resynced_after_delete", fields: [
 +        "keyCode": Int(keyCode),
 +        "inputGeneration": generation,
++        "frontendRevision": frontendRevision,
++        "selectionEpoch": selectionEpoch,
++        "committedContextHash": self.ragImeStableTextHash(actual),
 +        "committedContextChars": actual.count,
 +        "committedContextSuffix": String(actual.suffix(80)),
 +      ])

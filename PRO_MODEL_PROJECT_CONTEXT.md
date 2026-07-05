@@ -405,6 +405,25 @@ Acceptance evidence should come from frontend trace events such as:
 - `committed_context_resynced_after_delete`
 - `sidecar_response_dropped`
 
+The frontend and soak trace checkers now support `--require-delete-resync`.
+That gate pairs `display_invalidated_by_input_change(reason=delete_key)` with
+`committed_context_resynced_after_delete` by timestamp/input generation, so a
+real foreground trace can explicitly prove Backspace/Delete rebuilt context
+from the actual client state. The Squirrel patch now includes
+`frontendRevision`, `selectionEpoch`, and `committedContextHash` on the resync
+event.
+
+Prediction stability is now a first-class layer. `rag_ime/prediction_anchors.py`
+splits identity into `hardContextAnchor`, `queryAnchor`, and `displayAnchor` so
+Backspace/Delete/app/input-source changes can hard-clear old candidates while
+ordinary preedit/Rime candidate changes can refresh without flashing the panel.
+`rag_ime/prediction_stability.py` creates `StableCandidateSnapshot` records and
+returns explicit actions such as `fresh`, `soft_hold`, `reuse_last_good`,
+`soft_hide`, and `hard_clear`. `PredictionManager.render(...)` applies this
+only in post-commit and prefix-constrained prediction modes, then exposes the
+diagnostics through `predictionFirst.policy.stability` and anchor fields through
+`predictionSession`.
+
 ### Sidecar merge path
 
 File: `rag_ime/rime_sidecar.py`
@@ -575,6 +594,117 @@ candidate source diagnostics are active.
 These excerpts are included because the user explicitly needs the Pro model to
 read code even when repository browsing is unavailable. They are shortened, but
 they preserve the current contracts and the next edit points.
+
+### Prediction display stability layer
+
+Files: `rag_ime/prediction_anchors.py`, `rag_ime/prediction_stability.py`,
+`rag_ime/prediction_manager.py`
+
+```python
+@dataclass(frozen=True)
+class PredictionAnchors:
+    hard_context_anchor: str
+    query_anchor: str
+    display_anchor: str
+    hard_fields: dict[str, object]
+    query_fields: dict[str, object]
+    display_fields: dict[str, object]
+
+
+def build_prediction_anchors_from_snapshot(
+    *,
+    snapshot: RimeContextSnapshot,
+    mode: str,
+    semantic_query: str = "",
+    query_basis: str = "",
+    stable_short_pinyin_prefix: str = "",
+) -> PredictionAnchors:
+    transaction = snapshot.frontend_transaction
+    committed_hash = transaction.committed_context_hash or stable_text_hash(snapshot.committed_context)
+    composition_hash = transaction.composition_hash or stable_text_hash(snapshot.preedit or snapshot.raw_input)
+    return build_prediction_anchors(
+        session_id=snapshot.session_id,
+        panel_session_id=transaction.panel_session_id,
+        front_app_bundle_id=transaction.front_app_bundle_id or snapshot.app,
+        input_source_id=transaction.input_source_id,
+        selection_epoch=transaction.selection_epoch,
+        committed_context_hash=committed_hash,
+        composition_hash=composition_hash,
+        mode=mode,
+        semantic_query=semantic_query,
+        query_basis=query_basis,
+        stable_short_pinyin_prefix=stable_short_pinyin_prefix,
+        preedit=snapshot.preedit or snapshot.raw_input,
+        rime_candidates=snapshot.candidates,
+    )
+```
+
+```python
+@dataclass(frozen=True)
+class StableCandidateSnapshot:
+    snapshot_id: str
+    generation: int
+    hard_context_anchor: str
+    query_anchor: str
+    display_anchor: str
+    mode: str
+    min_visible_until_ms: int
+    expires_at_ms: int
+    candidates: tuple[object, ...]
+    source_summary: dict[str, int]
+    lane_status: dict[str, object]
+    reused_last_good: bool = False
+    holdover_hit: bool = False
+    stale_level: str = "fresh"
+
+
+def render_stable_prediction_panel(...):
+    if hard_clear_reason:
+        return None, cleared_state, {"action": "hard_clear", ...}
+    if fresh_candidates:
+        return fresh_snapshot, next_state, {"action": "fresh", ...}
+    if previous.hard_context_anchor != anchors.hard_context_anchor:
+        return None, cleared_state, {"action": "hard_clear", ...}
+    if previous.display_anchor != anchors.display_anchor or now > previous.expires_at_ms:
+        return None, next_state, {"action": "soft_hide", ...}
+    if now <= previous.min_visible_until_ms:
+        return reused_snapshot, next_state, {"action": "soft_hold", ...}
+    if lane_empty_or_timed_out:
+        return reused_snapshot, next_state, {"action": "reuse_last_good", ...}
+```
+
+```python
+if merge_result.mode in {InputMode.POST_COMMIT_PREDICTING, InputMode.PREFIX_CONSTRAINED_COMPOSING}:
+    stable_snapshot, self._panel_state, stability = render_stable_prediction_panel(
+        state=self._panel_state,
+        anchors=anchors,
+        mode=merge_result.mode.value,
+        fresh_candidates=merge_result.display_candidates,
+        trigger_decision={
+            "sourceUpdate": source_update,
+            "candidatePoolStale": candidate_pool_stale,
+            "candidatePoolActive": bool(active_model_predictions or active_suggestions),
+        },
+        rag_lane={"called": source_update, "suggestionCount": len(active_suggestions)},
+        model_lane={"called": source_update, "predictionCount": len(active_model_predictions)},
+        now_ms=now_ms,
+    )
+    display_candidates = tuple(item for item in stable_snapshot.candidates if isinstance(item, SideCandidateDisplayItem)) if stable_snapshot else ()
+    merge_result = replace(
+        merge_result,
+        display_candidates=display_candidates,
+        policy={
+            **merge_result.policy,
+            "panelVisible": bool(display_candidates),
+            "predictionPanelVisible": side_count > 0,
+            "shouldClearPredictionPanel": side_count <= 0,
+            "stabilityAction": str(stability.get("action") or ""),
+            "stabilityReason": str(stability.get("reason") or ""),
+            "stabilityReusedLastGood": bool(stable_snapshot.reused_last_good if stable_snapshot else False),
+            "stabilitySnapshotId": stable_snapshot.snapshot_id if stable_snapshot else "",
+        },
+    )
+```
 
 ### PR-1 frontend transaction model
 

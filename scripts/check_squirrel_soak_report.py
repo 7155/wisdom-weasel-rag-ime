@@ -36,6 +36,7 @@ def main() -> int:
     parser.add_argument("--require-side-commit", action="store_true")
     parser.add_argument("--require-commit-observed", action="store_true")
     parser.add_argument("--require-post-commit-followup", action="store_true")
+    parser.add_argument("--require-delete-resync", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
     parser.add_argument("--min-sidecar-requests", type=int, default=1)
     parser.add_argument("--min-sidecar-applied", type=int, default=1)
@@ -69,6 +70,7 @@ def main() -> int:
             require_side_commit=args.require_side_commit,
             require_commit_observed=args.require_commit_observed,
             require_post_commit_followup=args.require_post_commit_followup,
+            require_delete_resync=args.require_delete_resync,
             require_modern_prediction_session=args.require_modern_prediction_session,
             min_sidecar_requests=max(0, args.min_sidecar_requests),
             min_sidecar_applied=max(0, args.min_sidecar_applied),
@@ -98,6 +100,7 @@ def build_soak_report(
     require_side_commit: bool,
     require_commit_observed: bool,
     require_post_commit_followup: bool,
+    require_delete_resync: bool,
     require_modern_prediction_session: bool,
     min_sidecar_requests: int,
     min_sidecar_applied: int,
@@ -118,6 +121,7 @@ def build_soak_report(
         require_side_commit=require_side_commit,
         require_commit_observed=require_commit_observed,
         require_post_commit_followup=require_post_commit_followup,
+        require_delete_resync=require_delete_resync,
         require_modern_prediction_session=require_modern_prediction_session,
     )
 
@@ -197,6 +201,7 @@ def build_soak_report(
             "sideCommit": require_side_commit,
             "commitObserved": require_commit_observed,
             "postCommitFollowup": require_post_commit_followup,
+            "deleteResync": require_delete_resync,
             "modernPredictionSession": require_modern_prediction_session,
         },
         "thresholds": thresholds,
@@ -207,6 +212,7 @@ def build_soak_report(
             "pairedSideCommitCount": len(side_commit_pairs),
             "unmatchedNumberKeyRouteCount": len(unmatched_routes),
             "postCommitFollowupCount": len(post_commit_followups),
+            "deleteResyncObserved": bool(frontend_report.get("latestDeleteResync")),
             "staleAppliedResponseCount": len(stale_applied),
             "staleResponseDropCount": int(event_counts.get("sidecar_response_dropped_stale", 0))
             + int(event_counts.get("sidecar_response_dropped", 0)),

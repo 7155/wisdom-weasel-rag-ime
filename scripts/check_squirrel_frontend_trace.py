@@ -35,6 +35,7 @@ def main() -> int:
     parser.add_argument("--require-side-commit", action="store_true")
     parser.add_argument("--require-commit-observed", action="store_true")
     parser.add_argument("--require-post-commit-followup", action="store_true")
+    parser.add_argument("--require-delete-resync", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
     parser.add_argument("--print-last", type=int, default=5)
     args = parser.parse_args()
@@ -55,6 +56,7 @@ def main() -> int:
             require_side_commit=args.require_side_commit,
             require_commit_observed=args.require_commit_observed,
             require_post_commit_followup=args.require_post_commit_followup,
+            require_delete_resync=args.require_delete_resync,
             require_modern_prediction_session=args.require_modern_prediction_session,
         ):
             break
@@ -68,6 +70,7 @@ def main() -> int:
         "sideCommit": bool(args.require_side_commit),
         "commitObserved": bool(args.require_commit_observed),
         "postCommitFollowup": bool(args.require_post_commit_followup),
+        "deleteResync": bool(args.require_delete_resync),
         "modernPredictionSession": bool(args.require_modern_prediction_session),
     }
     report["passed"] = report_passes(
@@ -77,6 +80,7 @@ def main() -> int:
         require_side_commit=args.require_side_commit,
         require_commit_observed=args.require_commit_observed,
         require_post_commit_followup=args.require_post_commit_followup,
+        require_delete_resync=args.require_delete_resync,
         require_modern_prediction_session=args.require_modern_prediction_session,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -111,6 +115,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     stale_selection_rejected = latest_matching(events, lambda event: event.get("event") == "stale_candidate_selection_rejected")
     modern_prediction_session = latest_matching(events, is_modern_prediction_session_event)
     commit_observed = latest_matching(events, lambda event: event.get("event") == "commit_observed")
+    delete_resync = latest_delete_resync(events)
     side_commit_barrier_ms = max(
         event_timestamp_ms(mixed_panel),
         event_timestamp_ms(side_panel),
@@ -130,6 +135,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "frontendTransactionViolations": frontend_transaction_violations(events),
         "latestModernPredictionSession": summarize_event(modern_prediction_session),
         "latestCommitObserved": summarize_event(commit_observed),
+        "latestDeleteResync": summarize_delete_resync(delete_resync),
         "latestMixedPanel": summarize_event(mixed_panel),
         "latestSidePanel": summarize_event(side_panel),
         "latestMixedTextLayout": summarize_event(mixed_text_layout),
@@ -346,6 +352,32 @@ def is_stale_response_drop_event(event: dict[str, Any]) -> bool:
     return str(event.get("event") or "") in {"sidecar_response_dropped", "sidecar_response_dropped_stale"}
 
 
+def latest_delete_resync(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    latest: dict[str, Any] | None = None
+    for invalidation_index, invalidation_event in enumerate(events):
+        if invalidation_event.get("event") != "display_invalidated_by_input_change":
+            continue
+        if str(invalidation_event.get("reason") or "") not in {"delete_key", "backspace", "delete"}:
+            continue
+        invalidation_generation = invalidation_event.get("inputGeneration")
+        invalidation_timestamp = event_timestamp_ms(invalidation_event)
+        for resync_event in events[invalidation_index + 1 :]:
+            if resync_event.get("event") != "committed_context_resynced_after_delete":
+                continue
+            if event_timestamp_ms(resync_event) < invalidation_timestamp:
+                continue
+            resync_generation = resync_event.get("inputGeneration")
+            if invalidation_generation is not None or resync_generation is not None:
+                if str(invalidation_generation) != str(resync_generation):
+                    continue
+            latest = {
+                "invalidation": invalidation_event,
+                "resync": resync_event,
+            }
+            break
+    return latest
+
+
 def frontend_transaction_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     violations: list[dict[str, Any]] = []
     for event in events:
@@ -523,6 +555,7 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "separators": event.get("separators"),
         "key": event.get("key"),
         "selectionKey": event.get("selectionKey"),
+        "keyCode": event.get("keyCode"),
         "sourceType": event.get("sourceType"),
         "sessionFingerprint": event.get("sessionFingerprint"),
         "commitTextPreview": event.get("commitTextPreview"),
@@ -532,6 +565,7 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "responseAgeMs": event.get("responseAgeMs"),
         "inputGeneration": event.get("inputGeneration"),
         "liveInputGeneration": event.get("liveInputGeneration"),
+        "previousDisplayCount": event.get("previousDisplayCount"),
         "frontendRevision": event.get("frontendRevision"),
         "selectionEpoch": event.get("selectionEpoch"),
         "panelSessionId": event.get("panelSessionId"),
@@ -574,6 +608,15 @@ def summarize_post_commit_followup(match: dict[str, Any] | None) -> dict[str, An
     }
 
 
+def summarize_delete_resync(match: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not match:
+        return None
+    return {
+        "invalidation": summarize_event(match.get("invalidation")),
+        "resync": summarize_event(match.get("resync")),
+    }
+
+
 def report_passes(
     report: dict[str, Any],
     *,
@@ -582,6 +625,7 @@ def report_passes(
     require_side_commit: bool,
     require_commit_observed: bool,
     require_post_commit_followup: bool,
+    require_delete_resync: bool,
     require_modern_prediction_session: bool,
 ) -> bool:
     if require_mixed_panel and not report.get("latestMixedPanel"):
@@ -595,6 +639,8 @@ def report_passes(
     if require_commit_observed and not report.get("latestCommitObserved"):
         return False
     if require_post_commit_followup and not report.get("latestPostCommitFollowup"):
+        return False
+    if require_delete_resync and not report.get("latestDeleteResync"):
         return False
     if require_modern_prediction_session and not report.get("latestModernPredictionSession"):
         return False

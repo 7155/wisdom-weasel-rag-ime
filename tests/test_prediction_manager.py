@@ -67,7 +67,7 @@ class PredictionManagerTests(unittest.TestCase):
         )
         self.assertEqual([item.source_type for item in result.display_candidates], ["model", "memory", "rime", "rime"])
 
-    def test_expired_pool_clears_post_commit_prediction_panel(self) -> None:
+    def test_expired_pool_soft_holds_post_commit_during_min_visible_window(self) -> None:
         manager = PredictionManager(candidate_pool_ttl_ms=1200)
         manager.render(
             snapshot=RimeContextSnapshot(session_id="s1", request_seq=1, committed_context="我想"),
@@ -86,7 +86,32 @@ class PredictionManagerTests(unittest.TestCase):
         )
 
         self.assertTrue(result.candidate_pool_stale)
+        self.assertEqual(result.stability["action"], "soft_hold")
         self.assertFalse(result.candidate_pool_active)
+        self.assertEqual(result.session.phase, PredictionSessionPhase.POST_COMMIT)
+        self.assertFalse(result.session.should_clear_prediction_panel)
+        self.assertEqual([item.text for item in result.display_candidates], ["做一个本地 RAG 输入法"])
+
+    def test_expired_pool_clears_after_stability_window(self) -> None:
+        manager = PredictionManager(candidate_pool_ttl_ms=1200)
+        manager.render(
+            snapshot=RimeContextSnapshot(session_id="s1", request_seq=1, committed_context="我想"),
+            model_predictions=[_model("做一个本地 RAG 输入法", initials="zygbdragsrf")],
+            now_ms=100,
+        )
+
+        result = manager.render(
+            snapshot=RimeContextSnapshot(
+                session_id="s1",
+                request_seq=2,
+                committed_context="我想",
+                idle_ms=3000,
+            ),
+            now_ms=2301,
+        )
+
+        self.assertTrue(result.candidate_pool_stale)
+        self.assertEqual(result.stability["action"], "soft_hide")
         self.assertEqual(result.session.phase, PredictionSessionPhase.HIDDEN)
         self.assertTrue(result.session.should_clear_prediction_panel)
         self.assertEqual(result.display_candidates, ())

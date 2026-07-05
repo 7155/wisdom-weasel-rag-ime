@@ -19,6 +19,7 @@ SELECT_INPUT_SOURCE=1
 REQUIRE_SIDE_COMMIT=1
 REQUIRE_COMMIT_OBSERVED=1
 REQUIRE_POST_COMMIT_FOLLOWUP=1
+REQUIRE_DELETE_RESYNC="${RAG_IME_FOREGROUND_TRACE_REQUIRE_DELETE_RESYNC:-0}"
 REQUIRE_MIXED_PANEL=1
 REQUIRE_SIDE_PANEL=0
 REQUIRE_HITOOLBOX_ENABLED="${RAG_IME_FOREGROUND_TRACE_REQUIRE_HITOOLBOX_ENABLED:-0}"
@@ -46,6 +47,8 @@ Options:
   --side-panel-only     Require any model/RAG/memory side panel instead of mixed model+RAG layout
   --no-followup         Do not require post-commit follow-up after side commit
   --no-commit-observed  Do not require a commit_observed trace before follow-up
+  --require-delete-resync
+                       Require delete/backspace invalidation followed by committed-context resync
   --no-clear            Do not clear the existing frontend trace first
   --no-open             Do not open the TextEdit test file
   --no-select           Do not try to select the Squirrel input source
@@ -84,6 +87,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-commit-observed)
       REQUIRE_COMMIT_OBSERVED=0
+      ;;
+    --require-delete-resync)
+      REQUIRE_DELETE_RESYNC=1
       ;;
     --no-clear)
       CLEAR_TRACE=0
@@ -164,6 +170,9 @@ fi
 if [[ "$REQUIRE_POST_COMMIT_FOLLOWUP" == "1" ]]; then
   trace_args+=(--require-post-commit-followup)
 fi
+if [[ "$REQUIRE_DELETE_RESYNC" == "1" ]]; then
+  trace_args+=(--require-delete-resync)
+fi
 if [[ "$REQUIRE_MODERN_PREDICTION_SESSION" == "1" ]]; then
   trace_args+=(--require-modern-prediction-session)
 fi
@@ -182,6 +191,7 @@ select_input_source=$SELECT_INPUT_SOURCE
 require_side_commit=$REQUIRE_SIDE_COMMIT
 require_commit_observed=$REQUIRE_COMMIT_OBSERVED
 require_post_commit_followup=$REQUIRE_POST_COMMIT_FOLLOWUP
+require_delete_resync=$REQUIRE_DELETE_RESYNC
 require_mixed_panel=$REQUIRE_MIXED_PANEL
 require_side_panel=$REQUIRE_SIDE_PANEL
 require_hitoolbox_enabled=$REQUIRE_HITOOLBOX_ENABLED
