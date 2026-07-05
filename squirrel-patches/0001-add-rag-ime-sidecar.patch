@@ -874,6 +874,8 @@ index c2adf74..3cfc0e5 100644
 +  private var ragImeDisplaySessionFingerprint: String = ""
 +  private var ragImeDisplaySnapshotId: String = ""
 +  private var ragImeDisplayNumberKeyPolicy: String = ""
++  private var ragImeDisplayTabPolicy: String = ""
++  private var ragImeDisplayOptionNumberPolicy: String = ""
 +  private let ragImeDisplayHoldoverDuration: TimeInterval = 2.6
 +  private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 8.0
 +  private let ragImeActiveResponseApplyWindowMs: Int = 9000
@@ -906,13 +908,28 @@ index c2adf74..3cfc0e5 100644
 +      if isRagImeDeleteKey(keyCode, modifiers: modifiers) {
 +        invalidateRagImeDisplayForInputChange(reason: "delete_key", keyCode: keyCode)
 +      }
-       var keyChars = event.charactersIgnoringModifiers
++      if keyCode == 48
++        && !modifiers.contains(.command)
++        && !modifiers.contains(.control)
++        && !modifiers.contains(.option)
++        && ragImeDisplayTabPolicy == "accept_top_prediction"
++        && selectRagImePredictionCandidate(atOrdinal: 1, route: "tab", key: "tab") {
++        return true
++      }
+      var keyChars = event.charactersIgnoringModifiers
        let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
        if let code = keyChars?.first,
 @@ -106,6 +132,9 @@ final class SquirrelInputController: IMKInputController {
          keyChars = event.characters
-       }
-       if let char = keyChars?.first {
+      }
+      if let char = keyChars?.first {
++        if modifiers.contains(.option)
++          && !modifiers.contains(.command)
++          && !modifiers.contains(.control)
++          && ragImeDisplayOptionNumberPolicy == "select_prediction_by_ordinal"
++          && selectRagImePredictionCandidate(forKey: String(char), route: "option_number") {
++          return true
++        }
 +        if !modifiers.contains(.control) && !modifiers.contains(.option) && ragImeDisplayNumberKeyPolicy == "select_visible_candidate" && selectRagImeSideCandidate(forKey: String(char)) {
 +          return true
 +        }
@@ -1102,6 +1119,65 @@ index c2adf74..3cfc0e5 100644
 +      "key": key,
 +      "index": index,
 +      "candidate": ragImeTraceCandidateSummary(ragImeDisplayCandidates[index], index: index),
++    ])
++    return selectCandidate(index)
++  }
++
++  func selectRagImePredictionCandidate(forKey key: String, route: String) -> Bool {
++    let ordinal: Int
++    if key == "0" {
++      ordinal = 10
++    } else if let parsed = Int(key), parsed > 0 {
++      ordinal = parsed
++    } else {
++      return false
++    }
++    return selectRagImePredictionCandidate(atOrdinal: ordinal, route: route, key: key)
++  }
++
++  func selectRagImePredictionCandidate(atOrdinal ordinal: Int, route: String, key: String) -> Bool {
++    guard ragImePanelUsesDisplayCandidates else {
++      return false
++    }
++    guard canSelectCurrentRagImeDisplayCandidates() else {
++      traceRagImeFrontendEvent("stale_candidate_selection_rejected", fields: [
++        "key": key,
++        "route": route,
++        "reason": "prediction_display_session_not_live",
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeDisplayPanelSessionId,
++      ])
++      clearRagImeDisplayCandidates()
++      return false
++    }
++    guard ordinal > 0 && ordinal <= ragImeDisplayCandidates.count else {
++      return false
++    }
++    let index = ordinal - 1
++    let candidate = ragImeDisplayCandidates[index]
++    guard candidate.sourceType != "raw_english" && candidate.sourceType != "rime" else {
++      return false
++    }
++    guard canSelectRagImeDisplayCandidate(candidate) else {
++      traceRagImeFrontendEvent("stale_candidate_selection_rejected", fields: [
++        "key": key,
++        "route": route,
++        "reason": "prediction_candidate_transaction_mismatch",
++        "index": index,
++        "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeDisplayPanelSessionId,
++      ])
++      clearRagImeDisplayCandidates()
++      return false
++    }
++    let eventName = route == "tab" ? "tab_key_route" : "option_number_route"
++    traceRagImeFrontendEvent(eventName, fields: [
++      "key": key,
++      "route": route,
++      "ordinal": ordinal,
++      "index": index,
++      "candidate": ragImeTraceCandidateSummary(candidate, index: index),
 +    ])
 +    return selectCandidate(index)
 +  }
@@ -1601,6 +1677,8 @@ index c2adf74..3cfc0e5 100644
 +    ragImeDisplaySessionFingerprint = responseSessionFingerprint
 +    ragImeDisplaySnapshotId = response.predictionSession?.snapshotId ?? response.predictionSession?.stableSnapshotId ?? ""
 +    ragImeDisplayNumberKeyPolicy = response.keyPolicy?.numberKeys ?? ""
++    ragImeDisplayTabPolicy = response.keyPolicy?.tab ?? ""
++    ragImeDisplayOptionNumberPolicy = response.keyPolicy?.optionNumber ?? ""
 +    ragImeDisplayPanelSessionId = response.panelSessionId
 +    ragImeDisplayCompositionHash = response.compositionHash
 +    ragImeDisplayCommittedContextHash = response.committedContextHash
@@ -2429,6 +2507,8 @@ index c2adf74..3cfc0e5 100644
 +    ragImeDisplaySessionFingerprint = ""
 +    ragImeDisplaySnapshotId = ""
 +    ragImeDisplayNumberKeyPolicy = ""
++    ragImeDisplayTabPolicy = ""
++    ragImeDisplayOptionNumberPolicy = ""
 +    ragImeDisplayPanelSessionId = ""
 +    ragImeDisplayCompositionHash = ""
 +    ragImeDisplayCommittedContextHash = ""

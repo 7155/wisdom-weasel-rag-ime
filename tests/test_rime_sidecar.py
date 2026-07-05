@@ -26,6 +26,7 @@ from rag_ime.rime_sidecar import (
     clear_prediction_manager_cache,
     clear_refresh_debounce_cache,
     decide_side_candidate_refresh,
+    key_policy_for_prediction_session,
     merge_display_candidates,
     parse_rime_context_payload,
     prediction_trace_events_payload,
@@ -712,6 +713,36 @@ class RimeSidecarTests(unittest.TestCase):
         clear_model_prediction_holdover_cache()
         clear_prediction_manager_cache()
         clear_refresh_debounce_cache()
+
+    def test_post_commit_number_keys_are_pass_through(self) -> None:
+        policy = key_policy_for_prediction_session(
+            {"phase": "post_commit", "inputMode": "post_commit_predicting"}
+        )
+
+        self.assertEqual(policy["numberKeys"], "pass_through")
+
+    def test_post_commit_tab_accepts_top_prediction(self) -> None:
+        policy = key_policy_for_prediction_session(
+            {"phase": "post_commit", "inputMode": "post_commit_predicting"}
+        )
+
+        self.assertEqual(policy["tab"], "accept_top_prediction")
+
+    def test_post_commit_option_number_accepts_prediction_by_ordinal(self) -> None:
+        policy = key_policy_for_prediction_session(
+            {"phase": "post_commit", "inputMode": "post_commit_predicting"}
+        )
+
+        self.assertEqual(policy["optionNumber"], "select_prediction_by_ordinal")
+
+    def test_composition_number_keys_select_visible_candidates(self) -> None:
+        policy = key_policy_for_prediction_session(
+            {"phase": "prefix_constrained", "inputMode": "prefix_constrained_composing"}
+        )
+
+        self.assertEqual(policy["numberKeys"], "select_visible_candidate")
+        self.assertEqual(policy["tab"], "page_or_accept_by_rime_mode")
+        self.assertEqual(policy["optionNumber"], "select_side_candidate")
 
     def test_semantic_query_uses_rime_candidates_not_dirty_raw_pinyin(self) -> None:
         snapshot = parse_rime_context_payload(

@@ -437,8 +437,11 @@ fields; `displayCandidates[]` includes `snapshotId`, `candidateStableId`,
 `candidateOrdinal`, `visibleLabel`, `sourceBadge`, `sourceStability`, anchors,
 and snapshot TTL fields. The Squirrel patch decodes these fields and only routes
 ordinary number keys when `keyPolicy.numberKeys == "select_visible_candidate"`,
-so post-commit predictions use `numberKeys=pass_through`. The patch now also
-rejects stale candidate selection when `snapshotId`, `candidateOrdinal`,
+so post-commit predictions use `numberKeys=pass_through`. The patch also routes
+post-commit `Tab` to the top prediction only when
+`keyPolicy.tab == "accept_top_prediction"` and routes `Option+number` by ordinal
+only when `keyPolicy.optionNumber == "select_prediction_by_ordinal"`. The patch
+now rejects stale candidate selection when `snapshotId`, `candidateOrdinal`,
 `candidateStableId`, candidate expiry, session fingerprint, or foreground
 transaction metadata no longer match; the frontend trace checker compares the
 same snapshot-lock fields before accepting a number-key route/commit pair.
