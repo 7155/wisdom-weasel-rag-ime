@@ -905,21 +905,10 @@ class CooldownPredictionProvider:
 
 def prediction_provider_from_env(env: dict[str, str] | None = None) -> PredictionProvider:
     source = _prediction_env_with_predictor_file(env)
-    provider = (
-        source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
-        or source.get("RAG_IME_AI_PROVIDER", "").strip().lower()
-    )
-    base_url = _canonical_x1api_base_url(
-        source.get("RAG_IME_PREDICTOR_BASE_URL", "").strip()
-        or source.get("RAG_IME_AI_BASE_URL", "").strip()
-        or source.get("X1API_BASE_URL", "").strip()
-        or source.get("API_BASE_URL", "").strip()
-    )
+    provider = source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
+    base_url = _canonical_x1api_base_url(source.get("RAG_IME_PREDICTOR_BASE_URL", "").strip())
     model = (
         source.get("RAG_IME_PREDICTOR_MODEL", "").strip()
-        or source.get("RAG_IME_AI_MODEL", "").strip()
-        or source.get("X1API_MODEL", "").strip()
-        or source.get("MODEL", "").strip()
         or source.get("RAG_IME_MLX_MODEL", "").strip()
     )
     if not provider and base_url and model:
@@ -969,12 +958,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
             OpenAICompatiblePredictionConfig(
             base_url=base_url,
             model=model,
-            api_key=(
-                source.get("RAG_IME_PREDICTOR_API_KEY", "").strip()
-                or source.get("RAG_IME_AI_API_KEY", "").strip()
-                or source.get("X1API_API_KEY", "").strip()
-                or source.get("API_KEY", "").strip()
-            ),
+            api_key=source.get("RAG_IME_PREDICTOR_API_KEY", "").strip(),
             profile=profile,
             prompt_mode=source.get("RAG_IME_PREDICTOR_PROMPT_MODE", defaults.prompt_mode).strip(),
             timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", defaults.timeout_ms) / 1000,
@@ -998,11 +982,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
 
 def _prediction_env_with_predictor_file(env: dict[str, str] | None) -> dict[str, str]:
     source = dict(os.environ if env is None else env)
-    env_path = (
-        source.get("RAG_IME_PREDICTOR_ENV", "").strip()
-        or source.get("RAG_IME_MODEL_ENV", "").strip()
-        or source.get("RAG_IME_X1API_ENV", "").strip()
-    )
+    env_path = source.get("RAG_IME_PREDICTOR_ENV", "").strip()
     if not env_path:
         return source
     path = Path(env_path).expanduser()
@@ -1016,7 +996,7 @@ def _prediction_env_with_predictor_file(env: dict[str, str] | None) -> dict[str,
         key, value = line.split("=", 1)
         file_values[key.strip()] = value.strip().strip('"').strip("'")
     merged = {**file_values, **source}
-    for key in ("RAG_IME_PREDICTOR_BASE_URL", "RAG_IME_AI_BASE_URL", "X1API_BASE_URL", "API_BASE_URL"):
+    for key in ("RAG_IME_PREDICTOR_BASE_URL",):
         if merged.get(key):
             merged[key] = _canonical_x1api_base_url(str(merged[key]))
     return merged

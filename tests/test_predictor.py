@@ -812,7 +812,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertFalse(status["capabilities"]["streaming"])
         self.assertTrue(status["cooldown"]["enabled"])
 
-    def test_prediction_provider_can_use_model_env_file_for_x1api(self) -> None:
+    def test_model_env_file_does_not_configure_realtime_predictor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / ".env"
             env_path.write_text(
@@ -832,11 +832,7 @@ class PredictionProviderTests(unittest.TestCase):
                 }
             )
 
-        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
-        assert isinstance(provider, OpenAICompatiblePredictionProvider)
-        self.assertEqual(provider.config.base_url, "https://x1api.top")
-        self.assertEqual(provider.config.model, "deepseek-chat")
-        self.assertEqual(provider.config.api_key, "secret-value")
+        self.assertIsInstance(provider, NullPredictionProvider)
 
     def test_prediction_provider_can_use_explicit_predictor_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -865,7 +861,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(provider.config.model, "local-proxy-model")
         self.assertEqual(provider.config.api_key, "secret-value")
 
-    def test_prediction_provider_canonicalizes_legacy_model_env_to_x1api_root(self) -> None:
+    def test_legacy_x1api_model_env_does_not_configure_realtime_predictor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / ".env"
             env_path.write_text(
@@ -885,11 +881,7 @@ class PredictionProviderTests(unittest.TestCase):
                 }
             )
 
-        self.assertIsInstance(provider, OpenAICompatiblePredictionProvider)
-        assert isinstance(provider, OpenAICompatiblePredictionProvider)
-        self.assertEqual(provider.config.base_url, "https://x1api.top")
-        self.assertEqual(provider.config.model, "gpt-5.5")
-        self.assertEqual(provider.config.api_key, "secret-value")
+        self.assertIsInstance(provider, NullPredictionProvider)
 
     def test_env_can_disable_prediction_failure_cooldown(self) -> None:
         provider = prediction_provider_from_env(
