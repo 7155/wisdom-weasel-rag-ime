@@ -144,6 +144,24 @@
           <p class="panel-hint" id="memoryHint">waiting for memory history</p>
         </section>
 
+        <section class="panel-card management-console">
+          <h2>Management</h2>
+          <div class="segmented" id="managementTabs">
+            <button type="button" data-view="explain">Explain</button>
+            <button type="button" data-view="history">History</button>
+            <button type="button" data-view="memories">Memory</button>
+            <button type="button" data-view="lexicon">Lexicon</button>
+            <button type="button" data-view="cleanup">Cleanup</button>
+          </div>
+          <input id="managementQuery" class="memory-input" placeholder="query / filter" />
+          <div class="controls">
+            <button id="managementRefreshButton" type="button">refresh</button>
+            <button id="managementActionButton" type="button">action</button>
+          </div>
+          <div class="memory-list management-list" id="managementList"></div>
+          <p class="panel-hint" id="managementHint">local management api</p>
+        </section>
+
         <section class="panel-card">
           <h2>Debug</h2>
           <div class="controls">

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import os
@@ -49,6 +50,16 @@ from .rime_sidecar import (
 from .text_utils import compact_whitespace, now_ms
 
 
+def _host_is_loopback(host: str) -> bool:
+    normalized = (host or "").strip().lower().removeprefix("[").removesuffix("]")
+    if normalized in {"localhost", "localhost.", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 @dataclass(frozen=True)
 class DebugServerConfig:
     host: str = "127.0.0.1"
@@ -65,6 +76,7 @@ class DebugServerConfig:
     input_source_check_script: Path | None = None
     input_source_require_hitoolbox: bool = True
     vector_auto_rebuild_limit: int = 0
+    include_raw_text: bool = False
 
 
 @dataclass
@@ -108,6 +120,11 @@ class DebugImeService:
             "project": self.config.project,
             "coreMode": "local" if isinstance(self.core, LocalSqliteCoreClient) else "json",
             "dbPath": str(self.config.db_path),
+            "management": {
+                "schemaVersion": "rag-ime.debug-management.v1",
+                "localhostOnly": _host_is_loopback(self.config.host),
+                "rawTextVisible": self._include_raw_text(),
+            },
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
             "rimeSuggestCache": {
@@ -336,6 +353,385 @@ class DebugImeService:
             }
         self._clear_rime_cache()
         return {"ok": True, **report}
+
+    def candidate_explain(self, payload: dict[str, Any]) -> dict[str, object]:
+        query = _string(payload.get("query") or payload.get("currentInput")).strip()
+        recent_context = _string(payload.get("recentContext") or payload.get("recent_context"))
+        top_k = _bounded_int(payload.get("topK"), default=5, minimum=1, maximum=10)
+        if not query:
+            return {
+                "schemaVersion": "rag-ime.management-candidate-explain.v1",
+                "ok": False,
+                "error": "query is required",
+                "candidates": [],
+            }
+        response = self.suggest(
+            {
+                "currentInput": query,
+                "recentContext": recent_context,
+                "project": _string(payload.get("project")) or self.config.project,
+                "topK": top_k,
+                "app": _string(payload.get("app")),
+            }
+        )
+        suggestions = response.get("suggestions") if isinstance(response.get("suggestions"), list) else []
+        model_predictions = response.get("modelPredictions") if isinstance(response.get("modelPredictions"), list) else []
+        candidates: list[dict[str, object]] = []
+        for rank, item in enumerate(model_predictions[:top_k], start=1):
+            if not isinstance(item, dict):
+                continue
+            candidates.append(
+                {
+                    "rank": rank,
+                    "text": _string(item.get("text")),
+                    "sourceType": "model",
+                    "lane": "model",
+                    "score": float(item.get("confidence") or 0.0),
+                    "penalty": 0.0,
+                    "reason": _string(item.get("providerName") or item.get("provider_name")) or "model prediction",
+                    "diagnostics": _redact_mapping(dict(item.get("metadata") or {}), include_text=self._include_raw_text()),
+                }
+            )
+        for index, item in enumerate(suggestions[:top_k], start=1):
+            if not isinstance(item, dict):
+                continue
+            metadata = dict(item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {}
+            score_breakdown = metadata.get("scoreBreakdown") or metadata.get("score_breakdown") or {}
+            source_type = _string(metadata.get("source_type")) or _string(item.get("suggestionType")) or "rag"
+            candidates.append(
+                {
+                    "rank": len(candidates) + 1,
+                    "text": _string(item.get("surfaceText") or item.get("text")),
+                    "sourceType": source_type,
+                    "lane": "rag" if source_type in {"rag", "memory", "stable_memory"} else source_type,
+                    "score": float(item.get("confidence") or 0.0),
+                    "penalty": _score_penalty(score_breakdown),
+                    "reason": _string(metadata.get("reason")) or _string(item.get("evidencePreview"))[:80] or "local memory",
+                    "memoryId": _string(item.get("memoryId")),
+                    "sourceEventId": int(item.get("sourceEventId") or 0),
+                    "diagnostics": _redact_mapping(metadata, include_text=self._include_raw_text()),
+                }
+            )
+        return {
+            "schemaVersion": "rag-ime.management-candidate-explain.v1",
+            "ok": True,
+            "project": _string(payload.get("project")) or self.config.project,
+            "queryHash": _stable_debug_hash(query),
+            "queryPreview": _privacy_preview(query),
+            "rawTextVisible": self._include_raw_text(),
+            "candidates": candidates,
+        }
+
+    def management_history(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.management-history.v1",
+                "ok": False,
+                "error": "history audit is only available for local SQLite core",
+                "items": [],
+            }
+        report = self.core.list_memory_events(
+            project=_string(payload.get("project")) or self.config.project,
+            query=_string(payload.get("query")),
+            source=_string(payload.get("source")),
+            include_deleted=_bool(payload.get("includeDeleted"), default=False),
+            generated_only=_bool(payload.get("generatedOnly"), default=False),
+            limit=_bounded_int(payload.get("limit"), default=100, minimum=1, maximum=500),
+        )
+        include_text = self._include_raw_text()
+        items = [
+            _redact_history_item(item, include_text=include_text)
+            for item in report.get("items", [])
+            if isinstance(item, dict)
+        ]
+        return {
+            "schemaVersion": "rag-ime.management-history.v1",
+            "ok": True,
+            "project": report.get("project"),
+            "queryHash": _stable_debug_hash(_string(payload.get("query"))),
+            "limit": report.get("limit"),
+            "rawTextVisible": include_text,
+            "totals": report.get("totals", {}),
+            "items": items,
+        }
+
+    def management_history_tombstone(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.management-history-tombstone.v1",
+                "ok": False,
+                "error": "history tombstone is only available for local SQLite core",
+            }
+        event_id = _optional_int(payload.get("eventId"))
+        memory_id = _string(payload.get("memoryId")) or (f"event:{event_id}" if event_id else "")
+        if not memory_id:
+            return {
+                "schemaVersion": "rag-ime.management-history-tombstone.v1",
+                "ok": False,
+                "error": "eventId or memoryId is required",
+            }
+        result = self.memory_tombstone(
+            {
+                "targetType": "memory_id",
+                "targetValue": memory_id,
+                "reason": _string(payload.get("reason")) or "debug-management-history",
+                "metadata": {"source": "debug-management", "eventId": event_id or 0},
+            }
+        )
+        audit_id = self._record_management_audit(
+            action="history_tombstone",
+            target_type="history",
+            target_id=memory_id,
+            payload=payload,
+            result=result,
+        )
+        return {
+            "schemaVersion": "rag-ime.management-history-tombstone.v1",
+            "ok": bool(result.get("ok")),
+            "auditId": audit_id,
+            "result": result,
+        }
+
+    def management_memories(self, payload: dict[str, Any]) -> dict[str, object]:
+        report = self._management_memory_items(payload, lexicon=False)
+        report["schemaVersion"] = "rag-ime.management-memories.v1"
+        return report
+
+    def management_lexicon(self, payload: dict[str, Any]) -> dict[str, object]:
+        report = self._management_memory_items(payload, lexicon=True)
+        report["schemaVersion"] = "rag-ime.management-lexicon.v1"
+        return report
+
+    def management_memory_action(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self._management_item_action(payload, lexicon=False)
+
+    def management_lexicon_action(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self._management_item_action(payload, lexicon=True)
+
+    def management_cleanup_diff(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.management-cleanup-diff.v1",
+                "ok": False,
+                "error": "cleanup diff review is only available for local SQLite core",
+            }
+        diff_id = _optional_int(payload.get("id") or payload.get("diffId"))
+        if diff_id:
+            try:
+                with self.core._connect() as conn:  # type: ignore[attr-defined]
+                    row = _cleanup_diff_payload_for_debug(conn, diff_id=diff_id)
+            except ValueError as exc:
+                return {"schemaVersion": "rag-ime.management-cleanup-diff.v1", "ok": False, "error": str(exc)}
+            return {"schemaVersion": "rag-ime.management-cleanup-diff.v1", "ok": True, "diff": row}
+        runs = self.core.list_memory_cleanup_runs(
+            limit=_bounded_int(payload.get("limit"), default=20, minimum=1, maximum=100),
+            run_id=_string(payload.get("runId")),
+            status=_string(payload.get("status")),
+        )
+        return {
+            "schemaVersion": "rag-ime.management-cleanup-diff.v1",
+            "ok": True,
+            **runs,
+        }
+
+    def management_cleanup_diff_apply(self, payload: dict[str, Any]) -> dict[str, object]:
+        diff_id = _optional_int(payload.get("id") or payload.get("diffId"))
+        result = self.memory_cleanup_diff_apply(diff_id or 0)
+        audit_id = self._record_management_audit(
+            action="cleanup_diff_apply",
+            target_type="cleanup_diff",
+            target_id=str(diff_id or ""),
+            payload=payload,
+            result=result,
+        )
+        return {
+            "schemaVersion": "rag-ime.management-cleanup-diff-action.v1",
+            "ok": bool(result.get("ok")),
+            "auditId": audit_id,
+            "result": result,
+        }
+
+    def management_cleanup_diff_rollback(self, payload: dict[str, Any]) -> dict[str, object]:
+        diff_id = _optional_int(payload.get("id") or payload.get("diffId"))
+        result = self.memory_cleanup_diff_rollback(diff_id or 0)
+        audit_id = self._record_management_audit(
+            action="cleanup_diff_rollback",
+            target_type="cleanup_diff",
+            target_id=str(diff_id or ""),
+            payload=payload,
+            result=result,
+        )
+        return {
+            "schemaVersion": "rag-ime.management-cleanup-diff-action.v1",
+            "ok": bool(result.get("ok")),
+            "auditId": audit_id,
+            "result": result,
+        }
+
+    def _management_memory_items(self, payload: dict[str, Any], *, lexicon: bool) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "ok": False,
+                "error": "memory item review is only available for local SQLite core",
+                "items": [],
+            }
+        status = _string(payload.get("status")) or "pending"
+        kind = _string(payload.get("kind"))
+        if lexicon and not kind:
+            kind = "phrase"
+        report = self.core.inspect_memory_v2(
+            project=_string(payload.get("project")) or self.config.project,
+            limit=_bounded_int(payload.get("limit"), default=100, minimum=1, maximum=200),
+            kind=kind,
+            status=status if status != "all" else "",
+        )
+        include_text = self._include_raw_text()
+        items = [
+            _redact_memory_item(item, include_text=include_text, lexicon=lexicon)
+            for item in report.get("items", [])
+            if isinstance(item, dict)
+        ]
+        return {
+            "ok": True,
+            "project": report.get("project"),
+            "status": status,
+            "kind": kind,
+            "rawTextVisible": include_text,
+            "items": items,
+        }
+
+    def _management_item_action(self, payload: dict[str, Any], *, lexicon: bool) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.management-item-action.v1",
+                "ok": False,
+                "error": "memory item action is only available for local SQLite core",
+            }
+        memory_id = _string(payload.get("memoryId") or payload.get("id"))
+        action = _management_action(_string(payload.get("action") or payload.get("actionType")))
+        if not memory_id:
+            return {
+                "schemaVersion": "rag-ime.management-item-action.v1",
+                "ok": False,
+                "error": "memoryId is required",
+            }
+        if action not in {"approve", "reject", "tombstone", "hide", "restore", "pin", "downrank"}:
+            return {
+                "schemaVersion": "rag-ime.management-item-action.v1",
+                "ok": False,
+                "error": f"unsupported action: {action}",
+            }
+        if action == "tombstone":
+            result = self.memory_tombstone(
+                {
+                    "targetType": "memory_id",
+                    "targetValue": memory_id,
+                    "reason": _string(payload.get("reason")) or "debug-management-item",
+                    "metadata": {"source": "debug-management", "lexicon": lexicon},
+                }
+            )
+        else:
+            result = self._update_memory_item_status(memory_id=memory_id, action=action, payload=payload)
+        audit_id = self._record_management_audit(
+            action=("lexicon_" if lexicon else "memory_") + action,
+            target_type="lexicon" if lexicon else "memory",
+            target_id=memory_id,
+            payload=payload,
+            result=result,
+        )
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.management-item-action.v1",
+            "ok": bool(result.get("ok")),
+            "auditId": audit_id,
+            "result": result,
+        }
+
+    def _update_memory_item_status(self, *, memory_id: str, action: str, payload: dict[str, Any]) -> dict[str, object]:
+        status_by_action = {
+            "approve": "approved",
+            "reject": "rejected",
+            "hide": "hidden",
+            "restore": "active",
+            "pin": "approved",
+            "downrank": "active",
+        }
+        status = status_by_action[action]
+        metadata_update = {
+            "lastManagementAction": action,
+            "managementReason": _string(payload.get("reason")),
+            "managedAtMs": now_ms(),
+        }
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            row = conn.execute(
+                "SELECT metadata_json FROM memory_items WHERE memory_id = ? LIMIT 1",
+                (memory_id,),
+            ).fetchone()
+            if row is None:
+                return {"ok": False, "error": f"memory item not found: {memory_id}", "memoryId": memory_id}
+            metadata = _json_loads_dict(row["metadata_json"])
+            metadata.update({key: value for key, value in metadata_update.items() if value not in ("", None)})
+            quality_expr = "quality_score"
+            if action == "pin":
+                quality_expr = "MIN(1.0, quality_score + 0.12)"
+                metadata["pinned"] = True
+            elif action == "downrank":
+                quality_expr = "MAX(0.05, quality_score - 0.12)"
+                metadata["downranked"] = True
+            conn.execute(
+                f"""
+                UPDATE memory_items
+                SET status = ?, quality_score = {quality_expr}, updated_at_ms = ?, metadata_json = ?
+                WHERE memory_id = ?
+                """,
+                (
+                    status,
+                    now_ms(),
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    memory_id,
+                ),
+            )
+        return {"ok": True, "memoryId": memory_id, "action": action, "status": status}
+
+    def _include_raw_text(self) -> bool:
+        return bool(
+            self.config.include_raw_text
+            or os.environ.get("RAG_IME_TRACE_INCLUDE_TEXT") == "1"
+            or os.environ.get("RAG_IME_DEBUG_INCLUDE_TEXT") == "1"
+        )
+
+    def _record_management_audit(
+        self,
+        *,
+        action: str,
+        target_type: str,
+        target_id: str,
+        payload: dict[str, Any],
+        result: dict[str, object],
+    ) -> int:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return 0
+        safe_payload = _redact_mapping(payload, include_text=False)
+        safe_result = _redact_mapping(result, include_text=False)
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            _ensure_management_audit_schema(conn)
+            cur = conn.execute(
+                """
+                INSERT INTO management_audit_log(
+                    created_at_ms, action, target_type, target_id, payload_json, result_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    now_ms(),
+                    action,
+                    target_type,
+                    target_id,
+                    json.dumps(safe_payload, ensure_ascii=False, sort_keys=True),
+                    json.dumps(safe_result, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            return int(cur.lastrowid)
 
     def organize_rag_database(self, payload: dict[str, Any]) -> dict[str, object]:
         organizer = getattr(self.core, "organize_rag_database", None)
@@ -1117,6 +1513,76 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
+        if parsed.path in ("/api/candidates/explain",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.candidate_explain(
+                    {
+                        "query": _query_first(query, "query"),
+                        "currentInput": _query_first(query, "currentInput"),
+                        "recentContext": _query_first(query, "recentContext"),
+                        "project": _query_first(query, "project"),
+                        "app": _query_first(query, "app"),
+                        "topK": _query_first(query, "topK"),
+                    }
+                ),
+            )
+            return
+        if parsed.path in ("/api/history",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management_history(
+                    {
+                        "limit": _query_first(query, "limit"),
+                        "project": _query_first(query, "project"),
+                        "query": _query_first(query, "query"),
+                        "source": _query_first(query, "source"),
+                        "includeDeleted": _query_first(query, "includeDeleted"),
+                        "generatedOnly": _query_first(query, "generatedOnly"),
+                    }
+                ),
+            )
+            return
+        if parsed.path in ("/api/memories",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management_memories(
+                    {
+                        "limit": _query_first(query, "limit"),
+                        "project": _query_first(query, "project"),
+                        "status": _query_first(query, "status"),
+                        "kind": _query_first(query, "kind"),
+                    }
+                ),
+            )
+            return
+        if parsed.path in ("/api/lexicon",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management_lexicon(
+                    {
+                        "limit": _query_first(query, "limit"),
+                        "project": _query_first(query, "project"),
+                        "status": _query_first(query, "status"),
+                        "kind": _query_first(query, "kind"),
+                    }
+                ),
+            )
+            return
+        if parsed.path in ("/api/cleanup-diff",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management_cleanup_diff(
+                    {
+                        "id": _query_first(query, "id"),
+                        "diffId": _query_first(query, "diffId"),
+                        "runId": _query_first(query, "runId"),
+                        "status": _query_first(query, "status"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
         if parsed.path.startswith("/api/memory/optimizer/trace/"):
             trace_id = unquote(parsed.path.rsplit("/", 1)[-1])
             self._write_json(HTTPStatus.OK, self.service.memory_optimizer_trace({"traceId": trace_id}))
@@ -1186,6 +1652,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.memory_cleanup_runs(payload))
             elif path in ("/api/memory-tombstone", "/memory-tombstone", "/api/memory/tombstone"):
                 self._write_json(HTTPStatus.OK, self.service.memory_tombstone(payload))
+            elif path in ("/api/history/tombstone",):
+                self._write_json(HTTPStatus.OK, self.service.management_history_tombstone(payload))
+            elif path in ("/api/memories/action",):
+                self._write_json(HTTPStatus.OK, self.service.management_memory_action(payload))
+            elif path in ("/api/lexicon/action",):
+                self._write_json(HTTPStatus.OK, self.service.management_lexicon_action(payload))
+            elif path in ("/api/cleanup-diff/apply",):
+                self._write_json(HTTPStatus.OK, self.service.management_cleanup_diff_apply(payload))
+            elif path in ("/api/cleanup-diff/rollback",):
+                self._write_json(HTTPStatus.OK, self.service.management_cleanup_diff_rollback(payload))
             elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/apply"):
                 diff_id = _cleanup_diff_path_id(path, suffix="/apply")
                 self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_apply(diff_id))
@@ -1266,6 +1742,164 @@ def run_debug_server(config: DebugServerConfig) -> None:
     print(f"RAG IME {config.server_name}: {url}")
     print(f"DB: {config.db_path}")
     server.serve_forever()
+
+
+def _stable_debug_hash(text: str) -> str:
+    compact = compact_whitespace(text)
+    if not compact:
+        return ""
+    return "sha256:" + hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
+
+
+def _privacy_preview(text: str, *, max_chars: int = 12) -> str:
+    compact = compact_whitespace(text)
+    if not compact:
+        return ""
+    if len(compact) <= max_chars:
+        return compact
+    return f"{compact[:max_chars]}..."
+
+
+def _redact_history_item(item: dict[str, object], *, include_text: bool) -> dict[str, object]:
+    text = _string(item.get("text"))
+    recent_context = _string(item.get("recentContext"))
+    preedit = _string(item.get("preedit"))
+    payload = {key: value for key, value in item.items() if key not in {"text", "recentContext", "preedit"}}
+    payload.update(
+        {
+            "textHash": _stable_debug_hash(text),
+            "textPreview": _privacy_preview(text),
+            "recentContextHash": _stable_debug_hash(recent_context),
+            "recentContextPreview": _privacy_preview(recent_context),
+            "preeditHash": _stable_debug_hash(preedit),
+            "preeditPreview": _privacy_preview(preedit),
+        }
+    )
+    if include_text:
+        payload.update({"text": text, "recentContext": recent_context, "preedit": preedit})
+    return payload
+
+
+def _redact_memory_item(item: dict[str, object], *, include_text: bool, lexicon: bool) -> dict[str, object]:
+    text = _string(item.get("text"))
+    normalized_text = _string(item.get("normalizedText"))
+    metadata = dict(item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {}
+    payload = {key: value for key, value in item.items() if key not in {"text", "normalizedText", "metadata"}}
+    payload.update(
+        {
+            "textHash": _stable_debug_hash(text),
+            "textPreview": _privacy_preview(text, max_chars=16 if lexicon else 12),
+            "normalizedTextHash": _stable_debug_hash(normalized_text),
+            "metadata": _redact_mapping(metadata, include_text=include_text),
+        }
+    )
+    if include_text:
+        payload.update({"text": text, "normalizedText": normalized_text})
+    return payload
+
+
+def _redact_mapping(value: dict[str, object], *, include_text: bool) -> dict[str, object]:
+    redacted: dict[str, object] = {}
+    sensitive_keys = {"text", "rawText", "recentContext", "preedit", "committedContext", "payload", "result"}
+    for key, item in value.items():
+        if isinstance(item, dict):
+            redacted[key] = _redact_mapping(item, include_text=include_text)
+        elif isinstance(item, list):
+            redacted[key] = [
+                _redact_mapping(part, include_text=include_text) if isinstance(part, dict) else part
+                for part in item
+            ]
+        elif include_text or key not in sensitive_keys:
+            redacted[key] = item
+        else:
+            text = _string(item)
+            redacted[f"{key}Hash"] = _stable_debug_hash(text)
+            redacted[f"{key}Preview"] = _privacy_preview(text)
+    return redacted
+
+
+def _score_penalty(score_breakdown: object) -> float:
+    if not isinstance(score_breakdown, dict):
+        return 0.0
+    penalty = 0.0
+    for key, value in score_breakdown.items():
+        if "penalty" not in str(key).lower():
+            continue
+        try:
+            penalty += abs(float(value))
+        except (TypeError, ValueError):
+            continue
+    return penalty
+
+
+def _management_action(raw: str) -> str:
+    normalized = raw.strip().lower().replace("_", "-")
+    aliases = {
+        "approved": "approve",
+        "accept": "approve",
+        "accepted": "approve",
+        "rejected": "reject",
+        "delete": "tombstone",
+        "deleted": "tombstone",
+        "downranked": "downrank",
+        "pinned": "pin",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _ensure_management_audit_schema(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS management_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at_ms INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            result_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+
+
+def _json_loads_dict(raw: object) -> dict[str, object]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not isinstance(raw, str) or not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _cleanup_diff_payload_for_debug(conn, *, diff_id: int) -> dict[str, object]:
+    row = conn.execute(
+        """
+        SELECT id, run_id, op, target_memory_id, payload_json, status, created_at_ms, applied_at_ms, rollback_json
+        FROM memory_cleanup_diffs
+        WHERE id = ?
+        LIMIT 1
+        """,
+        (int(diff_id),),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"cleanup diff not found: {diff_id}")
+    payload = _json_loads_dict(row["payload_json"])
+    rollback = _json_loads_dict(row["rollback_json"])
+    return {
+        "diffId": int(row["id"]),
+        "runId": str(row["run_id"]),
+        "op": str(row["op"]),
+        "targetMemoryId": str(row["target_memory_id"]),
+        "payload": _redact_mapping(payload, include_text=False),
+        "status": str(row["status"]),
+        "createdAtMs": int(row["created_at_ms"] or 0),
+        "appliedAtMs": int(row["applied_at_ms"] or 0),
+        "rollback": _redact_mapping(rollback, include_text=False),
+    }
 
 
 def _string(value: object) -> str:

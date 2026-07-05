@@ -251,27 +251,42 @@ def optimize_suggestions_if_enabled(
         }
     raw_hits = _raw_hits_from_suggestions(suggestions)
     optimizer_callable = getattr(core, "optimize_memory_candidates", None) if core is not None else None
-    if callable(optimizer_callable):
-        result = optimizer_callable(
-            context,
-            raw_hits,
-            top_k=top_k,
-            latency_budget_ms=min(latency_budget_ms, config.max_ms),
-        )
-    else:
-        optimizer = RagMemoryOptimizer(config=config)
-        governance = _load_governance_snapshot(
-            core=core,
-            context=context,
-            base_hits=raw_hits,
-        )
-        result = optimizer.optimize_memory_candidates(
-            context,
-            raw_hits,
-            top_k=top_k,
-            latency_budget_ms=min(latency_budget_ms, config.max_ms),
-            governance=governance,
-        )
+    try:
+        if callable(optimizer_callable):
+            result = optimizer_callable(
+                context,
+                raw_hits,
+                top_k=top_k,
+                latency_budget_ms=min(latency_budget_ms, config.max_ms),
+            )
+        else:
+            optimizer = RagMemoryOptimizer(config=config)
+            governance = _load_governance_snapshot(
+                core=core,
+                context=context,
+                base_hits=raw_hits,
+            )
+            result = optimizer.optimize_memory_candidates(
+                context,
+                raw_hits,
+                top_k=top_k,
+                latency_budget_ms=min(latency_budget_ms, config.max_ms),
+                governance=governance,
+            )
+    except Exception as exc:
+        return [], {
+            "enabled": True,
+            "traceEnabled": config.trace_enabled,
+            "maxMs": config.max_ms,
+            "traceId": None,
+            "latencyMs": 0.0,
+            "degraded": True,
+            "failClosed": True,
+            "warnings": [f"optimizer_exception:{type(exc).__name__}"],
+            "blocked": [],
+            "contextFrame": asdict(context) if config.trace_enabled else {},
+            "queryPlan": asdict(plan) if config.trace_enabled else {},
+        }
     _store_optimizer_trace(
         core=core,
         context=context,
@@ -454,22 +469,25 @@ def _store_optimizer_trace(
     recorder = getattr(core, "store_memory_optimizer_trace", None)
     if not callable(recorder):
         return
-    recorder(
-        {
-            "traceId": result.trace_id,
-            "requestSeq": context.request_seq,
-            "contextHash": context.context_hash,
-            "contextFrame": asdict(context),
-            "queryPlan": asdict(plan),
-            "rawResults": [asdict(item) for item in raw_hits],
-            "optimizedCandidates": [asdict(item) for item in result.candidates],
-            "blocked": [asdict(item) for item in result.blocked],
-            "latencyMs": result.latency_ms,
-            "warnings": list(result.warnings),
-            "degraded": result.degraded,
-            "createdAtMs": context.timestamp_ms,
-        }
-    )
+    try:
+        recorder(
+            {
+                "traceId": result.trace_id,
+                "requestSeq": context.request_seq,
+                "contextHash": context.context_hash,
+                "contextFrame": asdict(context),
+                "queryPlan": asdict(plan),
+                "rawResults": [asdict(item) for item in raw_hits],
+                "optimizedCandidates": [asdict(item) for item in result.candidates],
+                "blocked": [asdict(item) for item in result.blocked],
+                "latencyMs": result.latency_ms,
+                "warnings": list(result.warnings),
+                "degraded": result.degraded,
+                "createdAtMs": context.timestamp_ms,
+            }
+        )
+    except Exception:
+        return
 
 
 def _load_governance_snapshot(

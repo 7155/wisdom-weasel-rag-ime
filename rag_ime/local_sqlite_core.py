@@ -2072,7 +2072,7 @@ class LocalSqliteCoreClient:
         query = compact_whitespace(" ".join(part for part in (context.current_input, context.recent_context, context.committed_context) if part))
         fts_query = build_fts_query(query)
         pool_counts = {"phrase": 0, "fts": 0, "vector": 0, "tag": 0}
-        filtered = {"tombstone": 0, "suppressed": 0, "rawEcho": 0, "duplicate": 0}
+        filtered = {"tombstone": 0, "suppressed": 0, "rawEcho": 0, "contextMismatch": 0, "duplicate": 0}
         candidates: list[MemoryCandidateV2] = []
         with self._connect() as conn:
             phrase_rows = self._memory_item_rows(
@@ -2142,6 +2142,12 @@ class LocalSqliteCoreClient:
                 accepted_count_state = int(row["accepted_count"] or 0)
                 query_feedback_bonus = self._memory_item_feedback_bonus(conn, memory_id=memory_id, query=query)
                 feedback_bonus = accepted_count_state * 0.6 + query_feedback_bonus
+                tags = _split_tags_joined(str(row["tags_joined"] or ""))
+                if not tags:
+                    tags = ("memory",) if kind in {"phrase", "stable_memory"} else ("rag",)
+                if feedback_bonus > 0 and _accepted_feedback_context_mismatch(context=context, row=row, tags=tags):
+                    filtered["contextMismatch"] += 1
+                    continue
                 stale_penalty = 0.6 if kind == "raw_event" and len(text) > 12 else 0.0
                 score = (
                     0.26 * lexical_score
@@ -2153,9 +2159,6 @@ class LocalSqliteCoreClient:
                     + 0.05 * float(row["quality_score"])
                     - 0.35 * stale_penalty
                 )
-                tags = _split_tags_joined(str(row["tags_joined"] or ""))
-                if not tags:
-                    tags = ("memory",) if kind in {"phrase", "stable_memory"} else ("rag",)
                 candidates.append(
                     MemoryCandidateV2(
                         text=text,
@@ -3076,6 +3079,26 @@ def _affinity_score(*, row: sqlite3.Row, project: str, app: str) -> float:
     if app and str(row["app"]) == app:
         score += 0.6
     return score
+
+
+def _accepted_feedback_context_mismatch(*, context: ImeQueryContext, row: sqlite3.Row, tags: tuple[str, ...]) -> bool:
+    current_context = compact_whitespace(" ".join(part for part in (context.recent_context, context.committed_context) if part))
+    if not current_context:
+        return False
+    source_context = compact_whitespace(
+        " ".join(
+            part
+            for part in (
+                str(row["summary"] or ""),
+                str(row["text"] or ""),
+                " ".join(tags),
+            )
+            if part
+        )
+    )
+    if not source_context:
+        return True
+    return not bool(overlap_terms(current_context, source_context))
 
 
 def _freshness_score(*, updated_at_ms: int) -> float:

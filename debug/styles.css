@@ -541,6 +541,36 @@ button {
   margin: 8px 0 10px;
 }
 
+.management-console .controls {
+  margin: 8px 0 10px;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 3px;
+  margin-bottom: 8px;
+}
+
+.segmented button {
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.segmented button.is-active {
+  border-color: rgba(59, 130, 246, 0.55);
+  color: var(--ink);
+  background: rgba(59, 130, 246, 0.12);
+}
+
 .memory-input,
 .memory-textarea {
   width: 100%;
@@ -581,6 +611,27 @@ button {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-2);
+}
+
+.management-row {
+  grid-template-columns: 58px minmax(0, 1fr);
+}
+
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 20px;
+  padding: 0 5px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .memory-row input {

@@ -147,7 +147,7 @@ The current goal is to implement the attached PR roadmap in order:
 9. PR-9 model matrix, reranker, and quality eval.
 10. PR-10 localhost-only management UI v1.
 
-Current checkpoint: PR-1 through PR-9 have active implementation work in-tree.
+Current checkpoint: PR-1 through PR-10 have active implementation work in-tree.
 Python sidecar transaction parsing/echo and trace checker transaction
 validation are implemented; Squirrel patch text now contains the matching
 transaction fields, response validation, stale selection rejection, hash-only
@@ -180,7 +180,10 @@ profile is mild (`z_zh/c_ch/s_sh/en_eng/in_ing` on, `n_l/f_h` off). PR-9 has
 started: `model-matrix-eval` is now a real alias for the local model matrix,
 reports product metrics for top-3 coverage, echo, duplicates, latency, and
 chain readiness, and `rerank-demo` exposes a source-aware Rime/model/RAG/memory
-ranking path that preserves Rime fallback.
+ranking path that preserves Rime fallback. PR-10 has started: `debug-server`
+now exposes localhost management APIs for candidate explain, history audit,
+memory/lexicon review, cleanup diff apply/rollback, redacted-by-default raw
+history, and action audit logging.
 
 ## Source Repository Structure
 
@@ -271,6 +274,19 @@ New PR-9 quality/rerank CLI now present in `rag_ime/cli.py`:
   name; reports `productMetrics` in each model row.
 - `rerank-demo`: rank ad-hoc `source:text` or JSON candidates and emit source
   counts, score breakdowns, echo/duplicate flags, and Rime fallback status.
+
+New PR-10 management API now present in `rag_ime/debug_server.py`:
+
+- `GET /api/candidates/explain?query=...`
+- `GET /api/history?limit=100&project=...`
+- `POST /api/history/tombstone`
+- `GET /api/memories?status=pending`
+- `POST /api/memories/action`
+- `GET /api/lexicon?status=pending`
+- `POST /api/lexicon/action`
+- `GET /api/cleanup-diff?id=...`
+- `POST /api/cleanup-diff/apply`
+- `POST /api/cleanup-diff/rollback`
 
 ## Code Path Map
 
@@ -1052,6 +1068,60 @@ def rerank_candidate_dicts(
 Important behavior: the reranker can promote model/RAG/memory candidates, but it
 must preserve at least one Rime fallback when Rime candidates are present.
 
+### PR-10 management API and redaction
+
+File: `rag_ime/debug_server.py`
+
+```python
+def management_history(self, payload: dict[str, Any]) -> dict[str, object]:
+    report = self.core.list_memory_events(...)
+    include_text = self._include_raw_text()
+    items = [
+        _redact_history_item(item, include_text=include_text)
+        for item in report.get("items", [])
+        if isinstance(item, dict)
+    ]
+    return {
+        "schemaVersion": "rag-ime.management-history.v1",
+        "ok": True,
+        "rawTextVisible": include_text,
+        "items": items,
+        ...
+    }
+
+
+def _include_raw_text(self) -> bool:
+    return bool(
+        self.config.include_raw_text
+        or os.environ.get("RAG_IME_TRACE_INCLUDE_TEXT") == "1"
+        or os.environ.get("RAG_IME_DEBUG_INCLUDE_TEXT") == "1"
+    )
+```
+
+Mutating management actions write an audit row:
+
+```python
+def _record_management_audit(...):
+    safe_payload = _redact_mapping(payload, include_text=False)
+    safe_result = _redact_mapping(result, include_text=False)
+    with self.core._connect() as conn:
+        _ensure_management_audit_schema(conn)
+        cur = conn.execute(
+            """
+            INSERT INTO management_audit_log(
+                created_at_ms, action, target_type, target_id, payload_json, result_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (...),
+        )
+        return int(cur.lastrowid)
+```
+
+The browser management panel lives in `debug/index.html`, `debug/app.js`, and
+`debug/styles.css`. It uses one compact side-panel card with five views:
+Candidate Explain, History, Memory, Lexicon, and Cleanup.
+
 ## Current Verification Snapshot
 
 Recent public-prep verification:
@@ -1097,6 +1167,28 @@ Latest full-suite result:
 
 ```text
 Ran 506 tests in 77.756s
+OK
+```
+
+Additional PR-10 management API verification:
+
+```bash
+python3 -m unittest tests.test_debug_management_api tests.test_debug_server tests.test_memory_optimizer_sidecar_integration
+node --check debug/app.js
+python3 -m py_compile rag_ime/debug_server.py
+```
+
+Targeted result:
+
+```text
+Ran 54 tests in 8.901s
+OK
+```
+
+Latest full-suite result after PR-10:
+
+```text
+Ran 514 tests in 74.169s
 OK
 ```
 
@@ -1311,11 +1403,19 @@ It intentionally keeps `n_l` and `f_h` disabled by default. The remaining check
 is real Rime/Squirrel confirmation after applying the profile and rebuilding
 user data.
 
-### 7. Visual management UI is not final
+### 7. Visual management UI v1 exists, but is not a large backend
 
-The debug server has memory history and organization endpoints, but the polished
-OpenLess-style visual management UI for history/RAG/memory/lexicon cleanup is
-future work.
+The debug server now has a first localhost-only management panel and API for
+candidate explain, redacted history audit, stable memory review, lexicon review,
+and cleanup diff review. It is intentionally a small debug-server surface, not
+a polished OpenLess-style management application.
+
+Remaining polish:
+
+- per-row selection and explicit second confirmation in the browser UI;
+- richer edit/merge flows for stable memories and lexicon phrases;
+- export to Rime user dictionary;
+- more visual grouping and pagination for large local databases.
 
 ## Suggested Next Engineering Plan
 
@@ -1433,6 +1533,8 @@ Important test files:
   generation.
 - `tests/test_predictor.py`: predictor config boundaries and candidate parsing.
 - `tests/test_prediction_first.py`: source-lane merge.
+- `tests/test_debug_management_api.py`: PR-10 management API, redaction, audit,
+  and cleanup diff review.
 - `tests/test_install_squirrel_rag_config.py`: Rime/Squirrel config install.
 - `tests/test_check_macos_input_source.py`: macOS input source checking.
 

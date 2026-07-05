@@ -21,6 +21,10 @@ const state = {
   memoryBusy: false,
   memoryTimer: 0,
   memoryLastAction: null,
+  managementView: "explain",
+  managementResult: null,
+  managementBusy: false,
+  managementLastAction: null,
   health: null,
   lastPayload: null,
   timer: 0,
@@ -119,6 +123,12 @@ const elements = {
   memoryOrganizeButton: document.getElementById("memoryOrganizeButton"),
   memoryList: document.getElementById("memoryList"),
   memoryHint: document.getElementById("memoryHint"),
+  managementTabs: document.getElementById("managementTabs"),
+  managementQuery: document.getElementById("managementQuery"),
+  managementRefreshButton: document.getElementById("managementRefreshButton"),
+  managementActionButton: document.getElementById("managementActionButton"),
+  managementList: document.getElementById("managementList"),
+  managementHint: document.getElementById("managementHint"),
 };
 
 function keyNumber(event) {
@@ -312,6 +322,7 @@ function render() {
   renderPredictionFirst();
   renderInputSource();
   renderMemoryConsole();
+  renderManagementConsole();
 }
 
 function escapeHtml(value) {
@@ -700,6 +711,175 @@ function renderMemoryConsole() {
   );
 }
 
+function renderManagementConsole() {
+  const result = state.managementResult || {};
+  const rows = managementRows(result);
+  for (const button of elements.managementTabs.querySelectorAll("button")) {
+    button.classList.toggle("is-active", button.dataset.view === state.managementView);
+  }
+  elements.managementRefreshButton.disabled = state.managementBusy;
+  elements.managementActionButton.disabled = state.managementBusy || !managementActionTarget(rows);
+  elements.managementActionButton.textContent = managementActionLabel(rows);
+  elements.managementHint.textContent = [
+    state.managementBusy ? "loading" : "",
+    result.rawTextVisible === false ? "redacted" : "",
+    state.managementLastAction?.message,
+    result.error,
+    `${rows.length} rows`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  elements.managementList.replaceChildren(
+    ...rows.slice(0, 8).map((row) => {
+      const item = document.createElement("div");
+      item.className = "memory-row management-row";
+      item.innerHTML = `
+        <span class="source-chip">${escapeHtml(row.source)}</span>
+        <span class="memory-row-main">
+          <span class="memory-row-text">${escapeHtml(row.title)}</span>
+          <span class="memory-row-meta">${escapeHtml(row.meta)}</span>
+        </span>
+      `;
+      return item;
+    }),
+  );
+}
+
+function managementRows(result) {
+  if (!result || result.ok === false) return [];
+  if (state.managementView === "explain") {
+    return (result.candidates || []).map((item) => ({
+      source: item.sourceType || "candidate",
+      title: item.text || item.textPreview || item.memoryId || "",
+      meta: [item.lane, item.score, item.reason].filter((part) => part !== undefined && part !== "").join(" · "),
+      raw: item,
+    }));
+  }
+  if (state.managementView === "history") {
+    return (result.items || []).map((item) => ({
+      source: item.source || "history",
+      title: item.text || item.textPreview || item.textHash || "",
+      meta: [item.eventId, item.app, item.providerName, item.deleted ? "deleted" : ""].filter(Boolean).join(" · "),
+      raw: item,
+    }));
+  }
+  if (state.managementView === "memories" || state.managementView === "lexicon") {
+    return (result.items || []).map((item) => ({
+      source: item.kind || state.managementView,
+      title: item.text || item.textPreview || item.memoryId || "",
+      meta: [item.memoryId, item.status, item.qualityScore].filter((part) => part !== undefined && part !== "").join(" · "),
+      raw: item,
+    }));
+  }
+  if (state.managementView === "cleanup") {
+    const rows = [];
+    for (const run of result.items || []) {
+      for (const diff of run.diffs || []) {
+        rows.push({
+          source: diff.op || "diff",
+          title: diff.targetMemoryId || diff.diffId || run.runId || "",
+          meta: [diff.diffId, diff.status, run.status].filter(Boolean).join(" · "),
+          raw: diff,
+        });
+      }
+    }
+    if (result.diff) {
+      rows.push({
+        source: result.diff.op || "diff",
+        title: result.diff.targetMemoryId || result.diff.diffId || "",
+        meta: [result.diff.diffId, result.diff.status].filter(Boolean).join(" · "),
+        raw: result.diff,
+      });
+    }
+    return rows;
+  }
+  return [];
+}
+
+function managementActionTarget(rows) {
+  return rows[0]?.raw || null;
+}
+
+function managementActionLabel(rows) {
+  if (!managementActionTarget(rows)) return "action";
+  if (state.managementView === "history") return "tombstone";
+  if (state.managementView === "memories" || state.managementView === "lexicon") return "approve";
+  if (state.managementView === "cleanup") return rows[0].raw.status === "applied" ? "rollback" : "apply";
+  return "inspect";
+}
+
+async function refreshManagementConsole() {
+  state.managementBusy = true;
+  renderManagementConsole();
+  try {
+    const query = elements.managementQuery.value.trim();
+    let url = "/api/candidates/explain";
+    if (state.managementView === "history") url = "/api/history";
+    else if (state.managementView === "memories") url = "/api/memories";
+    else if (state.managementView === "lexicon") url = "/api/lexicon";
+    else if (state.managementView === "cleanup") url = "/api/cleanup-diff";
+    const params = new URLSearchParams({
+      project: "wisdom-weasel-rag-ime",
+      limit: "20",
+    });
+    if (query) params.set(state.managementView === "explain" ? "query" : "query", query);
+    if (state.managementView === "explain" && !query) params.set("query", state.query || "RAG 输入法");
+    if (state.managementView === "memories" || state.managementView === "lexicon") params.set("status", "pending");
+    const response = await fetch(`${url}?${params.toString()}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    state.managementResult = await response.json();
+    state.apiOnline = true;
+  } catch (error) {
+    state.managementResult = { ok: false, error: String(error) };
+    state.apiOnline = false;
+  } finally {
+    state.managementBusy = false;
+    render();
+  }
+}
+
+async function runManagementAction() {
+  const rows = managementRows(state.managementResult || {});
+  const target = managementActionTarget(rows);
+  if (!target) return;
+  state.managementBusy = true;
+  renderManagementConsole();
+  try {
+    let endpoint = "";
+    let body = {};
+    if (state.managementView === "history") {
+      endpoint = "/api/history/tombstone";
+      body = { eventId: target.eventId, reason: "debug-management" };
+    } else if (state.managementView === "memories") {
+      endpoint = "/api/memories/action";
+      body = { memoryId: target.memoryId, action: "approve" };
+    } else if (state.managementView === "lexicon") {
+      endpoint = "/api/lexicon/action";
+      body = { memoryId: target.memoryId, action: "approve" };
+    } else if (state.managementView === "cleanup") {
+      endpoint = target.status === "applied" ? "/api/cleanup-diff/rollback" : "/api/cleanup-diff/apply";
+      body = { diffId: target.diffId };
+    } else {
+      await refreshManagementConsole();
+      return;
+    }
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
+    state.managementLastAction = { message: `audit ${payload.auditId || "ok"}` };
+    await refreshManagementConsole();
+  } catch (error) {
+    state.managementLastAction = { message: String(error) };
+  } finally {
+    state.managementBusy = false;
+    render();
+  }
+}
+
 async function generateMemoryFromConsole() {
   state.memoryBusy = true;
   renderMemoryConsole();
@@ -952,6 +1132,19 @@ elements.memoryQuery.addEventListener("input", () => {
   window.clearTimeout(state.memoryTimer);
   state.memoryTimer = window.setTimeout(refreshMemoryHistory, 250);
 });
+elements.managementTabs.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-view]");
+  if (!button) return;
+  state.managementView = button.dataset.view;
+  state.managementResult = null;
+  refreshManagementConsole();
+});
+elements.managementRefreshButton.addEventListener("click", refreshManagementConsole);
+elements.managementActionButton.addEventListener("click", runManagementAction);
+elements.managementQuery.addEventListener("input", () => {
+  window.clearTimeout(state.memoryTimer);
+  state.memoryTimer = window.setTimeout(refreshManagementConsole, 250);
+});
 elements.predictionFirstToggle.addEventListener("change", () => {
   state.predictionFirstMerge = elements.predictionFirstToggle.checked;
   state.rimeSidecar = null;
@@ -964,6 +1157,7 @@ elements.inputSourceButton.addEventListener("click", refreshInputSource);
 render();
 refreshHealth().then(render);
 refreshMemoryHistory();
+refreshManagementConsole();
 refreshInputSource({ silent: true });
 startInputSourcePolling();
 suggestNow();

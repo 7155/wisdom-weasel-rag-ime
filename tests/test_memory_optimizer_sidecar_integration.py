@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.adapter import InputMethodAdapter
 from rag_ime.core_client import FixtureCoreClient
@@ -41,6 +43,27 @@ class _TrackingOptimizerCore(FixtureCoreClient):
             top_k=top_k,
             latency_budget_ms=latency_budget_ms,
         )
+
+
+class _FailingOptimizerCore(FixtureCoreClient):
+    def optimize_memory_candidates(self, context, base_hits, *, top_k: int, latency_budget_ms: int):
+        del context, base_hits, top_k, latency_budget_ms
+        raise RuntimeError("simulated optimizer failure")
+
+
+class _TraceWriteFailingCore(FixtureCoreClient):
+    def optimize_memory_candidates(self, context, base_hits, *, top_k: int, latency_budget_ms: int):
+        result = super().optimize_memory_candidates(
+            context,
+            base_hits,
+            top_k=top_k,
+            latency_budget_ms=latency_budget_ms,
+        )
+        return replace(result, trace_id="trace-write-fails")
+
+    def store_memory_optimizer_trace(self, trace):
+        del trace
+        raise RuntimeError("simulated trace write failure")
 
 
 class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
@@ -157,6 +180,118 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
         self.assertEqual(core.optimize_calls[0]["inputMode"], "pinyin_composition")
         self.assertEqual(core.optimize_calls[0]["topK"], 2)
         self.assertTrue(core.optimize_calls[0]["baseHitIds"])
+
+    def test_sidecar_fail_closes_when_optimizer_core_raises(self) -> None:
+        os.environ["RAG_IME_MEMORY_OPTIMIZER"] = "1"
+        os.environ["RAG_IME_MEMORY_OPTIMIZER_TRACE"] = "1"
+        core = _FailingOptimizerCore()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "optimizer-fail-closed",
+                "requestSeq": 29,
+                "forceSideCandidates": True,
+                "committedContext": "我想设计一个输入法",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "rimeContext": {"candidates": [{"label": "1", "text": "设计", "comment": "rime"}]},
+            },
+            adapter=InputMethodAdapter(core),
+            core=core,
+            predictor=_NoopPredictionProvider(),
+        )
+
+        optimizer = response["ragLane"]["memoryOptimizer"]
+        self.assertTrue(optimizer["enabled"])
+        self.assertTrue(optimizer["degraded"])
+        self.assertTrue(optimizer["failClosed"])
+        self.assertIn("optimizer_exception:RuntimeError", optimizer["warnings"])
+        self.assertEqual(response["ragCandidates"], [])
+
+    def test_sidecar_ignores_optimizer_trace_write_failure(self) -> None:
+        os.environ["RAG_IME_MEMORY_OPTIMIZER"] = "1"
+        os.environ["RAG_IME_MEMORY_OPTIMIZER_TRACE"] = "1"
+        core = _TraceWriteFailingCore()
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "optimizer-trace-write-fail",
+                "requestSeq": 30,
+                "forceSideCandidates": True,
+                "committedContext": "我想设计一个输入法",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "rimeContext": {"candidates": [{"label": "1", "text": "设计", "comment": "rime"}]},
+            },
+            adapter=InputMethodAdapter(core),
+            core=core,
+            predictor=_NoopPredictionProvider(),
+        )
+
+        optimizer = response["ragLane"]["memoryOptimizer"]
+        self.assertTrue(optimizer["enabled"])
+        self.assertEqual(optimizer["traceId"], "trace-write-fails")
+        self.assertTrue(response["ragCandidates"])
+
+    def test_realtime_sidecar_does_not_call_x1top_or_http_when_optimizer_enabled(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-no-cloud-realtime-") as tmp:
+            env_path = Path(tmp) / ".rag-ime-x1api.env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "X1API_BASE_URL=https://x1api.top/v1",
+                        "X1API_API_KEY=secret-value",
+                        "X1API_MODEL=x1top",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
+            core.initialize()
+            adapter = InputMethodAdapter(core)
+            adapter.commit_text(
+                "本地检索优先",
+                recent_context="输入法 RAG 和记忆优化需要保持 local-first",
+                project="wisdom-weasel-rag-ime",
+                tags=("phrase-memory",),
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_MEMORY_OPTIMIZER": "1",
+                    "RAG_IME_MEMORY_OPTIMIZER_TRACE": "1",
+                    "RAG_IME_MODEL_ENV": str(env_path),
+                    "X1API_BASE_URL": "https://x1api.top/v1",
+                    "X1API_API_KEY": "secret-value",
+                    "X1API_MODEL": "x1top",
+                },
+                clear=False,
+            ), patch(
+                "urllib.request.urlopen",
+                side_effect=AssertionError("/rime-suggest must not make external HTTP calls"),
+            ), patch(
+                "rag_ime.memory_generator.VcpRebuildMemoryGenerator.from_env_path",
+                side_effect=AssertionError("/rime-suggest must not load the x1top generator"),
+            ), patch(
+                "rag_ime.memory_compiler.VcpRebuildMemoryGenerator.from_env_path",
+                side_effect=AssertionError("/rime-suggest must not load the offline compiler"),
+            ):
+                response = build_rime_sidecar_response(
+                    payload={
+                        "sessionId": "optimizer-no-cloud",
+                        "requestSeq": 31,
+                        "forceSideCandidates": True,
+                        "committedContext": "我想优化 RAG 和记忆候选",
+                        "maxVisibleCandidates": 4,
+                        "maxSideCandidates": 2,
+                        "rimeContext": {"candidates": [{"label": "1", "text": "优化", "comment": "rime"}]},
+                    },
+                    adapter=adapter,
+                    core=core,
+                    predictor=_NoopPredictionProvider(),
+                )
+
+        self.assertTrue(response["ragLane"]["memoryOptimizer"]["enabled"])
+        self.assertEqual(response["modelLane"]["predictionCount"], 0)
 
     def test_optimizer_blocks_suppressed_memory_candidate_when_enabled(self) -> None:
         os.environ["RAG_IME_MEMORY_OPTIMIZER"] = "1"

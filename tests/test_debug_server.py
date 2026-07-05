@@ -333,9 +333,13 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(trace["ok"])
         self.assertEqual(trace["traceId"], trace_id)
         self.assertTrue(any(item["id"] == "phrase:连续预测" for item in trace["rawResults"]))
+        self.assertTrue(any(item["reason"] == "recent_committed_echo" for item in trace["blocked"]))
         self.assertTrue(explanation["ok"])
         self.assertEqual(explanation["candidateId"], "phrase:连续预测")
         self.assertEqual(explanation["recentTrace"]["traceId"], trace_id)
+        self.assertTrue(
+            any(item["reason"] == "recent_committed_echo" for item in explanation["recentTrace"]["blocked"])
+        )
 
     def test_memory_governance_and_cleanup_runs_endpoints(self) -> None:
         self.service.core.record_memory_feedback(
@@ -1239,8 +1243,13 @@ class DebugImeServiceTests(unittest.TestCase):
 
         self.assertTrue(trace_payload["ok"])
         self.assertEqual(trace_payload["traceId"], trace_id)
+        self.assertTrue(any(item["reason"] == "recent_committed_echo" for item in trace_payload["blocked"]))
         self.assertTrue(explain_payload["ok"])
         self.assertEqual(explain_payload["candidateId"], "phrase:连续预测")
+        self.assertEqual(explain_payload["recentTrace"]["traceId"], trace_id)
+        self.assertTrue(
+            any(item["reason"] == "recent_committed_echo" for item in explain_payload["recentTrace"]["blocked"])
+        )
         self.assertTrue(suppressions_payload["ok"])
         self.assertIn("suppressions", suppressions_payload)
         self.assertTrue(apply_payload["ok"])
