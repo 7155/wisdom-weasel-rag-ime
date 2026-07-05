@@ -25,6 +25,7 @@ from .models import (
 )
 from .payloads import action_response_payload, model_prediction_to_payload, suggestion_to_payload
 from .pinyin_index import build_pinyin_metadata, text_initials
+from .prediction_anchors import build_prediction_anchors_from_snapshot, prediction_mode_family
 from .prediction_first import (
     infer_input_mode,
     prediction_session_to_payload,
@@ -109,10 +110,13 @@ _PROGRESSIVE_FIRST_RESPONSE_MS = 700
 _PROGRESSIVE_FOLLOW_UP_RETRY_MS = 280
 _POST_COMMIT_PANEL_TTL_MS = 8000
 _PREFIX_CONSTRAINED_PANEL_TTL_MS = 2600
+_REFRESH_DEBOUNCE_MS = 100
 _MODEL_HOLDOVER_LOCK = RLock()
 _MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
 _PREDICTION_MANAGER_LOCK = RLock()
 _PREDICTION_MANAGERS: dict[tuple[str, str, str], PredictionManager] = {}
+_REFRESH_DEBOUNCE_LOCK = RLock()
+_REFRESH_DEBOUNCE: dict[tuple[str, str, str, str, str], "_RefreshDebounceState"] = {}
 _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
 _SOURCE_BADGE_MAP = {
     "rime": "词",
@@ -260,6 +264,13 @@ class _ModelPredictionHoldover:
     created_at: float
 
 
+@dataclass(frozen=True)
+class _RefreshDebounceState:
+    created_at_ms: int
+    request_seq: int
+    semantic_query_hash: str
+
+
 def build_rime_sidecar_response(
     *,
     payload: dict[str, Any],
@@ -274,6 +285,13 @@ def build_rime_sidecar_response(
         snapshot=snapshot,
         semantic_query=semantic_query,
         query_basis=query_basis,
+    )
+    trigger_decision, refresh_debounce = apply_refresh_debounce(
+        snapshot=snapshot,
+        trigger_decision=trigger_decision,
+        semantic_query=semantic_query,
+        query_basis=query_basis,
+        default_project=default_project,
     )
     if trigger_decision.should_refresh:
         lane_started = time.perf_counter()
@@ -508,6 +526,7 @@ def build_rime_sidecar_response(
         snapshot=snapshot,
         trigger_decision=trigger_decision,
         semantic_query=semantic_query,
+        debounce=refresh_debounce,
     )
     show_decision = show_decision_payload(
         prediction_session=prediction_session_payload,
@@ -2072,6 +2091,12 @@ def clear_model_prediction_holdover_cache() -> None:
 def clear_prediction_manager_cache() -> None:
     with _PREDICTION_MANAGER_LOCK:
         _PREDICTION_MANAGERS.clear()
+    clear_refresh_debounce_cache()
+
+
+def clear_refresh_debounce_cache() -> None:
+    with _REFRESH_DEBOUNCE_LOCK:
+        _REFRESH_DEBOUNCE.clear()
 
 
 def wait_for_model_prediction_lane_idle(timeout_s: float = 1.0) -> bool:
@@ -2609,6 +2634,79 @@ def prediction_first_merge_enabled(payload: Mapping[str, object]) -> bool:
     frontend_build = compact_whitespace(str(payload.get("frontendBuild") or ""))
     schema_version = compact_whitespace(str(payload.get("schemaVersion") or ""))
     return frontend_build.startswith("rag-ime.") or schema_version.startswith("rag-ime.squirrel")
+
+
+def apply_refresh_debounce(
+    *,
+    snapshot: RimeContextSnapshot,
+    trigger_decision: RimeSideCandidateTriggerDecision,
+    semantic_query: str,
+    query_basis: str,
+    default_project: str,
+) -> tuple[RimeSideCandidateTriggerDecision, dict[str, object]]:
+    debounce_ms = _refresh_debounce_ms()
+    if not trigger_decision.should_refresh or debounce_ms <= 0:
+        return trigger_decision, {"debounced": False, "debounceMs": debounce_ms}
+    if snapshot.progressive_follow_up or compact_whitespace(snapshot.commit_text_preview):
+        return trigger_decision, {"debounced": False, "debounceMs": debounce_ms, "reason": "post_commit_or_followup"}
+    if not compact_whitespace(snapshot.raw_input or snapshot.preedit):
+        return trigger_decision, {"debounced": False, "debounceMs": debounce_ms, "reason": "no_active_composition"}
+
+    mode = infer_input_mode(snapshot)
+    anchors = build_prediction_anchors_from_snapshot(
+        snapshot=snapshot,
+        mode=mode.value,
+        semantic_query=semantic_query,
+        query_basis=query_basis,
+        stable_short_pinyin_prefix=stable_short_pinyin_prefix(snapshot),
+    )
+    project = compact_whitespace(snapshot.project or default_project)
+    app = compact_whitespace(snapshot.app)
+    session_id = compact_whitespace(snapshot.session_id)
+    query_family = f"{prediction_mode_family(mode.value)}:{query_basis}"
+    key = (project, app, session_id, anchors.hard_context_anchor, query_family)
+    monotonic_ms = int(time.monotonic() * 1000)
+    semantic_hash = stable_text_hash(semantic_query)
+    with _REFRESH_DEBOUNCE_LOCK:
+        previous = _REFRESH_DEBOUNCE.get(key)
+        if previous is not None:
+            age_ms = max(0, monotonic_ms - previous.created_at_ms)
+            if age_ms <= debounce_ms:
+                return (
+                    RimeSideCandidateTriggerDecision(False, "skip: refresh debounce coalesced"),
+                    {
+                        "debounced": True,
+                        "debounceMs": debounce_ms,
+                        "coalescedWithAgeMs": age_ms,
+                        "debounceKey": _short_stable_id(*key),
+                        "previousRequestSeq": previous.request_seq,
+                        "previousSemanticQueryHash": previous.semantic_query_hash,
+                    },
+                )
+        _REFRESH_DEBOUNCE[key] = _RefreshDebounceState(
+            created_at_ms=monotonic_ms,
+            request_seq=snapshot.request_seq,
+            semantic_query_hash=semantic_hash,
+        )
+        if len(_REFRESH_DEBOUNCE) > 512:
+            oldest_key = min(_REFRESH_DEBOUNCE, key=lambda item: _REFRESH_DEBOUNCE[item].created_at_ms)
+            _REFRESH_DEBOUNCE.pop(oldest_key, None)
+    return (
+        trigger_decision,
+        {
+            "debounced": False,
+            "debounceMs": debounce_ms,
+            "debounceKey": _short_stable_id(*key),
+        },
+    )
+
+
+def _refresh_debounce_ms() -> int:
+    raw = os.environ.get("RAG_IME_REFRESH_DEBOUNCE_MS", str(_REFRESH_DEBOUNCE_MS))
+    try:
+        return max(0, min(1000, int(raw)))
+    except ValueError:
+        return _REFRESH_DEBOUNCE_MS
 
 
 def decide_side_candidate_refresh(
@@ -3275,7 +3373,9 @@ def refresh_decision_payload(
     snapshot: RimeContextSnapshot,
     trigger_decision: RimeSideCandidateTriggerDecision,
     semantic_query: str,
+    debounce: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    debounce_payload = dict(debounce or {})
     return {
         "shouldRefresh": trigger_decision.should_refresh,
         "refreshReason": trigger_decision.reason,
@@ -3283,6 +3383,10 @@ def refresh_decision_payload(
         "idleMs": snapshot.idle_ms,
         "semanticSignalLength": semantic_signal_length(semantic_query),
         "forceSideCandidates": snapshot.force_side_candidates,
+        "debounced": bool(debounce_payload.get("debounced")),
+        "debounceMs": int(debounce_payload.get("debounceMs") or _refresh_debounce_ms()),
+        "coalescedWithAgeMs": int(debounce_payload.get("coalescedWithAgeMs") or 0),
+        "debounceKey": _string(debounce_payload.get("debounceKey")),
     }
 
 

@@ -24,6 +24,7 @@ from rag_ime.rime_sidecar import (
     choose_semantic_query,
     clear_model_prediction_holdover_cache,
     clear_prediction_manager_cache,
+    clear_refresh_debounce_cache,
     decide_side_candidate_refresh,
     merge_display_candidates,
     parse_rime_context_payload,
@@ -150,7 +151,11 @@ class MultiPredictionProvider:
 
 
 class PrefixConstrainedPredictionProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.calls += 1
         return [
             ModelPrediction(
                 text="设计输入法状态机",
@@ -367,7 +372,12 @@ class HistoryRepeatingCore(CapturingCore):
 
 
 class PrefixSuggestionCore(CapturingCore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
     def suggest_for_input(self, *, current_input: str, recent_context: str = "", project: str = "", app: str = "", top_k: int = 5):
+        self.calls += 1
         return [
             InputSuggestion(
                 suggestion_id="prefix:1",
@@ -691,6 +701,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         clear_model_prediction_holdover_cache()
         clear_prediction_manager_cache()
+        clear_refresh_debounce_cache()
         self.core = FixtureCoreClient()
         self.adapter = InputMethodAdapter(self.core)
         self.predictor = FakePredictionProvider()
@@ -699,6 +710,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         clear_model_prediction_holdover_cache()
         clear_prediction_manager_cache()
+        clear_refresh_debounce_cache()
 
     def test_semantic_query_uses_rime_candidates_not_dirty_raw_pinyin(self) -> None:
         snapshot = parse_rime_context_payload(
@@ -1751,6 +1763,57 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertEqual(item["snapshotId"], response["predictionSession"]["snapshotId"])
             self.assertEqual(item["hardContextAnchor"], response["predictionSession"]["hardContextAnchor"])
             self.assertEqual(item["metadata"]["keyPolicy"]["numberKeys"], "select_visible_candidate")
+
+    def test_prediction_first_debounces_repeated_composition_refresh_but_keeps_snapshot(self) -> None:
+        core = PrefixSuggestionCore()
+        adapter = InputMethodAdapter(core)
+        predictor = PrefixConstrainedPredictionProvider()
+        payload = {
+            "sessionId": "squirrel-prediction-first-debounce-prefix",
+            "requestSeq": 71,
+            "rawInput": "sj",
+            "preedit": "sj",
+            "committedContext": "我想",
+            "predictionFirstMerge": True,
+            "forceSideCandidates": True,
+            "frontendRevision": 7,
+            "selectionEpoch": 7,
+            "panelSessionId": "panel-debounce",
+            "compositionHash": "sha256:composition-session",
+            "committedContextHash": "sha256:context",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "手机", "comment": "wanxiang"},
+                    {"label": "2", "text": "世界", "comment": "wanxiang"},
+                ]
+            },
+        }
+
+        first = build_rime_sidecar_response(
+            payload=payload,
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+        second = build_rime_sidecar_response(
+            payload={**payload, "requestSeq": 72},
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertTrue(first["refreshDecision"]["shouldRefresh"])
+        self.assertFalse(first["refreshDecision"]["debounced"])
+        self.assertFalse(second["refreshDecision"]["shouldRefresh"])
+        self.assertTrue(second["refreshDecision"]["debounced"])
+        self.assertEqual(second["triggerDecision"]["reason"], "skip: refresh debounce coalesced")
+        self.assertEqual(core.calls, 1)
+        self.assertEqual(predictor.calls, 1)
+        self.assertTrue(second["showDecision"]["shouldShow"])
+        self.assertEqual(second["showDecision"]["action"], "fresh")
+        self.assertTrue(second["displayCandidates"])
 
     def test_prediction_first_prefix_uses_compiled_memory_pinyin_index(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-prefix-memory-") as tmp:

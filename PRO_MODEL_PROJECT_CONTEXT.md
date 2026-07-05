@@ -435,6 +435,11 @@ rejects stale candidate selection when `snapshotId`, `candidateOrdinal`,
 `candidateStableId`, candidate expiry, session fingerprint, or foreground
 transaction metadata no longer match; the frontend trace checker compares the
 same snapshot-lock fields before accepting a number-key route/commit pair.
+PR-E has also started: active composition refreshes now pass through a small
+per-session debounce/coalescing guard keyed by hard context and query family.
+When a request is coalesced inside `RAG_IME_REFRESH_DEBOUNCE_MS`, the sidecar
+skips RAG/LLM lane execution but still calls `PredictionManager` so an existing
+legal snapshot can remain visible.
 
 ### Sidecar merge path
 
@@ -803,6 +808,40 @@ func canSelectRagImeDisplayCandidate(_ candidate: RagImeDisplayCandidate) -> Boo
   }
   ...
 }
+```
+
+### Composition refresh debounce
+
+File: `rag_ime/rime_sidecar.py`
+
+```python
+trigger_decision, refresh_debounce = apply_refresh_debounce(
+    snapshot=snapshot,
+    trigger_decision=trigger_decision,
+    semantic_query=semantic_query,
+    query_basis=query_basis,
+    default_project=default_project,
+)
+if trigger_decision.should_refresh:
+    suggestions, rag_lane, model_predictions, model_lane, progressive_state = run_side_lanes_with_latency_budget(...)
+```
+
+```python
+def apply_refresh_debounce(...):
+    if not trigger_decision.should_refresh or debounce_ms <= 0:
+        return trigger_decision, {"debounced": False, "debounceMs": debounce_ms}
+    if snapshot.progressive_follow_up or compact_whitespace(snapshot.commit_text_preview):
+        return trigger_decision, {"debounced": False, "reason": "post_commit_or_followup"}
+    if not compact_whitespace(snapshot.raw_input or snapshot.preedit):
+        return trigger_decision, {"debounced": False, "reason": "no_active_composition"}
+
+    key = (project, app, session_id, anchors.hard_context_anchor, query_family)
+    if previous is not None and age_ms <= debounce_ms:
+        return RimeSideCandidateTriggerDecision(False, "skip: refresh debounce coalesced"), {
+            "debounced": True,
+            "coalescedWithAgeMs": age_ms,
+            "debounceKey": _short_stable_id(*key),
+        }
 ```
 
 ### PR-1 frontend transaction model
