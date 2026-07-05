@@ -89,6 +89,8 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     valid_side_commit = latest_matching(events, is_valid_side_commit_event)
     number_route = latest_matching(events, lambda event: event.get("event") == "number_key_route")
     sidecar_response = latest_matching(events, lambda event: event.get("event") == "sidecar_response_applied")
+    stale_response_drop = latest_matching(events, is_stale_response_drop_event)
+    stale_selection_rejected = latest_matching(events, lambda event: event.get("event") == "stale_candidate_selection_rejected")
     modern_prediction_session = latest_matching(events, is_modern_prediction_session_event)
     side_commit_barrier_ms = max(
         event_timestamp_ms(mixed_panel),
@@ -104,6 +106,9 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "logPath": str(log_path),
         "eventCount": len(events),
         "latestSidecarResponse": summarize_event(sidecar_response),
+        "latestStaleResponseDrop": summarize_event(stale_response_drop),
+        "latestStaleSelectionRejected": summarize_event(stale_selection_rejected),
+        "frontendTransactionViolations": frontend_transaction_violations(events),
         "latestModernPredictionSession": summarize_event(modern_prediction_session),
         "latestMixedPanel": summarize_event(mixed_panel),
         "latestSidePanel": summarize_event(side_panel),
@@ -299,6 +304,51 @@ def is_modern_prediction_session_event(event: dict[str, Any]) -> bool:
     return phase not in {"", "legacy"} and bool(selection_scope) and expires_after_ms > 0
 
 
+def is_stale_response_drop_event(event: dict[str, Any]) -> bool:
+    return str(event.get("event") or "") in {"sidecar_response_dropped", "sidecar_response_dropped_stale"}
+
+
+def frontend_transaction_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") == "sidecar_response_applied":
+            session = event.get("predictionSession")
+            if isinstance(session, dict) and not transaction_fields_match(event, session):
+                violations.append(
+                    {
+                        "event": "sidecar_response_applied",
+                        "timestampMs": event.get("timestampMs"),
+                        "reason": "prediction_session_transaction_mismatch",
+                    }
+                )
+        if event.get("event") == "panel_display_candidates":
+            candidates = event.get("candidates")
+            if isinstance(candidates, list):
+                for candidate in candidates:
+                    if isinstance(candidate, dict) and not transaction_fields_match(event, candidate):
+                        violations.append(
+                            {
+                                "event": "panel_display_candidates",
+                                "timestampMs": event.get("timestampMs"),
+                                "reason": "candidate_transaction_mismatch",
+                                "candidate": candidate.get("label"),
+                            }
+                        )
+                        break
+    return violations
+
+
+def transaction_fields_match(parent: dict[str, Any], child: dict[str, Any]) -> bool:
+    for key in ("frontendRevision", "selectionEpoch", "panelSessionId", "compositionHash", "committedContextHash"):
+        parent_value = parent.get(key)
+        child_value = child.get(key)
+        if parent_value is None or child_value is None:
+            continue
+        if str(parent_value) != str(child_value):
+            return False
+    return True
+
+
 def latest_number_key_side_commit(
     events: list[dict[str, Any]],
     *,
@@ -346,7 +396,7 @@ def latest_post_commit_followup(
         for event in events[commit_index + 1 :]:
             if event_timestamp_ms(event) < event_timestamp_ms(commit_event):
                 continue
-            if event.get("event") == "side_candidate_continuation_scheduled":
+            if event.get("event") in {"side_candidate_continuation_scheduled", "post_commit_prediction_scheduled"}:
                 schedule_event = event
                 continue
             if event.get("event") != "sidecar_request_scheduled":
@@ -393,6 +443,12 @@ def candidates_match_number_route(route_event: dict[str, Any], commit_event: dic
     commit_session = str(commit_candidate.get("sessionFingerprint") or "")
     if (route_session or commit_session) and route_session != commit_session:
         return False
+    for key in ("frontendRevision", "selectionEpoch", "panelSessionId", "compositionHash", "committedContextHash"):
+        route_value = route_candidate.get(key)
+        commit_value = commit_candidate.get(key)
+        if route_value is not None or commit_value is not None:
+            if str(route_value) != str(commit_value):
+                return False
     return (
         bool(route_key)
         and route_key == route_candidate_key
@@ -431,6 +487,17 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "responseAgeMs": event.get("responseAgeMs"),
         "inputGeneration": event.get("inputGeneration"),
         "liveInputGeneration": event.get("liveInputGeneration"),
+        "frontendRevision": event.get("frontendRevision"),
+        "selectionEpoch": event.get("selectionEpoch"),
+        "panelSessionId": event.get("panelSessionId"),
+        "compositionHash": event.get("compositionHash"),
+        "committedContextHash": event.get("committedContextHash"),
+        "requestFrontendRevision": event.get("requestFrontendRevision"),
+        "responseFrontendRevision": event.get("responseFrontendRevision"),
+        "liveFrontendRevision": event.get("liveFrontendRevision"),
+        "requestSelectionEpoch": event.get("requestSelectionEpoch"),
+        "responseSelectionEpoch": event.get("responseSelectionEpoch"),
+        "liveSelectionEpoch": event.get("liveSelectionEpoch"),
         "predictionSession": event.get("predictionSession"),
     }
     candidates = event.get("candidates")
@@ -482,6 +549,8 @@ def report_passes(
     if require_post_commit_followup and not report.get("latestPostCommitFollowup"):
         return False
     if require_modern_prediction_session and not report.get("latestModernPredictionSession"):
+        return False
+    if report.get("frontendTransactionViolations"):
         return False
     return True
 

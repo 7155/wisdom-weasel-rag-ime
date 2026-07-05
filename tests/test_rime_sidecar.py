@@ -30,6 +30,7 @@ from rag_ime.rime_sidecar import (
     record_rime_side_candidate_selection,
     wait_for_model_prediction_lane_idle,
 )
+from rag_ime.text_utils import stable_text_hash
 
 
 class FakePredictionProvider:
@@ -1250,6 +1251,68 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
         self.assertTrue(response["triggerDecision"]["shouldRefresh"])
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: stable Rime candidates")
+
+    def test_frontend_transaction_fields_echo_and_bind_display_candidates(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "squirrel-transaction",
+                "requestSeq": 91,
+                "frontendRevision": 55,
+                "selectionEpoch": 12,
+                "frontAppBundleId": "com.apple.TextEdit",
+                "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
+                "compositionHash": "sha256:composition1234",
+                "committedContextHash": "sha256:context1234",
+                "panelSessionId": "panel-abc",
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                    ]
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+        )
+
+        self.assertEqual(response["frontendRevision"], 55)
+        self.assertEqual(response["selectionEpoch"], 12)
+        self.assertEqual(response["frontAppBundleId"], "com.apple.TextEdit")
+        self.assertEqual(response["inputSourceId"], "im.rag-ime.inputmethod.RagIme.Hans")
+        self.assertEqual(response["compositionHash"], "sha256:composition1234")
+        self.assertEqual(response["committedContextHash"], "sha256:context1234")
+        self.assertEqual(response["panelSessionId"], "panel-abc")
+        self.assertEqual(response["frontendTransaction"]["selectionEpoch"], 12)
+        self.assertEqual(response["predictionSession"]["frontendRevision"], 55)
+        self.assertTrue(response["displayCandidates"])
+        for item in response["displayCandidates"]:
+            self.assertEqual(item["metadata"]["frontendRevision"], 55)
+            self.assertEqual(item["metadata"]["selectionEpoch"], 12)
+            self.assertEqual(item["metadata"]["compositionHash"], "sha256:composition1234")
+            self.assertEqual(item["metadata"]["committedContextHash"], "sha256:context1234")
+            self.assertEqual(item["metadata"]["panelSessionId"], "panel-abc")
+
+    def test_frontend_transaction_hashes_default_to_privacy_preserving_text_hashes(self) -> None:
+        snapshot = parse_rime_context_payload(
+            {
+                "sessionId": "squirrel-transaction-default",
+                "requestSeq": 92,
+                "rawInput": "xiang",
+                "preedit": "xiang",
+                "committedContext": " 我想   做一个 RAG 输入法 ",
+            },
+            default_project="wisdom-weasel-rag-ime",
+        )
+
+        transaction = snapshot.frontend_transaction
+        self.assertEqual(transaction.frontend_revision, 0)
+        self.assertEqual(transaction.selection_epoch, 0)
+        self.assertEqual(transaction.composition_hash, stable_text_hash("xiang"))
+        self.assertEqual(transaction.committed_context_hash, stable_text_hash("我想 做一个 RAG 输入法"))
+        self.assertTrue(transaction.panel_session_id)
+        self.assertNotIn("我想", transaction.committed_context_hash)
 
     def test_model_predictions_keep_block_rows_for_rag_when_available(self) -> None:
         response = build_rime_sidecar_response(

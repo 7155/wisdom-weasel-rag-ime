@@ -385,6 +385,17 @@ def default_fixture_memories() -> list[CoreMemory]:
             project="wisdom-weasel-rag-ime",
             tags=("agent-hook", "vibe-coding"),
         ),
+        CoreMemory(
+            memory_id="mem-agent-context-contract",
+            source_event_id="303",
+            text="Agent 首次运行上下文需要项目目标和禁止事项",
+            source_ref="memory:303#agent-context-contract",
+            score=0.85,
+            reason="fixture:agent-hook",
+            evidence_preview="首次运行上下文应包含项目目标、用户偏好、禁止云端实时预测和下一步任务。",
+            project="wisdom-weasel-rag-ime",
+            tags=("agent-hook", "context", "project-memory"),
+        ),
     ]
 
 

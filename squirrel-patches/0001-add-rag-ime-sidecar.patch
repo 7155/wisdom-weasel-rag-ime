@@ -196,6 +196,7 @@ index 0000000..e4aaed0
 +//  Squirrel
 +//
 +
++import CryptoKit
 +import Foundation
 +
 +struct RagImeSidecarClient {
@@ -541,6 +542,13 @@ index 0000000..784162d
 +  let predictionFirstMerge: Bool
 +  let sessionId: String
 +  let requestSeq: Int
++  let frontendRevision: Int
++  let selectionEpoch: Int
++  let frontAppBundleId: String
++  let inputSourceId: String
++  let compositionHash: String
++  let committedContextHash: String
++  let panelSessionId: String
 +  let rawInput: String
 +  let preedit: String
 +  let commitTextPreview: String
@@ -572,6 +580,13 @@ index 0000000..784162d
 +  let schemaVersion: String
 +  let sessionId: String
 +  let requestSeq: Int
++  let frontendRevision: Int
++  let selectionEpoch: Int
++  let frontAppBundleId: String
++  let inputSourceId: String
++  let compositionHash: String
++  let committedContextHash: String
++  let panelSessionId: String
 +  let project: String
 +  let rawInput: String
 +  let preedit: String
@@ -616,6 +631,13 @@ index 0000000..784162d
 +  let contextFingerprint: String?
 +  let requestSeq: Int?
 +  let expiresAfterMs: Int?
++  let frontendRevision: Int?
++  let selectionEpoch: Int?
++  let frontAppBundleId: String?
++  let inputSourceId: String?
++  let compositionHash: String?
++  let committedContextHash: String?
++  let panelSessionId: String?
 +}
 +
 +struct RagImeProgressivePayload: Codable {
@@ -728,6 +750,20 @@ index 0000000..784162d
 +    }
 +  }
 +}
++ 
++func ragImeCompactWhitespace(_ text: String) -> String {
++  return text
++    .components(separatedBy: .whitespacesAndNewlines)
++    .filter { !$0.isEmpty }
++    .joined(separator: " ")
++}
++
++func ragImeStableTextHash(_ text: String) -> String {
++  let normalized = ragImeCompactWhitespace(text)
++  let digest = SHA256.hash(data: Data(normalized.utf8))
++  let hex = digest.map { String(format: "%02x", $0) }.joined()
++  return "sha256:" + String(hex.prefix(16))
++}
 diff --git a/sources/SquirrelApplicationDelegate.swift b/sources/SquirrelApplicationDelegate.swift
 index 124ef7b..52c6983 100644
 --- a/sources/SquirrelApplicationDelegate.swift
@@ -777,6 +813,11 @@ index c2adf74..3cfc0e5 100644
 +  private var ragImeCommittedContextUpdatedAt: Date = .distantPast
 +  private let ragImeCommittedContextLimit: Int = 800
 +  private var ragImeInputGeneration: Int = 0
++  private var ragImeFrontendRevision: Int = 0
++  private var ragImeSelectionEpoch: Int = 0
++  private var ragImeDisplayPanelSessionId: String = ""
++  private var ragImeDisplayCompositionHash: String = ""
++  private var ragImeDisplayCommittedContextHash: String = ""
 +  private var ragImeLastRequestFingerprint: String = ""
 +  private var ragImePendingRequestFingerprint: String = ""
 +  private var ragImePendingRequestWorkItem: DispatchWorkItem?
@@ -810,11 +851,24 @@ index c2adf74..3cfc0e5 100644
    func selectCandidate(_ index: Int) -> Bool {
 +    if ragImePanelUsesDisplayCandidates && index >= 0 && index < ragImeDisplayCandidates.count {
 +      guard canSelectCurrentRagImeDisplayCandidates() else {
++        traceRagImeFrontendEvent("stale_candidate_selection_rejected", fields: [
++          "reason": "select_candidate_display_session_not_live",
++          "index": index,
++          "selectionEpoch": ragImeSelectionEpoch,
++          "panelSessionId": ragImeDisplayPanelSessionId,
++        ])
 +        clearRagImeDisplayCandidates()
 +        return false
 +      }
 +      let candidate = ragImeDisplayCandidates[index]
 +      guard canSelectRagImeDisplayCandidate(candidate) else {
++        traceRagImeFrontendEvent("stale_candidate_selection_rejected", fields: [
++          "reason": "select_candidate_transaction_mismatch",
++          "index": index,
++          "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++          "selectionEpoch": ragImeSelectionEpoch,
++          "panelSessionId": ragImeDisplayPanelSessionId,
++        ])
 +        clearRagImeDisplayCandidates()
 +        return false
 +      }
@@ -840,6 +894,8 @@ index c2adf74..3cfc0e5 100644
 +          recentContext: recentContext,
 +          preedit: sourcePreedit
 +        )
++        ragImeFrontendRevision += 1
++        ragImeSelectionEpoch += 1
 +        clearRagImeDisplayCandidates()
 +        rimeUpdate(clearReservedComments: false, requestSidecar: false)
 +        scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)
@@ -941,6 +997,12 @@ index c2adf74..3cfc0e5 100644
 +      return false
 +    }
 +    guard canSelectCurrentRagImeDisplayCandidates() else {
++      traceRagImeFrontendEvent("stale_candidate_selection_rejected", fields: [
++        "key": key,
++        "reason": "display_session_not_live",
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeDisplayPanelSessionId,
++      ])
 +      clearRagImeDisplayCandidates()
 +      return false
 +    }
@@ -951,6 +1013,14 @@ index c2adf74..3cfc0e5 100644
 +      return false
 +    }
 +    guard canSelectRagImeDisplayCandidate(ragImeDisplayCandidates[index]) else {
++      traceRagImeFrontendEvent("stale_candidate_selection_rejected", fields: [
++        "key": key,
++        "reason": "candidate_transaction_mismatch",
++        "index": index,
++        "candidate": ragImeTraceCandidateSummary(ragImeDisplayCandidates[index], index: index),
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeDisplayPanelSessionId,
++      ])
 +      clearRagImeDisplayCandidates()
 +      return false
 +    }
@@ -1010,12 +1080,26 @@ index c2adf74..3cfc0e5 100644
 +    ragImePendingRequestWorkItem?.cancel()
 +    ragImeRequestSeq += 1
 +    let requestSeq = ragImeRequestSeq
++    ragImeFrontendRevision += 1
++    let frontendRevision = ragImeFrontendRevision
++    let selectionEpoch = ragImeSelectionEpoch
++    let compositionText = preedit.isEmpty ? rawInput : preedit
++    let compositionHash = ragImeStableTextHash(compositionText)
++    let committedContextHash = ragImeStableTextHash(ragImeCommittedContext)
++    let panelSessionId = UUID().uuidString
 +    let request = RagImeSidecarRequest(
 +      frontendBuild: "rag-ime.foreground-trace.v2",
 +      schemaVersion: "rag-ime.squirrel-frontend-trace.v1",
 +      predictionFirstMerge: true,
 +      sessionId: String(session),
 +      requestSeq: requestSeq,
++      frontendRevision: frontendRevision,
++      selectionEpoch: selectionEpoch,
++      frontAppBundleId: currentApp,
++      inputSourceId: SquirrelInstaller.currentInputSourceID() ?? "",
++      compositionHash: compositionHash,
++      committedContextHash: committedContextHash,
++      panelSessionId: panelSessionId,
 +      rawInput: rawInput,
 +      preedit: preedit,
 +      commitTextPreview: commitTextPreview,
@@ -1035,6 +1119,18 @@ index c2adf74..3cfc0e5 100644
 +    )
 +    ragImeInputGeneration += 1
 +    let inputGeneration = ragImeInputGeneration
++    traceRagImeFrontendEvent("frontend_transaction_created", fields: [
++      "requestSeq": requestSeq,
++      "frontendRevision": frontendRevision,
++      "selectionEpoch": selectionEpoch,
++      "frontAppBundleId": currentApp,
++      "inputSourceId": request.inputSourceId,
++      "compositionHash": compositionHash,
++      "committedContextHash": committedContextHash,
++      "compositionChars": ragImeCompactWhitespace(compositionText).count,
++      "committedContextChars": ragImeCompactWhitespace(ragImeCommittedContext).count,
++      "panelSessionId": panelSessionId,
++    ])
 +    let workItem = DispatchWorkItem { [weak self] in
 +      self?.sendRagImeSidecarRequest(
 +        request,
@@ -1046,6 +1142,11 @@ index c2adf74..3cfc0e5 100644
 +    }
 +    traceRagImeFrontendEvent("sidecar_request_scheduled", fields: [
 +      "requestSeq": requestSeq,
++      "frontendRevision": frontendRevision,
++      "selectionEpoch": selectionEpoch,
++      "compositionHash": compositionHash,
++      "committedContextHash": committedContextHash,
++      "panelSessionId": panelSessionId,
 +      "inputGeneration": inputGeneration,
 +      "rawInput": rawInput,
 +      "preedit": preedit,
@@ -1079,12 +1180,29 @@ index c2adf74..3cfc0e5 100644
 +    guard ragImeSidecarClient != nil else { return }
 +    let committedContext = syncRagImeCommittedContextFromClient(excludingMarkedText: "")
 +    guard !committedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
++    traceRagImeFrontendEvent("commit_observed", fields: [
++      "committedText": committedText,
++      "committedContextChars": committedContext.count,
++      "committedContextHash": ragImeStableTextHash(committedContext),
++      "sourceType": sourceCandidate.sourceType,
++      "selectionKey": ragImeSelectionKey(for: sourceCandidate),
++      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(sourceCandidate),
++    ])
 +    traceRagImeFrontendEvent("side_candidate_continuation_scheduled", fields: [
 +      "committedText": committedText,
 +      "committedContextChars": committedContext.count,
 +      "sourceType": sourceCandidate.sourceType,
 +      "selectionKey": ragImeSelectionKey(for: sourceCandidate),
 +      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(sourceCandidate),
++    ])
++    traceRagImeFrontendEvent("post_commit_prediction_scheduled", fields: [
++      "committedText": committedText,
++      "committedContextChars": committedContext.count,
++      "sourceType": sourceCandidate.sourceType,
++      "selectionKey": ragImeSelectionKey(for: sourceCandidate),
++      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(sourceCandidate),
++      "frontendRevision": ragImeFrontendRevision,
++      "selectionEpoch": ragImeSelectionEpoch,
 +    ])
 +    refreshRagImeSidecar(
 +      rawInput: "",
@@ -1109,7 +1227,7 @@ index c2adf74..3cfc0e5 100644
 +    sidecarClient: RagImeSidecarClient
 +  ) {
 +    guard fingerprint == ragImeLastRequestFingerprint else {
-+      traceRagImeFrontendEvent("sidecar_response_dropped", fields: [
++      traceRagImeFrontendEvent("sidecar_response_dropped_stale", fields: [
 +        "requestSeq": request.requestSeq,
 +        "reason": "stale_before_send",
 +        "requestRawInput": request.rawInput,
@@ -1154,6 +1272,16 @@ index c2adf74..3cfc0e5 100644
 +    let responseAgeMs = max(0, Int(Date().timeIntervalSince(sentAt) * 1000))
 +    let phase = response.predictionSession?.phase ?? ""
 +    let applyWindowMs = phase == "post_commit" ? ragImePostCommitResponseApplyWindowMs : ragImeActiveResponseApplyWindowMs
++    traceRagImeFrontendEvent("sidecar_response_received", fields: [
++      "requestSeq": response.requestSeq,
++      "frontendRevision": response.frontendRevision,
++      "selectionEpoch": response.selectionEpoch,
++      "compositionHash": response.compositionHash,
++      "committedContextHash": response.committedContextHash,
++      "panelSessionId": response.panelSessionId,
++      "displayCount": response.displayCandidates.count,
++      "responseAgeMs": responseAgeMs,
++    ])
 +    guard responseAgeMs <= applyWindowMs else {
 +      dropRagImeSidecarResponse(
 +        "response_too_late_for_foreground",
@@ -1173,8 +1301,36 @@ index c2adf74..3cfc0e5 100644
 +      dropRagImeSidecarResponse("session_id_mismatch", response: response, request: request, fingerprint: fingerprint)
 +      return
 +    }
++    guard response.frontendRevision == request.frontendRevision else {
++      dropRagImeSidecarResponse("frontend_revision_mismatch", response: response, request: request, fingerprint: fingerprint)
++      return
++    }
++    guard response.selectionEpoch == request.selectionEpoch else {
++      dropRagImeSidecarResponse("selection_epoch_mismatch", response: response, request: request, fingerprint: fingerprint)
++      return
++    }
++    guard response.compositionHash == request.compositionHash else {
++      dropRagImeSidecarResponse("composition_hash_mismatch", response: response, request: request, fingerprint: fingerprint)
++      return
++    }
++    guard response.committedContextHash == request.committedContextHash else {
++      dropRagImeSidecarResponse("committed_context_hash_mismatch", response: response, request: request, fingerprint: fingerprint)
++      return
++    }
++    guard response.panelSessionId == request.panelSessionId else {
++      dropRagImeSidecarResponse("panel_session_mismatch", response: response, request: request, fingerprint: fingerprint)
++      return
++    }
 +    guard session != 0 && rimeAPI.find_session(session) else {
 +      dropRagImeSidecarResponse("session_missing", response: response, request: request, fingerprint: fingerprint)
++      return
++    }
++    guard response.frontendRevision == ragImeFrontendRevision else {
++      dropRagImeSidecarResponse("live_frontend_revision_changed", response: response, request: request, fingerprint: fingerprint)
++      return
++    }
++    guard response.selectionEpoch == ragImeSelectionEpoch else {
++      dropRagImeSidecarResponse("live_selection_epoch_changed", response: response, request: request, fingerprint: fingerprint)
 +      return
 +    }
 +    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
@@ -1209,7 +1365,7 @@ index c2adf74..3cfc0e5 100644
 +    }
 +    if fingerprint != ragImeLastRequestFingerprint {
 +      if responseContainsRimeFallback || currentRawInput != request.rawInput || ragImeCommittedContext != request.committedContext {
-+        traceRagImeFrontendEvent("sidecar_response_dropped", fields: [
++        traceRagImeFrontendEvent("sidecar_response_dropped_stale", fields: [
 +          "requestSeq": response.requestSeq,
 +          "reason": "stale_fingerprint",
 +          "inputGeneration": inputGeneration,
@@ -1321,6 +1477,10 @@ index c2adf74..3cfc0e5 100644
 +      dropRagImeSidecarResponse("candidate_session_fingerprint_mismatch", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput, clearDisplay: true)
 +      return
 +    }
++    guard displayCandidatesToApply.allSatisfy({ ragImeDisplayCandidateMatchesTransaction($0, response: response) }) else {
++      dropRagImeSidecarResponse("candidate_frontend_transaction_mismatch", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput, clearDisplay: true)
++      return
++    }
 +
 +    ragImeDisplayCandidates = displayCandidatesToApply
 +    ragImePanelUsesDisplayCandidates = !displayCandidatesToApply.isEmpty
@@ -1330,6 +1490,9 @@ index c2adf74..3cfc0e5 100644
 +    ragImeDisplayQueryBasis = response.queryBasis
 +    ragImeDisplayUpdatedAt = Date()
 +    ragImeDisplaySessionFingerprint = responseSessionFingerprint
++    ragImeDisplayPanelSessionId = response.panelSessionId
++    ragImeDisplayCompositionHash = response.compositionHash
++    ragImeDisplayCommittedContextHash = response.committedContextHash
 +    if let expiresAfterMs = response.predictionSession?.expiresAfterMs, expiresAfterMs > 0 {
 +      ragImeDisplayExpiresAt = Date().addingTimeInterval(TimeInterval(expiresAfterMs) / 1000)
 +    } else {
@@ -1338,6 +1501,11 @@ index c2adf74..3cfc0e5 100644
 +    scheduleRagImeDisplayExpiry()
 +    traceRagImeFrontendEvent("sidecar_response_applied", fields: [
 +      "requestSeq": response.requestSeq,
++      "frontendRevision": response.frontendRevision,
++      "selectionEpoch": response.selectionEpoch,
++      "compositionHash": response.compositionHash,
++      "committedContextHash": response.committedContextHash,
++      "panelSessionId": response.panelSessionId,
 +      "rawInput": response.rawInput,
 +      "preedit": response.preedit,
 +      "semanticQuery": response.semanticQuery,
@@ -1352,12 +1520,27 @@ index c2adf74..3cfc0e5 100644
 +        "phase": response.predictionSession?.phase ?? "",
 +        "selectionScope": response.predictionSession?.selectionScope ?? "",
 +        "sessionFingerprint": ragImeDisplaySessionFingerprint,
++        "frontendRevision": response.predictionSession?.frontendRevision ?? response.frontendRevision,
++        "selectionEpoch": response.predictionSession?.selectionEpoch ?? response.selectionEpoch,
++        "panelSessionId": response.predictionSession?.panelSessionId ?? response.panelSessionId,
 +        "expiresAfterMs": response.predictionSession?.expiresAfterMs ?? 0,
 +      ],
 +      "candidateCounts": ragImeTraceCandidateCounts(),
 +      "candidates": ragImeTraceCandidateSummaries(),
 +      "progressive": ragImeTraceProgressive(response.progressive),
 +    ])
++    if phase == "post_commit" {
++      traceRagImeFrontendEvent("post_commit_prediction_applied", fields: [
++        "requestSeq": response.requestSeq,
++        "frontendRevision": response.frontendRevision,
++        "selectionEpoch": response.selectionEpoch,
++        "compositionHash": response.compositionHash,
++        "committedContextHash": response.committedContextHash,
++        "panelSessionId": response.panelSessionId,
++        "displayCount": displayCandidatesToApply.count,
++        "candidateCounts": ragImeTraceCandidateCounts(),
++      ])
++    }
 +    completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: true)
 +    scheduleRagImeProgressiveFollowUpIfNeeded(
 +      response: response,
@@ -1436,6 +1619,13 @@ index c2adf74..3cfc0e5 100644
 +        predictionFirstMerge: request.predictionFirstMerge,
 +        sessionId: request.sessionId,
 +        requestSeq: request.requestSeq,
++        frontendRevision: request.frontendRevision,
++        selectionEpoch: request.selectionEpoch,
++        frontAppBundleId: request.frontAppBundleId,
++        inputSourceId: request.inputSourceId,
++        compositionHash: request.compositionHash,
++        committedContextHash: request.committedContextHash,
++        panelSessionId: request.panelSessionId,
 +        rawInput: request.rawInput,
 +        preedit: request.preedit,
 +        commitTextPreview: request.commitTextPreview,
@@ -1489,8 +1679,20 @@ index c2adf74..3cfc0e5 100644
 +    if clearDisplay {
 +      clearRagImeDisplayCandidates()
 +    }
-+    traceRagImeFrontendEvent("sidecar_response_dropped", fields: [
++    traceRagImeFrontendEvent("sidecar_response_dropped_stale", fields: [
 +      "requestSeq": response.requestSeq,
++      "requestFrontendRevision": request.frontendRevision,
++      "responseFrontendRevision": response.frontendRevision,
++      "liveFrontendRevision": ragImeFrontendRevision,
++      "requestSelectionEpoch": request.selectionEpoch,
++      "responseSelectionEpoch": response.selectionEpoch,
++      "liveSelectionEpoch": ragImeSelectionEpoch,
++      "requestCompositionHash": request.compositionHash,
++      "responseCompositionHash": response.compositionHash,
++      "requestCommittedContextHash": request.committedContextHash,
++      "responseCommittedContextHash": response.committedContextHash,
++      "requestPanelSessionId": request.panelSessionId,
++      "responsePanelSessionId": response.panelSessionId,
 +      "reason": reason,
 +      "requestRawInput": request.rawInput,
 +      "responseRawInput": response.rawInput,
@@ -1673,7 +1875,11 @@ index c2adf74..3cfc0e5 100644
 +
 +  func invalidateRagImeDisplayForInputChange(reason: String, keyCode: UInt16) {
 +    ragImeInputGeneration += 1
++    ragImeFrontendRevision += 1
++    ragImeSelectionEpoch += 1
 +    let generation = ragImeInputGeneration
++    let frontendRevision = ragImeFrontendRevision
++    let selectionEpoch = ragImeSelectionEpoch
 +    let previousCount = ragImeDisplayCandidates.count
 +    clearRagImeDisplayCandidates()
 +    ragImePendingRequestWorkItem?.cancel()
@@ -1684,6 +1890,16 @@ index c2adf74..3cfc0e5 100644
 +      "reason": reason,
 +      "keyCode": Int(keyCode),
 +      "inputGeneration": generation,
++      "frontendRevision": frontendRevision,
++      "selectionEpoch": selectionEpoch,
++      "previousDisplayCount": previousCount,
++    ])
++    traceRagImeFrontendEvent("frontend_transaction_invalidated", fields: [
++      "reason": reason,
++      "keyCode": Int(keyCode),
++      "inputGeneration": generation,
++      "frontendRevision": frontendRevision,
++      "selectionEpoch": selectionEpoch,
 +      "previousDisplayCount": previousCount,
 +    ])
 +    DispatchQueue.main.async { [weak self] in
@@ -1748,11 +1964,41 @@ index c2adf74..3cfc0e5 100644
 +  func canSelectRagImeDisplayCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
 +    guard ragImeDisplaySessionStillLive() else { return false }
 +    guard !ragImeDisplaySessionFingerprint.isEmpty else { return true }
-+    return ragImeDisplayCandidateSessionFingerprint(candidate) == ragImeDisplaySessionFingerprint
++    guard ragImeDisplayCandidateSessionFingerprint(candidate) == ragImeDisplaySessionFingerprint else { return false }
++    guard ragImeDisplayCandidateIntMetadata(candidate, "frontendRevision") == ragImeFrontendRevision else { return false }
++    guard ragImeDisplayCandidateIntMetadata(candidate, "selectionEpoch") == ragImeSelectionEpoch else { return false }
++    guard ragImeDisplayCandidateStringMetadata(candidate, "panelSessionId") == ragImeDisplayPanelSessionId else { return false }
++    guard ragImeDisplayCandidateStringMetadata(candidate, "compositionHash") == ragImeDisplayCompositionHash else { return false }
++    guard ragImeDisplayCandidateStringMetadata(candidate, "committedContextHash") == ragImeDisplayCommittedContextHash else { return false }
++    return true
++  }
++
++  func ragImeDisplayCandidateMatchesTransaction(_ candidate: RagImeDisplayCandidate, response: RagImeSidecarResponse) -> Bool {
++    return ragImeDisplayCandidateIntMetadata(candidate, "frontendRevision") == response.frontendRevision
++      && ragImeDisplayCandidateIntMetadata(candidate, "selectionEpoch") == response.selectionEpoch
++      && ragImeDisplayCandidateStringMetadata(candidate, "panelSessionId") == response.panelSessionId
++      && ragImeDisplayCandidateStringMetadata(candidate, "compositionHash") == response.compositionHash
++      && ragImeDisplayCandidateStringMetadata(candidate, "committedContextHash") == response.committedContextHash
 +  }
 +
 +  func ragImeDisplayCandidateSessionFingerprint(_ candidate: RagImeDisplayCandidate) -> String {
 +    return ragImeJSONValueString(candidate.metadata["sessionFingerprint"]) ?? ""
++  }
++
++  func ragImeDisplayCandidateStringMetadata(_ candidate: RagImeDisplayCandidate, _ key: String) -> String {
++    return ragImeJSONValueString(candidate.metadata[key]) ?? ""
++  }
++
++  func ragImeDisplayCandidateIntMetadata(_ candidate: RagImeDisplayCandidate, _ key: String) -> Int {
++    guard let value = candidate.metadata[key] else { return -1 }
++    switch value {
++    case .number(let number):
++      return Int(number)
++    case .string(let text):
++      return Int(text) ?? -1
++    default:
++      return -1
++    }
 +  }
 +
 +  func ragImeDisplayPanelPayload(fallbackLabels: [String]) -> (candidates: [String], comments: [String], labels: [String]) {
@@ -1809,13 +2055,18 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func traceRagImeFrontendEvent(_ event: String, fields: [String: Any]) {
-+    var payload = fields
++    let includeText = ProcessInfo.processInfo.environment["RAG_IME_TRACE_INCLUDE_TEXT"] == "1"
++    var payload = ragImeSanitizedTraceFields(fields, includeText: includeText)
 +    payload["frontendBuild"] = "rag-ime.foreground-trace.v2"
 +    payload["schemaVersion"] = "rag-ime.squirrel-frontend-trace.v1"
 +    payload["event"] = event
 +    payload["timestampMs"] = Int(Date().timeIntervalSince1970 * 1000)
 +    payload["sessionId"] = String(session)
 +    payload["schemaId"] = schemaId
++    payload["frontendRevision"] = payload["frontendRevision"] ?? ragImeFrontendRevision
++    payload["selectionEpoch"] = payload["selectionEpoch"] ?? ragImeSelectionEpoch
++    payload["panelSessionId"] = payload["panelSessionId"] ?? ragImeDisplayPanelSessionId
++    payload["traceIncludesText"] = includeText
 +
 +    guard JSONSerialization.isValidJSONObject(payload) else { return }
 +    do {
@@ -1835,6 +2086,58 @@ index c2adf74..3cfc0e5 100644
 +    } catch {
 +      print("RAG IME frontend trace failed: \(error)")
 +    }
++  }
++
++  func ragImeSanitizedTraceFields(_ fields: [String: Any], includeText: Bool) -> [String: Any] {
++    var sanitized: [String: Any] = [:]
++    for (key, value) in fields {
++      sanitized[key] = ragImeSanitizedTraceValue(value, key: key, includeText: includeText)
++    }
++    return sanitized
++  }
++
++  func ragImeSanitizedTraceValue(_ value: Any, key: String, includeText: Bool) -> Any {
++    if includeText {
++      return value
++    }
++    if let text = value as? String {
++      guard ragImeTraceKeyCarriesUserText(key), !text.isEmpty else { return text }
++      return [
++        "chars": ragImeCompactWhitespace(text).count,
++        "hash": ragImeStableTextHash(text),
++      ] as [String: Any]
++    }
++    if let dictionary = value as? [String: Any] {
++      var sanitized: [String: Any] = [:]
++      for (childKey, childValue) in dictionary {
++        sanitized[childKey] = ragImeSanitizedTraceValue(childValue, key: childKey, includeText: includeText)
++      }
++      return sanitized
++    }
++    if let array = value as? [Any] {
++      return array.map { item in ragImeSanitizedTraceValue(item, key: key, includeText: includeText) }
++    }
++    return value
++  }
++
++  func ragImeTraceKeyCarriesUserText(_ key: String) -> Bool {
++    return [
++      "rawInput",
++      "preedit",
++      "requestRawInput",
++      "responseRawInput",
++      "currentRawInput",
++      "requestPreedit",
++      "responsePreedit",
++      "commitTextPreview",
++      "committedText",
++      "committedContextSuffix",
++      "query",
++      "text",
++      "insertText",
++      "comment",
++      "evidencePreview",
++    ].contains(key)
 +  }
 +
 +  func ragImeTraceCandidateCounts() -> [String: Any] {
@@ -1892,6 +2195,11 @@ index c2adf74..3cfc0e5 100644
 +      "rimeIndex": candidate.rimeIndex ?? -1,
 +      "sourceEventId": candidate.sourceEventId ?? 0,
 +      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(candidate),
++      "frontendRevision": ragImeDisplayCandidateIntMetadata(candidate, "frontendRevision"),
++      "selectionEpoch": ragImeDisplayCandidateIntMetadata(candidate, "selectionEpoch"),
++      "panelSessionId": ragImeDisplayCandidateStringMetadata(candidate, "panelSessionId"),
++      "compositionHash": ragImeDisplayCandidateStringMetadata(candidate, "compositionHash"),
++      "committedContextHash": ragImeDisplayCandidateStringMetadata(candidate, "committedContextHash"),
 +    ]
 +  }
 +
@@ -1905,6 +2213,9 @@ index c2adf74..3cfc0e5 100644
 +    ragImeDisplayUpdatedAt = .distantPast
 +    ragImeDisplayExpiresAt = nil
 +    ragImeDisplaySessionFingerprint = ""
++    ragImeDisplayPanelSessionId = ""
++    ragImeDisplayCompositionHash = ""
++    ragImeDisplayCommittedContextHash = ""
 +    ragImeLastRequestFingerprint = ""
 +    ragImePendingRequestFingerprint = ""
 +    ragImePendingRequestWorkItem?.cancel()

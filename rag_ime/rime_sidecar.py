@@ -14,6 +14,7 @@ from .embeddings import NullEmbeddingProvider
 from .history_context import build_prediction_context, model_prediction_context_limits, prediction_context_metadata
 from .local_sqlite_core import LocalSqliteCoreClient
 from .models import (
+    FrontendTransaction,
     InputSuggestion,
     MemoryAction,
     ModelPrediction,
@@ -35,7 +36,7 @@ from .predictor import (
     PredictionProvider,
     predict_with_optional_request_context,
 )
-from .text_utils import compact_whitespace, now_ms, token_terms
+from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms
 
 
 RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
@@ -382,6 +383,7 @@ def build_rime_sidecar_response(
                 "contextFingerprint": manager_result.context_fingerprint,
                 "requestSeq": snapshot.request_seq,
                 "expiresAfterMs": _prediction_session_expiry_ms(prediction_session_payload),
+                **frontend_transaction_to_payload(snapshot.frontend_transaction),
             }
         )
         prediction_first_payload: dict[str, object] = {
@@ -422,6 +424,7 @@ def build_rime_sidecar_response(
             "contextFingerprint": _context_fingerprint(snapshot.committed_context),
             "requestSeq": snapshot.request_seq,
             "expiresAfterMs": 0,
+            **frontend_transaction_to_payload(snapshot.frontend_transaction),
         }
         prediction_first_payload = {
             "enabled": False,
@@ -441,6 +444,8 @@ def build_rime_sidecar_response(
         "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
         "sessionId": snapshot.session_id,
         "requestSeq": snapshot.request_seq,
+        **frontend_transaction_to_payload(snapshot.frontend_transaction),
+        "frontendTransaction": frontend_transaction_to_payload(snapshot.frontend_transaction),
         "project": snapshot.project or default_project,
         "rawInput": snapshot.raw_input,
         "preedit": snapshot.preedit,
@@ -2269,13 +2274,16 @@ def parse_rime_context_payload(payload: dict[str, Any], *, default_project: str)
             )
             for index, item in enumerate(candidates)
         )
+    raw_input = _string(payload.get("rawInput") or payload.get("currentInput"))
+    preedit = _string(payload.get("preedit"))
+    committed_context = _string(payload.get("committedContext") or payload.get("recentContext"))
     return RimeContextSnapshot(
         session_id=_string(payload.get("sessionId")) or "default",
         request_seq=_bounded_int(payload.get("requestSeq"), default=0, minimum=0, maximum=2**63 - 1),
-        raw_input=_string(payload.get("rawInput") or payload.get("currentInput")),
-        preedit=_string(payload.get("preedit")),
+        raw_input=raw_input,
+        preedit=preedit,
         commit_text_preview=_string(payload.get("commitTextPreview") or rime_context.get("commitTextPreview")),
-        committed_context=_string(payload.get("committedContext") or payload.get("recentContext")),
+        committed_context=committed_context,
         project=_string(payload.get("project")) or default_project,
         app=_string(payload.get("app") or payload.get("frontmostApp") or rime_context.get("app") or rime_context.get("frontmostApp")),
         candidates=candidates,
@@ -2299,7 +2307,88 @@ def parse_rime_context_payload(payload: dict[str, Any], *, default_project: str)
             _first_present(payload, rime_context, "progressiveFollowUp"),
             default=False,
         ),
+        frontend_transaction=_frontend_transaction_from_payload(
+            payload=payload,
+            rime_context=rime_context,
+            raw_input=raw_input,
+            preedit=preedit,
+            committed_context=committed_context,
+        ),
     )
+
+
+def _frontend_transaction_from_payload(
+    *,
+    payload: Mapping[str, object],
+    rime_context: Mapping[str, object],
+    raw_input: str,
+    preedit: str,
+    committed_context: str,
+) -> FrontendTransaction:
+    frontend_revision = _bounded_int(
+        _first_present(dict(payload), dict(rime_context), "frontendRevision"),
+        default=_bounded_int(payload.get("inputGeneration"), default=0, minimum=0, maximum=2**63 - 1),
+        minimum=0,
+        maximum=2**63 - 1,
+    )
+    selection_epoch = _bounded_int(
+        _first_present(dict(payload), dict(rime_context), "selectionEpoch"),
+        default=frontend_revision,
+        minimum=0,
+        maximum=2**63 - 1,
+    )
+    composition_text = preedit or raw_input
+    composition_hash = _hash_from_payload(
+        _first_present(dict(payload), dict(rime_context), "compositionHash"),
+        fallback_text=composition_text,
+    )
+    committed_context_hash = _hash_from_payload(
+        _first_present(dict(payload), dict(rime_context), "committedContextHash"),
+        fallback_text=committed_context,
+    )
+    session_id = _string(payload.get("sessionId")) or "default"
+    request_seq = _bounded_int(payload.get("requestSeq"), default=0, minimum=0, maximum=2**63 - 1)
+    front_app_bundle_id = _string(
+        payload.get("frontAppBundleId")
+        or payload.get("frontmostAppBundleId")
+        or payload.get("frontmostApp")
+        or payload.get("app")
+        or rime_context.get("frontAppBundleId")
+        or rime_context.get("frontmostAppBundleId")
+    )
+    input_source_id = _string(payload.get("inputSourceId") or rime_context.get("inputSourceId"))
+    panel_session_id = _string(payload.get("panelSessionId") or rime_context.get("panelSessionId"))
+    if not panel_session_id:
+        panel_session_id = _short_stable_id(
+            session_id,
+            str(request_seq),
+            str(frontend_revision),
+            str(selection_epoch),
+            composition_hash,
+            committed_context_hash,
+        )
+    return FrontendTransaction(
+        frontend_revision=frontend_revision,
+        selection_epoch=selection_epoch,
+        front_app_bundle_id=front_app_bundle_id,
+        input_source_id=input_source_id,
+        composition_hash=composition_hash,
+        committed_context_hash=committed_context_hash,
+        panel_session_id=panel_session_id,
+        created_at_ms=_bounded_int(
+            _first_present(dict(payload), dict(rime_context), "createdAtMs"),
+            default=0,
+            minimum=0,
+            maximum=2**63 - 1,
+        ),
+    )
+
+
+def _hash_from_payload(value: object, *, fallback_text: str) -> str:
+    configured = _string(value)
+    if configured.startswith("sha256:") and len(configured) >= len("sha256:") + 8:
+        return configured
+    return stable_text_hash(fallback_text)
 
 
 def choose_semantic_query(snapshot: RimeContextSnapshot) -> tuple[str, str]:
@@ -2841,6 +2930,19 @@ def rime_context_to_payload(snapshot: RimeContextSnapshot) -> dict[str, object]:
     }
 
 
+def frontend_transaction_to_payload(transaction: FrontendTransaction) -> dict[str, object]:
+    return {
+        "frontendRevision": transaction.frontend_revision,
+        "selectionEpoch": transaction.selection_epoch,
+        "frontAppBundleId": transaction.front_app_bundle_id,
+        "inputSourceId": transaction.input_source_id,
+        "compositionHash": transaction.composition_hash,
+        "committedContextHash": transaction.committed_context_hash,
+        "panelSessionId": transaction.panel_session_id,
+        "createdAtMs": transaction.created_at_ms,
+    }
+
+
 def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]:
     selection_key = item.label
     return {
@@ -2877,6 +2979,7 @@ def _bind_display_candidates_to_session(
     )
     phase = _string(prediction_session_payload.get("phase"))
     scope = _string(prediction_session_payload.get("selectionScope"))
+    transaction = snapshot.frontend_transaction
     bound: list[SideCandidateDisplayItem] = []
     for item in display_candidates:
         metadata = dict(item.metadata)
@@ -2888,6 +2991,13 @@ def _bind_display_candidates_to_session(
                 "sessionId": snapshot.session_id,
                 "predictionSessionPhase": phase,
                 "selectionScope": scope,
+                "frontendRevision": transaction.frontend_revision,
+                "selectionEpoch": transaction.selection_epoch,
+                "frontAppBundleId": transaction.front_app_bundle_id,
+                "inputSourceId": transaction.input_source_id,
+                "compositionHash": transaction.composition_hash,
+                "committedContextHash": transaction.committed_context_hash,
+                "panelSessionId": transaction.panel_session_id,
             }
         )
         bound.append(replace(item, metadata=metadata))

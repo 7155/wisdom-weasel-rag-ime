@@ -53,7 +53,7 @@ Current state:
   harness.
 - The sidecar, local SQLite memory/RAG core, MLX local predictor, source-lane
   merge, feedback recording, and many tests exist.
-- Recent verification showed `440 tests OK`.
+- Current verification after PR-1 transaction-doc update showed `444 tests OK`.
 - Earlier runtime repair verified selected input source
   `im.rag-ime.inputmethod.RagIme.Hans`, sidecar `127.0.0.1:8766`, MLX predictor
   `127.0.0.1:8767`, and mixed model/RAG candidates.
@@ -126,6 +126,28 @@ Explicitly unacceptable:
 - Candidate popup flashes too quickly to select.
 - Number keys insert `1`, `2`, `3` while a live side candidate is visible.
 - x1api or any cloud API is placed in the realtime per-keystroke prediction path.
+
+## Active Implementation Roadmap
+
+The current goal is to implement the attached PR roadmap in order:
+
+1. PR-1 foreground transaction and stale guard hardening.
+2. PR-2 real Squirrel foreground soak trace gate.
+3. PR-3 commit barrier and continuous prediction chaining.
+4. PR-4 MLX `seededPromptReplay` top-k seed replay, while keeping
+   `sequenceFork=false` and `kvFork=false`.
+5. PR-5 RAG anti-echo and governance layering.
+6. PR-6 x1api/GPT-5.5 offline cleanup pipeline with dry-run, review, apply,
+   and rollback.
+7. PR-7 Squirrel product candidate source badges/colors.
+8. PR-8 Sichuan mild fuzzy profile check/apply scripts.
+9. PR-9 model matrix, reranker, and quality eval.
+10. PR-10 localhost-only management UI v1.
+
+Current checkpoint: PR-1 has begun. Python sidecar transaction parsing/echo and
+trace checker transaction validation are implemented; Squirrel patch text now
+contains the matching transaction fields, response validation, stale selection
+rejection, hash-only default trace, and post-commit trace event names.
 
 ## Source Repository Structure
 
@@ -391,6 +413,274 @@ Useful endpoints / methods:
 Use it for diagnosing whether the model lane, RAG lane, cache, vector index, and
 candidate source diagnostics are active.
 
+## Key Code Excerpts For Pro
+
+These excerpts are included because the user explicitly needs the Pro model to
+read code even when repository browsing is unavailable. They are shortened, but
+they preserve the current contracts and the next edit points.
+
+### PR-1 frontend transaction model
+
+File: `rag_ime/models.py`
+
+```python
+@dataclass(frozen=True)
+class FrontendTransaction:
+    """Frontend state identity that sidecar responses and selections must echo."""
+
+    frontend_revision: int = 0
+    selection_epoch: int = 0
+    front_app_bundle_id: str = ""
+    input_source_id: str = ""
+    composition_hash: str = ""
+    committed_context_hash: str = ""
+    panel_session_id: str = ""
+    created_at_ms: int = 0
+
+
+@dataclass(frozen=True)
+class RimeContextSnapshot:
+    session_id: str
+    request_seq: int
+    raw_input: str = ""
+    preedit: str = ""
+    committed_context: str = ""
+    candidates: tuple[RimeCandidate, ...] = ()
+    page: int = 0
+    force_side_candidates: bool = False
+    progressive_follow_up: bool = False
+    frontend_transaction: FrontendTransaction = field(default_factory=FrontendTransaction)
+```
+
+Hash helper:
+
+```python
+def stable_text_hash(text: str) -> str:
+    normalized = compact_whitespace(text or "")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"sha256:{digest}"
+```
+
+### PR-1 sidecar request parsing and candidate binding
+
+File: `rag_ime/rime_sidecar.py`
+
+```python
+raw_input = _string(payload.get("rawInput") or payload.get("currentInput"))
+preedit = _string(payload.get("preedit"))
+committed_context = _string(payload.get("committedContext") or payload.get("recentContext"))
+
+return RimeContextSnapshot(
+    session_id=_string(payload.get("sessionId")) or "default",
+    request_seq=_bounded_int(payload.get("requestSeq"), default=0, minimum=0, maximum=2**63 - 1),
+    raw_input=raw_input,
+    preedit=preedit,
+    committed_context=committed_context,
+    frontend_transaction=_frontend_transaction_from_payload(
+        payload=payload,
+        rime_context=rime_context,
+        raw_input=raw_input,
+        preedit=preedit,
+        committed_context=committed_context,
+    ),
+)
+```
+
+```python
+def frontend_transaction_to_payload(transaction: FrontendTransaction) -> dict[str, object]:
+    return {
+        "frontendRevision": transaction.frontend_revision,
+        "selectionEpoch": transaction.selection_epoch,
+        "frontAppBundleId": transaction.front_app_bundle_id,
+        "inputSourceId": transaction.input_source_id,
+        "compositionHash": transaction.composition_hash,
+        "committedContextHash": transaction.committed_context_hash,
+        "panelSessionId": transaction.panel_session_id,
+        "createdAtMs": transaction.created_at_ms,
+    }
+```
+
+```python
+metadata.update(
+    {
+        "sessionFingerprint": session_fingerprint,
+        "contextFingerprint": context_fingerprint,
+        "requestSeq": snapshot.request_seq,
+        "sessionId": snapshot.session_id,
+        "frontendRevision": transaction.frontend_revision,
+        "selectionEpoch": transaction.selection_epoch,
+        "frontAppBundleId": transaction.front_app_bundle_id,
+        "inputSourceId": transaction.input_source_id,
+        "compositionHash": transaction.composition_hash,
+        "committedContextHash": transaction.committed_context_hash,
+        "panelSessionId": transaction.panel_session_id,
+    }
+)
+```
+
+### PR-1 Squirrel patch transaction checks
+
+File: `squirrel-patches/0001-add-rag-ime-sidecar.patch`
+
+```swift
+struct RagImeSidecarRequest: Codable {
+  let frontendBuild: String
+  let schemaVersion: String
+  let predictionFirstMerge: Bool
+  let sessionId: String
+  let requestSeq: Int
+  let frontendRevision: Int
+  let selectionEpoch: Int
+  let frontAppBundleId: String
+  let inputSourceId: String
+  let compositionHash: String
+  let committedContextHash: String
+  let panelSessionId: String
+  let rawInput: String
+  let preedit: String
+  let committedContext: String
+  let rimeContext: RagImeRimeContextPayload
+}
+```
+
+```swift
+guard response.frontendRevision == request.frontendRevision else {
+  dropRagImeSidecarResponse("frontend_revision_mismatch", response: response, request: request, fingerprint: fingerprint)
+  return
+}
+guard response.selectionEpoch == request.selectionEpoch else {
+  dropRagImeSidecarResponse("selection_epoch_mismatch", response: response, request: request, fingerprint: fingerprint)
+  return
+}
+guard response.compositionHash == request.compositionHash else {
+  dropRagImeSidecarResponse("composition_hash_mismatch", response: response, request: request, fingerprint: fingerprint)
+  return
+}
+guard response.committedContextHash == request.committedContextHash else {
+  dropRagImeSidecarResponse("committed_context_hash_mismatch", response: response, request: request, fingerprint: fingerprint)
+  return
+}
+guard response.panelSessionId == request.panelSessionId else {
+  dropRagImeSidecarResponse("panel_session_mismatch", response: response, request: request, fingerprint: fingerprint)
+  return
+}
+guard response.frontendRevision == ragImeFrontendRevision else {
+  dropRagImeSidecarResponse("live_frontend_revision_changed", response: response, request: request, fingerprint: fingerprint)
+  return
+}
+guard response.selectionEpoch == ragImeSelectionEpoch else {
+  dropRagImeSidecarResponse("live_selection_epoch_changed", response: response, request: request, fingerprint: fingerprint)
+  return
+}
+```
+
+Default frontend trace is privacy preserving:
+
+```swift
+func ragImeSanitizedTraceValue(_ value: Any, key: String, includeText: Bool) -> Any {
+  if includeText {
+    return value
+  }
+  if let text = value as? String {
+    guard ragImeTraceKeyCarriesUserText(key), !text.isEmpty else { return text }
+    return [
+      "chars": ragImeCompactWhitespace(text).count,
+      "hash": ragImeStableTextHash(text),
+    ] as [String: Any]
+  }
+  ...
+}
+```
+
+### Local MLX next-token logits entry point
+
+File: `rag_ime/mlx_predictor_server.py`
+
+```python
+def predict_next_token_logits(
+    self,
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+    request_type: str = PREDICTION_REQUEST_GENERIC,
+    rime_candidates: tuple[str, ...] = (),
+    request_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        from mlx_lm.generate import generate_step
+        import mlx.core as mx
+
+        prompt = self._build_logits_prompt(
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidates=max_candidates,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
+        )
+        tokens = self.tokenizer.encode(prompt)
+        token, logprobs = next(generate_step(mx.array(tokens), self.model, max_tokens=1))
+        candidate_scores = self._candidate_scores_from_logprobs(
+            logprobs,
+            max_candidates=max_candidates,
+            scan_limit=max(64, max_candidates * 24),
+        )
+        return {
+            "candidates": [item["text"] for item in candidate_scores],
+            "candidateScores": candidate_scores,
+            "sampledTokenId": _token_to_int(token),
+            "elapsedMs": int((time.perf_counter() - started) * 1000),
+        }
+```
+
+This is the PR-4 insertion point for `seededPromptReplay`: top-k seed tokens
+should come from `candidateScores`, then each seed should be replayed/decoded
+into a short phrase candidate. Keep `sequenceFork=false` until true KV fork is
+implemented.
+
+### Current RAG retrieval entry point
+
+File: `rag_ime/local_sqlite_core.py`
+
+```python
+def suggest_for_input(
+    self,
+    *,
+    current_input: str,
+    recent_context: str = "",
+    project: str = "",
+    app: str = "",
+    top_k: int = 5,
+) -> list[InputSuggestion]:
+    cache_key = self._suggestion_cache_key(
+        current_input=current_input,
+        recent_context=recent_context,
+        project=project,
+        app=app,
+        top_k=top_k,
+    )
+    cached = self._get_cached_suggestions(cache_key)
+    if cached is not None:
+        return cached
+    memories = self.retrieve_memories(
+        current_input=current_input,
+        recent_context=recent_context,
+        project=project,
+        app=app,
+        top_k=max(top_k * 4, 20),
+    )
+    ranked = [RankedMemory(memory=memory, score=memory.score, rank=index) for index, memory in enumerate(memories, start=1)]
+    suggestions = self.compiler.compile(ranked)[:top_k]
+    self._store_cached_suggestions(cache_key, suggestions)
+    return _copy_suggestions(suggestions)
+```
+
+This is the PR-5 insertion point for anti-echo governance: raw input log should
+not directly become production candidates; stable memory, lexicon boost,
+tombstone, skipped/cooldown, and raw echo penalties should act before
+`compiler.compile(...)` returns visible suggestions.
+
 ## Current Verification Snapshot
 
 Recent public-prep verification:
@@ -402,7 +692,7 @@ python3 -m unittest discover -s tests
 Result:
 
 ```text
-Ran 440 tests in 76.290s
+Ran 444 tests in 71.007s
 OK
 ```
 

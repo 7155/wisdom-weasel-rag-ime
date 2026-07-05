@@ -460,6 +460,61 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(event["inputGeneration"], 3)
         self.assertEqual(event["liveInputGeneration"], 3)
 
+    def test_trace_check_reports_frontend_transaction_stale_events(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "sidecar_response_dropped_stale",
+                        "timestampMs": 10,
+                        "reason": "frontend_revision_mismatch",
+                        "requestSeq": 7,
+                        "requestFrontendRevision": 3,
+                        "responseFrontendRevision": 3,
+                        "liveFrontendRevision": 4,
+                        "requestSelectionEpoch": 2,
+                        "responseSelectionEpoch": 2,
+                        "liveSelectionEpoch": 3,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "stale_candidate_selection_rejected",
+                        "timestampMs": 11,
+                        "reason": "candidate_transaction_mismatch",
+                        "key": "2",
+                        "frontendRevision": 4,
+                        "selectionEpoch": 3,
+                        "panelSessionId": "panel-new",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertEqual(report["latestStaleResponseDrop"]["reason"], "frontend_revision_mismatch")
+        self.assertEqual(report["latestStaleResponseDrop"]["liveFrontendRevision"], 4)
+        self.assertEqual(report["latestStaleSelectionRejected"]["reason"], "candidate_transaction_mismatch")
+
     def test_trace_check_rejects_side_commit_from_older_panel_session(self) -> None:
         root = Path(__file__).resolve().parents[1]
         old_candidates = _mixed_side_first_candidates(session_fingerprint="old-session")
@@ -1038,6 +1093,66 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         report = json.loads(result.stdout)
         self.assertTrue(report["latestSideCommit"])
+        self.assertIsNone(report["latestNumberKeySideCommit"])
+
+    def test_trace_check_rejects_number_key_commit_with_selection_epoch_mismatch(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            route_candidate = _side_candidate(label="6", source_type="rag", session_fingerprint="session-a")
+            route_candidate.update(
+                {
+                    "frontendRevision": 4,
+                    "selectionEpoch": 8,
+                    "panelSessionId": "panel-a",
+                    "compositionHash": "sha256:composition",
+                    "committedContextHash": "sha256:context",
+                }
+            )
+            commit_candidate = dict(route_candidate)
+            commit_candidate["selectionEpoch"] = 9
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": False,
+                        "candidateCounts": {"total": 1, "modelInline": 0, "ragBlock": 1, "rime": 0},
+                        "candidates": [route_candidate],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {"event": "number_key_route", "timestampMs": 2, "key": "6", "candidate": route_candidate},
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {"event": "side_candidate_commit", "timestampMs": 3, "candidate": commit_candidate},
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-side-panel",
+                    "--require-side-commit",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertTrue(report["latestValidSideCommit"])
         self.assertIsNone(report["latestNumberKeySideCommit"])
 
     def test_trace_check_clear_removes_log(self) -> None:

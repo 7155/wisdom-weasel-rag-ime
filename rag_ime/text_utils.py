@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import textwrap
 from collections.abc import Iterable
@@ -18,6 +19,14 @@ def now_ms() -> int:
 
 def compact_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def stable_text_hash(text: str) -> str:
+    """Privacy-preserving text identity for frontend transaction traces."""
+
+    normalized = compact_whitespace(text or "")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"sha256:{digest}"
 
 
 def truncate_text(text: str, max_chars: int) -> str:

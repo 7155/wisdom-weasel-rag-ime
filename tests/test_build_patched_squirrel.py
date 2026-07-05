@@ -82,7 +82,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("client.attributedSubstring(from: range)", patch_text)
         self.assertIn("func invalidateRagImeDisplayForInputChange(reason: String, keyCode: UInt16)", patch_text)
         self.assertIn("committed_context_resynced_after_delete", patch_text)
-        self.assertIn('traceRagImeFrontendEvent("sidecar_response_dropped"', patch_text)
+        self.assertIn('traceRagImeFrontendEvent("sidecar_response_dropped_stale"', patch_text)
         self.assertIn('"input_generation_changed"', patch_text)
         self.assertIn('"response_too_late_for_foreground"', patch_text)
         self.assertIn("func ragImeResponseContainsRimeFallback(_ response: RagImeSidecarResponse) -> Bool", patch_text)
@@ -159,15 +159,15 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             "+      return false\n"
             "+    }\n"
             "+    guard canSelectCurrentRagImeDisplayCandidates() else {\n"
-            "+      clearRagImeDisplayCandidates()\n"
-            "+      return false\n"
-            "+    }\n"
-            "+    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {\n"
-            "+      return false",
+            "+      traceRagImeFrontendEvent(\"stale_candidate_selection_rejected\", fields: [",
             patch_text,
         )
+        self.assertIn("+    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {", patch_text)
         self.assertIn('traceRagImeFrontendEvent("number_key_route"', patch_text)
         self.assertIn('guard ragImeDisplayCandidates[index].sourceType != "raw_english" else {', patch_text)
+        self.assertIn("func ragImeDisplayCandidateMatchesTransaction(_ candidate: RagImeDisplayCandidate, response: RagImeSidecarResponse) -> Bool", patch_text)
+        self.assertIn("func ragImeSanitizedTraceValue(_ value: Any, key: String, includeText: Bool) -> Any", patch_text)
+        self.assertIn('ProcessInfo.processInfo.environment["RAG_IME_TRACE_INCLUDE_TEXT"] == "1"', patch_text)
         self.assertIn("guard canSelectRagImeDisplayCandidate(ragImeDisplayCandidates[index]) else {", patch_text)
         self.assertIn("guard canSelectRagImeDisplayCandidate(candidate) else {", patch_text)
         self.assertIn("+    return selectCandidate(index)", patch_text)

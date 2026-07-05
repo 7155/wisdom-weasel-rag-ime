@@ -80,6 +80,20 @@ class RimeCandidate:
 
 
 @dataclass(frozen=True)
+class FrontendTransaction:
+    """Frontend state identity that sidecar responses and selections must echo."""
+
+    frontend_revision: int = 0
+    selection_epoch: int = 0
+    front_app_bundle_id: str = ""
+    input_source_id: str = ""
+    composition_hash: str = ""
+    committed_context_hash: str = ""
+    panel_session_id: str = ""
+    created_at_ms: int = 0
+
+
+@dataclass(frozen=True)
 class RimeContextSnapshot:
     """The structured Rime context a Squirrel integration can send to RAG-IME."""
 
@@ -101,6 +115,7 @@ class RimeContextSnapshot:
     idle_ms: int = 0
     force_side_candidates: bool = False
     progressive_follow_up: bool = False
+    frontend_transaction: FrontendTransaction = field(default_factory=FrontendTransaction)
 
 
 @dataclass(frozen=True)
