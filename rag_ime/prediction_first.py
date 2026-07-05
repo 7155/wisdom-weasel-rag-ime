@@ -179,6 +179,8 @@ def infer_input_mode(snapshot: RimeContextSnapshot) -> InputMode:
     """
 
     prefix = active_pinyin_prefix(snapshot)
+    if _looks_like_raw_ascii_commit_input(prefix):
+        return InputMode.RAW_INPUT
     has_context = bool(compact_whitespace(snapshot.committed_context))
     if prefix and has_context:
         return InputMode.PREFIX_CONSTRAINED_COMPOSING
@@ -191,6 +193,21 @@ def infer_input_mode(snapshot: RimeContextSnapshot) -> InputMode:
 
 def active_pinyin_prefix(snapshot: RimeContextSnapshot) -> str:
     return compact_whitespace(snapshot.preedit or snapshot.raw_input).lower()
+
+
+def _looks_like_raw_ascii_commit_input(raw: str) -> bool:
+    if not raw or not raw.isascii():
+        return False
+    parts = raw.split()
+    command_prefixes = {"git", "npm", "python", "python3", "uv", "node", "cd", "ls", "rg", "docker"}
+    if parts and parts[0].lower() in command_prefixes:
+        return True
+    code_delimiters = set("_./:-+=<>[]{}()$@#\\|")
+    return (
+        any(char in code_delimiters for char in raw)
+        or any(char.isdigit() for char in raw)
+        or (any(char.isupper() for char in raw) and any(char.islower() for char in raw))
+    )
 
 
 def build_candidate_pool(

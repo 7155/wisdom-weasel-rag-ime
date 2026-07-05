@@ -135,6 +135,8 @@ class AntiEchoGovernor:
             return BlockedCandidate(id=hit.id, reason="suppressed_memory_id")
         if normalized in set(governance.get("suppressedTexts") or []):
             return BlockedCandidate(id=hit.id, reason="suppressed_text")
+        if _optimized_source_type(hit) == "cold_knowledge" and not self.config.allow_cold_knowledge:
+            return BlockedCandidate(id=hit.id, reason="cold_knowledge_disabled")
         if raw_history_hit and not self.config.allow_raw_memory_candidates:
             if len(text) > 12:
                 return BlockedCandidate(id=hit.id, reason="raw_history_long_candidate")
@@ -162,7 +164,11 @@ def build_context_frame(
         session_id=snapshot.session_id,
         request_seq=snapshot.request_seq,
         front_app_bundle_id=snapshot.frontend_transaction.front_app_bundle_id or snapshot.app or None,
-        input_mode=_normalize_input_mode(input_mode),
+        input_mode=_normalize_input_mode(
+            input_mode,
+            raw_input=snapshot.raw_input,
+            preedit=snapshot.preedit,
+        ),
         raw_input=snapshot.raw_input,
         preedit=snapshot.preedit,
         committed_tail=_tail_text(snapshot.committed_context, max_chars=80),
@@ -363,13 +369,13 @@ def _normalize_query_source(query_basis: str) -> str:
     return mapping.get(query_basis, "none")
 
 
-def _normalize_input_mode(input_mode: str) -> str:
+def _normalize_input_mode(input_mode: str, *, raw_input: str = "", preedit: str = "") -> str:
     raw_mode = getattr(input_mode, "value", input_mode)
     aliases = {
         "prefix_constrained_composing": "pinyin_composition",
         "anchor_composing": "pinyin_composition",
         "post_commit_predicting": "post_commit_continuation",
-        "raw_input": "unknown",
+        "raw_input": _classify_raw_input_mode(raw_input or preedit),
     }
     input_mode = aliases.get(str(raw_mode), str(raw_mode))
     known = {
@@ -383,6 +389,44 @@ def _normalize_input_mode(input_mode: str) -> str:
         "unknown",
     }
     return input_mode if input_mode in known else "unknown"
+
+
+def _classify_raw_input_mode(text: str) -> str:
+    raw = compact_whitespace(text)
+    if not raw:
+        return "unknown"
+    if raw.isdigit():
+        return "number"
+    if all(not char.isalnum() for char in raw):
+        return "punctuation"
+    if _looks_like_path_input(raw):
+        return "path"
+    if _looks_like_code_input(raw):
+        return "code"
+    if raw.isascii() and any(char.isalpha() for char in raw):
+        return "english"
+    return "unknown"
+
+
+def _looks_like_path_input(raw: str) -> bool:
+    lowered = raw.lower()
+    return (
+        "/" in raw
+        or "\\" in raw
+        or lowered.startswith(("./", "../", "~/"))
+        or lowered.endswith((".py", ".ts", ".tsx", ".js", ".json", ".md", ".yaml", ".yml"))
+    )
+
+
+def _looks_like_code_input(raw: str) -> bool:
+    code_delimiters = set("_:+=<>[]{}()$@#|")
+    command_prefixes = {"git", "npm", "python", "python3", "uv", "node", "cd", "ls", "rg", "docker"}
+    parts = raw.split()
+    return (
+        any(char in code_delimiters for char in raw)
+        or (parts and parts[0].lower() in command_prefixes)
+        or any(char.isdigit() for char in raw)
+    )
 
 
 def _tail_text(text: str, *, max_chars: int) -> str:

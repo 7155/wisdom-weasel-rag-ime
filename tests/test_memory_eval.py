@@ -52,6 +52,27 @@ class MemoryOptimizerEvalTests(unittest.TestCase):
         self.assertIn("recent_committed_echo", cases["recent-echo-blocked"]["blockedReasons"])
         self.assertEqual(cases["repeated-skip-cooldown"]["ragCandidateCount"], 0)
 
+    def test_repository_memory_optimizer_eval_covers_plan_cases(self) -> None:
+        cases_path = Path("docs/eval/memory_optimizer_cases.jsonl")
+
+        report = run_memory_optimizer_eval(
+            cases_file=cases_path,
+            project="wisdom-weasel-rag-ime",
+            repeat=1,
+            max_visible_candidates=4,
+            max_side_candidates=2,
+            latency_budget_ms=150,
+            optimizer_max_ms=50,
+        )
+
+        self.assertTrue(report["gatePassed"])
+        self.assertEqual(report["failedCases"], 0)
+        self.assertEqual(report["repeat"]["baseCaseCount"], 13)
+        cases = {item["caseId"]: item for item in report["cases"]}
+        self.assertEqual(cases["old-raw-input-echo-blocked"]["filteredSuggestionCount"], 1)
+        self.assertEqual(cases["cold-knowledge-disabled-by-default"]["blockedReasons"], ["cold_knowledge_disabled"])
+        self.assertEqual(cases["rollback-cleanup-diff"]["cleanup"]["applyRollback"]["rollbackStatus"], "rolled_back")
+
     def test_cli_eval_memory_optimizer_returns_nonzero_on_failure(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-memory-eval-cli-") as tmp:
             cases_path = Path(tmp) / "failing.jsonl"

@@ -147,7 +147,7 @@ The current goal is to implement the attached PR roadmap in order:
 9. PR-9 model matrix, reranker, and quality eval.
 10. PR-10 localhost-only management UI v1.
 
-Current checkpoint: PR-1 through PR-8 have active implementation work in-tree.
+Current checkpoint: PR-1 through PR-9 have active implementation work in-tree.
 Python sidecar transaction parsing/echo and trace checker transaction
 validation are implemented; Squirrel patch text now contains the matching
 transaction fields, response validation, stale selection rejection, hash-only
@@ -176,7 +176,11 @@ tokens (`模/查/忆/词/input`), the Squirrel patch traces those fields without
 changing selection keys, and the foreground trace checker rejects source visual
 mismatches. PR-8 has started: the Sichuan fuzzy-pinyin helper is now split into
 JSON check and explicit dry-run/apply scripts with backup, and the default
-profile is mild (`z_zh/c_ch/s_sh/en_eng/in_ing` on, `n_l/f_h` off).
+profile is mild (`z_zh/c_ch/s_sh/en_eng/in_ing` on, `n_l/f_h` off). PR-9 has
+started: `model-matrix-eval` is now a real alias for the local model matrix,
+reports product metrics for top-3 coverage, echo, duplicates, latency, and
+chain readiness, and `rerank-demo` exposes a source-aware Rime/model/RAG/memory
+ranking path that preserves Rime fallback.
 
 ## Source Repository Structure
 
@@ -260,6 +264,13 @@ New PR-6 cleanup CLI now present in `rag_ime/cli.py`:
 - `cleanup-validate`: inspect a run/file and reject unsafe diffs before apply.
 - `cleanup-apply --apply`: explicit-confirmation apply gate.
 - `cleanup-rollback`: revert an applied cleanup run by `runId`.
+
+New PR-9 quality/rerank CLI now present in `rag_ime/cli.py`:
+
+- `model-matrix-eval`: alias of `eval-model-matrix` using the roadmap command
+  name; reports `productMetrics` in each model row.
+- `rerank-demo`: rank ad-hoc `source:text` or JSON candidates and emit source
+  counts, score breakdowns, echo/duplicate flags, and Rime fallback status.
 
 ## Code Path Map
 
@@ -904,7 +915,14 @@ Current memory-v2 gate now does the same suppression/tombstone check before a
 candidate becomes visible:
 
 ```python
-for row in _merge_rows(phrase_rows, general_rows):
+tag_rows = self._memory_item_rows_by_ids(
+    conn,
+    memory_item_ids=tuple(tag_scores.keys()),
+    project=context.project,
+    app=context.app,
+    limit=max(context.top_k * 4, 12),
+)
+for row in _merge_rows(phrase_rows, general_rows, tag_rows):
     memory_id = str(row["memory_id"])
     normalized_text = _optimizer_norm(str(row["normalized_text"] or row["text"] or ""))
     source_event_id = int(row["source_event_id"] or 0)
@@ -957,6 +975,83 @@ if normalized_target_type == "memory_id":
         )
 ```
 
+### PR-9 model matrix product metrics
+
+File: `rag_ime/cli.py`
+
+```python
+if args.command in {"eval-model-matrix", "model-matrix-eval"}:
+    cases = load_eval_cases(Path(args.cases_file))
+    models = _parse_model_matrix_models(args.models)
+    reports = []
+    for model in models:
+        matrix_provider = _prediction_provider_for_model_matrix(args=args, model=model)
+        model_report = _eval_prediction_provider_on_cases(
+            provider=matrix_provider,
+            core=core,
+            cases=cases,
+            project=args.project,
+            max_candidates=max(1, min(10, args.max_candidates)),
+            match=args.match,
+            repeat=max(1, args.repeat),
+            latency_budget_ms=max(1, args.latency_budget_ms),
+        )
+        model_report["model"] = model
+        ...
+```
+
+Each model row keeps legacy `metrics` and now also emits `productMetrics`:
+
+```python
+return {
+    "top1Acceptability": ...,
+    "top3Coverage": ...,
+    "MRR": ...,
+    "noiseRate": ...,
+    "forbiddenRate": ...,
+    "oldInputEchoRate": ...,
+    "duplicateRate": ...,
+    "avgCandidateChars": ...,
+    "firstCandidateMs": _latency_percentiles(first_candidate_ms_values),
+    "threeCandidatesMs": _latency_percentiles(three_candidate_ms_values),
+    "chainSuccessRate": ...,
+}
+```
+
+### PR-9 source-aware reranker
+
+File: `rag_ime/reranker.py`
+
+```python
+def rerank_candidate_dicts(
+    candidates: list[Mapping[str, Any]],
+    *,
+    query: str = "",
+    recent_context: str = "",
+    max_candidates: int = 10,
+) -> list[dict[str, Any]]:
+    """Rank mixed Rime/model/RAG/memory candidates while preserving Rime fallback."""
+
+    scored: list[dict[str, Any]] = []
+    seen_texts: set[str] = set()
+    query_norm = _norm(query)
+    context_norm = _norm(recent_context)
+    for original_rank, candidate in enumerate(candidates, start=1):
+        text = compact_whitespace(str(candidate.get("text") or candidate.get("surface") or ""))
+        ...
+        old_input_echo = _is_old_input_echo(text, query_norm=query_norm, context_norm=context_norm)
+        score, breakdown = _score_candidate(...)
+        scored.append({...})
+
+    ranked = sorted(scored, key=lambda item: (-float(item["score"]), int(item["originalRank"])))
+    limited = ranked[: max(1, max_candidates)]
+    _ensure_rime_fallback(scored=scored, limited=limited, max_candidates=max(1, max_candidates))
+    ...
+```
+
+Important behavior: the reranker can promote model/RAG/memory candidates, but it
+must preserve at least one Rime fallback when Rime candidates are present.
+
 ## Current Verification Snapshot
 
 Recent public-prep verification:
@@ -987,6 +1082,22 @@ Additional narrow PR-4 verification:
 ```bash
 python3 -m unittest tests.test_mlx_predictor_server tests.test_predictor
 python3 -m py_compile rag_ime/mlx_predictor_server.py rag_ime/predictor.py rag_ime/cli.py
+```
+
+Additional PR-9 verification after adding model matrix product metrics and the
+source-aware reranker:
+
+```bash
+python3 -m unittest tests.test_model_matrix_eval tests.test_reranker tests.test_predictor
+python3 -m unittest tests.test_memory_eval tests.test_memory_optimizer_context_frame tests.test_memory_optimizer_query_plan tests.test_memory_optimizer_sidecar_integration tests.test_prediction_first tests.test_rime_sidecar tests.test_adapter tests.test_model_matrix_eval tests.test_reranker
+python3 -W error::ResourceWarning -m unittest discover -s tests
+```
+
+Latest full-suite result:
+
+```text
+Ran 506 tests in 77.756s
+OK
 ```
 
 Recent project-public cleanup:

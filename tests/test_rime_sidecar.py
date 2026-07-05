@@ -846,7 +846,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["contextMode"], "explicit-pinyin-constrained")
         self.assertEqual(response["modelLane"]["requestType"], "pinyin_constrained_prediction")
         self.assertEqual(response["modelLane"]["rimeCandidateCount"], 2)
-        self.assertEqual(response["ragLane"]["queryInput"], "sj")
+        self.assertEqual(response["ragLane"]["queryInput"], "我想 sj 设计 手机")
 
     def test_long_pinyin_with_context_uses_continuation_model_request(self) -> None:
         predictor = CapturingRequestPredictionProvider()

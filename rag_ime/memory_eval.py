@@ -12,7 +12,7 @@ from typing import Any, Iterator
 from .adapter import InputMethodAdapter
 from .local_sqlite_core import LocalSqliteCoreClient
 from .memory_ingest import normalize_text, upsert_memory_item
-from .models import InputEvent
+from .models import InputEvent, MemoryAction
 from .predictor import PredictionProvider
 from .rime_sidecar import build_rime_sidecar_response
 from .text_utils import compact_whitespace, now_ms
@@ -35,10 +35,16 @@ class MemoryOptimizerEvalCase:
     must_not_contain: tuple[str, ...]
     must_have_blocked_reasons: tuple[str, ...]
     must_not_have_blocked_reasons: tuple[str, ...]
+    must_have_trace_retrievers: tuple[str, ...]
+    must_not_have_trace_retrievers: tuple[str, ...]
+    must_have_context_input_mode: str
+    must_have_trace_active_tags: tuple[str, ...]
     min_rag_candidates: int | None
     max_rag_candidates: int | None
+    must_have_filtered_suggestion_count: int | None
     max_optimizer_latency_ms: int | None
     require_trace_id: bool
+    cleanup_assertions: dict[str, Any]
     memory_state: dict[str, Any]
 
 
@@ -96,10 +102,16 @@ def load_memory_optimizer_eval_cases(path: Path, *, default_project: str) -> lis
                 must_not_contain=_str_tuple(obj.get("mustNotContain")),
                 must_have_blocked_reasons=_str_tuple(obj.get("mustHaveBlockedReasons")),
                 must_not_have_blocked_reasons=_str_tuple(obj.get("mustNotHaveBlockedReasons")),
+                must_have_trace_retrievers=_str_tuple(obj.get("mustHaveTraceRetrievers")),
+                must_not_have_trace_retrievers=_str_tuple(obj.get("mustNotHaveTraceRetrievers")),
+                must_have_context_input_mode=compact_whitespace(str(obj.get("mustHaveContextInputMode") or "")),
+                must_have_trace_active_tags=_str_tuple(obj.get("mustHaveTraceActiveTags")),
                 min_rag_candidates=_optional_int(obj.get("minRagCandidates")),
                 max_rag_candidates=_optional_int(obj.get("maxRagCandidates")),
+                must_have_filtered_suggestion_count=_optional_int(obj.get("mustHaveFilteredSuggestionCount")),
                 max_optimizer_latency_ms=_optional_int(obj.get("maxOptimizerLatencyMs")),
                 require_trace_id=bool(obj.get("requireTraceId", True)),
+                cleanup_assertions=dict(obj.get("cleanupAssertions") or {}),
                 memory_state=dict(obj.get("memoryState") or {}),
             )
         )
@@ -225,6 +237,9 @@ def _run_one_case(
         candidate_haystacks = [_candidate_haystack(item) for item in rag_candidates]
         candidate_surfaces = [compact_whitespace(str(item.get("surfaceText") or item.get("text") or item.get("insertText") or "")) for item in rag_candidates]
         optimizer = response.get("ragLane", {}).get("memoryOptimizer", {}) if isinstance(response.get("ragLane"), dict) else {}
+        filtered_suggestion_count = 0
+        if isinstance(response.get("ragLane"), dict):
+            filtered_suggestion_count = int(response["ragLane"].get("filteredSuggestionCount") or 0)
         blocked_reasons = [
             str(item.get("reason") or "")
             for item in optimizer.get("blocked", [])
@@ -232,13 +247,17 @@ def _run_one_case(
         ]
         trace_id = str(optimizer.get("traceId") or "")
         stored_trace = core.get_memory_optimizer_trace(trace_id) if trace_id else None
+        cleanup_report = _run_cleanup_assertions(core=core, case=case)
         failures = _case_failures(
             case=case,
             candidate_haystacks=candidate_haystacks,
             blocked_reasons=blocked_reasons,
             rag_candidate_count=len(rag_candidates),
             optimizer_latency_ms=float(optimizer.get("latencyMs") or 0.0),
+            filtered_suggestion_count=filtered_suggestion_count,
             trace_stored=stored_trace is not None,
+            stored_trace=stored_trace,
+            cleanup_report=cleanup_report,
         )
         return {
             "caseId": case_id,
@@ -253,7 +272,9 @@ def _run_one_case(
             "blockedReasons": blocked_reasons,
             "ragCandidateCount": len(rag_candidates),
             "ragCandidateSurfaces": candidate_surfaces,
+            "filteredSuggestionCount": filtered_suggestion_count,
             "committedContextHash": str(response.get("committedContextHash") or ""),
+            "cleanup": cleanup_report,
         }
 
 
@@ -264,7 +285,10 @@ def _case_failures(
     blocked_reasons: list[str],
     rag_candidate_count: int,
     optimizer_latency_ms: float,
+    filtered_suggestion_count: int,
     trace_stored: bool,
+    stored_trace: dict[str, Any] | None,
+    cleanup_report: dict[str, Any],
 ) -> list[str]:
     failures: list[str] = []
     combined = "\n".join(item.lower() for item in candidate_haystacks)
@@ -287,10 +311,31 @@ def _case_failures(
         failures.append(f"min_rag_candidates:{case.min_rag_candidates}")
     if case.max_rag_candidates is not None and rag_candidate_count > case.max_rag_candidates:
         failures.append(f"max_rag_candidates:{case.max_rag_candidates}")
+    if case.must_have_filtered_suggestion_count is not None and filtered_suggestion_count < case.must_have_filtered_suggestion_count:
+        failures.append(f"filtered_suggestion_count:{filtered_suggestion_count}<{case.must_have_filtered_suggestion_count}")
     if case.max_optimizer_latency_ms is not None and optimizer_latency_ms > case.max_optimizer_latency_ms:
         failures.append(f"optimizer_latency_ms>{case.max_optimizer_latency_ms}")
     if case.require_trace_id and not trace_stored:
         failures.append("trace_not_stored")
+    if case.must_have_trace_retrievers or case.must_not_have_trace_retrievers:
+        retrievers = set(_trace_query_plan(stored_trace).get("retrievers") or [])
+        for retriever in case.must_have_trace_retrievers:
+            if retriever not in retrievers:
+                failures.append(f"missing_trace_retriever:{retriever}")
+        for retriever in case.must_not_have_trace_retrievers:
+            if retriever in retrievers:
+                failures.append(f"forbidden_trace_retriever:{retriever}")
+    if case.must_have_context_input_mode:
+        actual_mode = str(_trace_context_frame(stored_trace).get("input_mode") or "")
+        if actual_mode != case.must_have_context_input_mode:
+            failures.append(f"context_input_mode:{actual_mode or 'missing'}!={case.must_have_context_input_mode}")
+    if case.must_have_trace_active_tags:
+        active_tags = set(str(item) for item in (_trace_context_frame(stored_trace).get("active_tags") or []))
+        for tag in case.must_have_trace_active_tags:
+            if tag not in active_tags:
+                failures.append(f"missing_trace_active_tag:{tag}")
+    for failure in cleanup_report.get("failures", []):
+        failures.append(str(failure))
     return failures
 
 
@@ -312,6 +357,19 @@ def _seed_case_state(*, core: LocalSqliteCoreClient, case: MemoryOptimizerEvalCa
                 candidate_rank=None,
                 provider_name=str(event.get("providerName") or "memory-eval"),
                 tags=tuple(_str_tuple(event.get("tags"))),
+            )
+        )
+    for action in case.memory_state.get("actions", []):
+        if not isinstance(action, dict):
+            continue
+        core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=int(action.get("createdAtMs") or now_ms()),
+                memory_id=str(action.get("memoryId") or action.get("memory_id") or ""),
+                action_type=str(action.get("actionType") or action.get("action_type") or action.get("event") or "accepted"),
+                query=str(action.get("query") or case.query),
+                metadata=dict(action.get("metadata") or {}),
             )
         )
     for item in case.memory_state.get("items", []):
@@ -351,6 +409,67 @@ def _seed_case_state(*, core: LocalSqliteCoreClient, case: MemoryOptimizerEvalCa
             reason=str(tombstone.get("reason") or "memory-eval"),
             metadata=dict(tombstone.get("metadata") or {}),
         )
+    if bool(case.memory_state.get("recomputeTags")):
+        core.recompute_memory_tags(project=case.project)
+
+
+def _run_cleanup_assertions(*, core: LocalSqliteCoreClient, case: MemoryOptimizerEvalCase) -> dict[str, Any]:
+    assertions = case.cleanup_assertions
+    if not assertions:
+        return {}
+    failures: list[str] = []
+    report: dict[str, Any] = {"schemaVersion": "rag-ime.memory-optimizer-cleanup-eval.v1"}
+    if bool(assertions.get("previewDryRun")):
+        before_count = len(core.list_memory_cleanup_runs(limit=50)["items"])
+        preview = core.preview_memory_cleanup_plan(
+            project=case.project,
+            provider=str(assertions.get("provider") or "local-rule"),
+            model=str(assertions.get("model") or ""),
+        )
+        after_count = len(core.list_memory_cleanup_runs(limit=50)["items"])
+        report["preview"] = {
+            "provider": preview.get("provider"),
+            "diffOps": [str(item.get("op") or "") for item in preview.get("diffs", []) if isinstance(item, dict)],
+            "storedRunCountBefore": before_count,
+            "storedRunCountAfter": after_count,
+        }
+        if bool(assertions.get("expectNoStoredRun")) and after_count != before_count:
+            failures.append("cleanup_preview_stored_run")
+        expected_provider = compact_whitespace(str(assertions.get("expectProvider") or ""))
+        if expected_provider and str(preview.get("provider") or "") != expected_provider:
+            failures.append(f"cleanup_provider:{preview.get('provider')}!={expected_provider}")
+        _assert_cleanup_ops(
+            failures=failures,
+            actual_ops=report["preview"]["diffOps"],
+            expected_ops=_str_tuple(assertions.get("expectDiffOps")),
+            prefix="cleanup_preview",
+        )
+    if bool(assertions.get("applyRollback")):
+        plan = core.build_memory_cleanup_plan(
+            project=case.project,
+            provider=str(assertions.get("applyProvider") or assertions.get("provider") or "local-rule"),
+            model=str(assertions.get("model") or ""),
+        )
+        applied = core.apply_memory_cleanup_plan(run_id=str(plan.get("runId") or ""))
+        rolled_back = core.rollback_memory_cleanup_plan(run_id=str(plan.get("runId") or ""))
+        report["applyRollback"] = {
+            "runId": plan.get("runId"),
+            "plannedOps": [str(item.get("op") or "") for item in plan.get("diffs", []) if isinstance(item, dict)],
+            "applyStatus": str(applied.get("status") or ""),
+            "rollbackStatus": str(rolled_back.get("status") or ""),
+        }
+        if report["applyRollback"]["applyStatus"] != "applied":
+            failures.append(f"cleanup_apply_status:{report['applyRollback']['applyStatus']}")
+        if report["applyRollback"]["rollbackStatus"] != "rolled_back":
+            failures.append(f"cleanup_rollback_status:{report['applyRollback']['rollbackStatus']}")
+        _assert_cleanup_ops(
+            failures=failures,
+            actual_ops=report["applyRollback"]["plannedOps"],
+            expected_ops=_str_tuple(assertions.get("expectApplyDiffOps") or assertions.get("expectDiffOps")),
+            prefix="cleanup_apply",
+        )
+    report["failures"] = failures
+    return report
 
 
 def _payload_for_case(
@@ -424,6 +543,29 @@ def _candidate_haystack(item: dict[str, object]) -> str:
             ]
         )
     )
+
+
+def _trace_query_plan(stored_trace: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(stored_trace, dict):
+        return {}
+    query_plan = stored_trace.get("queryPlan")
+    return dict(query_plan) if isinstance(query_plan, dict) else {}
+
+
+def _trace_context_frame(stored_trace: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(stored_trace, dict):
+        return {}
+    context_frame = stored_trace.get("contextFrame")
+    return dict(context_frame) if isinstance(context_frame, dict) else {}
+
+
+def _assert_cleanup_ops(*, failures: list[str], actual_ops: list[str], expected_ops: tuple[str, ...], prefix: str) -> None:
+    if not expected_ops:
+        return
+    actual = set(actual_ops)
+    for op in expected_ops:
+        if op not in actual:
+            failures.append(f"{prefix}_missing_op:{op}")
 
 
 def _latency_payload(values: list[float]) -> dict[str, float | int]:

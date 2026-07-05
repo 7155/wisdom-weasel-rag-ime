@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
@@ -13,7 +14,7 @@ import urllib.error
 import urllib.request
 from dataclasses import replace
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .agent_hook import build_first_run_injection
@@ -58,6 +59,7 @@ from .predictor import (
     prediction_provider_status,
 )
 from .renderer import render_agent_injection, render_terminal_panel
+from .reranker import rerank_candidate_dicts
 from .rime_sidecar import build_rime_sidecar_response, record_rime_side_candidate_selection
 from .scenarios import SCENARIOS, get_scenario
 from .text_utils import compact_whitespace, now_ms
@@ -65,6 +67,43 @@ from .trigger_policy import TypingState, should_refresh_rag
 
 
 DEFAULT_DB_PATH = Path(os.environ.get("RAG_IME_DB_PATH", ".rag-ime-data/rag-ime.sqlite"))
+
+
+def _add_model_matrix_eval_parser(subparsers: argparse._SubParsersAction, name: str) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        name,
+        help="Evaluate multiple local model ids on the same prediction cases",
+    )
+    parser.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
+    parser.add_argument("--project", default="wisdom-weasel-rag-ime")
+    parser.add_argument(
+        "--base-url",
+        default=os.environ.get("RAG_IME_PREDICTOR_BASE_URL", "http://127.0.0.1:11434/v1"),
+        help="Base URL shared by all model ids. Defaults to Ollama /v1; --provider ollama normalizes it to native /api endpoints.",
+    )
+    parser.add_argument(
+        "--models",
+        default="qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b",
+        help="Comma-separated model ids. Defaults to small Ollama qwen3.5 tags.",
+    )
+    parser.add_argument("--profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "instant"))
+    parser.add_argument("--provider", default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "openai-compatible"))
+    parser.add_argument("--max-candidates", type=int, default=3)
+    parser.add_argument("--match", choices=("any", "all"), default="any")
+    parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--latency-budget-ms", type=int, default=150)
+    parser.add_argument(
+        "--failure-cooldown-ms",
+        type=int,
+        default=0,
+        help="Prediction failure cooldown during matrix eval. Defaults to 0 so latency is measured per case.",
+    )
+    parser.add_argument(
+        "--include-cases",
+        action="store_true",
+        help="Include full per-case evaluation details for every model.",
+    )
+    return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -572,38 +611,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_prediction.add_argument("--repeat", type=int, default=1)
     eval_prediction.add_argument("--latency-budget-ms", type=int, default=150)
 
-    eval_model_matrix = subparsers.add_parser(
-        "eval-model-matrix",
-        help="Evaluate multiple local model ids on the same prediction cases",
+    eval_model_matrix = _add_model_matrix_eval_parser(subparsers, "eval-model-matrix")
+    _add_model_matrix_eval_parser(subparsers, "model-matrix-eval")
+
+    rerank_demo = subparsers.add_parser(
+        "rerank-demo",
+        help="Run the PR-9 source-aware reranker on ad-hoc mixed candidates",
     )
-    eval_model_matrix.add_argument("--cases-file", required=True, help="JSONL cases with query and expectedTerms")
-    eval_model_matrix.add_argument("--project", default="wisdom-weasel-rag-ime")
-    eval_model_matrix.add_argument(
-        "--base-url",
-        default=os.environ.get("RAG_IME_PREDICTOR_BASE_URL", "http://127.0.0.1:11434/v1"),
-        help="Base URL shared by all model ids. Defaults to Ollama /v1; --provider ollama normalizes it to native /api endpoints.",
+    rerank_demo.add_argument("--query", default="")
+    rerank_demo.add_argument("--recent-context", default="")
+    rerank_demo.add_argument("--max-candidates", type=int, default=10)
+    rerank_demo.add_argument(
+        "--candidate",
+        action="append",
+        default=[],
+        help="Candidate as source:text or source|text. Repeat for Rime/model/RAG/memory inputs.",
     )
-    eval_model_matrix.add_argument(
-        "--models",
-        default="qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b",
-        help="Comma-separated model ids. Defaults to small Ollama qwen3.5 tags.",
-    )
-    eval_model_matrix.add_argument("--profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "instant"))
-    eval_model_matrix.add_argument("--provider", default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "openai-compatible"))
-    eval_model_matrix.add_argument("--max-candidates", type=int, default=3)
-    eval_model_matrix.add_argument("--match", choices=("any", "all"), default="any")
-    eval_model_matrix.add_argument("--repeat", type=int, default=1)
-    eval_model_matrix.add_argument("--latency-budget-ms", type=int, default=150)
-    eval_model_matrix.add_argument(
-        "--failure-cooldown-ms",
-        type=int,
-        default=0,
-        help="Prediction failure cooldown during matrix eval. Defaults to 0 so latency is measured per case.",
-    )
-    eval_model_matrix.add_argument(
-        "--include-cases",
-        action="store_true",
-        help="Include full per-case evaluation details for every model.",
+    rerank_demo.add_argument(
+        "--candidate-json",
+        action="append",
+        default=[],
+        help="Candidate JSON object. Can be repeated for confidence, feedback, and pinned metadata.",
     )
 
     eval_comparison = subparsers.add_parser(
@@ -2025,7 +2053,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
-    if args.command == "eval-model-matrix":
+    if args.command in {"eval-model-matrix", "model-matrix-eval"}:
         cases = load_eval_cases(Path(args.cases_file))
         models = _parse_model_matrix_models(args.models)
         reports = []
@@ -2069,6 +2097,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             "localRunners": _local_model_runner_status(),
             "models": reports,
             "winner": _model_matrix_winner(reports),
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "rerank-demo":
+        candidates = _parse_rerank_demo_candidates(args.candidate, args.candidate_json)
+        ranked = rerank_candidate_dicts(
+            candidates,
+            query=args.query,
+            recent_context=args.recent_context,
+            max_candidates=max(1, min(20, args.max_candidates)),
+        )
+        report = {
+            "schemaVersion": "rag-ime.rerank-demo.v1",
+            "query": args.query,
+            "recentContextHash": _stable_eval_hash(args.recent_context),
+            "inputCount": len(candidates),
+            "maxCandidates": max(1, min(20, args.max_candidates)),
+            "candidates": ranked,
+            "sourceCounts": _source_counts(ranked),
+            "rimeFallbackPreserved": any(item.get("source") == "rime" for item in ranked),
         }
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
@@ -3796,6 +3845,73 @@ def _predictions_as_eval_suggestions(predictions: list[ModelPrediction]) -> list
     ]
 
 
+def _parse_rerank_demo_candidates(raw_candidates: list[str], raw_json_candidates: list[str]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for raw in raw_candidates:
+        parsed = _parse_rerank_demo_candidate(raw)
+        if parsed:
+            candidates.append(parsed)
+    for raw in raw_json_candidates:
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"invalid --candidate-json: {exc}") from exc
+        if not isinstance(item, dict):
+            raise SystemExit("--candidate-json must be a JSON object")
+        text = compact_whitespace(str(item.get("text") or item.get("surface") or ""))
+        if text:
+            candidate = dict(item)
+            candidate["text"] = text
+            candidates.append(candidate)
+    if not candidates:
+        candidates = [
+            {"source": "rime", "text": "输入法", "confidence": 0.8},
+            {"source": "model", "text": "继续预测", "confidence": 0.74},
+            {"source": "rag", "text": "输入法", "confidence": 0.6},
+            {"source": "memory", "text": "长期记忆候选", "acceptedCount": 3},
+        ]
+    return candidates
+
+
+def _parse_rerank_demo_candidate(raw: str) -> dict[str, Any] | None:
+    value = compact_whitespace(str(raw))
+    if not value:
+        return None
+    if value.startswith("{"):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"invalid --candidate JSON object: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise SystemExit("--candidate JSON form must be an object")
+        return parsed
+    if "|" in value:
+        source, text = value.split("|", 1)
+    elif ":" in value:
+        source, text = value.split(":", 1)
+    else:
+        source, text = "unknown", value
+    text = compact_whitespace(text)
+    if not text:
+        return None
+    return {"source": compact_whitespace(source) or "unknown", "text": text}
+
+
+def _source_counts(candidates: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in candidates:
+        source = str(item.get("source") or "unknown")
+        counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def _stable_eval_hash(text: str) -> str:
+    compact = compact_whitespace(text)
+    if not compact:
+        return ""
+    return "sha256:" + hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
+
+
 def _rime_eval_payload(
     case: CodexEvalCase,
     *,
@@ -4061,6 +4177,7 @@ def _eval_prediction_provider_on_cases(
     results = []
     elapsed_ms_by_case: dict[str, int] = {}
     candidate_counts: list[int] = []
+    product_samples: list[dict[str, Any]] = []
     over_budget_count = 0
     provider_name = _prediction_provider_name(provider)
     provider_configured = not _is_null_prediction_provider(provider)
@@ -4084,6 +4201,14 @@ def _eval_prediction_provider_on_cases(
             if predictions:
                 provider_name = predictions[0].provider_name
             candidate_counts.append(len(predictions))
+            product_samples.append(
+                _model_matrix_product_sample(
+                    case=eval_case,
+                    predictions=predictions,
+                    elapsed_ms=elapsed_ms,
+                    max_candidates=max_candidates,
+                )
+            )
             if elapsed_ms > latency_budget_ms:
                 over_budget_count += 1
             results.append(
@@ -4095,6 +4220,7 @@ def _eval_prediction_provider_on_cases(
             )
 
     report = eval_report(results)
+    report["productMetrics"] = _model_matrix_product_metrics(results=results, samples=product_samples)
     report["repeat"] = {
         "requested": repeat,
         "baseCaseCount": len(cases),
@@ -4117,6 +4243,123 @@ def _eval_prediction_provider_on_cases(
     return report
 
 
+def _model_matrix_product_sample(
+    *,
+    case: CodexEvalCase,
+    predictions: list[ModelPrediction],
+    elapsed_ms: int,
+    max_candidates: int,
+) -> dict[str, Any]:
+    surfaces = [compact_whitespace(item.text) for item in predictions if compact_whitespace(item.text)]
+    first_candidate_ms = _first_candidate_ms(predictions, fallback_ms=elapsed_ms if surfaces else 0)
+    return {
+        "caseId": case.case_id,
+        "query": case.query,
+        "recentContext": case.recent_context,
+        "surfaces": surfaces,
+        "candidateCount": len(surfaces),
+        "elapsedMs": elapsed_ms,
+        "firstCandidateMs": first_candidate_ms,
+        "threeCandidatesMs": elapsed_ms if len(surfaces) >= min(3, max_candidates) else 0,
+        "chainReady": len(surfaces) >= min(2, max_candidates),
+    }
+
+
+def _model_matrix_product_metrics(
+    *,
+    results: list,
+    samples: list[dict[str, Any]],
+) -> dict[str, object]:
+    total = len(results)
+    surfaces_by_sample = [list(item.get("surfaces") or []) for item in samples]
+    all_surfaces = [surface for surfaces in surfaces_by_sample for surface in surfaces]
+    duplicate_count = sum(_duplicate_count(surfaces) for surfaces in surfaces_by_sample)
+    echo_count = sum(
+        1
+        for sample in samples
+        if any(
+            _candidate_echoes_old_input(
+                surface,
+                query=str(sample.get("query") or ""),
+                recent_context=str(sample.get("recentContext") or ""),
+            )
+            for surface in list(sample.get("surfaces") or [])
+        )
+    )
+    first_candidate_ms_values = [int(item.get("firstCandidateMs") or 0) for item in samples if int(item.get("firstCandidateMs") or 0) > 0]
+    three_candidate_ms_values = [int(item.get("threeCandidatesMs") or 0) for item in samples if int(item.get("threeCandidatesMs") or 0) > 0]
+    top3_hits = sum(1 for item in results if item.first_match_rank is not None and int(item.first_match_rank) <= 3)
+    forbidden_count = sum(1 for item in results if item.forbidden_matched_terms)
+    return {
+        "top1Acceptability": (sum(1 for item in results if item.top1_passed) / total) if total else 0.0,
+        "top3Coverage": (top3_hits / total) if total else 0.0,
+        "MRR": (sum(float(item.reciprocal_rank) for item in results) / total) if total else 0.0,
+        "noiseRate": (forbidden_count / total) if total else 0.0,
+        "forbiddenRate": (forbidden_count / total) if total else 0.0,
+        "oldInputEchoRate": (echo_count / total) if total else 0.0,
+        "duplicateRate": (duplicate_count / len(all_surfaces)) if all_surfaces else 0.0,
+        "avgCandidateChars": (sum(len(surface) for surface in all_surfaces) / len(all_surfaces)) if all_surfaces else 0.0,
+        "firstCandidateMs": _latency_percentiles(first_candidate_ms_values),
+        "threeCandidatesMs": _latency_percentiles(three_candidate_ms_values),
+        "chainSuccessRate": (
+            sum(1 for item in samples if bool(item.get("chainReady"))) / len(samples)
+        )
+        if samples
+        else 0.0,
+    }
+
+
+def _first_candidate_ms(predictions: list[ModelPrediction], *, fallback_ms: int) -> int:
+    values = [
+        _safe_int(item.metadata.get("first_candidate_ms"))
+        for item in predictions
+        if isinstance(item.metadata, dict) and _safe_int(item.metadata.get("first_candidate_ms")) > 0
+    ]
+    return min(values) if values else fallback_ms
+
+
+def _candidate_echoes_old_input(surface: str, *, query: str, recent_context: str) -> bool:
+    text = compact_whitespace(surface).casefold()
+    query_norm = compact_whitespace(query).casefold()
+    context_norm = compact_whitespace(recent_context).casefold()
+    if not text:
+        return False
+    if query_norm and text == query_norm:
+        return True
+    return bool(context_norm and len(text) >= 4 and text in context_norm[-120:])
+
+
+def _duplicate_count(surfaces: list[str]) -> int:
+    seen: set[str] = set()
+    duplicates = 0
+    for surface in surfaces:
+        key = compact_whitespace(surface).casefold()
+        if not key:
+            continue
+        if key in seen:
+            duplicates += 1
+        else:
+            seen.add(key)
+    return duplicates
+
+
+def _latency_percentiles(values: list[int]) -> dict[str, int]:
+    sorted_values = sorted(values)
+    count = len(sorted_values)
+    return {
+        "count": count,
+        "p50Ms": sorted_values[count // 2] if sorted_values else 0,
+        "p95Ms": sorted_values[min(count - 1, int(count * 0.95))] if sorted_values else 0,
+    }
+
+
+def _safe_int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _model_matrix_winner(reports: list[dict[str, object]]) -> dict[str, object]:
     eligible = [
         item
@@ -4129,26 +4372,36 @@ def _model_matrix_winner(reports: list[dict[str, object]]) -> dict[str, object]:
             "reason": "no_model_returned_candidates",
         }
 
-    def sort_key(item: dict[str, object]) -> tuple[float, float, float, int]:
+    def sort_key(item: dict[str, object]) -> tuple[float, float, float, float, float, int]:
         metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+        product_metrics = item.get("productMetrics") if isinstance(item.get("productMetrics"), dict) else {}
+        first_candidate_ms = product_metrics.get("firstCandidateMs") if isinstance(product_metrics.get("firstCandidateMs"), dict) else {}
         latency = item.get("latency") if isinstance(item.get("latency"), dict) else {}
         return (
             float(item.get("passRate") or 0.0),
-            float(metrics.get("top1Accuracy") or 0.0),
-            float(metrics.get("meanReciprocalRank") or 0.0),
-            -int(latency.get("p95Ms") or 0),
+            float(product_metrics.get("top3Coverage") or metrics.get("hitRate") or 0.0),
+            float(product_metrics.get("top1Acceptability") or metrics.get("top1Accuracy") or 0.0),
+            float(product_metrics.get("MRR") or metrics.get("meanReciprocalRank") or 0.0),
+            -float(product_metrics.get("duplicateRate") or 0.0),
+            -int(first_candidate_ms.get("p95Ms") or latency.get("p95Ms") or 0),
         )
 
     best = max(eligible, key=sort_key)
     metrics = best.get("metrics") if isinstance(best.get("metrics"), dict) else {}
+    product_metrics = best.get("productMetrics") if isinstance(best.get("productMetrics"), dict) else {}
     latency = best.get("latency") if isinstance(best.get("latency"), dict) else {}
     return {
         "model": str(best.get("model") or ""),
         "passRate": float(best.get("passRate") or 0.0),
         "top1Accuracy": float(metrics.get("top1Accuracy") or 0.0),
         "meanReciprocalRank": float(metrics.get("meanReciprocalRank") or 0.0),
+        "top1Acceptability": float(product_metrics.get("top1Acceptability") or metrics.get("top1Accuracy") or 0.0),
+        "top3Coverage": float(product_metrics.get("top3Coverage") or metrics.get("hitRate") or 0.0),
+        "MRR": float(product_metrics.get("MRR") or metrics.get("meanReciprocalRank") or 0.0),
+        "duplicateRate": float(product_metrics.get("duplicateRate") or 0.0),
+        "oldInputEchoRate": float(product_metrics.get("oldInputEchoRate") or 0.0),
         "p95Ms": int(latency.get("p95Ms") or 0),
-        "reason": "highest_pass_rate_top1_mrr_then_lowest_p95",
+        "reason": "highest_pass_rate_top3_top1_mrr_then_lowest_duplicate_and_latency",
     }
 
 

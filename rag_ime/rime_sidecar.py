@@ -669,7 +669,6 @@ def run_side_lanes_with_latency_budget(
     if request_type == "pinyin_constrained_prediction":
         prefix = stable_short_pinyin_prefix(snapshot)
         if prefix:
-            rag_current_input = prefix
             model_current_input = prefix
 
     def run_rag() -> None:

@@ -256,6 +256,8 @@ def _skip_memory_by_tags(tags: tuple[str, ...]) -> bool:
 
 def _source_type_from_tags(tags: tuple[str, ...]) -> str:
     tag_set = {str(tag).lower() for tag in tags}
+    if tag_set.intersection({"cold_knowledge", "cold-knowledge", "external-knowledge"}):
+        return "cold_knowledge"
     if tag_set.intersection({"rag", "embedding", "retrieval", "suggestion-compiler"}):
         return "rag"
     if tag_set.intersection({"memory", "frequency", "phrase-memory", "user-input", "curated"}):

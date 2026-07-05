@@ -2019,6 +2019,53 @@ class LocalSqliteCoreClient:
         params.append(max(1, limit))
         return list(conn.execute(sql, params).fetchall())
 
+    def _memory_item_rows_by_ids(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        memory_item_ids: list[int] | tuple[int, ...],
+        project: str = "",
+        app: str = "",
+        limit: int = 20,
+    ) -> list[sqlite3.Row]:
+        ids = [int(item) for item in memory_item_ids if int(item) > 0]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids[: max(1, limit)])
+        params: list[Any] = list(ids[: max(1, limit)])
+        where = [
+            f"mi.id IN ({placeholders})",
+            "mi.status IN ('active', 'approved', 'tombstoned')",
+            "mi.privacy_class != 'sensitive'",
+        ]
+        if project:
+            where.append("(mi.project = ? OR mi.project = '')")
+            params.append(project)
+        if app:
+            where.append("(mi.app = ? OR mi.app = '')")
+            params.append(app)
+        sql = f"""
+            SELECT
+                mi.*,
+                0.0 AS bm25_score,
+                COALESCE(ms.accepted_count, 0) AS accepted_count,
+                COALESCE(ms.skipped_count, 0) AS skipped_count,
+                COALESCE(tag_map.tags_joined, '') AS tags_joined
+            FROM memory_items mi
+            LEFT JOIN memory_state ms ON ms.event_id = mi.source_event_id
+            LEFT JOIN (
+                SELECT mit.memory_item_id, GROUP_CONCAT(mt.tag, ',') AS tags_joined
+                FROM memory_item_tags mit
+                JOIN memory_tags mt ON mt.id = mit.tag_id
+                GROUP BY mit.memory_item_id
+            ) tag_map ON tag_map.memory_item_id = mi.id
+            WHERE {' AND '.join(where)}
+            ORDER BY mi.updated_at_ms DESC, mi.id DESC
+            LIMIT ?
+        """
+        params.append(max(1, limit))
+        return list(conn.execute(sql, params).fetchall())
+
     def _retrieve_memories_v2(self, context: ImeQueryContext) -> tuple[list[CoreMemory], dict[str, object]]:
         self.initialize()
         started_at = now_ms()
@@ -2051,7 +2098,14 @@ class LocalSqliteCoreClient:
             pool_counts["tag"] = len(tag_scores)
             vector_scores = self._memory_item_vector_scores(conn, query=query, project=context.project, app=context.app, limit=max(context.top_k * 4, 12))
             pool_counts["vector"] = len(vector_scores)
-            for row in _merge_rows(phrase_rows, general_rows):
+            tag_rows = self._memory_item_rows_by_ids(
+                conn,
+                memory_item_ids=tuple(tag_scores.keys()),
+                project=context.project,
+                app=context.app,
+                limit=max(context.top_k * 4, 12),
+            )
+            for row in _merge_rows(phrase_rows, general_rows, tag_rows):
                 memory_id = str(row["memory_id"])
                 normalized_text = _optimizer_norm(str(row["normalized_text"] or row["text"] or ""))
                 source_event_id = int(row["source_event_id"] or 0)
@@ -3171,6 +3225,8 @@ def _split_tags_joined(raw: str) -> tuple[str, ...]:
 
 def _source_type_from_tags_v2(tags: tuple[str, ...]) -> str:
     tag_set = {tag.lower() for tag in tags}
+    if tag_set.intersection({"cold_knowledge", "cold-knowledge", "external-knowledge"}):
+        return "cold_knowledge"
     if tag_set.intersection({"memory", "frequency", "phrase-memory", "user-input", "curated"}):
         return "memory"
     return "rag"
@@ -4099,13 +4155,14 @@ def _suggestion_looks_like_raw_history_echo(
     return False
 
 
-def _merge_rows(primary: list[sqlite3.Row], secondary: list[sqlite3.Row]) -> list[sqlite3.Row]:
+def _merge_rows(*groups: list[sqlite3.Row]) -> list[sqlite3.Row]:
     merged: list[sqlite3.Row] = []
     seen: set[int] = set()
-    for row in [*primary, *secondary]:
-        event_id = int(row["id"])
-        if event_id in seen:
-            continue
-        seen.add(event_id)
-        merged.append(row)
+    for group in groups:
+        for row in group:
+            event_id = int(row["id"])
+            if event_id in seen:
+                continue
+            seen.add(event_id)
+            merged.append(row)
     return merged
