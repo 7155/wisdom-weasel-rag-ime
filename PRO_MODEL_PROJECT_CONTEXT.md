@@ -499,6 +499,9 @@ Offline cleanup:
   suggestions through the existing `x1api.top`-compatible endpoint/config
   layer.
 - `x1top` must not be configured as the realtime predictor.
+- Realtime predictor config must resolve to a loopback base URL; explicit
+  `RAG_IME_PREDICTOR_ENV` files that point at `x1api.top`, `x2app.top`, or
+  other remote OpenAI-compatible URLs are ignored for `/rime-suggest`.
 - Destructive cleanup should be advisory/dry-run until reviewed.
 
 ### Predictor client path

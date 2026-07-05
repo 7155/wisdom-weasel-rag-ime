@@ -44,8 +44,8 @@ Cloud APIs are not used for realtime prediction. The high-intelligence
 `x1top` GPT-series lane, currently wired through `x1api.top`-compatible
 settings, is reserved for offline memory/RAG/database/lexicon distillation,
 not for per-keystroke completion.
-Realtime prediction should come from a local small model with room for KV-cache
-and native inference optimization.
+Realtime prediction should come from a local small model with a loopback
+predictor URL, leaving room for KV-cache and native inference optimization.
 
 ## Current Runtime Shape
 
