@@ -414,9 +414,21 @@ def build_rime_sidecar_response(
                 "hardContextAnchor": manager_result.anchors.hard_context_anchor,
                 "queryAnchor": manager_result.anchors.query_anchor,
                 "displayAnchor": manager_result.anchors.display_anchor,
+                "snapshotId": (
+                    manager_result.stable_snapshot.snapshot_id if manager_result.stable_snapshot else ""
+                ),
                 "stableSnapshotId": (
                     manager_result.stable_snapshot.snapshot_id if manager_result.stable_snapshot else ""
                 ),
+                "snapshotGeneration": (
+                    manager_result.stable_snapshot.generation if manager_result.stable_snapshot else 0
+                ),
+                "reusedLastGood": (
+                    bool(manager_result.stable_snapshot.reused_last_good) if manager_result.stable_snapshot else False
+                ),
+                "stablePanelAction": _string(manager_result.stability.get("action")),
+                "stablePanelReason": _string(manager_result.stability.get("reason")),
+                "stablePanel": manager_result.stability,
                 "requestSeq": snapshot.request_seq,
                 "expiresAfterMs": _prediction_session_expiry_ms(prediction_session_payload),
                 **frontend_transaction_to_payload(snapshot.frontend_transaction),
@@ -472,10 +484,12 @@ def build_rime_sidecar_response(
                 "reason": "prediction-first merge is behind explicit flag",
             },
         }
+    key_policy = key_policy_for_prediction_session(prediction_session_payload)
     display_candidates = _bind_display_candidates_to_session(
         display_candidates=display_candidates,
         snapshot=snapshot,
         prediction_session_payload=prediction_session_payload,
+        key_policy=key_policy,
     )
     _record_display_memory_feedback(
         core=core,
@@ -489,6 +503,15 @@ def build_rime_sidecar_response(
             )
         ),
         project=snapshot.project or default_project,
+    )
+    refresh_decision = refresh_decision_payload(
+        snapshot=snapshot,
+        trigger_decision=trigger_decision,
+        semantic_query=semantic_query,
+    )
+    show_decision = show_decision_payload(
+        prediction_session=prediction_session_payload,
+        display_candidates=display_candidates,
     )
     return {
         "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
@@ -506,10 +529,19 @@ def build_rime_sidecar_response(
         "triggerDecision": {
             "shouldRefresh": trigger_decision.should_refresh,
             "reason": trigger_decision.reason,
+            "refreshReason": trigger_decision.reason,
+            "shouldShow": show_decision["shouldShow"],
+            "showReason": show_decision["showReason"],
+            "hardClear": show_decision["hardClear"],
+            "hardClearReason": show_decision["hardClearReason"],
+            "softHold": show_decision["softHold"],
+            "softHoldReason": show_decision["softHoldReason"],
             "idleMs": snapshot.idle_ms,
             "semanticSignalLength": semantic_signal_length(semantic_query),
             "forceSideCandidates": snapshot.force_side_candidates,
         },
+        "refreshDecision": refresh_decision,
+        "showDecision": show_decision,
         "historyContext": prediction_context,
         "historyContextMeta": prediction_context_metadata(prediction_context),
         "latencyBudgetMs": snapshot.latency_budget_ms,
@@ -521,6 +553,7 @@ def build_rime_sidecar_response(
         "displayCandidates": [display_item_to_payload(item) for item in display_candidates],
         "predictionFirst": prediction_first_payload,
         "predictionSession": prediction_session_payload,
+        "keyPolicy": key_policy,
         "selectionActions": {
             "rime": "select_rime_candidate",
             "side": "commit_side_candidate",
@@ -3157,10 +3190,26 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
     source_badge = candidate_source_badge(item.source_type)
     color_token = candidate_color_token(item.source_type)
     comment = item.comment if candidate_diagnostics_enabled() else ""
+    metadata = dict(item.metadata)
     return {
         "label": item.label,
+        "visibleLabel": metadata.get("visibleLabel") or item.label,
         "selectionKey": selection_key,
         "selectionRank": _candidate_rank(selection_key),
+        "candidateOrdinal": _bounded_int(
+            metadata.get("candidateOrdinal"),
+            default=_candidate_rank(selection_key) or 0,
+            minimum=0,
+            maximum=99,
+        ),
+        "candidateStableId": _string(metadata.get("candidateStableId")),
+        "snapshotId": _string(metadata.get("snapshotId") or metadata.get("stableSnapshotId")),
+        "snapshotGeneration": _bounded_int(
+            metadata.get("snapshotGeneration"),
+            default=0,
+            minimum=0,
+            maximum=2**63 - 1,
+        ),
         "text": item.text,
         "insertText": item.insert_text,
         "sourceType": item.source_type,
@@ -3168,7 +3217,19 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "sourceIndex": item.source_index,
         "comment": comment,
         "badge": source_badge,
+        "sourceBadge": metadata.get("sourceBadge") or source_badge,
         "colorToken": color_token,
+        "sourceStability": metadata.get("sourceStability") or "fresh",
+        "hardContextAnchor": _string(metadata.get("hardContextAnchor")),
+        "queryAnchor": _string(metadata.get("queryAnchor")),
+        "displayAnchor": _string(metadata.get("displayAnchor")),
+        "expiresAtMs": _bounded_int(metadata.get("expiresAtMs"), default=0, minimum=0, maximum=2**63 - 1),
+        "minVisibleUntilMs": _bounded_int(
+            metadata.get("minVisibleUntilMs"),
+            default=0,
+            minimum=0,
+            maximum=2**63 - 1,
+        ),
         "evidencePreview": item.evidence_preview,
         "expandedEvidence": item.expanded_evidence,
         "suggestionId": item.suggestion_id,
@@ -3177,7 +3238,88 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "rimeIndex": item.rime_index,
         "displayLayout": item.display_layout,
         "displayLane": item.display_lane or item.source_type,
-        "metadata": dict(item.metadata),
+        "metadata": metadata,
+    }
+
+
+def key_policy_for_prediction_session(prediction_session_payload: Mapping[str, object]) -> dict[str, object]:
+    phase = _string(prediction_session_payload.get("phase"))
+    input_mode = _string(prediction_session_payload.get("inputMode"))
+    if phase == "post_commit" or input_mode == "post_commit_predicting":
+        return {
+            "numberKeys": "pass_through",
+            "tab": "accept_top_prediction",
+            "optionNumber": "select_prediction_by_ordinal",
+            "escape": "dismiss_prediction",
+        }
+    if phase in {"prefix_constrained", "anchor_composing"} or input_mode in {
+        "prefix_constrained_composing",
+        "anchor_composing",
+    }:
+        return {
+            "numberKeys": "select_visible_candidate",
+            "tab": "page_or_accept_by_rime_mode",
+            "optionNumber": "select_side_candidate",
+            "escape": "dismiss_side_candidates",
+        }
+    return {
+        "numberKeys": "pass_through",
+        "tab": "pass_through_or_rime",
+        "optionNumber": "pass_through",
+        "escape": "pass_through_or_clear_rime",
+    }
+
+
+def refresh_decision_payload(
+    *,
+    snapshot: RimeContextSnapshot,
+    trigger_decision: RimeSideCandidateTriggerDecision,
+    semantic_query: str,
+) -> dict[str, object]:
+    return {
+        "shouldRefresh": trigger_decision.should_refresh,
+        "refreshReason": trigger_decision.reason,
+        "reason": trigger_decision.reason,
+        "idleMs": snapshot.idle_ms,
+        "semanticSignalLength": semantic_signal_length(semantic_query),
+        "forceSideCandidates": snapshot.force_side_candidates,
+    }
+
+
+def show_decision_payload(
+    *,
+    prediction_session: Mapping[str, object],
+    display_candidates: list[SideCandidateDisplayItem],
+) -> dict[str, object]:
+    stable_panel = prediction_session.get("stablePanel")
+    stable_panel = stable_panel if isinstance(stable_panel, Mapping) else {}
+    action = _string(prediction_session.get("stablePanelAction") or stable_panel.get("action"))
+    reason = _string(prediction_session.get("stablePanelReason") or stable_panel.get("reason"))
+    should_show = bool(display_candidates) and not _bool(
+        prediction_session.get("shouldClearPredictionPanel"),
+        default=False,
+    )
+    hard_clear = action == "hard_clear"
+    soft_hold = action in {"soft_hold", "reuse_last_good"}
+    if should_show:
+        show_reason = reason or "visible_candidates"
+    elif hard_clear:
+        show_reason = reason or "hard_clear"
+    else:
+        show_reason = _string(prediction_session.get("clearReason")) or reason or "no_visible_candidates"
+    return {
+        "shouldShow": should_show,
+        "showReason": show_reason,
+        "action": action or ("show" if should_show else "hide"),
+        "hardClear": hard_clear,
+        "hardClearReason": reason if hard_clear else "",
+        "softHold": soft_hold,
+        "softHoldReason": reason if soft_hold else "",
+        "visibleCandidateCount": len(display_candidates),
+        "snapshotId": _string(prediction_session.get("snapshotId") or prediction_session.get("stableSnapshotId")),
+        "sourceSummary": stable_panel.get("snapshot", {}).get("sourceSummary", {})
+        if isinstance(stable_panel.get("snapshot"), Mapping)
+        else {},
     }
 
 
@@ -3186,6 +3328,7 @@ def _bind_display_candidates_to_session(
     display_candidates: list[SideCandidateDisplayItem],
     snapshot: RimeContextSnapshot,
     prediction_session_payload: Mapping[str, object],
+    key_policy: Mapping[str, object] | None = None,
 ) -> list[SideCandidateDisplayItem]:
     session_fingerprint = _string(prediction_session_payload.get("sessionFingerprint"))
     context_fingerprint = _string(prediction_session_payload.get("contextFingerprint")) or _context_fingerprint(
@@ -3194,12 +3337,33 @@ def _bind_display_candidates_to_session(
     hard_context_anchor = _string(prediction_session_payload.get("hardContextAnchor"))
     query_anchor = _string(prediction_session_payload.get("queryAnchor"))
     display_anchor = _string(prediction_session_payload.get("displayAnchor"))
-    stable_snapshot_id = _string(prediction_session_payload.get("stableSnapshotId"))
+    stable_snapshot_id = _string(prediction_session_payload.get("snapshotId")) or _string(
+        prediction_session_payload.get("stableSnapshotId")
+    )
+    snapshot_generation = _bounded_int(
+        prediction_session_payload.get("snapshotGeneration"),
+        default=0,
+        minimum=0,
+        maximum=2**63 - 1,
+    )
+    min_visible_until_ms = _bounded_int(
+        _nested_prediction_session_value(prediction_session_payload, "minVisibleUntilMs"),
+        default=0,
+        minimum=0,
+        maximum=2**63 - 1,
+    )
+    expires_at_ms = _bounded_int(
+        _nested_prediction_session_value(prediction_session_payload, "expiresAtMs"),
+        default=0,
+        minimum=0,
+        maximum=2**63 - 1,
+    )
+    source_stability = _source_stability_from_session(prediction_session_payload)
     phase = _string(prediction_session_payload.get("phase"))
     scope = _string(prediction_session_payload.get("selectionScope"))
     transaction = snapshot.frontend_transaction
     bound: list[SideCandidateDisplayItem] = []
-    for item in display_candidates:
+    for ordinal, item in enumerate(display_candidates, start=1):
         metadata = dict(item.metadata)
         metadata.update(
             {
@@ -3208,7 +3372,17 @@ def _bind_display_candidates_to_session(
                 "hardContextAnchor": hard_context_anchor,
                 "queryAnchor": query_anchor,
                 "displayAnchor": display_anchor,
+                "snapshotId": stable_snapshot_id,
                 "stableSnapshotId": stable_snapshot_id,
+                "snapshotGeneration": snapshot_generation,
+                "candidateStableId": _candidate_stable_id(item, snapshot_id=stable_snapshot_id),
+                "candidateOrdinal": ordinal,
+                "visibleLabel": item.label,
+                "sourceBadge": candidate_source_badge(item.source_type),
+                "sourceStability": source_stability,
+                "expiresAtMs": expires_at_ms,
+                "minVisibleUntilMs": min_visible_until_ms,
+                "keyPolicy": dict(key_policy or {}),
                 "requestSeq": snapshot.request_seq,
                 "sessionId": snapshot.session_id,
                 "predictionSessionPhase": phase,
@@ -3224,6 +3398,44 @@ def _bind_display_candidates_to_session(
         )
         bound.append(replace(item, metadata=metadata))
     return bound
+
+
+def _nested_prediction_session_value(prediction_session_payload: Mapping[str, object], key: str) -> object:
+    if key in prediction_session_payload:
+        return prediction_session_payload.get(key)
+    stable_panel = prediction_session_payload.get("stablePanel")
+    if not isinstance(stable_panel, Mapping):
+        return None
+    snapshot = stable_panel.get("snapshot")
+    if isinstance(snapshot, Mapping):
+        return snapshot.get(key)
+    return None
+
+
+def _source_stability_from_session(prediction_session_payload: Mapping[str, object]) -> str:
+    if _bool(prediction_session_payload.get("reusedLastGood"), default=False):
+        return "reused_last_good"
+    stable_panel = prediction_session_payload.get("stablePanel")
+    if isinstance(stable_panel, Mapping):
+        snapshot = stable_panel.get("snapshot")
+        if isinstance(snapshot, Mapping):
+            stale_level = _string(snapshot.get("staleLevel"))
+            if stale_level:
+                return stale_level
+    return "fresh"
+
+
+def _candidate_stable_id(item: SideCandidateDisplayItem, *, snapshot_id: str) -> str:
+    material = "\x1f".join(
+        (
+            snapshot_id,
+            item.source_type,
+            str(item.source_index),
+            compact_whitespace(item.text),
+            compact_whitespace(item.insert_text),
+        )
+    )
+    return f"{item.source_type}:{hashlib.sha1(material.encode('utf-8')).hexdigest()[:16]}"
 
 
 def _prediction_session_expiry_ms(prediction_session_payload: Mapping[str, object]) -> int:

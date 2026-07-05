@@ -778,6 +778,12 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in display[:4]], ["1", "2", "3", "4"])
         self.assertEqual([item["selectionKey"] for item in display[:4]], ["1", "2", "3", "4"])
         self.assertEqual([item["selectionRank"] for item in display[:4]], [1, 2, 3, 4])
+        self.assertEqual([item["candidateOrdinal"] for item in display[:4]], [1, 2, 3, 4])
+        for item in display[:4]:
+            self.assertEqual(item["visibleLabel"], item["label"])
+            self.assertEqual(item["sourceBadge"], item["badge"])
+            self.assertTrue(item["candidateStableId"].startswith(f"{item['sourceType']}:"))
+            self.assertEqual(item["metadata"]["candidateOrdinal"], item["candidateOrdinal"])
         self.assertFalse(response["mergePolicy"]["rimeFirst"])
         self.assertTrue(response["mergePolicy"]["sideFirst"])
         self.assertEqual(response["mergePolicy"]["fallbackOrder"], ["model", "rag", "rime"])
@@ -1736,6 +1742,15 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
         self.assertEqual(response["predictionSession"]["selectionScope"], "mixed_prediction_first")
         self.assertEqual(response["predictionSession"]["expiresAfterMs"], 2600)
+        self.assertEqual(response["keyPolicy"]["numberKeys"], "select_visible_candidate")
+        self.assertEqual(response["keyPolicy"]["optionNumber"], "select_side_candidate")
+        self.assertTrue(response["showDecision"]["shouldShow"])
+        self.assertFalse(response["showDecision"]["hardClear"])
+        for ordinal, item in enumerate(display, start=1):
+            self.assertEqual(item["candidateOrdinal"], ordinal)
+            self.assertEqual(item["snapshotId"], response["predictionSession"]["snapshotId"])
+            self.assertEqual(item["hardContextAnchor"], response["predictionSession"]["hardContextAnchor"])
+            self.assertEqual(item["metadata"]["keyPolicy"]["numberKeys"], "select_visible_candidate")
 
     def test_prediction_first_prefix_uses_compiled_memory_pinyin_index(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-prefix-memory-") as tmp:
@@ -2134,10 +2149,25 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(len(session_fingerprint), 16)
         self.assertEqual(response["predictionSession"]["requestSeq"], 53)
         self.assertEqual(response["predictionSession"]["expiresAfterMs"], 8000)
+        self.assertEqual(response["predictionSession"]["snapshotId"], response["predictionSession"]["stableSnapshotId"])
+        self.assertTrue(response["predictionSession"]["snapshotId"].startswith("snap:"))
+        self.assertEqual(response["predictionSession"]["stablePanelAction"], "fresh")
+        self.assertEqual(response["keyPolicy"]["numberKeys"], "pass_through")
+        self.assertEqual(response["keyPolicy"]["tab"], "accept_top_prediction")
+        self.assertEqual(response["keyPolicy"]["optionNumber"], "select_prediction_by_ordinal")
+        self.assertTrue(response["refreshDecision"]["shouldRefresh"])
+        self.assertTrue(response["showDecision"]["shouldShow"])
+        self.assertFalse(response["showDecision"]["softHold"])
         self.assertEqual(response["predictionFirst"]["policy"]["candidatePoolSessionFingerprint"], session_fingerprint)
-        for item in response["displayCandidates"]:
+        for ordinal, item in enumerate(response["displayCandidates"], start=1):
             self.assertEqual(item["metadata"]["sessionFingerprint"], session_fingerprint)
             self.assertEqual(item["metadata"]["requestSeq"], 53)
+            self.assertEqual(item["candidateOrdinal"], ordinal)
+            self.assertEqual(item["snapshotId"], response["predictionSession"]["snapshotId"])
+            self.assertEqual(item["candidateStableId"], item["metadata"]["candidateStableId"])
+            self.assertEqual(item["sourceBadge"], item["badge"])
+            self.assertEqual(item["sourceStability"], "fresh")
+            self.assertEqual(item["metadata"]["keyPolicy"]["numberKeys"], "pass_through")
 
     def test_prediction_first_short_committed_context_skips_even_when_forced(self) -> None:
         core = CapturingCore()

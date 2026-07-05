@@ -424,6 +424,14 @@ only in post-commit and prefix-constrained prediction modes, then exposes the
 diagnostics through `predictionFirst.policy.stability` and anchor fields through
 `predictionSession`.
 
+The sidecar now also exposes PR-B/PR-C/PR-D payload contracts:
+`refreshDecision`, `showDecision`, and `keyPolicy` are top-level response
+fields; `displayCandidates[]` includes `snapshotId`, `candidateStableId`,
+`candidateOrdinal`, `visibleLabel`, `sourceBadge`, `sourceStability`, anchors,
+and snapshot TTL fields. The Squirrel patch decodes these fields and only routes
+ordinary number keys when `keyPolicy.numberKeys == "select_visible_candidate"`,
+so post-commit predictions use `numberKeys=pass_through`.
+
 ### Sidecar merge path
 
 File: `rag_ime/rime_sidecar.py`
@@ -704,6 +712,75 @@ if merge_result.mode in {InputMode.POST_COMMIT_PREDICTING, InputMode.PREFIX_CONS
             "stabilitySnapshotId": stable_snapshot.snapshot_id if stable_snapshot else "",
         },
     )
+```
+
+### Snapshot lock and key policy payload
+
+File: `rag_ime/rime_sidecar.py`
+
+```python
+def key_policy_for_prediction_session(prediction_session_payload: Mapping[str, object]) -> dict[str, object]:
+    phase = _string(prediction_session_payload.get("phase"))
+    input_mode = _string(prediction_session_payload.get("inputMode"))
+    if phase == "post_commit" or input_mode == "post_commit_predicting":
+        return {
+            "numberKeys": "pass_through",
+            "tab": "accept_top_prediction",
+            "optionNumber": "select_prediction_by_ordinal",
+            "escape": "dismiss_prediction",
+        }
+    if phase in {"prefix_constrained", "anchor_composing"} or input_mode in {
+        "prefix_constrained_composing",
+        "anchor_composing",
+    }:
+        return {
+            "numberKeys": "select_visible_candidate",
+            "tab": "page_or_accept_by_rime_mode",
+            "optionNumber": "select_side_candidate",
+            "escape": "dismiss_side_candidates",
+        }
+    return {
+        "numberKeys": "pass_through",
+        "tab": "pass_through_or_rime",
+        "optionNumber": "pass_through",
+        "escape": "pass_through_or_clear_rime",
+    }
+```
+
+```python
+metadata.update(
+    {
+        "snapshotId": stable_snapshot_id,
+        "stableSnapshotId": stable_snapshot_id,
+        "snapshotGeneration": snapshot_generation,
+        "candidateStableId": _candidate_stable_id(item, snapshot_id=stable_snapshot_id),
+        "candidateOrdinal": ordinal,
+        "visibleLabel": item.label,
+        "sourceBadge": candidate_source_badge(item.source_type),
+        "sourceStability": source_stability,
+        "expiresAtMs": expires_at_ms,
+        "minVisibleUntilMs": min_visible_until_ms,
+        "keyPolicy": dict(key_policy or {}),
+    }
+)
+```
+
+Squirrel patch contract excerpt:
+
+```swift
+let keyPolicy: RagImeKeyPolicyPayload?
+let candidateOrdinal: Int?
+let candidateStableId: String?
+let snapshotId: String?
+let sourceBadge: String?
+let sourceStability: String?
+
+if !modifiers.contains(.control)
+  && !modifiers.contains(.option)
+  && ragImeDisplayNumberKeyPolicy == "select_visible_candidate"
+  && selectRagImeSideCandidate(forKey: String(char)) {
+  return true
+}
 ```
 
 ### PR-1 frontend transaction model

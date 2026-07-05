@@ -594,6 +594,8 @@ index 0000000..784162d
 +  let semanticQuery: String
 +  let queryBasis: String
 +  let triggerDecision: RagImeTriggerDecision?
++  let refreshDecision: RagImeRefreshDecision?
++  let showDecision: RagImeShowDecision?
 +  let historyContext: String
 +  let latencyBudgetMs: Int
 +  let rimeContext: RagImeRimeContextPayload
@@ -602,6 +604,7 @@ index 0000000..784162d
 +  let displayCandidates: [RagImeDisplayCandidate]
 +  let predictionSession: RagImePredictionSessionPayload?
 +  let progressive: RagImeProgressivePayload?
++  let keyPolicy: RagImeKeyPolicyPayload?
 +  let selectionActions: RagImeSelectionActions
 +  let mergePolicy: RagImeMergePolicy
 +}
@@ -609,9 +612,44 @@ index 0000000..784162d
 +struct RagImeTriggerDecision: Codable {
 +  let shouldRefresh: Bool
 +  let reason: String
++  let refreshReason: String?
++  let shouldShow: Bool?
++  let showReason: String?
++  let hardClear: Bool?
++  let hardClearReason: String?
++  let softHold: Bool?
++  let softHoldReason: String?
 +  let idleMs: Int
 +  let semanticSignalLength: Int
 +  let forceSideCandidates: Bool
++}
++
++struct RagImeRefreshDecision: Codable {
++  let shouldRefresh: Bool
++  let refreshReason: String
++  let reason: String
++  let idleMs: Int
++  let semanticSignalLength: Int
++  let forceSideCandidates: Bool
++}
++
++struct RagImeShowDecision: Codable {
++  let shouldShow: Bool
++  let showReason: String
++  let action: String
++  let hardClear: Bool
++  let hardClearReason: String
++  let softHold: Bool
++  let softHoldReason: String
++  let visibleCandidateCount: Int
++  let snapshotId: String
++}
++
++struct RagImeKeyPolicyPayload: Codable {
++  let numberKeys: String
++  let tab: String
++  let optionNumber: String
++  let escape: String
 +}
 +
 +struct RagImePredictionSessionPayload: Codable {
@@ -629,6 +667,15 @@ index 0000000..784162d
 +  let rawCommitCount: Int?
 +  let sessionFingerprint: String?
 +  let contextFingerprint: String?
++  let hardContextAnchor: String?
++  let queryAnchor: String?
++  let displayAnchor: String?
++  let snapshotId: String?
++  let stableSnapshotId: String?
++  let snapshotGeneration: Int?
++  let reusedLastGood: Bool?
++  let stablePanelAction: String?
++  let stablePanelReason: String?
 +  let requestSeq: Int?
 +  let expiresAfterMs: Int?
 +  let frontendRevision: Int?
@@ -674,8 +721,13 @@ index 0000000..784162d
 +
 +struct RagImeDisplayCandidate: Codable, Hashable {
 +  let label: String
++  let visibleLabel: String?
 +  let selectionKey: String?
 +  let selectionRank: Int?
++  let candidateOrdinal: Int?
++  let candidateStableId: String?
++  let snapshotId: String?
++  let snapshotGeneration: Int?
 +  let text: String
 +  let insertText: String
 +  let sourceType: String
@@ -683,7 +735,14 @@ index 0000000..784162d
 +  let sourceIndex: Int
 +  let comment: String
 +  let badge: String?
++  let sourceBadge: String?
 +  let colorToken: String?
++  let sourceStability: String?
++  let hardContextAnchor: String?
++  let queryAnchor: String?
++  let displayAnchor: String?
++  let expiresAtMs: Int?
++  let minVisibleUntilMs: Int?
 +  let evidencePreview: String
 +  let suggestionId: String
 +  let memoryId: String
@@ -807,6 +866,7 @@ index c2adf74..3cfc0e5 100644
 +  private var ragImeDisplayUpdatedAt: Date = .distantPast
 +  private var ragImeDisplayExpiresAt: Date?
 +  private var ragImeDisplaySessionFingerprint: String = ""
++  private var ragImeDisplayNumberKeyPolicy: String = ""
 +  private let ragImeDisplayHoldoverDuration: TimeInterval = 2.6
 +  private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 8.0
 +  private let ragImeActiveResponseApplyWindowMs: Int = 9000
@@ -846,7 +906,7 @@ index c2adf74..3cfc0e5 100644
          keyChars = event.characters
        }
        if let char = keyChars?.first {
-+        if !modifiers.contains(.control) && !modifiers.contains(.option) && selectRagImeSideCandidate(forKey: String(char)) {
++        if !modifiers.contains(.control) && !modifiers.contains(.option) && ragImeDisplayNumberKeyPolicy == "select_visible_candidate" && selectRagImeSideCandidate(forKey: String(char)) {
 +          return true
 +        }
          let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
@@ -1532,6 +1592,7 @@ index c2adf74..3cfc0e5 100644
 +    ragImeDisplayQueryBasis = response.queryBasis
 +    ragImeDisplayUpdatedAt = Date()
 +    ragImeDisplaySessionFingerprint = responseSessionFingerprint
++    ragImeDisplayNumberKeyPolicy = response.keyPolicy?.numberKeys ?? ""
 +    ragImeDisplayPanelSessionId = response.panelSessionId
 +    ragImeDisplayCompositionHash = response.compositionHash
 +    ragImeDisplayCommittedContextHash = response.committedContextHash
@@ -2271,6 +2332,14 @@ index c2adf74..3cfc0e5 100644
 +      "label": candidate.label,
 +      "selectionKey": candidate.selectionKey ?? "",
 +      "selectionRank": candidate.selectionRank ?? 0,
++      "candidateOrdinal": candidate.candidateOrdinal ?? 0,
++      "candidateStableId": candidate.candidateStableId ?? "",
++      "snapshotId": candidate.snapshotId ?? "",
++      "sourceBadge": candidate.sourceBadge ?? candidate.badge ?? "",
++      "sourceStability": candidate.sourceStability ?? "",
++      "hardContextAnchor": candidate.hardContextAnchor ?? "",
++      "queryAnchor": candidate.queryAnchor ?? "",
++      "displayAnchor": candidate.displayAnchor ?? "",
 +      "text": candidate.text,
 +      "sourceType": candidate.sourceType,
 +      "selectionAction": candidate.selectionAction,
@@ -2299,6 +2368,7 @@ index c2adf74..3cfc0e5 100644
 +    ragImeDisplayUpdatedAt = .distantPast
 +    ragImeDisplayExpiresAt = nil
 +    ragImeDisplaySessionFingerprint = ""
++    ragImeDisplayNumberKeyPolicy = ""
 +    ragImeDisplayPanelSessionId = ""
 +    ragImeDisplayCompositionHash = ""
 +    ragImeDisplayCommittedContextHash = ""
