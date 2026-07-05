@@ -430,7 +430,11 @@ fields; `displayCandidates[]` includes `snapshotId`, `candidateStableId`,
 `candidateOrdinal`, `visibleLabel`, `sourceBadge`, `sourceStability`, anchors,
 and snapshot TTL fields. The Squirrel patch decodes these fields and only routes
 ordinary number keys when `keyPolicy.numberKeys == "select_visible_candidate"`,
-so post-commit predictions use `numberKeys=pass_through`.
+so post-commit predictions use `numberKeys=pass_through`. The patch now also
+rejects stale candidate selection when `snapshotId`, `candidateOrdinal`,
+`candidateStableId`, candidate expiry, session fingerprint, or foreground
+transaction metadata no longer match; the frontend trace checker compares the
+same snapshot-lock fields before accepting a number-key route/commit pair.
 
 ### Sidecar merge path
 
@@ -780,6 +784,24 @@ if !modifiers.contains(.control)
   && ragImeDisplayNumberKeyPolicy == "select_visible_candidate"
   && selectRagImeSideCandidate(forKey: String(char)) {
   return true
+}
+
+func canSelectRagImeDisplayCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
+  guard ragImeDisplaySessionStillLive() else { return false }
+  guard !ragImeDisplaySessionFingerprint.isEmpty else { return true }
+  guard ragImeDisplayCandidateSessionFingerprint(candidate) == ragImeDisplaySessionFingerprint else { return false }
+  if !ragImeDisplaySnapshotId.isEmpty {
+    guard candidate.snapshotId == ragImeDisplaySnapshotId else { return false }
+  }
+  if let ordinal = candidate.candidateOrdinal, ordinal > 0 {
+    guard ordinal <= ragImeDisplayCandidates.count else { return false }
+    guard ragImeDisplayCandidates[ordinal - 1].candidateStableId == candidate.candidateStableId else { return false }
+  }
+  if let expiresAtMs = candidate.expiresAtMs, expiresAtMs > 0 {
+    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+    guard nowMs <= expiresAtMs else { return false }
+  }
+  ...
 }
 ```
 

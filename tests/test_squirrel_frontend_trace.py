@@ -1844,6 +1844,67 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertTrue(report["latestValidSideCommit"])
         self.assertIsNone(report["latestNumberKeySideCommit"])
 
+    def test_trace_check_rejects_number_key_commit_with_snapshot_mismatch(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            route_candidate = _side_candidate(label="6", source_type="rag", session_fingerprint="session-a")
+            route_candidate.update(
+                {
+                    "snapshotId": "snap:visible",
+                    "candidateStableId": "rag:visible",
+                    "candidateOrdinal": 1,
+                    "hardContextAnchor": "sha256:hard",
+                    "queryAnchor": "sha256:query",
+                    "displayAnchor": "sha256:display",
+                }
+            )
+            commit_candidate = dict(route_candidate)
+            commit_candidate["snapshotId"] = "snap:stale"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": False,
+                        "candidateCounts": {"total": 1, "modelInline": 0, "ragBlock": 1, "rime": 0},
+                        "candidates": [route_candidate],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {"event": "number_key_route", "timestampMs": 2, "key": "6", "candidate": route_candidate},
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {"event": "side_candidate_commit", "timestampMs": 3, "candidate": commit_candidate},
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-side-panel",
+                    "--require-side-commit",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertTrue(report["latestValidSideCommit"])
+        self.assertIsNone(report["latestNumberKeySideCommit"])
+
     def test_trace_check_clear_removes_log(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:

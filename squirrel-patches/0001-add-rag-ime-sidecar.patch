@@ -866,6 +866,7 @@ index c2adf74..3cfc0e5 100644
 +  private var ragImeDisplayUpdatedAt: Date = .distantPast
 +  private var ragImeDisplayExpiresAt: Date?
 +  private var ragImeDisplaySessionFingerprint: String = ""
++  private var ragImeDisplaySnapshotId: String = ""
 +  private var ragImeDisplayNumberKeyPolicy: String = ""
 +  private let ragImeDisplayHoldoverDuration: TimeInterval = 2.6
 +  private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 8.0
@@ -1592,6 +1593,7 @@ index c2adf74..3cfc0e5 100644
 +    ragImeDisplayQueryBasis = response.queryBasis
 +    ragImeDisplayUpdatedAt = Date()
 +    ragImeDisplaySessionFingerprint = responseSessionFingerprint
++    ragImeDisplaySnapshotId = response.predictionSession?.snapshotId ?? response.predictionSession?.stableSnapshotId ?? ""
 +    ragImeDisplayNumberKeyPolicy = response.keyPolicy?.numberKeys ?? ""
 +    ragImeDisplayPanelSessionId = response.panelSessionId
 +    ragImeDisplayCompositionHash = response.compositionHash
@@ -2071,6 +2073,17 @@ index c2adf74..3cfc0e5 100644
 +    guard ragImeDisplaySessionStillLive() else { return false }
 +    guard !ragImeDisplaySessionFingerprint.isEmpty else { return true }
 +    guard ragImeDisplayCandidateSessionFingerprint(candidate) == ragImeDisplaySessionFingerprint else { return false }
++    if !ragImeDisplaySnapshotId.isEmpty {
++      guard candidate.snapshotId == ragImeDisplaySnapshotId else { return false }
++    }
++    if let ordinal = candidate.candidateOrdinal, ordinal > 0 {
++      guard ordinal <= ragImeDisplayCandidates.count else { return false }
++      guard ragImeDisplayCandidates[ordinal - 1].candidateStableId == candidate.candidateStableId else { return false }
++    }
++    if let expiresAtMs = candidate.expiresAtMs, expiresAtMs > 0 {
++      let nowMs = Int(Date().timeIntervalSince1970 * 1000)
++      guard nowMs <= expiresAtMs else { return false }
++    }
 +    guard ragImeDisplayCandidateIntMetadata(candidate, "frontendRevision") == ragImeFrontendRevision else { return false }
 +    guard ragImeDisplayCandidateIntMetadata(candidate, "selectionEpoch") == ragImeSelectionEpoch else { return false }
 +    guard ragImeDisplayCandidateStringMetadata(candidate, "panelSessionId") == ragImeDisplayPanelSessionId else { return false }
@@ -2080,6 +2093,13 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func ragImeDisplayCandidateMatchesTransaction(_ candidate: RagImeDisplayCandidate, response: RagImeSidecarResponse) -> Bool {
++    let responseSnapshotId = response.predictionSession?.snapshotId ?? response.predictionSession?.stableSnapshotId ?? ""
++    if !responseSnapshotId.isEmpty && candidate.snapshotId != responseSnapshotId {
++      return false
++    }
++    if let ordinal = candidate.candidateOrdinal, ordinal <= 0 {
++      return false
++    }
 +    return ragImeDisplayCandidateIntMetadata(candidate, "frontendRevision") == response.frontendRevision
 +      && ragImeDisplayCandidateIntMetadata(candidate, "selectionEpoch") == response.selectionEpoch
 +      && ragImeDisplayCandidateStringMetadata(candidate, "panelSessionId") == response.panelSessionId
@@ -2368,6 +2388,7 @@ index c2adf74..3cfc0e5 100644
 +    ragImeDisplayUpdatedAt = .distantPast
 +    ragImeDisplayExpiresAt = nil
 +    ragImeDisplaySessionFingerprint = ""
++    ragImeDisplaySnapshotId = ""
 +    ragImeDisplayNumberKeyPolicy = ""
 +    ragImeDisplayPanelSessionId = ""
 +    ragImeDisplayCompositionHash = ""

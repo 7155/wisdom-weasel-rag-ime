@@ -517,7 +517,19 @@ def candidates_match_number_route(route_event: dict[str, Any], commit_event: dic
     commit_session = str(commit_candidate.get("sessionFingerprint") or "")
     if (route_session or commit_session) and route_session != commit_session:
         return False
-    for key in ("frontendRevision", "selectionEpoch", "panelSessionId", "compositionHash", "committedContextHash"):
+    for key in (
+        "frontendRevision",
+        "selectionEpoch",
+        "panelSessionId",
+        "compositionHash",
+        "committedContextHash",
+        "snapshotId",
+        "candidateStableId",
+        "candidateOrdinal",
+        "hardContextAnchor",
+        "queryAnchor",
+        "displayAnchor",
+    ):
         route_value = route_candidate.get(key)
         commit_value = commit_candidate.get(key)
         if route_value is not None or commit_value is not None:
@@ -558,6 +570,12 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "keyCode": event.get("keyCode"),
         "sourceType": event.get("sourceType"),
         "sessionFingerprint": event.get("sessionFingerprint"),
+        "snapshotId": event.get("snapshotId"),
+        "candidateStableId": event.get("candidateStableId"),
+        "candidateOrdinal": event.get("candidateOrdinal"),
+        "hardContextAnchor": event.get("hardContextAnchor"),
+        "queryAnchor": event.get("queryAnchor"),
+        "displayAnchor": event.get("displayAnchor"),
         "commitTextPreview": event.get("commitTextPreview"),
         "committedContextChars": event.get("committedContextChars"),
         "displayCount": event.get("displayCount"),
