@@ -17,6 +17,7 @@ CLEAR_TRACE=1
 OPEN_TEST_FILE=1
 SELECT_INPUT_SOURCE=1
 REQUIRE_SIDE_COMMIT=1
+REQUIRE_COMMIT_OBSERVED=1
 REQUIRE_POST_COMMIT_FOLLOWUP=1
 REQUIRE_MIXED_PANEL=1
 REQUIRE_SIDE_PANEL=0
@@ -44,6 +45,7 @@ Options:
   --mixed-only          Require mixed panel layout but not number-key side commit
   --side-panel-only     Require any model/RAG/memory side panel instead of mixed model+RAG layout
   --no-followup         Do not require post-commit follow-up after side commit
+  --no-commit-observed  Do not require a commit_observed trace before follow-up
   --no-clear            Do not clear the existing frontend trace first
   --no-open             Do not open the TextEdit test file
   --no-select           Do not try to select the Squirrel input source
@@ -79,6 +81,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-followup)
       REQUIRE_POST_COMMIT_FOLLOWUP=0
+      ;;
+    --no-commit-observed)
+      REQUIRE_COMMIT_OBSERVED=0
       ;;
     --no-clear)
       CLEAR_TRACE=0
@@ -153,6 +158,9 @@ fi
 if [[ "$REQUIRE_SIDE_COMMIT" == "1" ]]; then
   trace_args+=(--require-side-commit)
 fi
+if [[ "$REQUIRE_COMMIT_OBSERVED" == "1" ]]; then
+  trace_args+=(--require-commit-observed)
+fi
 if [[ "$REQUIRE_POST_COMMIT_FOLLOWUP" == "1" ]]; then
   trace_args+=(--require-post-commit-followup)
 fi
@@ -172,6 +180,7 @@ clear_trace=$CLEAR_TRACE
 open_test_file=$OPEN_TEST_FILE
 select_input_source=$SELECT_INPUT_SOURCE
 require_side_commit=$REQUIRE_SIDE_COMMIT
+require_commit_observed=$REQUIRE_COMMIT_OBSERVED
 require_post_commit_followup=$REQUIRE_POST_COMMIT_FOLLOWUP
 require_mixed_panel=$REQUIRE_MIXED_PANEL
 require_side_panel=$REQUIRE_SIDE_PANEL

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
 import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
@@ -750,17 +751,24 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[0]["selectionAction"], "commit_side_candidate")
         self.assertEqual(display[0]["displayLayout"], "inline")
         self.assertEqual(display[0]["displayLane"], "model")
+        self.assertEqual(display[0]["badge"], "模")
+        self.assertEqual(display[0]["colorToken"], "modelBlue")
         self.assertEqual(display[1]["sourceType"], "rag")
         self.assertEqual(display[1]["selectionAction"], "commit_side_candidate")
         self.assertEqual(display[1]["displayLayout"], "block")
         self.assertEqual(display[1]["displayLane"], "memory")
+        self.assertEqual(display[1]["badge"], "查")
+        self.assertEqual(display[1]["colorToken"], "ragTeal")
         self.assertIsInstance(display[1]["sourceEventId"], int)
         self.assertEqual(display[2]["sourceType"], "rag")
+        self.assertEqual(display[2]["badge"], "查")
         self.assertEqual(display[2]["selectionAction"], "commit_side_candidate")
         self.assertEqual(display[3]["sourceType"], "rime")
         self.assertEqual(display[3]["selectionAction"], "select_rime_candidate")
         self.assertEqual(display[3]["displayLayout"], "fallback")
         self.assertEqual(display[3]["displayLane"], "rime")
+        self.assertEqual(display[3]["badge"], "词")
+        self.assertEqual(display[3]["colorToken"], "rimeOrange")
         self.assertEqual(display[3]["rimeIndex"], 0)
         self.assertEqual([item["label"] for item in display[:4]], ["1", "2", "3", "4"])
         self.assertEqual([item["selectionKey"] for item in display[:4]], ["1", "2", "3", "4"])
@@ -772,6 +780,40 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertFalse(response["modelLane"]["timedOut"])
         self.assertEqual(response["modelLane"]["predictionCount"], 1)
         self.assertEqual(response["modelLane"]["totalLatencyBudgetMs"], 300)
+
+    def test_display_candidates_hide_diagnostics_by_default_but_can_enable_them(self) -> None:
+        payload = {
+            "sessionId": "squirrel-display-diagnostics",
+            "requestSeq": 420,
+            "rawInput": "ragshurufa",
+            "preedit": "ragshurufa",
+            "committedContext": "RAG 输入法需要展示更清晰的来源信息",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                ],
+            },
+        }
+
+        default_response = build_rime_sidecar_response(
+            payload=payload,
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+        )
+        self.assertEqual(default_response["displayCandidates"][0]["comment"], "")
+
+        with patch.dict(os.environ, {"RAG_IME_CANDIDATE_DIAGNOSTICS": "1"}, clear=False):
+            diagnostic_response = build_rime_sidecar_response(
+                payload={**payload, "requestSeq": 421},
+                adapter=self.adapter,
+                core=self.core,
+                predictor=self.predictor,
+            )
+
+        self.assertEqual(diagnostic_response["displayCandidates"][0]["comment"], "fake-rime-model")
 
     def test_model_lane_receives_pinyin_constrained_request_context(self) -> None:
         predictor = CapturingRequestPredictionProvider()
@@ -1453,6 +1495,8 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(first["sourceType"], "raw_english")
         self.assertEqual(first["insertText"], "model_prediction")
         self.assertEqual(first["selectionAction"], "commit_side_candidate")
+        self.assertEqual(first["badge"], "input")
+        self.assertEqual(first["colorToken"], "rawGray")
         self.assertEqual(len(response["displayCandidates"]), 1)
 
     def test_shell_command_raw_input_stays_first_candidate(self) -> None:
@@ -1687,9 +1731,13 @@ class RimeSidecarTests(unittest.TestCase):
         display = response["displayCandidates"]
         self.assertEqual(display[0]["text"], "设计输入法状态机")
         self.assertEqual(display[0]["sourceType"], "model")
+        self.assertEqual(display[0]["badge"], "模")
+        self.assertEqual(display[0]["colorToken"], "modelBlue")
         self.assertEqual(display[1]["text"], "设计一个候选展示方式")
         self.assertEqual(display[1]["sourceType"], "memory")
         self.assertEqual(display[1]["displayLane"], "memory")
+        self.assertEqual(display[1]["badge"], "忆")
+        self.assertEqual(display[1]["colorToken"], "memoryPurple")
         self.assertEqual(display[1]["metadata"]["initials"], "sjyghxzsfs")
         self.assertEqual([item["sourceType"] for item in display], ["model", "memory", "rime", "rime"])
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 2)
@@ -2909,7 +2957,7 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertFalse(response["recordedAction"])
             self.assertTrue(response["recordedCommitAction"])
             self.assertEqual(response["commitAction"]["actionType"], "accepted")
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 row = conn.execute(
                     """
                     SELECT e.committed_text, e.candidate_rank, e.source, s.accepted_count
@@ -3018,7 +3066,7 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertEqual(response["skippedActionCount"], 1)
             self.assertEqual(response["skippedActions"][0]["actionType"], "skipped")
             self.assertEqual(response["skippedActions"][0]["memoryId"], f"event:{skipped_event_id}")
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 actions = conn.execute(
                     """
                     SELECT memory_id, action_type, suggestion_id
@@ -3026,11 +3074,25 @@ class RimeSidecarTests(unittest.TestCase):
                     ORDER BY id
                     """
                 ).fetchall()
+                feedback_events = conn.execute(
+                    """
+                    SELECT action, candidate_id, candidate_text
+                    FROM memory_feedback_events
+                    ORDER BY created_at_ms, id
+                    """
+                ).fetchall()
             self.assertEqual(
                 actions,
                 [
                     (f"event:{selected_event_id}", "accepted", "sug-accept"),
                     (f"event:{skipped_event_id}", "skipped", "sug-skip"),
+                ],
+            )
+            self.assertCountEqual(
+                feedback_events,
+                [
+                    ("accepted", f"event:{selected_event_id}", "补齐 selection feedback"),
+                    ("skipped", f"event:{skipped_event_id}", "把 RAG 候选做成可选择的输入片段"),
                 ],
             )
 
@@ -3089,7 +3151,7 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertEqual(response["skippedActionCount"], 1)
             self.assertEqual(after[0].surface_text, selected_before.surface_text)
             self.assertIn("accepted:1", after[0].metadata["reason"])
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 state = {
                     row[0]: (row[1], row[2])
                     for row in conn.execute(
@@ -3137,7 +3199,7 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertTrue(response["dryRun"])
             self.assertEqual(response["eventId"], "")
             self.assertFalse(response["recordedAction"])
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 has_events_table = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'input_events'"
                 ).fetchone()
@@ -3181,7 +3243,7 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertEqual(code, 0)
             response = json.loads(stdout.getvalue())
             self.assertEqual(response["schemaVersion"], "rag-ime.rime-selection.v1")
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 row = conn.execute(
                     "SELECT committed_text, candidate_rank FROM input_events WHERE committed_text = ?",
                     ("第十个候选",),

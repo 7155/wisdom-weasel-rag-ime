@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 
 from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
@@ -62,6 +63,13 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def _run_cli_json(self, *args: str) -> dict[str, object]:
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(["--db-path", str(self.db_path), *args])
+        self.assertEqual(code, 0)
+        return json.loads(stdout.getvalue())
+
     def test_records_events_into_sqlite_and_retrieves_with_fts5(self) -> None:
         self.assertGreaterEqual(self.core.event_count(), 8)
         suggestions = self.adapter.suggest(
@@ -91,9 +99,124 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         phrase = next(item for item in snapshot["highFrequencyPhrases"] if item["text"] == "四川模糊音")
         self.assertGreaterEqual(phrase["inputFrequency"], 3)
 
+    def test_cli_admin_commands_expose_trace_governance_and_cleanup_runs(self) -> None:
+        self.adapter.commit_text(
+            "连续预测",
+            recent_context="RAG 输入法需要更好的候选",
+            project="wisdom-weasel-rag-ime",
+            tags=("phrase-memory",),
+        )
+        self.core.record_memory_feedback(
+            {
+                "event": "skipped",
+                "candidateId": "phrase:连续预测",
+                "candidateText": "连续预测",
+                "sourceType": "memory",
+                "contextHash": "ctx:cli-admin",
+                "timestampMs": 1,
+            }
+        )
+        self.core.record_memory_feedback(
+            {
+                "event": "skipped",
+                "candidateId": "phrase:连续预测",
+                "candidateText": "连续预测",
+                "sourceType": "memory",
+                "contextHash": "ctx:cli-admin",
+                "timestampMs": 2,
+            }
+        )
+        cleanup = self.core.build_memory_cleanup_plan(project="wisdom-weasel-rag-ime")
+        self.core.store_memory_optimizer_trace(
+            {
+                "traceId": "trace-cli-admin",
+                "requestSeq": 7,
+                "contextHash": "ctx:cli-admin",
+                "contextFrame": {"semantic_query": "连续"},
+                "queryPlan": {"retrievers": ["phrase"]},
+                "rawResults": [{"id": "phrase:连续预测", "text": "连续预测"}],
+                "optimizedCandidates": [],
+                "blocked": [{"id": "phrase:连续预测", "reason": "recent_committed_echo"}],
+                "latencyMs": 1.2,
+                "warnings": [],
+                "degraded": False,
+                "createdAtMs": 3,
+            }
+        )
+
+        governance_payload = self._run_cli_json("memory-governance", "--limit", "10")
+        cleanup_runs_payload = self._run_cli_json("memory-cleanup-runs", "--limit", "10")
+        trace_payload = self._run_cli_json("memory-optimizer-trace", "trace-cli-admin")
+        explain_payload = self._run_cli_json("memory-candidate-explain", "phrase:连续预测", "--context-hash", "ctx:cli-admin")
+
+        self.assertEqual(governance_payload["schemaVersion"], "rag-ime.memory-governance.v1")
+        self.assertIn("phrase:连续预测", [item["matchValue"] for item in governance_payload["suppressions"]])
+        self.assertEqual(cleanup_runs_payload["schemaVersion"], "rag-ime.memory-cleanup-runs.v1")
+        self.assertTrue(any(item["runId"] == cleanup["runId"] for item in cleanup_runs_payload["items"]))
+        self.assertEqual(trace_payload["traceId"], "trace-cli-admin")
+        self.assertEqual(explain_payload["candidateId"], "phrase:连续预测")
+        self.assertEqual(explain_payload["recentTrace"]["traceId"], "trace-cli-admin")
+
+    def test_cli_memory_cleanup_review_marks_run_reviewed(self) -> None:
+        self.adapter.commit_text(
+            "连续预测",
+            recent_context="RAG 输入法需要更好的候选",
+            project="wisdom-weasel-rag-ime",
+            tags=("phrase-memory",),
+        )
+        cleanup = self.core.build_memory_cleanup_plan(project="wisdom-weasel-rag-ime")
+
+        review_payload = self._run_cli_json(
+            "memory-cleanup-review",
+            "--run-id",
+            cleanup["runId"],
+            "--status",
+            "approved",
+        )
+
+        self.assertEqual(review_payload["schemaVersion"], "rag-ime.memory-cleanup-review.v1")
+        self.assertEqual(review_payload["run"]["status"], "reviewed")
+        self.assertTrue(review_payload["run"]["diffs"])
+        self.assertTrue(all(item["status"] == "approved" for item in review_payload["run"]["diffs"]))
+
+    def test_cli_pr5_governance_report_tombstone_and_anti_echo_demo(self) -> None:
+        tombstone_payload = self._run_cli_json(
+            "tombstone",
+            "phrase:连续预测",
+            "--target-type",
+            "memory_id",
+            "--reason",
+            "manual review",
+            "--metadata-json",
+            '{"source":"cli-test"}',
+        )
+        governance_payload = self._run_cli_json("governance-report", "--limit", "10")
+        anti_echo_payload = self._run_cli_json(
+            "anti-echo-demo",
+            "这是我之前输入过的一整段很长的历史句子，不应该再次出现在候选栏里",
+            "--committed-tail",
+            "我想设计一个输入法",
+            "--semantic-query",
+            "设计输入法",
+            "--candidate-source",
+            "rag",
+            "--hit-source",
+            "fts",
+            "--source-tag",
+            "user-input",
+        )
+
+        self.assertEqual(tombstone_payload["targetType"], "memory_id")
+        self.assertEqual(tombstone_payload["targetValue"], "phrase:连续预测")
+        self.assertEqual(tombstone_payload["metadata"]["source"], "cli-test")
+        self.assertTrue(any(item["targetValue"] == "phrase:连续预测" for item in governance_payload["tombstones"]))
+        self.assertEqual(anti_echo_payload["schemaVersion"], "rag-ime.anti-echo-demo.v1")
+        self.assertTrue(anti_echo_payload["decisions"][0]["blocked"])
+        self.assertEqual(anti_echo_payload["decisions"][0]["reason"], "raw_history_long_candidate")
+
     def test_initialize_prunes_orphan_memory_state_and_vectors(self) -> None:
         orphan_event_id = 999_999
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute("INSERT INTO memory_state(event_id, updated_at_ms) VALUES (?, ?)", (orphan_event_id, now_ms()))
             conn.execute(
                 "INSERT INTO memory_vectors(event_id, provider_fingerprint, vector_json, updated_at_ms) VALUES (?, ?, ?, ?)",
@@ -109,7 +232,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
         self.core.initialize()
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             state_count = conn.execute("SELECT COUNT(*) FROM memory_state WHERE event_id = ?", (orphan_event_id,)).fetchone()[0]
             vector_count = conn.execute("SELECT COUNT(*) FROM memory_vectors WHERE event_id = ?", (orphan_event_id,)).fetchone()[0]
             action_event_id = conn.execute("SELECT event_id FROM memory_actions WHERE memory_id = ?", (f"event:{orphan_event_id}",)).fetchone()[0]
@@ -449,7 +572,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 query="输入法 词频 候选方案",
             )
         )
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             remaining = conn.execute(
                 "SELECT input_frequency FROM phrase_stats WHERE committed_text = ?",
                 ("可删除高频候选",),
@@ -465,7 +588,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 query="输入法 词频 候选方案",
             )
         )
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             gone = conn.execute(
                 "SELECT input_frequency FROM phrase_stats WHERE committed_text = ?",
                 ("可删除高频候选",),
@@ -517,7 +640,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(dry_run["wouldHide"], 2)
         self.assertEqual(dry_run["hidden"], 0)
         self.assertEqual(report["hidden"], 2)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             active_rows = conn.execute(
                 """
                 SELECT e.committed_text
@@ -619,7 +742,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(report["hidden"], 2)
         self.assertEqual(report["reasonCounts"]["generated_side_candidate_oneoff"], 1)
         self.assertEqual(report["reasonCounts"]["ime_complaint_or_debug_feedback"], 1)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             active = {
                 row[0]
                 for row in conn.execute(
@@ -734,7 +857,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 query="项目内高频命令",
             )
         )
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             remaining = conn.execute(
                 "SELECT input_frequency FROM phrase_project_stats WHERE committed_text = ? AND project = ?",
                 ("项目内高频命令", "project-a"),
@@ -750,7 +873,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 query="项目内高频命令",
             )
         )
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             gone = conn.execute(
                 "SELECT input_frequency FROM phrase_project_stats WHERE committed_text = ? AND project = ?",
                 ("项目内高频命令", "project-a"),
@@ -878,7 +1001,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 query="应用内高频短语",
             )
         )
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             remaining = conn.execute(
                 "SELECT input_frequency FROM phrase_app_stats WHERE committed_text = ? AND app = ?",
                 ("应用内高频短语", "codex"),
@@ -894,7 +1017,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 query="应用内高频短语",
             )
         )
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             gone = conn.execute(
                 "SELECT input_frequency FROM phrase_app_stats WHERE committed_text = ? AND app = ?",
                 ("应用内高频短语", "codex"),
@@ -1050,7 +1173,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(code, 0)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             source = conn.execute(
                 "SELECT source FROM input_events WHERE committed_text = ?",
                 ("Squirrel side candidate",),

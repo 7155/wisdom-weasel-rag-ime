@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -528,7 +528,7 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(payload["records"], 2)
         self.assertEqual(payload["imported"], 0)
         if db_path.exists():
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 table = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'input_events'"
                 ).fetchone()

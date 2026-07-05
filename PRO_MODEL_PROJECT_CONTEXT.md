@@ -53,7 +53,8 @@ Current state:
   harness.
 - The sidecar, local SQLite memory/RAG core, MLX local predictor, source-lane
   merge, feedback recording, and many tests exist.
-- Current verification after PR-1 transaction-doc update showed `444 tests OK`.
+- Current verification after the PR-5 default-optimizer plus core-v2-recovery
+  checkpoint shows `481 tests OK`.
 - Earlier runtime repair verified selected input source
   `im.rag-ime.inputmethod.RagIme.Hans`, sidecar `127.0.0.1:8766`, MLX predictor
   `127.0.0.1:8767`, and mixed model/RAG candidates.
@@ -144,10 +145,34 @@ The current goal is to implement the attached PR roadmap in order:
 9. PR-9 model matrix, reranker, and quality eval.
 10. PR-10 localhost-only management UI v1.
 
-Current checkpoint: PR-1 has begun. Python sidecar transaction parsing/echo and
-trace checker transaction validation are implemented; Squirrel patch text now
-contains the matching transaction fields, response validation, stale selection
-rejection, hash-only default trace, and post-commit trace event names.
+Current checkpoint: PR-1 through PR-7 have active implementation work in-tree.
+Python sidecar transaction parsing/echo and trace checker transaction
+validation are implemented; Squirrel patch text now contains the matching
+transaction fields, response validation, stale selection rejection, hash-only
+default trace, pending post-commit continuation barrier, and post-commit trace
+event names. The local MLX predictor now also has a first PR-4
+`seeded-prompt-replay` mode for `no_input_prediction`. The PR-5 governance
+layer also exposes reviewable local CLI commands for tombstones and anti-echo
+inspection instead of hiding everything behind sidecar-only behavior, and the
+anti-echo optimizer is now on by default in the sidecar lane with
+mode-sensitive exemptions for prefix composition and strong post-commit phrase
+reuse. The local core default suggestion path now also performs a conservative
+v2 recovery step: if legacy retrieval surfaces a long raw-history sentence but
+memory-v2 can provide a compact compiled phrase, the core prefers that v2
+phrase candidate. Current PR-5 follow-up also unified governance on both
+retrieval paths: repeated-skip suppression and manual tombstones now apply to
+legacy suggestions and memory-v2 candidates consistently, and tombstoning a
+phrase candidate also tombstones sibling rows from the same source event so the
+same text does not bounce back as `raw:event:*`. PR-6 now also has a real
+offline cleanup CLI safety gate: `cleanup-preview` is dry-run only, plan files
+can be validated before apply, `cleanup-apply` requires explicit `--apply`, and
+rollback is exposed as a first-class command. Generated stable memory also now
+supports explicit `evidenceEventIds` from the model plus local event-evidence
+backfill when the exported bundle contains a strong matching source event.
+PR-7 has started: `displayCandidates` now carry compact source badges and color
+tokens (`模/查/忆/词/input`), the Squirrel patch traces those fields without
+changing selection keys, and the foreground trace checker rejects source visual
+mismatches.
 
 ## Source Repository Structure
 
@@ -203,11 +228,29 @@ Scripts:
 - `scripts/restart_rag_ime_runtime.sh`: restart local MLX predictor + sidecar.
 - `scripts/doctor_squirrel_integration.sh`: integration readiness doctor.
 - `scripts/verify_squirrel_foreground_trace.sh`: foreground trace verifier.
+- `scripts/soak_squirrel_foreground_trace.sh`: longer real-foreground soak run
+  that emits a machine-readable report.
 - `scripts/check_squirrel_frontend_trace.py`: parse frontend JSONL trace.
+- `scripts/check_squirrel_soak_report.py`: validate the soak JSON report and
+  fail on stale application, wrong commit, or missing commit barrier events.
 - `scripts/install_sichuan_fuzzy_pinyin.sh`: Rime fuzzy-pinyin helper.
 - `scripts/install_sidecar_launch_agent.sh`: user LaunchAgent for sidecar.
 - `scripts/install_mlx_predictor_launch_agent.sh`: user LaunchAgent for MLX.
 - `scripts/benchmark_mlx_model_matrix.py`: local model benchmark helper.
+
+Useful PR-5 review CLI now present in `rag_ime/cli.py`:
+
+- `governance-report`: inspect active suppressions/tombstones.
+- `tombstone`: add one manual tombstone row to the local governance store.
+- `anti-echo-demo`: run ad-hoc candidate texts through the anti-echo governor
+  without needing a live Squirrel session.
+
+New PR-6 cleanup CLI now present in `rag_ime/cli.py`:
+
+- `cleanup-preview`: build a true dry-run cleanup diff file.
+- `cleanup-validate`: inspect a run/file and reject unsafe diffs before apply.
+- `cleanup-apply --apply`: explicit-confirmation apply gate.
+- `cleanup-rollback`: revert an applied cleanup run by `runId`.
 
 ## Code Path Map
 
@@ -592,52 +635,218 @@ func ragImeSanitizedTraceValue(_ value: Any, key: String, includeText: Bool) -> 
 }
 ```
 
+### PR-7 source badge/color payload contract
+
+File: `rag_ime/rime_sidecar.py`
+
+```python
+_SOURCE_BADGE_MAP = {
+    "rime": "词",
+    "model": "模",
+    "rag": "查",
+    "memory": "忆",
+    "raw_english": "input",
+}
+
+_SOURCE_COLOR_TOKEN_MAP = {
+    "rime": "rimeOrange",
+    "model": "modelBlue",
+    "rag": "ragTeal",
+    "memory": "memoryPurple",
+    "raw_english": "rawGray",
+}
+
+def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]:
+    selection_key = item.label
+    source_badge = candidate_source_badge(item.source_type)
+    color_token = candidate_color_token(item.source_type)
+    comment = item.comment if candidate_diagnostics_enabled() else ""
+    return {
+        "label": item.label,
+        "selectionKey": selection_key,
+        "selectionRank": _candidate_rank(selection_key),
+        "text": item.text,
+        "insertText": item.insert_text,
+        "sourceType": item.source_type,
+        "selectionAction": item.selection_action,
+        "sourceIndex": item.source_index,
+        "comment": comment,
+        "badge": source_badge,
+        "colorToken": color_token,
+        "displayLayout": item.display_layout,
+        "displayLane": item.display_lane or item.source_type,
+        "metadata": dict(item.metadata),
+    }
+```
+
+File: `squirrel-patches/0001-add-rag-ime-sidecar.patch`
+
+```swift
+struct RagImeDisplayCandidate: Codable, Hashable {
+  let label: String
+  let selectionKey: String?
+  let selectionRank: Int?
+  let text: String
+  let insertText: String
+  let sourceType: String
+  let selectionAction: String
+  let sourceIndex: Int
+  let comment: String
+  let badge: String?
+  let colorToken: String?
+  let displayLayout: String?
+  let displayLane: String?
+  let metadata: [String: RagImeJSONValue]
+}
+
+func ragImeDisplayBadge(for candidate: RagImeDisplayCandidate) -> String {
+  guard ragImeCandidateSourceBadgesEnabled() else { return "" }
+  if let badge = candidate.badge, !badge.isEmpty { return badge }
+  switch candidate.sourceType {
+  case "model": return "模"
+  case "rag": return "查"
+  case "memory": return "忆"
+  case "rime": return "词"
+  case "raw_english": return "input"
+  default: return candidate.sourceType
+  }
+}
+```
+
+File: `scripts/check_squirrel_frontend_trace.py`
+
+```python
+SOURCE_BADGES = {
+    "rime": "词",
+    "model": "模",
+    "rag": "查",
+    "memory": "忆",
+    "raw_english": "input",
+}
+
+def candidate_source_visuals_match(candidate: dict[str, Any]) -> bool:
+    source_type = str(candidate.get("sourceType") or "")
+    expected_badge = SOURCE_BADGES.get(source_type)
+    expected_color = SOURCE_COLOR_TOKENS.get(source_type)
+    if expected_badge is None or expected_color is None:
+        return source_type in {"", "side"}
+    return (
+        str(candidate.get("badge") or "") == expected_badge
+        and str(candidate.get("colorToken") or "") == expected_color
+    )
+```
+
 ### Local MLX next-token logits entry point
 
 File: `rag_ime/mlx_predictor_server.py`
 
 ```python
-def predict_next_token_logits(
+def predict(
     self,
     *,
     current_input: str,
     recent_context: str,
     max_candidates: int,
+    max_tokens: int,
+    temperature: float,
+    top_p: float,
     request_type: str = PREDICTION_REQUEST_GENERIC,
     rime_candidates: tuple[str, ...] = (),
+    stream_first_candidate: bool = False,
     request_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    started = time.perf_counter()
-    try:
-        from mlx_lm.generate import generate_step
-        import mlx.core as mx
+    ...
+    logits_candidates = self.predict_next_token_logits(
+        current_input=current_input,
+        recent_context=recent_context,
+        max_candidates=max_candidates,
+        request_type=resolved_request_type,
+        rime_candidates=rime_candidate_tuple,
+        request_metadata=request_metadata,
+    )
+    if _logits_candidates_are_ime_quality(logits_candidates["candidates"], max_candidates=max_candidates):
+        ...
 
-        prompt = self._build_logits_prompt(
+    if resolved_request_type == PREDICTION_REQUEST_NO_INPUT and not stream_first_candidate:
+        seeded_replay_payload = self.predict_no_input_seeded_prompt_replay(
             current_input=current_input,
             recent_context=recent_context,
             max_candidates=max_candidates,
-            request_type=request_type,
-            rime_candidates=rime_candidates,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            started=started,
+            logits_candidates=logits_candidates,
+            request_metadata=request_metadata,
         )
-        tokens = self.tokenizer.encode(prompt)
-        token, logprobs = next(generate_step(mx.array(tokens), self.model, max_tokens=1))
-        candidate_scores = self._candidate_scores_from_logprobs(
-            logprobs,
-            max_candidates=max_candidates,
-            scan_limit=max(64, max_candidates * 24),
-        )
-        return {
-            "candidates": [item["text"] for item in candidate_scores],
-            "candidateScores": candidate_scores,
-            "sampledTokenId": _token_to_int(token),
-            "elapsedMs": int((time.perf_counter() - started) * 1000),
-        }
+        if seeded_replay_payload is not None and seeded_replay_payload.get("candidates"):
+            return seeded_replay_payload
+        return self.predict_no_input_continuation_branches(...)
 ```
 
-This is the PR-4 insertion point for `seededPromptReplay`: top-k seed tokens
-should come from `candidateScores`, then each seed should be replayed/decoded
-into a short phrase candidate. Keep `sequenceFork=false` until true KV fork is
-implemented.
+The PR-4 implementation is now partially in-tree. The predictor no longer stops
+at "this is where seeded replay should go"; it actually tries a seeded replay
+path before the older continuation-branch fallback.
+
+Actual seeded replay code path:
+
+```python
+def predict_no_input_seeded_prompt_replay(
+    self,
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+    max_tokens: int,
+    temperature: float,
+    top_p: float,
+    started: float,
+    logits_candidates: dict[str, Any],
+    request_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    seeds = _seed_replay_specs_from_logits(
+        logits_candidates.get("candidateScores"),
+        max_seeds=max(1, min(3, int(max_candidates))),
+    )
+    if not seeds:
+        return None
+    ...
+    for seed in seeds:
+        raw_text = "".join(
+            self._stream_text_with_generate_step(
+                prompt=_build_seeded_replay_prompt(
+                    recent_context=recent_context,
+                    seed_text=seed_text,
+                ),
+                max_tokens=per_seed_max_tokens,
+                temperature=replay_temperature,
+                top_p=top_p,
+            )
+        )
+        candidate = _seeded_replay_candidate(
+            seed_text=seed_text,
+            raw_text=raw_text,
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidate_chars=max(12, min(24, per_seed_max_tokens * 2)),
+        )
+        ...
+    return {
+        "candidates": candidates[: max(1, int(max_candidates))],
+        "candidateMode": "seeded-prompt-replay",
+        "timing": {"branches": branch_timings, ...},
+    }
+```
+
+Current PR-4 reality:
+
+- `seededPromptReplay=true`, `kvFork=false`, `sequenceFork=false` are exposed in
+  predictor health.
+- The branch count is capped at top-3 seed tokens.
+- Each branch is prompt replay, not true KV-cache fork.
+- `candidateMode: "seeded-prompt-replay"` is already test-covered.
+- True KV fork is still future work; keep `sequenceFork=false` until there is a
+  real cache-copy branch implementation.
 
 ### Current RAG retrieval entry point
 
@@ -681,6 +890,63 @@ not directly become production candidates; stable memory, lexicon boost,
 tombstone, skipped/cooldown, and raw echo penalties should act before
 `compiler.compile(...)` returns visible suggestions.
 
+Current memory-v2 gate now does the same suppression/tombstone check before a
+candidate becomes visible:
+
+```python
+for row in _merge_rows(phrase_rows, general_rows):
+    memory_id = str(row["memory_id"])
+    normalized_text = _optimizer_norm(str(row["normalized_text"] or row["text"] or ""))
+    source_event_id = int(row["source_event_id"] or 0)
+    if self._memory_item_tombstoned(
+        conn,
+        memory_id=memory_id,
+        normalized_text=normalized_text,
+        source_event_id=source_event_id,
+    ):
+        filtered["tombstone"] += 1
+        continue
+    if self._memory_item_suppressed(
+        conn,
+        memory_id=memory_id,
+        normalized_text=normalized_text,
+        source_event_id=source_event_id,
+    ):
+        filtered["suppressed"] += 1
+        continue
+    ...
+```
+
+And manual phrase tombstones now also tombstone sibling rows by source event or
+normalized text:
+
+```python
+if normalized_target_type == "memory_id":
+    row = conn.execute(
+        """
+        SELECT normalized_text, source_event_id
+        FROM memory_items
+        WHERE memory_id = ?
+        LIMIT 1
+        """,
+        (normalized_target_value,),
+    ).fetchone()
+    conn.execute(
+        "UPDATE memory_items SET status = 'tombstoned', updated_at_ms = ? WHERE memory_id = ?",
+        (created_at_ms, normalized_target_value),
+    )
+    ...
+    if len(related_clauses) > 1:
+        conn.execute(
+            f'''
+            UPDATE memory_items
+            SET status = 'tombstoned', updated_at_ms = ?
+            WHERE {' OR '.join(related_clauses)}
+            ''',
+            related_params,
+        )
+```
+
 ## Current Verification Snapshot
 
 Recent public-prep verification:
@@ -692,8 +958,25 @@ python3 -m unittest discover -s tests
 Result:
 
 ```text
-Ran 444 tests in 71.007s
+Ran 491 tests in 78.099s
 OK
+```
+
+Additional verification after the PR-5 governance/cleanup checkpoint:
+
+```bash
+python3 -W error::ResourceWarning -m unittest discover -s tests
+```
+
+That full suite also passes, so the earlier SQLite test-connection leakage has
+been cleaned up and the current PR-5 governance plus PR-6 cleanup-pipeline
+follow-up are covered in the same full run.
+
+Additional narrow PR-4 verification:
+
+```bash
+python3 -m unittest tests.test_mlx_predictor_server tests.test_predictor
+python3 -m py_compile rag_ime/mlx_predictor_server.py rag_ime/predictor.py rag_ime/cli.py
 ```
 
 Recent project-public cleanup:
@@ -855,21 +1138,26 @@ top-3 next-token logprobs
 
 This is the user's most important model-quality request.
 
-### 3. Source colors need final foreground polish
+### 3. Source colors have a first product pass, but need real foreground QA
 
-The payload carries source identity (`sourceType`, `displayLane`,
-`displayLayout`, comments such as `LLM`/`RAG`). The final Squirrel panel needs
-clear source distinction:
+The payload now carries explicit source visuals: `badge` and `colorToken`.
+Current mapping is `model=模/modelBlue`, `rag=查/ragTeal`,
+`memory=忆/memoryPurple`, `rime=词/rimeOrange`, and
+`raw_english=input/rawGray`. Squirrel patch trace summaries include these fields
+and `scripts/check_squirrel_frontend_trace.py` rejects mismatched source visuals.
 
-- LLM / prediction: blue or compact inline style.
-- RAG / memory: green/teal or evidence-backed block style.
-- Rime / dictionary: orange or stable dictionary style.
+Still missing: manual real Squirrel foreground confirmation that the colors and
+badges are visually low-distraction in the actual candidate bar after patch
+install, not only in JSON trace and patch tests.
 
 ### 4. RAG database cleanup is only conservative so far
 
 Some stale generated/complaint rows were filtered or hidden, but full x1api
 offline cleanup is still pending:
 
+- the PR-6 CLI path now exists, and strong source-event matches now backfill
+  `evidenceEventIds`, but weaker abstract summaries can still fail strict
+  validation until evidence linking becomes smarter;
 - summarize noisy history into stable memory facts;
 - deduplicate similar old inputs;
 - extract high-frequency phrases;

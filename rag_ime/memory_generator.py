@@ -33,6 +33,7 @@ class GeneratedMemoryItem:
     importance: float = 0.5
     reason: str = ""
     source: str = ""
+    evidence_event_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class GeneratedLexiconPhrase:
     tags: tuple[str, ...] = ()
     weight: float = 0.5
     reason: str = ""
+    evidence_event_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -76,14 +78,14 @@ class MemoryGenerationError(RuntimeError):
 
 
 class VcpRebuildMemoryGenerator:
-    """A small AIMemo-style memory distiller backed by an x1api/model config.
+    """A small AIMemo-style memory distiller backed by an x1top/x1api config.
 
     VCP/AIMemo is a design reference here, not the provider identity.
     """
 
     def __init__(self, config: VcpRebuildConfig):
         if not config.api_key:
-            raise MemoryGenerationError("x1api/model API_KEY is not configured")
+            raise MemoryGenerationError("x1top/x1api-compatible API_KEY is not configured")
         self.config = config
 
     @property
@@ -97,7 +99,7 @@ class VcpRebuildMemoryGenerator:
     def from_env_path(cls, env_path: str | Path | None = None) -> "VcpRebuildMemoryGenerator":
         resolved = Path(env_path).expanduser() if env_path else default_vcp_rebuild_env_path()
         if resolved is None or not resolved.exists():
-            raise MemoryGenerationError("x1api/model env file was not found")
+            raise MemoryGenerationError("x1top/x1api-compatible env file was not found")
         values = _read_env_file(resolved)
         api_base_url = _canonical_x1api_base_url(
             _first_env_value(
@@ -353,9 +355,10 @@ def _core_optimization_system_prompt(
         "4) 不保存 API key、密码、身份证、银行卡、私密 token；"
         "5) 不要把'没生效/展示不好/用不了'这类瞬时反馈当成长期记忆；"
         "6) 高频词要保留用户方言/地域偏好线索，比如四川用户常见模糊音需要输入法支持。"
+        "7) 如果某条记忆或短语可以从输入事件中找到依据，请尽量填写 evidenceEventIds。"
         "只输出 JSON，不要 Markdown。"
-        '格式: {"memories":[{"text":"...","tags":["preference"],"importance":0.8,"reason":"..."}],'
-        '"lexiconPhrases":[{"text":"...","tags":["term"],"weight":0.8,"reason":"..."}],'
+        '格式: {"memories":[{"text":"...","tags":["preference"],"importance":0.8,"reason":"...","evidenceEventIds":[12,15]}],'
+        '"lexiconPhrases":[{"text":"...","tags":["term"],"weight":0.8,"reason":"...","evidenceEventIds":[12]}],'
         '"hideEventIds":[{"eventId":123,"reason":"..."}]}'
         f"最多 memories={max_memories}, lexiconPhrases={max_lexicon_phrases}, hideEventIds={max_hide_suggestions}。"
     )
@@ -376,6 +379,11 @@ def _parse_generated_memory_items(raw_text: str, *, max_items: int = 3) -> list[
         tags = tuple(_safe_tag(tag) for tag in item.get("tags", []) if _safe_tag(tag))
         reason = truncate_text(compact_whitespace(str(item.get("reason") or "")), 120)
         importance = _float_value(item.get("importance"), default=0.5)
+        evidence_event_ids = tuple(
+            event_id
+            for event_id in (_int_value(value, default=0) for value in item.get("evidenceEventIds", []))
+            if event_id > 0
+        )
         items.append(
             GeneratedMemoryItem(
                 text=truncate_text(text, 160),
@@ -383,6 +391,7 @@ def _parse_generated_memory_items(raw_text: str, *, max_items: int = 3) -> list[
                 importance=max(0.0, min(1.0, importance)),
                 reason=reason,
                 source="vcp-aimemo",
+                evidence_event_ids=tuple(dict.fromkeys(evidence_event_ids)),
             )
         )
         if len(items) >= max(0, int(max_items)):
@@ -404,12 +413,18 @@ def _parse_generated_lexicon_phrases(payload: dict[str, Any], *, max_items: int)
         tags = tuple(_safe_tag(tag) for tag in item.get("tags", []) if _safe_tag(tag))
         reason = truncate_text(compact_whitespace(str(item.get("reason") or "")), 120)
         weight = _float_value(item.get("weight"), default=0.5)
+        evidence_event_ids = tuple(
+            event_id
+            for event_id in (_int_value(value, default=0) for value in item.get("evidenceEventIds", []))
+            if event_id > 0
+        )
         items.append(
             GeneratedLexiconPhrase(
                 text=truncate_text(text, 80),
                 tags=tuple(dict.fromkeys(tags)),
                 weight=max(0.0, min(1.0, weight)),
                 reason=reason,
+                evidence_event_ids=tuple(dict.fromkeys(evidence_event_ids)),
             )
         )
         if len(items) >= max(0, int(max_items)):

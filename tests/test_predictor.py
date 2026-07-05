@@ -1132,6 +1132,8 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(status["capabilities"]["streaming"])
         self.assertTrue(status["capabilities"]["residentModel"])
         self.assertFalse(status["capabilities"]["promptCache"])
+        self.assertFalse(status["capabilities"]["seededPromptReplay"])
+        self.assertFalse(status["capabilities"]["kvFork"])
         self.assertFalse(status["capabilities"]["sequenceFork"])
 
     def test_mlx_provider_status_can_probe_prompt_cache_runtime_capability(self) -> None:
@@ -1154,6 +1156,8 @@ class PredictionProviderTests(unittest.TestCase):
                 "streaming": True,
                 "residentModel": True,
                 "promptCache": True,
+                "seededPromptReplay": True,
+                "kvFork": False,
                 "sequenceFork": False,
                 "batchCandidates": False,
                 "serverTiming": True,
@@ -1183,6 +1187,8 @@ class PredictionProviderTests(unittest.TestCase):
 
         self.assertTrue(status["capabilityProbe"]["ok"])
         self.assertTrue(status["capabilities"]["promptCache"])
+        self.assertTrue(status["capabilities"]["seededPromptReplay"])
+        self.assertFalse(status["capabilities"]["kvFork"])
         self.assertFalse(status["capabilities"]["sequenceFork"])
         self.assertFalse(status["capabilities"]["batchCandidates"])
         self.assertEqual(status["capabilityProbe"]["promptCache"]["hits"], 3)

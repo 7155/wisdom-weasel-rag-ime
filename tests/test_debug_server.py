@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -8,9 +9,11 @@ import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
@@ -19,6 +22,7 @@ import rag_ime.debug_server as debug_server_module
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_generator import GeneratedMemoryItem, GeneratedMemoryReport
+from rag_ime.memory_models import ImeQueryContext
 from rag_ime.models import InputSuggestion, MemoryAction, ModelPrediction
 from rag_ime.predictor import OllamaPredictionConfig, OllamaPredictionProvider
 
@@ -201,6 +205,10 @@ class PrefixFixtureCore(FixtureCoreClient):
 
 class DebugImeServiceTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._optimizer_env = {
+            "RAG_IME_MEMORY_OPTIMIZER": os.environ.get("RAG_IME_MEMORY_OPTIMIZER"),
+            "RAG_IME_MEMORY_OPTIMIZER_TRACE": os.environ.get("RAG_IME_MEMORY_OPTIMIZER_TRACE"),
+        }
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-debug-test-")
         self.service = DebugImeService(
             DebugServerConfig(
@@ -211,6 +219,11 @@ class DebugImeServiceTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        for key, value in self._optimizer_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self.tmp.cleanup()
 
     def test_health_and_seed_use_local_sqlite(self) -> None:
@@ -286,6 +299,113 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertGreaterEqual(payload["totals"]["generated"], 1)
         self.assertEqual(payload["items"][0]["eventId"], int(event_id.removeprefix("event:")))
         self.assertIn("generated-memory", payload["items"][0]["tags"])
+
+    def test_memory_optimizer_trace_and_candidate_explain_endpoints(self) -> None:
+        os.environ["RAG_IME_MEMORY_OPTIMIZER"] = "1"
+        os.environ["RAG_IME_MEMORY_OPTIMIZER_TRACE"] = "1"
+        self.service.adapter.commit_text(
+            "连续预测",
+            recent_context="RAG 输入法需要更好的候选",
+            project=self.service.config.project,
+            tags=("phrase-memory",),
+        )
+        response = self.service.rime_suggest(
+            {
+                "sessionId": "debug-trace",
+                "requestSeq": 91,
+                "forceSideCandidates": True,
+                "committedContext": "我想继续写连续",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "rimeContext": {"candidates": [{"label": "1", "text": "连续", "comment": "rime"}]},
+            }
+        )
+
+        trace_id = response["ragLane"]["memoryOptimizer"]["traceId"]
+        trace = self.service.memory_optimizer_trace({"traceId": trace_id})
+        explanation = self.service.memory_candidate_explain(
+            {
+                "candidateId": "phrase:连续预测",
+                "contextHash": response["committedContextHash"],
+            }
+        )
+
+        self.assertTrue(trace["ok"])
+        self.assertEqual(trace["traceId"], trace_id)
+        self.assertTrue(any(item["id"] == "phrase:连续预测" for item in trace["rawResults"]))
+        self.assertTrue(explanation["ok"])
+        self.assertEqual(explanation["candidateId"], "phrase:连续预测")
+        self.assertEqual(explanation["recentTrace"]["traceId"], trace_id)
+
+    def test_memory_governance_and_cleanup_runs_endpoints(self) -> None:
+        self.service.core.record_memory_feedback(
+            {
+                "event": "skipped",
+                "candidateId": "phrase:连续预测",
+                "candidateText": "连续预测",
+                "sourceType": "memory",
+                "contextHash": "ctx:debug-admin",
+                "timestampMs": 1,
+            }
+        )
+        self.service.core.record_memory_feedback(
+            {
+                "event": "skipped",
+                "candidateId": "phrase:连续预测",
+                "candidateText": "连续预测",
+                "sourceType": "memory",
+                "contextHash": "ctx:debug-admin",
+                "timestampMs": 2,
+            }
+        )
+        cleanup = self.service.core.build_memory_cleanup_plan(project=self.service.config.project)
+
+        governance = self.service.memory_governance({"limit": 10})
+        cleanup_runs = self.service.memory_cleanup_runs({"limit": 10})
+
+        self.assertTrue(governance["ok"])
+        self.assertIn("phrase:连续预测", [item["matchValue"] for item in governance["suppressions"]])
+        self.assertTrue(cleanup_runs["ok"])
+        self.assertTrue(any(item["runId"] == cleanup["runId"] for item in cleanup_runs["items"]))
+
+    def test_memory_cleanup_review_and_tombstone_endpoints(self) -> None:
+        self.service.adapter.commit_text(
+            "连续预测",
+            recent_context="RAG 输入法需要更好的候选",
+            project=self.service.config.project,
+            tags=("phrase-memory",),
+        )
+        cleanup = self.service.core.build_memory_cleanup_plan(project=self.service.config.project)
+
+        review = self.service.memory_cleanup_runs(
+            {
+                "runId": cleanup["runId"],
+                "reviewStatus": "approved",
+            }
+        )
+        before = self.service.core.retrieve_candidates_v2(
+            context=ImeQueryContext(current_input="连续", project=self.service.config.project, top_k=5)
+        )
+        tombstone = self.service.memory_tombstone(
+            {
+                "targetType": "memory_id",
+                "targetValue": "phrase:连续预测",
+                "reason": "debug review",
+                "metadata": {"source": "debug-test"},
+            }
+        )
+        after = self.service.core.retrieve_candidates_v2(
+            context=ImeQueryContext(current_input="连续", project=self.service.config.project, top_k=5)
+        )
+
+        self.assertTrue(review["ok"])
+        self.assertEqual(review["status"], "reviewed")
+        self.assertTrue(all(item["status"] == "approved" for item in review["diffs"]))
+        self.assertIn("连续预测", [item["text"] for item in before["candidates"]])
+        self.assertTrue(tombstone["ok"])
+        self.assertEqual(tombstone["targetValue"], "phrase:连续预测")
+        self.assertEqual(tombstone["metadata"]["source"], "debug-test")
+        self.assertNotIn("连续预测", [item["text"] for item in after["candidates"]])
 
     def test_generate_memory_endpoint_uses_x1api_generator_and_records_rows(self) -> None:
         original = debug_server_module.VcpRebuildMemoryGenerator
@@ -882,7 +1002,7 @@ class DebugImeServiceTests(unittest.TestCase):
             }
         )
         self.assertTrue(committed["ok"])
-        with sqlite3.connect(self.service.config.db_path) as conn:
+        with closing(sqlite3.connect(self.service.config.db_path)) as conn, conn:
             source = conn.execute(
                 "SELECT source FROM input_events WHERE committed_text = ?",
                 ("Squirrel HTTP sidecar commit",),
@@ -1034,6 +1154,99 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["schemaVersion"], "rag-ime.debug-cache-probe.v1")
         self.assertGreaterEqual(payload["summary"]["rimeCacheHitDelta"], 2)
         self.assertIn("suggestionCache", payload)
+
+    def test_http_debug_server_exposes_memory_path_endpoints(self) -> None:
+        os.environ["RAG_IME_MEMORY_OPTIMIZER"] = "1"
+        os.environ["RAG_IME_MEMORY_OPTIMIZER_TRACE"] = "1"
+        event_id = self.service.adapter.commit_text(
+            "连续预测",
+            recent_context="RAG 输入法需要更好的候选",
+            project=self.service.config.project,
+            tags=("phrase-memory",),
+        )
+        self.service.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=2,
+                memory_id=event_id,
+                action_type="accepted",
+                query="连续",
+                metadata={"project": self.service.config.project},
+            )
+        )
+        response = self.service.rime_suggest(
+            {
+                "sessionId": "debug-http-memory",
+                "requestSeq": 101,
+                "forceSideCandidates": True,
+                "committedContext": "我想继续写连续",
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "rimeContext": {"candidates": [{"label": "1", "text": "连续", "comment": "rime"}]},
+            }
+        )
+        trace_id = response["ragLane"]["memoryOptimizer"]["traceId"]
+        cleanup = self.service.core.build_memory_cleanup_plan(project=self.service.config.project)
+        cleanup_runs = self.service.core.list_memory_cleanup_runs(run_id=cleanup["runId"], limit=5)
+        stable_diff = next(item for item in cleanup_runs["items"][0]["diffs"] if item["op"] == "add_stable_memory")
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        debug_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        debug_thread = Thread(target=debug_server.serve_forever, daemon=True)
+        debug_thread.start()
+        try:
+            with urlopen(
+                f"http://127.0.0.1:{debug_server.server_port}/api/memory/optimizer/trace/{quote(trace_id)}",
+                timeout=5,
+            ) as trace_response:
+                trace_payload = json.loads(trace_response.read().decode("utf-8"))
+            with urlopen(
+                f"http://127.0.0.1:{debug_server.server_port}/api/memory/candidate/{quote('phrase:连续预测')}/explain?contextHash={quote(response['committedContextHash'])}",
+                timeout=5,
+            ) as explain_response:
+                explain_payload = json.loads(explain_response.read().decode("utf-8"))
+            with urlopen(
+                f"http://127.0.0.1:{debug_server.server_port}/api/memory/suppressions?limit=10",
+                timeout=5,
+            ) as suppressions_response:
+                suppressions_payload = json.loads(suppressions_response.read().decode("utf-8"))
+
+            apply_request = Request(
+                f"http://127.0.0.1:{debug_server.server_port}/api/memory/cleanup-diff/{stable_diff['diffId']}/apply",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(apply_request, timeout=5) as apply_response:
+                apply_payload = json.loads(apply_response.read().decode("utf-8"))
+
+            rollback_request = Request(
+                f"http://127.0.0.1:{debug_server.server_port}/api/memory/cleanup-diff/{stable_diff['diffId']}/rollback",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(rollback_request, timeout=5) as rollback_response:
+                rollback_payload = json.loads(rollback_response.read().decode("utf-8"))
+        finally:
+            debug_server.shutdown()
+            debug_thread.join(timeout=2)
+            debug_server.server_close()
+
+        self.assertTrue(trace_payload["ok"])
+        self.assertEqual(trace_payload["traceId"], trace_id)
+        self.assertTrue(explain_payload["ok"])
+        self.assertEqual(explain_payload["candidateId"], "phrase:连续预测")
+        self.assertTrue(suppressions_payload["ok"])
+        self.assertIn("suppressions", suppressions_payload)
+        self.assertTrue(apply_payload["ok"])
+        self.assertEqual(apply_payload["diff"]["status"], "applied")
+        self.assertTrue(rollback_payload["ok"])
+        self.assertEqual(rollback_payload["diff"]["status"], "rolled_back")
 
     def test_cli_cache_probe_runs_without_debug_server(self) -> None:
         root = Path(__file__).resolve().parents[1]

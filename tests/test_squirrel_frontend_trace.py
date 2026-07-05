@@ -8,6 +8,47 @@ from pathlib import Path
 
 
 class SquirrelFrontendTraceScriptTests(unittest.TestCase):
+    def test_soak_wrapper_dry_run_reports_gate(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "soak_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--no-open",
+                "--side-panel-only",
+                "--no-auto-type",
+                "--auto-query",
+                "xian zai",
+                "--auto-key",
+                "7",
+                "--wait",
+                "15",
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertIn("report_path=/tmp/rag-ime-squirrel-soak-report.json", result.stdout)
+        self.assertIn("wait_seconds=15", result.stdout)
+        self.assertIn("open_test_file=0", result.stdout)
+        self.assertIn("auto_type=0", result.stdout)
+        self.assertIn("auto_query=xian zai", result.stdout)
+        self.assertIn("auto_key=7", result.stdout)
+        self.assertIn("require_mixed_panel=0", result.stdout)
+        self.assertIn("require_side_panel=1", result.stdout)
+        self.assertIn("require_side_commit=1", result.stdout)
+        self.assertIn("require_commit_observed=1", result.stdout)
+        self.assertIn("require_post_commit_followup=1", result.stdout)
+        self.assertIn("min_side_commits=1", result.stdout)
+        self.assertIn("--require-side-panel", result.stdout)
+        self.assertIn("--require-side-commit", result.stdout)
+        self.assertIn("--require-commit-observed", result.stdout)
+        self.assertIn("--require-post-commit-followup", result.stdout)
+        self.assertNotIn("--require-mixed-panel", result.stdout)
+
     def test_foreground_trace_wrapper_dry_run_reports_gate(self) -> None:
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run(
@@ -40,12 +81,14 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("require_mixed_panel=1", result.stdout)
         self.assertIn("require_side_panel=0", result.stdout)
         self.assertIn("auto_type=1", result.stdout)
+        self.assertIn("require_commit_observed=1", result.stdout)
         self.assertIn("auto_query=xian zai", result.stdout)
         self.assertIn("auto_key=7", result.stdout)
         self.assertIn("auto_char_delay=0.08", result.stdout)
         self.assertIn("require_hitoolbox_enabled=0", result.stdout)
         self.assertIn("require_modern_prediction_session=1", result.stdout)
         self.assertIn("--require-mixed-panel", result.stdout)
+        self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
         self.assertNotIn("--require-side-commit", result.stdout)
         self.assertNotIn("--require-post-commit-followup", result.stdout)
@@ -69,7 +112,9 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("require_mixed_panel=0", result.stdout)
         self.assertIn("require_side_panel=1", result.stdout)
         self.assertIn("require_post_commit_followup=1", result.stdout)
+        self.assertIn("require_commit_observed=1", result.stdout)
         self.assertIn("--require-side-panel", result.stdout)
+        self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-post-commit-followup", result.stdout)
         self.assertNotIn("--require-mixed-panel", result.stdout)
 
@@ -137,6 +182,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "insertText": "继续预测",
                             "selectionAction": "commit_side_candidate",
                             "displayLayout": "block",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
                             "sessionFingerprint": "session-a",
                         },
                     },
@@ -145,8 +192,20 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + "\n"
                 + json.dumps(
                     {
-                        "event": "side_candidate_commit",
+                        "event": "commit_observed",
                         "timestampMs": 4,
+                        "committedText": "继续预测",
+                        "committedContextChars": 18,
+                        "selectionKey": "6",
+                        "sessionFingerprint": "session-a",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_commit",
+                        "timestampMs": 5,
                         "candidate": {
                             "label": "6",
                             "selectionKey": "6",
@@ -156,6 +215,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "insertText": "继续预测",
                             "selectionAction": "commit_side_candidate",
                             "displayLayout": "block",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
                             "sessionFingerprint": "session-a",
                         },
                     },
@@ -165,7 +226,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "side_candidate_continuation_scheduled",
-                        "timestampMs": 5,
+                        "timestampMs": 6,
                         "committedText": "继续预测",
                         "committedContextChars": 18,
                         "sourceType": "rag",
@@ -178,7 +239,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "sidecar_request_scheduled",
-                        "timestampMs": 6,
+                        "timestampMs": 7,
                         "rawInput": "",
                         "preedit": "",
                         "commitTextPreview": "继续预测",
@@ -199,6 +260,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     str(log_path),
                     "--require-mixed-panel",
                     "--require-side-commit",
+                    "--require-commit-observed",
                     "--require-post-commit-followup",
                 ],
                 cwd=root,
@@ -216,6 +278,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["latestValidSideCommit"]["candidate"]["selectionAction"], "commit_side_candidate")
         self.assertEqual(report["latestNumberKeyRoute"]["key"], "6")
         self.assertEqual(report["latestNumberKeySideCommit"]["key"], "6")
+        self.assertEqual(report["latestCommitObserved"]["selectionKey"], "6")
         self.assertEqual(report["latestNumberKeySideCommit"]["commit"]["candidate"]["label"], "6")
         self.assertEqual(report["latestNumberKeySideCommit"]["commit"]["candidate"]["sessionFingerprint"], "session-a")
         self.assertEqual(report["latestPostCommitFollowup"]["request"]["commitTextPreview"], "继续预测")
@@ -267,8 +330,20 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + "\n"
                 + json.dumps(
                     {
-                        "event": "side_candidate_commit",
+                        "event": "commit_observed",
                         "timestampMs": 4,
+                        "committedText": "继续写",
+                        "committedContextChars": 12,
+                        "selectionKey": "1",
+                        "sessionFingerprint": "session-rag",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_commit",
+                        "timestampMs": 5,
                         "candidate": candidates[0],
                     },
                     ensure_ascii=False,
@@ -277,7 +352,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "side_candidate_continuation_scheduled",
-                        "timestampMs": 5,
+                        "timestampMs": 6,
                         "committedText": "继续写",
                         "committedContextChars": 12,
                         "sourceType": "rag",
@@ -290,7 +365,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "sidecar_request_scheduled",
-                        "timestampMs": 6,
+                        "timestampMs": 7,
                         "rawInput": "",
                         "preedit": "",
                         "commitTextPreview": "继续写",
@@ -311,6 +386,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     str(log_path),
                     "--require-side-panel",
                     "--require-side-commit",
+                    "--require-commit-observed",
                     "--require-post-commit-followup",
                     "--require-modern-prediction-session",
                 ],
@@ -324,6 +400,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual(report["latestSidePanel"]["candidateCounts"]["ragBlock"], 1)
         self.assertIsNone(report["latestMixedPanel"])
+        self.assertEqual(report["latestCommitObserved"]["selectionKey"], "1")
         self.assertEqual(report["latestNumberKeySideCommit"]["key"], "1")
         self.assertEqual(report["latestPostCommitFollowup"]["request"]["rawInput"], "")
 
@@ -367,6 +444,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "sourceType": "rag",
                             "selectionAction": "commit_side_candidate",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
                             "sessionFingerprint": "session-a",
                         },
                     },
@@ -382,6 +461,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "sourceType": "rag",
                             "selectionAction": "commit_side_candidate",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
                             "sessionFingerprint": "session-a",
                         },
                     },
@@ -410,6 +491,344 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertFalse(report["passed"])
         self.assertIsNone(report["latestPostCommitFollowup"])
+
+    def test_trace_check_fails_when_commit_observed_is_required_but_missing(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": True,
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "candidates": _mixed_side_first_candidates(session_fingerprint="session-a"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "panel_text_layout",
+                        "timestampMs": 2,
+                        "forcesHorizontalLayout": True,
+                        "linear": True,
+                        "vertical": False,
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "separators": ["", "  ", "  ", "  ", "  ", "\n", "\n", "\n"],
+                        "candidates": _mixed_side_first_candidates(session_fingerprint="session-a"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "number_key_route",
+                        "timestampMs": 3,
+                        "key": "6",
+                        "candidate": {
+                            "label": "6",
+                            "selectionKey": "6",
+                            "sourceType": "rag",
+                            "selectionAction": "commit_side_candidate",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
+                            "sessionFingerprint": "session-a",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_commit",
+                        "timestampMs": 4,
+                        "candidate": {
+                            "label": "6",
+                            "selectionKey": "6",
+                            "sourceType": "rag",
+                            "selectionAction": "commit_side_candidate",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
+                            "sessionFingerprint": "session-a",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-mixed-panel",
+                    "--require-side-commit",
+                    "--require-commit-observed",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertIsNone(report["latestCommitObserved"])
+
+    def test_soak_report_passes_for_valid_trace(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        candidates = _mixed_side_first_candidates(session_fingerprint="session-a")
+        selected_candidate = dict(candidates[5])
+        selected_candidate["text"] = "继续预测"
+        selected_candidate["insertText"] = "继续预测"
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 1,
+                        "frontendRevision": 4,
+                        "selectionEpoch": 9,
+                        "panelSessionId": "panel-a",
+                        "compositionHash": "sha256:aaaa",
+                        "committedContextHash": "sha256:bbbb",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_response_received",
+                        "timestampMs": 6,
+                        "frontendRevision": 4,
+                        "selectionEpoch": 9,
+                        "panelSessionId": "panel-a",
+                        "compositionHash": "sha256:aaaa",
+                        "committedContextHash": "sha256:bbbb",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_response_applied",
+                        "timestampMs": 8,
+                        "responseAgeMs": 42,
+                        "displayCount": 8,
+                        "frontendRevision": 4,
+                        "selectionEpoch": 9,
+                        "panelSessionId": "panel-a",
+                        "compositionHash": "sha256:aaaa",
+                        "committedContextHash": "sha256:bbbb",
+                        "requestFrontendRevision": 4,
+                        "responseFrontendRevision": 4,
+                        "liveFrontendRevision": 4,
+                        "requestSelectionEpoch": 9,
+                        "responseSelectionEpoch": 9,
+                        "liveSelectionEpoch": 9,
+                        "predictionSession": {
+                            "phase": "post_commit",
+                            "selectionScope": "prediction",
+                            "sessionFingerprint": "session-a",
+                            "expiresAfterMs": 8000,
+                            "frontendRevision": 4,
+                            "selectionEpoch": 9,
+                            "panelSessionId": "panel-a",
+                            "compositionHash": "sha256:aaaa",
+                            "committedContextHash": "sha256:bbbb",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 9,
+                        "forcesHorizontalLayout": True,
+                        "frontendRevision": 4,
+                        "selectionEpoch": 9,
+                        "panelSessionId": "panel-a",
+                        "compositionHash": "sha256:aaaa",
+                        "committedContextHash": "sha256:bbbb",
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "panel_text_layout",
+                        "timestampMs": 10,
+                        "forcesHorizontalLayout": True,
+                        "linear": True,
+                        "vertical": False,
+                        "frontendRevision": 4,
+                        "selectionEpoch": 9,
+                        "panelSessionId": "panel-a",
+                        "compositionHash": "sha256:aaaa",
+                        "committedContextHash": "sha256:bbbb",
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "separators": ["", "  ", "  ", "  ", "  ", "\n", "\n", "\n"],
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "number_key_route",
+                        "timestampMs": 11,
+                        "key": "6",
+                        "candidate": selected_candidate,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "commit_observed",
+                        "timestampMs": 12,
+                        "committedText": "继续预测",
+                        "committedContextChars": 24,
+                        "selectionKey": "6",
+                        "sessionFingerprint": "session-a",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_commit",
+                        "timestampMs": 13,
+                        "candidate": selected_candidate,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "post_commit_prediction_scheduled",
+                        "timestampMs": 14,
+                        "selectionKey": "6",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 18,
+                        "rawInput": "",
+                        "preedit": "",
+                        "commitTextPreview": selected_candidate["insertText"],
+                        "committedContextChars": 24,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--require-mixed-panel",
+                    "--require-side-commit",
+                    "--require-commit-observed",
+                    "--require-post-commit-followup",
+                    "--require-modern-prediction-session",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+            persisted = json.loads(report_path.read_text(encoding="utf-8"))
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["schemaVersion"], "rag-ime.squirrel-soak-report.v1")
+        self.assertEqual(report["metrics"]["pairedSideCommitCount"], 1)
+        self.assertEqual(report["latency"]["responseAgeMs"]["p50"], 42)
+        self.assertEqual(report["latency"]["responseReceivedToAppliedMs"]["max"], 2)
+        self.assertEqual(report["latency"]["postCommitFollowupMs"]["max"], 5)
+        self.assertTrue(persisted["passed"])
+
+    def test_soak_report_fails_on_stale_applied_response(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 1,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_response_applied",
+                        "timestampMs": 2,
+                        "responseAgeMs": 99,
+                        "requestFrontendRevision": 3,
+                        "responseFrontendRevision": 3,
+                        "liveFrontendRevision": 4,
+                        "requestSelectionEpoch": 6,
+                        "responseSelectionEpoch": 6,
+                        "liveSelectionEpoch": 7,
+                        "predictionSession": {
+                            "phase": "post_commit",
+                            "selectionScope": "prediction",
+                            "expiresAfterMs": 9000,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--require-modern-prediction-session",
+                    "--manual-required",
+                    "Accessibility typing failed",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["manualRequired"], ["Accessibility typing failed"])
+        self.assertEqual(report["violations"][0]["type"], "stale_applied_response")
+        self.assertIn("requestFrontendRevision!=liveFrontendRevision", report["violations"][0]["mismatches"])
 
     def test_trace_check_reports_sidecar_drop_reason_and_live_input(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -557,6 +976,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "sourceType": "rag",
                             "selectionAction": "commit_side_candidate",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
                             "sessionFingerprint": "old-session",
                         },
                     },
@@ -572,6 +993,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "sourceType": "rag",
                             "selectionAction": "commit_side_candidate",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
                             "sessionFingerprint": "old-session",
                         },
                     },
@@ -823,6 +1246,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
             "selectionAction": "select_rime_candidate",
             "displayLayout": "fallback",
             "displayLane": "rime",
+            "badge": _source_badge("rime"),
+            "colorToken": _source_color_token("rime"),
         }
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
             log_path = Path(tmp) / "trace.jsonl"
@@ -908,6 +1333,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "sourceType": "rag",
                             "selectionAction": "commit_side_candidate",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
                         },
                     },
                     ensure_ascii=False,
@@ -972,6 +1399,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "sourceType": "rime",
                             "selectionAction": "select_rime_candidate",
+                            "badge": _source_badge("rime"),
+                            "colorToken": _source_color_token("rime"),
                         },
                     },
                     ensure_ascii=False,
@@ -986,6 +1415,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "sourceType": "rime",
                             "selectionAction": "select_rime_candidate",
+                            "badge": _source_badge("rime"),
+                            "colorToken": _source_color_token("rime"),
                         },
                     },
                     ensure_ascii=False,
@@ -1052,6 +1483,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "sourceType": "rag",
                             "selectionAction": "commit_side_candidate",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
                             "sessionFingerprint": "old-session",
                         },
                     },
@@ -1067,6 +1500,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                             "selectionKey": "6",
                             "sourceType": "rag",
                             "selectionAction": "commit_side_candidate",
+                            "badge": _source_badge("rag"),
+                            "colorToken": _source_color_token("rag"),
                             "sessionFingerprint": "new-session",
                         },
                     },
@@ -1194,6 +1629,8 @@ def _mixed_side_first_candidates(session_fingerprint: str = "") -> list[dict[str
             "selectionAction": "commit_side_candidate",
             "displayLayout": "inline",
             "displayLane": "model",
+            "badge": _source_badge("model"),
+            "colorToken": _source_color_token("model"),
         }
         if session_fingerprint:
             candidate["sessionFingerprint"] = session_fingerprint
@@ -1208,6 +1645,8 @@ def _mixed_side_first_candidates(session_fingerprint: str = "") -> list[dict[str
             "selectionAction": "commit_side_candidate",
             "displayLayout": "block",
             "displayLane": "memory",
+            "badge": _source_badge("rag"),
+            "colorToken": _source_color_token("rag"),
         }
         if session_fingerprint:
             candidate["sessionFingerprint"] = session_fingerprint
@@ -1226,8 +1665,30 @@ def _side_candidate(label: str, source_type: str, session_fingerprint: str) -> d
         "selectionAction": "commit_side_candidate",
         "displayLayout": display_layout,
         "displayLane": display_lane,
+        "badge": _source_badge(source_type),
+        "colorToken": _source_color_token(source_type),
         "sessionFingerprint": session_fingerprint,
     }
+
+
+def _source_badge(source_type: str) -> str:
+    return {
+        "rime": "词",
+        "model": "模",
+        "rag": "查",
+        "memory": "忆",
+        "raw_english": "input",
+    }[source_type]
+
+
+def _source_color_token(source_type: str) -> str:
+    return {
+        "rime": "rimeOrange",
+        "model": "modelBlue",
+        "rag": "ragTeal",
+        "memory": "memoryPurple",
+        "raw_english": "rawGray",
+    }[source_type]
 
 
 if __name__ == "__main__":

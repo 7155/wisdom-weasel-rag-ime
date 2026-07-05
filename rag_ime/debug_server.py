@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, RLock
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .cli import seed_demo_memories
@@ -166,6 +166,175 @@ class DebugImeService:
             generated_only=_bool(payload.get("generatedOnly"), default=False),
             limit=_bounded_int(payload.get("limit"), default=80, minimum=1, maximum=500),
         )
+        return {"ok": True, **report}
+
+    def memory_optimizer_trace(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.memory-optimizer-trace.v1",
+                "ok": False,
+                "error": "optimizer trace is only available for local SQLite core",
+            }
+        trace_id = _string(payload.get("traceId"))
+        if not trace_id:
+            return {
+                "schemaVersion": "rag-ime.memory-optimizer-trace.v1",
+                "ok": False,
+                "error": "traceId is required",
+            }
+        trace = self.core.get_memory_optimizer_trace(trace_id)
+        if trace is None:
+            return {
+                "schemaVersion": "rag-ime.memory-optimizer-trace.v1",
+                "ok": False,
+                "error": "trace not found",
+                "traceId": trace_id,
+            }
+        return {
+            "schemaVersion": "rag-ime.memory-optimizer-trace.v1",
+            "ok": True,
+            **trace,
+        }
+
+    def memory_candidate_explain(self, payload: dict[str, Any]) -> dict[str, object]:
+        candidate_id = _string(payload.get("candidateId"))
+        if not candidate_id:
+            return {
+                "schemaVersion": "rag-ime.memory-candidate-explain.v1",
+                "ok": False,
+                "error": "candidateId is required",
+            }
+        explainer = getattr(self.core, "explain_memory_candidate", None)
+        if not callable(explainer):
+            return {
+                "schemaVersion": "rag-ime.memory-candidate-explain.v1",
+                "ok": False,
+                "error": "core does not support candidate explanation",
+            }
+        explanation = explainer(candidate_id, context_hash=_string(payload.get("contextHash")) or None)
+        if explanation is None:
+            return {
+                "schemaVersion": "rag-ime.memory-candidate-explain.v1",
+                "ok": False,
+                "error": "candidate not found",
+                "candidateId": candidate_id,
+            }
+        return {
+            "schemaVersion": "rag-ime.memory-candidate-explain.v1",
+            "ok": True,
+            **explanation,
+        }
+
+    def memory_governance(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.memory-governance.v1",
+                "ok": False,
+                "error": "memory governance is only available for local SQLite core",
+            }
+        report = self.core.inspect_memory_governance(
+            limit=_bounded_int(payload.get("limit"), default=20, minimum=1, maximum=200),
+            include_inactive=_bool(payload.get("includeInactive"), default=False),
+        )
+        return {"ok": True, **report}
+
+    def memory_cleanup_runs(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.memory-cleanup-runs.v1",
+                "ok": False,
+                "error": "cleanup runs are only available for local SQLite core",
+            }
+        review_status = _cleanup_review_status(payload)
+        if review_status:
+            run_id = _string(payload.get("runId"))
+            if not run_id:
+                return {
+                    "schemaVersion": "rag-ime.memory-cleanup-runs.v1",
+                    "ok": False,
+                    "error": "runId is required for cleanup review",
+                }
+            report = self.core.review_memory_cleanup_plan(
+                run_id=run_id,
+                status=review_status,
+                diff_ids=_int_list(payload.get("diffIds")),
+                diff_indexes=_int_list(payload.get("diffIndexes")),
+            )
+            return {
+                "schemaVersion": "rag-ime.memory-cleanup-runs.v1",
+                "ok": True,
+                **report,
+            }
+        report = self.core.list_memory_cleanup_runs(
+            limit=_bounded_int(payload.get("limit"), default=20, minimum=1, maximum=100),
+            run_id=_string(payload.get("runId")),
+            status=_string(payload.get("status")),
+        )
+        return {"ok": True, **report}
+
+    def memory_tombstone(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.memory-tombstone.v1",
+                "ok": False,
+                "error": "memory tombstone is only available for local SQLite core",
+            }
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        try:
+            tombstone = self.core.add_memory_tombstone(
+                target_type=_string(payload.get("targetType")) or "memory_id",
+                target_value=_string(payload.get("targetValue")),
+                reason=_string(payload.get("reason")) or "manual",
+                metadata=metadata,
+                active=_bool(payload.get("active"), default=True),
+            )
+        except ValueError as exc:
+            return {
+                "schemaVersion": "rag-ime.memory-tombstone.v1",
+                "ok": False,
+                "error": str(exc),
+            }
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.memory-tombstone.v1",
+            "ok": True,
+            **tombstone,
+        }
+
+    def memory_cleanup_diff_apply(self, diff_id: int) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.memory-cleanup-diff.v1",
+                "ok": False,
+                "error": "cleanup diffs are only available for local SQLite core",
+            }
+        try:
+            report = self.core.apply_memory_cleanup_diff(diff_id=diff_id)
+        except ValueError as exc:
+            return {
+                "schemaVersion": "rag-ime.memory-cleanup-diff.v1",
+                "ok": False,
+                "error": str(exc),
+            }
+        self._clear_rime_cache()
+        return {"ok": True, **report}
+
+    def memory_cleanup_diff_rollback(self, diff_id: int) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.memory-cleanup-diff.v1",
+                "ok": False,
+                "error": "cleanup diffs are only available for local SQLite core",
+            }
+        try:
+            report = self.core.rollback_memory_cleanup_diff(diff_id=diff_id)
+        except ValueError as exc:
+            return {
+                "schemaVersion": "rag-ime.memory-cleanup-diff.v1",
+                "ok": False,
+                "error": str(exc),
+            }
+        self._clear_rime_cache()
         return {"ok": True, **report}
 
     def organize_rag_database(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -947,6 +1116,46 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/input-source", "/input-source"):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
+        query = parse_qs(parsed.query or "")
+        if parsed.path.startswith("/api/memory/optimizer/trace/"):
+            trace_id = unquote(parsed.path.rsplit("/", 1)[-1])
+            self._write_json(HTTPStatus.OK, self.service.memory_optimizer_trace({"traceId": trace_id}))
+            return
+        if parsed.path.startswith("/api/memory/candidate/") and parsed.path.endswith("/explain"):
+            candidate_id = unquote(parsed.path[len("/api/memory/candidate/") : -len("/explain")].strip("/"))
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.memory_candidate_explain(
+                    {
+                        "candidateId": candidate_id,
+                        "contextHash": _query_first(query, "contextHash"),
+                    }
+                ),
+            )
+            return
+        if parsed.path in ("/api/memory/suppressions", "/api/memory/governance"):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.memory_governance(
+                    {
+                        "limit": _query_first(query, "limit"),
+                        "includeInactive": _query_first(query, "includeInactive"),
+                    }
+                ),
+            )
+            return
+        if parsed.path in ("/api/memory/cleanup-runs",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.memory_cleanup_runs(
+                    {
+                        "limit": _query_first(query, "limit"),
+                        "runId": _query_first(query, "runId"),
+                        "status": _query_first(query, "status"),
+                    }
+                ),
+            )
+            return
         self._serve_static(parsed.path)
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
@@ -967,6 +1176,22 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.rebuild_vector_index(payload))
             elif path in ("/api/memory-history", "/memory-history"):
                 self._write_json(HTTPStatus.OK, self.service.memory_history(payload))
+            elif path in ("/api/memory-optimizer-trace", "/memory-optimizer-trace"):
+                self._write_json(HTTPStatus.OK, self.service.memory_optimizer_trace(payload))
+            elif path in ("/api/memory-candidate-explain", "/memory-candidate-explain"):
+                self._write_json(HTTPStatus.OK, self.service.memory_candidate_explain(payload))
+            elif path in ("/api/memory-governance", "/memory-governance"):
+                self._write_json(HTTPStatus.OK, self.service.memory_governance(payload))
+            elif path in ("/api/memory-cleanup-runs", "/memory-cleanup-runs"):
+                self._write_json(HTTPStatus.OK, self.service.memory_cleanup_runs(payload))
+            elif path in ("/api/memory-tombstone", "/memory-tombstone", "/api/memory/tombstone"):
+                self._write_json(HTTPStatus.OK, self.service.memory_tombstone(payload))
+            elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/apply"):
+                diff_id = _cleanup_diff_path_id(path, suffix="/apply")
+                self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_apply(diff_id))
+            elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/rollback"):
+                diff_id = _cleanup_diff_path_id(path, suffix="/rollback")
+                self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_rollback(diff_id))
             elif path in ("/api/generate-memory", "/generate-memory"):
                 self._write_json(HTTPStatus.OK, self.service.generate_memory(payload))
             elif path in ("/api/organize-rag-db", "/organize-rag-db"):
@@ -1047,10 +1272,26 @@ def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _query_first(query: dict[str, list[str]], key: str) -> str:
+    values = query.get(key) or []
+    return values[0] if values else ""
+
+
 def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _int_list(value: object) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    parsed: list[int] = []
+    for item in value:
+        candidate = _optional_int(item)
+        if candidate is not None:
+            parsed.append(candidate)
+    return parsed
 
 
 def _bool(value: object, *, default: bool = False) -> bool:
@@ -1080,6 +1321,29 @@ def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> 
     if parsed is None:
         return default
     return max(minimum, min(maximum, parsed))
+
+
+def _cleanup_review_status(payload: dict[str, object]) -> str:
+    review_status = _string(payload.get("reviewStatus")).strip().lower()
+    action = _string(payload.get("action")).strip().lower()
+    if not review_status and action in {"approve", "approved"}:
+        review_status = "approved"
+    if not review_status and action in {"reject", "rejected"}:
+        review_status = "rejected"
+    if not review_status and action in {"reset", "pending"}:
+        review_status = "pending"
+    return review_status
+
+
+def _cleanup_diff_path_id(path: str, *, suffix: str) -> int:
+    prefix = "/api/memory/cleanup-diff/"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        raise ValueError("invalid cleanup diff path")
+    raw = path[len(prefix) : -len(suffix)].strip("/")
+    diff_id = _optional_int(raw)
+    if diff_id is None:
+        raise ValueError("cleanup diff path requires numeric diff id")
+    return diff_id
 
 
 def _attach_rime_ranking_diagnostics(response: dict[str, object]) -> None:

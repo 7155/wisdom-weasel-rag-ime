@@ -14,6 +14,24 @@ from typing import Any, Iterator
 
 from .core_client import CoreMemory
 from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity
+from .memory_cleanup import (
+    apply_cleanup_diff,
+    apply_cleanup_run,
+    build_cleanup_plan,
+    cleanup_plan_to_payload,
+    cleanup_run_payload,
+    load_cleanup_run_from_file,
+    persist_cleanup_plan,
+    review_cleanup_run,
+    rollback_cleanup_diff,
+    rollback_cleanup_run,
+)
+from .memory_dedup import select_diverse
+from .memory_ingest import sync_event_to_memory_v2
+from .memory_models import CandidateFeedbackV2, CleanupRunPlan, ImeQueryContext, MemoryCandidateV2
+from .memory_optimizer_models import ContextFrame, OptimizerResult, RawRetrievalHit
+from .memory_schema_v2 import ensure_memory_v2_schema
+from .memory_tag_graph import propagate_tag_energy, recompute_tag_graph, score_memory_items_from_tag_energy
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
 from .pinyin_index import pinyin_search_document
 from .suggestion_compiler import RankedMemory, SuggestionCompiler
@@ -23,6 +41,7 @@ from .text_utils import (
     compact_whitespace,
     now_ms,
     overlap_terms,
+    stable_text_hash,
     token_terms,
     truncate_text,
 )
@@ -67,6 +86,8 @@ class LocalSqliteCoreClient:
         embedding_provider: EmbeddingProvider | None = None,
         vector_candidate_limit: int = 80,
         vector_weight: float = 1.4,
+        legacy_governance_filter_enabled: bool = True,
+        v2_governance_filter_enabled: bool = True,
     ):
         self.db_path = Path(db_path)
         self.compiler = SuggestionCompiler()
@@ -74,6 +95,9 @@ class LocalSqliteCoreClient:
         self.embedding_provider = embedding_provider or NullEmbeddingProvider()
         self.vector_candidate_limit = max(0, int(vector_candidate_limit))
         self.vector_weight = max(0.0, float(vector_weight))
+        self.legacy_governance_filter_enabled = bool(legacy_governance_filter_enabled)
+        self.v2_governance_filter_enabled = bool(v2_governance_filter_enabled)
+        self.memory_v2_enabled = True
         self._suggestion_cache: OrderedDict[tuple[str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
         self._suggestion_cache_lock = RLock()
         self._suggestion_cache_hits = 0
@@ -169,6 +193,7 @@ class LocalSqliteCoreClient:
                 ON memory_vectors(provider_fingerprint);
                 """
             )
+            ensure_memory_v2_schema(conn)
             conn.executescript(
                 """
                 DELETE FROM memory_state
@@ -325,6 +350,21 @@ class LocalSqliteCoreClient:
                 (event_id, document, text, event.recent_context, event.project, " ".join(event.tags)),
             )
             self._upsert_event_vector(conn, event_id=event_id, document=document, updated_at_ms=created_at)
+            if self.memory_v2_enabled:
+                sync_event_to_memory_v2(
+                    conn,
+                    event_id=event_id,
+                    created_at_ms=created_at,
+                    source=event.source,
+                    committed_text=text,
+                    recent_context=event.recent_context,
+                    preedit=event.preedit,
+                    project=event.project,
+                    app=event.app,
+                    provider_name=event.provider_name,
+                    tags=tuple(event.tags),
+                    embedding_provider=self.embedding_provider,
+                )
         self._clear_suggestion_cache()
         return f"event:{event_id}"
 
@@ -347,6 +387,54 @@ class LocalSqliteCoreClient:
         cached = self._get_cached_suggestions(cache_key)
         if cached is not None:
             return cached
+        suggestions = self._legacy_suggest_for_input(
+            current_input=current_input,
+            recent_context=recent_context,
+            project=project,
+            app=app,
+            top_k=top_k,
+        )
+        if self.memory_v2_enabled:
+            context_v2 = ImeQueryContext(
+                current_input=current_input,
+                recent_context=recent_context,
+                project=project,
+                app=app,
+                top_k=top_k,
+            )
+            if not suggestions:
+                suggestions = self.suggest_for_ime_context_v2(context=context_v2)
+            elif _legacy_suggestions_need_v2_recovery(
+                suggestions,
+                current_input=current_input,
+                recent_context=recent_context,
+            ):
+                v2_suggestions = self.suggest_for_ime_context_v2(context=context_v2)
+                if _should_prefer_v2_ime_suggestions(
+                    legacy_suggestions=suggestions,
+                    v2_suggestions=v2_suggestions,
+                    current_input=current_input,
+                    recent_context=recent_context,
+                ):
+                    suggestions = _merge_prefer_v2_suggestions(
+                        v2_suggestions=v2_suggestions,
+                        legacy_suggestions=suggestions,
+                        top_k=top_k,
+                        current_input=current_input,
+                        recent_context=recent_context,
+                    )
+        self._store_cached_suggestions(cache_key, suggestions)
+        return _copy_suggestions(suggestions)
+
+    def _legacy_suggest_for_input(
+        self,
+        *,
+        current_input: str,
+        recent_context: str = "",
+        project: str = "",
+        app: str = "",
+        top_k: int = 5,
+    ) -> list[InputSuggestion]:
         memories = self.retrieve_memories(
             current_input=current_input,
             recent_context=recent_context,
@@ -355,9 +443,7 @@ class LocalSqliteCoreClient:
             top_k=max(top_k * 4, 20),
         )
         ranked = [RankedMemory(memory=memory, score=memory.score, rank=index) for index, memory in enumerate(memories, start=1)]
-        suggestions = self.compiler.compile(ranked)[:top_k]
-        self._store_cached_suggestions(cache_key, suggestions)
-        return _copy_suggestions(suggestions)
+        return self.compiler.compile(ranked)[:top_k]
 
     def retrieve_memories(
         self,
@@ -408,7 +494,58 @@ class LocalSqliteCoreClient:
             for row in rows
         ]
         memories.sort(key=lambda item: item.score, reverse=True)
+        if self.memory_v2_enabled and self.legacy_governance_filter_enabled and memories:
+            memories = self._filter_legacy_memories_with_governance(
+                memories,
+                current_input=current_input,
+                recent_context=recent_context,
+                project=project,
+                app=app,
+            )
         return memories[:top_k]
+
+    def _filter_legacy_memories_with_governance(
+        self,
+        memories: list[CoreMemory],
+        *,
+        current_input: str,
+        recent_context: str,
+        project: str,
+        app: str,
+    ) -> list[CoreMemory]:
+        if not memories:
+            return memories
+        governance = self.optimizer_governance_snapshot(
+            memory_ids=[memory.memory_id for memory in memories],
+            texts=[memory.text for memory in memories],
+            source_event_ids=[
+                int(memory.source_event_id)
+                if compact_whitespace(str(memory.source_event_id or "")).isdigit()
+                else None
+                for memory in memories
+            ],
+            context_hash="",
+            project=project,
+            app=app,
+        )
+        tombstoned_ids = set(governance.get("tombstonedMemoryIds") or [])
+        tombstoned_texts = set(governance.get("tombstonedTexts") or [])
+        suppressed_ids = set(governance.get("suppressedMemoryIds") or [])
+        suppressed_texts = set(governance.get("suppressedTexts") or [])
+        filtered: list[CoreMemory] = []
+        removed_any = False
+        for memory in memories:
+            normalized_text = _optimizer_norm(memory.text)
+            if memory.memory_id in tombstoned_ids or normalized_text in tombstoned_texts:
+                removed_any = True
+                continue
+            if memory.memory_id in suppressed_ids or normalized_text in suppressed_texts:
+                removed_any = True
+                continue
+            filtered.append(memory)
+        if removed_any:
+            return filtered
+        return memories
 
     def _retrieve_candidate_rows(
         self,
@@ -477,6 +614,21 @@ class LocalSqliteCoreClient:
                 self._refresh_phrase_stats_for_event(conn, event_id)
                 self._refresh_phrase_project_stats_for_event(conn, event_id)
                 self._refresh_phrase_app_stats_for_event(conn, event_id)
+            if self.memory_v2_enabled:
+                self._record_feedback_v2(
+                    conn,
+                    feedback=CandidateFeedbackV2(
+                        query_hash=_query_hash(action.query or action.suggestion_id or action.memory_id),
+                        candidate_text=self._event_text(conn, event_id),
+                        source_type="memory",
+                        memory_ids=(action.memory_id,),
+                        action=action.action_type,
+                        app=action.metadata.get("app", "") if isinstance(action.metadata, dict) else "",
+                        project=action.metadata.get("project", "") if isinstance(action.metadata, dict) else "",
+                        metadata=action.metadata,
+                    ),
+                )
+                self._sync_memory_item_status_for_action(conn, action=action, event_id=event_id)
             action_id = int(cur.lastrowid)
         self._clear_suggestion_cache()
         return MemoryAction(
@@ -560,6 +712,685 @@ class LocalSqliteCoreClient:
             if len(selected) >= limit:
                 break
         return compact_whitespace(" / ".join(reversed(selected)))
+
+    def retrieve_candidates_v2(self, *, context: ImeQueryContext) -> dict[str, object]:
+        memories, stats = self._retrieve_memories_v2(context)
+        return {
+            "ok": True,
+            "candidates": [
+                {
+                    "text": item.text,
+                    "sourceType": _source_type_from_tags_v2(item.tags),
+                    "memoryKind": str(item.state.get("memory_kind", "")),
+                    "score": round(item.score, 4),
+                    "memoryIds": [item.memory_id],
+                    "evidencePreview": item.evidence_preview,
+                    "diagnostics": {
+                        "scoreBreakdown": item.state.get("score_breakdown", {}),
+                        "evidence": [item.memory_id, f"kind:{item.state.get('memory_kind', '')}"],
+                    },
+                }
+                for item in memories
+            ],
+            "stats": stats,
+        }
+
+    def suggest_for_ime_context_v2(self, *, context: ImeQueryContext) -> list[InputSuggestion]:
+        memories, _stats = self._retrieve_memories_v2(context)
+        ranked = [RankedMemory(memory=memory, score=memory.score, rank=index) for index, memory in enumerate(memories, start=1)]
+        suggestions = self.compiler.compile(ranked)[: max(1, context.top_k)]
+        return _copy_suggestions(suggestions)
+
+    def record_feedback_v2(self, feedback: CandidateFeedbackV2) -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            self._record_feedback_v2(conn, feedback=feedback)
+        self._clear_suggestion_cache()
+        return {
+            "ok": True,
+            "queryHash": feedback.query_hash,
+            "action": feedback.action,
+            "memoryIds": list(feedback.memory_ids),
+        }
+
+    def inspect_memory_v2(self, *, project: str = "", limit: int = 20, kind: str = "", status: str = "") -> dict[str, object]:
+        self.initialize()
+        params: list[Any] = []
+        where = ["1 = 1"]
+        if project:
+            where.append("(project = ? OR project = '')")
+            params.append(project)
+        if kind:
+            where.append("kind = ?")
+            params.append(kind)
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        params.append(max(1, min(200, int(limit))))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, memory_id, kind, text, normalized_text, source_event_id, project, app,
+                       confidence, quality_score, status, privacy_class, created_at_ms, updated_at_ms, metadata_json
+                FROM memory_items
+                WHERE {' AND '.join(where)}
+                ORDER BY updated_at_ms DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return {
+            "schemaVersion": "rag-ime.memory-inspect.v2",
+            "project": project,
+            "limit": max(1, min(200, int(limit))),
+            "items": [
+                {
+                    "id": int(row["id"]),
+                    "memoryId": str(row["memory_id"]),
+                    "kind": str(row["kind"]),
+                    "text": str(row["text"]),
+                    "normalizedText": str(row["normalized_text"]),
+                    "sourceEventId": int(row["source_event_id"] or 0),
+                    "project": str(row["project"]),
+                    "app": str(row["app"]),
+                    "confidence": float(row["confidence"]),
+                    "qualityScore": float(row["quality_score"]),
+                    "status": str(row["status"]),
+                    "privacyClass": str(row["privacy_class"]),
+                    "createdAtMs": int(row["created_at_ms"]),
+                    "updatedAtMs": int(row["updated_at_ms"]),
+                    "metadata": _json_loads_dict(row["metadata_json"]),
+                }
+                for row in rows
+            ],
+        }
+
+    def optimizer_governance_snapshot(
+        self,
+        *,
+        memory_ids: list[str],
+        texts: list[str],
+        source_event_ids: list[int | None] | None = None,
+        context_hash: str = "",
+        project: str = "",
+        app: str = "",
+    ) -> dict[str, object]:
+        del context_hash
+        self.initialize()
+        normalized_texts = [_optimizer_norm(text) for text in texts if _optimizer_norm(text)]
+        source_event_tokens = {
+            f"event:{int(source_event_id)}"
+            for source_event_id in (source_event_ids or [])
+            if int(source_event_id or 0) > 0
+        }
+        candidate_records = list(
+            zip(
+                memory_ids,
+                [_optimizer_norm(text) for text in texts],
+                [int(source_event_id or 0) for source_event_id in (source_event_ids or [None] * len(memory_ids))],
+            )
+        )
+        with self._connect() as conn:
+            tombstoned_memory_ids = {
+                str(row["target_value"])
+                for row in conn.execute(
+                    """
+                    SELECT target_value
+                    FROM memory_tombstones
+                    WHERE active = 1 AND target_type = 'memory_id'
+                    """
+                ).fetchall()
+                if str(row["target_value"]) in set(memory_ids)
+            }
+            tombstoned_texts = {
+                _optimizer_norm(str(row["target_value"]))
+                for row in conn.execute(
+                    """
+                    SELECT target_value
+                    FROM memory_tombstones
+                    WHERE active = 1 AND target_type IN ('normalized_text', 'phrase')
+                    """
+                ).fetchall()
+                if _optimizer_norm(str(row["target_value"])) in set(normalized_texts)
+            }
+            suppressed_rows = conn.execute(
+                """
+                SELECT match_type, match_value
+                FROM memory_candidate_suppressions
+                WHERE expires_at_ms IS NULL OR expires_at_ms > ?
+                """,
+                (now_ms(),),
+            ).fetchall()
+            suppressed_memory_ids = {
+                str(row["match_value"])
+                for row in suppressed_rows
+                if str(row["match_type"]) == "memory_id" and str(row["match_value"]) in set(memory_ids)
+            }
+            suppressed_texts = {
+                _optimizer_norm(str(row["match_value"]))
+                for row in suppressed_rows
+                if str(row["match_type"]) in {"text", "normalized_text"} and _optimizer_norm(str(row["match_value"])) in set(normalized_texts)
+            }
+            suppressed_event_tokens = {
+                str(row["match_value"])
+                for row in suppressed_rows
+                if str(row["match_type"]) == "memory_id" and str(row["match_value"]) in source_event_tokens
+            }
+            if suppressed_event_tokens:
+                for memory_id, normalized_text, source_event_id in candidate_records:
+                    if source_event_id <= 0:
+                        continue
+                    if f"event:{source_event_id}" not in suppressed_event_tokens:
+                        continue
+                    suppressed_memory_ids.add(memory_id)
+                    if normalized_text:
+                        suppressed_texts.add(normalized_text)
+            params: list[Any] = [max(0, now_ms() - 30_000)]
+            where = ["e.created_at_ms >= ?", "s.deleted = 0"]
+            if project:
+                where.append("(e.project = ? OR e.project = '')")
+                params.append(project)
+            if app:
+                where.append("(e.app = ? OR e.app = '')")
+                params.append(app)
+            recent_rows = conn.execute(
+                f"""
+                SELECT e.committed_text
+                FROM input_events e
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE {' AND '.join(where)}
+                ORDER BY e.created_at_ms DESC
+                LIMIT 12
+                """,
+                params,
+            ).fetchall()
+        return {
+            "tombstonedMemoryIds": sorted(tombstoned_memory_ids),
+            "tombstonedTexts": sorted(tombstoned_texts),
+            "suppressedMemoryIds": sorted(suppressed_memory_ids),
+            "suppressedTexts": sorted(suppressed_texts),
+            "recentCommittedTexts": sorted({_optimizer_norm(str(row["committed_text"])) for row in recent_rows if _optimizer_norm(str(row["committed_text"]))}),
+        }
+
+    def record_memory_feedback(self, event: dict[str, Any]) -> None:
+        self.initialize()
+        action = compact_whitespace(str(event.get("event") or event.get("action") or "")).lower()
+        candidate_id = compact_whitespace(str(event.get("candidateId") or event.get("memoryId") or ""))
+        candidate_text = compact_whitespace(str(event.get("candidateText") or event.get("text") or ""))
+        candidate_source = compact_whitespace(str(event.get("sourceType") or event.get("candidateSource") or event.get("source") or ""))
+        if not action or (not candidate_id and not candidate_text):
+            return
+        created_at_ms = int(event.get("timestampMs") or event.get("createdAtMs") or now_ms())
+        context_hash = compact_whitespace(str(event.get("contextHash") or ""))
+        metadata = dict(event.get("metadata") or {}) if isinstance(event.get("metadata"), dict) else {}
+        for key in (
+            "lane",
+            "rank",
+            "project",
+            "traceId",
+            "requestSeq",
+            "sessionId",
+            "suggestionId",
+            "sourceEventId",
+            "selectedCandidateId",
+            "selectedText",
+            "selectedRank",
+            "shownCandidateIds",
+            "shownCandidateCount",
+        ):
+            if key in event and key not in metadata:
+                metadata[key] = event.get(key)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_feedback_events(
+                    id, candidate_id, candidate_text, candidate_source, action, context_hash,
+                    front_app_bundle_id, raw_input, preedit, committed_tail, metadata_json, created_at_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _memory_feedback_event_id(
+                        action=action,
+                        candidate_id=candidate_id,
+                        candidate_text=candidate_text,
+                        created_at_ms=created_at_ms,
+                    ),
+                    candidate_id or None,
+                    candidate_text,
+                    candidate_source or "unknown",
+                    action,
+                    context_hash or None,
+                    compact_whitespace(str(event.get("frontAppBundleId") or event.get("app") or "")) or None,
+                    compact_whitespace(str(event.get("rawInput") or "")) or None,
+                    compact_whitespace(str(event.get("preedit") or "")) or None,
+                    compact_whitespace(str(event.get("committedTail") or event.get("recentContext") or "")) or None,
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    created_at_ms,
+                ),
+            )
+            governance_changed = self._apply_optimizer_feedback_governance(
+                conn,
+                action=action,
+                candidate_id=candidate_id,
+                candidate_text=candidate_text,
+                candidate_source=candidate_source,
+                context_hash=context_hash,
+                created_at_ms=created_at_ms,
+                metadata=metadata,
+            )
+        if governance_changed:
+            self._clear_suggestion_cache()
+
+    def optimize_memory_candidates(
+        self,
+        context: ContextFrame,
+        base_hits: list[RawRetrievalHit],
+        *,
+        top_k: int,
+        latency_budget_ms: int,
+    ) -> OptimizerResult:
+        self.initialize()
+        from .memory_optimizer import MemoryOptimizerConfig, RagMemoryOptimizer
+
+        config = MemoryOptimizerConfig.from_env()
+        optimizer = RagMemoryOptimizer(config=config)
+        governance = self.optimizer_governance_snapshot(
+            memory_ids=[hit.id for hit in base_hits],
+            texts=[hit.text for hit in base_hits],
+            source_event_ids=[int(hit.metadata.get("source_event_id") or 0) or None for hit in base_hits],
+            context_hash=context.context_hash,
+            project=context.project_scope or "",
+            app=context.front_app_bundle_id or "",
+        )
+        return optimizer.optimize_memory_candidates(
+            context,
+            base_hits,
+            top_k=top_k,
+            latency_budget_ms=min(latency_budget_ms, config.max_ms),
+            governance=governance,
+        )
+
+    def explain_memory_candidate(self, candidate_id: str, context_hash: str | None = None) -> dict[str, Any] | None:
+        self.initialize()
+        candidate_key = compact_whitespace(candidate_id)
+        if not candidate_key:
+            return None
+        normalized_context_hash = compact_whitespace(context_hash or "")
+        with self._connect() as conn:
+            memory_row = conn.execute(
+                """
+                SELECT id, memory_id, kind, text, normalized_text, source_event_id, project, app,
+                       confidence, quality_score, status, privacy_class, created_at_ms, updated_at_ms, metadata_json
+                FROM memory_items
+                WHERE memory_id = ?
+                   OR (source_event_id = ? AND ? != '')
+                ORDER BY updated_at_ms DESC, id DESC
+                LIMIT 1
+                """,
+                (
+                    candidate_key,
+                    self._memory_id_to_event_id(candidate_key) if candidate_key.startswith("event:") else 0,
+                    candidate_key if candidate_key.startswith("event:") else "",
+                ),
+            ).fetchone()
+            feedback_rows = conn.execute(
+                """
+                SELECT candidate_id, candidate_text, candidate_source, action, context_hash,
+                       front_app_bundle_id, raw_input, preedit, committed_tail, metadata_json, created_at_ms
+                FROM memory_feedback_events
+                WHERE candidate_id = ? OR candidate_text = ?
+                ORDER BY created_at_ms DESC
+                LIMIT 12
+                """,
+                (candidate_key, candidate_key),
+            ).fetchall()
+            trace_rows = conn.execute(
+                """
+                SELECT id, request_seq, context_hash, query_plan_json, raw_results_json,
+                       optimized_candidates_json, blocked_json, latency_ms, created_at_ms
+                FROM memory_optimizer_traces
+                WHERE (? != '' AND context_hash = ?)
+                   OR optimized_candidates_json LIKE ?
+                   OR blocked_json LIKE ?
+                ORDER BY created_at_ms DESC
+                LIMIT 8
+                """,
+                (
+                    normalized_context_hash,
+                    normalized_context_hash,
+                    f'%"{candidate_key}"%',
+                    f'%"{candidate_key}"%',
+                ),
+            ).fetchall()
+        if memory_row is None and not feedback_rows and not trace_rows:
+            return None
+        traces = [
+            _optimizer_trace_row_payload(row)
+            for row in trace_rows
+        ]
+        recent_trace = traces[0] if traces else None
+        return {
+            "schemaVersion": "rag-ime.memory-candidate-explain.v1",
+            "candidateId": candidate_key,
+            "contextHash": normalized_context_hash or (recent_trace.get("contextHash") if isinstance(recent_trace, dict) else "") or "",
+            "memoryItem": _memory_item_explanation_payload(memory_row) if memory_row is not None else None,
+            "recentFeedback": [_memory_feedback_row_payload(row) for row in feedback_rows],
+            "recentTrace": recent_trace,
+            "traceCount": len(traces),
+            "traces": traces,
+        }
+
+    def store_memory_optimizer_trace(self, trace: dict[str, Any]) -> None:
+        self.initialize()
+        trace_id = compact_whitespace(str(trace.get("traceId") or ""))
+        if not trace_id:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO memory_optimizer_traces(
+                    id, request_seq, context_hash, query_plan_json, raw_results_json,
+                    optimized_candidates_json, blocked_json, latency_ms, created_at_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trace_id,
+                    int(trace.get("requestSeq") or 0),
+                    compact_whitespace(str(trace.get("contextHash") or "")),
+                    json.dumps(
+                        {
+                            "contextFrame": trace.get("contextFrame") or {},
+                            "queryPlan": trace.get("queryPlan") or {},
+                            "warnings": list(trace.get("warnings") or []),
+                            "degraded": bool(trace.get("degraded")),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    json.dumps(list(trace.get("rawResults") or []), ensure_ascii=False, sort_keys=True),
+                    json.dumps(list(trace.get("optimizedCandidates") or []), ensure_ascii=False, sort_keys=True),
+                    json.dumps(list(trace.get("blocked") or []), ensure_ascii=False, sort_keys=True),
+                    float(trace.get("latencyMs") or 0.0),
+                    int(trace.get("createdAtMs") or now_ms()),
+                ),
+            )
+
+    def get_memory_optimizer_trace(self, trace_id: str) -> dict[str, Any] | None:
+        self.initialize()
+        trace_key = compact_whitespace(trace_id)
+        if not trace_key:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, request_seq, context_hash, query_plan_json, raw_results_json,
+                       optimized_candidates_json, blocked_json, latency_ms, created_at_ms
+                FROM memory_optimizer_traces
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (trace_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _optimizer_trace_row_payload(row)
+
+    def inspect_memory_governance(self, *, limit: int = 20, include_inactive: bool = False) -> dict[str, object]:
+        self.initialize()
+        bounded_limit = max(1, min(200, int(limit)))
+        with self._connect() as conn:
+            suppression_rows = conn.execute(
+                """
+                SELECT id, match_type, match_value, action, reason, strength, expires_at_ms, created_at_ms
+                FROM memory_candidate_suppressions
+                ORDER BY created_at_ms DESC, id DESC
+                LIMIT ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+            tombstone_rows = conn.execute(
+                f"""
+                SELECT id, created_at_ms, target_type, target_value, reason, active, metadata_json
+                FROM memory_tombstones
+                {'WHERE active = 1' if not include_inactive else ''}
+                ORDER BY created_at_ms DESC, id DESC
+                LIMIT ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+        suppressions = [_memory_suppression_row_payload(row) for row in suppression_rows]
+        if not include_inactive:
+            suppressions = [item for item in suppressions if item["active"]]
+        return {
+            "schemaVersion": "rag-ime.memory-governance.v1",
+            "limit": bounded_limit,
+            "includeInactive": bool(include_inactive),
+            "suppressions": suppressions,
+            "tombstones": [_memory_tombstone_row_payload(row) for row in tombstone_rows],
+        }
+
+    def add_memory_tombstone(
+        self,
+        *,
+        target_type: str,
+        target_value: str,
+        reason: str = "manual",
+        metadata: dict[str, object] | None = None,
+        active: bool = True,
+    ) -> dict[str, object]:
+        self.initialize()
+        normalized_target_type = compact_whitespace(target_type)
+        normalized_target_value = compact_whitespace(target_value)
+        if normalized_target_type not in {"memory_id", "normalized_text", "phrase", "source_event_id"}:
+            raise ValueError(f"unsupported tombstone target_type: {target_type}")
+        if not normalized_target_value:
+            raise ValueError("target_value is required")
+        created_at_ms = now_ms()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO memory_tombstones(created_at_ms, target_type, target_value, reason, active, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    created_at_ms,
+                    normalized_target_type,
+                    normalized_target_value,
+                    compact_whitespace(reason) or "manual",
+                    1 if active else 0,
+                    json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            tombstone_id = int(cur.lastrowid)
+            if normalized_target_type == "memory_id":
+                row = conn.execute(
+                    """
+                    SELECT normalized_text, source_event_id
+                    FROM memory_items
+                    WHERE memory_id = ?
+                    LIMIT 1
+                    """,
+                    (normalized_target_value,),
+                ).fetchone()
+                conn.execute(
+                    "UPDATE memory_items SET status = 'tombstoned', updated_at_ms = ? WHERE memory_id = ?",
+                    (created_at_ms, normalized_target_value),
+                )
+                related_clauses: list[str] = ["memory_id = ?"]
+                related_params: list[Any] = [created_at_ms, normalized_target_value]
+                related_normalized_text = compact_whitespace(str(row["normalized_text"] or "")) if row is not None else ""
+                related_source_event_id = int(row["source_event_id"] or 0) if row is not None else 0
+                if related_normalized_text:
+                    related_clauses.append("normalized_text = ?")
+                    related_params.append(related_normalized_text)
+                if related_source_event_id > 0:
+                    related_clauses.append("source_event_id = ?")
+                    related_params.append(related_source_event_id)
+                elif normalized_target_value.startswith("phrase:"):
+                    derived_text = compact_whitespace(normalized_target_value.split(":", 1)[1])
+                    if derived_text:
+                        related_clauses.append("normalized_text = ?")
+                        related_params.append(derived_text)
+                if len(related_clauses) > 1:
+                    conn.execute(
+                        f"""
+                        UPDATE memory_items
+                        SET status = 'tombstoned', updated_at_ms = ?
+                        WHERE {' OR '.join(related_clauses)}
+                        """,
+                        related_params,
+                    )
+            elif normalized_target_type == "source_event_id":
+                conn.execute(
+                    "UPDATE memory_items SET status = 'tombstoned', updated_at_ms = ? WHERE source_event_id = ?",
+                    (created_at_ms, int(normalized_target_value)),
+                )
+            elif normalized_target_type == "normalized_text":
+                conn.execute(
+                    "UPDATE memory_items SET status = 'tombstoned', updated_at_ms = ? WHERE normalized_text = ?",
+                    (created_at_ms, normalized_target_value),
+                )
+            elif normalized_target_type == "phrase":
+                conn.execute(
+                    "UPDATE memory_items SET status = 'tombstoned', updated_at_ms = ? WHERE text = ?",
+                    (created_at_ms, normalized_target_value),
+                )
+            row = conn.execute(
+                """
+                SELECT id, created_at_ms, target_type, target_value, reason, active, metadata_json
+                FROM memory_tombstones
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (tombstone_id,),
+            ).fetchone()
+        self._clear_suggestion_cache()
+        if row is None:
+            raise RuntimeError("failed to create tombstone")
+        return _memory_tombstone_row_payload(row)
+
+    def list_memory_cleanup_runs(self, *, limit: int = 20, run_id: str = "", status: str = "") -> dict[str, object]:
+        self.initialize()
+        bounded_limit = max(1, min(100, int(limit)))
+        params: list[Any] = []
+        where = ["1 = 1"]
+        if run_id:
+            where.append("run_id = ?")
+            params.append(run_id)
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        params.append(bounded_limit)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT run_id
+                FROM memory_cleanup_runs
+                WHERE {' AND '.join(where)}
+                ORDER BY created_at_ms DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+            runs = [
+                cleanup_run_payload(conn, run_id=str(row["run_id"]))
+                for row in rows
+            ]
+        return {
+            "schemaVersion": "rag-ime.memory-cleanup-runs.v1",
+            "limit": bounded_limit,
+            "items": runs,
+        }
+
+    def recompute_memory_tags(self, *, project: str = "") -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            report = recompute_tag_graph(conn, project=project)
+        self._clear_suggestion_cache()
+        return {"schemaVersion": "rag-ime.memory-tags.v2", **report}
+
+    def build_memory_cleanup_plan(self, *, project: str = "", since_days: int = 90, provider: str = "", model: str = "") -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            plan = build_cleanup_plan(conn, project=project, since_days=since_days, provider=provider, model=model)
+            persist_cleanup_plan(conn, plan)
+        return cleanup_plan_to_payload(plan)
+
+    def preview_memory_cleanup_plan(self, *, project: str = "", since_days: int = 90, provider: str = "", model: str = "") -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            plan = build_cleanup_plan(conn, project=project, since_days=since_days, provider=provider, model=model)
+        return cleanup_plan_to_payload(plan)
+
+    def store_memory_cleanup_plan(self, plan: CleanupRunPlan) -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            payload = persist_cleanup_plan(conn, plan)
+        return payload
+
+    def review_memory_cleanup_plan(
+        self,
+        *,
+        run_id: str,
+        status: str,
+        diff_ids: list[int] | tuple[int, ...] = (),
+        diff_indexes: list[int] | tuple[int, ...] = (),
+    ) -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            payload = review_cleanup_run(
+                conn,
+                run_id=run_id,
+                status=status,
+                diff_ids=tuple(int(item) for item in diff_ids),
+                diff_indexes=tuple(int(item) for item in diff_indexes),
+            )
+        return payload
+
+    def apply_memory_cleanup_plan(self, *, run_path: str = "", run_id: str = "", only_approved: bool = False) -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            if run_path:
+                persist_cleanup_plan(conn, load_cleanup_run_from_file(run_path))
+                run_id = load_cleanup_run_from_file(run_path).run_id
+            if not run_id:
+                raise ValueError("run_id or run_path is required")
+            payload = apply_cleanup_run(conn, run_id=run_id, only_approved=only_approved)
+        self._clear_suggestion_cache()
+        return payload
+
+    def rollback_memory_cleanup_plan(self, *, run_id: str) -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            payload = rollback_cleanup_run(conn, run_id=run_id)
+        self._clear_suggestion_cache()
+        return payload
+
+    def apply_memory_cleanup_diff(self, *, diff_id: int) -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            payload = apply_cleanup_diff(conn, diff_id=int(diff_id))
+            run_payload = cleanup_run_payload(conn, run_id=str(payload["runId"]))
+        self._clear_suggestion_cache()
+        return {
+            "schemaVersion": "rag-ime.memory-cleanup-diff.v1",
+            "diff": payload,
+            "run": run_payload,
+        }
+
+    def rollback_memory_cleanup_diff(self, *, diff_id: int) -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            payload = rollback_cleanup_diff(conn, diff_id=int(diff_id))
+            run_payload = cleanup_run_payload(conn, run_id=str(payload["runId"]))
+        self._clear_suggestion_cache()
+        return {
+            "schemaVersion": "rag-ime.memory-cleanup-diff.v1",
+            "diff": payload,
+            "run": run_payload,
+        }
 
     def event_count(self) -> int:
         self.initialize()
@@ -1137,6 +1968,543 @@ class LocalSqliteCoreClient:
                 self._suggestion_cache_invalidations += 1
             self._suggestion_cache.clear()
 
+    def _memory_item_rows(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        kind: str,
+        project: str,
+        app: str,
+        limit: int,
+        fts_query: str,
+    ) -> list[sqlite3.Row]:
+        params: list[Any] = []
+        joins = ""
+        where = ["mi.status IN ('active', 'approved', 'tombstoned')", "mi.privacy_class != 'sensitive'"]
+        order = "mi.updated_at_ms DESC"
+        if kind:
+            where.append("mi.kind = ?")
+            params.append(kind)
+        if project:
+            where.append("(mi.project = ? OR mi.project = '')")
+            params.append(project)
+        if app:
+            where.append("(mi.app = ? OR mi.app = '')")
+            params.append(app)
+        if fts_query:
+            joins = "JOIN memory_items_fts ON memory_items_fts.rowid = mi.id"
+            where.insert(0, "memory_items_fts MATCH ?")
+            params.insert(0, fts_query)
+            order = "bm25(memory_items_fts) ASC, mi.updated_at_ms DESC"
+        sql = f"""
+            SELECT
+                mi.*,
+                {'bm25(memory_items_fts) AS bm25_score,' if fts_query else '0.0 AS bm25_score,'}
+                COALESCE(ms.accepted_count, 0) AS accepted_count,
+                COALESCE(ms.skipped_count, 0) AS skipped_count,
+                COALESCE(tag_map.tags_joined, '') AS tags_joined
+            FROM memory_items mi
+            {joins}
+            LEFT JOIN memory_state ms ON ms.event_id = mi.source_event_id
+            LEFT JOIN (
+                SELECT mit.memory_item_id, GROUP_CONCAT(mt.tag, ',') AS tags_joined
+                FROM memory_item_tags mit
+                JOIN memory_tags mt ON mt.id = mit.tag_id
+                GROUP BY mit.memory_item_id
+            ) tag_map ON tag_map.memory_item_id = mi.id
+            WHERE {' AND '.join(where)}
+            ORDER BY {order}
+            LIMIT ?
+        """
+        params.append(max(1, limit))
+        return list(conn.execute(sql, params).fetchall())
+
+    def _retrieve_memories_v2(self, context: ImeQueryContext) -> tuple[list[CoreMemory], dict[str, object]]:
+        self.initialize()
+        started_at = now_ms()
+        query = compact_whitespace(" ".join(part for part in (context.current_input, context.recent_context, context.committed_context) if part))
+        fts_query = build_fts_query(query)
+        pool_counts = {"phrase": 0, "fts": 0, "vector": 0, "tag": 0}
+        filtered = {"tombstone": 0, "suppressed": 0, "rawEcho": 0, "duplicate": 0}
+        candidates: list[MemoryCandidateV2] = []
+        with self._connect() as conn:
+            phrase_rows = self._memory_item_rows(
+                conn,
+                kind="phrase",
+                project=context.project,
+                app=context.app,
+                limit=max(context.top_k * 3, 10),
+                fts_query=fts_query,
+            )
+            pool_counts["phrase"] = len(phrase_rows)
+            general_rows = self._memory_item_rows(
+                conn,
+                kind="",
+                project=context.project,
+                app=context.app,
+                limit=max(context.top_k * 5, 18),
+                fts_query=fts_query,
+            )
+            pool_counts["fts"] = len(general_rows)
+            energy = propagate_tag_energy(conn, query_text=query, max_hops=2, max_neighbors=8)
+            tag_scores = score_memory_items_from_tag_energy(conn, energy, limit=max(context.top_k * 4, 12))
+            pool_counts["tag"] = len(tag_scores)
+            vector_scores = self._memory_item_vector_scores(conn, query=query, project=context.project, app=context.app, limit=max(context.top_k * 4, 12))
+            pool_counts["vector"] = len(vector_scores)
+            for row in _merge_rows(phrase_rows, general_rows):
+                memory_id = str(row["memory_id"])
+                normalized_text = _optimizer_norm(str(row["normalized_text"] or row["text"] or ""))
+                source_event_id = int(row["source_event_id"] or 0)
+                if self.v2_governance_filter_enabled:
+                    if self._memory_item_tombstoned(
+                        conn,
+                        memory_id=memory_id,
+                        normalized_text=normalized_text,
+                        source_event_id=source_event_id,
+                    ):
+                        filtered["tombstone"] += 1
+                        continue
+                    if self._memory_item_suppressed(
+                        conn,
+                        memory_id=memory_id,
+                        normalized_text=normalized_text,
+                        source_event_id=source_event_id,
+                    ):
+                        filtered["suppressed"] += 1
+                        continue
+                metadata = _json_loads_dict(row["metadata_json"])
+                direct_allowed = bool(metadata.get("direct_candidate_allowed", False))
+                kind = str(row["kind"])
+                text = str(row["text"])
+                if kind == "raw_event" and not context.allow_raw_event_candidates and not direct_allowed:
+                    filtered["rawEcho"] += 1
+                    continue
+                if _candidate_repeats_current_input(text=text, current_input=context.current_input):
+                    filtered["rawEcho"] += 1
+                    continue
+                lexical_score = float(row["bm25_score"])
+                vector_score = vector_scores.get(int(row["id"]), 0.0)
+                tag_energy = tag_scores.get(int(row["id"]), 0.0)
+                accepted_count_state = int(row["accepted_count"] or 0)
+                query_feedback_bonus = self._memory_item_feedback_bonus(conn, memory_id=memory_id, query=query)
+                feedback_bonus = accepted_count_state * 0.6 + query_feedback_bonus
+                stale_penalty = 0.6 if kind == "raw_event" and len(text) > 12 else 0.0
+                score = (
+                    0.26 * lexical_score
+                    + 0.24 * vector_score
+                    + 0.16 * tag_energy
+                    + 0.12 * _affinity_score(row=row, project=context.project, app=context.app)
+                    + 0.10 * feedback_bonus
+                    + 0.07 * _freshness_score(updated_at_ms=int(row["updated_at_ms"]))
+                    + 0.05 * float(row["quality_score"])
+                    - 0.35 * stale_penalty
+                )
+                tags = _split_tags_joined(str(row["tags_joined"] or ""))
+                if not tags:
+                    tags = ("memory",) if kind in {"phrase", "stable_memory"} else ("rag",)
+                candidates.append(
+                    MemoryCandidateV2(
+                        text=text,
+                        source_type=_source_type_from_tags_v2(tags),
+                        memory_kind=kind,
+                        score=score,
+                        memory_ids=(memory_id,),
+                        evidence_preview=truncate_text(f"{text} | kind: {kind} | project: {row['project']} | app: {row['app']}", 180),
+                        diagnostics={
+                            "scoreBreakdown": {
+                                "lexical": round(0.26 * lexical_score, 4),
+                                "vector": round(0.24 * vector_score, 4),
+                                "tagEnergy": round(0.16 * tag_energy, 4),
+                                "feedback": round(feedback_bonus, 4),
+                                "stalePenalty": round(-0.35 * stale_penalty, 4),
+                                "acceptedCount": accepted_count_state,
+                            },
+                            "memoryKind": kind,
+                        },
+                        source_event_id=source_event_id or None,
+                        normalized_text=normalized_text,
+                        tags=tags,
+                        reason=_build_v2_reason(
+                            lexical_score=lexical_score,
+                            vector_score=vector_score,
+                            tag_energy=tag_energy,
+                            feedback_bonus=feedback_bonus,
+                            stale_penalty=stale_penalty,
+                            tags=tags,
+                        ),
+                    )
+                )
+        selected = select_diverse(candidates, top_k=max(1, context.top_k))
+        filtered["duplicate"] = max(0, len(candidates) - len(selected) - filtered["tombstone"] - filtered["rawEcho"])
+        memories = [
+            CoreMemory(
+                memory_id=item.memory_ids[0],
+                text=item.text,
+                source_ref=f"memory_item:{item.memory_ids[0]}",
+                score=item.score,
+                reason=item.reason,
+                evidence_preview=item.evidence_preview,
+                project=context.project,
+                tags=item.tags,
+                source_event_id=str(item.source_event_id) if item.source_event_id is not None else None,
+                created_at_ms=None,
+                state={
+                    "score_breakdown": _score_breakdown_payload_v2(item),
+                    "memory_kind": item.memory_kind,
+                },
+            )
+            for item in selected
+        ]
+        return memories, {
+            "latencyMs": max(0, now_ms() - started_at),
+            "pools": pool_counts,
+            "filtered": filtered,
+        }
+
+    def _memory_item_vector_scores(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        query: str,
+        project: str,
+        app: str,
+        limit: int,
+    ) -> dict[int, float]:
+        if not self._embedding_enabled():
+            return {}
+        query_vector = self.embedding_provider.embed(query)
+        if not query_vector:
+            return {}
+        params: list[Any] = [self.embedding_provider.fingerprint]
+        where = ["v.provider_fingerprint = ?", "mi.status IN ('active', 'approved')", "mi.privacy_class != 'sensitive'"]
+        if project:
+            where.append("(mi.project = ? OR mi.project = '')")
+            params.append(project)
+        if app:
+            where.append("(mi.app = ? OR mi.app = '')")
+            params.append(app)
+        rows = conn.execute(
+            f"""
+            SELECT mi.id, v.vector_json
+            FROM memory_item_vectors v
+            JOIN memory_items mi ON mi.id = v.memory_item_id
+            WHERE {' AND '.join(where)}
+            """,
+            params,
+        ).fetchall()
+        scores: list[tuple[int, float]] = []
+        for row in rows:
+            try:
+                vector = json.loads(row["vector_json"] or "[]")
+            except json.JSONDecodeError:
+                continue
+            score = cosine_similarity(query_vector, [float(value) for value in vector if isinstance(value, (int, float))])
+            if score > 0:
+                scores.append((int(row["id"]), score))
+        scores.sort(key=lambda item: item[1], reverse=True)
+        return dict(scores[: max(1, limit)])
+
+    def _memory_item_feedback_bonus(self, conn: sqlite3.Connection, *, memory_id: str, query: str) -> float:
+        row = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN action = 'accepted' THEN 1 ELSE 0 END) AS accepted_count,
+                SUM(CASE WHEN action IN ('skipped', 'skip', 'rejected') THEN 1 ELSE 0 END) AS negative_count
+            FROM candidate_feedback
+            WHERE memory_id = ? AND query_hash = ?
+            """,
+            (memory_id, _query_hash(query)),
+        ).fetchone()
+        accepted = int(row["accepted_count"] or 0) if row is not None else 0
+        negative = int(row["negative_count"] or 0) if row is not None else 0
+        return max(0.0, accepted * 0.5 - negative * 0.35)
+
+    def _memory_item_tombstoned(self, conn: sqlite3.Connection, *, memory_id: str, normalized_text: str, source_event_id: int) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM memory_tombstones
+            WHERE active = 1
+              AND (
+                    (target_type = 'memory_id' AND target_value = ?)
+                 OR (target_type = 'normalized_text' AND target_value = ?)
+                 OR (target_type = 'source_event_id' AND target_value = ?)
+              )
+            LIMIT 1
+            """,
+            (memory_id, normalized_text, str(source_event_id)),
+        ).fetchone()
+        return row is not None
+
+    def _memory_item_suppressed(self, conn: sqlite3.Connection, *, memory_id: str, normalized_text: str, source_event_id: int) -> bool:
+        clauses = [
+            "(match_type = 'memory_id' AND match_value = ?)",
+        ]
+        params: list[Any] = [now_ms(), memory_id]
+        normalized_value = _optimizer_norm(normalized_text)
+        if normalized_value:
+            clauses.append("(match_type IN ('text', 'normalized_text') AND match_value = ?)")
+            params.append(normalized_value)
+        if source_event_id > 0:
+            clauses.append("(match_type = 'memory_id' AND match_value = ?)")
+            params.append(f"event:{source_event_id}")
+        row = conn.execute(
+            f"""
+            SELECT 1
+            FROM memory_candidate_suppressions
+            WHERE (expires_at_ms IS NULL OR expires_at_ms > ?)
+              AND ({' OR '.join(clauses)})
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+        return row is not None
+
+    def _record_feedback_v2(self, conn: sqlite3.Connection, *, feedback: CandidateFeedbackV2) -> None:
+        for memory_id in feedback.memory_ids or ("",):
+            conn.execute(
+                """
+                INSERT INTO candidate_feedback(
+                    created_at_ms, query_hash, candidate_text, source_type, memory_id, action, app, project, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    now_ms(),
+                    feedback.query_hash,
+                    feedback.candidate_text,
+                    feedback.source_type,
+                    memory_id,
+                    feedback.action,
+                    feedback.app,
+                    feedback.project,
+                    json.dumps(feedback.metadata or {}, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
+    def _sync_memory_item_status_for_action(self, conn: sqlite3.Connection, *, action: MemoryAction, event_id: int) -> None:
+        if action.action_type in ("delete", "hide"):
+            conn.execute(
+                "UPDATE memory_items SET status = 'hidden', updated_at_ms = ? WHERE source_event_id = ? OR memory_id = ?",
+                (now_ms(), event_id, action.memory_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_tombstones(created_at_ms, target_type, target_value, reason, active, metadata_json)
+                VALUES (?, 'memory_id', ?, ?, 1, ?)
+                """,
+                (
+                    now_ms(),
+                    action.memory_id,
+                    f"action:{action.action_type}",
+                    json.dumps(action.metadata or {}, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+        elif action.action_type == "restore":
+            conn.execute(
+                "UPDATE memory_items SET status = 'active', updated_at_ms = ? WHERE source_event_id = ? OR memory_id = ?",
+                (now_ms(), event_id, action.memory_id),
+            )
+            conn.execute("UPDATE memory_tombstones SET active = 0 WHERE target_type = 'memory_id' AND target_value = ?", (action.memory_id,))
+        elif action.action_type in ("accepted", "accept", "pin"):
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET quality_score = MIN(1.0, quality_score + 0.08), updated_at_ms = ?
+                WHERE source_event_id = ? OR memory_id = ?
+                """,
+                (now_ms(), event_id, action.memory_id),
+            )
+        elif action.action_type in ("skipped", "skip", "downrank"):
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET quality_score = MAX(0.05, quality_score - 0.05), updated_at_ms = ?
+                WHERE source_event_id = ? OR memory_id = ?
+                """,
+                (now_ms(), event_id, action.memory_id),
+            )
+
+    def _event_text(self, conn: sqlite3.Connection, event_id: int) -> str:
+        row = conn.execute("SELECT committed_text FROM input_events WHERE id = ?", (event_id,)).fetchone()
+        if row is None:
+            return ""
+        return str(row["committed_text"])
+
+    def _apply_optimizer_feedback_governance(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        action: str,
+        candidate_id: str,
+        candidate_text: str,
+        candidate_source: str,
+        context_hash: str,
+        created_at_ms: int,
+        metadata: dict[str, object],
+    ) -> bool:
+        changed = False
+        effective_now_ms = max(created_at_ms, now_ms())
+        memory_id = candidate_id
+        normalized_text = _optimizer_norm(candidate_text)
+        if memory_id and action in {"accepted", "accept"}:
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET updated_at_ms = ?, quality_score = MIN(1.0, quality_score + 0.02)
+                WHERE memory_id = ?
+                """,
+                (effective_now_ms, memory_id),
+            )
+            changed = True
+        if memory_id and action in {"deleted", "delete", "hide"}:
+            self._upsert_candidate_suppression(
+                conn,
+                match_type="memory_id",
+                match_value=memory_id,
+                action="block",
+                reason="feedback_delete",
+                strength=1.0,
+                created_at_ms=effective_now_ms,
+            )
+            changed = True
+        if memory_id and action in {"downranked", "downrank"}:
+            self._upsert_candidate_suppression(
+                conn,
+                match_type="memory_id",
+                match_value=memory_id,
+                action="cooldown",
+                reason="feedback_downrank",
+                strength=0.8,
+                created_at_ms=effective_now_ms,
+                expires_at_ms=effective_now_ms + 7 * 24 * 60 * 60 * 1000,
+            )
+            changed = True
+        if memory_id and action in {"backspace_after_accept", "edited_after_accept", "ignored_repeatedly", "session_invalidated"}:
+            self._upsert_candidate_suppression(
+                conn,
+                match_type="memory_id",
+                match_value=memory_id,
+                action="cooldown",
+                reason=action,
+                strength=0.75,
+                created_at_ms=effective_now_ms,
+                expires_at_ms=effective_now_ms + 24 * 60 * 60 * 1000,
+            )
+            changed = True
+        if memory_id and action in {"skipped", "skip"}:
+            cooldown_scope = context_hash or _optimizer_feedback_scope(metadata)
+            params: list[Any] = [memory_id, max(0, created_at_ms - 7 * 24 * 60 * 60 * 1000)]
+            where = ["candidate_id = ?", "action IN ('skipped', 'skip')", "created_at_ms >= ?"]
+            if cooldown_scope:
+                where.append("COALESCE(context_hash, '') = ?")
+                params.append(cooldown_scope)
+            count_row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS skipped_count
+                FROM memory_feedback_events
+                WHERE {' AND '.join(where)}
+                """,
+                params,
+            ).fetchone()
+            skipped_count = int(count_row["skipped_count"] or 0) if count_row is not None else 0
+            if skipped_count >= 2:
+                self._upsert_candidate_suppression(
+                    conn,
+                    match_type="memory_id",
+                    match_value=memory_id,
+                    action="cooldown",
+                    reason="repeated_skip",
+                    strength=min(1.0, 0.4 + 0.1 * skipped_count),
+                    created_at_ms=effective_now_ms,
+                    expires_at_ms=effective_now_ms + 6 * 60 * 60 * 1000,
+                )
+                changed = True
+                if normalized_text:
+                    self._upsert_candidate_suppression(
+                        conn,
+                        match_type="normalized_text",
+                        match_value=normalized_text,
+                        action="cooldown",
+                        reason="repeated_skip_text",
+                        strength=min(1.0, 0.35 + 0.08 * skipped_count),
+                        created_at_ms=effective_now_ms,
+                        expires_at_ms=effective_now_ms + 6 * 60 * 60 * 1000,
+                    )
+        if normalized_text and candidate_source in {"rag", "memory"} and action in {"deleted", "delete", "hide"}:
+            self._upsert_candidate_suppression(
+                conn,
+                match_type="normalized_text",
+                match_value=normalized_text,
+                action="block",
+                reason="feedback_delete_text",
+                strength=1.0,
+                created_at_ms=effective_now_ms,
+            )
+            changed = True
+        return changed
+
+    def _upsert_candidate_suppression(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        match_type: str,
+        match_value: str,
+        action: str,
+        reason: str,
+        strength: float,
+        created_at_ms: int,
+        expires_at_ms: int | None = None,
+    ) -> None:
+        normalized_match_value = compact_whitespace(match_value)
+        if not normalized_match_value:
+            return
+        row = conn.execute(
+            """
+            SELECT id
+            FROM memory_candidate_suppressions
+            WHERE match_type = ? AND match_value = ?
+            ORDER BY created_at_ms DESC
+            LIMIT 1
+            """,
+            (match_type, normalized_match_value),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                """
+                INSERT INTO memory_candidate_suppressions(
+                    id, match_type, match_value, action, reason, strength, expires_at_ms, created_at_ms
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _candidate_suppression_id(match_type=match_type, match_value=normalized_match_value),
+                    match_type,
+                    normalized_match_value,
+                    action,
+                    reason,
+                    max(0.0, min(1.0, strength)),
+                    expires_at_ms,
+                    created_at_ms,
+                ),
+            )
+            return
+        conn.execute(
+            """
+            UPDATE memory_candidate_suppressions
+            SET action = ?, reason = ?, strength = ?, expires_at_ms = ?, created_at_ms = ?
+            WHERE id = ?
+            """,
+            (
+                action,
+                reason,
+                max(0.0, min(1.0, strength)),
+                expires_at_ms,
+                created_at_ms,
+                str(row["id"]),
+            ),
+        )
+
     def _search_rows(self, *, fts_query: str, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = [fts_query]
         where = ["memory_fts MATCH ?", "s.deleted = 0"]
@@ -1637,6 +3005,226 @@ class LocalSqliteCoreClient:
             GROUP BY e.committed_text, e.app
             """
         )
+
+
+def _candidate_repeats_current_input(*, text: str, current_input: str) -> bool:
+    normalized_text = compact_whitespace(text)
+    normalized_input = compact_whitespace(current_input)
+    if not normalized_text or not normalized_input:
+        return False
+    return normalized_text == normalized_input or normalized_text.endswith(normalized_input) or normalized_input.endswith(normalized_text)
+
+
+def _affinity_score(*, row: sqlite3.Row, project: str, app: str) -> float:
+    score = 0.0
+    if project and str(row["project"]) == project:
+        score += 1.0
+    if app and str(row["app"]) == app:
+        score += 0.6
+    return score
+
+
+def _freshness_score(*, updated_at_ms: int) -> float:
+    age_ms = max(0, now_ms() - updated_at_ms)
+    if age_ms <= _MS_PER_DAY:
+        return 1.0
+    if age_ms <= 7 * _MS_PER_DAY:
+        return 0.55
+    if age_ms <= 30 * _MS_PER_DAY:
+        return 0.2
+    return 0.0
+
+
+def _json_loads_dict(raw: object) -> dict[str, object]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _query_hash(query: str) -> str:
+    return stable_text_hash(query)
+
+
+def _memory_feedback_event_id(*, action: str, candidate_id: str, candidate_text: str, created_at_ms: int) -> str:
+    seed = f"{action}:{candidate_id}:{candidate_text}:{created_at_ms}"
+    return f"feedback:{created_at_ms}:{stable_text_hash(seed)[:12]}"
+
+
+def _candidate_suppression_id(*, match_type: str, match_value: str) -> str:
+    return f"suppression:{stable_text_hash(f'{match_type}:{match_value}')[:16]}"
+
+
+def _optimizer_feedback_scope(metadata: dict[str, object]) -> str:
+    candidates = metadata.get("shownCandidateIds")
+    if isinstance(candidates, list):
+        normalized = [compact_whitespace(str(item)) for item in candidates if compact_whitespace(str(item))]
+        if normalized:
+            return stable_text_hash("|".join(normalized))
+    selected_id = compact_whitespace(str(metadata.get("selectedCandidateId") or ""))
+    selected_text = compact_whitespace(str(metadata.get("selectedText") or ""))
+    if selected_id or selected_text:
+        return stable_text_hash(f"{selected_id}|{selected_text}")
+    return ""
+
+
+def _optimizer_norm(text: str) -> str:
+    return compact_whitespace(text).lower()
+
+
+def _json_loads_list(raw: object) -> list[object]:
+    try:
+        loaded = json.loads(str(raw or "[]"))
+    except json.JSONDecodeError:
+        return []
+    return loaded if isinstance(loaded, list) else []
+
+
+def _memory_item_explanation_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "id": int(row["id"]),
+        "memoryId": str(row["memory_id"]),
+        "kind": str(row["kind"]),
+        "text": str(row["text"]),
+        "normalizedText": str(row["normalized_text"]),
+        "sourceEventId": int(row["source_event_id"] or 0) or None,
+        "project": str(row["project"]),
+        "app": str(row["app"]),
+        "confidence": float(row["confidence"]),
+        "qualityScore": float(row["quality_score"]),
+        "status": str(row["status"]),
+        "privacyClass": str(row["privacy_class"]),
+        "createdAtMs": int(row["created_at_ms"]),
+        "updatedAtMs": int(row["updated_at_ms"]),
+        "metadata": _json_loads_dict(row["metadata_json"]),
+    }
+
+
+def _memory_feedback_row_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "candidateId": str(row["candidate_id"] or ""),
+        "candidateText": str(row["candidate_text"]),
+        "candidateSource": str(row["candidate_source"]),
+        "action": str(row["action"]),
+        "contextHash": str(row["context_hash"] or ""),
+        "frontAppBundleId": str(row["front_app_bundle_id"] or ""),
+        "rawInput": str(row["raw_input"] or ""),
+        "preedit": str(row["preedit"] or ""),
+        "committedTail": str(row["committed_tail"] or ""),
+        "metadata": _json_loads_dict(row["metadata_json"]),
+        "createdAtMs": int(row["created_at_ms"]),
+    }
+
+
+def _optimizer_trace_row_payload(row: sqlite3.Row) -> dict[str, object]:
+    query_plan = _json_loads_dict(row["query_plan_json"])
+    return {
+        "traceId": str(row["id"]),
+        "requestSeq": int(row["request_seq"]),
+        "contextHash": str(row["context_hash"]),
+        "contextFrame": query_plan.get("contextFrame", {}) if isinstance(query_plan.get("contextFrame"), dict) else {},
+        "queryPlan": query_plan.get("queryPlan", {}) if isinstance(query_plan.get("queryPlan"), dict) else {},
+        "warnings": list(query_plan.get("warnings") or []),
+        "degraded": bool(query_plan.get("degraded")),
+        "rawResults": _json_loads_list(row["raw_results_json"]),
+        "optimizedCandidates": _json_loads_list(row["optimized_candidates_json"]),
+        "blocked": _json_loads_list(row["blocked_json"]),
+        "latencyMs": float(row["latency_ms"]),
+        "createdAtMs": int(row["created_at_ms"]),
+    }
+
+
+def _memory_suppression_row_payload(row: sqlite3.Row) -> dict[str, object]:
+    expires_at_ms = int(row["expires_at_ms"] or 0) or None
+    now = now_ms()
+    return {
+        "id": str(row["id"]),
+        "matchType": str(row["match_type"]),
+        "matchValue": str(row["match_value"]),
+        "action": str(row["action"]),
+        "reason": str(row["reason"]),
+        "strength": float(row["strength"]),
+        "expiresAtMs": expires_at_ms,
+        "createdAtMs": int(row["created_at_ms"]),
+        "active": expires_at_ms is None or expires_at_ms > now,
+    }
+
+
+def _memory_tombstone_row_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "id": int(row["id"]),
+        "createdAtMs": int(row["created_at_ms"]),
+        "targetType": str(row["target_type"]),
+        "targetValue": str(row["target_value"]),
+        "reason": str(row["reason"]),
+        "active": bool(row["active"]),
+        "metadata": _json_loads_dict(row["metadata_json"]),
+    }
+
+
+def _split_tags_joined(raw: str) -> tuple[str, ...]:
+    if not raw:
+        return ()
+    return tuple(tag for tag in (compact_whitespace(part) for part in raw.split(",")) if tag)
+
+
+def _source_type_from_tags_v2(tags: tuple[str, ...]) -> str:
+    tag_set = {tag.lower() for tag in tags}
+    if tag_set.intersection({"memory", "frequency", "phrase-memory", "user-input", "curated"}):
+        return "memory"
+    return "rag"
+
+
+def _build_v2_reason(
+    *,
+    lexical_score: float,
+    vector_score: float,
+    tag_energy: float,
+    feedback_bonus: float,
+    stale_penalty: float,
+    tags: tuple[str, ...],
+) -> str:
+    reason = [f"fts5:{round(0.26 * lexical_score, 3)}"]
+    if vector_score > 0:
+        reason.append(f"vector:{round(vector_score, 3)}")
+    if tag_energy > 0:
+        reason.append(f"tag:{round(tag_energy, 3)}")
+    if feedback_bonus > 0:
+        reason.append(f"accepted:{max(1, round(feedback_bonus / 0.6))}")
+    if stale_penalty > 0:
+        reason.append(f"stale:-{round(stale_penalty, 3)}")
+    if tags:
+        reason.append("raw:" + ",".join(tag.lower() for tag in tags[:3]))
+    return ";".join(reason)
+
+
+def _score_breakdown_payload_v2(candidate: MemoryCandidateV2) -> dict[str, object]:
+    components = dict(candidate.diagnostics.get("scoreBreakdown") or {})
+    return {
+        "schemaVersion": "rag-ime.score-breakdown.v1",
+        "components": {
+            "fts5": components.get("lexical", 0.0),
+            "vector": components.get("vector", 0.0),
+            "tag": components.get("tagEnergy", 0.0),
+            "accepted": components.get("feedback", 0.0),
+            "stalePenalty": components.get("stalePenalty", 0.0),
+        },
+        "rawSignals": {
+            "acceptedCount": int(components.get("acceptedCount", 0) or 0),
+            "memoryKind": candidate.memory_kind,
+            "sourceType": candidate.source_type,
+        },
+        "weights": {
+            "lexical": 0.26,
+            "vector": 0.24,
+            "tag": 0.16,
+            "accepted": 0.6,
+            "stalePenalty": -0.35,
+        },
+        "query": "",
+        "total": round(candidate.score, 4),
+    }
 
 
 def _tail_chars(text: str, max_chars: int) -> str:
@@ -2397,6 +3985,118 @@ def _runtime_trace_penalty(text: str) -> float:
 
 def _copy_suggestions(suggestions: list[InputSuggestion] | tuple[InputSuggestion, ...]) -> list[InputSuggestion]:
     return [replace(item, metadata=dict(item.metadata)) for item in suggestions]
+
+
+def _legacy_suggestions_need_v2_recovery(
+    suggestions: list[InputSuggestion],
+    *,
+    current_input: str,
+    recent_context: str,
+) -> bool:
+    return any(
+        _suggestion_looks_like_raw_history_echo(
+            suggestion,
+            current_input=current_input,
+            recent_context=recent_context,
+        )
+        for suggestion in suggestions[:3]
+    )
+
+
+def _should_prefer_v2_ime_suggestions(
+    *,
+    legacy_suggestions: list[InputSuggestion],
+    v2_suggestions: list[InputSuggestion],
+    current_input: str,
+    recent_context: str,
+) -> bool:
+    if not v2_suggestions:
+        return False
+    if not any(
+        _suggestion_looks_like_raw_history_echo(
+            suggestion,
+            current_input=current_input,
+            recent_context=recent_context,
+        )
+        for suggestion in legacy_suggestions[:3]
+    ):
+        return False
+    return any(_suggestion_looks_like_compiled_memory(item) for item in v2_suggestions[:3])
+
+
+def _merge_prefer_v2_suggestions(
+    *,
+    v2_suggestions: list[InputSuggestion],
+    legacy_suggestions: list[InputSuggestion],
+    top_k: int,
+    current_input: str,
+    recent_context: str,
+) -> list[InputSuggestion]:
+    merged: list[InputSuggestion] = []
+    seen: set[str] = set()
+    for item in [*v2_suggestions, *legacy_suggestions]:
+        if item in legacy_suggestions and _suggestion_looks_like_raw_history_echo(
+            item,
+            current_input=current_input,
+            recent_context=recent_context,
+        ):
+            continue
+        key = _legacy_v2_suggestion_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+        if len(merged) >= max(1, top_k):
+            break
+    return merged
+
+
+def _legacy_v2_suggestion_key(suggestion: InputSuggestion) -> str:
+    metadata = dict(suggestion.metadata)
+    insert_text = compact_whitespace(str(metadata.get("insert_text") or suggestion.surface_text)).lower()
+    memory_id = compact_whitespace(str(metadata.get("memory_id") or ""))
+    return memory_id or insert_text
+
+
+def _suggestion_looks_like_compiled_memory(suggestion: InputSuggestion) -> bool:
+    metadata = dict(suggestion.metadata)
+    tags = {str(tag).lower() for tag in metadata.get("tags") or []}
+    surface = compact_whitespace(suggestion.surface_text)
+    if not surface or len(surface) > 24:
+        return False
+    if tags.intersection({"phrase-memory", "compiled-memory", "compiled-phrase", "curated", "structure", "outline"}):
+        return True
+    source_type = str(metadata.get("source_type") or "")
+    return source_type == "memory" and suggestion.suggestion_type in {"phrase", "structure", "continue"}
+
+
+def _suggestion_looks_like_raw_history_echo(
+    suggestion: InputSuggestion,
+    *,
+    current_input: str,
+    recent_context: str,
+) -> bool:
+    metadata = dict(suggestion.metadata)
+    tags = {str(tag).lower() for tag in metadata.get("tags") or []}
+    surface = compact_whitespace(suggestion.surface_text)
+    if not surface or len(surface) <= 24:
+        return False
+    if tags.intersection({"phrase-memory", "compiled-memory", "compiled-phrase", "curated", "structure", "outline"}):
+        return False
+    if tags.intersection({"user-input", "raw", "history", "codex-history"}):
+        return True
+    if suggestion.suggestion_type not in {"sentence", "paragraph"}:
+        return False
+    if str(metadata.get("source_type") or "") not in {"memory", "rag"}:
+        return False
+    normalized_input = compact_whitespace(current_input).lower()
+    normalized_context = compact_whitespace(recent_context).lower()
+    normalized_surface = surface.lower()
+    if normalized_input and normalized_input in normalized_surface:
+        return True
+    if normalized_context and len(normalized_context) >= 4 and normalized_context in normalized_surface:
+        return True
+    return False
 
 
 def _merge_rows(primary: list[sqlite3.Row], secondary: list[sqlite3.Row]) -> list[sqlite3.Row]:

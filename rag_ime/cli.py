@@ -29,6 +29,17 @@ from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, d
 from .embeddings import embedding_provider_from_env
 from .history_context import build_prediction_context
 from .local_sqlite_core import LocalSqliteCoreClient
+from .memory_cleanup import cleanup_plan_from_payload, cleanup_plan_to_payload, inspect_cleanup_plan, load_cleanup_run_from_file
+from .memory_compiler import (
+    build_memory_compile_bundle,
+    cleanup_plan_from_compiler_report,
+    compiler_generator_from_env,
+    memory_compile_report_payload,
+)
+from .memory_eval import run_memory_optimizer_eval
+from .memory_models import ImeQueryContext
+from .memory_optimizer import AntiEchoGovernor, MemoryOptimizerConfig
+from .memory_optimizer_models import ContextFrame, RawRetrievalHit
 from .memory_generator import (
     MemoryGenerationError,
     VcpRebuildMemoryGenerator,
@@ -102,6 +113,179 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     subparsers.add_parser("init-db", help="Initialize the local SQLite/FTS5 database")
 
+    memory_inspect = subparsers.add_parser("memory-inspect", help="Inspect v2 memory items")
+    memory_inspect.add_argument("--project", default="")
+    memory_inspect.add_argument("--kind", default="")
+    memory_inspect.add_argument("--status", default="")
+    memory_inspect.add_argument("--limit", type=int, default=20)
+
+    memory_optimizer_trace = subparsers.add_parser("memory-optimizer-trace", help="Inspect one stored optimizer trace")
+    memory_optimizer_trace.add_argument("trace_id")
+
+    memory_candidate_explain = subparsers.add_parser("memory-candidate-explain", help="Explain one memory/optimizer candidate")
+    memory_candidate_explain.add_argument("candidate_id")
+    memory_candidate_explain.add_argument("--context-hash", default="")
+
+    memory_governance = subparsers.add_parser("memory-governance", help="Inspect suppressions and tombstones")
+    memory_governance.add_argument("--limit", type=int, default=20)
+    memory_governance.add_argument("--include-inactive", action="store_true")
+
+    governance_report = subparsers.add_parser("governance-report", help="Alias of memory-governance for PR-5 review")
+    governance_report.add_argument("--limit", type=int, default=20)
+    governance_report.add_argument("--include-inactive", action="store_true")
+
+    tombstone = subparsers.add_parser("tombstone", help="Create one manual tombstone entry")
+    tombstone.add_argument("target_value")
+    tombstone.add_argument(
+        "--target-type",
+        choices=("memory_id", "normalized_text", "phrase", "source_event_id"),
+        default="memory_id",
+    )
+    tombstone.add_argument("--reason", default="manual")
+    tombstone.add_argument("--metadata-json", default="")
+    tombstone.add_argument("--inactive", action="store_true")
+
+    memory_cleanup_runs = subparsers.add_parser("memory-cleanup-runs", help="Inspect stored cleanup runs and diffs")
+    memory_cleanup_runs.add_argument("--limit", type=int, default=20)
+    memory_cleanup_runs.add_argument("--run-id", default="")
+    memory_cleanup_runs.add_argument("--status", default="")
+
+    cleanup_review = subparsers.add_parser("memory-cleanup-review", help="Approve or reject stored cleanup diffs")
+    cleanup_review.add_argument("--run-id", required=True)
+    cleanup_review.add_argument("--status", choices=("pending", "approved", "rejected"), required=True)
+    cleanup_review.add_argument("--diff-id", action="append", type=int, default=[])
+    cleanup_review.add_argument("--diff-index", action="append", type=int, default=[])
+
+    compile_review = subparsers.add_parser("memory-compile-review", help="Alias of memory-cleanup-review for compiler-generated runs")
+    compile_review.add_argument("--run-id", required=True)
+    compile_review.add_argument("--status", choices=("pending", "approved", "rejected"), required=True)
+    compile_review.add_argument("--diff-id", action="append", type=int, default=[])
+    compile_review.add_argument("--diff-index", action="append", type=int, default=[])
+
+    recompute_tags = subparsers.add_parser("memory-recompute-tags", help="Recompute v2 tag graph edges")
+    recompute_tags.add_argument("--project", default="")
+
+    retrieve_v2 = subparsers.add_parser("retrieve-candidates-v2", help="Run the v2 retrieval mixer")
+    retrieve_v2.add_argument("current_input")
+    retrieve_v2.add_argument("--recent-context", default="")
+    retrieve_v2.add_argument("--committed-context", default="")
+    retrieve_v2.add_argument("--project", default="wisdom-weasel-rag-ime")
+    retrieve_v2.add_argument("--app", default="")
+    retrieve_v2.add_argument("--top-k", type=int, default=5)
+    retrieve_v2.add_argument("--allow-raw-event-candidates", action="store_true")
+
+    anti_echo_demo = subparsers.add_parser("anti-echo-demo", help="Run the PR-5 anti-echo governor on ad-hoc candidates")
+    anti_echo_demo.add_argument("candidate_text", nargs="+")
+    anti_echo_demo.add_argument("--candidate-source", choices=("rag", "memory", "phrase", "cold_knowledge"), default="rag")
+    anti_echo_demo.add_argument(
+        "--hit-source",
+        choices=("fts", "stable_memory", "phrase", "tag_graph", "rime_feedback", "vector", "cold_knowledge"),
+        default="fts",
+    )
+    anti_echo_demo.add_argument("--committed-tail", default="")
+    anti_echo_demo.add_argument("--raw-input", default="")
+    anti_echo_demo.add_argument("--preedit", default="")
+    anti_echo_demo.add_argument("--semantic-query", default="")
+    anti_echo_demo.add_argument(
+        "--semantic-query-source",
+        choices=("rime_candidate", "commit_preview", "preedit", "raw_input", "none"),
+        default="none",
+    )
+    anti_echo_demo.add_argument("--context-hash", default="ctx:anti-echo-demo")
+    anti_echo_demo.add_argument("--session-id", default="anti-echo-demo")
+    anti_echo_demo.add_argument("--request-seq", type=int, default=1)
+    anti_echo_demo.add_argument("--front-app-bundle-id", default="manual.cli")
+    anti_echo_demo.add_argument(
+        "--input-mode",
+        choices=("pinyin_composition", "post_commit_continuation", "english", "code", "path", "number", "punctuation", "unknown"),
+        default="post_commit_continuation",
+    )
+    anti_echo_demo.add_argument("--project", default="wisdom-weasel-rag-ime")
+    anti_echo_demo.add_argument("--source-tag", action="append", default=[])
+    anti_echo_demo.add_argument("--governance-json", default="")
+
+    cleanup_plan = subparsers.add_parser("memory-cleanup-plan", help="Build a dry-run cleanup diff plan")
+    cleanup_plan.add_argument("--project", default="")
+    cleanup_plan.add_argument("--since-days", type=int, default=90)
+    cleanup_plan.add_argument("--provider", default="")
+    cleanup_plan.add_argument("--model", default="")
+    cleanup_plan.add_argument("--out", default="")
+
+    cleanup_apply = subparsers.add_parser("memory-cleanup-apply", help="Apply a stored cleanup diff plan")
+    cleanup_apply.add_argument("--run", default="", help="JSON cleanup plan file")
+    cleanup_apply.add_argument("--run-id", default="", help="Stored cleanup run id")
+    cleanup_apply.add_argument("--only-approved", action="store_true")
+
+    cleanup_rollback = subparsers.add_parser("memory-cleanup-rollback", help="Rollback an applied cleanup diff plan")
+    cleanup_rollback.add_argument("--run-id", required=True)
+
+    cleanup_preview = subparsers.add_parser("cleanup-preview", help="Build an offline cleanup diff preview without modifying the DB")
+    cleanup_preview.add_argument("--provider", choices=("local-rule", "x1api", "x1top", "openai-compatible", "model-api"), default="local-rule")
+    cleanup_preview.add_argument("--project", default="wisdom-weasel-rag-ime")
+    cleanup_preview.add_argument("--since-days", type=int, default=90)
+    cleanup_preview.add_argument("--recent-limit", type=int, default=80)
+    cleanup_preview.add_argument("--phrase-limit", type=int, default=60)
+    cleanup_preview.add_argument("--memory-limit", type=int, default=120)
+    cleanup_preview.add_argument("--governance-limit", type=int, default=40)
+    cleanup_preview.add_argument("--max-memories", type=int, default=4)
+    cleanup_preview.add_argument("--max-lexicon-phrases", type=int, default=8)
+    cleanup_preview.add_argument("--max-hide-suggestions", type=int, default=12)
+    cleanup_preview.add_argument("--model", default="")
+    cleanup_preview.add_argument(
+        "--model-env-path",
+        default=os.environ.get("RAG_IME_MODEL_ENV", "")
+        or os.environ.get("RAG_IME_X1API_ENV", "")
+        or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
+    )
+    cleanup_preview.add_argument("--allow-private-paths", action="store_true")
+    cleanup_preview.add_argument("--output", default="")
+
+    cleanup_validate = subparsers.add_parser("cleanup-validate", help="Validate a cleanup diff plan before apply")
+    cleanup_validate.add_argument("--run-id", default="")
+    cleanup_validate.add_argument("--run", default="", help="JSON cleanup plan file")
+
+    cleanup_apply = subparsers.add_parser("cleanup-apply", help="Apply a cleanup diff plan after explicit confirmation")
+    cleanup_apply.add_argument("--run-id", default="")
+    cleanup_apply.add_argument("--run", default="", help="JSON cleanup plan file")
+    cleanup_apply.add_argument("--only-approved", action="store_true")
+    cleanup_apply.add_argument("--apply", action="store_true", help="Required to actually modify the DB")
+
+    cleanup_rollback_v2 = subparsers.add_parser("cleanup-rollback", help="Rollback an applied cleanup run")
+    cleanup_rollback_v2.add_argument("--run-id", required=True)
+
+    memory_compile = subparsers.add_parser(
+        "memory-compile",
+        help="Export a sanitized local bundle and build a dry-run cleanup diff with an explicitly configured model",
+    )
+    memory_compile.add_argument("--project", default="wisdom-weasel-rag-ime")
+    memory_compile.add_argument("--since-days", type=int, default=14)
+    memory_compile.add_argument("--recent-limit", type=int, default=80)
+    memory_compile.add_argument("--phrase-limit", type=int, default=60)
+    memory_compile.add_argument("--memory-limit", type=int, default=120)
+    memory_compile.add_argument("--governance-limit", type=int, default=40)
+    memory_compile.add_argument("--max-memories", type=int, default=4)
+    memory_compile.add_argument("--max-lexicon-phrases", type=int, default=8)
+    memory_compile.add_argument("--max-hide-suggestions", type=int, default=12)
+    memory_compile.add_argument("--provider", default="")
+    memory_compile.add_argument("--model", default="")
+    memory_compile.add_argument(
+        "--model-env-path",
+        default=os.environ.get("RAG_IME_MODEL_ENV", "")
+        or os.environ.get("RAG_IME_X1API_ENV", "")
+        or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
+    )
+    memory_compile.add_argument("--output", default="", help="Optional JSON path. When set, writes the dry-run diff plan.")
+    memory_compile.add_argument("--allow-private-paths", action="store_true")
+    memory_compile.add_argument("--dry-run", action="store_true", help="Accepted for compatibility; memory-compile is always dry-run.")
+
+    memory_compile_apply = subparsers.add_parser("memory-compile-apply", help="Apply a reviewed diff emitted by memory-compile")
+    memory_compile_apply.add_argument("--diff", default="")
+    memory_compile_apply.add_argument("--run-id", default="")
+    memory_compile_apply.add_argument("--only-approved", action="store_true")
+
+    memory_compile_rollback = subparsers.add_parser("memory-compile-rollback", help="Rollback an applied memory-compile run")
+    memory_compile_rollback.add_argument("--run-id", required=True)
+
     rebuild_vector = subparsers.add_parser("rebuild-vector-index", help="Backfill optional local-core vector side index")
     rebuild_vector.add_argument("--project", default="")
     rebuild_vector.add_argument("--limit", type=int, default=0)
@@ -121,7 +305,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     generate_memory = subparsers.add_parser(
         "generate-memory",
-        help="Distill stable long-term memory from text through x1api/model config",
+        help="Distill stable long-term memory from text through x1top/x1api-compatible config",
     )
     generate_memory.add_argument("text")
     generate_memory.add_argument("--recent-context", default="")
@@ -135,13 +319,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=os.environ.get("RAG_IME_MODEL_ENV", "")
         or os.environ.get("RAG_IME_X1API_ENV", "")
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
-        help="x1api/model env file. Prefer this over the legacy --vcp-env-path.",
+        help="x1top/x1api-compatible env file. Prefer this over the legacy --vcp-env-path.",
     )
     generate_memory.add_argument("--vcp-env-path", default="", help=argparse.SUPPRESS)
 
     optimize_core = subparsers.add_parser(
         "optimize-core",
-        help="Use x1api/model config to optimize RAG memory and lexicon phrases from local history",
+        help="Use x1top/x1api-compatible config to optimize RAG memory and lexicon phrases from local history",
     )
     optimize_core.add_argument("--project", default="wisdom-weasel-rag-ime")
     optimize_core.add_argument("--app", default="manual")
@@ -288,6 +472,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_rime_sidecar.add_argument("--max-side-candidates", type=int, default=3)
     eval_rime_sidecar.add_argument("--rime-cache-ttl-ms", type=int, default=int(os.environ.get("RAG_IME_RIME_CACHE_TTL_MS", "400")))
     eval_rime_sidecar.add_argument("--force-side-candidates", action="store_true")
+
+    eval_memory_optimizer = subparsers.add_parser(
+        "eval-memory-optimizer",
+        help="Run sidecar + memory optimizer regression cases against a local temporary core",
+    )
+    eval_memory_optimizer.add_argument("cases_file", help="JSONL cases for memory optimizer gates")
+    eval_memory_optimizer.add_argument("--project", default="wisdom-weasel-rag-ime")
+    eval_memory_optimizer.add_argument("--repeat", type=int, default=1)
+    eval_memory_optimizer.add_argument("--max-visible-candidates", type=int, default=4)
+    eval_memory_optimizer.add_argument("--max-side-candidates", type=int, default=2)
+    eval_memory_optimizer.add_argument("--latency-budget-ms", type=int, default=150)
+    eval_memory_optimizer.add_argument(
+        "--optimizer-max-ms",
+        type=int,
+        default=int(os.environ.get("RAG_IME_MEMORY_OPTIMIZER_MAX_MS", "15")),
+    )
 
     predict_benchmark = subparsers.add_parser("predict-benchmark", help="Measure local model prediction latency")
     predict_benchmark.add_argument("--case", action="append", default=[], help="Input case to predict. Can be repeated.")
@@ -511,7 +711,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--require-predictor-capability",
         action="append",
         default=[],
-        choices=("streaming", "residentModel", "promptCache", "sequenceFork", "batchCandidates", "logitsTopK", "serverTiming"),
+        choices=("streaming", "residentModel", "promptCache", "seededPromptReplay", "kvFork", "sequenceFork", "batchCandidates", "logitsTopK", "serverTiming"),
         help="Require a local model provider capability. Repeat for Wisdom-Weasel-style gates.",
     )
     quality_gate.add_argument("--include-cases", action="store_true", help="Include full per-case eval details in the quality-gate JSON")
@@ -599,7 +799,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--require-predictor-capability",
         action="append",
         default=[],
-        choices=("streaming", "residentModel", "promptCache", "sequenceFork", "batchCandidates", "logitsTopK", "serverTiming"),
+        choices=("streaming", "residentModel", "promptCache", "seededPromptReplay", "kvFork", "sequenceFork", "batchCandidates", "logitsTopK", "serverTiming"),
     )
     squirrel_tryout_gate.add_argument("--include-cases", action="store_true")
     squirrel_tryout_gate.add_argument("--report-path", default="")
@@ -694,6 +894,423 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit("init-db requires --core-mode local")
         core.initialize()
         print(json.dumps({"db_path": str(core.db_path), "initialized": True}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "memory-inspect":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-inspect requires --core-mode local")
+        print(
+            json.dumps(
+                core.inspect_memory_v2(
+                    project=args.project,
+                    limit=max(1, int(args.limit)),
+                    kind=args.kind,
+                    status=args.status,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "memory-optimizer-trace":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-optimizer-trace requires --core-mode local")
+        payload = core.get_memory_optimizer_trace(args.trace_id)
+        if payload is None:
+            raise SystemExit(f"unknown optimizer trace: {args.trace_id}")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "memory-candidate-explain":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-candidate-explain requires --core-mode local")
+        payload = core.explain_memory_candidate(args.candidate_id, context_hash=args.context_hash or None)
+        if payload is None:
+            raise SystemExit(f"unknown memory candidate: {args.candidate_id}")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command in {"memory-governance", "governance-report"}:
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit(f"{args.command} requires --core-mode local")
+        print(
+            json.dumps(
+                core.inspect_memory_governance(
+                    limit=max(1, int(args.limit)),
+                    include_inactive=bool(args.include_inactive),
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "tombstone":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("tombstone requires --core-mode local")
+        metadata = _json_object_arg(args.metadata_json, flag="--metadata-json")
+        payload = core.add_memory_tombstone(
+            target_type=args.target_type,
+            target_value=args.target_value,
+            reason=args.reason,
+            metadata=metadata,
+            active=not bool(args.inactive),
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "memory-cleanup-runs":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-cleanup-runs requires --core-mode local")
+        print(
+            json.dumps(
+                core.list_memory_cleanup_runs(
+                    limit=max(1, int(args.limit)),
+                    run_id=args.run_id,
+                    status=args.status,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command in {"memory-cleanup-review", "memory-compile-review"}:
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit(f"{args.command} requires --core-mode local")
+        payload = core.review_memory_cleanup_plan(
+            run_id=args.run_id,
+            status=args.status,
+            diff_ids=list(args.diff_id),
+            diff_indexes=list(args.diff_index),
+        )
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.memory-cleanup-review.v1",
+                    "run": payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "memory-recompute-tags":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-recompute-tags requires --core-mode local")
+        print(json.dumps(core.recompute_memory_tags(project=args.project), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "retrieve-candidates-v2":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("retrieve-candidates-v2 requires --core-mode local")
+        context = ImeQueryContext(
+            current_input=args.current_input,
+            recent_context=args.recent_context,
+            committed_context=args.committed_context,
+            project=args.project,
+            app=args.app,
+            top_k=max(1, int(args.top_k)),
+            allow_raw_event_candidates=bool(args.allow_raw_event_candidates),
+        )
+        print(json.dumps(core.retrieve_candidates_v2(context=context), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "anti-echo-demo":
+        governance = _json_object_arg(args.governance_json, flag="--governance-json")
+        governor = AntiEchoGovernor(MemoryOptimizerConfig(enabled=True))
+        context = ContextFrame(
+            session_id=args.session_id,
+            request_seq=max(1, int(args.request_seq)),
+            front_app_bundle_id=args.front_app_bundle_id or None,
+            input_mode=args.input_mode,
+            raw_input=args.raw_input,
+            preedit=args.preedit,
+            committed_tail=args.committed_tail,
+            selected_rime_candidates=[],
+            semantic_query=args.semantic_query,
+            semantic_query_source=args.semantic_query_source,
+            composition_hash="",
+            context_hash=args.context_hash,
+            active_tags=[],
+            project_scope=args.project or None,
+            timestamp_ms=now_ms(),
+        )
+        source_tags = [compact_whitespace(tag) for tag in args.source_tag if compact_whitespace(tag)]
+        decisions: list[dict[str, object]] = []
+        for index, text in enumerate(args.candidate_text, start=1):
+            hit = RawRetrievalHit(
+                id=f"demo:{index}",
+                text=text,
+                source=args.hit_source,
+                score=max(0.1, 1.0 - (index - 1) * 0.05),
+                memory_atom_id=None,
+                evidence="anti-echo-demo",
+                metadata={
+                    "tags": source_tags,
+                    "source_type": args.candidate_source,
+                },
+            )
+            blocked = governor.should_block(hit=hit, context=context, governance=governance)
+            decisions.append(
+                {
+                    "id": hit.id,
+                    "text": hit.text,
+                    "blocked": blocked is not None,
+                    "reason": blocked.reason if blocked is not None else "",
+                    "source": hit.source,
+                    "sourceType": args.candidate_source,
+                }
+            )
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.anti-echo-demo.v1",
+                    "context": {
+                        "committedTail": context.committed_tail,
+                        "rawInput": context.raw_input,
+                        "semanticQuery": context.semantic_query,
+                        "inputMode": context.input_mode,
+                        "contextHash": context.context_hash,
+                    },
+                    "governance": governance,
+                    "decisions": decisions,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "cleanup-preview":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("cleanup-preview requires --core-mode local")
+        payload = _cleanup_preview_payload(core=core, args=args)
+        if args.output:
+            Path(args.output).write_text(json.dumps(payload["run"], ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "cleanup-validate":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("cleanup-validate requires --core-mode local")
+        try:
+            plan = _cleanup_plan_from_cli_args(core=core, run_id=args.run_id, run_path=args.run)
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {"schemaVersion": "rag-ime.cleanup-validate.v1", "ok": False, "error": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        report = inspect_cleanup_plan(plan)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report.get("ok") else 1
+
+    if args.command == "cleanup-apply":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("cleanup-apply requires --core-mode local")
+        if not bool(args.apply):
+            print(
+                json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.cleanup-apply.v1",
+                        "ok": False,
+                        "error": "cleanup-apply requires --apply to modify the DB",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        try:
+            plan = _cleanup_plan_from_cli_args(core=core, run_id=args.run_id, run_path=args.run)
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {"schemaVersion": "rag-ime.cleanup-apply.v1", "ok": False, "error": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        validation = inspect_cleanup_plan(plan)
+        if not validation.get("ok"):
+            print(
+                json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.cleanup-apply.v1",
+                        "ok": False,
+                        "error": "cleanup plan failed validation",
+                        "validation": validation,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 1
+        payload = core.apply_memory_cleanup_plan(
+            run_path=args.run,
+            run_id=args.run_id,
+            only_approved=bool(args.only_approved),
+        )
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.cleanup-apply.v1",
+                    "ok": True,
+                    "validation": validation,
+                    "run": payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "cleanup-rollback":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("cleanup-rollback requires --core-mode local")
+        payload = core.rollback_memory_cleanup_plan(run_id=args.run_id)
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.cleanup-rollback.v1",
+                    "ok": True,
+                    "run": payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "memory-cleanup-plan":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-cleanup-plan requires --core-mode local")
+        payload = core.build_memory_cleanup_plan(
+            project=args.project,
+            since_days=max(1, int(args.since_days)),
+            provider=args.provider,
+            model=args.model,
+        )
+        if args.out:
+            Path(args.out).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "memory-cleanup-apply":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-cleanup-apply requires --core-mode local")
+        payload = core.apply_memory_cleanup_plan(
+            run_path=args.run,
+            run_id=args.run_id,
+            only_approved=bool(args.only_approved),
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "memory-cleanup-rollback":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-cleanup-rollback requires --core-mode local")
+        payload = core.rollback_memory_cleanup_plan(run_id=args.run_id)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "memory-compile":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-compile requires --core-mode local")
+        try:
+            generator = compiler_generator_from_env(
+                env_path=args.model_env_path or None,
+                provider=args.provider,
+                model=args.model,
+            )
+            bundle = build_memory_compile_bundle(
+                core,
+                project=args.project,
+                recent_limit=max(1, int(args.recent_limit)),
+                phrase_limit=max(1, int(args.phrase_limit)),
+                memory_limit=max(1, int(args.memory_limit)),
+                governance_limit=max(1, int(args.governance_limit)),
+                allow_private_paths=bool(args.allow_private_paths),
+            )
+            if isinstance(bundle.get("source"), dict):
+                bundle["source"]["sinceDays"] = max(1, int(args.since_days))
+            report = generator.optimize_core(
+                snapshot=bundle,
+                project=args.project,
+                max_memories=max(1, int(args.max_memories)),
+                max_lexicon_phrases=max(1, int(args.max_lexicon_phrases)),
+                max_hide_suggestions=max(0, int(args.max_hide_suggestions)),
+            )
+            plan = cleanup_plan_from_compiler_report(project=args.project, bundle=bundle, report=report)
+            stored_run = core.store_memory_cleanup_plan(plan)
+        except MemoryGenerationError as exc:
+            print(
+                json.dumps(
+                    {"schemaVersion": "rag-ime.memory-compile.v1", "ok": False, "error": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        if args.output:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.output).write_text(json.dumps(cleanup_plan_to_payload(plan), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        payload = memory_compile_report_payload(
+            project=args.project,
+            bundle=bundle,
+            report=report,
+            plan=plan,
+            output_path=str(args.output or ""),
+        )
+        payload["run"] = stored_run
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "memory-compile-apply":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-compile-apply requires --core-mode local")
+        if not args.diff and not args.run_id:
+            raise SystemExit("memory-compile-apply requires --diff or --run-id")
+        payload = core.apply_memory_cleanup_plan(
+            run_path=args.diff,
+            run_id=args.run_id,
+            only_approved=bool(args.only_approved),
+        )
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.memory-compile-apply.v1",
+                    "ok": True,
+                    "run": payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "memory-compile-rollback":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-compile-rollback requires --core-mode local")
+        payload = core.rollback_memory_cleanup_plan(run_id=args.run_id)
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.memory-compile-rollback.v1",
+                    "ok": True,
+                    "run": payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
     if args.command == "seed-demo":
@@ -1240,6 +1857,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "eval-memory-optimizer":
+        report = run_memory_optimizer_eval(
+            cases_file=Path(args.cases_file),
+            project=args.project,
+            repeat=max(1, args.repeat),
+            max_visible_candidates=max(1, min(10, args.max_visible_candidates)),
+            max_side_candidates=max(0, min(10, args.max_side_candidates)),
+            latency_budget_ms=max(30, args.latency_budget_ms),
+            optimizer_max_ms=max(1, args.optimizer_max_ms),
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if bool(report.get("gatePassed")) else 1
 
     if args.command == "predict-benchmark":
         prediction_context = build_prediction_context(
@@ -3637,6 +4267,138 @@ def _read_json_payload(payload_file: str) -> dict[str, object]:
     if not isinstance(data, dict):
         raise SystemExit("JSON payload must be an object")
     return data
+
+
+def _json_object_arg(raw: str, *, flag: str) -> dict[str, object]:
+    value = compact_whitespace(raw)
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{flag} must be valid JSON object: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"{flag} must be a JSON object")
+    return dict(data)
+
+
+def _cleanup_provider_alias(provider: str) -> str:
+    normalized = compact_whitespace(provider).lower()
+    if normalized in {"", "local-rule"}:
+        return "local-rule"
+    if normalized in {"openai-compatible"}:
+        return "openai-compatible"
+    if normalized in {"model-api"}:
+        return "model-api"
+    if normalized in {"x1api", "x1top", "x2app"}:
+        return "x1api"
+    return normalized
+
+
+def _cleanup_counts_payload(run_payload: dict[str, object]) -> dict[str, int]:
+    counts = {"addStableMemory": 0, "addPhrase": 0, "tombstone": 0}
+    for item in run_payload.get("diffs", []) if isinstance(run_payload.get("diffs"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        op = str(item.get("op") or "")
+        if op == "add_stable_memory":
+            counts["addStableMemory"] += 1
+        elif op == "add_phrase":
+            counts["addPhrase"] += 1
+        elif op == "tombstone":
+            counts["tombstone"] += 1
+    return counts
+
+
+def _cleanup_plan_from_cli_args(*, core: LocalSqliteCoreClient, run_id: str, run_path: str) -> object:
+    if compact_whitespace(run_path):
+        return load_cleanup_run_from_file(run_path)
+    normalized_run_id = compact_whitespace(run_id)
+    if not normalized_run_id:
+        raise ValueError("run_id or run file is required")
+    runs = core.list_memory_cleanup_runs(run_id=normalized_run_id, limit=1).get("items", [])
+    if not runs:
+        raise ValueError(f"cleanup run not found: {normalized_run_id}")
+    payload = runs[0]
+    if not isinstance(payload, dict):
+        raise ValueError(f"cleanup run payload invalid: {normalized_run_id}")
+    return cleanup_plan_from_payload(payload)
+
+
+def _cleanup_preview_payload(*, core: LocalSqliteCoreClient, args) -> dict[str, object]:
+    provider = _cleanup_provider_alias(str(args.provider))
+    if provider == "local-rule":
+        run_payload = core.preview_memory_cleanup_plan(
+            project=args.project,
+            since_days=max(1, int(args.since_days)),
+            provider="local-rule",
+            model="local-rule",
+        )
+        validation = inspect_cleanup_plan(cleanup_plan_from_payload(run_payload))
+        return {
+            "schemaVersion": "rag-ime.cleanup-preview.v1",
+            "ok": True,
+            "dryRun": True,
+            "provider": "local-rule",
+            "model": "local-rule",
+            "reviewRequired": True,
+            "sourceStats": {
+                "strategy": "local-rule",
+                "sinceDays": max(1, int(args.since_days)),
+                "diffCounts": _cleanup_counts_payload(run_payload),
+            },
+            "validation": validation,
+            "run": run_payload,
+        }
+    generator = compiler_generator_from_env(
+        env_path=args.model_env_path or None,
+        provider="" if provider == "openai-compatible" else provider,
+        model=args.model,
+    )
+    bundle = build_memory_compile_bundle(
+        core,
+        project=args.project,
+        recent_limit=max(1, int(args.recent_limit)),
+        phrase_limit=max(1, int(args.phrase_limit)),
+        memory_limit=max(1, int(args.memory_limit)),
+        governance_limit=max(1, int(args.governance_limit)),
+        allow_private_paths=bool(args.allow_private_paths),
+    )
+    if isinstance(bundle.get("source"), dict):
+        bundle["source"]["sinceDays"] = max(1, int(args.since_days))
+    report = generator.optimize_core(
+        snapshot=bundle,
+        project=args.project,
+        max_memories=max(1, int(args.max_memories)),
+        max_lexicon_phrases=max(1, int(args.max_lexicon_phrases)),
+        max_hide_suggestions=max(0, int(args.max_hide_suggestions)),
+    )
+    plan = cleanup_plan_from_compiler_report(project=args.project, bundle=bundle, report=report)
+    run_payload = cleanup_plan_to_payload(plan)
+    validation = inspect_cleanup_plan(plan)
+    return {
+        "schemaVersion": "rag-ime.cleanup-preview.v1",
+        "ok": True,
+        "dryRun": True,
+        "provider": report.provider,
+        "model": report.model,
+        "reviewRequired": True,
+        "sourceStats": {
+            "strategy": report.provider,
+            "bundleTotals": dict(bundle.get("totals") or {}),
+            "redactionStats": dict(bundle.get("redactionStats") or {}),
+            "generatorMetadata": dict(report.metadata or {}),
+            "diffCounts": _cleanup_counts_payload(run_payload),
+        },
+        "validation": validation,
+        "run": run_payload,
+        "rawPreview": memory_compile_report_payload(
+            project=args.project,
+            bundle=bundle,
+            report=report,
+            plan=plan,
+        ).get("rawPreview", ""),
+    }
 
 
 def _attach_eval_latency(report: dict[str, object], elapsed_ms_by_case: dict[str, int]) -> None:

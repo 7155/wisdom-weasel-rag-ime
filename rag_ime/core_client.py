@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from .memory_optimizer_models import BlockedCandidate, ContextFrame, OptimizedMemoryCandidate, OptimizerResult, RawRetrievalHit
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
 from .suggestion_compiler import RankedMemory, SuggestionCompiler
 from .text_utils import compact_whitespace, now_ms, overlap_terms
@@ -54,6 +55,22 @@ class CoreClient(Protocol):
         ...
 
     def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
+        ...
+
+    def optimize_memory_candidates(
+        self,
+        context: ContextFrame,
+        base_hits: list[RawRetrievalHit],
+        *,
+        top_k: int,
+        latency_budget_ms: int,
+    ) -> OptimizerResult:
+        ...
+
+    def record_memory_feedback(self, event: dict[str, Any]) -> None:
+        ...
+
+    def explain_memory_candidate(self, candidate_id: str, context_hash: str | None = None) -> dict[str, Any] | None:
         ...
 
 
@@ -114,6 +131,71 @@ class JsonCommandCoreClient:
         except RuntimeError:
             return ""
         return str(payload.get("context") or payload.get("history_context") or "")
+
+    def optimize_memory_candidates(
+        self,
+        context: ContextFrame,
+        base_hits: list[RawRetrievalHit],
+        *,
+        top_k: int,
+        latency_budget_ms: int,
+    ) -> OptimizerResult:
+        try:
+            payload = self._request(
+                "optimize_memory_candidates",
+                {
+                    "context": asdict(context),
+                    "base_hits": [asdict(item) for item in base_hits],
+                    "top_k": top_k,
+                    "latency_budget_ms": latency_budget_ms,
+                },
+            )
+        except RuntimeError:
+            return OptimizerResult(candidates=[], blocked=[], trace_id=None, latency_ms=0.0, degraded=True, warnings=["json-core-unavailable"])
+        return OptimizerResult(
+            candidates=[
+                OptimizedMemoryCandidate(
+                    id=str(item["id"]),
+                    text=str(item["text"]),
+                    source_type=str(item["source_type"]),
+                    lane=str(item["lane"]),
+                    score=float(item["score"]),
+                    confidence=float(item["confidence"]),
+                    evidence_preview=str(item.get("evidence_preview") or ""),
+                    memory_atom_ids=list(item.get("memory_atom_ids") or []),
+                    tags=list(item.get("tags") or []),
+                    debug_features=dict(item.get("debug_features") or {}),
+                    metadata=dict(item.get("metadata") or {}),
+                )
+                for item in payload.get("candidates", [])
+            ],
+            blocked=[
+                BlockedCandidate(
+                    id=str(item.get("id") or ""),
+                    reason=str(item.get("reason") or ""),
+                    metadata=dict(item.get("metadata") or {}),
+                )
+                for item in payload.get("blocked", [])
+                if isinstance(item, dict)
+            ],
+            trace_id=str(payload.get("trace_id") or "") or None,
+            latency_ms=float(payload.get("latency_ms") or 0.0),
+            degraded=bool(payload.get("degraded")),
+            warnings=list(payload.get("warnings") or []),
+        )
+
+    def record_memory_feedback(self, event: dict[str, Any]) -> None:
+        try:
+            self._request("record_memory_feedback", {"event": event})
+        except RuntimeError:
+            return None
+
+    def explain_memory_candidate(self, candidate_id: str, context_hash: str | None = None) -> dict[str, Any] | None:
+        try:
+            payload = self._request("explain_memory_candidate", {"candidate_id": candidate_id, "context_hash": context_hash})
+        except RuntimeError:
+            return None
+        return dict(payload)
 
     def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         request = {"method": method, "params": params}
@@ -257,6 +339,44 @@ class FixtureCoreClient:
             source_event_ids=tuple(int(item.source_event_id or 0) for item in suggestions),
             query=query,
         )
+
+    def optimize_memory_candidates(
+        self,
+        context: ContextFrame,
+        base_hits: list[RawRetrievalHit],
+        *,
+        top_k: int,
+        latency_budget_ms: int,
+    ) -> OptimizerResult:
+        del context, latency_budget_ms
+        candidates = [
+            OptimizedMemoryCandidate(
+                id=hit.id,
+                text=hit.text,
+                source_type="memory" if hit.source == "stable_memory" else "rag",
+                lane="memory" if hit.source == "stable_memory" else "rag",
+                score=hit.score,
+                confidence=max(0.0, min(1.0, hit.score)),
+                evidence_preview=hit.evidence,
+                memory_atom_ids=[hit.memory_atom_id] if hit.memory_atom_id else [],
+                tags=list(hit.metadata.get("tags") or []),
+                debug_features={},
+                metadata=dict(hit.metadata),
+            )
+            for hit in base_hits[: max(1, top_k)]
+        ]
+        return OptimizerResult(candidates=candidates, blocked=[], trace_id=None, latency_ms=0.0, degraded=False, warnings=[])
+
+    def record_memory_feedback(self, event: dict[str, Any]) -> None:
+        del event
+        return None
+
+    def explain_memory_candidate(self, candidate_id: str, context_hash: str | None = None) -> dict[str, Any] | None:
+        del context_hash
+        memory = next((item for item in self.memories if item.memory_id == candidate_id), None)
+        if memory is None:
+            return None
+        return {"memory_id": memory.memory_id, "text": memory.text, "tags": list(memory.tags)}
 
     def recent_input_context(self, *, project: str = "", limit: int = 6, max_chars: int = 420) -> str:
         if limit <= 0 or max_chars <= 0:

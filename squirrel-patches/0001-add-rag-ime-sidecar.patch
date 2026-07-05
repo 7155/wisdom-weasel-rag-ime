@@ -682,6 +682,8 @@ index 0000000..784162d
 +  let selectionAction: String
 +  let sourceIndex: Int
 +  let comment: String
++  let badge: String?
++  let colorToken: String?
 +  let evidencePreview: String
 +  let suggestionId: String
 +  let memoryId: String
@@ -822,6 +824,11 @@ index c2adf74..3cfc0e5 100644
 +  private var ragImePendingRequestFingerprint: String = ""
 +  private var ragImePendingRequestWorkItem: DispatchWorkItem?
 +  private var ragImeDisplayExpiryWorkItem: DispatchWorkItem?
++  private var ragImePendingContinuationCandidate: RagImeDisplayCandidate?
++  private var ragImePendingContinuationCommittedText: String = ""
++  private var ragImePendingContinuationPreviousContextHash: String = ""
++  private var ragImePendingContinuationQueuedAt: Date?
++  private var ragImePendingContinuationSelectionEpoch: Int = 0
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -1178,15 +1185,49 @@ index c2adf74..3cfc0e5 100644
 +
 +  func scheduleRagImePostCommitContinuation(committedText: String, sourceCandidate: RagImeDisplayCandidate) {
 +    guard ragImeSidecarClient != nil else { return }
-+    let committedContext = syncRagImeCommittedContextFromClient(excludingMarkedText: "")
-+    guard !committedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-+    traceRagImeFrontendEvent("commit_observed", fields: [
++    let previousContext = syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
++    ragImePendingContinuationCandidate = sourceCandidate
++    ragImePendingContinuationCommittedText = committedText
++    ragImePendingContinuationPreviousContextHash = ragImeStableTextHash(previousContext)
++    ragImePendingContinuationQueuedAt = Date()
++    ragImePendingContinuationSelectionEpoch = ragImeSelectionEpoch
++    traceRagImeFrontendEvent("side_candidate_commit_pending", fields: [
 +      "committedText": committedText,
-+      "committedContextChars": committedContext.count,
-+      "committedContextHash": ragImeStableTextHash(committedContext),
++      "previousCommittedContextHash": ragImePendingContinuationPreviousContextHash,
++      "previousCommittedContextChars": previousContext.count,
 +      "sourceType": sourceCandidate.sourceType,
 +      "selectionKey": ragImeSelectionKey(for: sourceCandidate),
 +      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(sourceCandidate),
++      "selectionEpoch": ragImeSelectionEpoch,
++    ])
++    observeRagImePostCommitContinuationIfReady()
++  }
++
++  func observeRagImePostCommitContinuationIfReady() {
++    guard let sourceCandidate = ragImePendingContinuationCandidate else { return }
++    guard ragImeSidecarClient != nil else { return }
++    let committedText = ragImePendingContinuationCommittedText
++    let committedContext = ragImeCommittedContext.isEmpty
++      ? syncRagImeCommittedContextFromClient(excludingMarkedText: "")
++      : ragImeCommittedContext
++    let committedContextHash = ragImeStableTextHash(committedContext)
++    guard !committedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
++    guard committedContextHash != ragImePendingContinuationPreviousContextHash || committedContext.contains(committedText) else {
++      return
++    }
++    ragImePendingContinuationCandidate = nil
++    ragImePendingContinuationCommittedText = ""
++    ragImePendingContinuationPreviousContextHash = ""
++    ragImePendingContinuationQueuedAt = nil
++    ragImePendingContinuationSelectionEpoch = 0
++    traceRagImeFrontendEvent("commit_observed", fields: [
++      "committedText": committedText,
++      "committedContextChars": committedContext.count,
++      "committedContextHash": committedContextHash,
++      "sourceType": sourceCandidate.sourceType,
++      "selectionKey": ragImeSelectionKey(for: sourceCandidate),
++      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(sourceCandidate),
++      "selectionEpoch": ragImeSelectionEpoch,
 +    ])
 +    traceRagImeFrontendEvent("side_candidate_continuation_scheduled", fields: [
 +      "committedText": committedText,
@@ -1194,6 +1235,7 @@ index c2adf74..3cfc0e5 100644
 +      "sourceType": sourceCandidate.sourceType,
 +      "selectionKey": ragImeSelectionKey(for: sourceCandidate),
 +      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(sourceCandidate),
++      "selectionEpoch": ragImeSelectionEpoch,
 +    ])
 +    traceRagImeFrontendEvent("post_commit_prediction_scheduled", fields: [
 +      "committedText": committedText,
@@ -2010,19 +2052,58 @@ index c2adf74..3cfc0e5 100644
 +    return (candidates, comments, labels)
 +  }
 +
-+  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {
++  func ragImeBoolEnvEnabled(_ key: String, default defaultValue: Bool) -> Bool {
++    let rawValue = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
++    guard let rawValue, !rawValue.isEmpty else {
++      return defaultValue
++    }
++    return !["0", "false", "no", "off"].contains(rawValue)
++  }
++
++  func ragImeCandidateSourceBadgesEnabled() -> Bool {
++    ragImeBoolEnvEnabled("RAG_IME_CANDIDATE_SOURCE_BADGES", default: true)
++  }
++
++  func ragImeCandidateSourceColorsEnabled() -> Bool {
++    ragImeBoolEnvEnabled("RAG_IME_CANDIDATE_SOURCE_COLORS", default: true)
++  }
++
++  func ragImeCandidateDiagnosticsEnabled() -> Bool {
++    ragImeBoolEnvEnabled("RAG_IME_CANDIDATE_DIAGNOSTICS", default: false)
++  }
++
++  func ragImeDisplayBadge(for candidate: RagImeDisplayCandidate) -> String {
++    guard ragImeCandidateSourceBadgesEnabled() else {
++      return ""
++    }
++    if let badge = candidate.badge, !badge.isEmpty {
++      return badge
++    }
 +    switch candidate.sourceType {
 +    case "model":
-+      return "LLM"
++      return "模"
 +    case "rag":
-+      return "RAG"
++      return "查"
 +    case "memory":
-+      return "RAG"
++      return "忆"
 +    case "rime":
-+      return "词库"
++      return "词"
++    case "raw_english":
++      return "input"
 +    default:
++      return candidate.sourceType
++    }
++  }
++
++  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {
++    let badge = ragImeDisplayBadge(for: candidate)
++    guard ragImeCandidateDiagnosticsEnabled(), !candidate.comment.isEmpty else {
++      return badge
++    }
++    guard !badge.isEmpty else {
 +      return candidate.comment
 +    }
++    return "\(badge)·\(candidate.comment)"
 +  }
 +
 +  func ragImeSelectionKey(for candidate: RagImeDisplayCandidate) -> String {
@@ -2145,7 +2226,7 @@ index c2adf74..3cfc0e5 100644
 +      $0.sourceType == "model" && ($0.displayLayout ?? "") == "inline" && ($0.displayLane ?? "") == "model"
 +    }.count
 +    let ragBlockCount = ragImeDisplayCandidates.filter {
-+      $0.sourceType == "rag" && ($0.displayLayout ?? "") == "block" && ($0.displayLane ?? "") == "memory"
++      ($0.sourceType == "rag" || $0.sourceType == "memory") && ($0.displayLayout ?? "") == "block" && ($0.displayLane ?? "") == "memory"
 +    }.count
 +    let rimeCount = ragImeDisplayCandidates.filter { $0.sourceType == "rime" }.count
 +    return [
@@ -2192,6 +2273,8 @@ index c2adf74..3cfc0e5 100644
 +      "selectionAction": candidate.selectionAction,
 +      "displayLayout": candidate.displayLayout ?? "",
 +      "displayLane": candidate.displayLane ?? "",
++      "badge": ragImeDisplayBadge(for: candidate),
++      "colorToken": candidate.colorToken ?? "",
 +      "rimeIndex": candidate.rimeIndex ?? -1,
 +      "sourceEventId": candidate.sourceEventId ?? 0,
 +      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(candidate),
@@ -2415,6 +2498,7 @@ index c2adf74..3cfc0e5 100644
      client.insertText(string, replacementRange: .empty)
 +    ragImeCommittedContext = actualRagImeCommittedContextFromClient(fallback: [previousContext, string].filter { !$0.isEmpty }.joined(separator: " "))
 +    ragImeCommittedContextUpdatedAt = ragImeCommittedContext.isEmpty ? .distantPast : Date()
++    observeRagImePostCommitContinuationIfReady()
      preedit = ""
      hidePalettes()
    }
@@ -2544,13 +2628,20 @@ index a9e2dae..c4aa52a 100644
    }
  
 +  func ragImeSourceColor(_ sourceType: String) -> NSColor? {
++    guard inputController?.ragImeCandidateSourceColorsEnabled() != false else {
++      return nil
++    }
 +    switch sourceType {
 +    case "model":
 +      return .systemBlue
-+    case "rag", "memory":
++    case "rag":
 +      return .systemTeal
++    case "memory":
++      return .systemPurple
 +    case "rime":
 +      return .systemOrange
++    case "raw_english":
++      return .systemGray
 +    default:
 +      return nil
 +    }

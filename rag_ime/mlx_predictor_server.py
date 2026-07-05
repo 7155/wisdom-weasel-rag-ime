@@ -185,6 +185,8 @@ class MlxLmEngine:
                 "residentModel": True,
                 "promptCache": _prompt_cache_used_for_generation(prompt_cache),
                 "textOnlyModel": bool(self.model_info.get("textOnly")),
+                "seededPromptReplay": True,
+                "kvFork": False,
                 "sequenceFork": False,
                 "batchCandidates": True,
                 "logitsTopK": True,
@@ -285,6 +287,19 @@ class MlxLmEngine:
             }
 
         if resolved_request_type == PREDICTION_REQUEST_NO_INPUT and not stream_first_candidate:
+            seeded_replay_payload = self.predict_no_input_seeded_prompt_replay(
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=max_candidates,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                started=started,
+                logits_candidates=logits_candidates,
+                request_metadata=request_metadata,
+            )
+            if seeded_replay_payload is not None and seeded_replay_payload.get("candidates"):
+                return seeded_replay_payload
             branch_payload = self.predict_no_input_continuation_branches(
                 current_input=current_input,
                 recent_context=recent_context,
@@ -354,7 +369,7 @@ class MlxLmEngine:
         logits_elapsed_ms: int,
         logits_quality_reason: str,
         request_metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+        ) -> dict[str, Any]:
         max_items = max(1, int(max_candidates))
         branch_specs = _continuation_branch_specs(temperature=temperature, max_tokens=max_tokens)
         raw_texts: list[str] = []
@@ -482,6 +497,96 @@ class MlxLmEngine:
                 "logitsMs": int(logits_elapsed_ms or 0),
                 "fallbackJson": False,
                 "fallbackReason": logits_quality_reason,
+                "requestType": PREDICTION_REQUEST_NO_INPUT,
+                "branches": branch_timings,
+            },
+            "requestMeta": dict(request_metadata or {}),
+        }
+
+    def predict_no_input_seeded_prompt_replay(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_candidates: int,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        started: float,
+        logits_candidates: dict[str, Any],
+        request_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        seeds = _seed_replay_specs_from_logits(
+            logits_candidates.get("candidateScores"),
+            max_seeds=max(1, min(3, int(max_candidates))),
+        )
+        if not seeds:
+            return None
+        raw_texts: list[str] = []
+        candidates: list[str] = []
+        seen: set[str] = set()
+        branch_timings: list[dict[str, Any]] = []
+        per_seed_max_tokens = max(8, min(24, int(max_tokens)))
+        replay_temperature = max(0.05, min(float(temperature), 0.18))
+        for seed in seeds:
+            if len(candidates) >= max(1, int(max_candidates)):
+                break
+            seed_text = str(seed.get("text") or "")
+            if not seed_text:
+                continue
+            branch_started = time.perf_counter()
+            raw_text = "".join(
+                self._stream_text_with_generate_step(
+                    prompt=_build_seeded_replay_prompt(recent_context=recent_context, seed_text=seed_text),
+                    max_tokens=per_seed_max_tokens,
+                    temperature=replay_temperature,
+                    top_p=top_p,
+                )
+            )
+            raw_texts.append(f"{seed_text}{raw_text}")
+            candidate = _seeded_replay_candidate(
+                seed_text=seed_text,
+                raw_text=raw_text,
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidate_chars=max(12, min(24, per_seed_max_tokens * 2)),
+            )
+            branch_candidates = [candidate] if candidate else []
+            branch_timings.append(
+                {
+                    "label": f"seed:{seed_text}",
+                    "seedText": seed_text,
+                    "logprob": seed.get("logprob"),
+                    "probability": seed.get("probability"),
+                    "maxTokens": per_seed_max_tokens,
+                    "elapsedMs": int((time.perf_counter() - branch_started) * 1000),
+                    "candidates": branch_candidates,
+                }
+            )
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+        if not candidates:
+            return None
+        total_ms = int((time.perf_counter() - started) * 1000)
+        return {
+            "ok": True,
+            "model": self.model_id,
+            "rawText": "\n".join(raw_texts),
+            "candidates": candidates[: max(1, int(max_candidates))],
+            "candidateScores": _seeded_prompt_replay_candidate_scores(
+                candidates[: max(1, int(max_candidates))],
+                branch_timings=branch_timings,
+            ),
+            "candidateMode": "seeded-prompt-replay",
+            "requestType": PREDICTION_REQUEST_NO_INPUT,
+            "totalMs": total_ms,
+            "promptCache": self.prompt_cache_status(),
+            "timing": {
+                "candidateMode": "seeded-prompt-replay",
+                "logitsMs": int(logits_candidates.get("elapsedMs") or 0),
+                "fallbackJson": False,
+                "fallbackReason": "top_logits_seed_replay",
                 "requestType": PREDICTION_REQUEST_NO_INPUT,
                 "branches": branch_timings,
             },
@@ -1590,6 +1695,20 @@ def _build_no_input_space_list_prompt(*, recent_context: str, max_candidates: in
     )
 
 
+def _build_seeded_replay_prompt(*, recent_context: str, seed_text: str) -> str:
+    return (
+        f"<|im_start|>system\n{STREAM_FIRST_SYSTEM_PROMPT}<|im_end|>\n"
+        "<|im_start|>user\n"
+        f"上下文：\"{recent_context}\"\n"
+        f"当前输入：\"\"\n"
+        f"种子候选：\"{seed_text}\"\n"
+        "请把这个种子候选续写成一个可直接上屏的短语。"
+        "不要解释，不要换行，不要输出多个候选。"
+        "<|im_end|>\n"
+        f"{QWEN_NON_THINKING_ASSISTANT_PREFIX}{seed_text}"
+    )
+
+
 def _space_list_continuation_candidates(
     raw_text: str,
     *,
@@ -1640,6 +1759,38 @@ def _continuation_branch_specs(*, temperature: float, max_tokens: int) -> list[_
             max_candidate_chars=24,
         )
     ]
+
+
+def _seed_replay_specs_from_logits(candidate_scores: Any, *, max_seeds: int) -> list[dict[str, Any]]:
+    if not isinstance(candidate_scores, list):
+        return []
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in candidate_scores:
+        if not isinstance(item, dict):
+            continue
+        text = compact_whitespace(str(item.get("text") or ""))
+        if (
+            not text
+            or text in seen
+            or _is_low_value_base_candidate(text)
+            or _looks_like_meta_completion_candidate(text)
+        ):
+            continue
+        if len(text) > 6:
+            continue
+        seen.add(text)
+        result.append(
+            {
+                "text": text,
+                "tokenId": item.get("tokenId"),
+                "logprob": item.get("logprob"),
+                "probability": item.get("probability"),
+            }
+        )
+        if len(result) >= max(1, int(max_seeds)):
+            break
+    return result
 
 
 def _branch_continuation_candidate(
@@ -1700,6 +1851,52 @@ def _branch_continuation_candidates(
         if len(result) >= max(1, int(max_candidates)):
             break
     return result
+
+
+def _seeded_replay_candidate(
+    *,
+    seed_text: str,
+    raw_text: str,
+    current_input: str,
+    recent_context: str,
+    max_candidate_chars: int,
+) -> str:
+    seed = compact_whitespace(seed_text)
+    continuation = _clean_base_completion_text(raw_text)
+    if continuation.startswith(seed):
+        combined = continuation
+    else:
+        combined = compact_whitespace(f"{seed}{continuation}")
+    direct = _normalize_base_candidate(combined)
+    if (
+        direct
+        and direct.startswith(seed)
+        and len(direct) > len(seed)
+        and len(direct) <= max(2, int(max_candidate_chars))
+        and not _is_low_value_base_candidate(direct)
+        and not _looks_like_meta_completion_candidate(direct)
+    ):
+        return direct
+    parsed = parse_ime_prediction_candidates(
+        combined,
+        max_candidates=4,
+        current_input=current_input,
+        recent_context=recent_context,
+        request_type=PREDICTION_REQUEST_NO_INPUT,
+    )
+    limit = max(2, int(max_candidate_chars))
+    for candidate in parsed:
+        normalized = compact_whitespace(candidate)
+        if (
+            normalized
+            and normalized.startswith(seed)
+            and len(normalized) > len(seed)
+            and len(normalized) <= limit
+            and not _is_low_value_base_candidate(normalized)
+            and not _looks_like_meta_completion_candidate(normalized)
+        ):
+            return normalized
+    return ""
 
 
 def _expand_continuation_candidates_from_model_output(
@@ -1875,6 +2072,42 @@ def _continuation_branch_candidate_scores(
                 "source": branch_by_candidate.get(text, "branch"),
                 "mode": "continuation-branches",
                 "confidence": max(0.0, min(1.0, 1.0 - ((index - 1) / max(3, total + 1)) * 0.35)),
+            }
+        )
+    return result
+
+
+def _seeded_prompt_replay_candidate_scores(
+    candidates: list[str],
+    *,
+    branch_timings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    branch_by_candidate: dict[str, dict[str, Any]] = {}
+    for branch in branch_timings:
+        branch_candidates = branch.get("candidates")
+        if not isinstance(branch_candidates, list):
+            continue
+        for item in branch_candidates:
+            text = compact_whitespace(str(item))
+            if text and text not in branch_by_candidate:
+                branch_by_candidate[text] = branch
+    total = max(1, len(candidates))
+    result: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        text = compact_whitespace(candidate)
+        if not text:
+            continue
+        branch = branch_by_candidate.get(text, {})
+        result.append(
+            {
+                "text": text,
+                "rank": index,
+                "source": str(branch.get("label") or "seed-replay"),
+                "mode": "seeded-prompt-replay",
+                "seedText": branch.get("seedText"),
+                "probability": branch.get("probability"),
+                "logprob": branch.get("logprob"),
+                "confidence": max(0.0, min(1.0, 1.0 - ((index - 1) / max(3, total + 1)) * 0.28)),
             }
         )
     return result

@@ -488,13 +488,13 @@ final class RagCandidatePanel {
     private func sourceBadge(_ candidate: RimeDisplayCandidate) -> String {
         switch candidate.sourceType {
         case "model":
-            return "LLM"
+            return "模"
         case "rag":
-            return "RAG"
+            return "查"
         case "memory":
-            return "RAG"
+            return "忆"
         case "rime":
-            return "词库"
+            return "词"
         case "raw_english":
             return "input"
         default:
@@ -506,8 +506,10 @@ final class RagCandidatePanel {
         switch candidate.sourceType {
         case "model":
             return .systemBlue
-        case "rag", "memory":
+        case "rag":
             return .systemTeal
+        case "memory":
+            return .systemPurple
         case "rime":
             return .systemOrange
         case "raw_english":

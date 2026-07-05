@@ -13,6 +13,7 @@ from .core_client import CoreClient
 from .embeddings import NullEmbeddingProvider
 from .history_context import build_prediction_context, model_prediction_context_limits, prediction_context_metadata
 from .local_sqlite_core import LocalSqliteCoreClient
+from .memory_optimizer import MemoryOptimizerConfig, optimize_suggestions_if_enabled
 from .models import (
     FrontendTransaction,
     InputSuggestion,
@@ -112,6 +113,21 @@ _MODEL_HOLDOVER_LOCK = RLock()
 _MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
 _PREDICTION_MANAGER_LOCK = RLock()
 _PREDICTION_MANAGERS: dict[tuple[str, str, str], PredictionManager] = {}
+_FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
+_SOURCE_BADGE_MAP = {
+    "rime": "词",
+    "model": "模",
+    "rag": "查",
+    "memory": "忆",
+    "raw_english": "input",
+}
+_SOURCE_COLOR_TOKEN_MAP = {
+    "rime": "rimeOrange",
+    "model": "modelBlue",
+    "rag": "ragTeal",
+    "memory": "memoryPurple",
+    "raw_english": "rawGray",
+}
 _RECENT_MEMORY_KEYWORDS = (
     "输入法",
     "RAG",
@@ -311,6 +327,17 @@ def build_rime_sidecar_response(
             rag_lane["suppressedSuggestionCount"] = len(suggestions)
             rag_lane["suggestionCount"] = 0
             suggestions = []
+        suggestions, optimizer_trace = optimize_suggestions_if_enabled(
+            core=core,
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            query_basis=query_basis,
+            input_mode=infer_input_mode(snapshot),
+            suggestions=suggestions,
+            top_k=snapshot.max_side_candidates,
+            latency_budget_ms=snapshot.latency_budget_ms,
+        )
+        rag_lane["suggestionCount"] = len(suggestions)
         model_lane.pop("historyContext", None)
         total_elapsed_ms = int((time.perf_counter() - lane_started) * 1000)
         rag_lane.update(
@@ -318,6 +345,7 @@ def build_rime_sidecar_response(
                 "totalLatencyBudgetMs": snapshot.latency_budget_ms,
                 "sideLaneMode": "parallel",
                 "sideLaneElapsedMs": total_elapsed_ms,
+                "memoryOptimizer": optimizer_trace,
             }
         )
         model_lane.update(
@@ -332,6 +360,7 @@ def build_rime_sidecar_response(
         prediction_context = ""
         model_predictions = []
         suggestions = []
+        optimizer_trace = {"enabled": False, "traceEnabled": False, "maxMs": 15}
         progressive_state = _progressive_state(
             enabled=progressive_sidecar_updates_enabled(),
             partial=False,
@@ -345,6 +374,7 @@ def build_rime_sidecar_response(
             "latencyBudgetMs": 0,
             "elapsedMs": 0,
             "totalLatencyBudgetMs": snapshot.latency_budget_ms,
+            "memoryOptimizer": optimizer_trace,
         }
         model_lane = {
             "called": False,
@@ -439,6 +469,19 @@ def build_rime_sidecar_response(
         display_candidates=display_candidates,
         snapshot=snapshot,
         prediction_session_payload=prediction_session_payload,
+    )
+    _record_display_memory_feedback(
+        core=core,
+        snapshot=snapshot,
+        display_candidates=display_candidates,
+        trace_id=_string(
+            (
+                rag_lane.get("memoryOptimizer", {}).get("traceId")
+                if isinstance(rag_lane.get("memoryOptimizer"), dict)
+                else ""
+            )
+        ),
+        project=snapshot.project or default_project,
     )
     return {
         "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
@@ -577,6 +620,7 @@ def suggest_rag_with_latency_budget(
 def _realtime_rag_adapter(*, adapter: InputMethodAdapter, core: CoreClient, budget_ms: int) -> InputMethodAdapter:
     if budget_ms > _REALTIME_MODEL_CONTEXT_BUDGET_MS or not isinstance(core, LocalSqliteCoreClient):
         return adapter
+    optimizer_enabled = MemoryOptimizerConfig.from_env().enabled
     return InputMethodAdapter(
         LocalSqliteCoreClient(
             core.db_path,
@@ -584,6 +628,8 @@ def _realtime_rag_adapter(*, adapter: InputMethodAdapter, core: CoreClient, budg
             embedding_provider=NullEmbeddingProvider(),
             vector_candidate_limit=0,
             vector_weight=0.0,
+            legacy_governance_filter_enabled=not optimizer_enabled,
+            v2_governance_filter_enabled=not optimizer_enabled,
         ),
         project=str(getattr(adapter, "project", "wisdom-weasel-rag-ime")),
     )
@@ -810,6 +856,36 @@ def progressive_follow_up_retry_ms(env: Mapping[str, str] | None = None) -> int:
         minimum=80,
         maximum=1500,
     )
+
+
+def candidate_source_badges_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_CANDIDATE_SOURCE_BADGES", "1")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def candidate_source_colors_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_CANDIDATE_SOURCE_COLORS", "1")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def candidate_diagnostics_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_CANDIDATE_DIAGNOSTICS", "0")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def candidate_source_badge(source_type: str, env: Mapping[str, str] | None = None) -> str:
+    if not candidate_source_badges_enabled(env):
+        return ""
+    return _SOURCE_BADGE_MAP.get(source_type, source_type)
+
+
+def candidate_color_token(source_type: str, env: Mapping[str, str] | None = None) -> str:
+    if not candidate_source_colors_enabled(env):
+        return ""
+    return _SOURCE_COLOR_TOKEN_MAP.get(source_type, "")
 
 
 def _has_progressive_visible_lane_result(
@@ -2182,6 +2258,19 @@ def record_rime_side_candidate_selection(
     action_payload: dict[str, object] | None = None
     skipped_actions: list[dict[str, object]] = []
     if not dry_run:
+        shown_candidates = _shown_candidate_payloads(payload)
+        shown_candidate_ids = [
+            _string(item.get("memoryId") or item.get("memory_id") or item.get("suggestionId") or item.get("suggestion_id"))
+            for item in shown_candidates
+        ]
+        feedback_base = _selection_feedback_base_event(
+            payload=payload,
+            candidate=candidate,
+            project=project,
+            query=query,
+            recent_context=recent_context,
+            shown_candidate_ids=shown_candidate_ids,
+        )
         action_payload = _apply_candidate_memory_action(
             core=core,
             candidate=candidate,
@@ -2191,6 +2280,22 @@ def record_rime_side_candidate_selection(
                 "surface_text": _string(candidate.get("text")) or insert_text,
                 "insert_text": insert_text,
                 "source": "rime-sidecar-select",
+                },
+            )
+        _record_memory_feedback_event(
+            core=core,
+            event={
+                **feedback_base,
+                "event": "accepted",
+                "candidateId": _string(candidate.get("memoryId") or candidate.get("memory_id")) or event_id,
+                "candidateText": _string(candidate.get("text")) or insert_text,
+                "sourceType": source_type,
+                "rank": candidate_rank or 0,
+                "selectedCandidateId": _string(candidate.get("memoryId") or candidate.get("memory_id")) or event_id,
+                "selectedText": _string(candidate.get("text")) or insert_text,
+                "selectedRank": candidate_rank or 0,
+                "sourceEventId": _optional_int(candidate.get("sourceEventId") or candidate.get("source_event_id")) or _event_id_from_memory_id(event_id),
+                "suggestionId": _string(candidate.get("suggestionId") or candidate.get("suggestion_id")),
             },
         )
         if action_payload is None:
@@ -2207,10 +2312,10 @@ def record_rime_side_candidate_selection(
                     "source": "rime-sidecar-select-committed-event",
                     "source_type": source_type,
                     "selection_rank": candidate_rank or 0,
-                },
-            )
+                    },
+                )
         if candidate_rank is not None:
-            for shown_candidate in _shown_candidate_payloads(payload):
+            for shown_candidate in shown_candidates:
                 shown_rank = _candidate_display_rank(shown_candidate)
                 if shown_rank is None or shown_rank >= candidate_rank:
                     continue
@@ -2233,6 +2338,22 @@ def record_rime_side_candidate_selection(
                         "selected_source_type": source_type,
                         "selected_rank": candidate_rank,
                         "skipped_rank": shown_rank,
+                        },
+                    )
+                _record_memory_feedback_event(
+                    core=core,
+                    event={
+                        **feedback_base,
+                        "event": "skipped",
+                        "candidateId": _string(shown_candidate.get("memoryId") or shown_candidate.get("memory_id")),
+                        "candidateText": _string(shown_candidate.get("text")),
+                        "sourceType": _string(shown_candidate.get("sourceType") or shown_candidate.get("source_type")),
+                        "rank": shown_rank,
+                        "selectedCandidateId": _string(candidate.get("memoryId") or candidate.get("memory_id")) or event_id,
+                        "selectedText": _string(candidate.get("text")) or insert_text,
+                        "selectedRank": candidate_rank,
+                        "sourceEventId": _optional_int(shown_candidate.get("sourceEventId") or shown_candidate.get("source_event_id")),
+                        "suggestionId": _string(shown_candidate.get("suggestionId") or shown_candidate.get("suggestion_id")),
                     },
                 )
                 if skipped_payload is not None:
@@ -2943,8 +3064,61 @@ def frontend_transaction_to_payload(transaction: FrontendTransaction) -> dict[st
     }
 
 
+def _record_display_memory_feedback(
+    *,
+    core: CoreClient,
+    snapshot: RimeContextSnapshot,
+    display_candidates: list[SideCandidateDisplayItem],
+    trace_id: str,
+    project: str,
+) -> None:
+    shown_candidate_ids = [
+        item.memory_id or item.suggestion_id
+        for item in display_candidates
+        if item.source_type in {"rag", "memory"} and (item.memory_id or item.suggestion_id)
+    ]
+    for item in display_candidates:
+        if item.source_type not in {"rag", "memory"}:
+            continue
+        _record_memory_feedback_event(
+            core=core,
+            event={
+                "event": "shown",
+                "candidateId": item.memory_id or item.suggestion_id,
+                "candidateText": item.text,
+                "sourceType": item.source_type,
+                "lane": item.display_lane or item.source_type,
+                "rank": _candidate_rank(item.label),
+                "contextHash": snapshot.frontend_transaction.committed_context_hash,
+                "frontAppBundleId": snapshot.frontend_transaction.front_app_bundle_id or snapshot.app,
+                "rawInput": snapshot.raw_input,
+                "preedit": snapshot.preedit,
+                "committedTail": snapshot.committed_context,
+                "timestampMs": now_ms(),
+                "project": project,
+                "traceId": trace_id,
+                "requestSeq": snapshot.request_seq,
+                "sessionId": snapshot.session_id,
+                "suggestionId": item.suggestion_id,
+                "sourceEventId": item.source_event_id,
+                "shownCandidateIds": shown_candidate_ids,
+                "shownCandidateCount": len(shown_candidate_ids),
+            },
+        )
+
+
+def _record_memory_feedback_event(*, core: CoreClient, event: dict[str, object]) -> None:
+    recorder = getattr(core, "record_memory_feedback", None)
+    if not callable(recorder):
+        return
+    recorder(dict(event))
+
+
 def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]:
     selection_key = item.label
+    source_badge = candidate_source_badge(item.source_type)
+    color_token = candidate_color_token(item.source_type)
+    comment = item.comment if candidate_diagnostics_enabled() else ""
     return {
         "label": item.label,
         "selectionKey": selection_key,
@@ -2954,7 +3128,9 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "sourceType": item.source_type,
         "selectionAction": item.selection_action,
         "sourceIndex": item.source_index,
-        "comment": item.comment,
+        "comment": comment,
+        "badge": source_badge,
+        "colorToken": color_token,
         "evidencePreview": item.evidence_preview,
         "expandedEvidence": item.expanded_evidence,
         "suggestionId": item.suggestion_id,
@@ -3229,6 +3405,49 @@ def _apply_committed_event_feedback(
         )
     )
     return action_response_payload(action)
+
+
+def _selection_feedback_base_event(
+    *,
+    payload: dict[str, Any],
+    candidate: dict[str, Any],
+    project: str,
+    query: str,
+    recent_context: str,
+    shown_candidate_ids: list[str],
+) -> dict[str, object]:
+    metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+    assert isinstance(metadata, dict)
+    frontend_transaction = payload.get("frontendTransaction") if isinstance(payload.get("frontendTransaction"), dict) else {}
+    assert isinstance(frontend_transaction, dict)
+    normalized_shown_candidate_ids = [item for item in shown_candidate_ids if item]
+    context_hash = _string(
+        payload.get("committedContextHash")
+        or metadata.get("committedContextHash")
+        or payload.get("contextHash")
+        or frontend_transaction.get("committedContextHash")
+    )
+    front_app_bundle_id = _string(
+        payload.get("frontAppBundleId")
+        or metadata.get("frontAppBundleId")
+        or payload.get("app")
+    )
+    return {
+        "contextHash": context_hash,
+        "frontAppBundleId": front_app_bundle_id,
+        "rawInput": _string(payload.get("rawInput")),
+        "preedit": _string(payload.get("preedit")),
+        "committedTail": recent_context,
+        "recentContext": recent_context,
+        "timestampMs": now_ms(),
+        "project": project,
+        "query": query,
+        "traceId": _string(payload.get("traceId") or metadata.get("traceId")),
+        "requestSeq": _optional_int(payload.get("requestSeq")) or 0,
+        "sessionId": _string(payload.get("sessionId") or metadata.get("sessionId")),
+        "shownCandidateIds": normalized_shown_candidate_ids,
+        "shownCandidateCount": len(normalized_shown_candidate_ids),
+    }
 
 
 def _selection_memory_context(*, recent_context: str, query: str) -> str:

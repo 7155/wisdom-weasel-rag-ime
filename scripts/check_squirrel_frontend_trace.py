@@ -9,6 +9,20 @@ from typing import Any
 
 
 DEFAULT_LOG_PATH = Path.home() / "Library" / "Logs" / "RagIme" / "squirrel-frontend.jsonl"
+SOURCE_BADGES = {
+    "rime": "词",
+    "model": "模",
+    "rag": "查",
+    "memory": "忆",
+    "raw_english": "input",
+}
+SOURCE_COLOR_TOKENS = {
+    "rime": "rimeOrange",
+    "model": "modelBlue",
+    "rag": "ragTeal",
+    "memory": "memoryPurple",
+    "raw_english": "rawGray",
+}
 
 
 def main() -> int:
@@ -19,6 +33,7 @@ def main() -> int:
     parser.add_argument("--require-mixed-panel", action="store_true")
     parser.add_argument("--require-side-panel", action="store_true")
     parser.add_argument("--require-side-commit", action="store_true")
+    parser.add_argument("--require-commit-observed", action="store_true")
     parser.add_argument("--require-post-commit-followup", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
     parser.add_argument("--print-last", type=int, default=5)
@@ -38,6 +53,7 @@ def main() -> int:
             require_mixed_panel=args.require_mixed_panel,
             require_side_panel=args.require_side_panel,
             require_side_commit=args.require_side_commit,
+            require_commit_observed=args.require_commit_observed,
             require_post_commit_followup=args.require_post_commit_followup,
             require_modern_prediction_session=args.require_modern_prediction_session,
         ):
@@ -50,6 +66,7 @@ def main() -> int:
         "mixedPanel": bool(args.require_mixed_panel),
         "sidePanel": bool(args.require_side_panel),
         "sideCommit": bool(args.require_side_commit),
+        "commitObserved": bool(args.require_commit_observed),
         "postCommitFollowup": bool(args.require_post_commit_followup),
         "modernPredictionSession": bool(args.require_modern_prediction_session),
     }
@@ -58,6 +75,7 @@ def main() -> int:
         require_mixed_panel=args.require_mixed_panel,
         require_side_panel=args.require_side_panel,
         require_side_commit=args.require_side_commit,
+        require_commit_observed=args.require_commit_observed,
         require_post_commit_followup=args.require_post_commit_followup,
         require_modern_prediction_session=args.require_modern_prediction_session,
     )
@@ -92,6 +110,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     stale_response_drop = latest_matching(events, is_stale_response_drop_event)
     stale_selection_rejected = latest_matching(events, lambda event: event.get("event") == "stale_candidate_selection_rejected")
     modern_prediction_session = latest_matching(events, is_modern_prediction_session_event)
+    commit_observed = latest_matching(events, lambda event: event.get("event") == "commit_observed")
     side_commit_barrier_ms = max(
         event_timestamp_ms(mixed_panel),
         event_timestamp_ms(side_panel),
@@ -110,6 +129,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestStaleSelectionRejected": summarize_event(stale_selection_rejected),
         "frontendTransactionViolations": frontend_transaction_violations(events),
         "latestModernPredictionSession": summarize_event(modern_prediction_session),
+        "latestCommitObserved": summarize_event(commit_observed),
         "latestMixedPanel": summarize_event(mixed_panel),
         "latestSidePanel": summarize_event(side_panel),
         "latestMixedTextLayout": summarize_event(mixed_text_layout),
@@ -210,6 +230,8 @@ def visible_candidates_have_selectable_side(candidates: Any) -> bool:
             return False
 
         source_type = str(candidate.get("sourceType") or "")
+        if not candidate_source_visuals_match(candidate):
+            return False
         selection_action = str(candidate.get("selectionAction") or "")
         if source_type == "model":
             side_indices.append(index)
@@ -250,6 +272,8 @@ def visible_candidates_are_side_first(candidates: Any) -> bool:
             return False
 
         source_type = str(candidate.get("sourceType") or "")
+        if not candidate_source_visuals_match(candidate):
+            return False
         display_layout = str(candidate.get("displayLayout") or "")
         display_lane = str(candidate.get("displayLane") or "")
         selection_action = str(candidate.get("selectionAction") or "")
@@ -284,12 +308,26 @@ def is_valid_side_commit_event(event: dict[str, Any]) -> bool:
     candidate = event.get("candidate")
     if not isinstance(candidate, dict):
         return False
+    if not candidate_source_visuals_match(candidate):
+        return False
     if str(candidate.get("selectionAction") or "") != "commit_side_candidate":
         return False
     if str(candidate.get("sourceType") or "") not in {"model", "rag", "memory"}:
         return False
     selection_key = str(candidate.get("selectionKey") or candidate.get("label") or "")
     return bool(selection_key)
+
+
+def candidate_source_visuals_match(candidate: dict[str, Any]) -> bool:
+    source_type = str(candidate.get("sourceType") or "")
+    expected_badge = SOURCE_BADGES.get(source_type)
+    expected_color = SOURCE_COLOR_TOKENS.get(source_type)
+    if expected_badge is None or expected_color is None:
+        return source_type in {"", "side"}
+    return (
+        str(candidate.get("badge") or "") == expected_badge
+        and str(candidate.get("colorToken") or "") == expected_color
+    )
 
 
 def is_modern_prediction_session_event(event: dict[str, Any]) -> bool:
@@ -480,6 +518,9 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "candidateCounts": event.get("candidateCounts"),
         "separators": event.get("separators"),
         "key": event.get("key"),
+        "selectionKey": event.get("selectionKey"),
+        "sourceType": event.get("sourceType"),
+        "sessionFingerprint": event.get("sessionFingerprint"),
         "commitTextPreview": event.get("commitTextPreview"),
         "committedContextChars": event.get("committedContextChars"),
         "displayCount": event.get("displayCount"),
@@ -535,6 +576,7 @@ def report_passes(
     require_mixed_panel: bool,
     require_side_panel: bool,
     require_side_commit: bool,
+    require_commit_observed: bool,
     require_post_commit_followup: bool,
     require_modern_prediction_session: bool,
 ) -> bool:
@@ -545,6 +587,8 @@ def report_passes(
     if require_side_panel and not report.get("latestSidePanel"):
         return False
     if require_side_commit and not report.get("latestNumberKeySideCommit"):
+        return False
+    if require_commit_observed and not report.get("latestCommitObserved"):
         return False
     if require_post_commit_followup and not report.get("latestPostCommitFollowup"):
         return False

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rag_ime.memory_compiler import compiler_generator_from_env
 from rag_ime.memory_generator import (
     VcpRebuildMemoryGenerator,
     _build_openai_url,
@@ -106,6 +107,28 @@ class MemoryGeneratorTests(unittest.TestCase):
 
         self.assertEqual(generator.provider_name, "x1api")
         self.assertEqual(generator.config.api_base_url, "https://x1api.top/v1")
+
+    def test_compiler_generator_accepts_x1top_alias_for_offline_gpt_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "X1API_BASE_URL=https://x1api.top/v1",
+                        "X1API_API_KEY=secret-value",
+                        "X1API_MODEL=gpt-5.5",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            generator = compiler_generator_from_env(
+                env_path=env_path,
+                provider="x1top",
+            )
+
+        self.assertEqual(generator.provider_name, "x1api")
+        self.assertEqual(generator.config.model, "gpt-5.5")
 
     def test_parse_core_optimization_payload(self) -> None:
         raw = """
