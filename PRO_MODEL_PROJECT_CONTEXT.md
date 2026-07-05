@@ -152,7 +152,10 @@ Python sidecar transaction parsing/echo and trace checker transaction
 validation are implemented; Squirrel patch text now contains the matching
 transaction fields, response validation, stale selection rejection, hash-only
 default trace, pending post-commit continuation barrier, and post-commit trace
-event names. The local MLX predictor now also has a first PR-4
+event names. The frontend/soak trace checkers now only count a post-commit
+follow-up request when its `commitTextPreview` matches the side candidate that
+was just committed, preventing unrelated blank no-input requests from passing
+the continuous-prediction gate. The local MLX predictor now also has a first PR-4
 `seeded-prompt-replay` mode for `no_input_prediction`. The PR-5 governance
 layer also exposes reviewable local CLI commands for tombstones and anti-echo
 inspection instead of hiding everything behind sidecar-only behavior, and the

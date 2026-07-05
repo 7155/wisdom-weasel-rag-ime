@@ -492,6 +492,110 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertFalse(report["passed"])
         self.assertIsNone(report["latestPostCommitFollowup"])
 
+    def test_trace_check_rejects_followup_without_commit_preview(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        selected_candidate = {
+            "label": "6",
+            "selectionKey": "6",
+            "selectionRank": 6,
+            "sourceType": "model",
+            "text": "继续预测",
+            "insertText": "继续预测",
+            "selectionAction": "commit_side_candidate",
+            "displayLayout": "inline",
+            "badge": _source_badge("model"),
+            "colorToken": _source_color_token("model"),
+            "sessionFingerprint": "session-a",
+        }
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": True,
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "candidates": _mixed_side_first_candidates(session_fingerprint="session-a"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "number_key_route",
+                        "timestampMs": 2,
+                        "key": "6",
+                        "candidate": selected_candidate,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_commit",
+                        "timestampMs": 3,
+                        "candidate": selected_candidate,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "commit_observed",
+                        "timestampMs": 4,
+                        "committedText": "继续预测",
+                        "committedContextChars": 18,
+                        "selectionKey": "6",
+                        "sessionFingerprint": "session-a",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "post_commit_prediction_scheduled",
+                        "timestampMs": 5,
+                        "selectionKey": "6",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 6,
+                        "rawInput": "",
+                        "preedit": "",
+                        "committedContextChars": 18,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-mixed-panel",
+                    "--require-side-commit",
+                    "--require-commit-observed",
+                    "--require-post-commit-followup",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertIsNone(report["latestPostCommitFollowup"])
+
     def test_trace_check_fails_when_commit_observed_is_required_but_missing(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:

@@ -457,9 +457,9 @@ def is_post_commit_followup_request(request_event: dict[str, Any], commit_event:
         return False
     if int(request_event.get("committedContextChars") or 0) <= 0:
         return False
-    commit_text = committed_candidate_text(commit_event)
-    request_preview = str(request_event.get("commitTextPreview") or "")
-    return not commit_text or not request_preview or request_preview == commit_text
+    commit_text = compact_trace_text(committed_candidate_text(commit_event))
+    request_preview = compact_trace_text(str(request_event.get("commitTextPreview") or ""))
+    return bool(commit_text and request_preview and request_preview == commit_text)
 
 
 def committed_candidate_text(commit_event: dict[str, Any]) -> str:
@@ -467,6 +467,10 @@ def committed_candidate_text(commit_event: dict[str, Any]) -> str:
     if not isinstance(candidate, dict):
         return ""
     return str(candidate.get("insertText") or candidate.get("text") or "")
+
+
+def compact_trace_text(value: str) -> str:
+    return " ".join(str(value or "").split())
 
 
 def candidates_match_number_route(route_event: dict[str, Any], commit_event: dict[str, Any]) -> bool:
