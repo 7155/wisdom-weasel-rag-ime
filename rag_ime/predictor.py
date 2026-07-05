@@ -921,6 +921,8 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
         base_url = "http://127.0.0.1:8767"
     if provider not in ("openai", "openai-compatible", "ollama", "mlx", "mlx-lm", "mlx-service") or not base_url or not model:
         return NullPredictionProvider()
+    if not _is_loopback_realtime_predictor_url(base_url):
+        return NullPredictionProvider()
     profile = _normalized_predictor_profile(source.get("RAG_IME_PREDICTOR_PROFILE", "custom"))
     defaults = _prediction_profile_defaults(profile)
     if provider == "ollama":
@@ -1016,6 +1018,22 @@ def _canonical_x1api_base_url(value: str) -> str:
     if path == "/v1":
         path = ""
     return urllib.parse.urlunsplit((parsed.scheme or "https", "x1api.top", path, parsed.query, parsed.fragment))
+
+
+def _is_loopback_realtime_predictor_url(value: str) -> bool:
+    cleaned = compact_whitespace(value)
+    if not cleaned:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(cleaned)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    return host.startswith("127.")
 
 
 def prediction_provider_status(provider: PredictionProvider, *, probe_capabilities: bool = False) -> dict[str, object]:
