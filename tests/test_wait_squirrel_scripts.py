@@ -155,6 +155,9 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         self.assertIn("matching_squirrel_app_path=/Users/me/Desktop/backup/Squirrel.app", result.stdout)
         self.assertIn("duplicate_cleanup_hint=scripts/prepare_squirrel_foreground_check.sh --refresh-registration", result.stdout)
         self.assertIn("duplicate_quarantine_hint=RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh", result.stdout)
+        self.assertIn("third_party_allow_list_missing=1", result.stdout)
+        self.assertIn("command_line_repair_hint=scripts/enable_squirrel_hitoolbox_input_source.sh", result.stdout)
+        self.assertIn("manual_add_hint=scripts/open_squirrel_input_source_settings.sh --wait", result.stdout)
         self.assertEqual(open_args, "--wait")
         self.assertTrue(wait_log_exists)
 
@@ -349,6 +352,9 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("readiness_state=third-party-missing", result.stdout)
+        self.assertIn("duplicate_squirrel_app_paths=0", result.stdout)
+        self.assertIn("third_party_allow_list_missing=1", result.stdout)
+        self.assertIn("manual_add_hint=scripts/open_squirrel_input_source_settings.sh --wait", result.stdout)
         self.assertIn("foreground trace verification is still pending", result.stdout)
         self.assertNotIn("ready for foreground trace verification", result.stdout)
 

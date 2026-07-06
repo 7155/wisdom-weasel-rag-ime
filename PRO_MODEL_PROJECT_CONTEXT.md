@@ -279,9 +279,10 @@ HIToolbox/inputsource plists but macOS denied direct persistence of
 macOS user input-source activation.
 `im.rime.inputmethod.Squirrel.Hans` is visible, enabled, selectable, and
 HIToolbox-enabled, but `thirdPartyEnabled=false`; the current source is
-`com.apple.keylayout.ABC`. A 2026-07-06 read-only audit initially reported
-`duplicatePathCount=5` from old backup app paths under
-`/Users/undo/Desktop/rag-ime-input-method-backups/system/`. Running
+`com.bytedance.inputmethod.doubaoime.pinyin`. A 2026-07-06 read-only audit
+initially reported `duplicatePathCount=7` from old backup/removed/temp app
+paths, mostly under `/Users/undo/Desktop/rag-ime-input-method-backups/system/`.
+Running
 `refresh_squirrel_input_source_registration.sh` against the product
 `Squirrel.app` / `im.rime.inputmethod.Squirrel` route unregistered those stale
 LaunchServices records; the follow-up audit reported `duplicatePathCount=0`
@@ -298,8 +299,8 @@ selection, and checks sidecar health. It also prints duplicate
 LaunchServices-matching Squirrel paths plus cleanup hints, and
 `--refresh-registration` can run the existing Squirrel registration refresh
 before re-auditing. A 2026-07-06 dry run with
-`--refresh-registration --no-open --no-wait-typing` unregistered five stale
-backup/removed paths and then correctly refused to claim readiness. The
+`--refresh-registration --no-open --no-wait-typing` unregistered seven stale
+backup/removed/temp paths and then correctly refused to claim readiness. The
 follow-up audit reports `duplicatePathCount=0`, only
 `/Users/undo/Library/Input Methods/Squirrel.app` remains, and the current
 blocker is `readiness_state=third-party-missing` with

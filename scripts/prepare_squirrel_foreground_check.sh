@@ -161,6 +161,8 @@ if [[ -n "$duplicate_count" && "$duplicate_count" != "0" ]]; then
   done < <(print_duplicate_paths 2>/dev/null || true)
   log "duplicate_cleanup_hint=scripts/prepare_squirrel_foreground_check.sh --refresh-registration"
   log "duplicate_quarantine_hint=RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh"
+else
+  log "duplicate_squirrel_app_paths=0"
 fi
 
 case "$state" in
@@ -171,6 +173,9 @@ case "$state" in
     log "Squirrel is added but not current; use the macOS input menu to select it."
     ;;
   third-party-missing|preferences-incomplete)
+    log "third_party_allow_list_missing=1"
+    log "command_line_repair_hint=scripts/enable_squirrel_hitoolbox_input_source.sh"
+    log "manual_add_hint=scripts/open_squirrel_input_source_settings.sh --wait"
     if [[ "$OPEN_SETTINGS" == "1" ]]; then
       log "opening System Settings Add flow"
       if [[ "$WAIT_ADDED" == "1" ]]; then
