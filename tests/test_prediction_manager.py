@@ -208,12 +208,12 @@ class PredictionManagerTests(unittest.TestCase):
 
         self.assertIsNotNone(first.stable_snapshot)
         self.assertIsNotNone(second.stable_snapshot)
-        self.assertEqual(second.stability["action"], "progressive_replace")
-        self.assertNotEqual(second.stable_snapshot.snapshot_id, first.stable_snapshot.snapshot_id)
+        self.assertEqual(second.stability["action"], "progressive_append")
+        self.assertEqual(second.stable_snapshot.snapshot_id, first.stable_snapshot.snapshot_id)
         self.assertEqual([item.text for item in second.display_candidates], ["做一个本地 RAG 输入法", "连续弹出下一个预测"])
         self.assertEqual(second.stability["preservedOrdinalCount"], 1)
-        self.assertEqual(second.stability["appendedCandidateCount"], 0)
-        self.assertEqual(second.stability["replacedCandidateCount"], 2)
+        self.assertEqual(second.stability["appendedCandidateCount"], 1)
+        self.assertEqual(second.stability["replacedCandidateCount"], 0)
 
     def test_stale_prefix_pool_filters_incompatible_holdover_candidates(self) -> None:
         manager = PredictionManager(candidate_pool_ttl_ms=1)

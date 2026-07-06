@@ -6,12 +6,14 @@ import unittest
 import json
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 from urllib.request import Request, urlopen
 
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_ingest import normalize_text, upsert_memory_item
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
+from rag_ime.retrieval_docs import rebuild_retrieval_docs
 
 
 class _ManagementPredictionProvider:
@@ -217,6 +219,110 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(health["management"]["localhostOnly"])
         self.assertFalse(health["management"]["rawTextVisible"])
 
+    def test_rag_core_v3_preview_is_read_only(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_030,
+                source="manual",
+                committed_text="多路召回",
+                recent_context="RAG 输入法",
+                project="wisdom-weasel-rag-ime",
+                tags=("RAG",),
+            )
+        )
+        before = self._retrieval_doc_count()
+
+        preview = self.service.rag_core_v3_query_preview({"query": "多路召回", "project": "wisdom-weasel-rag-ime"})
+        after = self._retrieval_doc_count()
+
+        self.assertTrue(preview["ok"])
+        self.assertEqual(preview["schemaVersion"], "rag-ime.rag-core-v3-preview.v1")
+        self.assertEqual(before, after)
+
+    def test_rag_core_v3_preview_redacts_raw_text_by_default(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_031,
+                source="manual",
+                committed_text="隐私短语",
+                recent_context="超级秘密上下文",
+                project="wisdom-weasel-rag-ime",
+                tags=("RAG",),
+            )
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+
+        preview = self.service.rag_core_v3_query_preview({"query": "隐私短语", "project": "wisdom-weasel-rag-ime"})
+        blob = json.dumps(preview, ensure_ascii=False)
+
+        self.assertTrue(preview["ok"])
+        self.assertFalse(preview["rawTextVisible"])
+        self.assertNotIn("隐私短语 超级秘密上下文", blob)
+        self.assertNotIn("超级秘密上下文", blob)
+        self.assertIn("evidencePreviewHash", blob)
+
+    def test_rag_core_v3_preview_reports_lane_breakdown(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_032,
+                source="manual",
+                committed_text="多路召回",
+                recent_context="RAG 输入法",
+                project="wisdom-weasel-rag-ime",
+                tags=("RAG",),
+            )
+        )
+
+        rebuild = self.service.rag_core_v3_rebuild_retrieval_docs({"project": "wisdom-weasel-rag-ime"})
+        preview = self.service.rag_core_v3_query_preview({"query": "多路召回", "project": "wisdom-weasel-rag-ime"})
+
+        self.assertTrue(rebuild["ok"])
+        self.assertIn("bm25Raw", preview["lanes"])
+        self.assertGreaterEqual(preview["lanes"]["bm25Raw"]["count"], 1)
+
+    def test_deepseek_preview_requires_explicit_flag_or_token(self) -> None:
+        with patch.dict("os.environ", {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "0"}, clear=False):
+            preview = self.service.deepseek_completion_preview({"currentContext": "RAG 输入法"})
+
+        self.assertFalse(preview["ok"])
+        self.assertIn("RAG_IME_DEEPSEEK_ACTIVE_RAG=1", preview["requires"])
+
+    def test_debug_ui_can_render_rag_core_v3_view(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        index = (root / "debug" / "index.html").read_text(encoding="utf-8")
+        app = (root / "debug" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('data-view="ragcore"', index)
+        self.assertIn("RAG Core v3", index)
+        self.assertIn("/api/rag-core-v3/query-preview", app)
+
+    def test_memory_book_preview_is_dry_run_and_redacted(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_033,
+                source="manual",
+                committed_text="真实历史整理入口",
+                recent_context="不应该默认展示的上下文",
+                project="wisdom-weasel-rag-ime",
+                tags=("RAG",),
+            )
+        )
+
+        preview = self.service.rag_core_v3_memory_book_preview({"project": "wisdom-weasel-rag-ime", "limit": 10})
+        blob = json.dumps(preview, ensure_ascii=False)
+
+        self.assertTrue(preview["ok"])
+        self.assertTrue(preview["dryRun"])
+        self.assertFalse(preview["rawTextVisible"])
+        self.assertNotIn("真实历史整理入口", blob)
+        self.assertNotIn("不应该默认展示的上下文", blob)
+        self.assertIn("textHash", blob)
+
     def test_management_http_routes_are_available(self) -> None:
         self.core.record_event(
             InputEvent(
@@ -362,6 +468,11 @@ class DebugManagementApiTests(unittest.TestCase):
                 "SELECT COUNT(*) AS count FROM management_audit_log WHERE action = ?",
                 (action,),
             ).fetchone()
+            return int(row["count"])
+
+    def _retrieval_doc_count(self) -> int:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            row = conn.execute("SELECT COUNT(*) AS count FROM memory_retrieval_docs").fetchone()
             return int(row["count"])
 
 

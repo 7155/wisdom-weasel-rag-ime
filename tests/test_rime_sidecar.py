@@ -16,6 +16,7 @@ from unittest.mock import patch
 from rag_ime.adapter import InputMethodAdapter
 from rag_ime.cli import main
 from rag_ime.core_client import FixtureCoreClient
+from rag_ime.deepseek_completion import CompletionCandidateDelta
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction, RimeContextSnapshot, SideCandidateDisplayItem
 from rag_ime.predictor import CooldownPredictionProvider, OpenAICompatiblePredictionConfig
@@ -236,6 +237,40 @@ class FailingPredictionProvider:
         self.calls += 1
         self.last_error = "timeout"
         return []
+
+
+class DeepSeekPassivePredictionProvider:
+    config = OpenAICompatiblePredictionConfig(
+        base_url="http://127.0.0.1:8767",
+        model="deepseek-v4-flash",
+        provider_name="local-openai-compatible",
+        profile="instant",
+    )
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        self.calls += 1
+        return [
+            ModelPrediction(
+                text="DeepSeek 不应进入每按键路径",
+                rank=1,
+                provider_name="deepseek-v4-flash",
+                latency_ms=1200,
+            )
+        ][:max_candidates]
+
+
+class FakeDeepSeekCompletionProvider:
+    def __init__(self, texts: tuple[str, ...] = ("DeepSeek流式补全", "TagMemo语义解锁")) -> None:
+        self.texts = texts
+        self.calls: list[object] = []
+
+    def stream_candidates(self, request):
+        self.calls.append(request)
+        for text in self.texts:
+            yield CompletionCandidateDelta(text=text, insert_text=text, metadata={"test": True})
 
 
 class EmptyPredictionProvider:
@@ -737,14 +772,14 @@ class RimeSidecarTests(unittest.TestCase):
 
         self.assertEqual(policy["optionNumber"], "select_prediction_by_ordinal")
 
-    def test_composition_number_keys_select_visible_candidates(self) -> None:
+    def test_composition_number_keys_select_rime_candidates(self) -> None:
         policy = key_policy_for_prediction_session(
             {"phase": "prefix_constrained", "inputMode": "prefix_constrained_composing"}
         )
 
-        self.assertEqual(policy["numberKeys"], "select_visible_candidate")
-        self.assertEqual(policy["tab"], "page_or_accept_by_rime_mode")
-        self.assertEqual(policy["optionNumber"], "select_side_candidate")
+        self.assertEqual(policy["numberKeys"], "select_rime_candidate")
+        self.assertEqual(policy["tab"], "rime_default")
+        self.assertEqual(policy["optionNumber"], "disabled")
 
     def test_holdover_candidate_is_marked_dim_or_stable_in_metadata(self) -> None:
         snapshot = RimeContextSnapshot(session_id="s1", request_seq=1, committed_context="我想")
@@ -812,6 +847,7 @@ class RimeSidecarTests(unittest.TestCase):
             "rawInput": "ragshurufa",
             "preedit": "ragshurufa",
             "committedContext": "RAG 输入法需要复用 Rime 词库",
+            "forceSideCandidates": True,
             "maxVisibleCandidates": 5,
             "maxSideCandidates": 3,
             "rimeContext": {
@@ -879,6 +915,7 @@ class RimeSidecarTests(unittest.TestCase):
             "rawInput": "ragshurufa",
             "preedit": "ragshurufa",
             "committedContext": "RAG 输入法需要本地记忆",
+            "forceSideCandidates": True,
             "maxVisibleCandidates": 4,
             "maxSideCandidates": 2,
             "rimeContext": {
@@ -1299,6 +1336,118 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(predictor.last_recent_context, "当前正在写 RAG 输入法 sidecar")
         self.assertEqual([item["text"] for item in response["modelPredictions"]], ["把输入法流程跑通"])
 
+    def test_deepseek_model_is_not_called_from_passive_per_key_sidecar_path(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        predictor = DeepSeekPassivePredictionProvider()
+
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "deepseek-passive-guard",
+                "requestSeq": 46,
+                "rawInput": "houxuan",
+                "preedit": "houxuan",
+                "committedContext": "我想设计输入法候选展示方式",
+                "latencyBudgetMs": 800,
+                "maxVisibleCandidates": 4,
+                "maxSideCandidates": 2,
+                "forceSideCandidates": True,
+                "rimeContext": {"candidates": [{"label": "1", "text": "候选", "comment": "rime"}]},
+            },
+            adapter=adapter,
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(predictor.calls, 0)
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertFalse(response["modelLane"]["called"])
+        self.assertIn("DeepSeek must not be called", response["modelLane"]["skippedReason"])
+
+    def test_deepseek_post_commit_requires_env_flag(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        deepseek = FakeDeepSeekCompletionProvider()
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_POST_COMMIT": "0"}):
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "deepseek-post-commit-flag",
+                    "requestSeq": 47,
+                    "committedContext": "我正在整理 RAG 输入法的历史记忆",
+                    "latencyBudgetMs": 1200,
+                    "maxVisibleCandidates": 5,
+                    "maxSideCandidates": 3,
+                    "forceSideCandidates": True,
+                },
+                adapter=adapter,
+                core=core,
+                predictor=EmptyPredictionProvider(),
+                deepseek_completion_provider=deepseek,
+            )
+
+        self.assertEqual(deepseek.calls, [])
+        self.assertFalse(response["modelLane"]["called"])
+        self.assertIn("RAG_IME_DEEPSEEK_POST_COMMIT=1", response["modelLane"]["skippedReason"])
+
+    def test_deepseek_post_commit_streaming_appends_only(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        deepseek = FakeDeepSeekCompletionProvider(("DeepSeek流式补全", "TagMemo语义解锁"))
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_POST_COMMIT": "1"}):
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "deepseek-post-commit-append",
+                    "requestSeq": 48,
+                    "committedContext": "我正在整理 RAG 输入法的历史记忆",
+                    "latencyBudgetMs": 1600,
+                    "maxVisibleCandidates": 6,
+                    "maxSideCandidates": 3,
+                    "forceSideCandidates": True,
+                },
+                adapter=adapter,
+                core=core,
+                predictor=CleanPostCommitPredictionProvider(),
+                deepseek_completion_provider=deepseek,
+            )
+
+        model_texts = [item["text"] for item in response["modelPredictions"]]
+        self.assertEqual(model_texts, ["我们开始", "DeepSeek流式补全", "TagMemo语义解锁"])
+        self.assertTrue(response["modelLane"]["deepseekCalled"])
+        self.assertEqual(response["modelLane"]["deepseekPredictionCount"], 2)
+        self.assertTrue(response["modelLane"]["deepseekAppendOnly"])
+        self.assertEqual(deepseek.calls[0].scene, "post_commit")
+
+    def test_deepseek_streaming_candidate_does_not_renumber_existing_candidates(self) -> None:
+        core = CapturingCore()
+        adapter = InputMethodAdapter(core)
+        deepseek = FakeDeepSeekCompletionProvider(("DeepSeek流式补全",))
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_POST_COMMIT": "1"}):
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "deepseek-post-commit-ordinal",
+                    "requestSeq": 49,
+                    "committedContext": "我正在整理 RAG 输入法的历史记忆",
+                    "latencyBudgetMs": 1600,
+                    "maxVisibleCandidates": 6,
+                    "maxSideCandidates": 3,
+                    "forceSideCandidates": True,
+                },
+                adapter=adapter,
+                core=core,
+                predictor=CleanPostCommitPredictionProvider(),
+                deepseek_completion_provider=deepseek,
+            )
+
+        model_items = [item for item in response["displayCandidates"] if item["sourceType"] == "model"]
+        self.assertGreaterEqual(len(model_items), 2)
+        self.assertEqual(model_items[0]["text"], "我们开始")
+        self.assertEqual(model_items[1]["text"], "DeepSeek流式补全")
+        self.assertEqual([item["candidateOrdinal"] for item in model_items[:2]], [1, 2])
+        self.assertEqual([item["selectionKey"] for item in model_items[:2]], ["1", "2"])
+
     def test_frontmost_app_payload_reaches_rag_retrieval(self) -> None:
         core = CapturingCore()
         adapter = InputMethodAdapter(core)
@@ -1556,6 +1705,7 @@ class RimeSidecarTests(unittest.TestCase):
                 "requestSeq": 11,
                 "rawInput": "erqi",
                 "preedit": "erqi",
+                "forceSideCandidates": True,
                 "maxVisibleCandidates": 8,
                 "maxSideCandidates": 8,
                 "rimeContext": {
@@ -1822,6 +1972,7 @@ class RimeSidecarTests(unittest.TestCase):
                 "rawInput": "rag",
                 "preedit": "rag",
                 "committedContext": "我正在做本地 RAG 输入法，需要根据历史输入预测候选。",
+                "forceSideCandidates": True,
                 "maxVisibleCandidates": 8,
                 "maxSideCandidates": 8,
                 "rimeContext": {
@@ -1870,7 +2021,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["displayCandidates"])
         self.assertNotEqual(response["displayCandidates"][0]["sourceType"], "raw_english")
 
-    def test_prediction_first_merge_prefix_keeps_llm_rag_before_wanxiang_fallback(self) -> None:
+    def test_prediction_first_merge_prefix_response_keeps_composition_rime_only(self) -> None:
         core = PrefixSuggestionCore()
         adapter = InputMethodAdapter(core)
         response = build_rime_sidecar_response(
@@ -1899,34 +2050,29 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["predictionFirst"]["mode"], "prefix_constrained_composing")
         self.assertEqual(response["predictionFirst"]["pinyinPrefix"], "sj")
         display = response["displayCandidates"]
-        self.assertEqual(
-            [item["text"] for item in display],
-            ["设计输入法状态机", "设计一个候选展示方式", "手机", "世界"],
-        )
-        self.assertEqual(
-            [item["sourceType"] for item in display],
-            ["model", "rag", "rime", "rime"],
-        )
-        self.assertEqual([item["displayLane"] for item in display], ["model", "memory", "wanxiang", "wanxiang"])
+        self.assertEqual([item["text"] for item in display], ["手机", "世界"])
+        self.assertEqual([item["sourceType"] for item in display], ["rime", "rime"])
+        self.assertEqual([item["displayLane"] for item in display], ["rime", "rime"])
         self.assertEqual(response["predictionFirst"]["policy"]["sideInserted"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["prefixMatchedSideInserted"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 2)
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangReserve"], 2)
         self.assertTrue(response["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
-        self.assertEqual(response["predictionSession"]["phase"], "prefix_constrained")
-        self.assertTrue(response["predictionSession"]["predictionPanelVisible"])
+        self.assertEqual(response["uiMode"], "composition_rime")
+        self.assertEqual(response["predictionSession"]["phase"], "anchor_composing")
+        self.assertFalse(response["predictionSession"]["predictionPanelVisible"])
         self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
-        self.assertEqual(response["predictionSession"]["selectionScope"], "mixed_prediction_first")
-        self.assertEqual(response["predictionSession"]["expiresAfterMs"], 2600)
-        self.assertEqual(response["keyPolicy"]["numberKeys"], "select_visible_candidate")
-        self.assertEqual(response["keyPolicy"]["optionNumber"], "select_side_candidate")
+        self.assertEqual(response["predictionSession"]["selectionScope"], "rime")
+        self.assertEqual(response["keyPolicy"]["numberKeys"], "select_rime_candidate")
+        self.assertEqual(response["keyPolicy"]["optionNumber"], "disabled")
         self.assertTrue(response["showDecision"]["shouldShow"])
         self.assertFalse(response["showDecision"]["hardClear"])
         for ordinal, item in enumerate(display, start=1):
             self.assertEqual(item["candidateOrdinal"], ordinal)
             self.assertEqual(item["snapshotId"], response["predictionSession"]["snapshotId"])
             self.assertEqual(item["hardContextAnchor"], response["predictionSession"]["hardContextAnchor"])
-            self.assertEqual(item["metadata"]["keyPolicy"]["numberKeys"], "select_visible_candidate")
+            self.assertEqual(item["metadata"]["keyPolicy"]["numberKeys"], "select_rime_candidate")
+            self.assertEqual(item["group"], "rime")
 
     def test_prediction_trace_events_include_prefix_filter_diagnostics(self) -> None:
         events = prediction_trace_events_payload(
@@ -2035,6 +2181,7 @@ class RimeSidecarTests(unittest.TestCase):
                     "preedit": "sj",
                     "committedContext": "我想",
                     "predictionFirstMerge": True,
+                    "forceSideCandidates": True,
                     "maxVisibleCandidates": 5,
                     "maxSideCandidates": 3,
                     "rimeContext": {
@@ -2074,6 +2221,7 @@ class RimeSidecarTests(unittest.TestCase):
                 "preedit": "ni",
                 "committedContext": "我想",
                 "predictionFirstMerge": True,
+                "forceSideCandidates": True,
                 "maxVisibleCandidates": 5,
                 "maxSideCandidates": 3,
                 "rimeContext": {
@@ -2856,7 +3004,10 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(timeout_response["modelLane"]["called"])
         self.assertTrue(timeout_response["modelLane"]["timedOut"])
         self.assertFalse(timeout_response["modelLane"]["holdoverHit"])
-        self.assertEqual(timeout_response["modelLane"]["skippedReason"], "model dispatch exceeded latency budget")
+        self.assertIn(
+            timeout_response["modelLane"]["skippedReason"],
+            {"model dispatch exceeded latency budget", "model lane exceeded latency budget"},
+        )
         self.assertFalse(any(item["sourceType"] == "model" for item in timeout_response["displayCandidates"]))
 
     def test_model_lane_timeout_keeps_rag_candidates_responsive(self) -> None:
@@ -2934,6 +3085,18 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(response["progressive"]["shouldFollowUp"])
         self.assertIn("model", response["progressive"]["pendingLanes"])
         self.assertEqual(response["modelLane"]["skippedReason"], "model lane pending after progressive first response")
+        status_rows = [item for item in response["displayCandidates"] if item["sourceType"] == "status"]
+        self.assertEqual(len(status_rows), 1)
+        self.assertEqual(status_rows[0]["selectionAction"], "none")
+        self.assertIsNone(status_rows[0]["selectionKey"])
+        self.assertEqual(status_rows[0]["badge"], "查忆")
+        self.assertFalse(status_rows[0]["isSelectable"])
+        self.assertTrue(status_rows[0]["isStatus"])
+        self.assertEqual(status_rows[0]["displayLane"], "post_commit_status")
+        self.assertIn(response["uiMode"], {"post_commit_pending", "post_commit_prediction"})
+        self.assertEqual(response["keyPolicy"]["numberKeys"], "pass_through")
+        self.assertEqual(response["keyPolicy"]["tab"], "accept_top_prediction")
+        self.assertEqual(response["keyPolicy"]["optionNumber"], "select_prediction_by_ordinal")
 
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         with patch.dict("os.environ", {"RAG_IME_PROGRESSIVE_FIRST_RESPONSE_MS": "120"}):
@@ -2947,24 +3110,25 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(followup["modelPredictions"])
         self.assertTrue(followup["progressive"]["enabled"])
         self.assertFalse(followup["progressive"]["shouldFollowUp"])
-        self.assertEqual(followup["displayCandidates"][0]["sourceType"], "model")
-        self.assertTrue(any(item["sourceType"] == "rag" for item in followup["displayCandidates"][1:]))
-        self.assertEqual(followup["predictionSession"]["stablePanelAction"], "progressive_replace")
+        self.assertEqual(followup["displayCandidates"][0]["sourceType"], "rag")
+        self.assertTrue(any(item["sourceType"] == "model" for item in followup["displayCandidates"][1:]))
+        self.assertEqual(followup["predictionSession"]["stablePanelAction"], "progressive_append")
         self.assertEqual(
             followup["predictionSession"]["stablePanelReason"],
-            "progressive_replaced_prediction_panel",
+            "progressive_appended_prediction_candidates",
         )
         self.assertIn(
-            "candidate_snapshot_progressive_replace",
+            "candidate_snapshot_progressive_append",
             [item["event"] for item in followup["predictionTraceEvents"]],
         )
-        replace_event = next(
+        append_event = next(
             item
             for item in followup["predictionTraceEvents"]
-            if item["event"] == "candidate_snapshot_progressive_replace"
+            if item["event"] == "candidate_snapshot_progressive_append"
         )
-        self.assertEqual(replace_event["fields"]["preservedOrdinalCount"], 0)
-        self.assertIn("previousSnapshotId", replace_event["fields"])
+        self.assertEqual(append_event["fields"]["preservedOrdinalCount"], 0)
+        self.assertGreaterEqual(append_event["fields"]["appendedCandidateCount"], 1)
+        self.assertIn("previousSnapshotId", append_event["fields"])
 
     def test_progressive_first_response_does_not_reuse_stale_model_holdover(self) -> None:
         payload = {

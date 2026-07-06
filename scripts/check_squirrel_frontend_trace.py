@@ -15,6 +15,7 @@ SOURCE_BADGES = {
     "rag": "查",
     "memory": "忆",
     "raw_english": "input",
+    "status": "查忆",
 }
 SOURCE_COLOR_TOKENS = {
     "rime": "rimeOrange",
@@ -22,6 +23,7 @@ SOURCE_COLOR_TOKENS = {
     "rag": "ragTeal",
     "memory": "memoryPurple",
     "raw_english": "rawGray",
+    "status": "statusGray",
 }
 SIDE_SELECTION_ROUTE_EVENTS = {"number_key_route", "tab_key_route", "option_number_route"}
 USER_TEXT_TRACE_KEYS = {
@@ -55,6 +57,16 @@ def main() -> int:
     parser.add_argument("--require-post-commit-followup", action="store_true")
     parser.add_argument("--require-delete-resync", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
+    parser.add_argument("--require-rime-composition-mode", action="store_true")
+    parser.add_argument("--require-post-commit-pending-status", action="store_true")
+    parser.add_argument("--require-prediction-status-visible", action="store_true")
+    parser.add_argument("--require-source-badges", action="store_true")
+    parser.add_argument(
+        "--max-renumber-rate",
+        type=float,
+        default=None,
+        help="Fail if candidate ordinal drift/reuse exceeds this rate; use 0 for append-only strictness.",
+    )
     parser.add_argument(
         "--require-balanced-quota",
         action="store_true",
@@ -81,7 +93,12 @@ def main() -> int:
             require_post_commit_followup=args.require_post_commit_followup,
             require_delete_resync=args.require_delete_resync,
             require_modern_prediction_session=args.require_modern_prediction_session,
+            require_rime_composition_mode=args.require_rime_composition_mode,
+            require_post_commit_pending_status=args.require_post_commit_pending_status,
+            require_prediction_status_visible=args.require_prediction_status_visible,
+            require_source_badges=args.require_source_badges,
             require_balanced_quota=args.require_balanced_quota,
+            max_renumber_rate=args.max_renumber_rate,
         ):
             break
         if time.monotonic() >= deadline:
@@ -96,7 +113,12 @@ def main() -> int:
         "postCommitFollowup": bool(args.require_post_commit_followup),
         "deleteResync": bool(args.require_delete_resync),
         "modernPredictionSession": bool(args.require_modern_prediction_session),
+        "rimeCompositionMode": bool(args.require_rime_composition_mode),
+        "postCommitPendingStatus": bool(args.require_post_commit_pending_status),
+        "predictionStatusVisible": bool(args.require_prediction_status_visible),
+        "sourceBadges": bool(args.require_source_badges),
         "balancedQuota": bool(args.require_balanced_quota),
+        "maxRenumberRate": args.max_renumber_rate,
     }
     report["passed"] = report_passes(
         report,
@@ -107,7 +129,12 @@ def main() -> int:
         require_post_commit_followup=args.require_post_commit_followup,
         require_delete_resync=args.require_delete_resync,
         require_modern_prediction_session=args.require_modern_prediction_session,
+        require_rime_composition_mode=args.require_rime_composition_mode,
+        require_post_commit_pending_status=args.require_post_commit_pending_status,
+        require_prediction_status_visible=args.require_prediction_status_visible,
+        require_source_badges=args.require_source_badges,
         require_balanced_quota=args.require_balanced_quota,
+        max_renumber_rate=args.max_renumber_rate,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["passed"] else 1
@@ -139,6 +166,10 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     side_selection_route = latest_matching(events, is_side_selection_route_event)
     sidecar_response = latest_matching(events, lambda event: event.get("event") == "sidecar_response_applied")
     balanced_candidate_panel = latest_matching(events, is_balanced_candidate_quota_event)
+    rime_composition_mode = latest_matching(events, is_rime_composition_mode_event)
+    post_commit_pending_status = latest_matching(events, is_post_commit_pending_status_event)
+    prediction_status_visible = latest_matching(events, is_prediction_status_visible_event)
+    source_badge_panel = latest_matching(events, is_source_badges_visible_event)
     stale_response_drop = latest_matching(events, is_stale_response_drop_event)
     stale_selection_rejected = latest_matching(events, lambda event: event.get("event") == "stale_candidate_selection_rejected")
     modern_prediction_session = latest_matching(events, is_modern_prediction_session_event)
@@ -148,6 +179,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     post_delete_context_use = latest_post_delete_context_use(events, delete_resync)
     post_commit_barrier_violations = collect_post_commit_barrier_violations(events)
     trace_privacy_violations = collect_trace_privacy_violations(events)
+    renumber_metrics = candidate_renumber_metrics(events)
     side_commit_barrier_ms = max(
         event_timestamp_ms(mixed_panel),
         event_timestamp_ms(side_panel),
@@ -165,7 +197,13 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "eventCount": len(events),
         "latestSidecarResponse": summarize_event(sidecar_response),
         "latestBalancedCandidatePanel": summarize_event(balanced_candidate_panel),
+        "latestRimeCompositionMode": summarize_event(rime_composition_mode),
+        "latestPostCommitPendingStatus": summarize_event(post_commit_pending_status),
+        "latestPredictionStatusVisible": summarize_event(prediction_status_visible),
+        "latestSourceBadgePanel": summarize_event(source_badge_panel),
         "candidateQuotaViolations": candidate_quota_violations(events),
+        "candidateRenumber": renumber_metrics,
+        "candidateRenumberViolations": renumber_metrics["violations"],
         "latestStaleResponseDrop": summarize_event(stale_response_drop),
         "latestStaleSelectionRejected": summarize_event(stale_selection_rejected),
         "frontendTransactionViolations": frontend_transaction_violations(events),
@@ -268,12 +306,18 @@ def visible_candidates_have_selectable_side(candidates: Any) -> bool:
         return False
     side_indices: list[int] = []
     rime_indices: list[int] = []
+    selectable_index = 0
     for index, candidate in enumerate(candidates):
         if not isinstance(candidate, dict):
             return False
+        if is_status_candidate(candidate):
+            if not status_candidate_is_valid(candidate):
+                return False
+            continue
         label = str(candidate.get("label") or "")
         selection_key = str(candidate.get("selectionKey") or label)
-        expected_label = "0" if index == 9 else str(index + 1)
+        expected_label = "0" if selectable_index == 9 else str(selectable_index + 1)
+        selectable_index += 1
         if label and label != expected_label:
             return False
         if selection_key and label and selection_key != label:
@@ -310,12 +354,18 @@ def visible_candidates_are_side_first(candidates: Any) -> bool:
     model_indices: list[int] = []
     rag_indices: list[int] = []
     rime_indices: list[int] = []
+    selectable_index = 0
     for index, candidate in enumerate(candidates):
         if not isinstance(candidate, dict):
             return False
+        if is_status_candidate(candidate):
+            if not status_candidate_is_valid(candidate):
+                return False
+            continue
         label = str(candidate.get("label") or "")
         selection_key = str(candidate.get("selectionKey") or label)
-        expected_label = "0" if index == 9 else str(index + 1)
+        expected_label = "0" if selectable_index == 9 else str(selectable_index + 1)
+        selectable_index += 1
         if label and label != expected_label:
             return False
         if selection_key and label and selection_key != label:
@@ -373,8 +423,109 @@ def visible_candidates_obey_balanced_quota(candidates: Any) -> bool:
     return visible_candidates_have_selectable_side(candidates)
 
 
+def is_rime_composition_mode_event(event: dict[str, Any]) -> bool:
+    if event.get("event") == "sidecar_response_applied":
+        ui_mode = str(event.get("uiMode") or "")
+        session = event.get("predictionSession")
+        input_mode = str(session.get("inputMode") or "") if isinstance(session, dict) else ""
+        if ui_mode == "composition_rime" or input_mode in {"anchor_composing", "prefix_constrained_composing"}:
+            return True
+    if event.get("event") != "panel_display_candidates":
+        return False
+    if not (str(event.get("rawInput") or "") or str(event.get("preedit") or "")):
+        return False
+    candidates = event.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    return visible_candidates_are_rime_only(candidates)
+
+
+def visible_candidates_are_rime_only(candidates: Any) -> bool:
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    seen_rime = False
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            return False
+        if is_status_candidate(candidate):
+            return False
+        source_type = str(candidate.get("sourceType") or "")
+        if source_type != "rime":
+            return False
+        if not candidate_source_visuals_match(candidate):
+            return False
+        selection_action = str(candidate.get("selectionAction") or "")
+        if selection_action and selection_action != "select_rime_candidate":
+            return False
+        seen_rime = True
+    return seen_rime
+
+
+def is_post_commit_pending_status_event(event: dict[str, Any]) -> bool:
+    if event.get("event") == "sidecar_response_applied":
+        ui_mode = str(event.get("uiMode") or "")
+        if ui_mode == "post_commit_pending":
+            return True
+    if event.get("event") != "panel_display_candidates":
+        return False
+    ui_mode = str(event.get("uiMode") or "")
+    if ui_mode and ui_mode != "post_commit_pending":
+        return False
+    if not panel_is_post_commit(event):
+        return False
+    return panel_has_valid_status_row(event)
+
+
+def is_prediction_status_visible_event(event: dict[str, Any]) -> bool:
+    if event.get("event") not in {"panel_display_candidates", "sidecar_response_applied"}:
+        return False
+    return panel_has_valid_status_row(event)
+
+
+def is_source_badges_visible_event(event: dict[str, Any]) -> bool:
+    if event.get("event") != "panel_display_candidates":
+        return False
+    candidates = event.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    return all(isinstance(candidate, dict) and candidate_source_visuals_match(candidate) for candidate in candidates)
+
+
+def panel_is_post_commit(event: dict[str, Any]) -> bool:
+    if str(event.get("uiMode") or "") in {"post_commit_pending", "post_commit_prediction"}:
+        return True
+    session = event.get("predictionSession")
+    return isinstance(session, dict) and str(session.get("phase") or "") == "post_commit"
+
+
+def panel_has_valid_status_row(event: dict[str, Any]) -> bool:
+    candidates = event.get("candidates")
+    if not isinstance(candidates, list):
+        return False
+    return any(isinstance(candidate, dict) and status_candidate_is_valid(candidate) for candidate in candidates)
+
+
+def is_status_candidate(candidate: dict[str, Any]) -> bool:
+    return (
+        str(candidate.get("sourceType") or "") == "status"
+        or candidate.get("isStatus") is True
+        or str(candidate.get("displayLayout") or "") == "status_row"
+        or str(candidate.get("displayLane") or "") == "post_commit_status"
+    )
+
+
+def status_candidate_is_valid(candidate: dict[str, Any]) -> bool:
+    selection_key = candidate.get("selectionKey")
+    return (
+        is_status_candidate(candidate)
+        and str(candidate.get("selectionAction") or "") == "none"
+        and (selection_key is None or str(selection_key) == "")
+        and candidate_source_visuals_match(candidate)
+    )
+
+
 def candidate_source_counts(candidates: Any) -> dict[str, int]:
-    counts = {"model": 0, "rag": 0, "memory": 0, "rime": 0, "raw_english": 0, "other": 0}
+    counts = {"model": 0, "rag": 0, "memory": 0, "rime": 0, "raw_english": 0, "status": 0, "other": 0}
     if not isinstance(candidates, list):
         return counts
     for candidate in candidates:
@@ -443,6 +594,82 @@ def candidate_source_visuals_match(candidate: dict[str, Any]) -> bool:
         str(candidate.get("badge") or "") == expected_badge
         and str(candidate.get("colorToken") or "") == expected_color
     )
+
+
+def candidate_renumber_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
+    by_snapshot_ordinal: dict[tuple[str, int], str] = {}
+    by_snapshot_stable_id: dict[tuple[str, str], int] = {}
+    comparisons = 0
+    violations: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        candidates = event.get("candidates")
+        if not isinstance(candidates, list):
+            continue
+        event_snapshot = snapshot_id_for_event(event)
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or is_status_candidate(candidate):
+                continue
+            if str(candidate.get("selectionAction") or "") != "commit_side_candidate":
+                continue
+            snapshot_id = str(candidate.get("snapshotId") or event_snapshot)
+            stable_id = str(candidate.get("candidateStableId") or "")
+            ordinal = optional_int(candidate.get("candidateOrdinal"))
+            if not snapshot_id or not stable_id or ordinal is None or ordinal <= 0:
+                continue
+            ordinal_key = (snapshot_id, ordinal)
+            stable_key = (snapshot_id, stable_id)
+            previous_stable = by_snapshot_ordinal.get(ordinal_key)
+            if previous_stable is None:
+                by_snapshot_ordinal[ordinal_key] = stable_id
+            else:
+                comparisons += 1
+                if previous_stable != stable_id:
+                    violations.append(
+                        {
+                            "event": "panel_display_candidates",
+                            "timestampMs": event.get("timestampMs"),
+                            "reason": "candidate_ordinal_reused_for_different_stable_id",
+                            "snapshotId": snapshot_id,
+                            "candidateOrdinal": ordinal,
+                            "previousCandidateStableId": previous_stable,
+                            "candidateStableId": stable_id,
+                        }
+                    )
+            previous_ordinal = by_snapshot_stable_id.get(stable_key)
+            if previous_ordinal is None:
+                by_snapshot_stable_id[stable_key] = ordinal
+            else:
+                comparisons += 1
+                if previous_ordinal != ordinal:
+                    violations.append(
+                        {
+                            "event": "panel_display_candidates",
+                            "timestampMs": event.get("timestampMs"),
+                            "reason": "candidate_stable_id_changed_ordinal",
+                            "snapshotId": snapshot_id,
+                            "candidateStableId": stable_id,
+                            "previousCandidateOrdinal": previous_ordinal,
+                            "candidateOrdinal": ordinal,
+                        }
+                    )
+    rate = float(len(violations)) / float(comparisons) if comparisons else 0.0
+    return {"comparisonCount": comparisons, "violationCount": len(violations), "renumberRate": rate, "violations": violations}
+
+
+def snapshot_id_for_event(event: dict[str, Any]) -> str:
+    session = event.get("predictionSession")
+    if isinstance(session, dict):
+        return str(session.get("snapshotId") or session.get("stableSnapshotId") or "")
+    return str(event.get("snapshotId") or "")
+
+
+def optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def is_modern_prediction_session_event(event: dict[str, Any]) -> bool:
@@ -884,6 +1111,8 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "linear": event.get("linear"),
         "vertical": event.get("vertical"),
         "candidateCounts": event.get("candidateCounts"),
+        "uiMode": event.get("uiMode"),
+        "laneStatus": event.get("laneStatus"),
         "separators": event.get("separators"),
         "key": event.get("key"),
         "selectionKey": event.get("selectionKey"),
@@ -993,7 +1222,12 @@ def report_passes(
     require_post_commit_followup: bool,
     require_delete_resync: bool,
     require_modern_prediction_session: bool,
+    require_rime_composition_mode: bool = False,
+    require_post_commit_pending_status: bool = False,
+    require_prediction_status_visible: bool = False,
+    require_source_badges: bool = False,
     require_balanced_quota: bool = False,
+    max_renumber_rate: float | None = None,
 ) -> bool:
     if require_mixed_panel and not report.get("latestMixedPanel"):
         return False
@@ -1017,10 +1251,23 @@ def report_passes(
         return False
     if require_modern_prediction_session and not report.get("latestModernPredictionSession"):
         return False
+    if require_rime_composition_mode and not report.get("latestRimeCompositionMode"):
+        return False
+    if require_post_commit_pending_status and not report.get("latestPostCommitPendingStatus"):
+        return False
+    if require_prediction_status_visible and not report.get("latestPredictionStatusVisible"):
+        return False
+    if require_source_badges and not report.get("latestSourceBadgePanel"):
+        return False
     if require_balanced_quota and not report.get("latestBalancedCandidatePanel"):
         return False
     if require_balanced_quota and report.get("candidateQuotaViolations"):
         return False
+    if max_renumber_rate is not None:
+        metrics = report.get("candidateRenumber")
+        rate = float(metrics.get("renumberRate") or 0.0) if isinstance(metrics, dict) else 0.0
+        if rate > max_renumber_rate:
+            return False
     if report.get("frontendTransactionViolations"):
         return False
     if report.get("tracePrivacyViolations"):

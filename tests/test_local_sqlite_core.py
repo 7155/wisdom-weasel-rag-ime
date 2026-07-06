@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import closing, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.agent_hook import build_first_run_injection
@@ -1324,6 +1325,51 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         stats = core.suggestion_cache_stats()
         self.assertEqual(stats["size"], 1)
         self.assertEqual(stats["evictions"], 1)
+
+    def test_suggest_for_input_uses_hybrid_core_when_enabled(self) -> None:
+        self.adapter.commit_text(
+            "多路召回",
+            recent_context="RAG 输入法",
+            project="wisdom-weasel-rag-ime",
+            tags=("RAG", "检索"),
+        )
+
+        with patch.dict("os.environ", {"RAG_IME_HYBRID_RAG_CORE": "1", "RAG_IME_RAG_CORE_V3_BUDGET_MS": "1000"}):
+            suggestions = self.core.suggest_for_input(
+                current_input="多路召回",
+                project="wisdom-weasel-rag-ime",
+                top_k=3,
+            )
+
+        self.assertTrue(suggestions)
+        self.assertEqual(suggestions[0].surface_text, "多路召回")
+        self.assertEqual(suggestions[0].metadata["rag_core"], "v3")
+
+    def test_suggest_for_input_legacy_path_when_disabled(self) -> None:
+        with patch.dict("os.environ", {"RAG_IME_HYBRID_RAG_CORE": "0"}):
+            suggestions = self.core.suggest_for_input(
+                current_input="SQLite 和 FTS5 第一版",
+                recent_context="MVP 先 local-first, 先验证检索和排序",
+                top_k=3,
+            )
+
+        self.assertTrue(suggestions)
+        self.assertNotEqual(suggestions[0].metadata.get("rag_core"), "v3")
+
+    def test_hybrid_core_fail_closed_to_legacy_or_empty_on_exception(self) -> None:
+        with patch.dict("os.environ", {"RAG_IME_HYBRID_RAG_CORE": "1"}), patch.object(
+            self.core,
+            "retrieve_candidates_v3",
+            side_effect=RuntimeError("boom"),
+        ):
+            suggestions = self.core.suggest_for_input(
+                current_input="SQLite 和 FTS5 第一版",
+                recent_context="MVP 先 local-first, 先验证检索和排序",
+                top_k=3,
+            )
+
+        self.assertTrue(suggestions)
+        self.assertNotEqual(suggestions[0].metadata.get("rag_core"), "v3")
 
     def test_delete_pin_and_downrank_are_durable_actions(self) -> None:
         request = SuggestionRequest(

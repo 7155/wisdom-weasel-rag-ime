@@ -721,7 +721,7 @@ function renderManagementConsole() {
     button.classList.toggle("is-active", button.dataset.view === state.managementView);
   }
   elements.managementRefreshButton.disabled = state.managementBusy;
-  elements.managementActionButton.disabled = state.managementBusy || !managementActionTarget(rows);
+  elements.managementActionButton.disabled = state.managementBusy || state.managementView === "ragcore" || !managementActionTarget(rows);
   elements.managementExportButton.disabled = state.managementBusy || state.managementView !== "lexicon";
   elements.managementActionButton.textContent = managementActionLabel(rows);
   elements.managementHint.textContent = [
@@ -807,6 +807,21 @@ function managementRows(result) {
     }
     return rows;
   }
+  if (state.managementView === "ragcore") {
+    const laneRows = Object.entries(result.lanes || {}).map(([name, lane]) => ({
+      source: "lane",
+      title: name,
+      meta: `count ${lane.count || 0}`,
+      raw: { lane: name, ...lane },
+    }));
+    const candidateRows = (result.fusedCandidates || []).map((item) => ({
+      source: item.source_type || item.sourceType || "candidate",
+      title: item.text || item.textPreview || item.textHash || item.candidate_id || item.candidateId || item.candidateIdHash || "",
+      meta: [item.source_lane || item.sourceLane, item.score, item.confidence].filter((part) => part !== undefined && part !== "").join(" · "),
+      raw: item,
+    }));
+    return [...laneRows, ...candidateRows];
+  }
   return [];
 }
 
@@ -863,6 +878,7 @@ async function refreshManagementConsole() {
     else if (state.managementView === "memories") url = "/api/memories";
     else if (state.managementView === "lexicon") url = "/api/lexicon";
     else if (state.managementView === "cleanup") url = "/api/cleanup-diff";
+    else if (state.managementView === "ragcore") url = "/api/rag-core-v3/query-preview";
     const params = new URLSearchParams({
       project: "wisdom-weasel-rag-ime",
       limit: "20",
@@ -870,7 +886,19 @@ async function refreshManagementConsole() {
     if (query) params.set(state.managementView === "explain" ? "query" : "query", query);
     if (state.managementView === "explain" && !query) params.set("query", state.query || "RAG 输入法");
     if (state.managementView === "memories" || state.managementView === "lexicon") params.set("status", "pending");
-    const response = await fetch(`${url}?${params.toString()}`);
+    const response =
+      state.managementView === "ragcore"
+        ? await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: query || state.query || "RAG 输入法",
+              committedContext: state.committed,
+              project: "wisdom-weasel-rag-ime",
+              topK: 5,
+            }),
+          })
+        : await fetch(`${url}?${params.toString()}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.managementResult = await response.json();
     ensureManagementSelection(managementRows(state.managementResult));

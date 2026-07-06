@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .core_client import CoreClient
+from .deepseek_completion import DeepSeekCompletionRequest
 from .embeddings import NullEmbeddingProvider
 from .history_context import build_prediction_context, model_prediction_context_limits, prediction_context_metadata
 from .local_sqlite_core import LocalSqliteCoreClient
@@ -27,6 +28,7 @@ from .payloads import action_response_payload, model_prediction_to_payload, sugg
 from .pinyin_index import build_pinyin_metadata, text_initials
 from .prediction_anchors import build_prediction_anchors_from_snapshot, prediction_mode_family
 from .prediction_first import (
+    InputMode,
     infer_input_mode,
     prediction_session_to_payload,
 )
@@ -39,7 +41,7 @@ from .predictor import (
     PredictionProvider,
     predict_with_optional_request_context,
 )
-from .runtime_flags import assert_deepseek_not_called
+from .runtime_flags import assert_deepseek_not_called, assert_deepseek_scene_allowed
 from .side_lane_scheduler import LaneRequestToken, LatestWinsLaneScheduler
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms
 
@@ -128,7 +130,7 @@ _SOURCE_BADGE_MAP = {
     "rag": "查",
     "memory": "忆",
     "raw_english": "input",
-    "status": "…",
+    "status": "查忆",
 }
 _SOURCE_COLOR_TOKEN_MAP = {
     "rime": "rimeOrange",
@@ -295,6 +297,7 @@ def build_rime_sidecar_response(
     adapter: InputMethodAdapter,
     core: CoreClient,
     predictor: PredictionProvider,
+    deepseek_completion_provider: Any | None = None,
     default_project: str = "wisdom-weasel-rag-ime",
 ) -> dict[str, object]:
     snapshot = parse_rime_context_payload(payload, default_project=default_project)
@@ -317,6 +320,7 @@ def build_rime_sidecar_response(
             adapter=adapter,
             core=core,
             predictor=predictor,
+            deepseek_completion_provider=deepseek_completion_provider,
             snapshot=snapshot,
             current_input=semantic_query,
             query_basis=query_basis,
@@ -521,15 +525,54 @@ def build_rime_sidecar_response(
                 "reason": "prediction-first merge is behind explicit flag",
             },
         }
+    response_input_mode = infer_input_mode(snapshot)
+    if response_input_mode in {InputMode.ANCHOR_COMPOSING, InputMode.PREFIX_CONSTRAINED_COMPOSING} and not snapshot.force_side_candidates:
+        rime_display_candidates = rime_only_display_candidates(snapshot)
+        if rime_display_candidates:
+            display_candidates = rime_display_candidates
+            prediction_session_payload.update(
+                {
+                    "phase": "anchor_composing",
+                    "inputMode": response_input_mode.value,
+                    "candidatePanelVisible": True,
+                    "predictionPanelVisible": False,
+                    "shouldClearPredictionPanel": False,
+                    "clearReason": "",
+                    "selectionScope": "rime",
+                    "rimeCompositionOwnedByRime": True,
+                    "sideCandidateCount": 0,
+                    "rimeCandidateCount": len(display_candidates),
+                }
+            )
     key_policy = key_policy_for_prediction_session(prediction_session_payload)
     status_row = _prediction_status_row_for_response(
         progressive_state=progressive_state,
         rag_lane=rag_lane,
         model_lane=model_lane,
         generation=snapshot.request_seq,
+        input_mode=response_input_mode.value,
     )
     if status_row is not None:
         display_candidates.append(status_row)
+        if response_input_mode == InputMode.POST_COMMIT_PREDICTING:
+            prediction_session_payload.update(
+                {
+                    "phase": "post_commit",
+                    "inputMode": response_input_mode.value,
+                    "candidatePanelVisible": True,
+                    "predictionPanelVisible": True,
+                    "shouldClearPredictionPanel": False,
+                    "clearReason": "",
+                    "selectionScope": "prediction",
+                    "rimeCompositionOwnedByRime": False,
+                    "expiresAfterMs": _POST_COMMIT_PANEL_TTL_MS,
+                }
+            )
+    ui_mode = ui_mode_for_response(
+        input_mode=response_input_mode.value,
+        display_candidates=display_candidates,
+        status_row_visible=status_row is not None,
+    )
     display_candidates = _bind_display_candidates_to_session(
         display_candidates=display_candidates,
         snapshot=snapshot,
@@ -600,6 +643,12 @@ def build_rime_sidecar_response(
         "historyContext": prediction_context,
         "historyContextMeta": prediction_context_metadata(prediction_context),
         "latencyBudgetMs": snapshot.latency_budget_ms,
+        "uiMode": ui_mode,
+        "laneStatus": lane_status_payload(
+            rag_lane=rag_lane,
+            model_lane=model_lane,
+            rime_candidate_count=len(snapshot.candidates),
+        ),
         "ragLane": rag_lane,
         "modelLane": model_lane,
         "rimeContext": rime_context_to_payload(snapshot),
@@ -746,11 +795,17 @@ def _predictor_model_name(predictor: PredictionProvider) -> str:
     return compact_whitespace(str(value or ""))
 
 
+def _looks_like_deepseek_provider(predictor: PredictionProvider) -> bool:
+    identity = f"{_predictor_provider_name(predictor)} {_predictor_model_name(predictor)}".lower()
+    return "deepseek" in identity
+
+
 def run_side_lanes_with_latency_budget(
     *,
     adapter: InputMethodAdapter,
     core: CoreClient,
     predictor: PredictionProvider,
+    deepseek_completion_provider: Any | None = None,
     snapshot: RimeContextSnapshot,
     current_input: str,
     query_basis: str,
@@ -823,27 +878,45 @@ def run_side_lanes_with_latency_budget(
                 requested_max_candidates=model_candidate_limit,
             )
             return
-        try:
-            assert_deepseek_not_called(
-                "passive_per_key",
-                provider_name=_predictor_provider_name(predictor),
-                model=_predictor_model_name(predictor),
-            )
-        except RuntimeError as exc:
-            model_result["predictions"] = []
-            model_result["lane"] = _model_lane_status(
-                called=False,
-                timed_out=False,
-                skipped_reason=str(exc),
-                budget_ms=latency_budget_ms,
-                request_type=request_type,
-                rime_candidate_count=rime_candidate_count,
-                requested_max_candidates=model_candidate_limit,
-            )
-            return
+        if _is_post_commit_prediction_snapshot(snapshot):
+            if _looks_like_deepseek_provider(predictor) or deepseek_completion_provider is not None:
+                try:
+                    assert_deepseek_scene_allowed("post_commit")
+                except RuntimeError as exc:
+                    model_result["predictions"] = []
+                    model_result["lane"] = _model_lane_status(
+                        called=False,
+                        timed_out=False,
+                        skipped_reason=str(exc),
+                        budget_ms=latency_budget_ms,
+                        request_type=request_type,
+                        rime_candidate_count=rime_candidate_count,
+                        requested_max_candidates=model_candidate_limit,
+                    )
+                    return
+        else:
+            try:
+                assert_deepseek_not_called(
+                    "passive_per_key",
+                    provider_name=_predictor_provider_name(predictor),
+                    model=_predictor_model_name(predictor),
+                )
+            except RuntimeError as exc:
+                model_result["predictions"] = []
+                model_result["lane"] = _model_lane_status(
+                    called=False,
+                    timed_out=False,
+                    skipped_reason=str(exc),
+                    budget_ms=latency_budget_ms,
+                    request_type=request_type,
+                    rime_candidate_count=rime_candidate_count,
+                    requested_max_candidates=model_candidate_limit,
+                )
+                return
         predictions, lane = predict_model_with_latency_budget(
             core=core,
             predictor=predictor,
+            deepseek_completion_provider=deepseek_completion_provider,
             snapshot=snapshot,
             current_input=model_current_input,
             explicit_recent_context=explicit_recent_context,
@@ -973,13 +1046,18 @@ def _prediction_status_row_for_response(
     rag_lane: Mapping[str, object],
     model_lane: Mapping[str, object],
     generation: int,
+    input_mode: str = "",
 ) -> SideCandidateDisplayItem | None:
     if not prediction_status_rows_enabled():
+        return None
+    if input_mode != InputMode.POST_COMMIT_PREDICTING.value:
         return None
     pending_lanes = progressive_state.get("pendingLanes")
     pending = {compact_whitespace(str(item)).lower() for item in pending_lanes} if isinstance(pending_lanes, list) else set()
     rag_pending = "rag" in pending or bool(rag_lane.get("pending"))
     model_pending = "model" in pending or bool(model_lane.get("pending"))
+    rag_state = lane_status_state(rag_lane, count_key="suggestionCount", pending=rag_pending)
+    model_state = lane_status_state(model_lane, count_key="predictionCount", pending=model_pending)
     waiting_ms = max(
         _optional_int(rag_lane.get("sideLaneElapsedMs")) or _optional_int(rag_lane.get("elapsedMs")) or 0,
         _optional_int(model_lane.get("sideLaneElapsedMs")) or _optional_int(model_lane.get("elapsedMs")) or 0,
@@ -990,6 +1068,64 @@ def _prediction_status_row_for_response(
         model_pending=model_pending,
         waiting_ms=waiting_ms,
         latest_generation=generation,
+        rag_state=rag_state,
+        model_state=model_state,
+        trigger="rime_candidate_commit",
+    )
+
+
+def lane_status_payload(
+    *,
+    rag_lane: Mapping[str, object],
+    model_lane: Mapping[str, object],
+    rime_candidate_count: int,
+) -> dict[str, object]:
+    return {
+        "rag": {
+            "state": lane_status_state(rag_lane, count_key="suggestionCount"),
+            "elapsedMs": lane_elapsed_ms(rag_lane),
+            "candidateCount": _bounded_int(rag_lane.get("suggestionCount"), default=0, minimum=0, maximum=999),
+            "dropReason": _string(rag_lane.get("dropReason") or rag_lane.get("staleReason") or rag_lane.get("skippedReason")),
+        },
+        "model": {
+            "state": lane_status_state(model_lane, count_key="predictionCount"),
+            "elapsedMs": lane_elapsed_ms(model_lane),
+            "candidateCount": _bounded_int(model_lane.get("predictionCount"), default=0, minimum=0, maximum=999),
+            "dropReason": _string(
+                model_lane.get("dropReason") or model_lane.get("staleReason") or model_lane.get("skippedReason")
+            ),
+        },
+        "rime": {
+            "state": "ready" if rime_candidate_count > 0 else "empty",
+            "candidateCount": max(0, int(rime_candidate_count)),
+        },
+    }
+
+
+def lane_status_state(lane: Mapping[str, object], *, count_key: str, pending: bool | None = None) -> str:
+    if pending is True or bool(lane.get("pending")):
+        return "pending"
+    if bool(lane.get("stale")) or bool(lane.get("droppedStale")) or _string(lane.get("dropReason")):
+        return "stale_dropped"
+    if bool(lane.get("timedOut")):
+        return "timeout"
+    if bool(lane.get("error")):
+        return "error"
+    count = _bounded_int(lane.get(count_key), default=0, minimum=0, maximum=999)
+    if count > 0:
+        return "ready"
+    if bool(lane.get("called")):
+        return "empty"
+    return "idle"
+
+
+def lane_elapsed_ms(lane: Mapping[str, object]) -> int:
+    return max(
+        0,
+        _optional_int(lane.get("sideLaneElapsedMs"))
+        or _optional_int(lane.get("elapsedMs"))
+        or _optional_int(lane.get("latencyMs"))
+        or 0,
     )
 
 
@@ -1863,6 +1999,7 @@ def predict_model_with_latency_budget(
     *,
     core: CoreClient,
     predictor: PredictionProvider,
+    deepseek_completion_provider: Any | None = None,
     snapshot: RimeContextSnapshot,
     current_input: str,
     explicit_recent_context: str,
@@ -1959,6 +2096,19 @@ def predict_model_with_latency_budget(
                 prediction_context=recent_context,
                 pinyin_prefix=stable_short_pinyin_prefix(snapshot) if request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED else "",
             )
+            if deepseek_completion_provider is not None:
+                deepseek_predictions, deepseek_lane = _predict_deepseek_post_commit_candidates(
+                    provider=deepseek_completion_provider,
+                    snapshot=snapshot,
+                    current_context=recent_context,
+                    existing_predictions=predictions,
+                    max_candidates=max_candidates,
+                    started=started,
+                    budget_ms=budget_ms,
+                    rime_candidates=rime_candidate_texts,
+                )
+                result["deepseekLane"] = deepseek_lane
+                predictions = [*predictions, *deepseek_predictions]
             result["predictions"] = predictions
             if not predictions:
                 predictor_error = _predictor_last_error(predictor)
@@ -1996,7 +2146,7 @@ def predict_model_with_latency_budget(
         predictions = []
     error = _string(result.get("error"))
     skipped_reason = _string(result.get("skippedReason"))
-    return predictions, _model_lane_status(
+    lane = _model_lane_status(
         called=True,
         timed_out=False,
         skipped_reason=f"error: {error}" if error else skipped_reason,
@@ -2007,6 +2157,120 @@ def predict_model_with_latency_budget(
         context_mode=_string(result.get("contextMode")),
         request_type=_string(result.get("requestType")) or request_type,
         rime_candidate_count=_optional_int(result.get("rimeCandidateCount")) or len(rime_candidate_texts),
+    )
+    deepseek_lane = result.get("deepseekLane")
+    if isinstance(deepseek_lane, dict):
+        lane.update(deepseek_lane)
+    return predictions, lane
+
+
+def _predict_deepseek_post_commit_candidates(
+    *,
+    provider: Any,
+    snapshot: RimeContextSnapshot,
+    current_context: str,
+    existing_predictions: list[ModelPrediction],
+    max_candidates: int,
+    started: float,
+    budget_ms: int,
+    rime_candidates: tuple[str, ...],
+) -> tuple[list[ModelPrediction], dict[str, object]]:
+    if not _is_post_commit_prediction_snapshot(snapshot):
+        return [], {
+            "deepseekCalled": False,
+            "deepseekPredictionCount": 0,
+            "deepseekSkippedReason": "not post_commit",
+        }
+    try:
+        assert_deepseek_scene_allowed("post_commit")
+    except RuntimeError as exc:
+        return [], {
+            "deepseekCalled": False,
+            "deepseekPredictionCount": 0,
+            "deepseekSkippedReason": str(exc),
+        }
+    remaining = max(0, int(max_candidates) - len(existing_predictions))
+    if remaining <= 0:
+        return [], {
+            "deepseekCalled": False,
+            "deepseekPredictionCount": 0,
+            "deepseekSkippedReason": "no side candidate slot",
+        }
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    remaining_budget_ms = max(1, int(budget_ms) - elapsed_ms)
+    request = DeepSeekCompletionRequest(
+        scene="post_commit",
+        current_context=current_context,
+        evidence_pack=_deepseek_post_commit_evidence_pack(
+            snapshot=snapshot,
+            current_context=current_context,
+            rime_candidates=rime_candidates,
+        ),
+        max_candidates=remaining,
+        latency_budget_ms=remaining_budget_ms,
+    )
+    predictions: list[ModelPrediction] = []
+    seen = {compact_whitespace(item.text).lower() for item in existing_predictions}
+    try:
+        for delta in provider.stream_candidates(request):
+            text = compact_whitespace(str(getattr(delta, "text", "")))
+            key = text.lower()
+            if not text or key in seen:
+                continue
+            seen.add(key)
+            predictions.append(
+                ModelPrediction(
+                    text=text,
+                    rank=len(existing_predictions) + len(predictions) + 1,
+                    provider_name="deepseek-v4-flash",
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    confidence=0.72,
+                    metadata={
+                        "source_lane": "deepseek_v4_flash",
+                        "scene": "post_commit",
+                        "append_only": True,
+                        **dict(getattr(delta, "metadata", {}) or {}),
+                    },
+                )
+            )
+            if len(predictions) >= remaining:
+                break
+            if int((time.perf_counter() - started) * 1000) >= budget_ms:
+                break
+    except Exception as exc:  # pragma: no cover - defensive fail-open guard
+        return [], {
+            "deepseekCalled": True,
+            "deepseekPredictionCount": 0,
+            "deepseekSkippedReason": f"error: {exc.__class__.__name__}",
+        }
+    return predictions, {
+        "deepseekCalled": True,
+        "deepseekPredictionCount": len(predictions),
+        "deepseekSkippedReason": "" if predictions else "empty",
+        "deepseekAppendOnly": True,
+        "deepseekLatencyBudgetMs": remaining_budget_ms,
+    }
+
+
+def _deepseek_post_commit_evidence_pack(
+    *,
+    snapshot: RimeContextSnapshot,
+    current_context: str,
+    rime_candidates: tuple[str, ...],
+) -> tuple[dict[str, object], ...]:
+    hints = [item for item in rime_candidates[:5] if compact_whitespace(item)]
+    return (
+        {
+            "sourceType": "post_commit_context",
+            "evidencePreview": compact_whitespace(current_context)[-240:],
+            "surfaceHints": hints,
+            "tags": ["post_commit", "input_method"],
+            "metadata": {
+                "requestSeq": snapshot.request_seq,
+                "frontendRevision": snapshot.frontend_transaction.frontend_revision,
+                "selectionEpoch": snapshot.frontend_transaction.selection_epoch,
+            },
+        },
     )
 
 
@@ -3262,10 +3526,67 @@ def merge_display_candidates(
                 comment=candidate.comment,
                 rime_index=candidate.index,
                 display_layout="fallback",
+                display_lane=candidate.comment or "wanxiang",
+                metadata={"candidate_mode": "composition-rime"},
+            )
+        )
+    return display
+
+
+def rime_only_display_candidates(snapshot: RimeContextSnapshot) -> list[SideCandidateDisplayItem]:
+    display: list[SideCandidateDisplayItem] = []
+    max_visible = max(0, int(snapshot.max_visible_candidates))
+    seen: set[str] = set()
+    for candidate in snapshot.candidates:
+        if len(display) >= max_visible:
+            break
+        text = compact_whitespace(candidate.text)
+        if not text:
+            continue
+        normalized_text = _display_text_norm(text)
+        if normalized_text in seen:
+            continue
+        seen.add(normalized_text)
+        display.append(
+            SideCandidateDisplayItem(
+                label=_display_label(candidate.label if not display else "", len(display)),
+                text=text,
+                insert_text=text,
+                source_type="rime",
+                selection_action="select_rime_candidate",
+                source_index=candidate.index,
+                comment=candidate.comment,
+                rime_index=candidate.index,
+                display_layout="fallback",
                 display_lane="rime",
             )
         )
     return display
+
+
+def ui_mode_for_response(
+    *,
+    input_mode: str,
+    display_candidates: list[SideCandidateDisplayItem],
+    status_row_visible: bool = False,
+) -> str:
+    if input_mode in {InputMode.ANCHOR_COMPOSING.value, InputMode.PREFIX_CONSTRAINED_COMPOSING.value}:
+        if display_candidates and not all(item.source_type == "rime" for item in display_candidates):
+            return "active_rag_assist"
+        return "composition_rime"
+    if input_mode == InputMode.POST_COMMIT_PREDICTING.value:
+        has_prediction = any(
+            item.source_type in {"model", "rag", "memory"} and _display_item_is_selectable(item)
+            for item in display_candidates
+        )
+        if has_prediction:
+            return "post_commit_prediction"
+        if status_row_visible:
+            return "post_commit_pending"
+        return "post_commit_pending"
+    if not display_candidates:
+        return "empty"
+    return "active_rag_assist"
 
 
 def _display_rime_reserve(*, snapshot: RimeContextSnapshot, mode: object, max_visible: int) -> int:
@@ -3450,20 +3771,22 @@ def _record_memory_feedback_event(*, core: CoreClient, event: dict[str, object])
 
 
 def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]:
-    selection_key = item.label
+    metadata = dict(item.metadata)
+    selectable = _display_item_is_selectable(item)
+    selection_key = item.label if selectable else None
     source_badge = candidate_source_badge(item.source_type)
     color_token = candidate_color_token(item.source_type)
-    metadata = dict(item.metadata)
     text = _strip_candidate_source_suffix(item.text)
     insert_text = _strip_candidate_source_suffix(item.insert_text or text)
+    group = _display_candidate_group(item)
     return {
         "label": item.label,
         "visibleLabel": metadata.get("visibleLabel") or item.label,
         "selectionKey": selection_key,
-        "selectionRank": _candidate_rank(selection_key),
+        "selectionRank": _candidate_rank(selection_key or ""),
         "candidateOrdinal": _bounded_int(
             metadata.get("candidateOrdinal"),
-            default=_candidate_rank(selection_key) or 0,
+            default=_candidate_rank(selection_key or "") or 0,
             minimum=0,
             maximum=99,
         ),
@@ -3503,8 +3826,28 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "rimeIndex": item.rime_index,
         "displayLayout": item.display_layout,
         "displayLane": item.display_lane or item.source_type,
+        "group": metadata.get("group") or group,
+        "groupLabel": metadata.get("groupLabel") or _display_candidate_group_label(group),
+        "isSelectable": selectable,
+        "isStatus": item.source_type == "status" or item.display_layout == "status_row",
         "metadata": metadata,
     }
+
+
+def _display_candidate_group(item: SideCandidateDisplayItem) -> str:
+    if item.source_type == "status" or item.display_layout == "status_row":
+        return "status"
+    if item.source_type == "rime":
+        return "rime"
+    return "prediction"
+
+
+def _display_candidate_group_label(group: str) -> str:
+    return {
+        "rime": "词库",
+        "prediction": "预测",
+        "status": "状态",
+    }.get(group, group)
 
 
 def key_policy_for_prediction_session(prediction_session_payload: Mapping[str, object]) -> dict[str, object]:
@@ -3522,10 +3865,10 @@ def key_policy_for_prediction_session(prediction_session_payload: Mapping[str, o
         "anchor_composing",
     }:
         return {
-            "numberKeys": "select_visible_candidate",
-            "tab": "page_or_accept_by_rime_mode",
-            "optionNumber": "select_side_candidate",
-            "escape": "dismiss_side_candidates",
+            "numberKeys": "select_rime_candidate",
+            "tab": "rime_default",
+            "optionNumber": "disabled",
+            "escape": "rime_cancel",
         }
     return {
         "numberKeys": "pass_through",

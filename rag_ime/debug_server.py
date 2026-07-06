@@ -20,8 +20,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .cli import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
+from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
+from .deepseek_config import load_deepseek_config
 from .history_context import build_prediction_context
+from .hybrid_rag_models import HybridRagQuery
+from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from .local_sqlite_core import LocalSqliteCoreClient
+from .memory_book_compiler import build_memory_book_source_bundle
 from .memory_generator import (
     MemoryGenerationError,
     VcpRebuildMemoryGenerator,
@@ -49,6 +54,8 @@ from .rime_sidecar import (
     rime_context_to_payload,
     semantic_signal_length,
 )
+from .retrieval_docs import rebuild_retrieval_docs
+from .runtime_flags import assert_deepseek_scene_allowed
 from .text_utils import compact_whitespace, now_ms
 
 
@@ -291,6 +298,165 @@ class DebugImeService:
             status=_string(payload.get("status")),
         )
         return {"ok": True, **report}
+
+    def rag_core_v3_query_preview(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.rag-core-v3-preview.v1", "ok": False, "error": "local SQLite core required"}
+        query = HybridRagQuery(
+            query_text=_string(payload.get("query")) or _string(payload.get("currentInput")),
+            raw_input=_string(payload.get("rawInput") or payload.get("currentInput")),
+            preedit=_string(payload.get("preedit")),
+            committed_tail=_string(payload.get("committedContext") or payload.get("recentContext")),
+            rime_candidates=tuple(_string_list(payload.get("rimeCandidates"))),
+            project=_string(payload.get("project")) or self.config.project,
+            app=_string(payload.get("app")),
+            top_k=_bounded_int(payload.get("topK"), default=5, minimum=1, maximum=20),
+            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=25, minimum=1, maximum=5000),
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            payload_result = retrieve_hybrid_rag_candidates(conn, query)
+        include_text = self._include_raw_text()
+        candidates = list(payload_result.get("candidates") or [])
+        fused = [_debug_redact_rag_candidate(item, include_text=include_text) for item in candidates if isinstance(item, dict)]
+        evidence_pack = _debug_deepseek_evidence_pack(candidates, include_text=include_text)
+        return {
+            "schemaVersion": "rag-ime.rag-core-v3-preview.v1",
+            "ok": True,
+            "query": _debug_query_preview(payload_result.get("query"), include_text=include_text),
+            "lanes": _debug_lane_breakdown(payload_result.get("lanes")),
+            "fusedCandidates": fused,
+            "blocked": [],
+            "deepseekEvidencePack": evidence_pack,
+            "deepseekCandidates": [],
+            "elapsedMs": int(payload_result.get("elapsedMs") or 0),
+            "rawTextVisible": include_text,
+        }
+
+    def rag_core_v3_rebuild_retrieval_docs(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.retrieval-docs-rebuild.v1", "ok": False, "error": "local SQLite core required"}
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            report = rebuild_retrieval_docs(
+                conn,
+                project=_string(payload.get("project")) or self.config.project,
+                include_books=not _bool(payload.get("noBooks"), default=False),
+                include_atoms=not _bool(payload.get("noAtoms"), default=False),
+                include_items=not _bool(payload.get("noItems"), default=False),
+            )
+        self._clear_rime_cache()
+        return {"ok": True, **report}
+
+    def rag_core_v3_memory_book_preview(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.memory-book-preview.v1", "ok": False, "error": "local SQLite core required"}
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project=_string(payload.get("project")) or self.config.project,
+                since_days=_bounded_int(payload.get("sinceDays"), default=7, minimum=1, maximum=365),
+                limit=_bounded_int(payload.get("limit"), default=80, minimum=1, maximum=500),
+            )
+        safe_bundle = _debug_memory_book_source_bundle(bundle, include_text=self._include_raw_text())
+        return {
+            "schemaVersion": "rag-ime.memory-book-preview.v1",
+            "ok": True,
+            "dryRun": True,
+            "sourceBundle": safe_bundle,
+            "rawTextVisible": self._include_raw_text(),
+        }
+
+    def rag_core_v3_doc(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.rag-core-v3-doc.v1", "ok": False, "error": "local SQLite core required"}
+        doc_id = _string(payload.get("id") or payload.get("docId"))
+        if not doc_id:
+            return {"schemaVersion": "rag-ime.rag-core-v3-doc.v1", "ok": False, "error": "id is required"}
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            row = conn.execute("SELECT * FROM memory_retrieval_docs WHERE doc_id = ? LIMIT 1", (doc_id,)).fetchone()
+        if row is None:
+            return {"schemaVersion": "rag-ime.rag-core-v3-doc.v1", "ok": False, "error": "doc not found", "docId": doc_id}
+        item = {key: row[key] for key in row.keys()}
+        item["metadata"] = _json_loads_dict(item.pop("metadata_json", "{}"))
+        return {
+            "schemaVersion": "rag-ime.rag-core-v3-doc.v1",
+            "ok": True,
+            "doc": _redact_mapping(item, include_text=self._include_raw_text()),
+        }
+
+    def rag_core_v3_tag_graph(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.rag-core-v3-tag-graph.v1", "ok": False, "error": "local SQLite core required"}
+        tag = compact_whitespace(_string(payload.get("tag")))
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                """
+                SELECT src.tag AS src, dst.tag AS dst, e.edge_type, e.weight, e.direction_bias, e.evidence_count
+                FROM memory_tag_edges e
+                JOIN memory_tags src ON src.id = e.src_tag_id
+                JOIN memory_tags dst ON dst.id = e.dst_tag_id
+                WHERE (? = '' OR src.tag = ? OR dst.tag = ?)
+                ORDER BY e.weight DESC
+                LIMIT ?
+                """,
+                (tag, tag, tag, _bounded_int(payload.get("limit"), default=50, minimum=1, maximum=200)),
+            ).fetchall()
+        return {
+            "schemaVersion": "rag-ime.rag-core-v3-tag-graph.v1",
+            "ok": True,
+            "tag": tag,
+            "edges": [
+                {
+                    "src": str(row["src"]),
+                    "dst": str(row["dst"]),
+                    "edgeType": str(row["edge_type"]),
+                    "weight": float(row["weight"] or 0.0),
+                    "directionBias": float(row["direction_bias"] or 0.0),
+                    "evidenceCount": int(row["evidence_count"] or 0),
+                }
+                for row in rows
+            ],
+        }
+
+    def deepseek_completion_preview(self, payload: dict[str, Any]) -> dict[str, object]:
+        try:
+            assert_deepseek_scene_allowed("active_rag")
+        except RuntimeError as exc:
+            expected_token = os.environ.get("RAG_IME_DEEPSEEK_PREVIEW_TOKEN", "")
+            provided_token = _string(payload.get("previewToken"))
+            if not (expected_token and provided_token and provided_token == expected_token):
+                return {
+                    "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
+                    "ok": False,
+                    "error": str(exc),
+                    "requires": "RAG_IME_DEEPSEEK_ACTIVE_RAG=1 or previewToken",
+                }
+        request = DeepSeekCompletionRequest(
+            scene="active_rag",
+            current_context=_string(payload.get("currentContext") or payload.get("context")),
+            selected_text=_string(payload.get("selectedText")),
+            evidence_pack=tuple(item for item in payload.get("evidencePack", []) if isinstance(item, dict)) if isinstance(payload.get("evidencePack"), list) else (),
+            max_candidates=_bounded_int(payload.get("maxCandidates"), default=5, minimum=1, maximum=8),
+            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=2500, minimum=100, maximum=15000),
+        )
+        messages = build_deepseek_completion_messages(request)
+        if _bool(payload.get("dryRun"), default=True):
+            return {
+                "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
+                "ok": True,
+                "dryRun": True,
+                "messages": _redact_mapping({"messages": messages}, include_text=self._include_raw_text())["messages"],
+                "candidates": [],
+            }
+        config = load_deepseek_config(_string(payload.get("modelEnvPath")) or None)
+        provider = DeepSeekV4FlashCompletionProvider(config, enforce_runtime_flags=False)
+        candidates = [item.__dict__ for item in provider.stream_candidates(request)]
+        return {
+            "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
+            "ok": True,
+            "dryRun": False,
+            "messages": _redact_mapping({"messages": messages}, include_text=self._include_raw_text())["messages"],
+            "candidates": _redact_mapping({"items": candidates}, include_text=self._include_raw_text())["items"],
+        }
 
     def memory_tombstone(self, payload: dict[str, Any]) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
@@ -1776,6 +1942,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if parsed.path in ("/api/rag-core-v3/doc",):
+            self._write_json(HTTPStatus.OK, self.service.rag_core_v3_doc({"id": _query_first(query, "id")}))
+            return
+        if parsed.path in ("/api/rag-core-v3/tag-graph",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.rag_core_v3_tag_graph(
+                    {
+                        "tag": _query_first(query, "tag"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
         self._serve_static(parsed.path)
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
@@ -1828,6 +2008,14 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.generate_memory(payload))
             elif path in ("/api/organize-rag-db", "/organize-rag-db"):
                 self._write_json(HTTPStatus.OK, self.service.organize_rag_database(payload))
+            elif path in ("/api/rag-core-v3/query-preview",):
+                self._write_json(HTTPStatus.OK, self.service.rag_core_v3_query_preview(payload))
+            elif path in ("/api/rag-core-v3/rebuild-retrieval-docs",):
+                self._write_json(HTTPStatus.OK, self.service.rag_core_v3_rebuild_retrieval_docs(payload))
+            elif path in ("/api/rag-core-v3/memory-book-preview",):
+                self._write_json(HTTPStatus.OK, self.service.rag_core_v3_memory_book_preview(payload))
+            elif path in ("/api/deepseek/completion-preview",):
+                self._write_json(HTTPStatus.OK, self.service.deepseek_completion_preview(payload))
             elif path in ("/api/commit", "/commit"):
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
             elif path in ("/api/action", "/action"):
@@ -1905,6 +2093,119 @@ def _stable_debug_hash(text: str) -> str:
     if not compact:
         return ""
     return "sha256:" + hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
+
+
+def _debug_lane_breakdown(raw_lanes: object) -> dict[str, object]:
+    if not isinstance(raw_lanes, dict):
+        return {}
+    result: dict[str, object] = {}
+    for name, payload in raw_lanes.items():
+        if not isinstance(payload, dict):
+            continue
+        result[_camel_lane_name(str(name))] = {
+            "count": int(payload.get("count") or 0),
+            "docIds": list(payload.get("docIds") or []),
+        }
+    return result
+
+
+def _debug_query_preview(query: object, *, include_text: bool) -> dict[str, object]:
+    if not isinstance(query, dict):
+        return {}
+    if include_text:
+        return dict(query)
+    return {
+        "primaryHash": _stable_debug_hash(_string(query.get("primary"))),
+        "lexicalTermCount": len(query.get("lexicalTerms") or []),
+        "matchedAliasCount": len(query.get("matchedAliases") or []),
+        "activatedTagCount": len(query.get("activatedTags") or []),
+        "negativeTagCount": len(query.get("negativeTags") or []),
+        "expansionTermCount": len(query.get("expansionTerms") or []),
+    }
+
+
+def _debug_redact_rag_candidate(item: dict[str, object], *, include_text: bool) -> dict[str, object]:
+    if include_text:
+        return _redact_mapping(dict(item), include_text=True)
+    text = _string(item.get("text") or item.get("insert_text") or item.get("insertText"))
+    evidence_preview = _string(item.get("evidence_preview") or item.get("evidencePreview"))
+    metadata = dict(item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {}
+    return {
+        "candidateIdHash": _stable_debug_hash(_string(item.get("candidate_id") or item.get("candidateId"))),
+        "textHash": _stable_debug_hash(text),
+        "sourceType": item.get("source_type") or item.get("sourceType") or "",
+        "sourceLane": item.get("source_lane") or item.get("sourceLane") or "",
+        "score": float(item.get("score") or 0.0),
+        "confidence": float(item.get("confidence") or 0.0),
+        "tagCount": len(item.get("tags") or []),
+        "memoryIdCount": len(item.get("memory_ids") or item.get("memoryIds") or []),
+        "atomIdCount": len(item.get("atom_ids") or item.get("atomIds") or []),
+        "bookIdCount": len(item.get("book_ids") or item.get("bookIds") or []),
+        "evidenceEventIds": list(item.get("evidence_event_ids") or item.get("evidenceEventIds") or []),
+        "evidencePreviewHash": _stable_debug_hash(evidence_preview),
+        "debugFeatures": dict(item.get("debug_features") or item.get("debugFeatures") or {})
+        if isinstance(item.get("debug_features") or item.get("debugFeatures"), dict)
+        else {},
+        "metadata": _redact_mapping(metadata, include_text=False),
+    }
+
+
+def _camel_lane_name(name: str) -> str:
+    parts = [part for part in name.split("_") if part]
+    if not parts:
+        return name
+    return parts[0] + "".join(part[:1].upper() + part[1:] for part in parts[1:])
+
+
+def _debug_deepseek_evidence_pack(candidates: list[object], *, include_text: bool) -> list[dict[str, object]]:
+    evidence: list[dict[str, object]] = []
+    for item in candidates[:8]:
+        if not isinstance(item, dict):
+            continue
+        text = compact_whitespace(str(item.get("text") or ""))
+        evidence_preview = compact_whitespace(str(item.get("evidence_preview") or item.get("evidencePreview") or ""))
+        payload: dict[str, object] = {
+            "sourceType": item.get("source_type") or item.get("sourceType"),
+            "sourceLane": item.get("source_lane") or item.get("sourceLane"),
+            "textHash": _stable_debug_hash(text),
+            "evidencePreviewHash": _stable_debug_hash(evidence_preview),
+            "tagCount": len(item.get("tags") or []),
+        }
+        if include_text:
+            payload.update({"text": text, "evidencePreview": evidence_preview, "tags": item.get("tags") or []})
+        evidence.append(payload)
+    return evidence
+
+
+def _debug_memory_book_source_bundle(bundle: dict[str, object], *, include_text: bool) -> dict[str, object]:
+    events: list[dict[str, object]] = []
+    for item in bundle.get("recentEvents") or []:
+        if not isinstance(item, dict):
+            continue
+        text = _string(item.get("text"))
+        recent_context = _string(item.get("recentContext"))
+        event: dict[str, object] = {
+            "eventId": int(item.get("eventId") or 0),
+            "createdAtMs": int(item.get("createdAtMs") or 0),
+            "source": _string(item.get("source")),
+            "app": _string(item.get("app")),
+            "project": _string(item.get("project")),
+            "tagCount": len(item.get("tags") or []),
+            "textHash": _stable_debug_hash(text),
+            "recentContextHash": _stable_debug_hash(recent_context),
+        }
+        if include_text:
+            event.update({"text": text, "recentContext": recent_context, "tags": item.get("tags") or []})
+        events.append(event)
+    return {
+        "schemaVersion": bundle.get("schemaVersion") or "rag-ime.memory-book-source-bundle.v1",
+        "project": _string(bundle.get("project")),
+        "sinceDays": int(bundle.get("sinceDays") or 0),
+        "exportedAtMs": int(bundle.get("exportedAtMs") or 0),
+        "redactionStats": dict(bundle.get("redactionStats") or {}) if isinstance(bundle.get("redactionStats"), dict) else {},
+        "recentEventCount": len(events),
+        "recentEvents": events,
+    }
 
 
 def _privacy_preview(text: str, *, max_chars: int = 12) -> str:
@@ -2054,7 +2355,18 @@ def _rime_lexicon_export_text(*, project: str, status: str, entries: list[dict[s
 
 def _redact_mapping(value: dict[str, object], *, include_text: bool) -> dict[str, object]:
     redacted: dict[str, object] = {}
-    sensitive_keys = {"text", "rawText", "recentContext", "preedit", "committedContext", "payload", "result"}
+    sensitive_keys = {
+        "text",
+        "rawText",
+        "raw_text",
+        "recentContext",
+        "preedit",
+        "committedContext",
+        "evidencePreview",
+        "evidence_preview",
+        "payload",
+        "result",
+    }
     for key, item in value.items():
         if isinstance(item, dict):
             redacted[key] = _redact_mapping(item, include_text=include_text)
@@ -2068,7 +2380,7 @@ def _redact_mapping(value: dict[str, object], *, include_text: bool) -> dict[str
         else:
             text = _string(item)
             redacted[f"{key}Hash"] = _stable_debug_hash(text)
-            redacted[f"{key}Preview"] = _privacy_preview(text)
+            redacted[f"{key}Chars"] = len(text)
     return redacted
 
 

@@ -35,6 +35,11 @@ from .memory_schema_v2 import ensure_memory_v2_schema
 from .memory_tag_graph import propagate_tag_energy, recompute_tag_graph, score_memory_items_from_tag_energy
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
 from .pinyin_index import pinyin_search_document
+from .rag_core_v3 import (
+    memory_candidates_v2_to_input_suggestions,
+    retrieve_candidates_v3 as retrieve_rag_core_v3_candidates,
+)
+from .runtime_flags import load_hybrid_rag_runtime_flags
 from .suggestion_compiler import RankedMemory, SuggestionCompiler
 from .text_utils import (
     build_fts_document,
@@ -99,7 +104,7 @@ class LocalSqliteCoreClient:
         self.legacy_governance_filter_enabled = bool(legacy_governance_filter_enabled)
         self.v2_governance_filter_enabled = bool(v2_governance_filter_enabled)
         self.memory_v2_enabled = True
-        self._suggestion_cache: OrderedDict[tuple[str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
+        self._suggestion_cache: OrderedDict[tuple[str, str, str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
         self._suggestion_cache_lock = RLock()
         self._suggestion_cache_hits = 0
         self._suggestion_cache_misses = 0
@@ -378,16 +383,34 @@ class LocalSqliteCoreClient:
         app: str = "",
         top_k: int = 5,
     ) -> list[InputSuggestion]:
+        flags = load_hybrid_rag_runtime_flags()
         cache_key = self._suggestion_cache_key(
             current_input=current_input,
             recent_context=recent_context,
             project=project,
             app=app,
+            mode="v3" if flags.hybrid_rag_core else "legacy",
             top_k=top_k,
         )
         cached = self._get_cached_suggestions(cache_key)
         if cached is not None:
             return cached
+        if flags.hybrid_rag_core:
+            try:
+                candidates = self.retrieve_candidates_v3(
+                    current_input=current_input,
+                    recent_context=recent_context,
+                    committed_context=recent_context,
+                    project=project,
+                    app=app,
+                    top_k=top_k,
+                    source_budget_ms=flags.rag_core_v3_budget_ms,
+                )
+                suggestions = memory_candidates_v2_to_input_suggestions(candidates)[:top_k]
+                self._store_cached_suggestions(cache_key, suggestions)
+                return _copy_suggestions(suggestions)
+            except Exception:
+                pass
         suggestions = self._legacy_suggest_for_input(
             current_input=current_input,
             recent_context=recent_context,
@@ -426,6 +449,34 @@ class LocalSqliteCoreClient:
                     )
         self._store_cached_suggestions(cache_key, suggestions)
         return _copy_suggestions(suggestions)
+
+    def retrieve_candidates_v3(
+        self,
+        *,
+        current_input: str,
+        recent_context: str = "",
+        committed_context: str = "",
+        preedit: str = "",
+        rime_candidates: tuple[str, ...] = (),
+        project: str = "",
+        app: str = "",
+        top_k: int = 5,
+        source_budget_ms: int = 25,
+    ) -> list[MemoryCandidateV2]:
+        self.initialize()
+        with self._connect() as conn:
+            return retrieve_rag_core_v3_candidates(
+                conn,
+                current_input=current_input,
+                recent_context=recent_context,
+                committed_context=committed_context,
+                preedit=preedit,
+                rime_candidates=tuple(rime_candidates),
+                project=project,
+                app=app,
+                top_k=top_k,
+                source_budget_ms=source_budget_ms,
+            )
 
     def _legacy_suggest_for_input(
         self,
@@ -1985,17 +2036,19 @@ class LocalSqliteCoreClient:
         recent_context: str,
         project: str,
         app: str,
+        mode: str,
         top_k: int,
-    ) -> tuple[str, str, str, str, int]:
+    ) -> tuple[str, str, str, str, str, int]:
         return (
             compact_whitespace(current_input),
             compact_whitespace(recent_context),
             compact_whitespace(project),
             compact_whitespace(app),
+            compact_whitespace(mode),
             int(top_k),
         )
 
-    def _get_cached_suggestions(self, key: tuple[str, str, str, str, int]) -> list[InputSuggestion] | None:
+    def _get_cached_suggestions(self, key: tuple[str, str, str, str, str, int]) -> list[InputSuggestion] | None:
         if self.suggestion_cache_size <= 0:
             return None
         with self._suggestion_cache_lock:
@@ -2007,7 +2060,7 @@ class LocalSqliteCoreClient:
             self._suggestion_cache_hits += 1
             return _copy_suggestions(cached)
 
-    def _store_cached_suggestions(self, key: tuple[str, str, str, str, int], suggestions: list[InputSuggestion]) -> None:
+    def _store_cached_suggestions(self, key: tuple[str, str, str, str, str, int], suggestions: list[InputSuggestion]) -> None:
         if self.suggestion_cache_size <= 0:
             return
         with self._suggestion_cache_lock:

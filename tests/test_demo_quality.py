@@ -273,6 +273,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
                 "rawInput": "ragshurufa",
                 "preedit": "ragshurufa",
                 "committedContext": "RAG 输入法 候选可选性 LLM 来源 本地记忆",
+                "forceSideCandidates": True,
                 "maxVisibleCandidates": 6,
                 "maxSideCandidates": 4,
                 "rimeContext": {

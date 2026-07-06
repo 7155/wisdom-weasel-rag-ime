@@ -54,7 +54,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             subprocess.run(["git", "commit", "-m", "base"], cwd=upstream, check=True, capture_output=True, text=True)
 
             (upstream / "sources" / "RagImeSidecarModels.swift").write_text(
-                "import Foundation\nstruct RagImeSidecarRequest: Codable {}\nstruct RagImeDisplayCandidate { let displayLayout: String? }\n",
+                "import CryptoKit\nimport Foundation\nstruct RagImeSidecarRequest: Codable {}\nstruct RagImeDisplayCandidate { let displayLayout: String? }\n",
                 encoding="utf-8",
             )
             (upstream / "sources" / "RagImeSidecarClient.swift").write_text(
@@ -81,7 +81,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func ragImeRequestFingerprint() {}",
                         "  func mergedRagImePanelCandidates() {}",
                         "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
-                        "  func forceSideCandidates() { _ = \"forceSideCandidates: true\" }",
+                        "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
                         "  func traceRagImeFrontendEvent() {}",
                         '  func traceRagImePanelTextLayout() { _ = "panel_text_layout" }',
                         '  func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }',

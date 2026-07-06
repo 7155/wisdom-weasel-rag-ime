@@ -7,11 +7,13 @@ import os
 import plistlib
 import shutil
 import shlex
+import sqlite3
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
@@ -29,7 +31,22 @@ from .codex_history import (
 from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, default_fixture_memories
 from .embeddings import embedding_provider_from_env
 from .history_context import build_prediction_context
+from .hybrid_rag_eval import run_hybrid_rag_eval
 from .local_sqlite_core import LocalSqliteCoreClient
+from .deepseek_config import load_deepseek_config
+from .deepseek_memory_organizer import DeepSeekMemoryOrganizer, DeepSeekMemoryOrganizerError
+from .memory_book_compiler import (
+    MEMORY_BOOK_APPLY_SCHEMA_VERSION,
+    MEMORY_BOOK_PREVIEW_SCHEMA_VERSION,
+    MEMORY_BOOK_ROLLBACK_SCHEMA_VERSION,
+    MEMORY_BOOK_VALIDATE_SCHEMA_VERSION,
+    apply_memory_book_plan,
+    build_memory_book_source_bundle,
+    inspect_memory_book_plan,
+    load_memory_book_plan,
+    memory_book_plan_from_compile_output,
+    rollback_memory_book_run,
+)
 from .memory_cleanup import cleanup_plan_from_payload, cleanup_plan_to_payload, inspect_cleanup_plan, load_cleanup_run_from_file
 from .memory_compiler import (
     build_memory_compile_bundle,
@@ -59,6 +76,7 @@ from .predictor import (
     prediction_provider_status,
 )
 from .renderer import render_agent_injection, render_terminal_panel
+from .retrieval_docs import rebuild_retrieval_docs
 from .reranker import rerank_candidate_dicts
 from .rime_sidecar import (
     build_rime_sidecar_response,
@@ -334,6 +352,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     memory_compile_rollback = subparsers.add_parser("memory-compile-rollback", help="Rollback an applied memory-compile run")
     memory_compile_rollback.add_argument("--run-id", required=True)
 
+    memory_book_preview = subparsers.add_parser(
+        "memory-book-preview",
+        help="Build a dry-run Memory Book compile preview with an explicitly configured DeepSeek provider",
+    )
+    memory_book_preview.add_argument("--project", default="wisdom-weasel-rag-ime")
+    memory_book_preview.add_argument("--since-days", type=int, default=7)
+    memory_book_preview.add_argument("--recent-limit", type=int, default=80)
+    memory_book_preview.add_argument("--provider", choices=("deepseek",), default="deepseek")
+    memory_book_preview.add_argument("--model", default="")
+    memory_book_preview.add_argument("--model-env-path", default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "") or os.environ.get("RAG_IME_MODEL_ENV", ""))
+    memory_book_preview.add_argument("--output", default="")
+
+    memory_book_validate = subparsers.add_parser("memory-book-validate", help="Validate a Memory Book compile preview before apply")
+    memory_book_validate.add_argument("--run", required=True, help="JSON Memory Book run file")
+
+    memory_book_apply = subparsers.add_parser("memory-book-apply", help="Apply a Memory Book compile preview after explicit confirmation")
+    memory_book_apply.add_argument("--run", required=True, help="JSON Memory Book run file")
+    memory_book_apply.add_argument("--apply", action="store_true", help="Required to actually modify the DB")
+
+    memory_book_rollback = subparsers.add_parser("memory-book-rollback", help="Rollback an applied Memory Book run")
+    memory_book_rollback.add_argument("--run-id", required=True)
+
+    rebuild_retrieval_docs_parser = subparsers.add_parser(
+        "rebuild-retrieval-docs",
+        help="Rebuild BM25-ready Memory Book / atom / item retrieval documents",
+    )
+    rebuild_retrieval_docs_parser.add_argument("--project", default="wisdom-weasel-rag-ime")
+    rebuild_retrieval_docs_parser.add_argument("--no-books", action="store_true")
+    rebuild_retrieval_docs_parser.add_argument("--no-atoms", action="store_true")
+    rebuild_retrieval_docs_parser.add_argument("--no-items", action="store_true")
+
     rebuild_vector = subparsers.add_parser("rebuild-vector-index", help="Backfill optional local-core vector side index")
     rebuild_vector.add_argument("--project", default="")
     rebuild_vector.add_argument("--limit", type=int, default=0)
@@ -544,6 +593,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=int,
         default=int(os.environ.get("RAG_IME_MEMORY_OPTIMIZER_MAX_MS", "15")),
     )
+
+    eval_hybrid_rag_core = subparsers.add_parser(
+        "eval-hybrid-rag-core",
+        help="Evaluate Hybrid RAG Core v3 against JSONL product/eval cases",
+    )
+    eval_hybrid_rag_core.add_argument("--cases-file", required=True, help="JSONL cases for hybrid RAG core gates")
+    eval_hybrid_rag_core.add_argument("--project", default="wisdom-weasel-rag-ime")
+    eval_hybrid_rag_core.add_argument("--repeat", type=int, default=1)
+    eval_hybrid_rag_core.add_argument("--top-k", type=int, default=5)
+    eval_hybrid_rag_core.add_argument("--latency-budget-ms", type=int, default=25)
+    eval_hybrid_rag_core.add_argument("--summary-only", action="store_true", help="Omit per-case details from the JSON report")
 
     predict_benchmark = subparsers.add_parser("predict-benchmark", help="Measure local model prediction latency")
     predict_benchmark.add_argument("--case", action="append", default=[], help="Input case to predict. Can be repeated.")
@@ -1407,6 +1467,136 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "memory-book-preview":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-book-preview requires --core-mode local")
+        try:
+            core.initialize()
+            with _connect_local_sqlite(core.db_path) as conn:
+                bundle = build_memory_book_source_bundle(
+                    conn,
+                    project=args.project,
+                    since_days=max(1, int(args.since_days)),
+                    limit=max(1, int(args.recent_limit)),
+                )
+            config = load_deepseek_config(args.model_env_path or None)
+            if args.model:
+                config = replace(config, model=args.model)
+            organizer = DeepSeekMemoryOrganizer(config)
+            compile_output = organizer.compile_memory_book(bundle=bundle, project=args.project)
+            plan = memory_book_plan_from_compile_output(
+                compile_output,
+                project=args.project,
+                provider=organizer.provider_name,
+                model=config.model,
+            )
+        except (DeepSeekMemoryOrganizerError, ValueError) as exc:
+            print(json.dumps({"schemaVersion": MEMORY_BOOK_PREVIEW_SCHEMA_VERSION, "ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        validation = inspect_memory_book_plan(plan)
+        if args.output:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.output).write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": MEMORY_BOOK_PREVIEW_SCHEMA_VERSION,
+                    "ok": bool(validation.get("ok")),
+                    "dryRun": True,
+                    "project": args.project,
+                    "provider": organizer.provider_name,
+                    "model": config.model,
+                    "source": {
+                        "sinceDays": max(1, int(args.since_days)),
+                        "recentLimit": max(1, int(args.recent_limit)),
+                        "eventCount": len(bundle.get("recentEvents") or []),
+                    },
+                    "validation": validation,
+                    "run": plan,
+                    "outputPath": str(args.output or ""),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0 if validation.get("ok") else 1
+
+    if args.command == "memory-book-validate":
+        try:
+            plan = load_memory_book_plan(args.run)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"schemaVersion": MEMORY_BOOK_VALIDATE_SCHEMA_VERSION, "ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        report = inspect_memory_book_plan(plan)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report.get("ok") else 1
+
+    if args.command == "memory-book-apply":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-book-apply requires --core-mode local")
+        if not bool(args.apply):
+            print(
+                json.dumps(
+                    {
+                        "schemaVersion": MEMORY_BOOK_APPLY_SCHEMA_VERSION,
+                        "ok": False,
+                        "error": "memory-book-apply requires --apply to modify the DB",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        try:
+            plan = load_memory_book_plan(args.run)
+            validation = inspect_memory_book_plan(plan)
+            if not validation.get("ok"):
+                print(
+                    json.dumps(
+                        {
+                            "schemaVersion": MEMORY_BOOK_APPLY_SCHEMA_VERSION,
+                            "ok": False,
+                            "error": "memory book plan failed validation",
+                            "validation": validation,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 1
+            core.initialize()
+            with _connect_local_sqlite(core.db_path) as conn:
+                run = apply_memory_book_plan(conn, plan)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"schemaVersion": MEMORY_BOOK_APPLY_SCHEMA_VERSION, "ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps({"schemaVersion": MEMORY_BOOK_APPLY_SCHEMA_VERSION, "ok": True, "validation": validation, "run": run}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "memory-book-rollback":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("memory-book-rollback requires --core-mode local")
+        core.initialize()
+        with _connect_local_sqlite(core.db_path) as conn:
+            run = rollback_memory_book_run(conn, run_id=args.run_id)
+        print(json.dumps({"schemaVersion": MEMORY_BOOK_ROLLBACK_SCHEMA_VERSION, "ok": True, "run": run}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "rebuild-retrieval-docs":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("rebuild-retrieval-docs requires --core-mode local")
+        core.initialize()
+        with _connect_local_sqlite(core.db_path) as conn:
+            payload = rebuild_retrieval_docs(
+                conn,
+                project=args.project,
+                include_books=not bool(args.no_books),
+                include_atoms=not bool(args.no_atoms),
+                include_items=not bool(args.no_items),
+            )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "seed-demo":
         if not isinstance(core, LocalSqliteCoreClient):
             raise SystemExit("seed-demo requires --core-mode local")
@@ -1983,6 +2173,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_side_candidates=max(0, min(10, args.max_side_candidates)),
             latency_budget_ms=max(30, args.latency_budget_ms),
             optimizer_max_ms=max(1, args.optimizer_max_ms),
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if bool(report.get("gatePassed")) else 1
+
+    if args.command == "eval-hybrid-rag-core":
+        report = run_hybrid_rag_eval(
+            cases_file=Path(args.cases_file),
+            project=args.project,
+            repeat=max(1, args.repeat),
+            top_k=max(1, args.top_k),
+            latency_budget_ms=max(1, args.latency_budget_ms),
+            include_cases=not bool(args.summary_only),
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if bool(report.get("gatePassed")) else 1
@@ -4322,6 +4524,21 @@ def _build_core(args):
         vector_candidate_limit=args.embedding_vector_candidates,
         vector_weight=args.embedding_vector_weight,
     )
+
+
+@contextmanager
+def _connect_local_sqlite(db_path: str | Path):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _embedding_provider_from_args(args):

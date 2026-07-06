@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from .memory_book_schema import ensure_memory_book_schema, memory_book_table_names
+
 
 def ensure_memory_v2_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
@@ -238,6 +240,7 @@ def ensure_memory_v2_schema(conn: sqlite3.Connection) -> None:
         ON memory_candidate_suppressions(match_type, match_value);
         """
     )
+    ensure_memory_book_schema(conn)
 
 
 def memory_v2_table_names() -> tuple[str, ...]:
@@ -258,4 +261,5 @@ def memory_v2_table_names() -> tuple[str, ...]:
         "memory_candidate_suppressions",
         "memory_feedback_events",
         "memory_optimizer_traces",
+        *memory_book_table_names(),
     )

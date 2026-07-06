@@ -542,16 +542,13 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(payload["queryBasis"], "rimeCandidates")
         self.assertIn("就比如", predictor.last_current_input)
         self.assertNotIn("jiubiruwopinshishur", predictor.last_current_input)
-        self.assertEqual(payload["displayCandidates"][0]["selectionAction"], "commit_side_candidate")
-        self.assertEqual(payload["displayCandidates"][0]["displayLayout"], "inline")
-        self.assertEqual(payload["displayCandidates"][1]["selectionAction"], "commit_side_candidate")
-        self.assertEqual(payload["displayCandidates"][1]["displayLayout"], "block")
-        self.assertEqual(payload["displayCandidates"][2]["selectionAction"], "select_rime_candidate")
-        self.assertEqual(payload["displayCandidates"][2]["displayLayout"], "fallback")
+        self.assertEqual(payload["uiMode"], "composition_rime")
+        self.assertEqual([item["selectionAction"] for item in payload["displayCandidates"]], ["select_rime_candidate", "select_rime_candidate"])
+        self.assertEqual([item["displayLayout"] for item in payload["displayCandidates"]], ["fallback", "fallback"])
         self.assertFalse(payload["cache"]["hit"])
         self.assertEqual(payload["rankingDiagnostics"]["schemaVersion"], "rag-ime.ranking-diagnostics.v1")
         self.assertEqual(payload["rankingDiagnostics"]["candidateCount"], len(payload["displayCandidates"]))
-        self.assertGreaterEqual(payload["rankingDiagnostics"]["sourceCounts"]["model"], 1)
+        self.assertEqual(payload["rankingDiagnostics"]["sourceCounts"], {"rime": 2})
 
     def test_rime_suggest_ranking_diagnostics_explain_rag_score_breakdown(self) -> None:
         db_path = Path(self.tmp.name) / "ranking-diagnostics.sqlite"
@@ -629,6 +626,7 @@ class DebugImeServiceTests(unittest.TestCase):
             "rawInput": "sj",
             "preedit": "sj",
             "committedContext": "我想",
+            "forceSideCandidates": True,
             "maxVisibleCandidates": 5,
             "maxSideCandidates": 3,
             "rimeContext": {
@@ -1027,6 +1025,7 @@ class DebugImeServiceTests(unittest.TestCase):
                 "rawInput": "ragshurufa",
                 "preedit": "ragshurufa",
                 "committedContext": "用户正在写 RAG 输入法",
+                "forceSideCandidates": True,
                 "maxVisibleCandidates": 5,
                 "maxSideCandidates": 2,
                 "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},

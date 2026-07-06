@@ -81,7 +81,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("let stablePanelReason: String?", patch_text)
         self.assertIn("guard !ragImeDisplayCandidates.isEmpty else { return false }", patch_text)
         self.assertNotIn('ragImeDisplayQueryBasis == "committedContext"', patch_text)
-        self.assertIn("forceSideCandidates: true", patch_text)
+        self.assertIn("let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty", patch_text)
+        self.assertIn("forceSideCandidates: forceSideCandidates", patch_text)
         self.assertIn("let frontendBuild: String", patch_text)
         self.assertIn("let schemaVersion: String", patch_text)
         self.assertIn("let predictionFirstMerge: Bool", patch_text)
@@ -482,7 +483,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }; '
             'func traceSidecarEmptyResponseCleared() { _ = "sidecar_empty_response_cleared" }; '
             'func traceV2() { _ = "rag-ime.foreground-trace.v2" }; '
-            'func forceSideCandidates() { _ = "forceSideCandidates: true" }; '
+            'func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = "forceSideCandidates: forceSideCandidates" }; '
             'func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" } }\n'
         ),
         encoding="utf-8",

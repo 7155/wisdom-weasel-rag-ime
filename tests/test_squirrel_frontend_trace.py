@@ -3621,6 +3621,173 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertTrue(report["latestValidSideCommit"])
         self.assertIsNone(report["latestNumberKeySideCommit"])
 
+    def test_trace_check_can_require_post_commit_prediction_ux_v1(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-ux-v1-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            rime_candidate = {
+                "label": "1",
+                "selectionKey": "1",
+                "selectionRank": 1,
+                "candidateOrdinal": 1,
+                "candidateStableId": "rime:出现",
+                "sourceType": "rime",
+                "selectionAction": "select_rime_candidate",
+                "displayLayout": "fallback",
+                "displayLane": "rime",
+                "badge": _source_badge("rime"),
+                "colorToken": _source_color_token("rime"),
+            }
+            status = _status_candidate()
+            first_prediction = _side_candidate(label="1", source_type="rag", session_fingerprint="session-a")
+            first_prediction.update(
+                {
+                    "snapshotId": "snap:post",
+                    "candidateStableId": "rag:first",
+                    "candidateOrdinal": 1,
+                    "text": "候选稳定性",
+                }
+            )
+            second_prediction = _side_candidate(label="2", source_type="model", session_fingerprint="session-a")
+            second_prediction.update(
+                {
+                    "snapshotId": "snap:post",
+                    "candidateStableId": "model:second",
+                    "candidateOrdinal": 2,
+                    "text": "可以继续预测",
+                }
+            )
+            events = [
+                {
+                    "event": "sidecar_response_applied",
+                    "timestampMs": 1,
+                    "uiMode": "composition_rime",
+                    "predictionSession": {"phase": "anchor_composing", "inputMode": "anchor_composing"},
+                },
+                {
+                    "event": "panel_display_candidates",
+                    "timestampMs": 2,
+                    "uiMode": "composition_rime",
+                    "rawInput": "chuxian",
+                    "preedit": "chuxian",
+                    "candidateCounts": {"total": 1, "modelInline": 0, "ragBlock": 0, "rime": 1},
+                    "candidates": [rime_candidate],
+                },
+                {
+                    "event": "sidecar_response_applied",
+                    "timestampMs": 3,
+                    "uiMode": "post_commit_pending",
+                    "laneStatus": {"rag": {"state": "pending"}, "model": {"state": "pending"}},
+                    "predictionSession": {"phase": "post_commit", "selectionScope": "prediction", "expiresAfterMs": 9000},
+                    "candidates": [status],
+                },
+                {
+                    "event": "panel_display_candidates",
+                    "timestampMs": 4,
+                    "uiMode": "post_commit_pending",
+                    "predictionSession": {"phase": "post_commit", "selectionScope": "prediction", "snapshotId": "snap:post"},
+                    "candidateCounts": {"total": 1, "modelInline": 0, "ragBlock": 0, "rime": 0},
+                    "candidates": [status],
+                },
+                {
+                    "event": "panel_display_candidates",
+                    "timestampMs": 5,
+                    "uiMode": "post_commit_prediction",
+                    "predictionSession": {"phase": "post_commit", "selectionScope": "prediction", "snapshotId": "snap:post"},
+                    "candidateCounts": {"total": 2, "modelInline": 0, "ragBlock": 1, "rime": 0},
+                    "candidates": [status, first_prediction],
+                },
+                {
+                    "event": "panel_display_candidates",
+                    "timestampMs": 6,
+                    "uiMode": "post_commit_prediction",
+                    "predictionSession": {"phase": "post_commit", "selectionScope": "prediction", "snapshotId": "snap:post"},
+                    "candidateCounts": {"total": 3, "modelInline": 1, "ragBlock": 1, "rime": 0},
+                    "candidates": [status, first_prediction, second_prediction],
+                },
+            ]
+            log_path.write_text("\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-rime-composition-mode",
+                    "--require-post-commit-pending-status",
+                    "--require-prediction-status-visible",
+                    "--require-source-badges",
+                    "--max-renumber-rate",
+                    "0",
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["required"]["rimeCompositionMode"], True)
+        self.assertEqual(report["latestRimeCompositionMode"]["uiMode"], "composition_rime")
+        self.assertEqual(report["latestPostCommitPendingStatus"]["uiMode"], "post_commit_pending")
+        self.assertEqual(report["latestPredictionStatusVisible"]["candidates"][0]["sourceType"], "status")
+        self.assertEqual(report["candidateRenumber"]["renumberRate"], 0.0)
+
+    def test_trace_check_rejects_renumber_when_strict_append_only_required(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-renumber-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            first = _side_candidate(label="1", source_type="rag", session_fingerprint="session-a")
+            first.update({"snapshotId": "snap:renumber", "candidateStableId": "rag:first", "candidateOrdinal": 1})
+            changed = _side_candidate(label="1", source_type="model", session_fingerprint="session-a")
+            changed.update({"snapshotId": "snap:renumber", "candidateStableId": "model:changed", "candidateOrdinal": 1})
+            events = [
+                {
+                    "event": "panel_display_candidates",
+                    "timestampMs": 1,
+                    "predictionSession": {"phase": "post_commit", "snapshotId": "snap:renumber"},
+                    "candidateCounts": {"total": 1, "modelInline": 0, "ragBlock": 1, "rime": 0},
+                    "candidates": [first],
+                },
+                {
+                    "event": "panel_display_candidates",
+                    "timestampMs": 2,
+                    "predictionSession": {"phase": "post_commit", "snapshotId": "snap:renumber"},
+                    "candidateCounts": {"total": 1, "modelInline": 1, "ragBlock": 0, "rime": 0},
+                    "candidates": [changed],
+                },
+            ]
+            log_path.write_text("\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--max-renumber-rate",
+                    "0",
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["candidateRenumber"]["violationCount"], 1)
+        self.assertEqual(
+            report["candidateRenumberViolations"][0]["reason"],
+            "candidate_ordinal_reused_for_different_stable_id",
+        )
+
     def test_trace_check_clear_removes_log(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
@@ -3725,6 +3892,24 @@ def _side_candidate(label: str, source_type: str, session_fingerprint: str) -> d
     }
 
 
+def _status_candidate() -> dict[str, object]:
+    return {
+        "label": "",
+        "selectionKey": "",
+        "selectionRank": 0,
+        "candidateOrdinal": 0,
+        "sourceType": "status",
+        "selectionAction": "none",
+        "displayLayout": "status_row",
+        "displayLane": "post_commit_status",
+        "badge": _source_badge("status"),
+        "colorToken": _source_color_token("status"),
+        "isSelectable": False,
+        "isStatus": True,
+        "text": "查忆处理中…",
+    }
+
+
 def _chain_trace_events(depth: int) -> str:
     lines: list[str] = []
     for index in range(depth):
@@ -3783,6 +3968,7 @@ def _source_badge(source_type: str) -> str:
         "rag": "查",
         "memory": "忆",
         "raw_english": "input",
+        "status": "查忆",
     }[source_type]
 
 
@@ -3793,6 +3979,7 @@ def _source_color_token(source_type: str) -> str:
         "rag": "ragTeal",
         "memory": "memoryPurple",
         "raw_english": "rawGray",
+        "status": "statusGray",
     }[source_type]
 
 

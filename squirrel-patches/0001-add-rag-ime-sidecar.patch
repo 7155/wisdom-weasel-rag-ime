@@ -528,12 +528,13 @@ new file mode 100644
 index 0000000..784162d
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,308 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
 +//
 +
++import CryptoKit
 +import Foundation
 +
 +struct RagImeSidecarRequest: Codable {
@@ -606,6 +607,8 @@ index 0000000..784162d
 +  let predictionSession: RagImePredictionSessionPayload?
 +  let progressive: RagImeProgressivePayload?
 +  let keyPolicy: RagImeKeyPolicyPayload?
++  let uiMode: String?
++  let laneStatus: [String: RagImeJSONValue]?
 +  let selectionActions: RagImeSelectionActions
 +  let mergePolicy: RagImeMergePolicy
 +}
@@ -756,6 +759,10 @@ index 0000000..784162d
 +  let rimeIndex: Int?
 +  let displayLayout: String?
 +  let displayLane: String?
++  let group: String?
++  let groupLabel: String?
++  let isSelectable: Bool?
++  let isStatus: Bool?
 +  let metadata: [String: RagImeJSONValue]
 +}
 +
@@ -817,7 +824,7 @@ index 0000000..784162d
 +    }
 +  }
 +}
-+ 
++
 +func ragImeCompactWhitespace(_ text: String) -> String {
 +  return text
 +    .components(separatedBy: .whitespacesAndNewlines)
@@ -902,7 +909,11 @@ index c2adf74..3cfc0e5 100644
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -99,6 +122,9 @@ final class SquirrelInputController: IMKInputController {
+@@ -123,6 +123,24 @@ final class SquirrelInputController: IMKInputController {
+     case .keyDown:
+       // Let client apps handle Command shortcuts.
+       if modifiers.contains(.command) {
+         break
        }
  
        let keyCode = event.keyCode
@@ -917,13 +928,13 @@ index c2adf74..3cfc0e5 100644
 +        && selectRagImePredictionCandidate(atOrdinal: 1, route: "tab", key: "tab") {
 +        return true
 +      }
-      var keyChars = event.charactersIgnoringModifiers
+       var keyChars = event.charactersIgnoringModifiers
        let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
        if let code = keyChars?.first,
-@@ -106,6 +132,9 @@ final class SquirrelInputController: IMKInputController {
+@@ -131,6 +149,15 @@ final class SquirrelInputController: IMKInputController {
          keyChars = event.characters
-      }
-      if let char = keyChars?.first {
+       }
+       if let char = keyChars?.first {
 +        if modifiers.contains(.option)
 +          && !modifiers.contains(.command)
 +          && !modifiers.contains(.control)
@@ -1197,12 +1208,16 @@ index c2adf74..3cfc0e5 100644
 +      clearRagImeDisplayCandidates()
 +      return false
 +    }
-+    guard ordinal > 0 && ordinal <= ragImeDisplayCandidates.count else {
++    guard ordinal > 0 else {
 +      return false
 +    }
-+    let index = ordinal - 1
++    guard let index = ragImeDisplayCandidates.firstIndex(where: { candidate in
++      candidate.candidateOrdinal == ordinal && (candidate.isSelectable ?? true)
++    }) else {
++      return false
++    }
 +    let candidate = ragImeDisplayCandidates[index]
-+    guard candidate.sourceType != "raw_english" && candidate.sourceType != "rime" else {
++    guard candidate.sourceType != "raw_english" && candidate.sourceType != "rime" && candidate.sourceType != "status" else {
 +      return false
 +    }
 +    guard canSelectRagImeDisplayCandidate(candidate) else {
@@ -1294,6 +1309,7 @@ index c2adf74..3cfc0e5 100644
 +    let compositionHash = ragImeStableTextHash(compositionText)
 +    let committedContextHash = ragImeStableTextHash(ragImeCommittedContext)
 +    let panelSessionId = UUID().uuidString
++    let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty
 +    let request = RagImeSidecarRequest(
 +      frontendBuild: "rag-ime.foreground-trace.v2",
 +      schemaVersion: "rag-ime.squirrel-frontend-trace.v1",
@@ -1315,7 +1331,7 @@ index c2adf74..3cfc0e5 100644
 +      latencyBudgetMs: sidecarClient.latencyBudgetMs,
 +      maxVisibleCandidates: sidecarClient.maxVisibleCandidates,
 +      maxSideCandidates: sidecarClient.maxSideCandidates,
-+      forceSideCandidates: true,
++      forceSideCandidates: forceSideCandidates,
 +      progressiveFollowUp: false,
 +      rimeContext: RagImeRimeContextPayload(
 +        candidates: rimeCandidates,
@@ -1822,6 +1838,8 @@ index c2adf74..3cfc0e5 100644
 +      "responseAgeMs": responseAgeMs,
 +      "applyWindowMs": applyWindowMs,
 +      "latencyBudgetMs": response.latencyBudgetMs,
++      "uiMode": response.uiMode ?? "",
++      "laneStatus": response.laneStatus.map { ragImeJSONValueDictionary($0) } ?? [:],
 +      "predictionSession": [
 +        "phase": response.predictionSession?.phase ?? "",
 +        "selectionScope": response.predictionSession?.selectionScope ?? "",
@@ -2218,7 +2236,7 @@ index c2adf74..3cfc0e5 100644
 +        "inputGeneration": generation,
 +        "frontendRevision": frontendRevision,
 +        "selectionEpoch": selectionEpoch,
-+        "committedContextHash": self.ragImeStableTextHash(actual),
++        "committedContextHash": ragImeStableTextHash(actual),
 +        "committedContextChars": actual.count,
 +        "committedContextSuffix": String(actual.suffix(80)),
 +      ])
@@ -2273,6 +2291,7 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func canSelectRagImeDisplayCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
++    guard candidate.selectionAction != "none", candidate.sourceType != "status", candidate.isStatus != true else { return false }
 +    guard ragImeDisplaySessionStillLive() else { return false }
 +    guard !ragImeDisplaySessionFingerprint.isEmpty else { return true }
 +    guard ragImeDisplayCandidateSessionFingerprint(candidate) == ragImeDisplaySessionFingerprint else { return false }
@@ -2300,7 +2319,8 @@ index c2adf74..3cfc0e5 100644
 +    if !responseSnapshotId.isEmpty && candidate.snapshotId != responseSnapshotId {
 +      return false
 +    }
-+    if let ordinal = candidate.candidateOrdinal, ordinal <= 0 {
++    let isStatusCandidate = candidate.sourceType == "status" || candidate.isStatus == true || candidate.selectionAction == "none"
++    if let ordinal = candidate.candidateOrdinal, ordinal <= 0, !isStatusCandidate {
 +      return false
 +    }
 +    return ragImeDisplayCandidateIntMetadata(candidate, "frontendRevision") == response.frontendRevision
@@ -2334,7 +2354,10 @@ index c2adf74..3cfc0e5 100644
 +    let candidates = ragImeDisplayCandidates.map { ragImeDisplayText(for: $0) }
 +    let comments = ragImeDisplayCandidates.map { ragImeDisplayComment(for: $0) }
 +    let labels = ragImeDisplayCandidates.enumerated().map { index, candidate in
-+      candidate.label.isEmpty ? ragImeFallbackLabel(index: index, fallbackLabels: fallbackLabels) : candidate.label
++      if candidate.sourceType == "status" || candidate.isStatus == true || candidate.selectionAction == "none" {
++        return ""
++      }
++      return candidate.label.isEmpty ? ragImeFallbackLabel(index: index, fallbackLabels: fallbackLabels) : candidate.label
 +    }
 +    return (candidates, comments, labels)
 +  }
@@ -2975,7 +2998,8 @@ index a9e2dae..c4aa52a 100644
    }
  
 +  func ragImeSourceColor(_ sourceType: String) -> NSColor? {
-+    guard inputController?.ragImeCandidateSourceColorsEnabled() != false else {
++    let colorFlag = ProcessInfo.processInfo.environment["RAG_IME_CANDIDATE_SOURCE_COLORS"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
++    guard !["0", "false", "no", "off"].contains(colorFlag ?? "") else {
 +      return nil
 +    }
 +    switch sourceType {
