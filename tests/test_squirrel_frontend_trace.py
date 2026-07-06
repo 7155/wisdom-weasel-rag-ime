@@ -1373,6 +1373,59 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("long_candidate", violation_types)
         self.assertIn("post_commit_number_key", violation_types)
 
+    def test_soak_report_fails_min_visible_violation(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-min-visible-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "prediction_panel_soft_hide",
+                        "timestampMs": 1,
+                        "fields": {
+                            "snapshotId": "snap:min-visible",
+                            "minVisibleRemainingMs": 400,
+                            "reason": "soft hide before minimum visible duration",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["predictionStability"]["minVisibleViolationCount"], 1)
+        self.assertFalse(report["thresholdResults"]["minVisibleViolations"])
+        self.assertIn("min_visible_threshold", {item["type"] for item in report["violations"]})
+
     def test_soak_report_counts_continuous_chain_depth(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-chain-") as tmp:

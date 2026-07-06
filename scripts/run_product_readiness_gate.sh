@@ -297,6 +297,7 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     --report-path "$SOAK_REPORT" \
     --max-stale-applied 0 \
     --max-flicker-count 0 \
+    --max-min-visible-violations 0 \
     --max-rag-empty-cleared-panel 0 \
     --min-side-commits 50 \
     --min-post-commit-followups 30 \

@@ -56,6 +56,7 @@ def main() -> int:
     )
     parser.add_argument("--max-stale-applied", type=int, default=0)
     parser.add_argument("--max-flicker-count", type=int, default=0)
+    parser.add_argument("--max-min-visible-violations", type=int, default=0)
     parser.add_argument("--max-rag-empty-cleared-panel", type=int, default=0)
     parser.add_argument(
         "--manual-required",
@@ -94,6 +95,7 @@ def main() -> int:
             min_chain_depth=max(0, args.min_chain_depth),
             max_stale_applied=max(0, args.max_stale_applied),
             max_flicker_count=max(0, args.max_flicker_count),
+            max_min_visible_violations=max(0, args.max_min_visible_violations),
             max_rag_empty_cleared_panel=max(0, args.max_rag_empty_cleared_panel),
         )
         if soak_report["passed"] or time.monotonic() >= deadline:
@@ -128,6 +130,7 @@ def build_soak_report(
     min_chain_depth: int,
     max_stale_applied: int,
     max_flicker_count: int,
+    max_min_visible_violations: int,
     max_rag_empty_cleared_panel: int,
 ) -> dict[str, Any]:
     event_counts = Counter(str(event.get("event") or "") for event in events if isinstance(event, dict))
@@ -160,6 +163,7 @@ def build_soak_report(
         "minChainDepth": min_chain_depth,
         "maxStaleApplied": max_stale_applied,
         "maxFlickerCount": max_flicker_count,
+        "maxMinVisibleViolations": max_min_visible_violations,
         "maxRagEmptyClearedPanel": max_rag_empty_cleared_panel,
     }
     threshold_results = {
@@ -171,6 +175,7 @@ def build_soak_report(
         "chainDepth": int(chain["maxChainDepth"]) >= min_chain_depth,
         "staleApplied": len(stale_applied) <= max_stale_applied,
         "flickerCount": int(prediction_stability["flickerCount"]) <= max_flicker_count,
+        "minVisibleViolations": int(prediction_stability["minVisibleViolationCount"]) <= max_min_visible_violations,
         "ragEmptyClearedPanel": int(lane_stability["ragEmptyClearedPanelCount"]) <= max_rag_empty_cleared_panel,
     }
 
@@ -216,6 +221,14 @@ def build_soak_report(
                 "type": "prediction_flicker_threshold",
                 "actual": prediction_stability["flickerCount"],
                 "expectedAtMost": max_flicker_count,
+            }
+        )
+    if int(prediction_stability["minVisibleViolationCount"]) > max_min_visible_violations:
+        violations.append(
+            {
+                "type": "min_visible_threshold",
+                "actual": prediction_stability["minVisibleViolationCount"],
+                "expectedAtMost": max_min_visible_violations,
             }
         )
     if int(lane_stability["ragEmptyClearedPanelCount"]) > max_rag_empty_cleared_panel:

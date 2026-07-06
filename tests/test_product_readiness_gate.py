@@ -45,6 +45,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--max-old-input-echo-rate", quality_help.stdout)
         self.assertIn("--max-stale-applied", soak_help.stdout)
         self.assertIn("--max-flicker-count", soak_help.stdout)
+        self.assertIn("--max-min-visible-violations", soak_help.stdout)
         self.assertIn("--max-rag-empty-cleared-panel", soak_help.stdout)
         self.assertIn("--min-chain-depth", soak_help.stdout)
         seed_help = subprocess.run(
@@ -178,6 +179,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)
         self.assertIn("--max-stale-applied 0", result.stdout)
         self.assertIn("--max-flicker-count 0", result.stdout)
+        self.assertIn("--max-min-visible-violations 0", result.stdout)
         self.assertIn("--max-rag-empty-cleared-panel 0", result.stdout)
         self.assertIn("--min-side-commits 50", result.stdout)
         self.assertIn("--min-post-commit-followups 30", result.stdout)
