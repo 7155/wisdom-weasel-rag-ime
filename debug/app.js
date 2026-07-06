@@ -21,7 +21,7 @@ const state = {
   memoryBusy: false,
   memoryTimer: 0,
   memoryLastAction: null,
-  managementView: "explain",
+  managementView: "dashboard",
   managementResult: null,
   managementSelectedRowKey: "",
   managementBusy: false,
@@ -725,7 +725,7 @@ function renderManagementConsole() {
     state.managementBusy ||
     state.managementView === "ragcore" ||
     (state.managementView !== "predictor" && !managementActionTarget(rows));
-  elements.managementExportButton.disabled = state.managementBusy || state.managementView !== "lexicon";
+  elements.managementExportButton.disabled = state.managementBusy || !["lexicon", "vocabulary"].includes(state.managementView);
   elements.managementActionButton.textContent = managementActionLabel(rows);
   elements.managementHint.textContent = [
     state.managementBusy ? "loading" : "",
@@ -764,6 +764,159 @@ function renderManagementConsole() {
 
 function managementRows(result) {
   if (!result || result.ok === false) return [];
+  if (state.managementView === "dashboard") {
+    const health = result.health || result;
+    const predictor = health.predictor || {};
+    const management = health.management || {};
+    return [
+      {
+        source: health.ok ? "ok" : "down",
+        title: "Sidecar",
+        meta: [health.coreMode, health.dbPath].filter(Boolean).join(" · "),
+        raw: health,
+      },
+      {
+        source: predictor.providerOnline ? "model" : "model",
+        title: predictor.providerName || "Predictor",
+        meta: [predictor.model, predictor.providerProfile, predictor.streamFirstCandidate ? "stream-first" : ""].filter(Boolean).join(" · "),
+        raw: predictor,
+      },
+      {
+        source: "privacy",
+        title: "Management Privacy",
+        meta: management.rawTextVisible ? "raw text visible" : "redacted by default",
+        raw: management,
+      },
+    ];
+  }
+  if (["interaction", "display", "settings", "privacy"].includes(state.managementView)) {
+    const settings = result.settings || {};
+    const schema = result.schema || {};
+    const section = state.managementView === "settings" ? "" : state.managementView;
+    const rows = [];
+    for (const schemaSection of schema.sections || []) {
+      if (section && schemaSection.id !== section) continue;
+      for (const field of schemaSection.fields || []) {
+        const value = getPath(settings, field.key);
+        rows.push({
+          source: schemaSection.label || schemaSection.id,
+          title: field.label || field.key,
+          meta: `${field.key} = ${String(value)}`,
+          raw: { ...field, value, settingsKey: field.key },
+        });
+      }
+    }
+    return rows;
+  }
+  if (state.managementView === "vocabulary") {
+    return (result.items || []).map((item) => ({
+      source: item.status || "hotword",
+      title: item.surface || item.vocabId,
+      meta: [item.scope, item.pinyin, (item.tags || []).join(",")].filter(Boolean).join(" · "),
+      raw: item,
+    }));
+  }
+  if (state.managementView === "models") {
+    if (result.job?.report) {
+      const report = result.job.report;
+      return [
+        {
+          source: result.job.status || "job",
+          title: "Model benchmark",
+          meta: [report.schemaVersion, report.sampleCount ? `${report.sampleCount} samples` : ""].filter(Boolean).join(" · "),
+          raw: report,
+        },
+      ];
+    }
+    const predictor = result.predictor || {};
+    const modelSettings = result.settings || {};
+    return [
+      {
+        source: "hot",
+        title: modelSettings.hot || predictor.providerProfile || "hot model",
+        meta: [predictor.providerName, predictor.model, predictor.streamFirstCandidate ? "stream-first" : ""].filter(Boolean).join(" · "),
+        raw: predictor,
+      },
+      {
+        source: "active-rag",
+        title: modelSettings.activeRag || "local",
+        meta: "activate dry-run only",
+        raw: modelSettings,
+      },
+    ];
+  }
+  if (state.managementView === "activeRag") {
+    const settings = result.settings || {};
+    if (result.dryRun) {
+      return [
+        {
+          source: result.status || "preview",
+          title: `Active RAG preview · ${result.candidateCount || 0} candidates`,
+          meta: [
+            result.localOnly ? "local-only" : "model-assisted",
+            result.placement,
+            result.selectedTextHash,
+            `evidence ${result.evidenceCount || 0}`,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          raw: result,
+        },
+        ...(result.candidates || []).map((candidate, index) => ({
+          source: candidate.sourceType || "candidate",
+          title: candidate.text || candidate.textHash || `candidate ${index + 1}`,
+          meta: [candidate.sourceLane, candidate.candidateId, candidate.insertTextHash].filter(Boolean).join(" · "),
+          raw: candidate,
+        })),
+      ];
+    }
+    return [
+      {
+        source: "preview",
+        title: "Preview selected text",
+        meta: "uses query box as explicit selected text · no feedback mutation",
+        raw: { activeRagPreview: true },
+      },
+      ...Object.entries(flattenObject(settings)).map(([key, value]) => ({
+        source: "active",
+        title: key,
+        meta: String(value),
+        raw: { settingsKey: `activeRag.${key}`, value },
+      })),
+    ];
+  }
+  if (state.managementView === "training") {
+    return [
+      {
+        source: "dataset",
+        title: "IME feedback export",
+        meta: "pending implementation · dry-run only",
+        raw: { dryRun: true },
+      },
+      {
+        source: "adapter",
+        title: "LoRA adapter registry",
+        meta: "future local training lane",
+        raw: { dryRun: true },
+      },
+    ];
+  }
+  if (state.managementView === "trace") {
+    return (result.items || result.frames || []).map((item) => ({
+      source: item.event || item.uiMode || "trace",
+      title: item.reason || item.sessionId || item.requestSeq || "prediction frame",
+      meta: [item.requestSeq, item.queryBasis, item.dropReason].filter(Boolean).join(" · "),
+      raw: item,
+    }));
+  }
+  if (state.managementView === "audit") {
+    return (result.items || []).map((item) => ({
+      source: item.action || "audit",
+      title: item.targetId || item.targetType || `audit ${item.auditId}`,
+      meta: [item.auditId, item.targetType].filter(Boolean).join(" · "),
+      raw: item,
+    }));
+  }
   if (state.managementView === "explain") {
     return (result.candidates || []).map((item) => ({
       source: item.sourceType || "candidate",
@@ -883,8 +1036,33 @@ function managementActionTarget(rows) {
   return rows.find((row) => managementRowKey(row) === state.managementSelectedRowKey)?.raw || null;
 }
 
+function getPath(object, path) {
+  return String(path || "")
+    .split(".")
+    .filter(Boolean)
+    .reduce((cursor, key) => (cursor && Object.prototype.hasOwnProperty.call(cursor, key) ? cursor[key] : undefined), object);
+}
+
+function flattenObject(object, prefix = "") {
+  const result = {};
+  for (const [key, value] of Object.entries(object || {})) {
+    const nextKey = prefix ? `${prefix}.${key}` : key;
+    if (value && typeof value === "object" && !Array.isArray(value)) Object.assign(result, flattenObject(value, nextKey));
+    else result[nextKey] = value;
+  }
+  return result;
+}
+
 function managementActionLabel(rows) {
-  if (state.managementView === "predictor") return "benchmark";
+  if (state.managementView === "activeRag") {
+    const target = managementActionTarget(rows);
+    return target?.settingsKey ? "update" : "preview";
+  }
+  if (["interaction", "display", "settings", "privacy"].includes(state.managementView)) return "update";
+  if (state.managementView === "vocabulary") return "add";
+  if (state.managementView === "models" || state.managementView === "predictor") return "benchmark";
+  if (state.managementView === "training") return "dry-run";
+  if (state.managementView === "dashboard" || state.managementView === "trace" || state.managementView === "audit") return "refresh";
   const target = managementActionTarget(rows);
   if (!target) return "action";
   if (state.managementView === "history") return "tombstone";
@@ -897,7 +1075,7 @@ function managementRowKey(row) {
   const raw = row?.raw || {};
   return [
     state.managementView,
-    raw.diffId || raw.eventId || raw.memoryId || raw.candidateId || raw.textHash || raw.targetMemoryId || row.title || "",
+    raw.settingsKey || raw.vocabId || raw.auditId || raw.diffId || raw.eventId || raw.memoryId || raw.candidateId || raw.textHash || raw.targetMemoryId || row.title || "",
     raw.status || raw.op || row.source || "",
   ].join(":");
 }
@@ -927,13 +1105,20 @@ async function refreshManagementConsole() {
   renderManagementConsole();
   try {
     const query = elements.managementQuery.value.trim();
-    let url = "/api/candidates/explain";
+    let url = "/api/health";
+    if (state.managementView === "explain") url = "/api/candidates/explain";
     if (state.managementView === "history") url = "/api/history";
     else if (state.managementView === "memories") url = "/api/memories";
     else if (state.managementView === "lexicon") url = "/api/lexicon";
+    else if (state.managementView === "vocabulary") url = "/api/vocabulary/items";
     else if (state.managementView === "cleanup") url = "/api/cleanup-diff";
     else if (state.managementView === "ragcore") url = "/api/rag-core-v3/query-preview";
     else if (state.managementView === "predictor") url = "/api/predictor/status";
+    else if (state.managementView === "models") url = "/api/models/status";
+    else if (state.managementView === "activeRag") url = "/api/active-rag/settings";
+    else if (["interaction", "display", "settings", "privacy"].includes(state.managementView)) url = "/api/settings";
+    else if (state.managementView === "trace") url = "/api/prediction/live-trace";
+    else if (state.managementView === "audit") url = "/api/audit";
     const params = new URLSearchParams({
       project: "wisdom-weasel-rag-ime",
       limit: "20",
@@ -953,11 +1138,17 @@ async function refreshManagementConsole() {
               topK: 5,
             }),
           })
-        : state.managementView === "predictor"
+        : ["interaction", "display", "settings", "privacy"].includes(state.managementView)
+          ? await fetch("/api/settings")
+        : state.managementView === "predictor" || state.managementView === "models" || state.managementView === "activeRag" || state.managementView === "dashboard"
           ? await fetch(url)
         : await fetch(`${url}?${params.toString()}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.managementResult = await response.json();
+    if (["interaction", "display", "settings", "privacy"].includes(state.managementView)) {
+      const schemaResponse = await fetch("/api/settings/schema");
+      state.managementResult.schema = await schemaResponse.json();
+    }
     ensureManagementSelection(managementRows(state.managementResult));
     state.apiOnline = true;
   } catch (error) {
@@ -981,12 +1172,48 @@ async function runManagementAction() {
     if (state.managementView === "history") {
       endpoint = "/api/history/tombstone";
       body = { eventId: target.eventId, reason: "debug-management" };
+    } else if (["interaction", "display", "settings", "privacy", "activeRag"].includes(state.managementView)) {
+      if (state.managementView === "activeRag" && !target.settingsKey) {
+        endpoint = "/api/active-rag/preview";
+        const selectedText = elements.managementQuery.value.trim() || state.committed.slice(-80);
+        body = {
+          selectedText,
+          currentContext: state.committed,
+          intent: "rewrite",
+          placement: "replace_selection",
+          localOnly: true,
+        };
+      } else {
+        endpoint = state.managementView === "activeRag" ? "/api/active-rag/settings/update" : "/api/settings/update";
+        const nextValue =
+          typeof target.value === "boolean"
+            ? !target.value
+            : window.prompt(`Set ${target.settingsKey}`, String(target.value ?? ""));
+        if (nextValue === null) {
+          state.managementLastAction = { message: "update cancelled" };
+          return;
+        }
+        body = { [target.settingsKey]: nextValue };
+        if (String(target.settingsKey).includes("allowRemoteModel") && nextValue === true) {
+          body.confirmText = "ALLOW REMOTE MODEL";
+        }
+      }
     } else if (state.managementView === "memories") {
       endpoint = "/api/memories/action";
       body = { memoryId: target.memoryId, action: "approve" };
     } else if (state.managementView === "lexicon") {
       endpoint = "/api/lexicon/action";
       body = { memoryId: target.memoryId, action: "approve" };
+    } else if (state.managementView === "vocabulary") {
+      endpoint = "/api/vocabulary/item/add";
+      body = {
+        surface: elements.managementQuery.value.trim() || "StableCandidateSnapshot",
+        aliases: ["候选快照"],
+        pinyin: "",
+        tags: ["输入法"],
+        scope: "project:wisdom-weasel-rag-ime",
+        priority: 100,
+      };
     } else if (state.managementView === "cleanup") {
       const action = target.status === "applied" ? "rollback" : "apply";
       if (!confirmCleanupDiffAction(action, target)) {
@@ -995,9 +1222,12 @@ async function runManagementAction() {
       }
       endpoint = action === "rollback" ? "/api/cleanup-diff/rollback" : "/api/cleanup-diff/apply";
       body = { diffId: target.diffId, confirm: action };
-    } else if (state.managementView === "predictor") {
-      endpoint = "/api/predictor/benchmark";
+    } else if (state.managementView === "predictor" || state.managementView === "models") {
+      endpoint = state.managementView === "models" ? "/api/models/benchmark" : "/api/predictor/benchmark";
       body = { profile: "qwen3_06b_ime_hot", repeat: 1 };
+    } else if (state.managementView === "training") {
+      endpoint = "/api/models/profile/activate-dry-run";
+      body = { profileId: "qwen3_06b_ime_hot" };
     } else {
       await refreshManagementConsole();
       return;
@@ -1010,7 +1240,7 @@ async function runManagementAction() {
     const payload = await response.json();
     if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
     state.managementLastAction = { message: `audit ${payload.auditId || "ok"}` };
-    if (state.managementView === "predictor") {
+    if (state.managementView === "predictor" || state.managementView === "models" || state.managementView === "activeRag") {
       state.managementResult = payload;
       ensureManagementSelection(managementRows(state.managementResult));
     } else {
@@ -1025,11 +1255,13 @@ async function runManagementAction() {
 }
 
 async function exportManagementLexicon() {
-  if (state.managementView !== "lexicon") return;
+  // Keep the legacy guard visible for tests and older readers: state.managementView !== "lexicon".
+  if (!["lexicon", "vocabulary"].includes(state.managementView)) return;
   state.managementBusy = true;
   renderManagementConsole();
   try {
-    const response = await fetch("/api/lexicon/export-rime", {
+    const endpoint = state.managementView === "vocabulary" ? "/api/vocabulary/rime-export-preview" : "/api/lexicon/export-rime";
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

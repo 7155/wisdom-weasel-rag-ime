@@ -4,9 +4,11 @@ import tempfile
 import threading
 import unittest
 import json
+import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
@@ -19,9 +21,10 @@ from rag_ime.retrieval_docs import rebuild_retrieval_docs
 
 class _ManagementPredictionProvider:
     def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5):
+        text = f"{current_input}候选" if current_input else "继续完善候选栏展示"
         return [
             ModelPrediction(
-                text=f"{current_input}候选",
+                text=text,
                 rank=1,
                 provider_name="test-local-model",
                 latency_ms=3,
@@ -266,6 +269,138 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertTrue(health["management"]["localhostOnly"])
         self.assertFalse(health["management"]["rawTextVisible"])
+        self.assertIn("settings", health["management"])
+
+    def test_settings_update_schema_and_reset_are_audited(self) -> None:
+        schema = self.service.settings_schema()
+        update = self.service.settings_update({"display.badges.model": "AI", "interaction.postCommit.numberKeys": "select_prediction"})
+        settings = self.service.settings()
+        reset = self.service.settings_reset_section({"section": "display"})
+
+        self.assertTrue(schema["ok"])
+        self.assertIn("interaction", {item["id"] for item in schema["sections"]})
+        self.assertTrue(update["ok"])
+        self.assertGreater(int(update["auditId"]), 0)
+        self.assertEqual(settings["settings"]["display"]["badges"]["model"], "AI")
+        self.assertEqual(settings["settings"]["interaction"]["postCommit"]["numberKeys"], "select_prediction")
+        self.assertEqual(reset["settings"]["display"]["badges"]["model"], "模")
+        self.assertEqual(self._audit_count("settings_update"), 1)
+        self.assertEqual(self._audit_count("settings_reset_section"), 1)
+
+    def test_display_badge_customization_applies_to_rime_suggest_preview(self) -> None:
+        self.service.settings_update({"display.badges.model": "AI", "display.maxPostCommitCandidates": 2})
+        payload = {
+            "sessionId": "custom-display",
+            "requestSeq": 1,
+            "rawInput": "",
+            "preedit": "",
+            "committedContext": "我想设计一个候选栏",
+            "predictionFirstMerge": True,
+            "maxSideCandidates": 8,
+            "latencyBudgetMs": 1000,
+            "rimeContext": {"candidates": []},
+        }
+        response = self.service.rime_suggest(payload)
+        model_items = [item for item in response["displayCandidates"] if item["sourceType"] == "model"]
+        for request_seq in range(2, 6):
+            if model_items:
+                break
+            time.sleep(0.2)
+            response = self.service.rime_suggest({**payload, "requestSeq": request_seq})
+            model_items = [item for item in response["displayCandidates"] if item["sourceType"] == "model"]
+
+        self.assertLessEqual(len([item for item in response["displayCandidates"] if item["selectionAction"] != "none"]), 2)
+        self.assertTrue(model_items)
+        self.assertEqual(model_items[0]["badge"], "AI")
+
+    def test_disable_composition_prediction_keeps_rime_like_candidates_only(self) -> None:
+        self.service.settings_update({"interaction.composition.showPrediction": False})
+        response = self.service.rime_suggest(
+            {
+                "sessionId": "custom-composition",
+                "requestSeq": 1,
+                "rawInput": "houxuan",
+                "preedit": "houxuan",
+                "committedContext": "输入法",
+                "predictionFirstMerge": True,
+                "maxSideCandidates": 8,
+                "rimeContext": {"candidates": [{"label": "1", "text": "候选"}]},
+            }
+        )
+
+        self.assertTrue(all(item["sourceType"] in {"rime", "raw_english", "status"} for item in response["displayCandidates"]))
+
+    def test_rag_preview_reports_disabled_lanes_from_settings(self) -> None:
+        self.service.settings_update({"rag.lanes.bm25Tags": False})
+
+        preview = self.service.rag_core_v3_query_preview({"query": "多路召回"})
+
+        self.assertTrue(preview["ok"])
+        self.assertTrue(preview["lanes"]["bm25Tags"]["disabledBySettings"])
+        self.assertIn({"lane": "bm25Tags", "reason": "disabled_by_management_settings"}, preview["blocked"])
+
+    def test_vocabulary_and_active_rag_management_api(self) -> None:
+        added = self.service.vocabulary_item_save(
+            {
+                "surface": "StableCandidateSnapshot",
+                "aliases": ["候选快照"],
+                "pinyin": "hou xuan kuai zhao",
+                "tags": ["输入法"],
+                "priority": 100,
+            },
+            action="add",
+        )
+        items = self.service.vocabulary_items({"query": "Stable"})
+        export_preview = self.service.vocabulary_rime_export_preview({})
+        active = self.service.active_rag_preview({"selectedText": "候选栏闪烁，需要解释原因"})
+
+        self.assertTrue(added["ok"])
+        self.assertEqual(items["items"][0]["surface"], "StableCandidateSnapshot")
+        self.assertIn("StableCandidateSnapshot", export_preview["text"])
+        self.assertTrue(active["ok"])
+        self.assertTrue(active["dryRun"])
+        self.assertIn("selectedTextHash", active)
+
+    def test_management_security_token_gate_when_enabled(self) -> None:
+        self.service.settings_update({"managementSecurity.requireToken": True, "managementSecurity.token": "secret-token"})
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/settings/update",
+                data=json.dumps({"display.badges.model": "AI"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                urlopen(request, timeout=5)
+                denied_payload = {"ok": True}
+            except HTTPError as exc:
+                denied_payload = json.loads(exc.read().decode("utf-8"))
+
+            allowed_request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/settings/update",
+                data=json.dumps({"display.badges.model": "AI"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "X-RAG-IME-Admin-Token": "secret-token"},
+                method="POST",
+            )
+            with urlopen(allowed_request, timeout=5) as response:
+                allowed_payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertFalse(denied_payload["ok"])
+        self.assertIn("token", denied_payload["error"])
+        self.assertTrue(allowed_payload["ok"])
 
     def test_rag_core_v3_preview_is_read_only(self) -> None:
         self.core.record_event(
