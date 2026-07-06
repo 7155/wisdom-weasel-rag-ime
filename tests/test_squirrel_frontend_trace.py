@@ -1509,6 +1509,145 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["chain"]["maxChainDepth"], 2)
         self.assertIn("chain_depth_threshold", {item["type"] for item in report["violations"]})
 
+    def test_soak_report_fails_post_commit_request_after_observe_timeout(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-commit-timeout-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            candidate = _side_candidate(label="1", source_type="model", session_fingerprint="session-a")
+            candidate["text"] = "连续候选"
+            candidate["insertText"] = "连续候选"
+            log_path.write_text(
+                "\n".join(
+                    json.dumps(event, ensure_ascii=False)
+                    for event in [
+                        {"event": "side_candidate_commit", "timestampMs": 1, "candidate": candidate},
+                        {
+                            "event": "commit_observe_timeout",
+                            "timestampMs": 2,
+                            "reason": "committed_context_not_observed",
+                        },
+                        {
+                            "event": "post_commit_prediction_scheduled",
+                            "timestampMs": 3,
+                            "selectionKey": "1",
+                        },
+                        {
+                            "event": "sidecar_request_scheduled",
+                            "timestampMs": 4,
+                            "rawInput": "",
+                            "preedit": "",
+                            "commitTextPreview": "连续候选",
+                            "committedContextChars": 12,
+                            "committedContextHash": "sha256:aftertimeout",
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["metrics"]["postCommitFollowupCount"], 0)
+        self.assertEqual(report["metrics"]["postCommitBarrierViolationCount"], 1)
+        violation = report["violations"][0]
+        self.assertEqual(violation["type"], "post_commit_after_cancel")
+        self.assertEqual(violation["cancelEvent"], "commit_observe_timeout")
+
+    def test_soak_report_fails_post_commit_request_after_delete_invalidation(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-delete-cancel-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            candidate = _side_candidate(label="1", source_type="model", session_fingerprint="session-a")
+            candidate["text"] = "删除前候选"
+            candidate["insertText"] = "删除前候选"
+            log_path.write_text(
+                "\n".join(
+                    json.dumps(event, ensure_ascii=False)
+                    for event in [
+                        {"event": "side_candidate_commit", "timestampMs": 1, "candidate": candidate},
+                        {
+                            "event": "display_invalidated_by_input_change",
+                            "timestampMs": 2,
+                            "reason": "delete_key",
+                            "keyCode": 51,
+                        },
+                        {
+                            "event": "sidecar_request_scheduled",
+                            "timestampMs": 3,
+                            "rawInput": "",
+                            "preedit": "",
+                            "commitTextPreview": "删除前候选",
+                            "committedContextChars": 9,
+                            "committedContextHash": "sha256:staleafterdelete",
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["metrics"]["postCommitFollowupCount"], 0)
+        self.assertEqual(report["metrics"]["postCommitBarrierViolationCount"], 1)
+        violation = report["violations"][0]
+        self.assertEqual(violation["type"], "post_commit_after_cancel")
+        self.assertEqual(violation["cancelEvent"], "display_invalidated_by_input_change")
+        self.assertEqual(violation["cancelReason"], "delete_key")
+
     def test_soak_report_counts_option_number_side_selection_route(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-option-") as tmp:

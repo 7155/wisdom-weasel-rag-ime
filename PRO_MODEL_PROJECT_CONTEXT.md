@@ -54,9 +54,9 @@ Current state:
   harness.
 - The sidecar, local SQLite memory/RAG core, MLX local predictor, source-lane
   merge, feedback recording, and many tests exist.
-- Current verification after the latest product-gate/management/RAG-governance
-  and cached UI transaction repair:
-  `scripts/run_product_readiness_gate.sh` reports `Ran 605 tests`, `OK`,
+- Current verification after the latest product-gate/management/RAG-governance,
+  cached UI transaction repair, and post-commit barrier cancellation gate:
+  `scripts/run_product_readiness_gate.sh` reports `Ran 607 tests`, `OK`,
   deterministic acceptance passed, backend `quality-gate` passed, and
   old-input echo remained `0.0`.
 - Earlier runtime repair verified selected input source
@@ -1767,6 +1767,16 @@ Latest full-suite result after PR-10:
 ```text
 Ran 605 tests in 116.571s
 OK
+```
+
+Latest full-suite/product-gate result after the PR-3 post-commit barrier
+cancellation checkpoint:
+
+```text
+Ran 607 tests in 131.572s
+OK
+scripts/run_product_readiness_gate.sh: passed
+backend quality-gate pass-rate=0.9706, sidecar pass-rate=0.9706, old-input echo=0.0
 ```
 
 Additional final-gate verification after adding the integrated product gate:

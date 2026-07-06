@@ -898,6 +898,7 @@ index c2adf74..3cfc0e5 100644
 +  private var ragImePendingContinuationPreviousContextHash: String = ""
 +  private var ragImePendingContinuationQueuedAt: Date?
 +  private var ragImePendingContinuationSelectionEpoch: Int = 0
++  private var ragImePendingContinuationWorkItem: DispatchWorkItem?
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -1334,6 +1335,8 @@ index c2adf74..3cfc0e5 100644
 +    ragImePendingContinuationPreviousContextHash = ragImeStableTextHash(previousContext)
 +    ragImePendingContinuationQueuedAt = Date()
 +    ragImePendingContinuationSelectionEpoch = ragImeSelectionEpoch
++    ragImePendingContinuationWorkItem?.cancel()
++    ragImePendingContinuationWorkItem = nil
 +    traceRagImeFrontendEvent("side_candidate_commit_pending", fields: [
 +      "committedText": committedText,
 +      "previousCommittedContextHash": ragImePendingContinuationPreviousContextHash,
@@ -1343,26 +1346,57 @@ index c2adf74..3cfc0e5 100644
 +      "sessionFingerprint": ragImeDisplayCandidateSessionFingerprint(sourceCandidate),
 +      "selectionEpoch": ragImeSelectionEpoch,
 +    ])
-+    observeRagImePostCommitContinuationIfReady()
++    scheduleRagImePendingContinuationObservation(attempt: 0)
++  }
++
++  func scheduleRagImePendingContinuationObservation(attempt: Int) {
++    guard ragImePendingContinuationCandidate != nil else { return }
++    ragImePendingContinuationWorkItem?.cancel()
++    let delay = attempt == 0 ? 0.03 : 0.08
++    let workItem = DispatchWorkItem { [weak self] in
++      self?.observeRagImePostCommitContinuationIfReady(attempt: attempt)
++    }
++    ragImePendingContinuationWorkItem = workItem
++    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
 +  }
 +
 +  func observeRagImePostCommitContinuationIfReady() {
++    observeRagImePostCommitContinuationIfReady(attempt: 0)
++  }
++
++  func observeRagImePostCommitContinuationIfReady(attempt: Int) {
 +    guard let sourceCandidate = ragImePendingContinuationCandidate else { return }
 +    guard ragImeSidecarClient != nil else { return }
 +    let committedText = ragImePendingContinuationCommittedText
++    if ragImePendingContinuationSelectionEpoch != 0 && ragImePendingContinuationSelectionEpoch != ragImeSelectionEpoch {
++      cancelRagImePendingContinuation(reason: "selection_epoch_changed", keyCode: nil)
++      return
++    }
++    let queuedAgeMs = Int(Date().timeIntervalSince(ragImePendingContinuationQueuedAt ?? Date()) * 1000)
++    if queuedAgeMs > 1200 {
++      traceRagImeFrontendEvent("commit_observe_timeout", fields: [
++        "committedText": committedText,
++        "queuedAgeMs": queuedAgeMs,
++        "attempt": attempt,
++        "selectionEpoch": ragImeSelectionEpoch,
++        "pendingSelectionEpoch": ragImePendingContinuationSelectionEpoch,
++      ])
++      cancelRagImePendingContinuation(reason: "commit_observe_timeout", keyCode: nil)
++      return
++    }
 +    let committedContext = ragImeCommittedContext.isEmpty
 +      ? syncRagImeCommittedContextFromClient(excludingMarkedText: "")
 +      : ragImeCommittedContext
 +    let committedContextHash = ragImeStableTextHash(committedContext)
-+    guard !committedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-+    guard committedContextHash != ragImePendingContinuationPreviousContextHash || committedContext.contains(committedText) else {
++    guard !committedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
++      scheduleRagImePendingContinuationObservation(attempt: attempt + 1)
 +      return
 +    }
-+    ragImePendingContinuationCandidate = nil
-+    ragImePendingContinuationCommittedText = ""
-+    ragImePendingContinuationPreviousContextHash = ""
-+    ragImePendingContinuationQueuedAt = nil
-+    ragImePendingContinuationSelectionEpoch = 0
++    guard committedContextHash != ragImePendingContinuationPreviousContextHash || committedContext.contains(committedText) else {
++      scheduleRagImePendingContinuationObservation(attempt: attempt + 1)
++      return
++    }
++    resetRagImePendingContinuationState()
 +    traceRagImeFrontendEvent("commit_observed", fields: [
 +      "committedText": committedText,
 +      "committedContextChars": committedContext.count,
@@ -1402,6 +1436,33 @@ index c2adf74..3cfc0e5 100644
 +      requestSidecar: true,
 +      immediate: true
 +    )
++  }
++
++  func cancelRagImePendingContinuation(reason: String, keyCode: UInt16?) {
++    guard ragImePendingContinuationCandidate != nil else { return }
++    let queuedAgeMs = Int(Date().timeIntervalSince(ragImePendingContinuationQueuedAt ?? Date()) * 1000)
++    var fields: [String: Any] = [
++      "reason": reason,
++      "committedText": ragImePendingContinuationCommittedText,
++      "queuedAgeMs": queuedAgeMs,
++      "selectionEpoch": ragImeSelectionEpoch,
++      "pendingSelectionEpoch": ragImePendingContinuationSelectionEpoch,
++    ]
++    if let keyCode = keyCode {
++      fields["keyCode"] = Int(keyCode)
++    }
++    traceRagImeFrontendEvent("post_commit_chain_cancelled", fields: fields)
++    resetRagImePendingContinuationState()
++  }
++
++  func resetRagImePendingContinuationState() {
++    ragImePendingContinuationWorkItem?.cancel()
++    ragImePendingContinuationWorkItem = nil
++    ragImePendingContinuationCandidate = nil
++    ragImePendingContinuationCommittedText = ""
++    ragImePendingContinuationPreviousContextHash = ""
++    ragImePendingContinuationQueuedAt = nil
++    ragImePendingContinuationSelectionEpoch = 0
 +  }
 +
 +  func sendRagImeSidecarRequest(
@@ -2076,6 +2137,7 @@ index c2adf74..3cfc0e5 100644
 +    ragImePendingRequestWorkItem = nil
 +    ragImePendingRequestFingerprint = ""
 +    ragImeLastRequestFingerprint = ""
++    cancelRagImePendingContinuation(reason: reason, keyCode: keyCode)
 +    traceRagImeFrontendEvent("display_invalidated_by_input_change", fields: [
 +      "reason": reason,
 +      "keyCode": Int(keyCode),
@@ -2518,6 +2580,7 @@ index c2adf74..3cfc0e5 100644
 +    ragImePendingRequestWorkItem = nil
 +    ragImeDisplayExpiryWorkItem?.cancel()
 +    ragImeDisplayExpiryWorkItem = nil
++    resetRagImePendingContinuationState()
 +  }
 +
 +  func recordRagImeSideCandidateCommit(

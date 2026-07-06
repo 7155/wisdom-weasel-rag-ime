@@ -27,6 +27,12 @@ from check_squirrel_frontend_trace import (
 
 
 DEFAULT_REPORT_PATH = Path("/tmp/rag-ime-squirrel-soak-report.json")
+POST_COMMIT_BARRIER_EVENTS = {
+    "commit_observe_timeout",
+    "post_commit_chain_cancelled",
+    "display_invalidated_by_input_change",
+    "frontend_transaction_invalidated",
+}
 
 
 def main() -> int:
@@ -141,6 +147,11 @@ def build_soak_report(
     prediction_stability = summarize_prediction_stability(events, stale_applied_count=len(stale_applied))
     lane_stability = summarize_lane_stability(events)
     display_quality = summarize_display_quality(events, frontend_report=frontend_report)
+    post_commit_barrier_violations = [
+        violation
+        for violation in frontend_report.get("postCommitBarrierViolations") or []
+        if isinstance(violation, dict)
+    ]
 
     frontend_ok = report_passes(
         frontend_report,
@@ -203,6 +214,19 @@ def build_soak_report(
                     "committedContextHash": violation.get("committedContextHash"),
                 }
             )
+    for violation in post_commit_barrier_violations:
+        violations.append(
+            {
+                "type": violation.get("type") or "post_commit_after_cancel",
+                "timestampMs": violation.get("timestampMs"),
+                "commitTimestampMs": violation.get("commitTimestampMs"),
+                "cancelTimestampMs": violation.get("cancelTimestampMs"),
+                "cancelEvent": violation.get("cancelEvent"),
+                "cancelReason": violation.get("cancelReason"),
+                "commitTextPreview": violation.get("commitTextPreview"),
+                "committedContextHash": violation.get("committedContextHash"),
+            }
+        )
     if len(stale_applied) > max_stale_applied:
         for violation in stale_applied:
             violations.append(violation)
@@ -311,6 +335,7 @@ def build_soak_report(
             "postCommitFollowupCount": len(post_commit_followups),
             "deleteResyncObserved": bool(frontend_report.get("latestDeleteResync")),
             "postDeleteContextUseObserved": bool(frontend_report.get("latestPostDeleteContextUse")),
+            "postCommitBarrierViolationCount": len(post_commit_barrier_violations),
             "staleAppliedResponseCount": len(stale_applied),
             "staleResponseDropCount": int(event_counts.get("sidecar_response_dropped_stale", 0))
             + int(event_counts.get("sidecar_response_dropped", 0)),
@@ -764,7 +789,7 @@ def post_commit_followup_after_commit(
     for event in events[commit_index + 1 :]:
         if event.get("event") == "side_candidate_commit":
             break
-        if event.get("event") in {"commit_observe_timeout", "post_commit_chain_cancelled"}:
+        if str(event.get("event") or "") in POST_COMMIT_BARRIER_EVENTS:
             return None
         if event.get("event") in {"side_candidate_continuation_scheduled", "post_commit_prediction_scheduled"}:
             schedule_event = event

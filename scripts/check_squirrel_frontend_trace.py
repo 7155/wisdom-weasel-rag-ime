@@ -129,6 +129,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     commit_observed = latest_matching(events, lambda event: event.get("event") == "commit_observed")
     delete_resync = latest_delete_resync(events)
     post_delete_context_use = latest_post_delete_context_use(events, delete_resync)
+    post_commit_barrier_violations = collect_post_commit_barrier_violations(events)
     side_commit_barrier_ms = max(
         event_timestamp_ms(mixed_panel),
         event_timestamp_ms(side_panel),
@@ -156,6 +157,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestDeleteResync": summarize_delete_resync(delete_resync),
         "latestPostDeleteContextUse": summarize_post_delete_context_use(post_delete_context_use),
         "postDeleteContextViolations": post_delete_context_violations(events, delete_resync),
+        "postCommitBarrierViolations": post_commit_barrier_violations,
         "latestMixedPanel": summarize_event(mixed_panel),
         "latestSidePanel": summarize_event(side_panel),
         "latestMixedTextLayout": summarize_event(mixed_text_layout),
@@ -565,6 +567,63 @@ def frontend_transaction_violations(events: list[dict[str, Any]]) -> list[dict[s
     return violations
 
 
+POST_COMMIT_BARRIER_EVENTS = {
+    "commit_observe_timeout",
+    "post_commit_chain_cancelled",
+    "display_invalidated_by_input_change",
+    "frontend_transaction_invalidated",
+}
+
+
+def collect_post_commit_barrier_violations(
+    events: list[dict[str, Any]],
+    *,
+    min_timestamp_ms: int = 0,
+) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    for commit_index, commit_event in enumerate(events):
+        if event_timestamp_ms(commit_event) < min_timestamp_ms:
+            continue
+        if not is_valid_side_commit_event(commit_event):
+            continue
+        cancelled_by: dict[str, Any] | None = None
+        scheduled_after_cancel: dict[str, Any] | None = None
+        for event in events[commit_index + 1 :]:
+            if event.get("event") == "side_candidate_commit":
+                break
+            if event_timestamp_ms(event) < event_timestamp_ms(commit_event):
+                continue
+            event_name = str(event.get("event") or "")
+            if event_name in POST_COMMIT_BARRIER_EVENTS and cancelled_by is None:
+                cancelled_by = event
+                scheduled_after_cancel = None
+                continue
+            if cancelled_by and event_name in {"side_candidate_continuation_scheduled", "post_commit_prediction_scheduled"}:
+                scheduled_after_cancel = event
+                continue
+            if not cancelled_by or event_name != "sidecar_request_scheduled":
+                continue
+            if not is_post_commit_followup_request(event, commit_event):
+                continue
+            violations.append(
+                {
+                    "type": "post_commit_after_cancel",
+                    "timestampMs": event.get("timestampMs"),
+                    "commitTimestampMs": commit_event.get("timestampMs"),
+                    "cancelTimestampMs": cancelled_by.get("timestampMs"),
+                    "cancelEvent": cancelled_by.get("event"),
+                    "cancelReason": cancelled_by.get("reason"),
+                    "scheduledAfterCancel": summarize_event(scheduled_after_cancel),
+                    "commitTextPreview": event.get("commitTextPreview"),
+                    "committedContextHash": event.get("committedContextHash"),
+                    "frontendRevision": event.get("frontendRevision"),
+                    "selectionEpoch": event.get("selectionEpoch"),
+                }
+            )
+            break
+    return violations
+
+
 def transaction_fields_match(parent: dict[str, Any], child: dict[str, Any]) -> bool:
     for key in ("frontendRevision", "selectionEpoch", "panelSessionId", "compositionHash", "committedContextHash"):
         parent_value = parent.get(key)
@@ -634,6 +693,8 @@ def latest_post_commit_followup(
         for event in events[commit_index + 1 :]:
             if event_timestamp_ms(event) < event_timestamp_ms(commit_event):
                 continue
+            if str(event.get("event") or "") in POST_COMMIT_BARRIER_EVENTS:
+                break
             if event.get("event") in {"side_candidate_continuation_scheduled", "post_commit_prediction_scheduled"}:
                 schedule_event = event
                 continue
@@ -875,6 +936,8 @@ def report_passes(
     if require_delete_resync and not report.get("latestPostDeleteContextUse"):
         return False
     if require_delete_resync and report.get("postDeleteContextViolations"):
+        return False
+    if report.get("postCommitBarrierViolations"):
         return False
     if require_modern_prediction_session and not report.get("latestModernPredictionSession"):
         return False
