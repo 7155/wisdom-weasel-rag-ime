@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import plistlib
 import subprocess
@@ -77,6 +78,7 @@ class CheckMacosInputSourceScriptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="rag-ime-check-input-source-") as tmp:
             tmp_path = Path(tmp)
             home = tmp_path / "home"
+            report_path = tmp_path / "check-report.json"
             _write_preferences(home, include_squirrel_hitoolbox=True, include_squirrel_third_party=True)
             fake_bin = _write_fake_swift(tmp_path)
 
@@ -85,6 +87,8 @@ class CheckMacosInputSourceScriptTests(unittest.TestCase):
                     "bash",
                     str(root / "scripts" / "check_macos_input_source.sh"),
                     "--require-hitoolbox-enabled",
+                    "--report-path",
+                    str(report_path),
                     "im.rime.inputmethod.Squirrel.Hans",
                 ],
                 cwd=root,
@@ -97,9 +101,53 @@ class CheckMacosInputSourceScriptTests(unittest.TestCase):
                 text=True,
                 capture_output=True,
             )
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
 
         self.assertIn("hitoolboxEnabled=true", result.stdout)
         self.assertIn("thirdPartyEnabled=true", result.stdout)
+        self.assertEqual(payload["schemaVersion"], "rag-ime.macos-input-source-check.v1")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["inputSourceId"], "im.rime.inputmethod.Squirrel.Hans")
+        self.assertTrue(payload["requirements"]["hitoolboxEnabled"])
+        self.assertTrue(payload["source"]["hitoolboxEnabled"])
+        self.assertTrue(payload["source"]["thirdPartyEnabled"])
+        self.assertIsNone(payload["failureKind"])
+
+    def test_report_path_explains_third_party_missing_failure(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-check-input-source-") as tmp:
+            tmp_path = Path(tmp)
+            home = tmp_path / "home"
+            report_path = tmp_path / "check-report.json"
+            _write_preferences(home, include_squirrel_hitoolbox=True, include_squirrel_third_party=False)
+            fake_bin = _write_fake_swift(tmp_path)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "check_macos_input_source.sh"),
+                    "--require-hitoolbox-enabled",
+                    "--report-path",
+                    str(report_path),
+                    "im.rime.inputmethod.Squirrel.Hans",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                },
+                text=True,
+                capture_output=True,
+            )
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["failureKind"], "third-party-missing")
+        self.assertTrue(payload["source"]["hitoolboxEnabled"])
+        self.assertFalse(payload["source"]["thirdPartyEnabled"])
+        self.assertIn("System Settings", " ".join(payload["manualRequired"]))
 
 
 def _write_fake_swift(tmp_path: Path) -> Path:

@@ -3,6 +3,7 @@ set -euo pipefail
 
 REQUIRE_SELECTED="${RAG_IME_REQUIRE_SELECTED:-0}"
 REQUIRE_HITOOLBOX_ENABLED="${RAG_IME_REQUIRE_HITOOLBOX_ENABLED:-0}"
+REPORT_PATH="${RAG_IME_CHECK_INPUT_SOURCE_REPORT_PATH:-}"
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
     --require-selected)
@@ -11,6 +12,14 @@ while [[ "${1:-}" == --* ]]; do
       ;;
     --require-hitoolbox-enabled)
       REQUIRE_HITOOLBOX_ENABLED=1
+      shift
+      ;;
+    --report-path)
+      REPORT_PATH="${2:?--report-path requires a value}"
+      shift 2
+      ;;
+    --report-path=*)
+      REPORT_PATH="${1#--report-path=}"
       shift
       ;;
     *)
@@ -28,6 +37,7 @@ else
   INPUT_SOURCE_BUNDLE_ID="${INPUT_SOURCE_ID%.*}"
 fi
 MODULE_CACHE="${RAG_IME_SWIFT_MODULE_CACHE:-${TMPDIR:-/tmp}/rag-ime-swift-module-cache}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 if ! command -v swift >/dev/null 2>&1; then
   echo "swift is not available; cannot query macOS input sources" >&2
@@ -39,8 +49,113 @@ tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-tis-input-source.XXXXXX")"
 script="$tmpdir/query.swift"
 out="$tmpdir/out"
 err="$tmpdir/err"
+annotated_out="$tmpdir/annotated.out"
 trap 'rm -rf "$tmpdir"' EXIT
 mkdir -p "$MODULE_CACHE"
+
+write_report() {
+  [[ -n "$REPORT_PATH" ]] || return 0
+  local exit_code="$1"
+  mkdir -p "$(dirname "$REPORT_PATH")"
+  "$PYTHON_BIN" - "$REPORT_PATH" "$INPUT_SOURCE_ID" "$INPUT_SOURCE_BUNDLE_ID" "$exit_code" \
+    "$REQUIRE_SELECTED" "$REQUIRE_HITOOLBOX_ENABLED" "$annotated_out" "$out" "$err" <<'PY'
+import json
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+report_path = Path(sys.argv[1]).expanduser()
+target = sys.argv[2]
+bundle_id = sys.argv[3]
+exit_code = int(sys.argv[4])
+require_selected = sys.argv[5] in {"1", "true", "TRUE"}
+require_hitoolbox = sys.argv[6] in {"1", "true", "TRUE"}
+annotated_path = Path(sys.argv[7])
+stdout_path = Path(sys.argv[8])
+stderr_path = Path(sys.argv[9])
+
+def read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except FileNotFoundError:
+        return ""
+
+stdout_text = read(annotated_path) or read(stdout_path)
+stderr_text = read(stderr_path)
+fields = {}
+if stdout_text.startswith("missing "):
+    fields["missing"] = stdout_text.removeprefix("missing ").splitlines()[0].strip()
+for key in [
+    "id",
+    "name",
+    "enabled",
+    "selectable",
+    "selected",
+    "tisSelected",
+    "current",
+    "hitoolboxEnabled",
+    "thirdPartyEnabled",
+]:
+    match = re.search(rf"(?:^|\s){re.escape(key)}=([^\n]+?)(?=\s+[A-Za-z][A-Za-z0-9]*=|$)", stdout_text)
+    if not match:
+        continue
+    value = match.group(1).strip()
+    if value == "true":
+        fields[key] = True
+    elif value == "false":
+        fields[key] = False
+    else:
+        fields[key] = value
+
+failure_kind = None
+manual_required = []
+commands = []
+if exit_code == 0:
+    failure_kind = None
+elif fields.get("missing") == target:
+    failure_kind = "input-source-missing"
+    manual_required.append("Install/register the patched Squirrel.app before foreground verification.")
+    commands.append("scripts/build_patched_squirrel.sh install")
+elif require_selected and fields.get("selected") is False:
+    failure_kind = "not-selected"
+    manual_required.append("Select Squirrel - Simplified from the macOS input menu.")
+    commands.append("scripts/wait_squirrel_typing_ready.sh")
+elif require_hitoolbox and fields.get("thirdPartyEnabled") is False:
+    failure_kind = "third-party-missing"
+    manual_required.append("Use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel - Simplified.")
+    commands.append("scripts/open_squirrel_input_source_settings.sh --wait")
+    commands.append("scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path /tmp/rag-ime-squirrel-repair-dryrun.json")
+elif require_hitoolbox and fields.get("hitoolboxEnabled") is False:
+    failure_kind = "hitoolbox-missing"
+    manual_required.append("Repair HIToolbox input-source preferences or add Squirrel in System Settings.")
+    commands.append("scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path /tmp/rag-ime-squirrel-repair-dryrun.json")
+elif fields.get("enabled") is not True or fields.get("selectable") is not True:
+    failure_kind = "not-enabled-or-selectable"
+else:
+    failure_kind = "check-failed"
+
+payload = {
+    "schemaVersion": "rag-ime.macos-input-source-check.v1",
+    "generatedAt": datetime.now(timezone.utc).isoformat(),
+    "ok": exit_code == 0,
+    "exitCode": exit_code,
+    "inputSourceId": target,
+    "bundleId": bundle_id,
+    "requirements": {
+        "selected": require_selected,
+        "hitoolboxEnabled": require_hitoolbox,
+    },
+    "source": fields,
+    "failureKind": failure_kind,
+    "manualRequired": list(dict.fromkeys(manual_required)),
+    "commands": list(dict.fromkeys(commands)),
+    "stdoutTail": stdout_text[-2000:],
+    "stderrTail": stderr_text[-2000:],
+}
+report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
 
 cat >"$script" <<'SWIFT'
 import Foundation
@@ -92,6 +207,8 @@ set -e
 if [[ "$status" != "0" ]]; then
   cat "$out"
   cat "$err" >&2
+  cp "$out" "$annotated_out"
+  write_report "$status"
   exit "$status"
 fi
 
@@ -127,7 +244,8 @@ third_party_value=false
 if [[ "$third_party_ok" == "1" ]]; then
   third_party_value=true
 fi
-sed "s/$/ hitoolboxEnabled=$hitoolbox_value thirdPartyEnabled=$third_party_value/" "$out"
+sed "s/$/ hitoolboxEnabled=$hitoolbox_value thirdPartyEnabled=$third_party_value/" "$out" >"$annotated_out"
+cat "$annotated_out"
 if [[ "$tis_ok" == "1" ]]; then
   if [[ "$REQUIRE_SELECTED" == "1" || "$REQUIRE_SELECTED" == "true" || "$REQUIRE_SELECTED" == "TRUE" ]]; then
     set +e
@@ -135,13 +253,20 @@ if [[ "$tis_ok" == "1" ]]; then
     selected_status=$?
     set -e
     if [[ "$selected_status" != "0" ]]; then
+      write_report "$selected_status"
       exit "$selected_status"
     fi
   fi
   if [[ "$REQUIRE_HITOOLBOX_ENABLED" == "1" || "$REQUIRE_HITOOLBOX_ENABLED" == "true" || "$REQUIRE_HITOOLBOX_ENABLED" == "TRUE" ]]; then
+    set +e
     [[ "$hitoolbox_ok" == "1" && "$third_party_ok" == "1" ]]
-    exit $?
+    enabled_status=$?
+    set -e
+    write_report "$enabled_status"
+    exit "$enabled_status"
   fi
+  write_report 0
   exit 0
 fi
+write_report 2
 exit 2

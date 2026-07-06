@@ -8,6 +8,7 @@ import plistlib
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -60,25 +61,48 @@ def run_check_script(check_script: Path, input_source_id: str, bundle_id: str) -
         "exitCode": None,
         "rawOutput": "",
         "parsed": {},
+        "structured": {},
     }
     if not check_script.exists():
         return {**payload, "error": "check script is missing"}
     env = {**os.environ, "RAG_IME_INPUT_SOURCE_BUNDLE_ID": bundle_id}
-    completed = subprocess.run(
-        [str(check_script), "--require-hitoolbox-enabled", input_source_id],
-        check=False,
-        text=True,
-        capture_output=True,
-        timeout=10,
-        env=env,
-    )
+    with tempfile.TemporaryDirectory(prefix="rag-ime-input-source-check-report-") as tmp:
+        check_report_path = Path(tmp) / "check.json"
+        completed = subprocess.run(
+            [
+                str(check_script),
+                "--require-hitoolbox-enabled",
+                "--report-path",
+                str(check_report_path),
+                input_source_id,
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            env=env,
+        )
+        structured = read_json_if_exists(check_report_path)
     output = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
+    source = structured.get("source") if isinstance(structured.get("source"), dict) else {}
     return {
         **payload,
         "exitCode": completed.returncode,
         "rawOutput": output,
-        "parsed": parse_check_output(output),
+        "parsed": source or parse_check_output(output),
+        "structured": structured,
     }
+
+
+def read_json_if_exists(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception as exc:  # pragma: no cover - defensive script path
+        return {"readError": exc.__class__.__name__}
+    return payload if isinstance(payload, dict) else {}
 
 
 def parse_check_output(output: str) -> dict[str, Any]:

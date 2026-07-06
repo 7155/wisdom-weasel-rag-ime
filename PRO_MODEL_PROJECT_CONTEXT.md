@@ -345,8 +345,40 @@ evidence; the latest apply report is
 blocker is macOS user input-source activation.
 `im.rime.inputmethod.Squirrel.Hans` is visible, enabled, selectable, and
 HIToolbox-enabled, but `thirdPartyEnabled=false`; the current source is
-not Squirrel. A 2026-07-06 command-line select attempt now writes structured
-evidence to `/tmp/rag-ime-squirrel-select-attempt.json`:
+not Squirrel. The low-level check script now has a structured report mode:
+
+```bash
+scripts/check_macos_input_source.sh \
+  --require-hitoolbox-enabled \
+  --report-path /tmp/rag-ime-check-input-source-current.json \
+  im.rime.inputmethod.Squirrel.Hans
+```
+
+It preserves the existing stdout/exit-code contract and additionally writes
+`rag-ime.macos-input-source-check.v1` with `source.current`, `selected`,
+`hitoolboxEnabled`, `thirdPartyEnabled`, `failureKind`, `manualRequired`, and
+next commands. `audit_squirrel_input_source.py` now prefers that structured
+check report when available:
+
+```python
+structured = read_json_if_exists(check_report_path)
+source = structured.get("source") if isinstance(structured.get("source"), dict) else {}
+return {
+    **payload,
+    "exitCode": completed.returncode,
+    "rawOutput": output,
+    "parsed": source or parse_check_output(output),
+    "structured": structured,
+}
+```
+
+The current-machine report still shows `failureKind=third-party-missing`,
+current source `com.bytedance.inputmethod.doubaoime.pinyin`,
+`hitoolboxEnabled=true`, and `thirdPartyEnabled=false`; the audit also
+re-detected `duplicatePathCount=5`.
+
+A 2026-07-06 command-line select attempt writes structured evidence to
+`/tmp/rag-ime-squirrel-select-attempt.json`:
 
 ```json
 {
@@ -414,7 +446,11 @@ backup/removed/temp paths and then correctly refused to claim readiness. The
 follow-up audit reports `duplicatePathCount=0`, only
 `/Users/undo/Library/Input Methods/Squirrel.app` remains, and the current
 blocker is `readiness_state=third-party-missing` with
-`thirdPartyEnabled=false` / `selected=false`. The new foreground readiness
+`thirdPartyEnabled=false` / `selected=false`. A later structured audit can still
+rediscover stale LaunchServices records from old Squirrel backups
+(`duplicatePathCount=5` on the current machine), so the duplicate cleanup check
+must stay in the tryout gate until those root-owned/ACL-protected backups are
+manually quarantined. The new foreground readiness
 summary reports `ok=false`, `foregroundReady=false`, and next commands
 `scripts/open_squirrel_input_source_settings.sh --wait` plus
 `scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path

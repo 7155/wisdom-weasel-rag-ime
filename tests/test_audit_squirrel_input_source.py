@@ -78,6 +78,39 @@ class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
         self.assertTrue(report["preferences"]["wouldChangeThirdParty"])
         self.assertEqual(report["launchServices"]["duplicatePathCount"], 1)
 
+    def test_audit_prefers_structured_check_report_when_available(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-input-source-audit-structured-") as tmp:
+            tmp_path = Path(tmp)
+            home = tmp_path / "home"
+            _write_preferences(home)
+            check_script = _write_structured_check_script(tmp_path)
+            lsregister = _write_fake_lsregister(tmp_path)
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "audit_squirrel_input_source.py"),
+                    "--check-script",
+                    str(check_script),
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "RAG_IME_LSREGISTER": str(lsregister),
+                },
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["check"]["structured"]["schemaVersion"], "rag-ime.macos-input-source-check.v1")
+        self.assertEqual(report["check"]["parsed"]["current"], "com.apple.keylayout.ABC")
+        self.assertFalse(report["check"]["parsed"]["thirdPartyEnabled"])
+        self.assertEqual(report["readiness"]["state"], "third-party-missing")
+
     def test_tryout_gate_check_flags_duplicate_squirrel_app_registrations(self) -> None:
         audit = {
             "launchServices": {
@@ -182,6 +215,48 @@ def _write_fake_check_script(tmp_path: Path) -> Path:
             [
                 "#!/usr/bin/env bash",
                 "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=false tisSelected=false current=com.apple.keylayout.ABC hitoolboxEnabled=true thirdPartyEnabled=false'",
+                "exit 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
+
+def _write_structured_check_script(tmp_path: Path) -> Path:
+    script = tmp_path / "check-input-source-structured.sh"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "report=''",
+                "while (($#)); do",
+                "  case \"$1\" in",
+                "    --report-path) report=\"$2\"; shift 2 ;;",
+                "    --require-hitoolbox-enabled) shift ;;",
+                "    *) target=\"$1\"; shift ;;",
+                "  esac",
+                "done",
+                "echo 'id=im.rime.inputmethod.Squirrel.Hans name=Squirrel - Simplified enabled=true selectable=true selected=false current=com.apple.keylayout.ABC hitoolboxEnabled=true thirdPartyEnabled=false'",
+                "cat > \"$report\" <<'JSON'",
+                "{",
+                '  "schemaVersion": "rag-ime.macos-input-source-check.v1",',
+                '  "ok": false,',
+                '  "exitCode": 1,',
+                '  "source": {',
+                '    "id": "im.rime.inputmethod.Squirrel.Hans",',
+                '    "name": "Squirrel - Simplified",',
+                '    "enabled": true,',
+                '    "selectable": true,',
+                '    "selected": false,',
+                '    "current": "com.apple.keylayout.ABC",',
+                '    "hitoolboxEnabled": true,',
+                '    "thirdPartyEnabled": false',
+                "  }",
+                "}",
+                "JSON",
                 "exit 1",
             ]
         )
