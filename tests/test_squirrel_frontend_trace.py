@@ -1266,6 +1266,21 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + "\n"
                 + json.dumps(
                     {
+                        "event": "candidate_snapshot_selection_accepted",
+                        "timestampMs": 15,
+                        "fields": {
+                            "snapshotId": "snap:soak",
+                            "index": 2,
+                            "selectionEpoch": 9,
+                            "panelSessionId": "panel-a",
+                            "candidate": selected_candidate,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
                         "event": "commit_observed",
                         "timestampMs": 16,
                         "committedText": "继续预测",
@@ -1302,6 +1317,20 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "preedit": "",
                         "commitTextPreview": selected_candidate["insertText"],
                         "committedContextChars": 24,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "candidate_snapshot_selection_rejected_stale",
+                        "timestampMs": 23,
+                        "fields": {
+                            "snapshotId": "snap:old",
+                            "reason": "candidate_transaction_mismatch",
+                            "selectionEpoch": 8,
+                            "panelSessionId": "panel-old",
+                        },
                     },
                     ensure_ascii=False,
                 )
@@ -1387,6 +1416,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["predictionStability"]["flickerCount"], 0)
         self.assertEqual(report["predictionStability"]["softHoldCount"], 1)
         self.assertGreaterEqual(report["predictionStability"]["lastGoodReuseCount"], 1)
+        self.assertEqual(report["predictionStability"]["snapshotSelectionAccepted"], 1)
+        self.assertEqual(report["predictionStability"]["snapshotSelectionRejectedStale"], 1)
         self.assertEqual(report["predictionStability"]["staleSelectionApplied"], 0)
         self.assertEqual(report["laneStability"]["modelTimeouts"], 1)
         self.assertEqual(report["laneStability"]["modelTimeoutsWithHoldover"], 1)

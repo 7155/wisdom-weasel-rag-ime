@@ -165,6 +165,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertNotIn("guard ragImeSidecarClient?.frontendTrace == true", patch_text)
         self.assertIn('traceRagImeFrontendEvent("panel_display_candidates"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("side_candidate_commit"', patch_text)
+        self.assertIn('traceRagImeFrontendEvent("candidate_snapshot_selection_accepted"', patch_text)
+        self.assertIn('traceRagImeFrontendEvent("candidate_snapshot_selection_rejected_stale"', patch_text)
         self.assertIn("shownCandidates: ragImeDisplayCandidates", patch_text)
         self.assertIn("let shownCandidates: [RagImeDisplayCandidate]", patch_text)
         self.assertIn("traceRagImePredictionEvents(response.predictionTraceEvents)", patch_text)

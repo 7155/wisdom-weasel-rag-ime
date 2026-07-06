@@ -615,6 +615,12 @@ def summarize_prediction_stability(events: list[dict[str, Any]], *, stale_applie
         + sum(1 for event in events if event.get("event") == "display_invalidated_by_input_change"),
         "softHoldCount": sum(1 for event in prediction_events if event.get("event") == "prediction_panel_soft_hold"),
         "lastGoodReuseCount": sum(1 for event in prediction_events if prediction_event_reuses_last_good(event)),
+        "snapshotSelectionAccepted": sum(
+            1 for event in prediction_events if event.get("event") == "candidate_snapshot_selection_accepted"
+        ),
+        "snapshotSelectionRejectedStale": sum(
+            1 for event in prediction_events if event.get("event") == "candidate_snapshot_selection_rejected_stale"
+        ),
         "staleSelectionRejected": sum(1 for event in events if event.get("event") == "stale_candidate_selection_rejected"),
         "staleSelectionApplied": stale_applied_count,
         "snapshotSpans": snapshot_spans[:20],
@@ -709,6 +715,8 @@ def collect_visible_snapshot_spans(
         first_seen.setdefault(snapshot_id, timestamp)
         last_seen[snapshot_id] = max(timestamp, last_seen.get(snapshot_id, timestamp))
     for event in prediction_events:
+        if str(event.get("event") or "").startswith("candidate_snapshot_selection_"):
+            continue
         snapshot_id = str(event.get("snapshotId") or "")
         if not snapshot_id:
             continue

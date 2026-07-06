@@ -228,6 +228,9 @@ same-snapshot append is allowed and counted, but if the same `snapshotId`
 reuses an existing `candidateOrdinal` / `selectionKey` for a different
 `candidateStableId`, the report emits `snapshot_ordinal_drift` and fails. This
 keeps "one-by-one candidates pop in" compatible with stable 1/2/3 selection.
+The Squirrel patch now emits `candidate_snapshot_selection_accepted` and
+`candidate_snapshot_selection_rejected_stale`, and the soak report surfaces
+both counts under `predictionStability`.
 It also treats raw-text leakage in default modern trace events as a foreground
 gate failure: when `traceIncludesText=false`, fields such as `rawInput`,
 `preedit`, `commitTextPreview`, `committedText`, `committedContextSuffix`,
@@ -580,6 +583,9 @@ now rejects stale candidate selection when `snapshotId`, `candidateOrdinal`,
 `candidateStableId`, candidate expiry, session fingerprint, or foreground
 transaction metadata no longer match; the frontend trace checker compares the
 same snapshot-lock fields before accepting a number-key route/commit pair.
+Accepted and stale-rejected snapshot selections are traced explicitly so a
+foreground soak can distinguish "visible candidate was accepted" from "old
+snapshot was rejected before commit".
 PR-E has also started: active composition refreshes now pass through a small
 per-session debounce/coalescing guard keyed by hard context and query family.
 When a request is coalesced inside `RAG_IME_REFRESH_DEBOUNCE_MS`, the sidecar

@@ -949,6 +949,13 @@ index c2adf74..3cfc0e5 100644
 +          "selectionEpoch": ragImeSelectionEpoch,
 +          "panelSessionId": ragImeDisplayPanelSessionId,
 +        ])
++        traceRagImeFrontendEvent("candidate_snapshot_selection_rejected_stale", fields: [
++          "reason": "select_candidate_display_session_not_live",
++          "index": index,
++          "selectionEpoch": ragImeSelectionEpoch,
++          "panelSessionId": ragImeDisplayPanelSessionId,
++          "snapshotId": ragImeDisplaySnapshotId,
++        ])
 +        clearRagImeDisplayCandidates()
 +        return false
 +      }
@@ -961,6 +968,14 @@ index c2adf74..3cfc0e5 100644
 +          "selectionEpoch": ragImeSelectionEpoch,
 +          "panelSessionId": ragImeDisplayPanelSessionId,
 +        ])
++        traceRagImeFrontendEvent("candidate_snapshot_selection_rejected_stale", fields: [
++          "reason": "select_candidate_transaction_mismatch",
++          "index": index,
++          "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++          "selectionEpoch": ragImeSelectionEpoch,
++          "panelSessionId": ragImeDisplayPanelSessionId,
++          "snapshotId": ragImeDisplaySnapshotId,
++        ])
 +        clearRagImeDisplayCandidates()
 +        return false
 +      }
@@ -970,6 +985,13 @@ index c2adf74..3cfc0e5 100644
 +        let query = ragImeDisplaySemanticQuery.isEmpty ? ragImeDisplayRawInput : ragImeDisplaySemanticQuery
 +        let recentContext = syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
 +        let sourcePreedit = ragImeDisplayPreedit
++        traceRagImeFrontendEvent("candidate_snapshot_selection_accepted", fields: [
++          "index": index,
++          "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++          "selectionEpoch": ragImeSelectionEpoch,
++          "panelSessionId": ragImeDisplayPanelSessionId,
++          "snapshotId": ragImeDisplaySnapshotId,
++        ])
 +        traceRagImeFrontendEvent("side_candidate_commit", fields: [
 +          "index": index,
 +          "candidate": ragImeTraceCandidateSummary(candidate, index: index),
@@ -1095,6 +1117,13 @@ index c2adf74..3cfc0e5 100644
 +        "selectionEpoch": ragImeSelectionEpoch,
 +        "panelSessionId": ragImeDisplayPanelSessionId,
 +      ])
++      traceRagImeFrontendEvent("candidate_snapshot_selection_rejected_stale", fields: [
++        "key": key,
++        "reason": "display_session_not_live",
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeDisplayPanelSessionId,
++        "snapshotId": ragImeDisplaySnapshotId,
++      ])
 +      clearRagImeDisplayCandidates()
 +      return false
 +    }
@@ -1112,6 +1141,15 @@ index c2adf74..3cfc0e5 100644
 +        "candidate": ragImeTraceCandidateSummary(ragImeDisplayCandidates[index], index: index),
 +        "selectionEpoch": ragImeSelectionEpoch,
 +        "panelSessionId": ragImeDisplayPanelSessionId,
++      ])
++      traceRagImeFrontendEvent("candidate_snapshot_selection_rejected_stale", fields: [
++        "key": key,
++        "reason": "candidate_transaction_mismatch",
++        "index": index,
++        "candidate": ragImeTraceCandidateSummary(ragImeDisplayCandidates[index], index: index),
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeDisplayPanelSessionId,
++        "snapshotId": ragImeDisplaySnapshotId,
 +      ])
 +      clearRagImeDisplayCandidates()
 +      return false
@@ -1148,6 +1186,14 @@ index c2adf74..3cfc0e5 100644
 +        "selectionEpoch": ragImeSelectionEpoch,
 +        "panelSessionId": ragImeDisplayPanelSessionId,
 +      ])
++      traceRagImeFrontendEvent("candidate_snapshot_selection_rejected_stale", fields: [
++        "key": key,
++        "route": route,
++        "reason": "prediction_display_session_not_live",
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeDisplayPanelSessionId,
++        "snapshotId": ragImeDisplaySnapshotId,
++      ])
 +      clearRagImeDisplayCandidates()
 +      return false
 +    }
@@ -1168,6 +1214,16 @@ index c2adf74..3cfc0e5 100644
 +        "candidate": ragImeTraceCandidateSummary(candidate, index: index),
 +        "selectionEpoch": ragImeSelectionEpoch,
 +        "panelSessionId": ragImeDisplayPanelSessionId,
++      ])
++      traceRagImeFrontendEvent("candidate_snapshot_selection_rejected_stale", fields: [
++        "key": key,
++        "route": route,
++        "reason": "prediction_candidate_transaction_mismatch",
++        "index": index,
++        "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeDisplayPanelSessionId,
++        "snapshotId": ragImeDisplaySnapshotId,
 +      ])
 +      clearRagImeDisplayCandidates()
 +      return false
