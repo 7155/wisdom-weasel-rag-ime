@@ -185,6 +185,9 @@ changing selection keys, and the foreground trace checker rejects source visual
 mismatches. Candidate quota now prevents LLM/model output from occupying all
 side slots when RAG/memory exists: model display is capped at two visible slots,
 RAG/memory keeps block slots, and Rime/Wanxiang fallback keeps reserved slots.
+The real foreground verifier/soak scripts now default to
+`--require-balanced-quota`, with trace output exposing
+`latestBalancedCandidatePanel` and `candidateQuotaViolations`.
 PR-8 has started: the Sichuan fuzzy-pinyin helper is now split into
 JSON check and explicit dry-run/apply scripts with backup, and the default
 profile is mild (`z_zh/c_ch/s_sh/en_eng/in_ing` on, `n_l/f_h` off). PR-9 has
@@ -249,7 +252,7 @@ before writing, and memory optimizer evidence avoids leaking long stable-memory
 source sentences when the compiled IME candidate is short.
 
 Latest default product-gate evidence: `scripts/run_product_readiness_gate.sh`
-passes with `580 tests OK`, deterministic `scripts/acceptance.py`,
+passes with `583 tests OK`, deterministic `scripts/acceptance.py`,
 `rag-pass-rate=0.9706`, `rime-sidecar-pass-rate=0.9706`, old-input echo `0.0`,
 warm suggestion/Rime cache hits, and no sidecar RAG/model timeouts. Latest
 backend product-gate evidence with the installed local MLX runtime:

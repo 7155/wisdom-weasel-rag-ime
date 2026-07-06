@@ -45,11 +45,13 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("require_post_commit_followup=1", result.stdout)
         self.assertIn("require_delete_resync=1", result.stdout)
         self.assertIn("min_side_commits=1", result.stdout)
+        self.assertIn("require_balanced_quota=1", result.stdout)
         self.assertIn("--require-side-panel", result.stdout)
         self.assertIn("--require-side-commit", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-post-commit-followup", result.stdout)
         self.assertIn("--require-delete-resync", result.stdout)
+        self.assertIn("--require-balanced-quota", result.stdout)
         self.assertNotIn("--require-mixed-panel", result.stdout)
 
     def test_foreground_trace_wrapper_dry_run_reports_gate(self) -> None:
@@ -91,9 +93,11 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("auto_char_delay=0.08", result.stdout)
         self.assertIn("require_hitoolbox_enabled=0", result.stdout)
         self.assertIn("require_modern_prediction_session=1", result.stdout)
+        self.assertIn("require_balanced_quota=1", result.stdout)
         self.assertIn("--require-mixed-panel", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
+        self.assertIn("--require-balanced-quota", result.stdout)
         self.assertNotIn("--require-delete-resync", result.stdout)
         self.assertNotIn("--require-side-commit", result.stdout)
         self.assertNotIn("--require-post-commit-followup", result.stdout)
@@ -160,7 +164,26 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
 
         self.assertIn("require_hitoolbox_enabled=1", result.stdout)
         self.assertIn("require_modern_prediction_session=0", result.stdout)
+        self.assertIn("require_balanced_quota=1", result.stdout)
         self.assertNotIn("--require-modern-prediction-session", result.stdout)
+
+    def test_foreground_trace_wrapper_can_disable_balanced_quota_for_legacy_trace_debugging(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "verify_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--no-balanced-quota",
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertIn("require_balanced_quota=0", result.stdout)
+        self.assertNotIn("--require-balanced-quota", result.stdout)
 
     def test_trace_check_can_require_delete_resync(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1452,6 +1475,90 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertFalse(report["passed"])
         self.assertIsNone(report["latestMixedPanel"])
 
+    def test_trace_check_can_require_balanced_candidate_quota(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-quota-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": True,
+                        "candidateCounts": {"total": 5, "modelInline": 2, "ragBlock": 2, "rime": 1},
+                        "candidates": _balanced_quota_candidates(),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-balanced-quota",
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["required"]["balancedQuota"], True)
+        self.assertEqual(report["latestBalancedCandidatePanel"]["candidateCounts"]["modelInline"], 2)
+        self.assertEqual(report["candidateQuotaViolations"], [])
+
+    def test_trace_check_rejects_model_overrun_when_rag_is_visible(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-quota-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": True,
+                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "candidates": _mixed_side_first_candidates(),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-balanced-quota",
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertIsNone(report["latestBalancedCandidatePanel"])
+        self.assertEqual(
+            report["candidateQuotaViolations"][0]["reason"],
+            "model_candidates_exceed_quota_when_rag_or_memory_visible",
+        )
+
     def test_trace_check_fails_when_model_inline_candidates_are_newline_separated(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
@@ -1977,6 +2084,29 @@ def _mixed_side_first_candidates(session_fingerprint: str = "") -> list[dict[str
         if session_fingerprint:
             candidate["sessionFingerprint"] = session_fingerprint
         candidates.append(candidate)
+    return candidates
+
+
+def _balanced_quota_candidates(session_fingerprint: str = "") -> list[dict[str, object]]:
+    candidates = [
+        _side_candidate("1", "model", session_fingerprint),
+        _side_candidate("2", "model", session_fingerprint),
+        _side_candidate("3", "rag", session_fingerprint),
+        _side_candidate("4", "memory", session_fingerprint),
+        {
+            "label": "5",
+            "selectionKey": "5",
+            "selectionRank": 5,
+            "sourceType": "rime",
+            "selectionAction": "select_rime_candidate",
+            "displayLayout": "fallback",
+            "displayLane": "rime",
+            "badge": _source_badge("rime"),
+            "colorToken": _source_color_token("rime"),
+        },
+    ]
+    if session_fingerprint:
+        candidates[-1]["sessionFingerprint"] = session_fingerprint
     return candidates
 
 

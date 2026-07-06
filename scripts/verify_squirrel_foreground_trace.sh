@@ -24,6 +24,7 @@ REQUIRE_MIXED_PANEL=1
 REQUIRE_SIDE_PANEL=0
 REQUIRE_HITOOLBOX_ENABLED="${RAG_IME_FOREGROUND_TRACE_REQUIRE_HITOOLBOX_ENABLED:-0}"
 REQUIRE_MODERN_PREDICTION_SESSION=1
+REQUIRE_BALANCED_QUOTA=1
 DRY_RUN=0
 AUTO_TYPE=0
 AUTO_QUERY="${RAG_IME_FOREGROUND_TRACE_AUTO_QUERY:-er qi}"
@@ -55,6 +56,7 @@ Options:
   --require-hitoolbox-enabled
                        Also require the HIToolbox preference gate before typing
   --no-modern-session   Do not require a non-legacy predictionSession trace
+  --no-balanced-quota   Do not require product model/RAG/Rime quota trace
   --auto-type           Try to type the test query and side-candidate key with AppleScript
   --auto-query TEXT     Text used by --auto-type (default: er qi)
   --auto-key KEY        Number key used by --auto-type (default: 6)
@@ -105,6 +107,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-modern-session)
       REQUIRE_MODERN_PREDICTION_SESSION=0
+      ;;
+    --no-balanced-quota)
+      REQUIRE_BALANCED_QUOTA=0
       ;;
     --auto-type)
       AUTO_TYPE=1
@@ -176,6 +181,9 @@ fi
 if [[ "$REQUIRE_MODERN_PREDICTION_SESSION" == "1" ]]; then
   trace_args+=(--require-modern-prediction-session)
 fi
+if [[ "$REQUIRE_BALANCED_QUOTA" == "1" ]]; then
+  trace_args+=(--require-balanced-quota)
+fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
   cat <<EOF
@@ -196,6 +204,7 @@ require_mixed_panel=$REQUIRE_MIXED_PANEL
 require_side_panel=$REQUIRE_SIDE_PANEL
 require_hitoolbox_enabled=$REQUIRE_HITOOLBOX_ENABLED
 require_modern_prediction_session=$REQUIRE_MODERN_PREDICTION_SESSION
+require_balanced_quota=$REQUIRE_BALANCED_QUOTA
 auto_type=$AUTO_TYPE
 auto_query=$AUTO_QUERY
 auto_key=$AUTO_KEY

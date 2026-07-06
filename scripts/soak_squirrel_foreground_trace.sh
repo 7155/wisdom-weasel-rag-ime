@@ -25,6 +25,7 @@ REQUIRE_COMMIT_OBSERVED=1
 REQUIRE_POST_COMMIT_FOLLOWUP=1
 REQUIRE_DELETE_RESYNC="${RAG_IME_FOREGROUND_SOAK_REQUIRE_DELETE_RESYNC:-0}"
 REQUIRE_MODERN_PREDICTION_SESSION=1
+REQUIRE_BALANCED_QUOTA=1
 AUTO_TYPE=1
 AUTO_QUERY="${RAG_IME_FOREGROUND_SOAK_AUTO_QUERY:-er qi}"
 AUTO_KEY="${RAG_IME_FOREGROUND_SOAK_AUTO_KEY:-6}"
@@ -59,6 +60,7 @@ Options:
   --no-select           Do not auto-select the Squirrel input source
   --no-auto-type        Skip Accessibility typing and record manualRequired
   --no-modern-session   Do not require a non-legacy predictionSession event
+  --no-balanced-quota   Do not require product model/RAG/Rime quota trace
   --auto-query TEXT     Text used for auto typing / manual instructions
   --auto-key KEY        Number key used for auto typing / manual instructions
   --dry-run             Print resolved commands without changing local state
@@ -107,6 +109,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-modern-session)
       REQUIRE_MODERN_PREDICTION_SESSION=0
+      ;;
+    --no-balanced-quota)
+      REQUIRE_BALANCED_QUOTA=0
       ;;
     --auto-query)
       AUTO_QUERY="$2"
@@ -172,6 +177,9 @@ fi
 if [[ "$REQUIRE_MODERN_PREDICTION_SESSION" == "1" ]]; then
   soak_args+=(--require-modern-prediction-session)
 fi
+if [[ "$REQUIRE_BALANCED_QUOTA" == "1" ]]; then
+  soak_args+=(--require-balanced-quota)
+fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
   cat <<EOF
@@ -197,6 +205,7 @@ require_commit_observed=$REQUIRE_COMMIT_OBSERVED
 require_post_commit_followup=$REQUIRE_POST_COMMIT_FOLLOWUP
 require_delete_resync=$REQUIRE_DELETE_RESYNC
 require_modern_prediction_session=$REQUIRE_MODERN_PREDICTION_SESSION
+require_balanced_quota=$REQUIRE_BALANCED_QUOTA
 min_sidecar_requests=$MIN_SIDECAR_REQUESTS
 min_sidecar_applied=$MIN_SIDECAR_APPLIED
 min_panel_displays=$MIN_PANEL_DISPLAYS

@@ -38,6 +38,7 @@ def main() -> int:
     parser.add_argument("--require-post-commit-followup", action="store_true")
     parser.add_argument("--require-delete-resync", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
+    parser.add_argument("--require-balanced-quota", action="store_true")
     parser.add_argument("--min-sidecar-requests", type=int, default=1)
     parser.add_argument("--min-sidecar-applied", type=int, default=1)
     parser.add_argument("--min-panel-displays", type=int, default=1)
@@ -72,6 +73,7 @@ def main() -> int:
             require_post_commit_followup=args.require_post_commit_followup,
             require_delete_resync=args.require_delete_resync,
             require_modern_prediction_session=args.require_modern_prediction_session,
+            require_balanced_quota=args.require_balanced_quota,
             min_sidecar_requests=max(0, args.min_sidecar_requests),
             min_sidecar_applied=max(0, args.min_sidecar_applied),
             min_panel_displays=max(0, args.min_panel_displays),
@@ -102,6 +104,7 @@ def build_soak_report(
     require_post_commit_followup: bool,
     require_delete_resync: bool,
     require_modern_prediction_session: bool,
+    require_balanced_quota: bool,
     min_sidecar_requests: int,
     min_sidecar_applied: int,
     min_panel_displays: int,
@@ -123,6 +126,7 @@ def build_soak_report(
         require_post_commit_followup=require_post_commit_followup,
         require_delete_resync=require_delete_resync,
         require_modern_prediction_session=require_modern_prediction_session,
+        require_balanced_quota=require_balanced_quota,
     )
 
     thresholds = {
@@ -203,6 +207,7 @@ def build_soak_report(
             "postCommitFollowup": require_post_commit_followup,
             "deleteResync": require_delete_resync,
             "modernPredictionSession": require_modern_prediction_session,
+            "balancedQuota": require_balanced_quota,
         },
         "thresholds": thresholds,
         "thresholdResults": threshold_results,

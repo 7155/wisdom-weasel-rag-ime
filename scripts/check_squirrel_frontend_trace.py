@@ -37,6 +37,11 @@ def main() -> int:
     parser.add_argument("--require-post-commit-followup", action="store_true")
     parser.add_argument("--require-delete-resync", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
+    parser.add_argument(
+        "--require-balanced-quota",
+        action="store_true",
+        help="Require visible model/RAG/Rime candidates to obey product quota rules.",
+    )
     parser.add_argument("--print-last", type=int, default=5)
     args = parser.parse_args()
 
@@ -58,6 +63,7 @@ def main() -> int:
             require_post_commit_followup=args.require_post_commit_followup,
             require_delete_resync=args.require_delete_resync,
             require_modern_prediction_session=args.require_modern_prediction_session,
+            require_balanced_quota=args.require_balanced_quota,
         ):
             break
         if time.monotonic() >= deadline:
@@ -72,6 +78,7 @@ def main() -> int:
         "postCommitFollowup": bool(args.require_post_commit_followup),
         "deleteResync": bool(args.require_delete_resync),
         "modernPredictionSession": bool(args.require_modern_prediction_session),
+        "balancedQuota": bool(args.require_balanced_quota),
     }
     report["passed"] = report_passes(
         report,
@@ -82,6 +89,7 @@ def main() -> int:
         require_post_commit_followup=args.require_post_commit_followup,
         require_delete_resync=args.require_delete_resync,
         require_modern_prediction_session=args.require_modern_prediction_session,
+        require_balanced_quota=args.require_balanced_quota,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report["passed"] else 1
@@ -111,6 +119,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     valid_side_commit = latest_matching(events, is_valid_side_commit_event)
     number_route = latest_matching(events, lambda event: event.get("event") == "number_key_route")
     sidecar_response = latest_matching(events, lambda event: event.get("event") == "sidecar_response_applied")
+    balanced_candidate_panel = latest_matching(events, is_balanced_candidate_quota_event)
     stale_response_drop = latest_matching(events, is_stale_response_drop_event)
     stale_selection_rejected = latest_matching(events, lambda event: event.get("event") == "stale_candidate_selection_rejected")
     modern_prediction_session = latest_matching(events, is_modern_prediction_session_event)
@@ -131,6 +140,8 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "logPath": str(log_path),
         "eventCount": len(events),
         "latestSidecarResponse": summarize_event(sidecar_response),
+        "latestBalancedCandidatePanel": summarize_event(balanced_candidate_panel),
+        "candidateQuotaViolations": candidate_quota_violations(events),
         "latestStaleResponseDrop": summarize_event(stale_response_drop),
         "latestStaleSelectionRejected": summarize_event(stale_selection_rejected),
         "frontendTransactionViolations": frontend_transaction_violations(events),
@@ -308,6 +319,71 @@ def visible_candidates_are_side_first(candidates: Any) -> bool:
     if rime_indices and min(rime_indices) < max(side_indices):
         return False
     return True
+
+
+def is_balanced_candidate_quota_event(event: dict[str, Any]) -> bool:
+    if event.get("event") != "panel_display_candidates":
+        return False
+    candidates = event.get("candidates")
+    return visible_candidates_obey_balanced_quota(candidates)
+
+
+def visible_candidates_obey_balanced_quota(candidates: Any) -> bool:
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    counts = candidate_source_counts(candidates)
+    side_count = counts["model"] + counts["rag"] + counts["memory"]
+    if side_count <= 0:
+        return True
+    if counts["model"] > 2 and (counts["rag"] + counts["memory"]) > 0:
+        return False
+    if counts["model"] > 3 and (counts["rag"] + counts["memory"]) == 0:
+        return False
+    return visible_candidates_have_selectable_side(candidates)
+
+
+def candidate_source_counts(candidates: Any) -> dict[str, int]:
+    counts = {"model": 0, "rag": 0, "memory": 0, "rime": 0, "raw_english": 0, "other": 0}
+    if not isinstance(candidates, list):
+        return counts
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            counts["other"] += 1
+            continue
+        source_type = str(candidate.get("sourceType") or "")
+        if source_type in counts:
+            counts[source_type] += 1
+        else:
+            counts["other"] += 1
+    return counts
+
+
+def candidate_quota_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        candidates = event.get("candidates")
+        counts = candidate_source_counts(candidates)
+        if counts["model"] > 2 and (counts["rag"] + counts["memory"]) > 0:
+            violations.append(
+                {
+                    "event": "panel_display_candidates",
+                    "timestampMs": event.get("timestampMs"),
+                    "reason": "model_candidates_exceed_quota_when_rag_or_memory_visible",
+                    "sourceCounts": counts,
+                }
+            )
+        elif counts["model"] > 3 and (counts["rag"] + counts["memory"]) == 0:
+            violations.append(
+                {
+                    "event": "panel_display_candidates",
+                    "timestampMs": event.get("timestampMs"),
+                    "reason": "model_only_candidates_exceed_quota",
+                    "sourceCounts": counts,
+                }
+            )
+    return violations
 
 
 def is_valid_side_commit_event(event: dict[str, Any]) -> bool:
@@ -666,6 +742,7 @@ def report_passes(
     require_post_commit_followup: bool,
     require_delete_resync: bool,
     require_modern_prediction_session: bool,
+    require_balanced_quota: bool = False,
 ) -> bool:
     if require_mixed_panel and not report.get("latestMixedPanel"):
         return False
@@ -682,6 +759,10 @@ def report_passes(
     if require_delete_resync and not report.get("latestDeleteResync"):
         return False
     if require_modern_prediction_session and not report.get("latestModernPredictionSession"):
+        return False
+    if require_balanced_quota and not report.get("latestBalancedCandidatePanel"):
+        return False
+    if require_balanced_quota and report.get("candidateQuotaViolations"):
         return False
     if report.get("frontendTransactionViolations"):
         return False
