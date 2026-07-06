@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.memory_compiler import compiler_generator_from_env
 from rag_ime.memory_generator import (
@@ -88,6 +89,43 @@ class MemoryGeneratorTests(unittest.TestCase):
         self.assertEqual(generator.config.model, "deepseek-chat")
         self.assertEqual(generator.config.api_key, "secret-value")
         self.assertEqual(generator.provider_name, "x1api")
+
+    def test_model_request_uses_gateway_friendly_user_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "X1API_BASE_URL=https://api.example.com/v1",
+                        "X1API_API_KEY=secret-value",
+                        "X1API_MODEL=deepseek-v4-flash",
+                        "RAG_IME_AI_WIRE_API=chat_completions",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            generator = VcpRebuildMemoryGenerator.from_env_path(env_path)
+            captured = {}
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self):
+                    return b'{"choices":[{"message":{"content":"{\\"memories\\":[]}"}}]}'
+
+            def fake_urlopen(request, timeout):
+                captured["user_agent"] = request.get_header("User-agent")
+                return FakeResponse()
+
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                report = generator.generate(text="测试离线整理模型", max_items=1)
+
+        self.assertEqual(report.provider, "model-api")
+        self.assertEqual(captured["user_agent"], "rag-ime/1.0 curl-compatible")
 
     def test_from_env_path_canonicalizes_x2app_to_current_x1api_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
