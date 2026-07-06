@@ -9,10 +9,12 @@ DB_PATH="${RAG_IME_GATE_DB_PATH:-.rag-ime-data/product-readiness-gate.sqlite}"
 FRONTEND_DB_PATH="${RAG_IME_FRONTEND_DB_PATH:-$HOME/Library/Application Support/RagIme/rag-ime.sqlite}"
 CASES_FILE="${RAG_IME_GATE_CASES_FILE:-docs/eval/codex-history-cases.example.jsonl}"
 SOAK_REPORT="${RAG_IME_SQUIRREL_SOAK_REPORT:-/tmp/rag-ime-squirrel-soak-report.json}"
+FOREGROUND_READINESS_REPORT="${RAG_IME_FOREGROUND_READINESS_REPORT:-/tmp/rag-ime-foreground-readiness.json}"
 SIDECAR_LAUNCH_AGENT_PLIST="${RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST:-$HOME/Library/LaunchAgents/com.rag-ime.sidecar.plist}"
 REQUIRE_MACOS_FRONTEND="${RAG_IME_REQUIRE_MACOS_FRONTEND:-0}"
 REQUIRE_SICHUAN_FUZZY="${RAG_IME_REQUIRE_SICHUAN_FUZZY:-$REQUIRE_MACOS_FRONTEND}"
 SICHUAN_FUZZY_CHECK_SCRIPT="${RAG_IME_SICHUAN_FUZZY_CHECK_SCRIPT:-$ROOT/scripts/check_sichuan_fuzzy_profile.sh}"
+PREPARE_FOREGROUND_SCRIPT="${RAG_IME_PREPARE_SQUIRREL_FOREGROUND_CHECK_SCRIPT:-$ROOT/scripts/prepare_squirrel_foreground_check.sh}"
 DRY_RUN=0
 RUN_UNIT_TESTS="${RAG_IME_GATE_RUN_UNIT_TESTS:-1}"
 RUN_ACCEPTANCE="${RAG_IME_GATE_RUN_ACCEPTANCE:-1}"
@@ -39,6 +41,8 @@ Options:
   --frontend-db-path PATH SQLite DB path expected by the installed Squirrel/Rime config.
   --cases-file PATH       Eval cases file for quality-gate.
   --soak-report PATH      Squirrel foreground soak report path.
+  --foreground-readiness-report PATH
+                           Foreground readiness summary report path.
   --sidecar-plist PATH    Installed sidecar LaunchAgent plist for predictor env fallback.
   --sidecar-latency-budget-ms MS
                            Latency budget used by sidecar eval requests.
@@ -48,6 +52,8 @@ Environment:
   RAG_IME_REQUIRE_MACOS_FRONTEND=1  Require Squirrel tryout + soak report checks.
   RAG_IME_REQUIRE_SICHUAN_FUZZY=1   Require installed Sichuan mild fuzzy profile.
   RAG_IME_FRONTEND_DB_PATH=PATH      Installed frontend runtime DB path.
+  RAG_IME_FOREGROUND_READINESS_REPORT=PATH
+  RAG_IME_PREPARE_SQUIRREL_FOREGROUND_CHECK_SCRIPT=PATH
   RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST=PATH
                                     Sidecar plist used to recover local predictor env.
   RAG_IME_REQUIRE_PREDICTOR_CAPABILITY=name
@@ -98,6 +104,10 @@ while (($#)); do
       ;;
     --soak-report)
       SOAK_REPORT="${2:?--soak-report requires a value}"
+      shift 2
+      ;;
+    --foreground-readiness-report)
+      FOREGROUND_READINESS_REPORT="${2:?--foreground-readiness-report requires a value}"
       shift 2
       ;;
     --sidecar-plist)
@@ -198,6 +208,7 @@ log "db_path=$DB_PATH"
 log "frontend_db_path=$FRONTEND_DB_PATH"
 log "sidecar_plist=$SIDECAR_LAUNCH_AGENT_PLIST"
 log "cases_file=$CASES_FILE"
+log "foreground_readiness_report=$FOREGROUND_READINESS_REPORT"
 log "require_macos_frontend=$REQUIRE_MACOS_FRONTEND"
 log "require_sichuan_fuzzy=$REQUIRE_SICHUAN_FUZZY"
 log "require_predictor_capability=${REQUIRE_PREDICTOR_CAPABILITY:-none}"
@@ -269,6 +280,13 @@ else
 fi
 
 if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
+  log "foreground readiness preflight"
+  run_cmd "$PREPARE_FOREGROUND_SCRIPT" \
+    --refresh-registration \
+    --no-open \
+    --no-wait-typing \
+    --summary-path "$FOREGROUND_READINESS_REPORT"
+
   log "macOS Squirrel tryout gate"
   TRYOUT_CMD=(
     "$PYTHON_BIN" -m rag_ime.cli

@@ -266,8 +266,11 @@ files yet. The
 final integrated product gate has also
 started: `scripts/run_product_readiness_gate.sh` now runs unit tests,
 deterministic acceptance, backend `quality-gate`, and, when
-`RAG_IME_REQUIRE_MACOS_FRONTEND=1`, the real Squirrel tryout plus soak-report
-checker. `quality-gate` now has `--max-old-input-echo-rate`, and
+`RAG_IME_REQUIRE_MACOS_FRONTEND=1`, the foreground readiness preflight, real
+Squirrel tryout, and soak-report checker. The preflight writes
+`/tmp/rag-ime-foreground-readiness.json` before tryout so input-source Add/select
+blockers are machine-readable. `quality-gate` now has
+`--max-old-input-echo-rate`, and
 `check_squirrel_soak_report.py` now has `--max-stale-applied`,
 `--max-flicker-count`, and `--max-rag-empty-cleared-panel`; its report includes
 `predictionStability` and `laneStability` sections for visible snapshots,

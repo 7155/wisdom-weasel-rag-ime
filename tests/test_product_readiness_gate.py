@@ -154,6 +154,8 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                 "/tmp/rag-ime-frontend-runtime.sqlite",
                 "--soak-report",
                 "/tmp/custom-rag-ime-soak-report.json",
+                "--foreground-readiness-report",
+                "/tmp/custom-rag-ime-foreground-readiness.json",
             ],
             cwd=root,
             env=env,
@@ -167,9 +169,14 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("quality gate skipped", result.stdout)
         self.assertIn("db_path=/tmp/rag-ime-backend-gate.sqlite", result.stdout)
         self.assertIn("frontend_db_path=/tmp/rag-ime-frontend-runtime.sqlite", result.stdout)
+        self.assertIn("foreground_readiness_report=/tmp/custom-rag-ime-foreground-readiness.json", result.stdout)
         self.assertIn("require_sichuan_fuzzy=1", result.stdout)
         self.assertIn("require_predictor_capability=seededPromptReplay", result.stdout)
         self.assertIn("scripts/check_sichuan_fuzzy_profile.sh", result.stdout)
+        self.assertIn("foreground readiness preflight", result.stdout)
+        self.assertIn("scripts/prepare_squirrel_foreground_check.sh", result.stdout)
+        self.assertIn("--refresh-registration --no-open --no-wait-typing", result.stdout)
+        self.assertIn("--summary-path /tmp/custom-rag-ime-foreground-readiness.json", result.stdout)
         self.assertIn("squirrel-tryout-gate", result.stdout)
         self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-frontend-runtime.sqlite squirrel-tryout-gate", result.stdout)
         self.assertNotIn("-m rag_ime.cli --db-path /tmp/rag-ime-backend-gate.sqlite squirrel-tryout-gate", result.stdout)
@@ -188,6 +195,62 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--require-delete-resync", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
         self.assertIn("--require-balanced-quota", result.stdout)
+
+    def test_product_gate_macos_frontend_stops_after_failed_readiness_preflight(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = root / "scripts" / "run_product_readiness_gate.sh"
+        with tempfile.TemporaryDirectory(prefix="rag-ime-product-gate-preflight-") as tmp:
+            tmp_path = Path(tmp)
+            prepare_script = tmp_path / "prepare.sh"
+            call_log = tmp_path / "calls.log"
+            summary_path = tmp_path / "readiness.json"
+            prepare_script.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        f"printf '%s\\n' \"$@\" > {call_log}",
+                        "while [[ $# -gt 0 ]]; do",
+                        "  case \"$1\" in",
+                        "    --summary-path) summary=\"$2\"; shift 2 ;;",
+                        "    *) shift ;;",
+                        "  esac",
+                        "done",
+                        "cat > \"$summary\" <<'JSON'",
+                        '{"schemaVersion":"rag-ime.foreground-readiness.v1","ok":false,"readinessState":"third-party-missing","foregroundReady":false}',
+                        "JSON",
+                        "exit 1",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            prepare_script.chmod(0o755)
+            env = dict(os.environ)
+            env["RAG_IME_REQUIRE_MACOS_FRONTEND"] = "1"
+            env["RAG_IME_PREPARE_SQUIRREL_FOREGROUND_CHECK_SCRIPT"] = str(prepare_script)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script),
+                    "--skip-unit-tests",
+                    "--skip-acceptance",
+                    "--skip-quality-gate",
+                    "--foreground-readiness-report",
+                    str(summary_path),
+                ],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+            prepare_args = call_log.read_text(encoding="utf-8")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("foreground readiness preflight", result.stdout)
+        self.assertIn("--summary-path", prepare_args)
+        self.assertIn(str(summary_path), prepare_args)
+        self.assertNotIn("squirrel-tryout-gate", result.stdout)
 
     def test_product_gate_recovers_predictor_env_from_sidecar_launch_agent_plist(self) -> None:
         root = Path(__file__).resolve().parents[1]
