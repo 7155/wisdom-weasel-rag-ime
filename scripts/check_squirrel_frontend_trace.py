@@ -24,6 +24,23 @@ SOURCE_COLOR_TOKENS = {
     "raw_english": "rawGray",
 }
 SIDE_SELECTION_ROUTE_EVENTS = {"number_key_route", "tab_key_route", "option_number_route"}
+USER_TEXT_TRACE_KEYS = {
+    "rawInput",
+    "preedit",
+    "requestRawInput",
+    "responseRawInput",
+    "currentRawInput",
+    "requestPreedit",
+    "responsePreedit",
+    "commitTextPreview",
+    "committedText",
+    "committedContextSuffix",
+    "query",
+    "text",
+    "insertText",
+    "comment",
+    "evidencePreview",
+}
 
 
 def main() -> int:
@@ -130,6 +147,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     delete_resync = latest_delete_resync(events)
     post_delete_context_use = latest_post_delete_context_use(events, delete_resync)
     post_commit_barrier_violations = collect_post_commit_barrier_violations(events)
+    trace_privacy_violations = collect_trace_privacy_violations(events)
     side_commit_barrier_ms = max(
         event_timestamp_ms(mixed_panel),
         event_timestamp_ms(side_panel),
@@ -158,6 +176,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestPostDeleteContextUse": summarize_post_delete_context_use(post_delete_context_use),
         "postDeleteContextViolations": post_delete_context_violations(events, delete_resync),
         "postCommitBarrierViolations": post_commit_barrier_violations,
+        "tracePrivacyViolations": trace_privacy_violations,
         "latestMixedPanel": summarize_event(mixed_panel),
         "latestSidePanel": summarize_event(side_panel),
         "latestMixedTextLayout": summarize_event(mixed_text_layout),
@@ -567,6 +586,63 @@ def frontend_transaction_violations(events: list[dict[str, Any]]) -> list[dict[s
     return violations
 
 
+def collect_trace_privacy_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("traceIncludesText") is True:
+            continue
+        if event.get("traceIncludesText") is not False:
+            continue
+        for violation in trace_privacy_violations_for_value(event, path=""):
+            violations.append(
+                {
+                    "event": event.get("event"),
+                    "timestampMs": event.get("timestampMs"),
+                    **violation,
+                }
+            )
+    return violations
+
+
+def trace_privacy_violations_for_value(value: Any, *, path: str) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        violations: list[dict[str, Any]] = []
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            if key in USER_TEXT_TRACE_KEYS:
+                if is_unsanitized_trace_text_value(child):
+                    violations.append(
+                        {
+                            "field": child_path,
+                            "reason": "raw_text_in_default_trace",
+                            "valueType": type(child).__name__,
+                        }
+                    )
+                continue
+            violations.extend(trace_privacy_violations_for_value(child, path=child_path))
+        return violations
+    if isinstance(value, list):
+        violations = []
+        for index, item in enumerate(value):
+            violations.extend(trace_privacy_violations_for_value(item, path=f"{path}[{index}]"))
+        return violations
+    return []
+
+
+def is_unsanitized_trace_text_value(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(compact_trace_text(value))
+    if isinstance(value, dict):
+        return not (
+            isinstance(value.get("hash"), str)
+            and str(value.get("hash") or "").startswith("sha256:")
+            and isinstance(value.get("chars"), int)
+        )
+    if isinstance(value, list):
+        return any(is_unsanitized_trace_text_value(item) for item in value)
+    return False
+
+
 POST_COMMIT_BARRIER_EVENTS = {
     "commit_observe_timeout",
     "post_commit_chain_cancelled",
@@ -946,6 +1022,8 @@ def report_passes(
     if require_balanced_quota and report.get("candidateQuotaViolations"):
         return False
     if report.get("frontendTransactionViolations"):
+        return False
+    if report.get("tracePrivacyViolations"):
         return False
     return True
 

@@ -214,6 +214,12 @@ or RAG-empty panel clearing in the soak report.
 The soak report also exposes `displayQuality` and fails on source badge/color
 mismatch, model side-slot overrun, overlong model/RAG/memory candidate surfaces,
 or post-commit number-key selection.
+It also treats raw-text leakage in default modern trace events as a foreground
+gate failure: when `traceIncludesText=false`, fields such as `rawInput`,
+`preedit`, `commitTextPreview`, `committedText`, `committedContextSuffix`,
+candidate `text`, and `insertText` must be empty or `{chars, hash}` objects.
+`check_squirrel_soak_report.py` surfaces these as top-level
+`trace_privacy_violation` entries.
 It now reports continuous chaining metrics as well: `chain.maxChainDepth`,
 `chain.chainedCommitCount`, and `chain.chainSuccessRate` count consecutive
 side-candidate commits that produce matching post-commit prediction requests.
@@ -400,7 +406,8 @@ Scripts:
   that emits a machine-readable report.
 - `scripts/check_squirrel_frontend_trace.py`: parse frontend JSONL trace.
 - `scripts/check_squirrel_soak_report.py`: validate the soak JSON report and
-  fail on stale application, wrong commit, or missing commit barrier events.
+  fail on stale application, wrong commit, missing commit barrier events, or
+  default-trace raw text leakage.
 - `scripts/check_sichuan_fuzzy_profile.sh`: JSON checker for the managed
   Sichuan mild fuzzy-pinyin profile.
 - `scripts/apply_sichuan_fuzzy_profile.sh`: dry-run/apply/backup installer for
@@ -1810,7 +1817,7 @@ Additional final-gate verification after adding the integrated product gate:
 python3 -m unittest tests.test_product_readiness_gate
 python3 -m unittest tests.test_squirrel_frontend_trace tests.test_product_readiness_gate
 python3 -m unittest tests.test_memory_optimizer_sidecar_integration
-python3 -m py_compile rag_ime/cli.py rag_ime/rime_sidecar.py scripts/check_squirrel_soak_report.py
+python3 -m py_compile rag_ime/cli.py rag_ime/rime_sidecar.py scripts/check_squirrel_frontend_trace.py scripts/check_squirrel_soak_report.py
 ```
 
 Product gate targeted result:

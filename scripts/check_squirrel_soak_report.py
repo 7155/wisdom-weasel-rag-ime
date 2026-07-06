@@ -214,6 +214,17 @@ def build_soak_report(
                     "committedContextHash": violation.get("committedContextHash"),
                 }
             )
+    for violation in frontend_report.get("tracePrivacyViolations") or []:
+        if isinstance(violation, dict):
+            violations.append(
+                {
+                    "type": "trace_privacy_violation",
+                    "event": violation.get("event"),
+                    "timestampMs": violation.get("timestampMs"),
+                    "field": violation.get("field"),
+                    "reason": violation.get("reason"),
+                }
+            )
     for violation in post_commit_barrier_violations:
         violations.append(
             {

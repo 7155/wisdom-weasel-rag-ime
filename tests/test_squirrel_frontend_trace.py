@@ -361,6 +361,88 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIsNone(report["latestPostDeleteContextUse"])
         self.assertEqual(report["postDeleteContextViolations"][0]["reason"], "post_delete_context_hash_mismatch")
 
+    def test_trace_check_rejects_raw_text_when_trace_text_is_disabled(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-privacy-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "committed_context_resynced_after_delete",
+                        "timestampMs": 11,
+                        "traceIncludesText": False,
+                        "committedContextHash": "sha256:abc",
+                        "committedContextChars": 7,
+                        "committedContextSuffix": "用户刚才输入的真实内容",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["tracePrivacyViolations"][0]["field"], "committedContextSuffix")
+        self.assertEqual(report["tracePrivacyViolations"][0]["reason"], "raw_text_in_default_trace")
+
+    def test_trace_check_accepts_hashed_text_when_trace_text_is_disabled(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-privacy-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "committed_context_resynced_after_delete",
+                        "timestampMs": 11,
+                        "traceIncludesText": False,
+                        "committedContextHash": "sha256:abc",
+                        "committedContextChars": 7,
+                        "committedContextSuffix": {
+                            "chars": 7,
+                            "hash": "sha256:abc",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["tracePrivacyViolations"], [])
+
     def test_trace_check_passes_for_mixed_panel_and_side_commit(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
@@ -1229,6 +1311,56 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["displayQuality"]["longCandidateViolation"], 0)
         self.assertEqual(report["displayQuality"]["postCommitNumberKeyViolation"], 0)
         self.assertTrue(persisted["passed"])
+
+    def test_soak_report_surfaces_trace_privacy_violations(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-privacy-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak.json"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 10,
+                        "traceIncludesText": False,
+                        "rawInput": "zhen shi shu ru",
+                        "committedContextHash": "sha256:aaaa",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["violations"][0]["type"], "trace_privacy_violation")
+        self.assertEqual(report["violations"][0]["field"], "rawInput")
 
     def test_soak_report_fails_on_stale_applied_response(self) -> None:
         root = Path(__file__).resolve().parents[1]
