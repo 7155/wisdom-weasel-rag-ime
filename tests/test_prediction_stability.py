@@ -265,7 +265,7 @@ class PredictionStabilityTests(unittest.TestCase):
         self.assertIsNone(state.last_snapshot)
         self.assertEqual(diag["action"], "hard_clear")
 
-    def test_composition_hash_change_hard_clears_prediction_snapshot(self) -> None:
+    def test_composition_hash_change_soft_holds_prediction_snapshot(self) -> None:
         state = StablePanelState()
         _, state, _ = render_stable_prediction_panel(
             state=state,
@@ -283,9 +283,10 @@ class PredictionStabilityTests(unittest.TestCase):
             now_ms=1200,
         )
 
-        self.assertIsNone(cleared)
-        self.assertIsNone(state.last_snapshot)
-        self.assertEqual(diag["action"], "hard_clear")
+        self.assertIsNotNone(cleared)
+        self.assertIsNotNone(state.last_snapshot)
+        self.assertEqual(diag["action"], "soft_hold")
+        self.assertEqual([item.text for item in cleared.candidates], ["设计输入法状态机"])
 
     def test_snapshot_expires_after_ttl(self) -> None:
         state = StablePanelState()
@@ -378,10 +379,12 @@ class PredictionStabilityTests(unittest.TestCase):
 
         self.assertIsNotNone(first)
         self.assertIsNotNone(replaced)
-        self.assertEqual(diag["action"], "progressive_replace")
-        self.assertNotEqual(replaced.snapshot_id, first.snapshot_id)
-        self.assertEqual([item.text for item in replaced.candidates], ["模型回来后想排第一", "先显示 RAG", "第二个记忆"])
+        self.assertEqual(diag["action"], "progressive_append")
+        self.assertEqual(diag["reason"], "progressive_reorder_rejected_appended_empty_slots")
+        self.assertEqual(replaced.snapshot_id, first.snapshot_id)
+        self.assertEqual([item.text for item in replaced.candidates], ["先显示 RAG", "第二个记忆", "模型回来后想排第一"])
         self.assertEqual(diag["preservedOrdinalCount"], 0)
+        self.assertTrue(diag["progressiveReorderRejected"])
 
     def test_prefix_filter_removes_only_incompatible_holdover_candidates(self) -> None:
         state = StablePanelState()

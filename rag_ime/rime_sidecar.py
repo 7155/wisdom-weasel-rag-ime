@@ -31,6 +31,7 @@ from .prediction_first import (
     prediction_session_to_payload,
 )
 from .prediction_manager import PredictionManager
+from .prediction_status import prediction_status_row
 from .predictor import (
     PREDICTION_REQUEST_NO_INPUT,
     PREDICTION_REQUEST_PINYIN_CONSTRAINED,
@@ -38,6 +39,7 @@ from .predictor import (
     PredictionProvider,
     predict_with_optional_request_context,
 )
+from .side_lane_scheduler import LaneRequestToken, LatestWinsLaneScheduler
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms
 
 
@@ -117,6 +119,7 @@ _PREDICTION_MANAGER_LOCK = RLock()
 _PREDICTION_MANAGERS: dict[tuple[str, str, str], PredictionManager] = {}
 _REFRESH_DEBOUNCE_LOCK = RLock()
 _REFRESH_DEBOUNCE: dict[tuple[str, str, str, str, str], "_RefreshDebounceState"] = {}
+_SIDE_LANE_SCHEDULER = LatestWinsLaneScheduler()
 _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
 _SOURCE_BADGE_MAP = {
     "rime": "词",
@@ -124,6 +127,7 @@ _SOURCE_BADGE_MAP = {
     "rag": "查",
     "memory": "忆",
     "raw_english": "input",
+    "status": "…",
 }
 _SOURCE_COLOR_TOKEN_MAP = {
     "rime": "rimeOrange",
@@ -131,6 +135,7 @@ _SOURCE_COLOR_TOKEN_MAP = {
     "rag": "ragTeal",
     "memory": "memoryPurple",
     "raw_english": "rawGray",
+    "status": "statusGray",
 }
 _RECENT_MEMORY_KEYWORDS = (
     "输入法",
@@ -430,6 +435,7 @@ def build_rime_sidecar_response(
                 "sessionFingerprint": manager_result.session_fingerprint,
                 "contextFingerprint": manager_result.context_fingerprint,
                 "hardContextAnchor": manager_result.anchors.hard_context_anchor,
+                "applyAnchor": manager_result.anchors.apply_anchor,
                 "queryAnchor": manager_result.anchors.query_anchor,
                 "displayAnchor": manager_result.anchors.display_anchor,
                 "snapshotId": (
@@ -503,6 +509,14 @@ def build_rime_sidecar_response(
             },
         }
     key_policy = key_policy_for_prediction_session(prediction_session_payload)
+    status_row = _prediction_status_row_for_response(
+        progressive_state=progressive_state,
+        rag_lane=rag_lane,
+        model_lane=model_lane,
+        generation=snapshot.request_seq,
+    )
+    if status_row is not None:
+        display_candidates.append(status_row)
     display_candidates = _bind_display_candidates_to_session(
         display_candidates=display_candidates,
         snapshot=snapshot,
@@ -742,8 +756,18 @@ def run_side_lanes_with_latency_budget(
         prefix = stable_short_pinyin_prefix(snapshot)
         if prefix:
             model_current_input = prefix
+    lane_token = _SIDE_LANE_SCHEDULER.begin(_side_lane_request_token(snapshot, current_input, query_basis))
 
     def run_rag() -> None:
+        if not _SIDE_LANE_SCHEDULER.is_latest(lane_token):
+            rag_result["suggestions"] = []
+            rag_result["lane"] = _stale_lane_status(
+                lane="rag",
+                reason="superseded_before_rag",
+                budget_ms=rag_budget_ms,
+                token=lane_token,
+            )
+            return
         suggestions, lane = suggest_rag_with_latency_budget(
             adapter=adapter,
             core=core,
@@ -754,11 +778,26 @@ def run_side_lanes_with_latency_budget(
             top_k=top_k,
             latency_budget_ms=rag_budget_ms,
         )
+        if not _SIDE_LANE_SCHEDULER.is_latest(lane_token):
+            suggestions = []
+            lane.update(_stale_lane_fields("superseded_after_rag", lane_token))
         lane["queryInput"] = rag_current_input
         rag_result["suggestions"] = suggestions
         rag_result["lane"] = lane
 
     def run_model() -> None:
+        if not _SIDE_LANE_SCHEDULER.is_latest(lane_token):
+            model_result["predictions"] = []
+            model_result["lane"] = _stale_lane_status(
+                lane="model",
+                reason="superseded_before_model",
+                budget_ms=latency_budget_ms,
+                token=lane_token,
+                request_type=request_type,
+                rime_candidate_count=rime_candidate_count,
+                requested_max_candidates=model_candidate_limit,
+            )
+            return
         predictions, lane = predict_model_with_latency_budget(
             core=core,
             predictor=predictor,
@@ -769,6 +808,9 @@ def run_side_lanes_with_latency_budget(
             max_candidates=model_candidate_limit,
             latency_budget_ms=latency_budget_ms,
         )
+        if not _SIDE_LANE_SCHEDULER.is_latest(lane_token):
+            predictions = []
+            lane.update(_stale_lane_fields("superseded_after_model", lane_token))
         model_result["predictions"] = predictions
         model_result["lane"] = lane
 
@@ -895,6 +937,100 @@ def run_side_lanes_with_latency_budget(
 def _rag_lane_budget_for_request(latency_budget_ms: int) -> int:
     budget = max(0, int(latency_budget_ms))
     return budget
+
+
+def prediction_status_rows_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_PREDICTION_STATUS_ROW", "1")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def _prediction_status_row_for_response(
+    *,
+    progressive_state: Mapping[str, object],
+    rag_lane: Mapping[str, object],
+    model_lane: Mapping[str, object],
+    generation: int,
+) -> SideCandidateDisplayItem | None:
+    if not prediction_status_rows_enabled():
+        return None
+    pending_lanes = progressive_state.get("pendingLanes")
+    pending = {compact_whitespace(str(item)).lower() for item in pending_lanes} if isinstance(pending_lanes, list) else set()
+    rag_pending = "rag" in pending or bool(rag_lane.get("pending"))
+    model_pending = "model" in pending or bool(model_lane.get("pending"))
+    waiting_ms = max(
+        _optional_int(rag_lane.get("sideLaneElapsedMs")) or _optional_int(rag_lane.get("elapsedMs")) or 0,
+        _optional_int(model_lane.get("sideLaneElapsedMs")) or _optional_int(model_lane.get("elapsedMs")) or 0,
+        _bounded_int(progressive_state.get("firstResponseBudgetMs"), default=0, minimum=0, maximum=10000),
+    )
+    return prediction_status_row(
+        rag_pending=rag_pending,
+        model_pending=model_pending,
+        waiting_ms=waiting_ms,
+        latest_generation=generation,
+    )
+
+
+def _side_lane_request_token(snapshot: RimeContextSnapshot, semantic_query: str, query_basis: str) -> LaneRequestToken:
+    anchors = build_prediction_anchors_from_snapshot(
+        snapshot=snapshot,
+        mode=infer_input_mode(snapshot).value,
+        semantic_query=semantic_query,
+        query_basis=query_basis,
+        stable_short_pinyin_prefix=stable_short_pinyin_prefix(snapshot),
+    )
+    transaction = snapshot.frontend_transaction
+    return LaneRequestToken(
+        session_id=snapshot.session_id,
+        panel_session_id=transaction.panel_session_id,
+        frontend_revision=transaction.frontend_revision,
+        input_generation=snapshot.request_seq,
+        apply_anchor=anchors.apply_anchor,
+        query_anchor=anchors.query_anchor,
+        created_at_ms=now_ms(),
+    )
+
+
+def _stale_lane_fields(reason: str, token: LaneRequestToken) -> dict[str, object]:
+    return {
+        "staleDropped": True,
+        "staleDropReason": reason,
+        "waitingForLatest": True,
+        "activeGeneration": token.input_generation,
+        "applyAnchor": token.apply_anchor,
+        "queryAnchor": token.query_anchor,
+    }
+
+
+def _stale_lane_status(
+    *,
+    lane: str,
+    reason: str,
+    budget_ms: int,
+    token: LaneRequestToken,
+    request_type: str = "",
+    rime_candidate_count: int = 0,
+    requested_max_candidates: int = 0,
+) -> dict[str, object]:
+    if lane == "model":
+        status = _model_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason=reason,
+            budget_ms=budget_ms,
+            request_type=request_type,
+            rime_candidate_count=rime_candidate_count,
+            requested_max_candidates=requested_max_candidates,
+        )
+    else:
+        status = _rag_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason=reason,
+            budget_ms=budget_ms,
+        )
+    status.update(_stale_lane_fields(reason, token))
+    return status
 
 
 def progressive_sidecar_updates_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -3471,6 +3607,7 @@ def prediction_trace_events_payload(
         "mode": _string(prediction_session.get("inputMode")),
         "phase": _string(prediction_session.get("phase")),
         "hardContextAnchor": _string(prediction_session.get("hardContextAnchor")),
+        "applyAnchor": _string(prediction_session.get("applyAnchor")),
         "queryAnchor": _string(prediction_session.get("queryAnchor")),
         "displayAnchor": _string(prediction_session.get("displayAnchor")),
         "snapshotId": snapshot_id,
@@ -3495,6 +3632,13 @@ def prediction_trace_events_payload(
             minimum=0,
             maximum=99,
         ),
+        "reorderedCandidateCount": _bounded_int(
+            stable_panel.get("reorderedCandidateCount"),
+            default=0,
+            minimum=0,
+            maximum=99,
+        ),
+        "progressiveReorderRejected": bool(stable_panel.get("progressiveReorderRejected")),
         "prefixFiltered": bool(stable_panel.get("prefixFiltered")),
         "prefixRemovedCandidateCount": _bounded_int(
             stable_panel.get("prefixRemovedCandidateCount"),
@@ -3607,6 +3751,7 @@ def _bind_display_candidates_to_session(
         snapshot.committed_context
     )
     hard_context_anchor = _string(prediction_session_payload.get("hardContextAnchor"))
+    apply_anchor = _string(prediction_session_payload.get("applyAnchor"))
     query_anchor = _string(prediction_session_payload.get("queryAnchor"))
     display_anchor = _string(prediction_session_payload.get("displayAnchor"))
     stable_snapshot_id = _string(prediction_session_payload.get("snapshotId")) or _string(
@@ -3635,20 +3780,26 @@ def _bind_display_candidates_to_session(
     scope = _string(prediction_session_payload.get("selectionScope"))
     transaction = snapshot.frontend_transaction
     bound: list[SideCandidateDisplayItem] = []
-    for ordinal, item in enumerate(display_candidates, start=1):
+    ordinal = 0
+    for item in display_candidates:
+        selectable = _display_item_is_selectable(item)
+        if selectable:
+            ordinal += 1
+        candidate_ordinal = ordinal if selectable else 0
         metadata = dict(item.metadata)
         metadata.update(
             {
                 "sessionFingerprint": session_fingerprint,
                 "contextFingerprint": context_fingerprint,
                 "hardContextAnchor": hard_context_anchor,
+                "applyAnchor": apply_anchor,
                 "queryAnchor": query_anchor,
                 "displayAnchor": display_anchor,
                 "snapshotId": stable_snapshot_id,
                 "stableSnapshotId": stable_snapshot_id,
                 "snapshotGeneration": snapshot_generation,
                 "candidateStableId": _candidate_stable_id(item, snapshot_id=stable_snapshot_id),
-                "candidateOrdinal": ordinal,
+                "candidateOrdinal": candidate_ordinal,
                 "visibleLabel": item.label,
                 "sourceBadge": candidate_source_badge(item.source_type),
                 "sourceStability": source_stability,
@@ -3670,6 +3821,10 @@ def _bind_display_candidates_to_session(
         )
         bound.append(replace(item, metadata=metadata))
     return bound
+
+
+def _display_item_is_selectable(item: SideCandidateDisplayItem) -> bool:
+    return bool(compact_whitespace(item.label)) and item.selection_action not in {"", "none"} and item.source_type != "status"
 
 
 def _nested_prediction_session_value(prediction_session_payload: Mapping[str, object], key: str) -> object:

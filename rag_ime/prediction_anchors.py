@@ -13,18 +13,27 @@ from .text_utils import compact_whitespace, stable_text_hash
 class PredictionAnchors:
     """Stable identities for prediction refresh, display reuse, and hard clears."""
 
-    hard_context_anchor: str
+    hard_clear_anchor: str
+    apply_anchor: str
     query_anchor: str
     display_anchor: str
     hard_fields: dict[str, object]
+    apply_fields: dict[str, object]
     query_fields: dict[str, object]
     display_fields: dict[str, object]
+
+    @property
+    def hard_context_anchor(self) -> str:
+        """Backward-compatible name for the hard-clear identity."""
+
+        return self.hard_clear_anchor
 
 
 def build_prediction_anchors(
     *,
     session_id: str,
     panel_session_id: str = "",
+    frontend_revision: int = 0,
     front_app_bundle_id: str = "",
     input_source_id: str = "",
     selection_epoch: int = 0,
@@ -34,6 +43,7 @@ def build_prediction_anchors(
     semantic_query: str = "",
     query_basis: str = "",
     stable_short_pinyin_prefix: str = "",
+    raw_input: str = "",
     preedit: str = "",
     rime_candidates: tuple[RimeCandidate, ...] = (),
 ) -> PredictionAnchors:
@@ -45,27 +55,36 @@ def build_prediction_anchors(
         "inputSourceId": compact_whitespace(input_source_id),
         "selectionEpoch": max(0, int(selection_epoch)),
         "committedContextHash": _hash_or_empty(committed_context_hash),
+        "modeFamily": mode_family,
+    }
+    hard_anchor = _sha16(hard_fields)
+    apply_fields: dict[str, object] = {
+        "hardClearAnchor": hard_anchor,
+        "frontendRevision": max(0, int(frontend_revision)),
         "compositionHash": _hash_or_empty(composition_hash),
+        "rawInputHash": stable_text_hash(compact_whitespace(raw_input)),
+        "preeditHash": stable_text_hash(compact_whitespace(preedit)),
+        "rimeCandidatesHash": _rime_candidates_hash(rime_candidates),
     }
     query_fields: dict[str, object] = {
-        "mode": compact_whitespace(mode),
+        "hardClearAnchor": hard_anchor,
         "semanticQueryHash": stable_text_hash(compact_whitespace(semantic_query)),
         "queryBasis": compact_whitespace(query_basis),
         "stableShortPinyinPrefix": compact_whitespace(stable_short_pinyin_prefix),
         "preeditHash": stable_text_hash(compact_whitespace(preedit)),
         "rimeCandidatesHash": _rime_candidates_hash(rime_candidates),
     }
-    hard_anchor = _sha16(hard_fields)
-    query_anchor = _sha16({"hardContextAnchor": hard_anchor, **query_fields})
     display_fields: dict[str, object] = {
-        "hardContextAnchor": hard_anchor,
+        "hardClearAnchor": hard_anchor,
         "modeFamily": mode_family,
     }
     return PredictionAnchors(
-        hard_context_anchor=hard_anchor,
-        query_anchor=query_anchor,
+        hard_clear_anchor=hard_anchor,
+        apply_anchor=_sha16(apply_fields),
+        query_anchor=_sha16(query_fields),
         display_anchor=_sha16(display_fields),
         hard_fields=hard_fields,
+        apply_fields=apply_fields,
         query_fields=query_fields,
         display_fields=display_fields,
     )
@@ -85,6 +104,7 @@ def build_prediction_anchors_from_snapshot(
     return build_prediction_anchors(
         session_id=snapshot.session_id,
         panel_session_id=transaction.panel_session_id,
+        frontend_revision=transaction.frontend_revision,
         front_app_bundle_id=transaction.front_app_bundle_id or snapshot.app,
         input_source_id=transaction.input_source_id,
         selection_epoch=transaction.selection_epoch,
@@ -94,6 +114,7 @@ def build_prediction_anchors_from_snapshot(
         semantic_query=semantic_query,
         query_basis=query_basis,
         stable_short_pinyin_prefix=stable_short_pinyin_prefix,
+        raw_input=snapshot.raw_input,
         preedit=snapshot.preedit or snapshot.raw_input,
         rime_candidates=snapshot.candidates,
     )

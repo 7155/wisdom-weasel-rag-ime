@@ -427,19 +427,60 @@ def _render_progressive_fresh_candidates(
     fresh_keys = [_candidate_key(item) for item in fresh_candidates]
     preserved_count = _preserved_prefix_count(previous_keys, fresh_keys)
     if preserved_count < len(previous_keys):
-        generation = max(state.generation, previous.generation) + 1
-        snapshot = _new_snapshot(
-            generation=generation,
-            anchors=anchors,
-            mode=mode,
-            candidates=fresh_candidates,
-            lane_status=lane_status,
-            now_ms=now_ms,
+        appendable = _append_only_candidates(
+            previous_candidates=previous.candidates,
+            fresh_candidates=fresh_candidates,
+            max_visible_candidates=max_visible_candidates,
         )
-        next_state = StablePanelState(last_snapshot=snapshot, generation=generation)
+        if appendable:
+            merged_candidates = previous.candidates + appendable
+            appended_count = len(appendable)
+            snapshot = replace(
+                previous,
+                query_anchor=anchors.query_anchor,
+                mode=compact_whitespace(mode),
+                updated_at_ms=now_ms,
+                min_visible_until_ms=max(previous.min_visible_until_ms, now_ms + MIN_VISIBLE_MS),
+                expires_at_ms=max(previous.expires_at_ms, now_ms + _ttl_for_mode(mode)),
+                candidates=tuple(merged_candidates),
+                source_summary=source_summary(tuple(merged_candidates)),
+                lane_status=lane_status,
+                reused_last_good=False,
+                holdover_hit=False,
+                stale_level="fresh",
+            )
+            next_state = StablePanelState(last_snapshot=snapshot, generation=max(state.generation, previous.generation))
+            return snapshot, next_state, _diagnostics(
+                action="progressive_append",
+                reason="progressive_reorder_rejected_appended_empty_slots",
+                anchors=anchors,
+                snapshot=snapshot,
+                previous=previous,
+                now_ms=now_ms,
+                extra={
+                    "preservedOrdinalCount": preserved_count,
+                    "previousCandidateCount": len(previous.candidates),
+                    "freshCandidateCount": len(fresh_candidates),
+                    "appendedCandidateCount": appended_count,
+                    "reorderedCandidateCount": max(0, len(fresh_candidates) - preserved_count),
+                    "progressiveReorderRejected": True,
+                },
+            )
+        snapshot = replace(
+            previous,
+            query_anchor=anchors.query_anchor,
+            mode=compact_whitespace(mode),
+            updated_at_ms=now_ms,
+            expires_at_ms=max(previous.expires_at_ms, now_ms + _ttl_for_mode(mode)),
+            lane_status=lane_status,
+            reused_last_good=True,
+            holdover_hit=True,
+            stale_level="soft_stale",
+        )
+        next_state = StablePanelState(last_snapshot=snapshot, generation=max(state.generation, previous.generation))
         return snapshot, next_state, _diagnostics(
-            action="progressive_replace",
-            reason="progressive_reordered_visible_ordinals",
+            action="progressive_reorder_rejected",
+            reason="visible_ordinals_locked",
             anchors=anchors,
             snapshot=snapshot,
             previous=previous,
@@ -449,6 +490,8 @@ def _render_progressive_fresh_candidates(
                 "previousCandidateCount": len(previous.candidates),
                 "freshCandidateCount": len(fresh_candidates),
                 "appendedCandidateCount": 0,
+                "reorderedCandidateCount": max(0, len(fresh_candidates) - preserved_count),
+                "progressiveReorderRejected": True,
             },
         )
 
@@ -557,6 +600,36 @@ def _preserved_prefix_count(previous_keys: list[dict[str, object]], fresh_keys: 
             break
         count += 1
     return count
+
+
+def _append_only_candidates(
+    *,
+    previous_candidates: tuple[object, ...],
+    fresh_candidates: tuple[object, ...],
+    max_visible_candidates: int | None,
+) -> tuple[object, ...]:
+    try:
+        limit = max(0, int(max_visible_candidates)) if max_visible_candidates is not None else len(fresh_candidates)
+    except (TypeError, ValueError):
+        limit = len(fresh_candidates)
+    remaining_slots = max(0, limit - len(previous_candidates))
+    if remaining_slots <= 0:
+        return ()
+    previous_keys = {_stable_candidate_key_json(item) for item in previous_candidates}
+    appendable: list[object] = []
+    for candidate in fresh_candidates:
+        key = _stable_candidate_key_json(candidate)
+        if key in previous_keys:
+            continue
+        appendable.append(candidate)
+        previous_keys.add(key)
+        if len(appendable) >= remaining_slots:
+            break
+    return tuple(appendable)
+
+
+def _stable_candidate_key_json(candidate: object) -> str:
+    return json.dumps(_candidate_key(candidate), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _ttl_for_mode(mode: str) -> int:
@@ -676,8 +749,10 @@ def _lane_summary(lane: Mapping[str, object]) -> dict[str, object]:
         "called": bool(lane.get("called")),
         "timedOut": bool(lane.get("timedOut")),
         "holdoverHit": bool(lane.get("holdoverHit")),
+        "staleDropped": bool(lane.get("staleDropped")),
         "count": _lane_count(lane),
         "skippedReason": compact_whitespace(str(lane.get("skippedReason") or "")),
+        "staleDropReason": compact_whitespace(str(lane.get("staleDropReason") or "")),
     }
 
 

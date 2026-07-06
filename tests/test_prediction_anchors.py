@@ -28,6 +28,7 @@ class PredictionAnchorsTests(unittest.TestCase):
         )
 
         self.assertEqual(first.hard_context_anchor, second.hard_context_anchor)
+        self.assertNotEqual(first.apply_anchor, second.apply_anchor)
         self.assertNotEqual(first.query_anchor, second.query_anchor)
         self.assertEqual(first.display_anchor, second.display_anchor)
 
@@ -46,6 +47,7 @@ class PredictionAnchorsTests(unittest.TestCase):
         )
 
         self.assertNotEqual(first.hard_context_anchor, second.hard_context_anchor)
+        self.assertNotEqual(first.apply_anchor, second.apply_anchor)
         self.assertNotEqual(first.display_anchor, second.display_anchor)
 
     def test_rime_candidate_change_updates_query_not_display_anchor(self) -> None:
@@ -65,7 +67,28 @@ class PredictionAnchorsTests(unittest.TestCase):
         )
 
         self.assertEqual(first.hard_context_anchor, second.hard_context_anchor)
+        self.assertNotEqual(first.apply_anchor, second.apply_anchor)
         self.assertNotEqual(first.query_anchor, second.query_anchor)
+        self.assertEqual(first.display_anchor, second.display_anchor)
+
+    def test_composition_hash_change_updates_apply_not_hard_anchor(self) -> None:
+        first = build_prediction_anchors_from_snapshot(
+            snapshot=_snapshot(composition_hash="sha256:composition-a"),
+            mode="prefix_constrained_composing",
+            semantic_query="设计 输入法",
+            query_basis="rimeCandidates",
+            stable_short_pinyin_prefix="sj",
+        )
+        second = build_prediction_anchors_from_snapshot(
+            snapshot=_snapshot(composition_hash="sha256:composition-b"),
+            mode="prefix_constrained_composing",
+            semantic_query="设计 输入法",
+            query_basis="rimeCandidates",
+            stable_short_pinyin_prefix="sj",
+        )
+
+        self.assertEqual(first.hard_context_anchor, second.hard_context_anchor)
+        self.assertNotEqual(first.apply_anchor, second.apply_anchor)
         self.assertEqual(first.display_anchor, second.display_anchor)
 
 
@@ -76,6 +99,7 @@ def _snapshot(
     candidates: tuple[RimeCandidate, ...] = (),
     selection_epoch: int = 1,
     input_source_id: str = "im.rime.inputmethod.Squirrel.Hans",
+    composition_hash: str = "",
 ) -> RimeContextSnapshot:
     committed = "我想设计一个稳定的输入法候选栏"
     return RimeContextSnapshot(
@@ -91,7 +115,7 @@ def _snapshot(
             front_app_bundle_id="com.apple.TextEdit",
             input_source_id=input_source_id,
             committed_context_hash=stable_text_hash(committed),
-            composition_hash=stable_text_hash(""),
+            composition_hash=composition_hash or stable_text_hash(""),
             panel_session_id="panel-1",
         ),
     )

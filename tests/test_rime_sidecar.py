@@ -2912,19 +2912,25 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(followup["modelPredictions"])
         self.assertTrue(followup["progressive"]["enabled"])
         self.assertFalse(followup["progressive"]["shouldFollowUp"])
-        self.assertEqual(followup["displayCandidates"][0]["sourceType"], "model")
-        self.assertEqual(followup["predictionSession"]["stablePanelAction"], "progressive_replace")
+        self.assertEqual(followup["displayCandidates"][0]["sourceType"], "rag")
+        self.assertTrue(any(item["sourceType"] == "model" for item in followup["displayCandidates"][1:]))
+        self.assertEqual(followup["predictionSession"]["stablePanelAction"], "progressive_append")
+        self.assertEqual(
+            followup["predictionSession"]["stablePanelReason"],
+            "progressive_reorder_rejected_appended_empty_slots",
+        )
         self.assertIn(
-            "candidate_snapshot_progressive_replace",
+            "candidate_snapshot_progressive_append",
             [item["event"] for item in followup["predictionTraceEvents"]],
         )
-        replace_event = next(
+        append_event = next(
             item
             for item in followup["predictionTraceEvents"]
-            if item["event"] == "candidate_snapshot_progressive_replace"
+            if item["event"] == "candidate_snapshot_progressive_append"
         )
-        self.assertEqual(replace_event["fields"]["preservedOrdinalCount"], 0)
-        self.assertIn("previousSnapshotId", replace_event["fields"])
+        self.assertEqual(append_event["fields"]["preservedOrdinalCount"], 0)
+        self.assertTrue(append_event["fields"]["progressiveReorderRejected"])
+        self.assertIn("previousSnapshotId", append_event["fields"])
 
     def test_rag_lane_timeout_does_not_block_parallel_model_lane(self) -> None:
         core = SlowSuggestionCore(sleep_s=0.12)
