@@ -132,7 +132,11 @@ log "audit_report=$REPORT_PATH"
 
 if [[ "$REFRESH_REGISTRATION" == "1" ]]; then
   log "refreshing LaunchServices/Squirrel input-source registration"
+  set +e
   "$REFRESH_REGISTRATION_SCRIPT"
+  refresh_status=$?
+  set -e
+  log "refresh_registration_exit_code=$refresh_status"
 fi
 
 set +e

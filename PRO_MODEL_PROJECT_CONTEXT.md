@@ -262,10 +262,13 @@ selection, and checks sidecar health. It also prints duplicate
 LaunchServices-matching Squirrel paths plus cleanup hints, and
 `--refresh-registration` can run the existing Squirrel registration refresh
 before re-auditing. A 2026-07-06 dry run with
-`--no-open --no-wait-typing` correctly refused to claim readiness and reported
-`readiness_state=third-party-missing` plus `duplicate_squirrel_app_paths=5`,
-which means LaunchServices rediscovered old backup app paths. True foreground
-soak still requires the System Settings Add/select flow for
+`--refresh-registration --no-open --no-wait-typing` unregistered five stale
+backup/removed paths and then correctly refused to claim readiness. The
+follow-up audit reports `duplicatePathCount=0`, only
+`/Users/undo/Library/Input Methods/Squirrel.app` remains, and the current
+blocker is `readiness_state=third-party-missing` with
+`thirdPartyEnabled=false` / `selected=false`. True foreground soak still
+requires the System Settings Add/select flow for
 `Squirrel - Simplified`. Cleanup diff apply now
 re-validates stored diffs
 before writing, and memory optimizer evidence avoids leaking long stable-memory

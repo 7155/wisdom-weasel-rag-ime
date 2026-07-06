@@ -235,6 +235,73 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         self.assertIn("refreshing LaunchServices/Squirrel input-source registration", result.stdout)
         self.assertEqual(calls, ["refresh", "audit", "wait-typing"])
 
+    def test_prepare_foreground_check_continues_audit_when_refresh_fails(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-prepare-foreground-refresh-fail-") as tmp:
+            tmp_path = Path(tmp)
+            report_path = tmp_path / "audit.json"
+            call_log = tmp_path / "calls.log"
+            refresh_script = tmp_path / "refresh.sh"
+            audit_script = tmp_path / "audit.sh"
+            refresh_script.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        f"echo refresh >> {call_log}",
+                        "exit 7",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            audit_script.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        f"echo audit >> {call_log}",
+                        "while [[ $# -gt 0 ]]; do",
+                        "  case \"$1\" in",
+                        "    --report-path) report=\"$2\"; shift 2 ;;",
+                        "    *) shift ;;",
+                        "  esac",
+                        "done",
+                        "cat > \"$report\" <<'JSON'",
+                        '{"readiness":{"state":"ready","nextAction":"type in a foreground text field"},"launchServices":{"duplicatePathCount":0,"matchingRecords":[]}}',
+                        "JSON",
+                        "exit 0",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            refresh_script.chmod(0o755)
+            audit_script.chmod(0o755)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "prepare_squirrel_foreground_check.sh"),
+                    "--refresh-registration",
+                    "--no-wait-typing",
+                    "--report-path",
+                    str(report_path),
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT": str(refresh_script),
+                    "RAG_IME_AUDIT_SQUIRREL_INPUT_SOURCE_SCRIPT": str(audit_script),
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            calls = call_log.read_text(encoding="utf-8").splitlines()
+
+        self.assertIn("refresh_registration_exit_code=7", result.stdout)
+        self.assertIn("readiness_state=ready", result.stdout)
+        self.assertEqual(calls, ["refresh", "audit"])
+
     def test_prepare_foreground_check_does_not_claim_ready_when_manual_flow_is_skipped(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-prepare-foreground-pending-") as tmp:
