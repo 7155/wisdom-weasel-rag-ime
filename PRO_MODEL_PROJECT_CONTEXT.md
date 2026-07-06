@@ -196,7 +196,9 @@ JSON check and explicit dry-run/apply scripts with backup, and the default
 profile is mild (`z_zh/c_ch/s_sh/en_eng/in_ing` on, `n_l/f_h` off). PR-9 has
 started: `model-matrix-eval` is now a real alias for the local model matrix,
 reports product metrics for top-3 coverage, echo, duplicates, latency, and
-chain readiness, and `rerank-demo` exposes a source-aware Rime/model/RAG/memory
+chain readiness. The winner now prefers lower noise, forbidden output, and
+old-input echo before duplicate rate and latency when quality ties, and
+`rerank-demo` exposes a source-aware Rime/model/RAG/memory
 ranking path that preserves Rime fallback. PR-10 has started: `debug-server`
 now exposes localhost management APIs for candidate explain, history audit,
 memory/lexicon review, cleanup diff apply/rollback, redacted-by-default raw

@@ -10,7 +10,7 @@ from contextlib import redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
-from rag_ime.cli import main
+from rag_ime.cli import _model_matrix_winner, main
 
 
 class _MatrixProductMetricsHandler(BaseHTTPRequestHandler):
@@ -96,6 +96,45 @@ class ModelMatrixEvalTests(unittest.TestCase):
         self.assertIn("threeCandidatesMs", good["productMetrics"])
         self.assertEqual(report["winner"]["model"], "qwen3.5:0.8b")
         self.assertEqual(report["winner"]["top3Coverage"], 1.0)
+
+    def test_model_matrix_winner_penalizes_echo_noise_and_forbidden_rates(self) -> None:
+        noisy = {
+            "model": "echo-heavy",
+            "passRate": 1.0,
+            "prediction": {"hasCandidates": True},
+            "metrics": {"top1Accuracy": 1.0, "meanReciprocalRank": 1.0, "noiseRate": 0.0},
+            "productMetrics": {
+                "top1Acceptability": 1.0,
+                "top3Coverage": 1.0,
+                "MRR": 1.0,
+                "noiseRate": 0.1,
+                "forbiddenRate": 0.1,
+                "oldInputEchoRate": 0.5,
+                "duplicateRate": 0.0,
+                "firstCandidateMs": {"p95Ms": 10},
+            },
+            "latency": {"p95Ms": 10},
+        }
+        clean = {
+            **noisy,
+            "model": "clean-branching",
+            "productMetrics": {
+                **noisy["productMetrics"],
+                "noiseRate": 0.0,
+                "forbiddenRate": 0.0,
+                "oldInputEchoRate": 0.0,
+                "firstCandidateMs": {"p95Ms": 20},
+            },
+            "latency": {"p95Ms": 20},
+        }
+
+        winner = _model_matrix_winner([noisy, clean])
+
+        self.assertEqual(winner["model"], "clean-branching")
+        self.assertEqual(winner["oldInputEchoRate"], 0.0)
+        self.assertEqual(winner["forbiddenRate"], 0.0)
+        self.assertEqual(winner["noiseRate"], 0.0)
+        self.assertEqual(winner["reason"], "highest_pass_rate_top3_top1_mrr_then_lowest_noise_echo_duplicate_latency")
 
 
 if __name__ == "__main__":

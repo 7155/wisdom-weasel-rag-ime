@@ -4680,7 +4680,7 @@ def _model_matrix_winner(reports: list[dict[str, object]]) -> dict[str, object]:
             "reason": "no_model_returned_candidates",
         }
 
-    def sort_key(item: dict[str, object]) -> tuple[float, float, float, float, float, int]:
+    def sort_key(item: dict[str, object]) -> tuple[float, float, float, float, float, float, float, float, int]:
         metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
         product_metrics = item.get("productMetrics") if isinstance(item.get("productMetrics"), dict) else {}
         first_candidate_ms = product_metrics.get("firstCandidateMs") if isinstance(product_metrics.get("firstCandidateMs"), dict) else {}
@@ -4690,6 +4690,9 @@ def _model_matrix_winner(reports: list[dict[str, object]]) -> dict[str, object]:
             float(product_metrics.get("top3Coverage") or metrics.get("hitRate") or 0.0),
             float(product_metrics.get("top1Acceptability") or metrics.get("top1Accuracy") or 0.0),
             float(product_metrics.get("MRR") or metrics.get("meanReciprocalRank") or 0.0),
+            -float(product_metrics.get("noiseRate") or metrics.get("noiseRate") or 0.0),
+            -float(product_metrics.get("forbiddenRate") or 0.0),
+            -float(product_metrics.get("oldInputEchoRate") or 0.0),
             -float(product_metrics.get("duplicateRate") or 0.0),
             -int(first_candidate_ms.get("p95Ms") or latency.get("p95Ms") or 0),
         )
@@ -4706,10 +4709,12 @@ def _model_matrix_winner(reports: list[dict[str, object]]) -> dict[str, object]:
         "top1Acceptability": float(product_metrics.get("top1Acceptability") or metrics.get("top1Accuracy") or 0.0),
         "top3Coverage": float(product_metrics.get("top3Coverage") or metrics.get("hitRate") or 0.0),
         "MRR": float(product_metrics.get("MRR") or metrics.get("meanReciprocalRank") or 0.0),
+        "noiseRate": float(product_metrics.get("noiseRate") or metrics.get("noiseRate") or 0.0),
+        "forbiddenRate": float(product_metrics.get("forbiddenRate") or 0.0),
         "duplicateRate": float(product_metrics.get("duplicateRate") or 0.0),
         "oldInputEchoRate": float(product_metrics.get("oldInputEchoRate") or 0.0),
         "p95Ms": int(latency.get("p95Ms") or 0),
-        "reason": "highest_pass_rate_top3_top1_mrr_then_lowest_duplicate_and_latency",
+        "reason": "highest_pass_rate_top3_top1_mrr_then_lowest_noise_echo_duplicate_latency",
     }
 
 
