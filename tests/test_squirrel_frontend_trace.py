@@ -1837,6 +1837,143 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("long_candidate", violation_types)
         self.assertIn("post_commit_number_key", violation_types)
 
+    def test_soak_report_can_require_foreground_multi_model_candidate_panel(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-model-multi-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            candidates = _balanced_quota_candidates(session_fingerprint="session-a")
+            for candidate in candidates:
+                candidate["snapshotId"] = "snap:model-multi"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "predictionSession": {
+                            "phase": "composition",
+                            "selectionScope": "mixed",
+                            "snapshotId": "snap:model-multi",
+                        },
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                    "--min-model-candidates-per-panel",
+                    "2",
+                    "--min-model-multi-candidate-panels",
+                    "1",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertTrue(report["thresholdResults"]["modelMultiCandidatePanels"])
+        self.assertEqual(report["thresholds"]["minModelCandidatesPerPanel"], 2)
+        self.assertEqual(report["thresholds"]["minModelMultiCandidatePanels"], 1)
+        self.assertEqual(report["displayQuality"]["modelCandidatePanelCount"], 1)
+        self.assertEqual(report["displayQuality"]["multiModelCandidatePanelCount"], 1)
+        self.assertEqual(report["displayQuality"]["maxModelCandidateCountInPanel"], 2)
+
+    def test_soak_report_fails_when_foreground_model_panel_has_only_one_candidate(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-model-single-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            candidates = [
+                _side_candidate("1", "model", "session-a"),
+                {
+                    "label": "2",
+                    "selectionKey": "2",
+                    "selectionRank": 2,
+                    "sourceType": "rime",
+                    "selectionAction": "select_rime_candidate",
+                    "displayLayout": "fallback",
+                    "displayLane": "rime",
+                    "badge": _source_badge("rime"),
+                    "colorToken": _source_color_token("rime"),
+                },
+            ]
+            for candidate in candidates:
+                candidate["snapshotId"] = "snap:model-single"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "predictionSession": {
+                            "phase": "composition",
+                            "selectionScope": "mixed",
+                            "snapshotId": "snap:model-single",
+                        },
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                    "--min-model-candidates-per-panel",
+                    "2",
+                    "--min-model-multi-candidate-panels",
+                    "1",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["thresholdResults"]["modelMultiCandidatePanels"])
+        self.assertEqual(report["displayQuality"]["modelCandidatePanelCount"], 1)
+        self.assertEqual(report["displayQuality"]["multiModelCandidatePanelCount"], 0)
+        self.assertEqual(report["displayQuality"]["maxModelCandidateCountInPanel"], 1)
+        violation_types = {item["type"] for item in report["violations"]}
+        self.assertIn("model_multi_candidate_panel_threshold", violation_types)
+
     def test_soak_report_allows_progressive_append_without_ordinal_drift(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-progressive-") as tmp:

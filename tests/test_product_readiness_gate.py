@@ -49,6 +49,8 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--max-min-visible-violations", soak_help.stdout)
         self.assertIn("--max-rag-empty-cleared-panel", soak_help.stdout)
         self.assertIn("--min-chain-depth", soak_help.stdout)
+        self.assertIn("--min-model-candidates-per-panel", soak_help.stdout)
+        self.assertIn("--min-model-multi-candidate-panels", soak_help.stdout)
         self.assertIn("--require-snapshot-selection-trace", soak_help.stdout)
         seed_help = subprocess.run(
             ["python3", "-m", "rag_ime.cli", "seed-eval-cases", "--help"],
@@ -90,6 +92,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("reset_gate_db=1", result.stdout)
         self.assertIn("require_sichuan_fuzzy=0", result.stdout)
         self.assertIn("seed demo memories into gate DB", result.stdout)
+        self.assertIn("require_model_candidate_count=0", result.stdout)
         self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-product-gate.sqlite seed-demo --reset", result.stdout)
         self.assertIn("seed eval-case memories into gate DB", result.stdout)
         self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-product-gate.sqlite seed-eval-cases", result.stdout)
@@ -142,6 +145,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         env = dict(os.environ)
         env["RAG_IME_REQUIRE_MACOS_FRONTEND"] = "1"
         env["RAG_IME_REQUIRE_PREDICTOR_CAPABILITY"] = "seededPromptReplay"
+        env["RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT"] = "3"
 
         result = subprocess.run(
             [
@@ -175,6 +179,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("foreground_readiness_report=/tmp/custom-rag-ime-foreground-readiness.json", result.stdout)
         self.assertIn("require_sichuan_fuzzy=1", result.stdout)
         self.assertIn("require_predictor_capability=seededPromptReplay", result.stdout)
+        self.assertIn("require_model_candidate_count=3", result.stdout)
         self.assertIn("scripts/check_sichuan_fuzzy_profile.sh", result.stdout)
         self.assertIn("foreground readiness preflight", result.stdout)
         self.assertIn("scripts/prepare_squirrel_foreground_check.sh", result.stdout)
@@ -185,6 +190,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertNotIn("-m rag_ime.cli --db-path /tmp/rag-ime-backend-gate.sqlite squirrel-tryout-gate", result.stdout)
         self.assertIn("--include-input-source-audit", result.stdout)
         self.assertIn("--require-predictor-capability seededPromptReplay", result.stdout)
+        self.assertIn("--require-model-candidate-count 3", result.stdout)
         self.assertIn("scripts/check_squirrel_soak_report.py", result.stdout)
         self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)
         self.assertIn("--max-stale-applied 0", result.stdout)
@@ -196,6 +202,8 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--min-backspaces 1", result.stdout)
         self.assertIn("--min-app-switches 1", result.stdout)
         self.assertIn("--min-chain-depth 10", result.stdout)
+        self.assertIn("--min-model-candidates-per-panel 3", result.stdout)
+        self.assertIn("--min-model-multi-candidate-panels 1", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-delete-resync", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)

@@ -68,6 +68,18 @@ def main() -> int:
     parser.add_argument("--min-backspaces", type=int, default=0)
     parser.add_argument("--min-app-switches", type=int, default=0)
     parser.add_argument(
+        "--min-model-candidates-per-panel",
+        type=int,
+        default=0,
+        help="Candidate count used by --min-model-multi-candidate-panels. Use 3 to prove real foreground multi-candidate model display.",
+    )
+    parser.add_argument(
+        "--min-model-multi-candidate-panels",
+        type=int,
+        default=0,
+        help="Require this many foreground panels to contain at least --min-model-candidates-per-panel model candidates.",
+    )
+    parser.add_argument(
         "--min-chain-depth",
         type=int,
         default=0,
@@ -117,6 +129,8 @@ def main() -> int:
             min_duration_sec=max(0.0, args.min_duration_sec),
             min_backspaces=max(0, args.min_backspaces),
             min_app_switches=max(0, args.min_app_switches),
+            min_model_candidates_per_panel=max(0, args.min_model_candidates_per_panel),
+            min_model_multi_candidate_panels=max(0, args.min_model_multi_candidate_panels),
             min_chain_depth=max(0, args.min_chain_depth),
             max_stale_applied=max(0, args.max_stale_applied),
             max_flicker_count=max(0, args.max_flicker_count),
@@ -157,6 +171,8 @@ def build_soak_report(
     min_duration_sec: float,
     min_backspaces: int,
     min_app_switches: int,
+    min_model_candidates_per_panel: int,
+    min_model_multi_candidate_panels: int,
     min_chain_depth: int,
     max_stale_applied: int,
     max_flicker_count: int,
@@ -170,7 +186,11 @@ def build_soak_report(
     stale_applied = collect_stale_applied_responses(events)
     prediction_stability = summarize_prediction_stability(events, stale_applied_count=len(stale_applied))
     lane_stability = summarize_lane_stability(events)
-    display_quality = summarize_display_quality(events, frontend_report=frontend_report)
+    display_quality = summarize_display_quality(
+        events,
+        frontend_report=frontend_report,
+        min_model_candidates_per_panel=min_model_candidates_per_panel,
+    )
     foreground_coverage = summarize_foreground_coverage(events)
     selection_quality = summarize_selection_quality(
         events,
@@ -203,6 +223,8 @@ def build_soak_report(
         "minDurationSec": min_duration_sec,
         "minBackspaces": min_backspaces,
         "minAppSwitches": min_app_switches,
+        "minModelCandidatesPerPanel": min_model_candidates_per_panel,
+        "minModelMultiCandidatePanels": min_model_multi_candidate_panels,
         "minChainDepth": min_chain_depth,
         "maxStaleApplied": max_stale_applied,
         "maxFlickerCount": max_flicker_count,
@@ -224,6 +246,9 @@ def build_soak_report(
         "durationSec": float(foreground_coverage["durationSec"]) >= min_duration_sec,
         "backspaces": int(foreground_coverage["backspaceCount"]) >= min_backspaces,
         "appSwitches": int(foreground_coverage["appSwitchCount"]) >= min_app_switches,
+        "modelMultiCandidatePanels": (
+            int(display_quality["multiModelCandidatePanelCount"]) >= min_model_multi_candidate_panels
+        ),
         "chainDepth": int(chain["maxChainDepth"]) >= min_chain_depth,
         "staleApplied": len(stale_applied) <= max_stale_applied,
         "flickerCount": int(prediction_stability["flickerCount"]) <= max_flicker_count,
@@ -376,6 +401,16 @@ def build_soak_report(
                 "expectedAtLeast": min_app_switches,
             }
         )
+    if int(display_quality["multiModelCandidatePanelCount"]) < min_model_multi_candidate_panels:
+        violations.append(
+            {
+                "type": "model_multi_candidate_panel_threshold",
+                "actual": display_quality["multiModelCandidatePanelCount"],
+                "expectedAtLeast": min_model_multi_candidate_panels,
+                "requiredModelCandidatesPerPanel": display_quality["requiredModelCandidatesPerPanel"],
+                "maxModelCandidateCountInPanel": display_quality["maxModelCandidateCountInPanel"],
+            }
+        )
     if require_snapshot_selection_trace and int(selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"]) > 0:
         violations.append(
             {
@@ -516,12 +551,21 @@ PREDICTION_TRACE_EVENT_NAMES = {
 }
 
 
-def summarize_display_quality(events: list[dict[str, Any]], *, frontend_report: dict[str, Any]) -> dict[str, Any]:
+def summarize_display_quality(
+    events: list[dict[str, Any]],
+    *,
+    frontend_report: dict[str, Any],
+    min_model_candidates_per_panel: int = 0,
+) -> dict[str, Any]:
     panel_candidates = list(iter_panel_candidates(events))
     source_badge_missing = sum(1 for candidate in panel_candidates if source_visual_violation(candidate))
     long_candidate_violation = sum(1 for candidate in panel_candidates if long_candidate_violation_for(candidate))
     quota_violations = candidate_quota_violations(events)
     ordinal_drift_violations = snapshot_ordinal_drift_violations(events)
+    model_panel_coverage = summarize_model_candidate_panel_coverage(
+        events,
+        min_model_candidates_per_panel=min_model_candidates_per_panel,
+    )
     progressive_events = list(iter_prediction_trace_events(events))
     progressive_appends = [
         event for event in progressive_events if event.get("event") == "candidate_snapshot_progressive_append"
@@ -535,11 +579,55 @@ def summarize_display_quality(events: list[dict[str, Any]], *, frontend_report: 
         "longCandidateViolation": long_candidate_violation,
         "postCommitNumberKeyViolation": len(post_commit_number_key_violations(events)),
         "snapshotOrdinalDriftViolation": len(ordinal_drift_violations),
+        **model_panel_coverage,
         "progressiveAppendCount": len(dedupe_trace_events(progressive_appends)),
         "progressiveReplaceCount": len(dedupe_trace_events(progressive_replaces)),
         "candidateQuotaViolations": quota_violations[:20],
         "snapshotOrdinalDriftViolations": ordinal_drift_violations[:20],
         "latestBalancedCandidatePanelPresent": bool(frontend_report.get("latestBalancedCandidatePanel")),
+    }
+
+
+def summarize_model_candidate_panel_coverage(
+    events: list[dict[str, Any]],
+    *,
+    min_model_candidates_per_panel: int,
+) -> dict[str, Any]:
+    required_per_panel = max(2, int(min_model_candidates_per_panel or 0))
+    model_panel_count = 0
+    multi_model_panel_count = 0
+    max_model_count = 0
+    samples: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        candidates = event.get("candidates")
+        if not isinstance(candidates, list):
+            continue
+        model_count = sum(
+            1 for candidate in candidates if isinstance(candidate, dict) and str(candidate.get("sourceType") or "") == "model"
+        )
+        if model_count <= 0:
+            continue
+        model_panel_count += 1
+        max_model_count = max(max_model_count, model_count)
+        if model_count >= required_per_panel:
+            multi_model_panel_count += 1
+        samples.append(
+            {
+                "timestampMs": event.get("timestampMs"),
+                "snapshotId": panel_snapshot_id(event),
+                "modelCandidateCount": model_count,
+                "visibleCandidateCount": len(candidates),
+                "phase": prediction_session_phase(event),
+            }
+        )
+    return {
+        "requiredModelCandidatesPerPanel": required_per_panel,
+        "modelCandidatePanelCount": model_panel_count,
+        "multiModelCandidatePanelCount": multi_model_panel_count,
+        "maxModelCandidateCountInPanel": max_model_count,
+        "modelCandidatePanelSamples": samples[:12],
     }
 
 
@@ -716,6 +804,15 @@ def panel_snapshot_id(event: dict[str, Any]) -> str:
                 if snapshot_id:
                     return snapshot_id
     return str(event.get("snapshotId") or "")
+
+
+def prediction_session_phase(event: dict[str, Any]) -> str:
+    session = event.get("predictionSession")
+    if isinstance(session, dict):
+        phase = str(session.get("phase") or session.get("selectionScope") or "")
+        if phase:
+            return phase
+    return ""
 
 
 def summarize_prediction_stability(events: list[dict[str, Any]], *, stale_applied_count: int) -> dict[str, Any]:

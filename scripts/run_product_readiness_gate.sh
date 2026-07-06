@@ -217,6 +217,7 @@ log "foreground_readiness_report=$FOREGROUND_READINESS_REPORT"
 log "require_macos_frontend=$REQUIRE_MACOS_FRONTEND"
 log "require_sichuan_fuzzy=$REQUIRE_SICHUAN_FUZZY"
 log "require_predictor_capability=${REQUIRE_PREDICTOR_CAPABILITY:-none}"
+log "require_model_candidate_count=$REQUIRE_MODEL_CANDIDATE_COUNT"
 log "sidecar_latency_budget_ms=$SIDECAR_LATENCY_BUDGET_MS"
 log "reset_gate_db=$RESET_GATE_DB"
 log "predictor_env_source=$PREDICTOR_ENV_SOURCE"
@@ -323,7 +324,8 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
   run_cmd "${TRYOUT_CMD[@]}"
 
   log "foreground soak report check"
-  run_cmd "$PYTHON_BIN" scripts/check_squirrel_soak_report.py \
+  SOAK_CMD=(
+    "$PYTHON_BIN" scripts/check_squirrel_soak_report.py
     --report-path "$SOAK_REPORT" \
     --max-stale-applied 0 \
     --max-flicker-count 0 \
@@ -341,6 +343,14 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     --require-modern-prediction-session \
     --require-balanced-quota \
     --require-snapshot-selection-trace
+  )
+  if [[ "$REQUIRE_MODEL_CANDIDATE_COUNT" != "0" ]]; then
+    SOAK_CMD+=(
+      --min-model-candidates-per-panel "$REQUIRE_MODEL_CANDIDATE_COUNT"
+      --min-model-multi-candidate-panels 1
+    )
+  fi
+  run_cmd "${SOAK_CMD[@]}"
 else
   log "macOS Squirrel foreground checks skipped; set RAG_IME_REQUIRE_MACOS_FRONTEND=1 to require them"
 fi

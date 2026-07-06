@@ -2222,6 +2222,12 @@ same check through `RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT=3`. This does not make
 the small model smarter; it prevents silent regression to a single Tab-like LLM
 candidate during MLX/Ollama experiments.
 
+When `RAG_IME_REQUIRE_MACOS_FRONTEND=1` is enabled, that same env var now also
+tightens the foreground soak checker: `check_squirrel_soak_report.py` requires
+at least one real `panel_display_candidates` event with the requested number of
+visible `model` candidates. This matters because backend predictor JSON can be
+green while the Squirrel product panel still shows only one LLM row.
+
 Still missing:
 
 ```text
