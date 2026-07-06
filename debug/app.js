@@ -721,7 +721,10 @@ function renderManagementConsole() {
     button.classList.toggle("is-active", button.dataset.view === state.managementView);
   }
   elements.managementRefreshButton.disabled = state.managementBusy;
-  elements.managementActionButton.disabled = state.managementBusy || state.managementView === "ragcore" || !managementActionTarget(rows);
+  elements.managementActionButton.disabled =
+    state.managementBusy ||
+    state.managementView === "ragcore" ||
+    (state.managementView !== "predictor" && !managementActionTarget(rows));
   elements.managementExportButton.disabled = state.managementBusy || state.managementView !== "lexicon";
   elements.managementActionButton.textContent = managementActionLabel(rows);
   elements.managementHint.textContent = [
@@ -822,6 +825,56 @@ function managementRows(result) {
     }));
     return [...laneRows, ...candidateRows];
   }
+  if (state.managementView === "predictor") {
+    if (result.schemaVersion === "rag-ime.predictor-benchmark.v1") {
+      const summary = result.summary || {};
+      const checkRows = Object.entries(result.checks || {}).map(([name, ok]) => ({
+        source: ok ? "pass" : "fail",
+        title: name,
+        meta: ok ? "ok" : "needs attention",
+        raw: { check: name, ok },
+      }));
+      const sampleRows = (result.samples || []).slice(0, 5).map((item) => ({
+        source: item.ok ? "sample" : "error",
+        title: item.currentInput || item.recentContext || item.requestType || "benchmark",
+        meta: [item.requestType, item.candidateCount, item.totalMs].filter((part) => part !== undefined && part !== "").join(" · "),
+        raw: item,
+      }));
+      return [
+        {
+          source: "summary",
+          title: `p50 ${summary.p50Ms ?? "-"}ms / p95 ${summary.p95Ms ?? "-"}ms`,
+          meta: `format ${summary.formatValidRate ?? "-"} · non-empty ${summary.nonEmptyRate ?? "-"}`,
+          raw: summary,
+        },
+        ...checkRows,
+        ...sampleRows,
+      ];
+    }
+    const predictor = result.predictor || {};
+    const profile = predictor.modelProfile || {};
+    const capabilities = predictor.capabilities || {};
+    return [
+      {
+        source: predictor.providerOnline ? "online" : "offline",
+        title: predictor.providerName || "predictor",
+        meta: [predictor.providerProfile, predictor.providerLatencyMs, predictor.providerError].filter((part) => part !== undefined && part !== "").join(" · "),
+        raw: predictor,
+      },
+      {
+        source: "profile",
+        title: profile.id || predictor.providerProfile || "model profile",
+        meta: [profile.lane, `budget ${profile.latencyBudgetMs ?? "-"}ms`, profile.resident ? "resident" : "append-only"].filter(Boolean).join(" · "),
+        raw: profile,
+      },
+      ...Object.entries(capabilities).map(([name, value]) => ({
+        source: value ? "enabled" : "disabled",
+        title: name,
+        meta: String(value),
+        raw: { capability: name, value },
+      })),
+    ];
+  }
   return [];
 }
 
@@ -831,6 +884,7 @@ function managementActionTarget(rows) {
 }
 
 function managementActionLabel(rows) {
+  if (state.managementView === "predictor") return "benchmark";
   const target = managementActionTarget(rows);
   if (!target) return "action";
   if (state.managementView === "history") return "tombstone";
@@ -879,6 +933,7 @@ async function refreshManagementConsole() {
     else if (state.managementView === "lexicon") url = "/api/lexicon";
     else if (state.managementView === "cleanup") url = "/api/cleanup-diff";
     else if (state.managementView === "ragcore") url = "/api/rag-core-v3/query-preview";
+    else if (state.managementView === "predictor") url = "/api/predictor/status";
     const params = new URLSearchParams({
       project: "wisdom-weasel-rag-ime",
       limit: "20",
@@ -898,6 +953,8 @@ async function refreshManagementConsole() {
               topK: 5,
             }),
           })
+        : state.managementView === "predictor"
+          ? await fetch(url)
         : await fetch(`${url}?${params.toString()}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.managementResult = await response.json();
@@ -915,7 +972,7 @@ async function refreshManagementConsole() {
 async function runManagementAction() {
   const rows = managementRows(state.managementResult || {});
   const target = managementActionTarget(rows);
-  if (!target) return;
+  if (!target && state.managementView !== "predictor") return;
   state.managementBusy = true;
   renderManagementConsole();
   try {
@@ -938,6 +995,9 @@ async function runManagementAction() {
       }
       endpoint = action === "rollback" ? "/api/cleanup-diff/rollback" : "/api/cleanup-diff/apply";
       body = { diffId: target.diffId, confirm: action };
+    } else if (state.managementView === "predictor") {
+      endpoint = "/api/predictor/benchmark";
+      body = { profile: "qwen3_06b_ime_hot", repeat: 1 };
     } else {
       await refreshManagementConsole();
       return;
@@ -950,7 +1010,12 @@ async function runManagementAction() {
     const payload = await response.json();
     if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
     state.managementLastAction = { message: `audit ${payload.auditId || "ok"}` };
-    await refreshManagementConsole();
+    if (state.managementView === "predictor") {
+      state.managementResult = payload;
+      ensureManagementSelection(managementRows(state.managementResult));
+    } else {
+      await refreshManagementConsole();
+    }
   } catch (error) {
     state.managementLastAction = { message: String(error) };
   } finally {

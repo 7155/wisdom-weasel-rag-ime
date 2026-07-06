@@ -43,6 +43,8 @@ from .predictor import (
     prediction_provider_from_env,
     prediction_provider_status,
 )
+from .predictor_benchmark import benchmark_predictor_latency, load_predictor_latency_cases
+from .predictor_latency import latency_log_path_from_env, latency_report
 from .rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
@@ -151,6 +153,60 @@ class DebugImeService:
             "vectorStats": self._vector_index_stats(),
             "vectorAutoRebuild": self._vector_auto_rebuild_status(),
         }
+
+    def predictor_status(self) -> dict[str, object]:
+        return {
+            "schemaVersion": "rag-ime.predictor-status.v1",
+            "ok": True,
+            "predictor": prediction_provider_status(self.predictor, probe_capabilities=True),
+        }
+
+    def predictor_latency(self, payload: dict[str, Any]) -> dict[str, object]:
+        log_path = Path(_string(payload.get("log")) or latency_log_path_from_env())
+        return {
+            "ok": True,
+            **latency_report(log_path, last=_bounded_int(payload.get("last"), default=200, minimum=1, maximum=5000)),
+        }
+
+    def predictor_cache_stats(self) -> dict[str, object]:
+        status = prediction_provider_status(self.predictor, probe_capabilities=True)
+        probe = status.get("capabilityProbe") if isinstance(status.get("capabilityProbe"), dict) else {}
+        prompt_cache = probe.get("promptCache") if isinstance(probe.get("promptCache"), dict) else {}
+        capabilities = status.get("capabilities") if isinstance(status.get("capabilities"), dict) else {}
+        return {
+            "schemaVersion": "rag-ime.predictor-cache-stats.v1",
+            "ok": True,
+            "capabilities": capabilities,
+            "promptCache": prompt_cache,
+            "clearSupported": False,
+        }
+
+    def predictor_cache_clear(self, payload: dict[str, Any]) -> dict[str, object]:
+        confirm = _string(payload.get("confirmText") or payload.get("confirm"))
+        if confirm != "CLEAR PREDICTOR CACHE":
+            return {
+                "schemaVersion": "rag-ime.predictor-cache-clear.v1",
+                "ok": False,
+                "cleared": False,
+                "error": "confirmText must be CLEAR PREDICTOR CACHE",
+            }
+        return {
+            "schemaVersion": "rag-ime.predictor-cache-clear.v1",
+            "ok": True,
+            "cleared": False,
+            "reason": "current predictor provider does not expose a remote cache clear API",
+        }
+
+    def predictor_benchmark(self, payload: dict[str, Any]) -> dict[str, object]:
+        cases_path = Path(_string(payload.get("cases")) or "docs/eval/predictor_latency_cases.jsonl")
+        cases = load_predictor_latency_cases(cases_path)
+        return benchmark_predictor_latency(
+            self.predictor,
+            cases,
+            profile=_string(payload.get("profile")) or "qwen3_06b_ime_hot",
+            repeat=_bounded_int(payload.get("repeat"), default=3, minimum=1, maximum=100),
+            max_candidates=_bounded_int(payload.get("maxCandidates"), default=3, minimum=1, maximum=10),
+        )
 
     def rebuild_vector_index(self, payload: dict[str, Any]) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
@@ -1802,6 +1858,23 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
+        if parsed.path in ("/api/predictor/status",):
+            self._write_json(HTTPStatus.OK, self.service.predictor_status())
+            return
+        if parsed.path in ("/api/predictor/latency",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.predictor_latency(
+                    {
+                        "log": _query_first(query, "log"),
+                        "last": _query_first(query, "last"),
+                    }
+                ),
+            )
+            return
+        if parsed.path in ("/api/predictor/cache/stats",):
+            self._write_json(HTTPStatus.OK, self.service.predictor_cache_stats())
+            return
         if parsed.path in ("/api/prediction/live-trace", "/prediction/live-trace"):
             self._write_json(
                 HTTPStatus.OK,
@@ -1970,6 +2043,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
             elif path in ("/api/predictor-ttfc", "/predictor-ttfc"):
                 self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
+            elif path in ("/api/predictor/benchmark",):
+                self._write_json(HTTPStatus.OK, self.service.predictor_benchmark(payload))
+            elif path in ("/api/predictor/cache/clear",):
+                self._write_json(HTTPStatus.OK, self.service.predictor_cache_clear(payload))
             elif path in ("/api/cache-probe", "/cache-probe"):
                 self._write_json(HTTPStatus.OK, self.service.cache_probe(payload))
             elif path in ("/api/rebuild-vector-index", "/rebuild-vector-index"):
@@ -2049,7 +2126,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, OSError):
             return
 
     def _serve_static(self, request_path: str) -> None:

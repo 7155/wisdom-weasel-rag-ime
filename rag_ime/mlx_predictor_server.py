@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .predictor import (
+    PREDICTION_REQUEST_ACTIVE_RAG,
     PREDICTION_REQUEST_GENERIC,
+    PREDICTION_REQUEST_IME_HOT,
+    PREDICTION_REQUEST_IME_POST_COMMIT,
+    PREDICTION_REQUEST_IME_QUALITY,
     PREDICTION_REQUEST_NO_INPUT,
     PREDICTION_REQUEST_PINYIN_CONSTRAINED,
     PREDICTION_REQUEST_RIME_REORDER,
@@ -22,6 +26,14 @@ from .predictor import (
     normalized_rime_candidate_texts,
     parse_ime_prediction_candidates,
     parse_prediction_candidates,
+)
+from .ime_candidate_stream import ImeCandidateStreamParser
+from .model_lane_scheduler import LatestWinsModelScheduler, model_request_token_from_metadata
+from .model_profiles import profile_by_id
+from .mlx_prefix_cache import MlxPrefixCache, PrefixCacheEntry
+from .predictor_latency import (
+    append_latency_trace,
+    trace_from_prediction_payload,
 )
 from .text_utils import compact_whitespace
 
@@ -127,6 +139,7 @@ class MlxPredictorServerConfig:
     top_p: float = 0.85
     prompt_cache: bool = False
     prompt_cache_max_kv_size: int = 0
+    profile_id: str = "qwen3_06b_ime_hot"
 
 
 @dataclass(frozen=True)
@@ -151,6 +164,7 @@ class MlxLmEngine:
         *,
         enable_prompt_cache: bool = False,
         prompt_cache_max_kv_size: int = 0,
+        profile_id: str = "qwen3_06b_ime_hot",
     ):
         if not model_id:
             raise RuntimeError("MLX predictor requires --model or RAG_IME_MLX_MODEL")
@@ -160,6 +174,7 @@ class MlxLmEngine:
             raise RuntimeError("Install mlx-lm before running mlx-predictor-server") from exc
 
         self.model_id = model_id
+        self.profile = profile_by_id(profile_id)
         self.model_info = _inspect_local_mlx_model(model_id)
         self.model, self.tokenizer = load(model_id)
         self._base_completion_mode = _is_base_completion_model(model_id, self.model_info)
@@ -168,6 +183,27 @@ class MlxLmEngine:
             stable_prefix=self._stable_prompt_prefix(),
             max_kv_size=max(0, int(prompt_cache_max_kv_size)),
         )
+        self._scheduler = LatestWinsModelScheduler()
+        self._prefix_cache_enabled = os.environ.get("RAG_IME_MLX_PREFIX_CACHE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self._prefix_cache_boundary_tokens = max(
+            1,
+            int(os.environ.get("RAG_IME_MLX_PREFIX_CACHE_BOUNDARY_TOKENS", "32")),
+        )
+        self._prefix_cache = MlxPrefixCache(
+            max_entries=int(os.environ.get("RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES", "64")),
+            max_bytes=int(os.environ.get("RAG_IME_MLX_PREFIX_CACHE_MAX_MB", "256")) * 1024 * 1024,
+        )
+        self._last_prefix_cache_status: dict[str, Any] = {
+            "enabled": self._prefix_cache_enabled,
+            "cacheHit": False,
+            "cacheHitTokens": 0,
+            "cacheMissTokens": 0,
+        }
         if self._prompt_cache.enabled:
             self._prepare_prompt_cache()
 
@@ -177,13 +213,16 @@ class MlxLmEngine:
             "ok": True,
             "provider": "mlx-lm",
             "model": self.model_id,
+            "modelProfile": self.profile.to_payload(),
             "modelLoaded": True,
             "modelInfo": self.model_info,
             "promptCache": prompt_cache,
+            "prefixCache": self.prefix_cache_status(),
             "capabilities": {
                 "streaming": True,
                 "residentModel": True,
                 "promptCache": _prompt_cache_used_for_generation(prompt_cache),
+                "prefixCache": bool(self._prefix_cache_enabled),
                 "textOnlyModel": bool(self.model_info.get("textOnly")),
                 "seededPromptReplay": True,
                 "kvFork": False,
@@ -199,6 +238,13 @@ class MlxLmEngine:
 
     def prompt_cache_status(self) -> dict[str, Any]:
         return self._prompt_cache.to_payload()
+
+    def prefix_cache_status(self) -> dict[str, Any]:
+        return {
+            **self._prefix_cache.stats(),
+            **self._last_prefix_cache_status,
+            "boundaryTokens": self._prefix_cache_boundary_tokens,
+        }
 
     def predict(
         self,
@@ -217,6 +263,44 @@ class MlxLmEngine:
         started = time.perf_counter()
         resolved_request_type = normalize_prediction_request_type(request_type)
         rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
+        metadata = dict(request_metadata or {})
+        profile_id = str(metadata.get("profileId") or metadata.get("profile") or self.profile.id)
+        token = model_request_token_from_metadata(metadata, profile_id=profile_id)
+        metadata["requestId"] = token.request_id
+        metadata["profileId"] = profile_id
+        self._scheduler.begin(token)
+
+        def finalize(payload: dict[str, Any]) -> dict[str, Any]:
+            if self._scheduler.is_cancelled(token.request_id):
+                payload["candidates"] = []
+                payload["candidateScores"] = []
+                payload["cancelled"] = True
+                payload["cancelReason"] = self._scheduler.cancel_reason(token.request_id) or "superseded_by_newer_generation"
+                timing = payload.get("timing") if isinstance(payload.get("timing"), dict) else {}
+                payload["timing"] = {**timing, "cancelled": True, "cancelReason": payload["cancelReason"]}
+            payload["requestMeta"] = dict(metadata)
+            payload["prefixCache"] = self.prefix_cache_status()
+            trace = trace_from_prediction_payload(
+                payload,
+                request_id=token.request_id,
+                request_type=resolved_request_type,
+                profile_id=profile_id,
+                model_id=self.model_id,
+                prompt_tokens=_estimate_prompt_tokens(
+                    current_input=current_input,
+                    recent_context=recent_context,
+                    rime_candidates=rime_candidate_tuple,
+                ),
+                output_tokens=_estimate_output_tokens(payload.get("rawText"), payload.get("candidates")),
+            )
+            payload["latencyTrace"] = trace.to_payload()
+            try:
+                append_latency_trace(trace)
+            except OSError:
+                pass
+            self._scheduler.finish(token)
+            return payload
+
         if self._base_completion_mode:
             raw_text = "".join(
                 self.stream_text(
@@ -229,7 +313,7 @@ class MlxLmEngine:
                     request_type=resolved_request_type,
                     rime_candidates=rime_candidate_tuple,
                     stream_first_candidate=stream_first_candidate,
-                    request_metadata=request_metadata,
+                    request_metadata=metadata,
                 )
             )
             total_ms = int((time.perf_counter() - started) * 1000)
@@ -239,7 +323,7 @@ class MlxLmEngine:
                 recent_context=recent_context,
                 max_candidates=max_candidates,
             )
-            return {
+            return finalize({
                 "ok": True,
                 "model": self.model_id,
                 "rawText": raw_text,
@@ -254,8 +338,8 @@ class MlxLmEngine:
                     "fallbackJson": False,
                     "requestType": resolved_request_type,
                 },
-                "requestMeta": dict(request_metadata or {}),
-            }
+                "requestMeta": dict(metadata),
+            })
 
         display_candidate_limit = max(1, int(max_candidates))
         logits_probe_candidate_limit = display_candidate_limit
@@ -268,7 +352,7 @@ class MlxLmEngine:
             max_candidates=logits_probe_candidate_limit,
             request_type=resolved_request_type,
             rime_candidates=rime_candidate_tuple,
-            request_metadata=request_metadata,
+            request_metadata=metadata,
         )
         if _logits_candidates_are_ime_quality(logits_candidates["candidates"], max_candidates=max_candidates):
             visible_logits_candidates = logits_candidates["candidates"][:display_candidate_limit]
@@ -278,7 +362,7 @@ class MlxLmEngine:
                 if isinstance(item, dict)
             ]
             total_ms = int((time.perf_counter() - started) * 1000)
-            return {
+            return finalize({
                 "ok": True,
                 "model": self.model_id,
                 "rawText": " ".join(visible_logits_candidates),
@@ -296,8 +380,8 @@ class MlxLmEngine:
                     "fallbackJson": False,
                     "requestType": resolved_request_type,
                 },
-                "requestMeta": dict(request_metadata or {}),
-            }
+                "requestMeta": dict(metadata),
+            })
 
         if resolved_request_type == PREDICTION_REQUEST_NO_INPUT and not stream_first_candidate:
             seeded_replay_payload = self.predict_no_input_seeded_prompt_replay(
@@ -309,13 +393,13 @@ class MlxLmEngine:
                 top_p=top_p,
                 started=started,
                 logits_candidates=logits_candidates,
-                request_metadata=request_metadata,
+                request_metadata=metadata,
             )
             if seeded_replay_payload is not None and seeded_replay_payload.get("candidates"):
                 requested_candidates = max(1, int(max_candidates))
                 seeded_candidate_count = len(seeded_replay_payload.get("candidates") or [])
                 if seeded_candidate_count >= requested_candidates:
-                    return seeded_replay_payload
+                    return finalize(seeded_replay_payload)
                 branch_payload = self.predict_no_input_continuation_branches(
                     current_input=current_input,
                     recent_context=recent_context,
@@ -326,14 +410,14 @@ class MlxLmEngine:
                     started=started,
                     logits_elapsed_ms=logits_candidates.get("elapsedMs", 0),
                     logits_quality_reason="seeded_replay_underfilled",
-                    request_metadata=request_metadata,
+                    request_metadata=metadata,
                 )
-                return _merge_seeded_replay_with_branch_payload(
+                return finalize(_merge_seeded_replay_with_branch_payload(
                     seeded_replay_payload,
                     branch_payload,
                     max_candidates=requested_candidates,
                     started=started,
-                )
+                ))
             branch_payload = self.predict_no_input_continuation_branches(
                 current_input=current_input,
                 recent_context=recent_context,
@@ -344,9 +428,9 @@ class MlxLmEngine:
                 started=started,
                 logits_elapsed_ms=logits_candidates.get("elapsedMs", 0),
                 logits_quality_reason=logits_candidates.get("qualityReason") or "logits_candidates_not_phrase_quality",
-                request_metadata=request_metadata,
+                request_metadata=metadata,
             )
-            return branch_payload
+            return finalize(branch_payload)
 
         raw_text = "".join(
             self.stream_text(
@@ -359,7 +443,7 @@ class MlxLmEngine:
                 request_type=resolved_request_type,
                 rime_candidates=rime_candidate_tuple,
                 stream_first_candidate=stream_first_candidate,
-                request_metadata=request_metadata,
+                request_metadata=metadata,
             )
         )
         total_ms = int((time.perf_counter() - started) * 1000)
@@ -371,7 +455,7 @@ class MlxLmEngine:
             request_type=resolved_request_type,
             rime_candidates=rime_candidate_tuple,
         )
-        return {
+        return finalize({
             "ok": True,
             "model": self.model_id,
             "rawText": raw_text,
@@ -387,8 +471,8 @@ class MlxLmEngine:
                 "fallbackReason": logits_candidates.get("qualityReason") or "logits_candidates_not_phrase_quality",
                 "requestType": resolved_request_type,
             },
-            "requestMeta": dict(request_metadata or {}),
-        }
+            "requestMeta": dict(metadata),
+        })
 
     def predict_no_input_continuation_branches(
         self,
@@ -405,6 +489,8 @@ class MlxLmEngine:
         request_metadata: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
         max_items = max(1, int(max_candidates))
+        metadata = dict(request_metadata or {})
+        cancel_request_id = str(metadata.get("requestId") or "")
         branch_specs = _continuation_branch_specs(temperature=temperature, max_tokens=max_tokens)
         raw_texts: list[str] = []
         candidates: list[str] = []
@@ -421,6 +507,7 @@ class MlxLmEngine:
                 max_tokens=list_max_tokens,
                 temperature=max(0.05, min(float(temperature), 0.18)),
                 top_p=top_p,
+                cancel_request_id=cancel_request_id,
             )
         )
         raw_texts.append(list_raw_text)
@@ -557,6 +644,9 @@ class MlxLmEngine:
         )
         if not seeds:
             return None
+        kv_fork_available = False
+        sequence_fork_available = False
+        replay_fallback_reason = "cache_clone_unsupported"
         raw_texts: list[str] = []
         candidates: list[str] = []
         seen: set[str] = set()
@@ -564,7 +654,11 @@ class MlxLmEngine:
         per_seed_max_tokens = max(8, min(24, int(max_tokens)))
         replay_temperature = max(0.05, min(float(temperature), 0.18))
         branch_count = len(seeds)
+        metadata = dict(request_metadata or {})
+        cancel_request_id = str(metadata.get("requestId") or "")
         for branch_rank, seed in enumerate(seeds, start=1):
+            if cancel_request_id and self._scheduler.is_cancelled(cancel_request_id):
+                break
             seed_text = str(seed.get("text") or "")
             if not seed_text:
                 continue
@@ -575,6 +669,7 @@ class MlxLmEngine:
                     max_tokens=per_seed_max_tokens,
                     temperature=replay_temperature,
                     top_p=top_p,
+                    cancel_request_id=cancel_request_id,
                 )
             )
             raw_texts.append(f"{seed_text}{raw_text}")
@@ -596,6 +691,9 @@ class MlxLmEngine:
                     "logprob": seed.get("logprob"),
                     "probability": seed.get("probability"),
                     "maxTokens": per_seed_max_tokens,
+                    "kvFork": kv_fork_available,
+                    "sequenceFork": sequence_fork_available,
+                    "fallbackReason": replay_fallback_reason,
                     "elapsedMs": int((time.perf_counter() - branch_started) * 1000),
                     "candidates": branch_candidates,
                 }
@@ -624,7 +722,10 @@ class MlxLmEngine:
                 "candidateMode": "seeded-prompt-replay",
                 "logitsMs": int(logits_candidates.get("elapsedMs") or 0),
                 "fallbackJson": False,
-                "fallbackReason": "top_logits_seed_replay",
+                "fallbackReason": replay_fallback_reason,
+                "kvFork": kv_fork_available,
+                "sequenceFork": sequence_fork_available,
+                "seedReplayReason": "top_logits_seed_replay",
                 "requestType": PREDICTION_REQUEST_NO_INPUT,
                 "seedReplayBranchCount": len(branch_timings),
                 "seedReplayDisplayedCount": len(displayed_candidates),
@@ -723,7 +824,8 @@ class MlxLmEngine:
         stream_first_candidate: bool = False,
         request_metadata: dict[str, Any] | None = None,
     ) -> Iterable[str]:
-        _ = request_metadata
+        metadata = dict(request_metadata or {})
+        cancel_request_id = str(metadata.get("requestId") or "")
         prompt = self._build_prompt(
             current_input=current_input,
             recent_context=recent_context,
@@ -732,6 +834,7 @@ class MlxLmEngine:
             rime_candidates=rime_candidates,
             stream_first_candidate=stream_first_candidate,
         )
+        self._record_prefix_cache(prompt=prompt, request_metadata=metadata)
         if self._prompt_cache.ready_for_generation() and not stream_first_candidate and not self._base_completion_mode:
             try:
                 for text in self._stream_text_with_prompt_cache(
@@ -744,6 +847,7 @@ class MlxLmEngine:
                     request_type=request_type,
                     rime_candidates=rime_candidates,
                     stream_first_candidate=stream_first_candidate,
+                    cancel_request_id=cancel_request_id,
                 ):
                     yield text
                 return
@@ -758,8 +862,63 @@ class MlxLmEngine:
             max_tokens=max(1, min(64, int(max_tokens))),
             temperature=float(temperature),
             top_p=float(top_p),
+            cancel_request_id=cancel_request_id,
         ):
             yield text
+
+    def _record_prefix_cache(self, *, prompt: str, request_metadata: dict[str, Any]) -> None:
+        if not self._prefix_cache_enabled:
+            self._last_prefix_cache_status = {
+                "enabled": False,
+                "cacheHit": False,
+                "cacheHitTokens": 0,
+                "cacheMissTokens": 0,
+            }
+            return
+        try:
+            token_ids = tuple(int(item) for item in self.tokenizer.encode(prompt))
+        except Exception:
+            self._last_prefix_cache_status = {
+                "enabled": True,
+                "cacheHit": False,
+                "cacheHitTokens": 0,
+                "cacheMissTokens": 0,
+                "error": "tokenize_failed",
+            }
+            return
+        profile_id = str(request_metadata.get("profileId") or request_metadata.get("profile") or "default")
+        hit = self._prefix_cache.lookup_longest_prefix(
+            profile_id=profile_id,
+            prompt_format="IMEV1",
+            token_ids=token_ids,
+        )
+        cache_hit_tokens = hit.token_count if hit else 0
+        boundary = min(len(token_ids), max(1, self._prefix_cache_boundary_tokens))
+        if boundary > 0 and (hit is None or hit.token_count < boundary):
+            prefix_tokens = token_ids[:boundary]
+            self._prefix_cache.put(
+                PrefixCacheEntry(
+                    cache_id=f"{profile_id}:IMEV1:{hash(prefix_tokens)}",
+                    profile_id=profile_id,
+                    prompt_format="IMEV1",
+                    token_ids=prefix_tokens,
+                    token_count=len(prefix_tokens),
+                    cache_obj=None,
+                    created_at_ms=int(time.time() * 1000),
+                    last_used_at_ms=int(time.time() * 1000),
+                    bytes_estimate=len(prefix_tokens) * 8,
+                )
+            )
+        self._last_prefix_cache_status = {
+            "enabled": True,
+            "cacheHit": hit is not None,
+            "cacheHitTokens": cache_hit_tokens,
+            "cacheMissTokens": max(0, len(token_ids) - cache_hit_tokens),
+            "tokenizedPrefixCache": True,
+            "kvObjectCache": False,
+            "fallbackReason": "kv_cache_clone_unsupported" if hit is not None else "",
+            "stats": self._prefix_cache.stats(),
+        }
 
     def _stream_text_with_prompt_cache(
         self,
@@ -773,6 +932,7 @@ class MlxLmEngine:
         request_type: str = PREDICTION_REQUEST_GENERIC,
         rime_candidates: tuple[str, ...] = (),
         stream_first_candidate: bool = False,
+        cancel_request_id: str = "",
     ) -> Iterable[str]:
         from mlx_lm.generate import generate_step  # type: ignore
         from mlx_lm.models.cache import load_prompt_cache  # type: ignore
@@ -797,6 +957,7 @@ class MlxLmEngine:
             temperature=float(temperature),
             top_p=float(top_p),
             prompt_cache=cache,
+            cancel_request_id=cancel_request_id,
         ):
             yield text
 
@@ -808,6 +969,7 @@ class MlxLmEngine:
         temperature: float,
         top_p: float,
         prompt_cache: Any | None = None,
+        cancel_request_id: str = "",
     ) -> Iterable[str]:
         from mlx_lm.generate import generate_step  # type: ignore
         from mlx_lm.sample_utils import make_sampler  # type: ignore
@@ -824,6 +986,8 @@ class MlxLmEngine:
             prompt_cache=prompt_cache,
             sampler=sampler,
         ):
+            if cancel_request_id and self._scheduler.is_cancelled(cancel_request_id):
+                break
             token_id = _token_to_int(token)
             if _token_is_eos(self.tokenizer, token_id):
                 break
@@ -1006,14 +1170,36 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
             return payload if isinstance(payload, dict) else {}
 
         def _send_stream(self, engine: MlxLmEngine, request: dict[str, Any]) -> None:
-            self.send_response(200)
-            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
-            self.end_headers()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
             started = time.perf_counter()
             raw_text = ""
+            parser = ImeCandidateStreamParser(
+                max_candidates=int(request["max_candidates"]),
+                current_input=str(request.get("current_input") or ""),
+                recent_context=str(request.get("recent_context") or ""),
+            )
             for text in engine.stream_text(**request):
                 raw_text += text
-                self._write_json_line({"delta": text, "elapsedMs": int((time.perf_counter() - started) * 1000)})
+                if not self._write_json_line({"delta": text, "elapsedMs": int((time.perf_counter() - started) * 1000)}):
+                    return
+                for candidate in parser.feed(text):
+                    if not self._write_json_line(
+                        {
+                            "event": "candidate_delta",
+                            "candidate": candidate,
+                            "index": len(parser.candidates) - 1,
+                            "elapsedMs": int((time.perf_counter() - started) * 1000),
+                            "partial": True,
+                        }
+                    ):
+                        return
+                if parser.done():
+                    break
             parse_candidates = getattr(engine, "parse_candidates_from_raw", None)
             if callable(parse_candidates):
                 candidates = parse_candidates(
@@ -1034,6 +1220,18 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
                     "requestType": normalize_prediction_request_type(request.get("request_type")),
                     "totalMs": int((time.perf_counter() - started) * 1000),
                     "promptCache": engine.prompt_cache_status(),
+                    "latencyTrace": trace_from_prediction_payload(
+                        {
+                            "rawText": raw_text,
+                            "candidates": candidates,
+                            "totalMs": int((time.perf_counter() - started) * 1000),
+                            "promptCache": engine.prompt_cache_status(),
+                        },
+                        request_id=str(dict(request.get("request_metadata") or {}).get("requestId") or ""),
+                        request_type=normalize_prediction_request_type(request.get("request_type")),
+                        profile_id=str(dict(request.get("request_metadata") or {}).get("profileId") or "default"),
+                        model_id=engine.model_id,
+                    ).to_payload(),
                     "requestMeta": dict(request.get("request_metadata") or {}),
                 }
             )
@@ -1046,9 +1244,13 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
             self.end_headers()
             self.wfile.write(body)
 
-        def _write_json_line(self, payload: dict[str, Any]) -> None:
-            self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
-            self.wfile.flush()
+        def _write_json_line(self, payload: dict[str, Any]) -> bool:
+            try:
+                self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return False
+            return True
 
         def log_message(self, fmt: str, *args: object) -> None:
             return
@@ -1061,6 +1263,7 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
         config.model,
         enable_prompt_cache=config.prompt_cache,
         prompt_cache_max_kv_size=config.prompt_cache_max_kv_size,
+        profile_id=config.profile_id,
     )
     server = ThreadingHTTPServer((config.host, config.port), make_mlx_predictor_handler(engine))
     print(
@@ -1069,6 +1272,7 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
                 "schemaVersion": "rag-ime.mlx-predictor-server.v1",
                 "listening": f"http://{config.host}:{config.port}",
                 "model": config.model,
+                "profile": config.profile_id,
                 "maxTokens": config.max_tokens,
                 "promptCache": engine.prompt_cache_status(),
             },
@@ -1233,6 +1437,15 @@ def _build_mlx_dynamic_prompt(
     rime_candidates: tuple[str, ...] = (),
     stream_first_candidate: bool = False,
 ) -> str:
+    if os.environ.get("RAG_IME_MLX_LEGACY_PROMPT", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return _build_imev1_dynamic_prompt(
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidates=max_candidates,
+            request_type=request_type,
+            rime_candidates=rime_candidates,
+            stream_first_candidate=stream_first_candidate,
+        )
     resolved_request_type = normalize_prediction_request_type(request_type)
     rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
     rime_line = _rime_candidates_prompt_line(rime_candidate_tuple)
@@ -1270,6 +1483,62 @@ def _build_mlx_dynamic_prompt(
         "- 不要输出单字、语气词、连接词、泛词、重复词。\n"
         f"输出 {max_candidates} 个候选 JSON 数组。"
     )
+
+
+def _build_imev1_dynamic_prompt(
+    *,
+    current_input: str,
+    recent_context: str,
+    max_candidates: int,
+    request_type: str = PREDICTION_REQUEST_GENERIC,
+    rime_candidates: tuple[str, ...] = (),
+    stream_first_candidate: bool = False,
+) -> str:
+    resolved_request_type = normalize_prediction_request_type(request_type)
+    rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
+    context_tail = _tail_chars(compact_whitespace(recent_context), 96)
+    query = compact_whitespace(current_input)
+    mode = _imev1_mode(resolved_request_type)
+    rime_line = _rime_candidates_prompt_line(rime_candidate_tuple)
+    mode_instruction = _request_type_prompt_instruction(resolved_request_type)
+    constraint_line = _request_type_candidate_constraint(resolved_request_type, rime_candidate_tuple)
+    negatives = "下一步|接下来|根据上述|可以进行|当前|目前|然后|测试|分析|验证|候选如下|输入法候选"
+    if stream_first_candidate:
+        target = "1"
+    else:
+        target = str(max(1, min(3, int(max_candidates))))
+    return (
+        "<IMEV1>\n"
+        f"M={mode}\n"
+        f"请求类型: {resolved_request_type}\n"
+        f"CTX={context_tail}\n"
+        f"IN={query}\n"
+        f"RIME={'|'.join(rime_candidate_tuple[:5])}\n"
+        f"{rime_line}"
+        "RAG=\n"
+        "MEM=\n"
+        f"NEG={negatives}\n"
+        f"模式说明: {mode_instruction}\n"
+        f"{constraint_line}"
+        f"OUT={target} candidates, tab-separated, append-only text, no JSON, no explanation.\n"
+        "光标后内容:\n"
+        "<CAND>\n"
+    )
+
+
+def _imev1_mode(request_type: str) -> str:
+    resolved = normalize_prediction_request_type(request_type)
+    if resolved in {PREDICTION_REQUEST_NO_INPUT, PREDICTION_REQUEST_IME_POST_COMMIT}:
+        return "POST"
+    if resolved in {PREDICTION_REQUEST_IME_HOT, PREDICTION_REQUEST_PINYIN_CONSTRAINED}:
+        return "HOT"
+    if resolved == PREDICTION_REQUEST_IME_QUALITY:
+        return "QUALITY_APPEND"
+    if resolved == PREDICTION_REQUEST_ACTIVE_RAG:
+        return "ACTIVE_RAG"
+    if resolved == PREDICTION_REQUEST_RIME_REORDER:
+        return "RIME"
+    return "GEN"
 
 
 def _request_type_prompt_instruction(request_type: str) -> str:
@@ -1528,9 +1797,36 @@ def _tail_chars(text: str, max_chars: int) -> str:
     return text[-max_chars:]
 
 
+def _estimate_prompt_tokens(
+    *,
+    current_input: str,
+    recent_context: str,
+    rime_candidates: tuple[str, ...],
+) -> int:
+    text = " ".join([compact_whitespace(current_input), compact_whitespace(recent_context), " ".join(rime_candidates)])
+    # Chinese IME prompts are short; chars/2 is a stable redacted estimate for gates.
+    return max(1, int(len(text) / 2) + 24)
+
+
+def _estimate_output_tokens(raw_text: Any, candidates: Any) -> int:
+    if isinstance(raw_text, str) and raw_text:
+        return max(1, int(len(compact_whitespace(raw_text)) / 2))
+    if isinstance(candidates, list):
+        text = " ".join(str(item) for item in candidates)
+        return max(0, int(len(compact_whitespace(text)) / 2))
+    return 0
+
+
 def _request_metadata_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key in (
+        "requestId",
+        "sessionId",
+        "panelSessionId",
+        "inputGeneration",
+        "requestSeq",
+        "profileId",
+        "createdAtMs",
         "currentInputFingerprint",
         "contextFingerprint",
         "contextChars",

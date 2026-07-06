@@ -15,6 +15,15 @@ class LatestWinsLaneSchedulerTests(unittest.TestCase):
         self.assertTrue(scheduler.is_latest(second))
         self.assertNotEqual(first.serial, second.serial)
 
+    def test_follow_up_with_same_context_reuses_active_token(self) -> None:
+        scheduler = LatestWinsLaneScheduler()
+        first = scheduler.begin(_token(input_generation=1, apply_anchor="apply-a"))
+        follow_up = scheduler.begin(_token(input_generation=2, apply_anchor="apply-a"))
+
+        self.assertEqual(first, follow_up)
+        self.assertTrue(scheduler.is_latest(first))
+        self.assertTrue(scheduler.is_latest(follow_up))
+
     def test_other_panel_does_not_supersede_current_panel(self) -> None:
         scheduler = LatestWinsLaneScheduler()
         first = scheduler.begin(_token(panel_session_id="panel-a", input_generation=1))

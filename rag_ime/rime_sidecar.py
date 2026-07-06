@@ -108,14 +108,17 @@ _SHELL_COMMAND_PREFIXES = _RAW_COMMIT_ASCII_TERMS | {
     "tail",
 }
 _RAG_LANE_SEMAPHORE = BoundedSemaphore(1)
-_MODEL_LANE_SEMAPHORE = BoundedSemaphore(1)
 _REALTIME_MODEL_CONTEXT_BUDGET_MS = 500
 _MODEL_HOLDOVER_TTL_MS = 5000
+_MODEL_LANE_LEASE_TTL_MS = 3000
 _PROGRESSIVE_FIRST_RESPONSE_MS = 700
 _PROGRESSIVE_FOLLOW_UP_RETRY_MS = 280
 _POST_COMMIT_PANEL_TTL_MS = 8000
 _PREFIX_CONSTRAINED_PANEL_TTL_MS = 2600
 _REFRESH_DEBOUNCE_MS = 100
+_MODEL_LANE_LOCK = RLock()
+_MODEL_LANE_ACTIVE_TOKEN: str | None = None
+_MODEL_LANE_ACTIVE_STARTED_AT = 0.0
 _MODEL_HOLDOVER_LOCK = RLock()
 _MODEL_HOLDOVERS: dict[tuple[str, str], "_ModelPredictionHoldover"] = {}
 _PREDICTION_MANAGER_LOCK = RLock()
@@ -568,6 +571,7 @@ def build_rime_sidecar_response(
                     "expiresAfterMs": _POST_COMMIT_PANEL_TTL_MS,
                 }
             )
+            key_policy = key_policy_for_prediction_session(prediction_session_payload)
     ui_mode = ui_mode_for_response(
         input_mode=response_input_mode.value,
         display_candidates=display_candidates,
@@ -821,6 +825,7 @@ def run_side_lanes_with_latency_budget(
     rag_result: dict[str, object] = {}
     model_result: dict[str, object] = {}
     rag_budget_ms = _rag_lane_budget_for_request(latency_budget_ms)
+    model_budget_ms = _model_lane_budget_for_request(latency_budget_ms, snapshot=snapshot)
     request_type = model_request_type_for_snapshot(snapshot)
     model_candidate_limit = realtime_model_candidate_limit(max_candidates)
     rime_candidate_count = len(
@@ -836,6 +841,8 @@ def run_side_lanes_with_latency_budget(
         prefix = stable_short_pinyin_prefix(snapshot)
         if prefix:
             model_current_input = prefix
+    elif _is_post_commit_prediction_snapshot(snapshot):
+        model_current_input = ""
     lane_token = _SIDE_LANE_SCHEDULER.begin(_side_lane_request_token(snapshot, current_input, query_basis))
 
     def run_rag() -> None:
@@ -871,7 +878,7 @@ def run_side_lanes_with_latency_budget(
             model_result["lane"] = _stale_lane_status(
                 lane="model",
                 reason="superseded_before_model",
-                budget_ms=latency_budget_ms,
+                budget_ms=model_budget_ms,
                 token=lane_token,
                 request_type=request_type,
                 rime_candidate_count=rime_candidate_count,
@@ -888,7 +895,7 @@ def run_side_lanes_with_latency_budget(
                         called=False,
                         timed_out=False,
                         skipped_reason=str(exc),
-                        budget_ms=latency_budget_ms,
+                        budget_ms=model_budget_ms,
                         request_type=request_type,
                         rime_candidate_count=rime_candidate_count,
                         requested_max_candidates=model_candidate_limit,
@@ -907,7 +914,7 @@ def run_side_lanes_with_latency_budget(
                     called=False,
                     timed_out=False,
                     skipped_reason=str(exc),
-                    budget_ms=latency_budget_ms,
+                    budget_ms=model_budget_ms,
                     request_type=request_type,
                     rime_candidate_count=rime_candidate_count,
                     requested_max_candidates=model_candidate_limit,
@@ -922,7 +929,7 @@ def run_side_lanes_with_latency_budget(
             explicit_recent_context=explicit_recent_context,
             project=project,
             max_candidates=model_candidate_limit,
-            latency_budget_ms=latency_budget_ms,
+            latency_budget_ms=model_budget_ms,
         )
         if not _SIDE_LANE_SCHEDULER.is_latest(lane_token):
             predictions = []
@@ -967,16 +974,17 @@ def run_side_lanes_with_latency_budget(
         suggestions = []
     rag_lane = rag_result.get("lane")
     rag_pending = rag_thread.is_alive()
+    post_commit_prediction = _is_post_commit_prediction_snapshot(snapshot)
     if not isinstance(rag_lane, dict):
         rag_lane = _rag_lane_status(
             called=True,
-            timed_out=not (progressive_partial and rag_pending),
+            timed_out=not ((progressive_partial or post_commit_prediction) and rag_pending),
             skipped_reason="RAG lane pending after progressive first response"
             if progressive_partial and rag_pending
             else "RAG dispatch exceeded latency budget",
             budget_ms=rag_budget_ms,
         )
-        if progressive_partial and rag_pending:
+        if (progressive_partial or post_commit_prediction) and rag_pending:
             rag_lane["pending"] = True
     if recent_context_candidate_fallback_enabled():
         recent_fallback = recent_context_memory_suggestions(
@@ -1002,16 +1010,16 @@ def run_side_lanes_with_latency_budget(
         predictions = []
         model_lane = _model_lane_status(
             called=True,
-            timed_out=not (progressive_partial and model_pending),
+            timed_out=not ((progressive_partial or post_commit_prediction) and model_pending),
             skipped_reason="model lane pending after progressive first response"
             if progressive_partial and model_pending
             else "model dispatch exceeded latency budget",
-            budget_ms=max(0, int(latency_budget_ms)),
+            budget_ms=model_budget_ms,
             request_type=request_type,
             rime_candidate_count=rime_candidate_count,
             requested_max_candidates=model_candidate_limit,
         )
-        if progressive_partial and model_pending:
+        if (progressive_partial or post_commit_prediction) and model_pending:
             model_lane["pending"] = True
 
     if isinstance(model_lane, dict):
@@ -1032,6 +1040,19 @@ def run_side_lanes_with_latency_budget(
 def _rag_lane_budget_for_request(latency_budget_ms: int) -> int:
     budget = max(0, int(latency_budget_ms))
     return budget
+
+
+def _model_lane_budget_for_request(latency_budget_ms: int, *, snapshot: RimeContextSnapshot) -> int:
+    budget = max(0, int(latency_budget_ms))
+    if not _is_post_commit_prediction_snapshot(snapshot):
+        return budget
+    configured = _bounded_int(
+        os.environ.get("RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"),
+        default=4500,
+        minimum=300,
+        maximum=12000,
+    )
+    return max(budget, configured)
 
 
 def prediction_status_rows_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -1272,6 +1293,8 @@ def _has_progressive_visible_lane_result(
     semantic_query: str = "",
     query_basis: str = "",
 ) -> bool:
+    if _is_post_commit_prediction_snapshot(snapshot):
+        return True
     suggestions = rag_result.get("suggestions")
     if isinstance(suggestions, list) and suggestions:
         visible_suggestions = _filter_rag_suggestions_for_query(
@@ -1302,6 +1325,7 @@ def _progressive_pending_lanes(*, rag_lane: Mapping[str, object], model_lane: Ma
         and (
             "model lane already running" in model_reason
             or "model lane pending" in model_reason
+            or "model dispatch exceeded latency budget" in model_reason
             or "model lane exceeded latency budget" in model_reason
         )
     ):
@@ -1336,6 +1360,52 @@ def realtime_model_candidate_limit(max_candidates: int) -> int:
         maximum=10,
     )
     return min(max(0, int(max_candidates)), configured)
+
+
+def _model_lane_lease_ttl_ms() -> int:
+    return _bounded_int(
+        os.environ.get("RAG_IME_MODEL_LANE_LEASE_TTL_MS"),
+        default=_MODEL_LANE_LEASE_TTL_MS,
+        minimum=250,
+        maximum=30000,
+    )
+
+
+def _try_acquire_model_lane() -> str | None:
+    global _MODEL_LANE_ACTIVE_STARTED_AT, _MODEL_LANE_ACTIVE_TOKEN
+    now = time.monotonic()
+    with _MODEL_LANE_LOCK:
+        active_token = _MODEL_LANE_ACTIVE_TOKEN
+        if active_token is not None:
+            age_ms = int((now - _MODEL_LANE_ACTIVE_STARTED_AT) * 1000)
+            if age_ms < _model_lane_lease_ttl_ms():
+                return None
+        token = f"{now:.9f}:{id(object())}"
+        _MODEL_LANE_ACTIVE_TOKEN = token
+        _MODEL_LANE_ACTIVE_STARTED_AT = now
+        return token
+
+
+def _release_model_lane(token: str) -> None:
+    global _MODEL_LANE_ACTIVE_STARTED_AT, _MODEL_LANE_ACTIVE_TOKEN
+    with _MODEL_LANE_LOCK:
+        if _MODEL_LANE_ACTIVE_TOKEN != token:
+            return
+        _MODEL_LANE_ACTIVE_TOKEN = None
+        _MODEL_LANE_ACTIVE_STARTED_AT = 0.0
+
+
+def _model_lane_is_idle() -> bool:
+    global _MODEL_LANE_ACTIVE_STARTED_AT, _MODEL_LANE_ACTIVE_TOKEN
+    with _MODEL_LANE_LOCK:
+        if _MODEL_LANE_ACTIVE_TOKEN is None:
+            return True
+        age_ms = int((time.monotonic() - _MODEL_LANE_ACTIVE_STARTED_AT) * 1000)
+        if age_ms < _model_lane_lease_ttl_ms():
+            return False
+        _MODEL_LANE_ACTIVE_TOKEN = None
+        _MODEL_LANE_ACTIVE_STARTED_AT = 0.0
+        return True
 
 
 def recent_context_memory_suggestions(
@@ -1730,12 +1800,15 @@ def _post_commit_model_prediction_echoes_context(candidate: str, committed_conte
         return False
     if len(surface) >= 3 and surface in context:
         return True
-    candidate_chars = re.findall(r"[\u3400-\u9fff]", surface)
-    context_chars = set(re.findall(r"[\u3400-\u9fff]", context))
-    if len(candidate_chars) < 4 or not context_chars:
-        return False
-    covered = sum(1 for char in candidate_chars if char in context_chars)
-    return covered / max(1, len(candidate_chars)) >= 0.65
+    if len(context) >= 3 and context in surface:
+        return True
+    compact_surface = "".join(surface.split())
+    compact_context = "".join(context.split())
+    if len(compact_surface) <= 12 and compact_surface and compact_context:
+        overlap = sum(1 for char in compact_surface if char in compact_context)
+        if overlap / max(len(compact_surface), 1) >= 0.7:
+            return True
+    return False
 
 
 def _post_commit_rag_candidate_has_strong_signal(
@@ -2032,7 +2105,27 @@ def predict_model_with_latency_budget(
             request_type=request_type,
             rime_candidate_count=len(rime_candidate_texts),
         )
-    if not _MODEL_LANE_SEMAPHORE.acquire(blocking=False):
+    if _is_post_commit_prediction_snapshot(snapshot):
+        holdover_predictions = _get_model_holdover_predictions(
+            project=project,
+            current_input=current_input,
+            explicit_recent_context=explicit_recent_context,
+            max_candidates=max_candidates,
+        )
+        if holdover_predictions:
+            return holdover_predictions, _model_lane_status(
+                called=False,
+                timed_out=False,
+                skipped_reason="holdover prediction cache hit",
+                budget_ms=budget_ms,
+                elapsed_ms=0,
+                prediction_count=len(holdover_predictions),
+                holdover_hit=True,
+                request_type=request_type,
+                rime_candidate_count=len(rime_candidate_texts),
+            )
+    lane_token = _try_acquire_model_lane()
+    if lane_token is None:
         return [], _model_lane_status(
             called=False,
             timed_out=False,
@@ -2128,7 +2221,7 @@ def predict_model_with_latency_budget(
         finally:
             result["elapsedMs"] = int((time.perf_counter() - started) * 1000)
             done.set()
-            _MODEL_LANE_SEMAPHORE.release()
+            _release_model_lane(lane_token)
 
     Thread(target=run_prediction, name="rag-ime-model-lane", daemon=True).start()
     if not done.wait(timeout=budget_ms / 1000):
@@ -2492,8 +2585,12 @@ def _model_lane_status(
 
 
 def clear_model_prediction_holdover_cache() -> None:
+    global _MODEL_LANE_ACTIVE_STARTED_AT, _MODEL_LANE_ACTIVE_TOKEN
     with _MODEL_HOLDOVER_LOCK:
         _MODEL_HOLDOVERS.clear()
+    with _MODEL_LANE_LOCK:
+        _MODEL_LANE_ACTIVE_TOKEN = None
+        _MODEL_LANE_ACTIVE_STARTED_AT = 0.0
 
 
 def clear_prediction_manager_cache() -> None:
@@ -2510,8 +2607,7 @@ def clear_refresh_debounce_cache() -> None:
 def wait_for_model_prediction_lane_idle(timeout_s: float = 1.0) -> bool:
     deadline = time.monotonic() + max(0.0, timeout_s)
     while time.monotonic() <= deadline:
-        if _MODEL_LANE_SEMAPHORE.acquire(blocking=False):
-            _MODEL_LANE_SEMAPHORE.release()
+        if _model_lane_is_idle():
             return True
         time.sleep(0.005)
     return False
@@ -3438,7 +3534,7 @@ def merge_display_candidates(
                     selection_action="commit_side_candidate",
                     source_index=prediction.rank - 1,
                     comment=prediction.provider_name,
-                    display_layout="inline",
+                    display_layout="block",
                     display_lane="model",
                     metadata={
                         "providerName": prediction.provider_name,
@@ -3667,7 +3763,7 @@ def _is_ascii_text_input(raw: str) -> bool:
 def max_model_side_candidates(side_budget: int) -> int:
     if side_budget <= 0:
         return 0
-    return min(2, side_budget)
+    return min(3, side_budget)
 
 
 def _display_max_model_side_candidates(side_budget: int, *, has_suggestions: bool) -> int:

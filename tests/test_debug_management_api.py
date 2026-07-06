@@ -10,6 +10,7 @@ from unittest.mock import patch
 from urllib.request import Request, urlopen
 
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
+from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trace
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_ingest import normalize_text, upsert_memory_item
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
@@ -70,6 +71,53 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("sourceType", first)
         self.assertIn("score", first)
         self.assertIn("reason", first)
+
+    def test_predictor_status_reports_cache_capabilities(self) -> None:
+        status = self.service.predictor_status()
+
+        self.assertTrue(status["ok"])
+        self.assertIn("predictor", status)
+        self.assertIn("capabilities", status["predictor"])
+
+    def test_predictor_latency_api_redacts_prompt_text(self) -> None:
+        trace_path = Path(self.tmp.name) / "predictor-latency.jsonl"
+        append_latency_trace(
+            {
+                "requestId": "req-1",
+                "requestType": "ime_hot",
+                "firstCandidateMs": 12,
+                "totalMs": 18,
+                "prompt": "secret prompt",
+                "rawText": "secret raw",
+            },
+            path=trace_path,
+        )
+
+        report = self.service.predictor_latency({"log": str(trace_path), "last": 5})
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["count"], 1)
+        self.assertEqual(report["summary"]["firstCandidateMs"]["p50Ms"], 12)
+
+    def test_predictor_benchmark_runs_as_job(self) -> None:
+        report = self.service.predictor_benchmark(
+            {
+                "cases": "docs/eval/predictor_latency_cases.jsonl",
+                "profile": "qwen3_06b_ime_hot",
+                "repeat": 1,
+            }
+        )
+
+        self.assertEqual(report["schemaVersion"], "rag-ime.predictor-benchmark.v1")
+        self.assertGreaterEqual(report["sampleCount"], 1)
+
+    def test_clear_cache_requires_confirm_text(self) -> None:
+        denied = self.service.predictor_cache_clear({"confirmText": "wrong"})
+        allowed = self.service.predictor_cache_clear({"confirmText": "CLEAR PREDICTOR CACHE"})
+
+        self.assertFalse(denied["ok"])
+        self.assertTrue(allowed["ok"])
+        self.assertFalse(allowed["cleared"])
 
     def test_history_endpoint_redacts_raw_text_by_default_and_tombstone_audits(self) -> None:
         self.core.record_event(
@@ -437,6 +485,10 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("managementExportButton", index_html)
         self.assertIn("function exportManagementLexicon", app_js)
         self.assertIn("/api/lexicon/export-rime", app_js)
+        self.assertIn('data-view="predictor"', index_html)
+        self.assertIn("/api/predictor/status", app_js)
+        self.assertIn("/api/predictor/benchmark", app_js)
+        self.assertIn('state.managementView !== "predictor"', app_js)
         self.assertIn("state.managementView !== \"lexicon\"", app_js)
 
     def _upsert_item(self, *, memory_id: str, kind: str, text: str, status: str = "pending") -> None:

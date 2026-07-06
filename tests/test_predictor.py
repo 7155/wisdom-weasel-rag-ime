@@ -848,6 +848,8 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(status["timeoutMs"], 350)
         self.assertIn("chat_template_kwargs", status["extraBodyKeys"])
         self.assertIn("seed", status["extraBodyKeys"])
+        self.assertEqual(status["modelProfile"]["id"], "qwen3_06b_ime_hot")
+        self.assertEqual(status["modelProfile"]["lane"], "hot")
         self.assertFalse(status["capabilities"]["streaming"])
         self.assertTrue(status["cooldown"]["enabled"])
 

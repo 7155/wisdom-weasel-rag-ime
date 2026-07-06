@@ -65,6 +65,14 @@ class _FakeMlxEngine:
         yield ',"输入法候选"]'
 
 
+class _BrokenPipeWriter:
+    def write(self, _data: bytes) -> int:
+        raise BrokenPipeError("client closed")
+
+    def flush(self) -> None:
+        raise AssertionError("flush should not run after a broken write")
+
+
 class MlxPredictorServerTests(unittest.TestCase):
     def test_normalized_request_keeps_prediction_request_type_and_rime_candidates(self) -> None:
         request = _normalize_prediction_request(
@@ -184,6 +192,9 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertFalse(payload["timing"]["fallbackJson"])
         self.assertEqual(payload["candidateScores"][0]["text"], "输入法候选")
         self.assertIn("probability", payload["candidateScores"][0])
+        self.assertIn("latencyTrace", payload)
+        self.assertEqual(payload["latencyTrace"]["requestType"], "generic_prediction")
+        self.assertEqual(payload["latencyTrace"]["candidateCount"], 3)
 
     def test_engine_json_fallback_candidateizes_sentence_output(self) -> None:
         modules, _calls = _fake_mlx_modules(generated_text="我想设计一个候选展示方式，并补充来源诊断。")
@@ -259,8 +270,27 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["seed:优化", "seed:补齐", "seed:重建"])
         self.assertEqual([item["seedTokenId"] for item in payload["timing"]["branches"]], [1000, 1001, 1002])
         self.assertEqual([item["branchRank"] for item in payload["timing"]["branches"]], [1, 2, 3])
+        self.assertFalse(payload["timing"]["kvFork"])
+        self.assertFalse(payload["timing"]["sequenceFork"])
+        self.assertEqual(payload["timing"]["fallbackReason"], "cache_clone_unsupported")
+        self.assertEqual(payload["timing"]["seedReplayReason"], "top_logits_seed_replay")
+        self.assertEqual([item["fallbackReason"] for item in payload["timing"]["branches"]], [
+            "cache_clone_unsupported",
+            "cache_clone_unsupported",
+            "cache_clone_unsupported",
+        ])
         self.assertEqual(calls["sampler_calls"], 3)
         self.assertIn("种子候选", calls["prompts"][1])
+
+    def test_engine_health_exposes_selected_model_profile(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text='["质量候选"]')
+        with patch.dict(sys.modules, modules):
+            health = MlxLmEngine("fake-qwen", profile_id="qwen3_17b_ime_quality").health()
+
+        self.assertEqual(health["modelProfile"]["id"], "qwen3_17b_ime_quality")
+        self.assertEqual(health["modelProfile"]["lane"], "quality")
+        self.assertTrue(health["modelProfile"]["appendOnly"])
+        self.assertFalse(health["modelProfile"]["resident"])
 
     def test_seeded_prompt_replay_explores_top_three_even_when_display_limit_is_one(self) -> None:
         modules, calls = _fake_mlx_modules(
@@ -371,7 +401,7 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(calls["sampler_calls"], 2)
         self.assertIn("候选之间用单个空格分隔", calls["prompts"][1])
         self.assertIn("光标后内容:", calls["prompts"][-1])
-        self.assertNotIn("请求类型:", calls["prompts"][-1])
+        self.assertIn("请求类型: no_input_prediction", calls["prompts"][-1])
 
     def test_no_input_lead_branch_splits_bad_prefixed_model_sentence(self) -> None:
         candidates = _branch_continuation_candidates(
@@ -801,7 +831,7 @@ class MlxPredictorServerTests(unittest.TestCase):
                 {
                     "model": "fake-mlx-qwen",
                     "currentInput": "RAG 输入法",
-                    "recentContext": "本地记忆",
+                    "recentContext": "调试上下文",
                     "maxCandidates": 2,
                     "maxTokens": 8,
                     "stream": True,
@@ -825,13 +855,24 @@ class MlxPredictorServerTests(unittest.TestCase):
             _stop_server(server, thread)
 
         self.assertEqual(events[0]["delta"], '["本地记忆"')
+        candidate_events = [item for item in events if item.get("event") == "candidate_delta"]
+        self.assertGreaterEqual(len(candidate_events), 1)
+        self.assertEqual(candidate_events[0]["candidate"], "本地记忆")
         self.assertTrue(events[-1]["done"])
         self.assertEqual(events[-1]["candidates"], ["本地记忆", "输入法候选"])
+        self.assertIn("latencyTrace", events[-1])
         self.assertEqual(events[-1]["requestType"], "pinyin_constrained_prediction")
         self.assertTrue(events[-1]["promptCache"]["prepared"])
         self.assertFalse(events[-1]["promptCache"]["usedForGeneration"])
         self.assertEqual(events[-1]["requestMeta"]["contextFingerprint"], "ctx123456789abcd")
         self.assertEqual(events[-1]["requestMeta"]["stablePrefixHash"], "prefix123456789")
+
+    def test_predict_stream_write_stops_cleanly_when_client_closes(self) -> None:
+        handler_cls = make_mlx_predictor_handler(_FakeMlxEngine())
+        handler = handler_cls.__new__(handler_cls)
+        handler.wfile = _BrokenPipeWriter()
+
+        self.assertFalse(handler._write_json_line({"delta": "本地"}))
 
 
 def _start_fake_server():

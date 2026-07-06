@@ -676,7 +676,7 @@ def _side_display_item(
         suggestion_id=candidate.suggestion_id,
         memory_id=candidate.memory_id,
         source_event_id=candidate.source_event_id,
-        display_layout="block" if candidate.source_type in {"rag", "memory"} else "inline",
+        display_layout="block" if candidate.source_type in {"model", "rag", "memory"} else "inline",
         display_lane="memory" if candidate.source_type in {"rag", "memory"} else "model",
         metadata=metadata,
     )

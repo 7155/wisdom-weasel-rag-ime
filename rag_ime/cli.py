@@ -75,6 +75,12 @@ from .predictor import (
     prediction_provider_from_env,
     prediction_provider_status,
 )
+from .predictor_benchmark import (
+    benchmark_predictor_latency,
+    load_predictor_latency_cases,
+    write_predictor_benchmark_report,
+)
+from .predictor_latency import latency_log_path_from_env, latency_report
 from .renderer import render_agent_injection, render_terminal_panel
 from .retrieval_docs import rebuild_retrieval_docs
 from .reranker import rerank_candidate_dicts
@@ -612,6 +618,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     predict_benchmark.add_argument("--max-candidates", type=int, default=3)
     predict_benchmark.add_argument("--latency-budget-ms", type=int, default=150)
 
+    benchmark_predictor = subparsers.add_parser(
+        "benchmark-predictor",
+        help="Run the IME model inference acceleration benchmark and write a gate report",
+    )
+    benchmark_predictor.add_argument("--profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "qwen3_06b_ime_hot"))
+    benchmark_predictor.add_argument("--cases", default="docs/eval/predictor_latency_cases.jsonl")
+    benchmark_predictor.add_argument("--repeat", type=int, default=20)
+    benchmark_predictor.add_argument("--max-candidates", type=int, default=3)
+    benchmark_predictor.add_argument("--report", default="/tmp/rag-ime-predictor-bench.json")
+
+    latency_report_parser = subparsers.add_parser(
+        "predictor-latency-report",
+        help="Summarize redacted predictor latency JSONL traces",
+    )
+    latency_report_parser.add_argument("--log", default="")
+    latency_report_parser.add_argument("--last", type=int, default=200)
+
     predictor_ttft = subparsers.add_parser(
         "predictor-ttft",
         help="Measure streaming first-chunk latency for the local model lane",
@@ -1000,6 +1023,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     mlx_predictor_server.add_argument("--host", default=os.environ.get("RAG_IME_MLX_HOST", "127.0.0.1"))
     mlx_predictor_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_MLX_PORT", "8767")))
     mlx_predictor_server.add_argument("--model", default=os.environ.get("RAG_IME_MLX_MODEL", ""))
+    mlx_predictor_server.add_argument(
+        "--profile",
+        default=os.environ.get(
+            "RAG_IME_MLX_PROFILE",
+            os.environ.get("RAG_IME_PREDICTOR_PROFILE", "qwen3_06b_ime_hot"),
+        ),
+        help="Model profile id for the resident inference lane.",
+    )
     mlx_predictor_server.add_argument("--max-tokens", type=int, default=int(os.environ.get("RAG_IME_MLX_MAX_TOKENS", "8")))
     mlx_predictor_server.add_argument("--temperature", type=float, default=float(os.environ.get("RAG_IME_MLX_TEMPERATURE", "0.15")))
     mlx_predictor_server.add_argument("--top-p", type=float, default=float(os.environ.get("RAG_IME_MLX_TOP_P", "0.85")))
@@ -1028,6 +1059,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 host=args.host,
                 port=args.port,
                 model=args.model,
+                profile_id=args.profile,
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
                 top_p=args.top_p,
@@ -2213,6 +2245,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+
+    if args.command == "benchmark-predictor":
+        cases = load_predictor_latency_cases(Path(args.cases))
+        report = benchmark_predictor_latency(
+            predictor,
+            cases,
+            profile=args.profile,
+            repeat=max(1, args.repeat),
+            max_candidates=max(1, args.max_candidates),
+        )
+        write_predictor_benchmark_report(report, Path(args.report))
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if bool(report.get("gatePassed")) else 1
+
+    if args.command == "predictor-latency-report":
+        log_path = Path(args.log).expanduser() if args.log else latency_log_path_from_env()
+        print(json.dumps(latency_report(log_path, last=max(1, args.last)), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "predictor-status":

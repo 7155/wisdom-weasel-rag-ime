@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .models import ModelPrediction
+from .model_profiles import profile_by_id
 from .pinyin_index import build_pinyin_metadata
 from .text_utils import compact_whitespace
 
@@ -23,6 +24,10 @@ PREDICTION_REQUEST_NO_INPUT = "no_input_prediction"
 PREDICTION_REQUEST_PINYIN_CONSTRAINED = "pinyin_constrained_prediction"
 PREDICTION_REQUEST_RIME_REORDER = "rime_reorder"
 PREDICTION_REQUEST_GENERIC = "generic_prediction"
+PREDICTION_REQUEST_IME_HOT = "ime_hot"
+PREDICTION_REQUEST_IME_POST_COMMIT = "ime_post_commit"
+PREDICTION_REQUEST_IME_QUALITY = "ime_quality"
+PREDICTION_REQUEST_ACTIVE_RAG = "active_rag"
 
 OPENAI_CHAT_SYSTEM_PROMPT = (
     "你是一个本地中文输入法预测器。只输出候选词或短语, "
@@ -183,6 +188,16 @@ class MlxPredictionConfig:
     extra_body: dict[str, Any] | None = None
     extra_headers: dict[str, str] | None = None
     stream_first_candidate: bool = False
+
+
+@dataclass(frozen=True)
+class PromptBudget:
+    context_tail_chars: int = 96
+    max_rime_candidates: int = 5
+    max_rag_hints: int = 6
+    max_memory_hints: int = 6
+    max_negative_terms: int = 12
+    max_prompt_tokens: int = 160
 
 
 @dataclass(frozen=True)
@@ -682,6 +697,7 @@ class MlxPredictionServiceProvider:
                     "candidate_scores": payload.get("candidateScores", []),
                     "prompt_cache": payload.get("promptCache", {}),
                     "server_timing": payload.get("timing", {}),
+                    "latency_trace": payload.get("latencyTrace", {}),
                     "request_type": str(payload.get("requestType") or resolved_request_type),
                     "rime_candidates": list(rime_candidate_tuple),
                     "requestMeta": request_meta,
@@ -1066,6 +1082,7 @@ def prediction_provider_status(provider: PredictionProvider, *, probe_capabiliti
         "extraHeaderKeys": sorted(str(key) for key in extra_headers.keys()) if isinstance(extra_headers, dict) else [],
         "streamFirstCandidate": bool(getattr(config, "stream_first_candidate", False)),
     }
+    status["modelProfile"] = profile_by_id(str(status["providerProfile"])).to_payload()
     status["capabilities"] = _prediction_provider_capabilities(str(status["providerName"]))
     if probe_capabilities:
         capability_probe = getattr(provider, "capability_probe", None)
@@ -1482,6 +1499,14 @@ def _measure_mlx_stream_ttft(
                 if not raw_line.strip():
                     continue
                 payload = json.loads(raw_line.decode("utf-8"))
+                if payload.get("event") == "candidate_delta" and isinstance(payload.get("candidate"), str):
+                    candidate = compact_whitespace(str(payload.get("candidate") or ""))
+                    if candidate and candidate not in final_candidates:
+                        final_candidates.append(candidate)
+                    if final_candidates and first_candidate_ms is None:
+                        first_candidate_ms = int(payload.get("elapsedMs") or (time.perf_counter() - started) * 1000)
+                        if stop_after_first_candidate:
+                            break
                 text = _mlx_stream_text_delta(payload)
                 if text:
                     full_text += text
@@ -2523,6 +2548,8 @@ def _mlx_predict_body(
         "topP": float(getattr(config, "top_p", 0.85)),
         "stream": stream,
         "profile": str(getattr(config, "profile", "custom")),
+        "profileId": str(getattr(config, "profile", "custom")),
+        "requestId": _short_hash(f"{time.time_ns()}:{query}:{context}:{resolved_request_type}"),
         **_prediction_request_metadata(
             context=context,
             query=query,
@@ -2583,6 +2610,10 @@ def normalize_prediction_request_type(value: object) -> str:
         PREDICTION_REQUEST_NO_INPUT,
         PREDICTION_REQUEST_PINYIN_CONSTRAINED,
         PREDICTION_REQUEST_RIME_REORDER,
+        PREDICTION_REQUEST_IME_HOT,
+        PREDICTION_REQUEST_IME_POST_COMMIT,
+        PREDICTION_REQUEST_IME_QUALITY,
+        PREDICTION_REQUEST_ACTIVE_RAG,
     }:
         return text
     return PREDICTION_REQUEST_GENERIC
@@ -2707,19 +2738,52 @@ def _normalized_predictor_profile(profile: str) -> str:
         "qwen-instant": "instant",
         "no-thinking": "instant",
         "nothinking": "instant",
+        "hot": "ime_hot",
+        "qwen3_06b_ime_hot": "ime_hot",
+        "post-commit": "ime_post_commit",
+        "post_commit": "ime_post_commit",
+        "main": "ime_post_commit",
+        "quality": "ime_quality",
         "base": "completion-instant",
         "prefix": "completion-instant",
         "completion": "completion-instant",
         "base-instant": "completion-instant",
     }
     normalized = aliases.get(normalized, normalized)
-    if normalized in {"custom", "instant", "completion-instant"}:
+    if normalized in {"custom", "instant", "completion-instant", "ime_hot", "ime_post_commit", "ime_quality"}:
         return normalized
     return "custom"
 
 
 def _prediction_profile_defaults(profile: str) -> PredictionProfileDefaults:
     normalized = _normalized_predictor_profile(profile)
+    if normalized == "ime_hot":
+        return PredictionProfileDefaults(
+            prompt_mode="mlx-service",
+            timeout_ms=500,
+            max_tokens=32,
+            temperature=0.10,
+            top_p=0.8,
+            disable_thinking=True,
+        )
+    if normalized == "ime_post_commit":
+        return PredictionProfileDefaults(
+            prompt_mode="mlx-service",
+            timeout_ms=900,
+            max_tokens=48,
+            temperature=0.15,
+            top_p=0.85,
+            disable_thinking=True,
+        )
+    if normalized == "ime_quality":
+        return PredictionProfileDefaults(
+            prompt_mode="mlx-service",
+            timeout_ms=1800,
+            max_tokens=64,
+            temperature=0.18,
+            top_p=0.85,
+            disable_thinking=True,
+        )
     if normalized == "instant":
         return PredictionProfileDefaults(
             prompt_mode="chat",

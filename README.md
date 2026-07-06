@@ -1,105 +1,125 @@
-# Wisdom-Weasel RAG IME
+# RAG IME
 
-Local-first RAG input method prototype inspired by
-`Felix3322/Wisdom-Weasel`, with Rime/Squirrel as the real IME base, a local
-small-model prediction lane, and local memory/RAG candidates.
+Experimental local-first RAG input method for macOS, built around Rime/Squirrel,
+local model prediction, and local memory retrieval.
 
-This repo is not a fork of Wisdom-Weasel. Wisdom-Weasel is the main reference
-for prediction flow, candidate lifecycle, and UI behavior.
+## Status
 
-## Start Here
+This repository is an active prototype. It is suitable for code review,
+experimentation, and local development, but it is not a packaged production IME
+release yet.
 
-- `AGENTS.md`: concise instructions for AI/code agents reviewing this public repo.
-- `docs/project-status.md`: product goal, user requirements, current state, and next priorities.
-- `docs/design-decisions.md`: architecture decisions and boundaries.
-- `docs/runtime-and-debug.md`: commands for local run, install, checks, and evaluation.
-- `squirrel-patches/README.md`: patch-pack details for the Squirrel frontend.
-- `docs/eval/*.jsonl`: small regression/evaluation cases.
+The product route is not the independent native `RagImeMac` app. The product
+route is the macOS Rime/Squirrel candidate-layer adapter plus the local sidecar.
+`macos/RagImeMac/` is a native InputMethodKit debug harness for bridge and panel
+experiments.
 
-For a Pro model or external reviewer, read `AGENTS.md` first, then
-`docs/project-status.md`, then `docs/runtime-and-debug.md`. The current public
-branch is `codex/wisdom-weasel-rag-ime-mvp`.
-
-## Product Goal
-
-Build an input method where normal typing still feels like a mature Rime/Wanxiang
-IME, while extra candidates come from:
-
-- local LLM prediction;
-- local RAG / long-term memory;
-- normal Rime dictionary candidates.
-
-The three sources must be visually distinct. LLM candidates should appear as a
-compact prediction row, RAG/memory as evidence-backed longer candidates, and
-Rime candidates as the stable fallback dictionary layer.
-
-## Current Boundary
-
-The product route is not the independent native `RagImeMac` app. It is the
-macOS Rime/Squirrel candidate-layer adapter plus a local sidecar. The
-`macos/RagImeMac` app is the native InputMethodKit debug harness, used only for
-bridge, panel rendering, and JSON contract checks.
-
-Cloud APIs are not used for realtime prediction. The high-intelligence
-`x1top` GPT-series lane, currently wired through `x1api.top`-compatible
-settings, is reserved for offline memory/RAG/database/lexicon distillation,
-not for per-keystroke completion.
-Realtime prediction should come from a local small model with a loopback
-predictor URL, leaving room for KV-cache and native inference optimization.
-
-## Current Runtime Shape
+The current product path is:
 
 ```text
-macOS Squirrel / Rime
-  -> Rime schema, pinyin parsing, dictionary candidates
-  -> patched Squirrel sends structured context to sidecar
-  -> local sidecar merges local model + RAG/memory + Rime candidates
-  -> candidate panel shows source colors and labels
-  -> number keys select side candidates instead of literal numbers
-  -> selection feedback updates local memory/frequency state
+Squirrel / Rime frontend
+  -> sidecar request with structured input context
+  -> local model prediction
+  -> local RAG and memory retrieval
+  -> merged candidate list with source metadata
+  -> side-candidate selection feedback
 ```
 
-## Implemented
+## Features
 
-- Local SQLite/FTS5 memory core and suggestion compiler.
-- Committed-input event recording and bounded recent history context.
-- Prediction-first merge logic for model, RAG/memory, and Rime candidates.
-- HTTP sidecar endpoints for `/rime-suggest`, `/rime-select`, health, and debug checks.
-- Local predictor clients, including Ollama/OpenAI-compatible baselines and resident MLX service.
-- Memory/RAG optimization command intended for x1top / x1api-compatible
-  offline distillation.
-- Squirrel patch pack for sidecar integration and side-candidate selection.
-- Native macOS debug harness and AppKit candidate panel preview.
-- Sichuan fuzzy-pinyin install helper enabled by default in the Rime bootstrap path.
-- Unit tests and small JSONL evaluation cases.
+- macOS Squirrel patch pack for sidecar-backed candidates.
+- Local sidecar API for Rime context parsing, candidate merge, selection
+  feedback, and debug checks.
+- Local SQLite memory store with FTS and optional vector retrieval.
+- Local predictor clients, including a resident MLX service for Apple Silicon.
+- Source-aware candidates for dictionary, model, RAG, memory, and raw input
+  lanes.
+- Foreground trace and readiness scripts for real Squirrel integration checks.
+- Test coverage for candidate merge policy, stale-result guards, RAG governance,
+  memory cleanup, and frontend trace contracts.
 
-## Still Open
+## Repository Map
 
-- Foreground candidate UX must be tuned so LLM/RAG results appear continuously and predictably.
-- RAG results still need better dedupe and context freshness after delete/backspace.
-- Local model quality is not yet good enough; the fast path needs a stronger local model or native provider.
-- Consecutive LLM selection should immediately trigger the next prediction instead of waiting for idle refresh.
-- The final Wisdom-Weasel-style provider should support stable prompt/KV cache, multi-candidate generation, and stale-result discard.
+| Path | Purpose |
+| --- | --- |
+| `rag_ime/` | Python sidecar, local memory core, predictor clients, CLI, and debug server. |
+| `squirrel-patches/` | Patch pack that adds the sidecar lane to Squirrel. |
+| `macos/RagImeMac/` | InputMethodKit debug harness and native UI experiments. |
+| `scripts/` | Runtime install, health check, Squirrel readiness, and evaluation helpers. |
+| `tests/` | Unit and integration-style regression tests. |
+| `docs/` | Design notes, runtime guide, status, and evaluation cases. |
 
-## Basic Commands
+## Quick Start
+
+Run the test suite:
 
 ```bash
 python3 -m unittest discover -s tests
+```
+
+Initialize a local demo database:
+
+```bash
 python3 -m rag_ime.cli init-db
 python3 -m rag_ime.cli seed-demo --reset
+```
+
+Start the sidecar manually:
+
+```bash
 python3 -m rag_ime.cli sidecar-server --host 127.0.0.1 --port 8766
+```
+
+Restart the local MLX predictor and sidecar launch agents:
+
+```bash
 scripts/restart_rag_ime_runtime.sh
+```
+
+Run Squirrel readiness checks:
+
+```bash
 scripts/doctor_squirrel_integration.sh
 scripts/verify_squirrel_foreground_trace.sh
 ```
 
-More commands live in `docs/runtime-and-debug.md`.
+More operational details are in `docs/runtime-and-debug.md`.
 
-## Public Repo Notes
+## Candidate Sources
 
-- No model weights, local SQLite databases, built `.app` bundles, API keys, or
-  personal input history should be committed.
-- `x1api.top` examples are placeholders for offline memory/RAG/lexicon cleanup
-  only; the realtime predictor must stay local.
-- The repo currently has no final production license decision. Choose one before
-  inviting broad reuse beyond code review and model analysis.
+The sidecar keeps candidate sources explicit so the frontend can render and
+route them consistently.
+
+| Source | Meaning |
+| --- | --- |
+| `rime` | Normal Rime dictionary/composition candidate. |
+| `model` | Local LLM prediction candidate. |
+| `rag` | Retrieval result from local documents or history-derived memory. |
+| `memory` | Stable local memory or lexicon candidate. |
+| `raw_english` | Direct commit candidate for code-like raw input. |
+
+Realtime prediction is local by default. Cloud or OpenAI-compatible providers,
+when configured, are intended for offline memory, RAG, or lexicon maintenance
+rather than per-keystroke prediction.
+
+## References
+
+This project studies or integrates with the following open-source projects:
+
+| Project | How it is used |
+| --- | --- |
+| [Felix3322/Wisdom-Weasel](https://github.com/Felix3322/Wisdom-Weasel) | Prediction-flow and candidate-lifecycle reference. |
+| [rime/squirrel](https://github.com/rime/squirrel) | macOS Rime frontend and candidate-panel base. |
+| [rime/librime](https://github.com/rime/librime) | Rime engine for schemas, dictionaries, composition, and candidate generation. |
+| [ml-explore/mlx](https://github.com/ml-explore/mlx) | Apple Silicon runtime used by the local model service. |
+| [ml-explore/mlx-lm](https://github.com/ml-explore/mlx-lm) | Local language-model loading and generation on MLX. |
+
+## Development Notes
+
+- Do not commit model weights, built `.app` bundles, local SQLite databases,
+  personal input history, API keys, or machine-specific caches.
+- Keep normal Rime/Squirrel behavior as the fallback path. Sidecar, predictor,
+  RAG, and debug UI failures should fail closed to ordinary IME behavior.
+- Keep raw input text out of default traces unless an explicit debug flag is
+  enabled.
+- Choose and document a final license before inviting broad reuse.

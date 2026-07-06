@@ -27,6 +27,9 @@ class LatestWinsLaneScheduler:
 
     def begin(self, token: LaneRequestToken) -> LaneRequestToken:
         with self._lock:
+            latest = self._latest.get(self._key(token))
+            if latest is not None and _same_request_context(latest, token):
+                return latest
             self._serial += 1
             active = replace(token, serial=self._serial, cancelled=False)
             self._latest[self._key(active)] = active
@@ -48,3 +51,12 @@ class LatestWinsLaneScheduler:
     @staticmethod
     def _key(token: LaneRequestToken) -> tuple[str, str]:
         return (token.session_id, token.panel_session_id)
+
+
+def _same_request_context(left: LaneRequestToken, right: LaneRequestToken) -> bool:
+    return (
+        left.frontend_revision == right.frontend_revision
+        and left.apply_anchor == right.apply_anchor
+        and left.query_anchor == right.query_anchor
+        and not left.cancelled
+    )
