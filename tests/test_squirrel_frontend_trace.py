@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -53,6 +54,91 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("--require-delete-resync", result.stdout)
         self.assertIn("--require-balanced-quota", result.stdout)
         self.assertNotIn("--require-mixed-panel", result.stdout)
+
+    def test_soak_wrapper_requires_delete_resync_by_default(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "soak_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--no-open",
+                "--no-auto-type",
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertIn("require_delete_resync=1", result.stdout)
+        self.assertIn("--require-delete-resync", result.stdout)
+
+    def test_soak_wrapper_can_disable_delete_resync_for_debug(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "soak_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--no-open",
+                "--no-auto-type",
+                "--no-delete-resync",
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertIn("require_delete_resync=0", result.stdout)
+        self.assertNotIn("--require-delete-resync", result.stdout)
+
+    def test_soak_wrapper_non_dry_run_writes_delete_resync_manual_step(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-soak-wrapper-") as tmp:
+            tmp_path = Path(tmp)
+            check_script = tmp_path / "check-input-source.sh"
+            select_script = tmp_path / "select-input-source.sh"
+            open_script = tmp_path / "fake-open.sh"
+            soak_script = tmp_path / "fake-soak.py"
+            test_file = tmp_path / "foreground-soak.txt"
+            check_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            select_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            open_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            soak_script.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+            for script in (check_script, select_script, open_script, soak_script):
+                script.chmod(0o755)
+            env = dict(os.environ)
+            env.update(
+                {
+                    "RAG_IME_CHECK_INPUT_SOURCE_SCRIPT": str(check_script),
+                    "RAG_IME_SELECT_INPUT_SOURCE_SCRIPT": str(select_script),
+                    "RAG_IME_OPEN_COMMAND": str(open_script),
+                    "RAG_IME_SOAK_CHECK_SCRIPT": str(soak_script),
+                    "RAG_IME_FOREGROUND_SOAK_TEST_FILE": str(test_file),
+                }
+            )
+
+            subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "soak_squirrel_foreground_trace.sh"),
+                    "--no-auto-type",
+                    "--wait",
+                    "0",
+                ],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+            manual_text = test_file.read_text(encoding="utf-8")
+
+        self.assertIn("Press Backspace/Delete", manual_text)
+        self.assertIn("updated foreground context", manual_text)
 
     def test_foreground_trace_wrapper_dry_run_reports_gate(self) -> None:
         root = Path(__file__).resolve().parents[1]

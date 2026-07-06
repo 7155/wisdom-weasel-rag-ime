@@ -185,6 +185,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--min-post-commit-followups 30", result.stdout)
         self.assertIn("--min-chain-depth 10", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
+        self.assertIn("--require-delete-resync", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
         self.assertIn("--require-balanced-quota", result.stdout)
 

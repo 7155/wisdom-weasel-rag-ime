@@ -305,6 +305,7 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     --require-side-commit \
     --require-commit-observed \
     --require-post-commit-followup \
+    --require-delete-resync \
     --require-modern-prediction-session \
     --require-balanced-quota
 else

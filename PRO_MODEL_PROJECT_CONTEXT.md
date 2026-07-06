@@ -210,7 +210,11 @@ They also treat ordinary number-key selection, Tab top-prediction acceptance,
 and Option+number prediction selection as side-selection routes that must match
 the committed candidate fingerprint, snapshot, ordinal, anchors, and foreground
 transaction. The macOS product gate requires balanced quota and rejects flicker
-or RAG-empty panel clearing in the soak report.
+or RAG-empty panel clearing in the soak report. It now also requires
+Backspace/Delete committed-context resync evidence when
+`RAG_IME_REQUIRE_MACOS_FRONTEND=1`; the default soak wrapper passes
+`--require-delete-resync`, auto typing presses Delete/Backspace after a side
+candidate commit, and `--no-delete-resync` exists only for temporary debugging.
 The soak report also exposes `displayQuality` and fails on source badge/color
 mismatch, model side-slot overrun, overlong model/RAG/memory candidate surfaces,
 or post-commit number-key selection.

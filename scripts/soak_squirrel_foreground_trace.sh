@@ -23,7 +23,7 @@ REQUIRE_SIDE_PANEL=0
 REQUIRE_SIDE_COMMIT=1
 REQUIRE_COMMIT_OBSERVED=1
 REQUIRE_POST_COMMIT_FOLLOWUP=1
-REQUIRE_DELETE_RESYNC="${RAG_IME_FOREGROUND_SOAK_REQUIRE_DELETE_RESYNC:-0}"
+REQUIRE_DELETE_RESYNC="${RAG_IME_FOREGROUND_SOAK_REQUIRE_DELETE_RESYNC:-1}"
 REQUIRE_MODERN_PREDICTION_SESSION=1
 REQUIRE_BALANCED_QUOTA=1
 AUTO_TYPE=1
@@ -55,6 +55,7 @@ Options:
   --no-commit-observed  Do not require a commit_observed trace before follow-up
   --require-delete-resync
                        Require delete/backspace invalidation followed by committed-context resync
+  --no-delete-resync   Do not require delete/backspace committed-context resync
   --no-clear            Do not clear the existing frontend trace first
   --no-open             Do not open the test editor file
   --no-select           Do not auto-select the Squirrel input source
@@ -94,6 +95,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --require-delete-resync)
       REQUIRE_DELETE_RESYNC=1
+      ;;
+    --no-delete-resync)
+      REQUIRE_DELETE_RESYNC=0
       ;;
     --no-clear)
       CLEAR_TRACE=0
@@ -243,7 +247,8 @@ path.write_text(
     f"2. Type: {query}.\n"
     "3. Wait for visible model, RAG, and memory side candidates.\n"
     f"4. Press candidate number {key} (or any visible side-candidate number).\n"
-    "5. Wait for the next post-commit prediction attempt.\n\n",
+    "5. Wait for the next post-commit prediction attempt.\n"
+    "6. Press Backspace/Delete, then wait for the next request to use the updated foreground context.\n\n",
     encoding="utf-8",
 )
 PY
@@ -271,6 +276,8 @@ on run argv
     end repeat
     delay waitSeconds
     keystroke sideKey
+    delay waitSeconds
+    key code 51
   end tell
 end run
 APPLESCRIPT
@@ -286,6 +293,7 @@ fi
 manual_required+=("Foreground editor typing verification")
 manual_required+=("Real Squirrel candidate panel visual check")
 manual_required+=("Side candidate number-key commit verification")
+manual_required+=("Backspace/Delete committed-context resync verification")
 
 echo "Foreground soak gate is collecting real Squirrel AppKit events."
 echo "Trace log: $TRACE_LOG"
