@@ -64,6 +64,9 @@ def main() -> int:
     parser.add_argument("--min-panel-displays", type=int, default=1)
     parser.add_argument("--min-side-commits", type=int, default=1)
     parser.add_argument("--min-post-commit-followups", type=int, default=1)
+    parser.add_argument("--min-duration-sec", type=float, default=0.0)
+    parser.add_argument("--min-backspaces", type=int, default=0)
+    parser.add_argument("--min-app-switches", type=int, default=0)
     parser.add_argument(
         "--min-chain-depth",
         type=int,
@@ -111,6 +114,9 @@ def main() -> int:
             min_panel_displays=max(0, args.min_panel_displays),
             min_side_commits=max(0, args.min_side_commits),
             min_post_commit_followups=max(0, args.min_post_commit_followups),
+            min_duration_sec=max(0.0, args.min_duration_sec),
+            min_backspaces=max(0, args.min_backspaces),
+            min_app_switches=max(0, args.min_app_switches),
             min_chain_depth=max(0, args.min_chain_depth),
             max_stale_applied=max(0, args.max_stale_applied),
             max_flicker_count=max(0, args.max_flicker_count),
@@ -148,6 +154,9 @@ def build_soak_report(
     min_panel_displays: int,
     min_side_commits: int,
     min_post_commit_followups: int,
+    min_duration_sec: float,
+    min_backspaces: int,
+    min_app_switches: int,
     min_chain_depth: int,
     max_stale_applied: int,
     max_flicker_count: int,
@@ -162,6 +171,7 @@ def build_soak_report(
     prediction_stability = summarize_prediction_stability(events, stale_applied_count=len(stale_applied))
     lane_stability = summarize_lane_stability(events)
     display_quality = summarize_display_quality(events, frontend_report=frontend_report)
+    foreground_coverage = summarize_foreground_coverage(events)
     selection_quality = summarize_selection_quality(
         events,
         paired_side_commit_count=len(side_commit_pairs),
@@ -190,6 +200,9 @@ def build_soak_report(
         "minPanelDisplays": min_panel_displays,
         "minSideCommits": min_side_commits,
         "minPostCommitFollowups": min_post_commit_followups,
+        "minDurationSec": min_duration_sec,
+        "minBackspaces": min_backspaces,
+        "minAppSwitches": min_app_switches,
         "minChainDepth": min_chain_depth,
         "maxStaleApplied": max_stale_applied,
         "maxFlickerCount": max_flicker_count,
@@ -208,6 +221,9 @@ def build_soak_report(
         "panelDisplays": int(event_counts.get("panel_display_candidates", 0)) >= min_panel_displays,
         "sideCommits": len(side_commit_pairs) >= min_side_commits,
         "postCommitFollowups": len(post_commit_followups) >= min_post_commit_followups,
+        "durationSec": float(foreground_coverage["durationSec"]) >= min_duration_sec,
+        "backspaces": int(foreground_coverage["backspaceCount"]) >= min_backspaces,
+        "appSwitches": int(foreground_coverage["appSwitchCount"]) >= min_app_switches,
         "chainDepth": int(chain["maxChainDepth"]) >= min_chain_depth,
         "staleApplied": len(stale_applied) <= max_stale_applied,
         "flickerCount": int(prediction_stability["flickerCount"]) <= max_flicker_count,
@@ -336,6 +352,30 @@ def build_soak_report(
                 "expectedAtLeast": min_chain_depth,
             }
         )
+    if float(foreground_coverage["durationSec"]) < min_duration_sec:
+        violations.append(
+            {
+                "type": "duration_threshold",
+                "actual": foreground_coverage["durationSec"],
+                "expectedAtLeast": min_duration_sec,
+            }
+        )
+    if int(foreground_coverage["backspaceCount"]) < min_backspaces:
+        violations.append(
+            {
+                "type": "backspace_threshold",
+                "actual": foreground_coverage["backspaceCount"],
+                "expectedAtLeast": min_backspaces,
+            }
+        )
+    if int(foreground_coverage["appSwitchCount"]) < min_app_switches:
+        violations.append(
+            {
+                "type": "app_switch_threshold",
+                "actual": foreground_coverage["appSwitchCount"],
+                "expectedAtLeast": min_app_switches,
+            }
+        )
     if require_snapshot_selection_trace and int(selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"]) > 0:
         violations.append(
             {
@@ -410,6 +450,7 @@ def build_soak_report(
         "predictionStability": prediction_stability,
         "laneStability": lane_stability,
         "displayQuality": display_quality,
+        "foregroundCoverage": foreground_coverage,
         "selectionQuality": selection_quality,
         "chain": chain,
         "latency": {
@@ -734,6 +775,80 @@ def summarize_selection_quality(events: list[dict[str, Any]], *, paired_side_com
         "sideCommitWithoutAcceptedSnapshotSelectionCount": max(0, paired_side_commit_count - accepted_count),
         "acceptedSnapshotSelectionWithoutSideCommitCount": max(0, accepted_count - paired_side_commit_count),
     }
+
+
+def summarize_foreground_coverage(events: list[dict[str, Any]]) -> dict[str, Any]:
+    timestamps = [event_timestamp_ms(event) for event in events if event_timestamp_ms(event) > 0]
+    duration_ms = max(timestamps) - min(timestamps) if timestamps else 0
+    delete_invalidation_events = [
+        event
+        for event in events
+        if event.get("event") == "display_invalidated_by_input_change"
+        and str(event.get("reason") or "") in {"delete_key", "backspace", "delete"}
+    ]
+    delete_resync_events = [
+        event for event in events if event.get("event") == "committed_context_resynced_after_delete"
+    ]
+    explicit_switch_events = [
+        event
+        for event in events
+        if event.get("event") == "frontend_transaction_invalidated"
+        and foreground_switch_reason(str(event.get("reason") or event.get("invalidationReason") or ""))
+    ]
+    app_switch_pairs = collect_front_app_switch_pairs(events)
+    input_source_switch_pairs = collect_input_source_switch_pairs(events)
+    return {
+        "durationMs": duration_ms,
+        "durationSec": round(duration_ms / 1000, 3),
+        "backspaceCount": len(delete_invalidation_events),
+        "deleteResyncCount": len(delete_resync_events),
+        "appSwitchCount": len(explicit_switch_events) + len(app_switch_pairs),
+        "inputSourceSwitchCount": len(input_source_switch_pairs),
+        "explicitSwitchInvalidationCount": len(explicit_switch_events),
+        "frontAppSwitchPairs": app_switch_pairs[:10],
+        "inputSourceSwitchPairs": input_source_switch_pairs[:10],
+    }
+
+
+def foreground_switch_reason(reason: str) -> bool:
+    normalized = reason.lower().replace("-", "_")
+    return any(token in normalized for token in ("app", "focus", "input_source", "inputsource"))
+
+
+def collect_front_app_switch_pairs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return collect_field_switch_pairs(events, "frontAppBundleId")
+
+
+def collect_input_source_switch_pairs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return collect_field_switch_pairs(events, "inputSourceId")
+
+
+def collect_field_switch_pairs(events: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
+    pairs: list[dict[str, Any]] = []
+    previous_value = ""
+    previous_event: dict[str, Any] | None = None
+    for event in events:
+        value = str(event.get(field) or "")
+        if not value:
+            session = event.get("predictionSession")
+            if isinstance(session, dict):
+                value = str(session.get(field) or "")
+        if not value:
+            continue
+        if previous_value and value != previous_value:
+            pairs.append(
+                {
+                    "field": field,
+                    "from": previous_value,
+                    "to": value,
+                    "timestampMs": event.get("timestampMs"),
+                    "previousTimestampMs": previous_event.get("timestampMs") if previous_event else None,
+                    "event": event.get("event"),
+                }
+            )
+        previous_value = value
+        previous_event = event
+    return pairs
 
 
 def summarize_lane_stability(events: list[dict[str, Any]]) -> dict[str, Any]:

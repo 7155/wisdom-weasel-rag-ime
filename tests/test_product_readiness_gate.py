@@ -191,6 +191,8 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--max-rag-empty-cleared-panel 0", result.stdout)
         self.assertIn("--min-side-commits 50", result.stdout)
         self.assertIn("--min-post-commit-followups 30", result.stdout)
+        self.assertIn("--min-backspaces 1", result.stdout)
+        self.assertIn("--min-app-switches 1", result.stdout)
         self.assertIn("--min-chain-depth 10", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-delete-resync", result.stdout)

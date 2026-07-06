@@ -39,6 +39,9 @@ MIN_SIDECAR_APPLIED="${RAG_IME_FOREGROUND_SOAK_MIN_SIDECAR_APPLIED:-1}"
 MIN_PANEL_DISPLAYS="${RAG_IME_FOREGROUND_SOAK_MIN_PANEL_DISPLAYS:-1}"
 MIN_SIDE_COMMITS="${RAG_IME_FOREGROUND_SOAK_MIN_SIDE_COMMITS:-1}"
 MIN_POST_COMMIT_FOLLOWUPS="${RAG_IME_FOREGROUND_SOAK_MIN_POST_COMMIT_FOLLOWUPS:-1}"
+MIN_DURATION_SEC="${RAG_IME_FOREGROUND_SOAK_MIN_DURATION_SEC:-0}"
+MIN_BACKSPACES="${RAG_IME_FOREGROUND_SOAK_MIN_BACKSPACES:-1}"
+MIN_APP_SWITCHES="${RAG_IME_FOREGROUND_SOAK_MIN_APP_SWITCHES:-}"
 MIN_CHAIN_DEPTH="${RAG_IME_FOREGROUND_SOAK_MIN_CHAIN_DEPTH:-}"
 DRY_RUN=0
 
@@ -72,6 +75,9 @@ Options:
   --auto-key KEY        Number key used for auto typing / manual instructions
   --chain-repeats N     Repeat side-candidate selection N times for chaining evidence (default: 10)
   --no-app-switch       Do not include an automated app switch between soak cases
+  --min-duration-sec N  Required foreground trace duration in seconds
+  --min-backspaces N    Required delete/backspace invalidations
+  --min-app-switches N  Required app/focus/input-source switches
   --min-chain-depth N   Required successful chain depth (default: chain repeats)
   --dry-run             Print resolved commands without changing local state
   -h, --help            Show this help
@@ -144,6 +150,18 @@ while [[ $# -gt 0 ]]; do
     --no-app-switch)
       AUTO_APP_SWITCH=0
       ;;
+    --min-duration-sec)
+      MIN_DURATION_SEC="$2"
+      shift
+      ;;
+    --min-backspaces)
+      MIN_BACKSPACES="$2"
+      shift
+      ;;
+    --min-app-switches)
+      MIN_APP_SWITCHES="$2"
+      shift
+      ;;
     --min-chain-depth)
       MIN_CHAIN_DEPTH="$2"
       shift
@@ -175,6 +193,13 @@ if [[ -z "$MIN_CHAIN_DEPTH" ]]; then
 fi
 if [[ "$REQUIRE_SIDE_COMMIT" != "1" || "$REQUIRE_POST_COMMIT_FOLLOWUP" != "1" ]]; then
   MIN_CHAIN_DEPTH=0
+fi
+if [[ -z "$MIN_APP_SWITCHES" ]]; then
+  if [[ "$AUTO_APP_SWITCH" == "1" ]]; then
+    MIN_APP_SWITCHES=1
+  else
+    MIN_APP_SWITCHES=0
+  fi
 fi
 SELECT_REPORT_PATH="${RAG_IME_SELECT_INPUT_SOURCE_REPORT_PATH:-${REPORT_PATH%.json}.input-source-selection.json}"
 if [[ -n "${RAG_IME_FOREGROUND_SOAK_CASES:-}" ]]; then
@@ -209,6 +234,9 @@ soak_args=(
   --min-panel-displays "$MIN_PANEL_DISPLAYS"
   --min-side-commits "$MIN_SIDE_COMMITS"
   --min-post-commit-followups "$MIN_POST_COMMIT_FOLLOWUPS"
+  --min-duration-sec "$MIN_DURATION_SEC"
+  --min-backspaces "$MIN_BACKSPACES"
+  --min-app-switches "$MIN_APP_SWITCHES"
   --min-chain-depth "$MIN_CHAIN_DEPTH"
 )
 if [[ "$SELECT_INPUT_SOURCE" == "1" ]]; then
@@ -277,6 +305,9 @@ min_sidecar_applied=$MIN_SIDECAR_APPLIED
 min_panel_displays=$MIN_PANEL_DISPLAYS
 min_side_commits=$MIN_SIDE_COMMITS
 min_post_commit_followups=$MIN_POST_COMMIT_FOLLOWUPS
+min_duration_sec=$MIN_DURATION_SEC
+min_backspaces=$MIN_BACKSPACES
+min_app_switches=$MIN_APP_SWITCHES
 min_chain_depth=$MIN_CHAIN_DEPTH
 soak_check_command=$PYTHON_EXECUTABLE ${soak_args[*]}
 auto_cases:

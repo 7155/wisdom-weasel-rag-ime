@@ -242,8 +242,13 @@ candidate `text`, and `insertText` must be empty or `{chars, hash}` objects.
 It now reports continuous chaining metrics as well: `chain.maxChainDepth`,
 `chain.chainedCommitCount`, and `chain.chainSuccessRate` count consecutive
 side-candidate commits that produce matching post-commit prediction requests.
-The macOS product gate requires `--min-chain-depth 10` and
-the default soak wrapper now drives a six-case foreground script: continuous
+The macOS product gate requires `--min-chain-depth 10` and now also requires
+foreground coverage counters in real macOS mode:
+`--min-backspaces 1` and `--min-app-switches 1`. The soak checker exposes these
+under `foregroundCoverage` and can additionally require `--min-duration-sec`.
+This gives the Backspace/Delete and app-switch requirements their own
+machine-readable thresholds instead of relying only on a generic trace pass.
+The default soak wrapper now drives a six-case foreground script: continuous
 `er qi` selection, `zhe ge fang an`, `lian xu yu ce`, raw English/path
 `open /`, shell path `cd ~/Downloads`, and URL passthrough
 `https://example.com`. The second case can app-switch away and back to test

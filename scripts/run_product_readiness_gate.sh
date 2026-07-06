@@ -319,6 +319,8 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     --max-rag-empty-cleared-panel 0 \
     --min-side-commits 50 \
     --min-post-commit-followups 30 \
+    --min-backspaces 1 \
+    --min-app-switches 1 \
     --min-chain-depth 10 \
     --require-side-commit \
     --require-commit-observed \

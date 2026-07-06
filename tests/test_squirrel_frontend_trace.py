@@ -45,8 +45,12 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("require_commit_observed=1", result.stdout)
         self.assertIn("require_post_commit_followup=1", result.stdout)
         self.assertIn("require_delete_resync=1", result.stdout)
+        self.assertIn("min_backspaces=1", result.stdout)
+        self.assertIn("min_app_switches=1", result.stdout)
         self.assertIn("min_side_commits=1", result.stdout)
         self.assertIn("require_balanced_quota=1", result.stdout)
+        self.assertIn("--min-backspaces 1", result.stdout)
+        self.assertIn("--min-app-switches 1", result.stdout)
         self.assertIn("--require-side-panel", result.stdout)
         self.assertIn("--require-side-commit", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
@@ -1497,6 +1501,87 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["inputSourceSelection"]["source"]["thirdPartyEnabled"], False)
         self.assertEqual(report["violations"][0]["type"], "input_source_selection_failed")
         self.assertEqual(report["violations"][0]["current"], "com.bytedance.inputmethod.doubaoime.pinyin")
+
+    def test_soak_report_can_require_foreground_backspace_and_app_switch_counts(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-coverage-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            events = [
+                {
+                    "event": "sidecar_request_scheduled",
+                    "timestampMs": 1000,
+                    "frontAppBundleId": "com.apple.TextEdit",
+                    "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+                },
+                {
+                    "event": "display_invalidated_by_input_change",
+                    "timestampMs": 1400,
+                    "reason": "delete_key",
+                    "keyCode": 51,
+                },
+                {
+                    "event": "committed_context_resynced_after_delete",
+                    "timestampMs": 1500,
+                    "keyCode": 51,
+                },
+                {
+                    "event": "frontend_transaction_invalidated",
+                    "timestampMs": 1800,
+                    "reason": "front_app_changed",
+                },
+                {
+                    "event": "sidecar_request_scheduled",
+                    "timestampMs": 2500,
+                    "frontAppBundleId": "com.apple.Notes",
+                    "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+                },
+            ]
+            log_path.write_text(
+                "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                    "--min-duration-sec",
+                    "1",
+                    "--min-backspaces",
+                    "1",
+                    "--min-app-switches",
+                    "1",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertTrue(report["thresholdResults"]["durationSec"])
+        self.assertTrue(report["thresholdResults"]["backspaces"])
+        self.assertTrue(report["thresholdResults"]["appSwitches"])
+        self.assertEqual(report["foregroundCoverage"]["backspaceCount"], 1)
+        self.assertEqual(report["foregroundCoverage"]["deleteResyncCount"], 1)
+        self.assertGreaterEqual(report["foregroundCoverage"]["appSwitchCount"], 1)
+        self.assertGreaterEqual(report["foregroundCoverage"]["durationSec"], 1)
 
     def test_soak_report_can_require_snapshot_selection_trace_for_side_commits(self) -> None:
         root = Path(__file__).resolve().parents[1]
