@@ -665,6 +665,99 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(prediction_first["predictionFirst"]["policy"]["sessionBound"])
         self.assertTrue(prediction_first["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
 
+    def test_prediction_live_trace_redacts_text_and_reports_lanes(self) -> None:
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "prediction-live-trace.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                core=PrefixFixtureCore(),
+                predictor=PrefixPredictionProvider(),
+            )
+        )
+        service.rime_suggest(
+            {
+                "sessionId": "debug-live-trace",
+                "requestSeq": 1,
+                "rawInput": "sj",
+                "preedit": "sj",
+                "committedContext": "我想输入真实内容",
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "forceSideCandidates": True,
+                "predictionFirstMerge": True,
+                "rimeContext": {"candidates": [{"label": "1", "text": "手机", "comment": "wanxiang"}]},
+            }
+        )
+
+        trace = service.prediction_live_trace({"limit": 10})
+        self.assertEqual(trace["schemaVersion"], "rag-ime.prediction-live-trace.v1")
+        self.assertEqual(trace["count"], 1)
+        self.assertFalse(trace["rawTextVisible"])
+        frame = trace["frames"][0]
+        self.assertEqual(frame["sessionId"], "debug-live-trace")
+        self.assertEqual(frame["predictionSession"]["phase"], "prefix_constrained")
+        self.assertIn("queryAnchor", frame["predictionSession"])
+        self.assertNotIn("text", frame["committedContext"])
+        self.assertEqual(frame["committedContext"]["length"], len("我想输入真实内容"))
+        self.assertGreaterEqual(frame["display"]["sourceCounts"]["model"], 1)
+        self.assertTrue(frame["traceEvents"])
+
+    def test_prediction_live_trace_http_endpoint(self) -> None:
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "prediction-live-trace-http.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                core=PrefixFixtureCore(),
+                predictor=PrefixPredictionProvider(),
+            )
+        )
+        service.rime_suggest(
+            {
+                "sessionId": "debug-live-trace-http",
+                "requestSeq": 1,
+                "rawInput": "sj",
+                "preedit": "sj",
+                "committedContext": "我想",
+                "maxVisibleCandidates": 5,
+                "maxSideCandidates": 3,
+                "forceSideCandidates": True,
+                "predictionFirstMerge": True,
+                "rimeContext": {"candidates": [{"label": "1", "text": "手机", "comment": "wanxiang"}]},
+            }
+        )
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = service
+        Handler.static_dir = Path("debug")
+        debug_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        debug_thread = Thread(target=debug_server.serve_forever, daemon=True)
+        debug_thread.start()
+        try:
+            with urlopen(
+                f"http://127.0.0.1:{debug_server.server_port}/api/prediction/live-trace?limit=5",
+                timeout=5,
+            ) as response:
+                trace_payload = json.loads(response.read().decode("utf-8"))
+            with urlopen(
+                f"http://127.0.0.1:{debug_server.server_port}/api/prediction/drop-stats?limit=5",
+                timeout=5,
+            ) as response:
+                drop_payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            debug_server.shutdown()
+            debug_thread.join(timeout=2)
+            debug_server.server_close()
+
+        self.assertEqual(trace_payload["schemaVersion"], "rag-ime.prediction-live-trace.v1")
+        self.assertEqual(trace_payload["count"], 1)
+        self.assertEqual(trace_payload["frames"][0]["sessionId"], "debug-live-trace-http")
+        self.assertEqual(drop_payload["schemaVersion"], "rag-ime.prediction-drop-stats.v1")
+        self.assertEqual(drop_payload["frameCount"], 1)
+
     def test_rime_suggest_cache_hit_rebinds_frontend_transaction_fields(self) -> None:
         service = DebugImeService(
             DebugServerConfig(

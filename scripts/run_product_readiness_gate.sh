@@ -302,6 +302,7 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     "$PYTHON_BIN" -m rag_ime.cli
     --db-path "$FRONTEND_DB_PATH"
     squirrel-tryout-gate
+    --quality-db-path "$DB_PATH"
     --cases-file "$CASES_FILE"
     --min-rag-pass-rate 0.9
     --min-sidecar-pass-rate 0.9

@@ -786,6 +786,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Run the real macOS Squirrel tryout readiness gate and quality gate",
     )
     squirrel_tryout_gate.add_argument("--cases-file", default="docs/eval/codex-history-cases.example.jsonl")
+    squirrel_tryout_gate.add_argument(
+        "--quality-db-path",
+        default="",
+        help=(
+            "SQLite DB used for deterministic quality-gate eval. Defaults to --db-path; "
+            "product gates can keep --db-path as the installed frontend DB while evaluating a seeded gate DB."
+        ),
+    )
     squirrel_tryout_gate.add_argument("--project", default="wisdom-weasel-rag-ime")
     squirrel_tryout_gate.add_argument("--top-k", type=int, default=5)
     squirrel_tryout_gate.add_argument("--match", choices=("any", "all"), default="any")
@@ -2380,6 +2388,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             core,
             predictor,
             db_path=Path(args.db_path),
+            quality_db_path=Path(args.quality_db_path) if args.quality_db_path else Path(args.db_path),
             cases_file=Path(args.cases_file),
             project=args.project,
             top_k=max(1, args.top_k),
@@ -2761,6 +2770,7 @@ def run_squirrel_tryout_gate(
     predictor,
     *,
     db_path: Path,
+    quality_db_path: Path,
     cases_file: Path,
     project: str,
     top_k: int,
@@ -2866,11 +2876,16 @@ def run_squirrel_tryout_gate(
     sidecar_ok = bool(sidecar_report.get("ok"))
     quality_report: dict[str, object] | None = None
     if bundle_ok and config_ok and defaults_ok and build_ok and launch_agent_ok and input_ready and sidecar_ok:
+        quality_core = core
+        quality_adapter = adapter
+        if quality_db_path != db_path:
+            quality_core = LocalSqliteCoreClient(quality_db_path)
+            quality_adapter = InputMethodAdapter(quality_core, project=project)
         quality_report = run_quality_gate(
-            adapter,
-            core,
+            quality_adapter,
+            quality_core,
             predictor,
-            db_path=db_path,
+            db_path=quality_db_path,
             cases_file=cases_file,
             project=project,
             top_k=top_k,
@@ -2990,6 +3005,7 @@ def run_squirrel_tryout_gate(
         "passed": all(bool(item.get("passed")) for item in checks),
         "project": project,
         "dbPath": str(db_path),
+        "qualityDbPath": str(quality_db_path),
         "casesFile": str(cases_file),
         "checks": checks,
         "manualRequired": manual_required,

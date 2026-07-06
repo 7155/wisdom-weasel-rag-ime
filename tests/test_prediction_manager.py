@@ -30,10 +30,20 @@ class PredictionManagerTests(unittest.TestCase):
         self.assertTrue(result.candidate_pool_active)
         self.assertEqual([item.source_type for item in result.display_candidates[:2]], ["model", "rag"])
 
-    def test_prefix_composition_reuses_pool_and_filters_by_pinyin(self) -> None:
+    def test_prefix_composition_filters_holdover_without_reusing_source_cache(self) -> None:
         manager = PredictionManager(candidate_pool_ttl_ms=1200)
+        transaction = _composition_transaction(raw="s", panel_session_id="panel-prefix-reuse")
         manager.render(
-            snapshot=RimeContextSnapshot(session_id="s1", request_seq=1, committed_context="我想"),
+            snapshot=RimeContextSnapshot(
+                session_id="s1",
+                request_seq=1,
+                raw_input="s",
+                preedit="s",
+                committed_context="我想",
+                max_visible_candidates=5,
+                max_side_candidates=3,
+                frontend_transaction=transaction,
+            ),
             model_predictions=[
                 _model("设计输入法状态机", initials="sjsrfztj"),
                 _model("把这个项目整理成面试亮点", rank=2, initials="bzgxmzlmsld"),
@@ -55,18 +65,23 @@ class PredictionManagerTests(unittest.TestCase):
                 ),
                 max_visible_candidates=5,
                 max_side_candidates=3,
+                frontend_transaction=_composition_transaction(raw="sj", panel_session_id="panel-prefix-reuse"),
             ),
             now_ms=250,
         )
 
-        self.assertTrue(result.reused_candidate_pool)
+        self.assertFalse(result.reused_candidate_pool)
+        self.assertFalse(result.candidate_pool_active)
+        self.assertEqual(result.context_fingerprint, result.anchors.query_anchor)
+        self.assertEqual(result.stability["action"], "soft_hold")
+        self.assertEqual(result.stability["reason"], "min_visible_window")
         self.assertEqual(result.session.phase, PredictionSessionPhase.PREFIX_CONSTRAINED)
         self.assertEqual(result.session.selection_scope, "mixed_prediction_first")
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["设计输入法状态机", "设计一个候选展示方式", "手机", "世界"],
+            ["设计输入法状态机", "设计一个候选展示方式"],
         )
-        self.assertEqual([item.source_type for item in result.display_candidates], ["model", "memory", "rime", "rime"])
+        self.assertEqual([item.source_type for item in result.display_candidates], ["model", "memory"])
 
     def test_expired_pool_soft_holds_post_commit_during_min_visible_window(self) -> None:
         manager = PredictionManager(candidate_pool_ttl_ms=1200)
@@ -235,12 +250,49 @@ class PredictionManagerTests(unittest.TestCase):
         )
 
         self.assertEqual([item.text for item in first.display_candidates], ["设计输入法状态机", "输入候选"])
-        self.assertTrue(second.candidate_pool_stale)
+        self.assertFalse(second.reused_candidate_pool)
+        self.assertFalse(second.candidate_pool_active)
+        self.assertFalse(second.candidate_pool_stale)
+        self.assertEqual(second.context_fingerprint, second.anchors.query_anchor)
         self.assertEqual(second.stability["action"], "prefix_filter")
         self.assertEqual(second.stability["prefixRemovedCandidateCount"], 1)
         self.assertEqual([item.text for item in second.display_candidates], ["设计输入法状态机"])
         self.assertEqual(second.session.phase, PredictionSessionPhase.PREFIX_CONSTRAINED)
         self.assertFalse(second.session.should_clear_prediction_panel)
+
+    def test_same_committed_context_different_rime_top_does_not_reuse_source_cache(self) -> None:
+        manager = PredictionManager(candidate_pool_ttl_ms=1200)
+        first = manager.render(
+            snapshot=RimeContextSnapshot(
+                session_id="s1",
+                request_seq=1,
+                raw_input="s",
+                preedit="s",
+                committed_context="我想",
+                candidates=(RimeCandidate(text="手机", comment="wanxiang", index=0),),
+                frontend_transaction=_composition_transaction(raw="s", panel_session_id="panel-rime-top"),
+            ),
+            model_predictions=[_model("设计输入法状态机", initials="sjsrfztj")],
+            now_ms=100,
+        )
+
+        second = manager.render(
+            snapshot=RimeContextSnapshot(
+                session_id="s1",
+                request_seq=2,
+                raw_input="s",
+                preedit="s",
+                committed_context="我想",
+                candidates=(RimeCandidate(text="世界", comment="wanxiang", index=0),),
+                frontend_transaction=_composition_transaction(raw="s", panel_session_id="panel-rime-top"),
+            ),
+            now_ms=200,
+        )
+
+        self.assertNotEqual(first.context_fingerprint, second.context_fingerprint)
+        self.assertEqual(second.context_fingerprint, second.anchors.query_anchor)
+        self.assertFalse(second.reused_candidate_pool)
+        self.assertFalse(second.candidate_pool_active)
 
 
 def _model(text: str, *, rank: int = 1, initials: str = "") -> ModelPrediction:
@@ -266,15 +318,15 @@ def _suggestion(text: str, *, source_type: str, initials: str = "") -> InputSugg
     )
 
 
-def _composition_transaction() -> FrontendTransaction:
+def _composition_transaction(*, raw: str = "s", panel_session_id: str = "panel-prefix-filter") -> FrontendTransaction:
     return FrontendTransaction(
         frontend_revision=12,
         selection_epoch=3,
         front_app_bundle_id="com.apple.TextEdit",
         input_source_id="im.rime.inputmethod.Squirrel.Hans",
-        composition_hash="sha256:composition-session",
+        composition_hash=stable_text_hash(raw),
         committed_context_hash=stable_text_hash("我想"),
-        panel_session_id="panel-prefix-filter",
+        panel_session_id=panel_session_id,
     )
 
 

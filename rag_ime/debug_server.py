@@ -110,6 +110,7 @@ class DebugImeService:
         self._rime_cache_misses = 0
         self._rime_inflight_hits = 0
         self._rime_inflight_errors = 0
+        self._prediction_live_trace: list[dict[str, object]] = []
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
         if config.seed_if_empty and self._event_count() == 0:
@@ -1092,6 +1093,36 @@ class DebugImeService:
             },
         }
 
+    def prediction_live_trace(self, payload: dict[str, Any]) -> dict[str, object]:
+        limit = _bounded_int(payload.get("limit"), default=100, minimum=1, maximum=500)
+        session_id = _string(payload.get("sessionId"))
+        with self._rime_cache_lock:
+            frames = list(self._prediction_live_trace)
+        if session_id:
+            frames = [item for item in frames if _string(item.get("sessionId")) == session_id]
+        frames = frames[-limit:]
+        return {
+            "schemaVersion": "rag-ime.prediction-live-trace.v1",
+            "ok": True,
+            "limit": limit,
+            "count": len(frames),
+            "rawTextVisible": self._include_raw_text(),
+            "frames": frames,
+            "dropStats": _prediction_drop_stats(frames),
+        }
+
+    def prediction_drop_stats(self, payload: dict[str, Any]) -> dict[str, object]:
+        limit = _bounded_int(payload.get("limit"), default=500, minimum=1, maximum=1000)
+        with self._rime_cache_lock:
+            frames = list(self._prediction_live_trace)[-limit:]
+        return {
+            "schemaVersion": "rag-ime.prediction-drop-stats.v1",
+            "ok": True,
+            "limit": limit,
+            "frameCount": len(frames),
+            **_prediction_drop_stats(frames),
+        }
+
     def seed(self) -> dict[str, object]:
         event_ids = seed_demo_memories(self.adapter, default_fixture_memories())
         self._clear_rime_cache()
@@ -1139,10 +1170,13 @@ class DebugImeService:
         cache_key = self._rime_suggest_cache_key(payload)
         cached = self._get_cached_rime_response(cache_key, payload)
         if cached is not None:
+            self._record_prediction_live_trace(cached, request_payload=payload)
             return cached
         owner, inflight = self._begin_rime_inflight(cache_key)
         if not owner:
-            return self._wait_for_rime_inflight(cache_key, inflight, payload)
+            response = self._wait_for_rime_inflight(cache_key, inflight, payload)
+            self._record_prediction_live_trace(response, request_payload=payload)
+            return response
         try:
             response = build_rime_sidecar_response(
                 payload=payload,
@@ -1159,6 +1193,7 @@ class DebugImeService:
         self._finish_rime_inflight(cache_key, response=response)
         response = copy.deepcopy(response)
         response["cache"] = self._cache_payload(hit=False, cache_key=cache_key)
+        self._record_prediction_live_trace(response, request_payload=payload)
         return response
 
     def rime_select(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -1576,6 +1611,17 @@ class DebugImeService:
             entry.error = error
             entry.event.set()
 
+    def _record_prediction_live_trace(self, response: dict[str, object], *, request_payload: dict[str, Any]) -> None:
+        frame = _prediction_live_trace_frame(
+            response=response,
+            request_payload=request_payload,
+            include_raw_text=self._include_raw_text(),
+        )
+        with self._rime_cache_lock:
+            self._prediction_live_trace.append(frame)
+            if len(self._prediction_live_trace) > 500:
+                del self._prediction_live_trace[: len(self._prediction_live_trace) - 500]
+
 
 class DebugRequestHandler(BaseHTTPRequestHandler):
     service: DebugImeService
@@ -1590,6 +1636,23 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
+        if parsed.path in ("/api/prediction/live-trace", "/prediction/live-trace"):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.prediction_live_trace(
+                    {
+                        "limit": _query_first(query, "limit"),
+                        "sessionId": _query_first(query, "sessionId"),
+                    }
+                ),
+            )
+            return
+        if parsed.path in ("/api/prediction/drop-stats", "/prediction/drop-stats"):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.prediction_drop_stats({"limit": _query_first(query, "limit")}),
+            )
+            return
         if parsed.path in ("/api/candidates/explain",):
             self._write_json(
                 HTTPStatus.OK,
@@ -2296,6 +2359,196 @@ def _ranking_top_candidate_summary(diagnostics: dict[str, object]) -> dict[str, 
     if isinstance(top_components, list) and top_components:
         payload["topScoreComponents"] = top_components[:3]
     return payload
+
+
+def _prediction_live_trace_frame(
+    *,
+    response: dict[str, object],
+    request_payload: dict[str, Any],
+    include_raw_text: bool,
+) -> dict[str, object]:
+    prediction_session = response.get("predictionSession") if isinstance(response.get("predictionSession"), dict) else {}
+    rag_lane = response.get("ragLane") if isinstance(response.get("ragLane"), dict) else {}
+    model_lane = response.get("modelLane") if isinstance(response.get("modelLane"), dict) else {}
+    display_candidates = response.get("displayCandidates") if isinstance(response.get("displayCandidates"), list) else []
+    trace_events = response.get("predictionTraceEvents") if isinstance(response.get("predictionTraceEvents"), list) else []
+    raw_input = _string(response.get("rawInput") or request_payload.get("rawInput"))
+    preedit = _string(response.get("preedit") or request_payload.get("preedit"))
+    committed_context = _string(response.get("committedContext") or request_payload.get("committedContext"))
+    frame: dict[str, object] = {
+        "schemaVersion": "rag-ime.prediction-frame.v1",
+        "recordedAtMs": now_ms(),
+        "sessionId": _string(response.get("sessionId")),
+        "requestSeq": _bounded_int(response.get("requestSeq"), default=0, minimum=0, maximum=2**63 - 1),
+        "frontendRevision": _bounded_int(response.get("frontendRevision"), default=0, minimum=0, maximum=2**63 - 1),
+        "selectionEpoch": _bounded_int(response.get("selectionEpoch"), default=0, minimum=0, maximum=2**63 - 1),
+        "panelSessionId": _string(response.get("panelSessionId")),
+        "input": _redacted_text_snapshot(raw_input, include_raw_text=include_raw_text),
+        "preedit": _redacted_text_snapshot(preedit, include_raw_text=include_raw_text),
+        "committedContext": _redacted_text_snapshot(committed_context, include_raw_text=include_raw_text),
+        "predictionSession": {
+            "phase": _string(prediction_session.get("phase")),
+            "inputMode": _string(prediction_session.get("inputMode")),
+            "hardContextAnchor": _string(prediction_session.get("hardContextAnchor")),
+            "applyAnchor": _string(prediction_session.get("applyAnchor")),
+            "queryAnchor": _string(prediction_session.get("queryAnchor")),
+            "displayAnchor": _string(prediction_session.get("displayAnchor")),
+            "stablePanelAction": _string(prediction_session.get("stablePanelAction")),
+            "stablePanelReason": _string(prediction_session.get("stablePanelReason")),
+            "snapshotId": _string(prediction_session.get("snapshotId") or prediction_session.get("stableSnapshotId")),
+            "reusedLastGood": _bool(prediction_session.get("reusedLastGood"), default=False),
+            "shouldClearPredictionPanel": _bool(prediction_session.get("shouldClearPredictionPanel"), default=False),
+        },
+        "ragLane": _prediction_lane_summary(rag_lane),
+        "modelLane": _prediction_lane_summary(model_lane),
+        "display": {
+            "visibleCandidateCount": len(display_candidates),
+            "sourceCounts": _display_payload_source_counts(display_candidates),
+            "statusRowCount": sum(
+                1
+                for item in display_candidates
+                if isinstance(item, dict) and _string(item.get("sourceType")) == "status"
+            ),
+            "candidates": [
+                _prediction_candidate_summary(item, include_raw_text=include_raw_text)
+                for item in display_candidates[:10]
+                if isinstance(item, dict)
+            ],
+        },
+        "cache": response.get("cache") if isinstance(response.get("cache"), dict) else {},
+        "dropReasons": _prediction_drop_reasons(rag_lane=rag_lane, model_lane=model_lane, trace_events=trace_events),
+        "traceEvents": _prediction_trace_event_summaries(trace_events),
+    }
+    return frame
+
+
+def _redacted_text_snapshot(text: str, *, include_raw_text: bool) -> dict[str, object]:
+    normalized = compact_whitespace(text)
+    payload: dict[str, object] = {
+        "length": len(normalized),
+        "hash": _sha16_text(normalized) if normalized else "",
+    }
+    if include_raw_text:
+        payload["text"] = normalized
+    return payload
+
+
+def _sha16_text(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _prediction_lane_summary(lane: dict[str, object]) -> dict[str, object]:
+    keep = (
+        "called",
+        "timedOut",
+        "staleDropped",
+        "staleDropReason",
+        "waitingForLatest",
+        "skippedReason",
+        "predictionCount",
+        "suggestionCount",
+        "elapsedMs",
+        "latencyBudgetMs",
+        "activeGeneration",
+        "providerName",
+        "candidateMode",
+    )
+    return {key: lane.get(key) for key in keep if key in lane and lane.get(key) not in ("", None)}
+
+
+def _prediction_candidate_summary(candidate: dict[str, object], *, include_raw_text: bool) -> dict[str, object]:
+    summary: dict[str, object] = {
+        "sourceType": _string(candidate.get("sourceType")),
+        "displayLane": _string(candidate.get("displayLane")),
+        "displayLayout": _string(candidate.get("displayLayout")),
+        "selectionKey": _string(candidate.get("selectionKey")),
+        "candidateOrdinal": _bounded_int(candidate.get("candidateOrdinal"), default=0, minimum=0, maximum=100),
+        "selectionAction": _string(candidate.get("selectionAction")),
+        "badge": _string(candidate.get("badge")),
+        "colorToken": _string(candidate.get("colorToken")),
+    }
+    if include_raw_text:
+        summary["text"] = _string(candidate.get("text"))
+        summary["insertText"] = _string(candidate.get("insertText"))
+    else:
+        summary["text"] = _redacted_text_snapshot(_string(candidate.get("text")), include_raw_text=False)
+    return {key: value for key, value in summary.items() if value not in ("", None)}
+
+
+def _display_payload_source_counts(candidates: list[object]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        source = _string(item.get("sourceType")) or "unknown"
+        counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def _prediction_drop_reasons(
+    *,
+    rag_lane: dict[str, object],
+    model_lane: dict[str, object],
+    trace_events: list[object],
+) -> list[str]:
+    reasons: list[str] = []
+    for lane in (rag_lane, model_lane):
+        reason = _string(lane.get("staleDropReason") or lane.get("dropReason") or lane.get("skippedReason"))
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    for event in trace_events:
+        if not isinstance(event, dict):
+            continue
+        fields = event.get("fields") if isinstance(event.get("fields"), dict) else {}
+        reason = _string(fields.get("reason") or fields.get("staleDropReason") or fields.get("dropReason"))
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    return reasons
+
+
+def _prediction_trace_event_summaries(trace_events: list[object]) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for event in trace_events[-16:]:
+        if not isinstance(event, dict):
+            continue
+        fields = event.get("fields") if isinstance(event.get("fields"), dict) else {}
+        summaries.append(
+            {
+                key: value
+                for key, value in {
+                    "event": _string(event.get("event")),
+                    "action": _string(fields.get("action")),
+                    "reason": _string(fields.get("reason")),
+                    "snapshotId": _string(fields.get("snapshotId")),
+                    "visibleCandidateCount": fields.get("visibleCandidateCount"),
+                    "sourceSummary": fields.get("sourceSummary"),
+                    "staleDropReason": _string(fields.get("staleDropReason")),
+                }.items()
+                if value not in ("", None)
+            }
+        )
+    return summaries
+
+
+def _prediction_drop_stats(frames: list[dict[str, object]]) -> dict[str, object]:
+    by_reason: dict[str, int] = {}
+    lane_stale_drops = {"rag": 0, "model": 0}
+    for frame in frames:
+        for reason in frame.get("dropReasons", []) if isinstance(frame.get("dropReasons"), list) else []:
+            text = _string(reason)
+            if text:
+                by_reason[text] = by_reason.get(text, 0) + 1
+        rag_lane = frame.get("ragLane") if isinstance(frame.get("ragLane"), dict) else {}
+        model_lane = frame.get("modelLane") if isinstance(frame.get("modelLane"), dict) else {}
+        if bool(rag_lane.get("staleDropped")):
+            lane_stale_drops["rag"] += 1
+        if bool(model_lane.get("staleDropped")):
+            lane_stale_drops["model"] += 1
+    return {
+        "byReason": by_reason,
+        "laneStaleDrops": lane_stale_drops,
+        "totalDropReasons": sum(by_reason.values()),
+    }
 
 
 def _top_score_components(components: dict[object, object], *, limit: int = 5) -> list[dict[str, object]]:

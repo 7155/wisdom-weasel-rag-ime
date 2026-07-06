@@ -9,6 +9,7 @@ from .prediction_first import (
     InputMode,
     PredictionFirstMergeResult,
     PredictionSessionState,
+    active_pinyin_prefix,
     infer_input_mode,
     merge_prediction_first_candidates,
     resolve_prediction_session,
@@ -75,16 +76,24 @@ class PredictionManager:
         raw_commit_text: str = "",
         now_ms: int = 0,
     ) -> PredictionManagerResult:
-        context_fingerprint = _context_fingerprint(snapshot.committed_context)
+        committed_context_fingerprint = _context_fingerprint(snapshot.committed_context)
         source_update = model_predictions is not None or suggestions is not None
         mode = (
             InputMode.RAW_INPUT
             if compact_whitespace(raw_commit_text) and not source_update
             else infer_input_mode(snapshot)
         )
+        anchors = build_prediction_anchors_from_snapshot(
+            snapshot=snapshot,
+            mode=mode.value,
+            semantic_query=committed_context_fingerprint,
+            query_basis="prediction-manager-context",
+            stable_short_pinyin_prefix=active_pinyin_prefix(snapshot),
+        )
+        source_cache_anchor = anchors.query_anchor
         if source_update:
             self._cache = self._updated_cache(
-                context_fingerprint=context_fingerprint,
+                context_fingerprint=source_cache_anchor,
                 model_predictions=model_predictions,
                 suggestions=suggestions,
                 now_ms=now_ms,
@@ -93,8 +102,8 @@ class PredictionManager:
         cache = self._cache
         can_reuse = (
             cache is not None
-            and context_fingerprint
-            and cache.context_fingerprint == context_fingerprint
+            and source_cache_anchor
+            and cache.context_fingerprint == source_cache_anchor
             and mode in {InputMode.POST_COMMIT_PREDICTING, InputMode.PREFIX_CONSTRAINED_COMPOSING}
         )
         candidate_pool_stale = bool(can_reuse and self._cache_is_stale(cache, now_ms=now_ms))
@@ -114,13 +123,15 @@ class PredictionManager:
             mode=mode,
             raw_commit_text=raw_commit_text,
         )
-        anchors = build_prediction_anchors_from_snapshot(
-            snapshot=snapshot,
-            mode=merge_result.mode.value,
-            semantic_query=context_fingerprint,
-            query_basis="prediction-manager-context",
-            stable_short_pinyin_prefix=merge_result.pinyin_prefix,
-        )
+        if merge_result.mode != mode:
+            anchors = build_prediction_anchors_from_snapshot(
+                snapshot=snapshot,
+                mode=merge_result.mode.value,
+                semantic_query=committed_context_fingerprint,
+                query_basis="prediction-manager-context",
+                stable_short_pinyin_prefix=merge_result.pinyin_prefix,
+            )
+            source_cache_anchor = anchors.query_anchor
         stable_snapshot: StableCandidateSnapshot | None = None
         stability: dict[str, object] = {
             "action": "bypass",
@@ -132,15 +143,28 @@ class PredictionManager:
         }
         display_candidates = merge_result.display_candidates
         if merge_result.mode in {InputMode.POST_COMMIT_PREDICTING, InputMode.PREFIX_CONSTRAINED_COMPOSING}:
+            stability_fresh_candidates = merge_result.display_candidates
+            if (
+                not source_update
+                and not (active_model_predictions or active_suggestions)
+                and self._panel_state.last_snapshot is not None
+                and _side_candidate_count(merge_result.display_candidates) <= 0
+            ):
+                # Source cache is keyed by query_anchor. When the query changes but
+                # no fresh side-lane data has arrived, let the stable panel decide
+                # whether to hold/filter the last good prediction instead of
+                # treating Rime-only fallback rows as a new prediction snapshot.
+                stability_fresh_candidates = ()
             stable_snapshot, self._panel_state, stability = render_stable_prediction_panel(
                 state=self._panel_state,
                 anchors=anchors,
                 mode=merge_result.mode.value,
-                fresh_candidates=merge_result.display_candidates,
+                fresh_candidates=stability_fresh_candidates,
                 trigger_decision={
                     "sourceUpdate": source_update,
                     "candidatePoolStale": candidate_pool_stale,
                     "candidatePoolActive": bool(active_model_predictions or active_suggestions),
+                    "sourceCacheAnchor": source_cache_anchor,
                 },
                 rag_lane={"called": source_update, "suggestionCount": len(active_suggestions)},
                 model_lane={"called": source_update, "predictionCount": len(active_model_predictions)},
@@ -182,10 +206,10 @@ class PredictionManager:
             reused_candidate_pool=reused_candidate_pool,
             candidate_pool_active=bool(active_model_predictions or active_suggestions),
             candidate_pool_stale=candidate_pool_stale,
-            context_fingerprint=context_fingerprint,
+            context_fingerprint=source_cache_anchor,
             session_fingerprint=_session_fingerprint(
                 snapshot=snapshot,
-                context_fingerprint=context_fingerprint,
+                context_fingerprint=source_cache_anchor,
                 mode=merge_result.mode.value,
                 display_candidates=display_candidates,
             ),

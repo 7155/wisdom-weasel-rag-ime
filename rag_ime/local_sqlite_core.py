@@ -3580,12 +3580,22 @@ def _rag_database_similar_duplicate_plan(
     hidden_ids: set[int] = set()
     for project, project_rows in by_project.items():
         ordered = sorted(project_rows, key=lambda item: _rag_duplicate_representative_score(item[0]), reverse=True)
+        rows_by_id = {int(row["id"]): (row, normalized) for row, normalized in ordered}
+        block_index: dict[str, list[int]] = {}
+        for row, normalized in ordered:
+            event_id = int(row["id"])
+            for key in _rag_similarity_block_keys(normalized):
+                block_index.setdefault(key, []).append(event_id)
         for representative, rep_norm in ordered:
             rep_id = int(representative["id"])
             if rep_id in hidden_ids:
                 continue
             group_rows: list[tuple[sqlite3.Row, str, str]] = []
-            for row, normalized in ordered:
+            candidate_ids: set[int] = set()
+            for key in _rag_similarity_block_keys(rep_norm):
+                candidate_ids.update(block_index.get(key, ()))
+            for event_id in sorted(candidate_ids):
+                row, normalized = rows_by_id[event_id]
                 event_id = int(row["id"])
                 if event_id == rep_id or event_id in hidden_ids:
                     continue
@@ -3672,6 +3682,27 @@ def _rag_duplicate_row_hideable(row: sqlite3.Row) -> bool:
 
 def _rag_similarity_text(text: str) -> str:
     return "".join(ch.lower() for ch in compact_whitespace(text) if ch.isalnum())
+
+
+def _rag_similarity_block_keys(text: str) -> tuple[str, ...]:
+    """Build deterministic blocking keys before expensive fuzzy comparison."""
+    if not text:
+        return ()
+    keys = {f"len:{len(text) // 12}"}
+    window = 8
+    if len(text) <= window:
+        keys.add(f"all:{text}")
+        return tuple(sorted(keys))
+    keys.add(f"prefix:{text[:window]}")
+    keys.add(f"suffix:{text[-window:]}")
+    middle = max(0, (len(text) - window) // 2)
+    keys.add(f"middle:{text[middle:middle + window]}")
+    step = max(1, window)
+    for start in range(0, max(1, len(text) - window + 1), step):
+        keys.add(f"gram:{text[start:start + window]}")
+        if len(keys) >= 24:
+            break
+    return tuple(sorted(keys))
 
 
 def _rag_similarity_reason(left: str, right: str) -> str:
