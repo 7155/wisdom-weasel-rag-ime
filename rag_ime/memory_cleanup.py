@@ -30,7 +30,9 @@ def build_cleanup_plan(
             mi.status,
             mi.privacy_class,
             COALESCE(ps.input_frequency, 0) AS input_frequency,
-            COALESCE(ms.accepted_count, 0) AS accepted_count
+            COALESCE(ms.accepted_count, 0) AS accepted_count,
+            COALESCE(ms.skipped_count, 0) AS skipped_count,
+            COALESCE(ms.downranked, 0) AS downranked
         FROM memory_items mi
         LEFT JOIN phrase_stats ps ON ps.committed_text = mi.text
         LEFT JOIN memory_state ms ON ms.event_id = mi.source_event_id
@@ -51,8 +53,11 @@ def build_cleanup_plan(
         privacy = str(row["privacy_class"])
         input_frequency = int(row["input_frequency"] or 0)
         accepted_count = int(row["accepted_count"] or 0)
+        skipped_count = int(row["skipped_count"] or 0)
+        downranked = int(row["downranked"] or 0)
         if privacy == "sensitive":
             continue
+        tombstone_planned = False
         if kind == "phrase" and normalized not in seen_stable and (accepted_count >= 1 or input_frequency >= 2):
             seen_stable.add(normalized)
             diffs.append(
@@ -69,6 +74,7 @@ def build_cleanup_plan(
                 )
             )
         if kind == "raw_event" and status == "active" and len(text) > 12 and accepted_count <= 0 and input_frequency <= 1:
+            tombstone_planned = True
             diffs.append(
                 CleanupDiffEntry(
                     op="tombstone",
@@ -80,8 +86,26 @@ def build_cleanup_plan(
                     },
                 )
             )
+        if not tombstone_planned and kind in {"phrase", "raw_event"} and accepted_count <= 0 and skipped_count + downranked >= 2:
+            diffs.append(
+                CleanupDiffEntry(
+                    op="downrank",
+                    target_memory_id=memory_id,
+                    payload={
+                        "targetType": "memory_id",
+                        "targetValue": memory_id,
+                        "reason": "cleanup:repeated-negative-feedback",
+                        "strength": min(1.0, 0.45 + 0.1 * (skipped_count + downranked)),
+                        "expiresAtMs": now_ms() + 7 * 24 * 60 * 60 * 1000,
+                    },
+                )
+            )
     run_id = f"cleanup_{now_ms()}"
-    summary = f"stable={sum(1 for item in diffs if item.op == 'add_stable_memory')} tombstone={sum(1 for item in diffs if item.op == 'tombstone')}"
+    summary = (
+        f"stable={sum(1 for item in diffs if item.op == 'add_stable_memory')} "
+        f"downrank={sum(1 for item in diffs if item.op == 'downrank')} "
+        f"tombstone={sum(1 for item in diffs if item.op == 'tombstone')}"
+    )
     return CleanupRunPlan(run_id=run_id, provider=provider, model=model, summary=summary, diffs=tuple(diffs))
 
 
@@ -366,6 +390,7 @@ def inspect_cleanup_plan(plan: CleanupRunPlan) -> dict[str, object]:
     counts = {
         "addStableMemory": 0,
         "addPhrase": 0,
+        "downrank": 0,
         "tombstone": 0,
     }
     errors: list[dict[str, object]] = []
@@ -397,6 +422,17 @@ def inspect_cleanup_plan(plan: CleanupRunPlan) -> dict[str, object]:
             target_value = compact_whitespace(str(payload.get("targetValue", "")))
             if not target_type or not target_value:
                 errors.append(_cleanup_issue(diff_id=diff_id, op=op, field="target", code="missing_tombstone_target"))
+        elif op == "downrank":
+            counts["downrank"] += 1
+            target_type = compact_whitespace(str(payload.get("targetType", "memory_id")))
+            target_value = compact_whitespace(str(payload.get("targetValue", diff.target_memory_id)))
+            if target_type not in {"memory_id", "normalized_text", "text"}:
+                errors.append(_cleanup_issue(diff_id=diff_id, op=op, field="targetType", code="unsupported_downrank_target_type", value=target_type))
+            if not target_value:
+                errors.append(_cleanup_issue(diff_id=diff_id, op=op, field="targetValue", code="missing_downrank_target"))
+            strength = _optional_float(payload.get("strength"))
+            if strength is not None and not 0.0 <= strength <= 1.0:
+                errors.append(_cleanup_issue(diff_id=diff_id, op=op, field="strength", code="invalid_downrank_strength", value=strength))
         else:
             errors.append(_cleanup_issue(diff_id=diff_id, op=op, field="op", code="unsupported_op"))
     return {
@@ -416,7 +452,7 @@ def inspect_cleanup_plan(plan: CleanupRunPlan) -> dict[str, object]:
 def validate_cleanup_plan(plan: CleanupRunPlan) -> None:
     if not compact_whitespace(plan.run_id):
         raise ValueError("cleanup run_id is required")
-    supported_ops = {"add_stable_memory", "add_phrase", "tombstone"}
+    supported_ops = {"add_stable_memory", "add_phrase", "downrank", "tombstone"}
     for diff in plan.diffs:
         if diff.op not in supported_ops:
             raise ValueError(f"unsupported cleanup diff op: {diff.op}")
@@ -430,6 +466,13 @@ def validate_cleanup_plan(plan: CleanupRunPlan) -> None:
             target_value = compact_whitespace(str(diff.payload.get("targetValue", "")))
             if not target_type or not target_value:
                 raise ValueError("tombstone requires targetType and targetValue")
+        if diff.op == "downrank":
+            target_type = compact_whitespace(str(diff.payload.get("targetType", "memory_id")))
+            target_value = compact_whitespace(str(diff.payload.get("targetValue", diff.target_memory_id)))
+            if target_type not in {"memory_id", "normalized_text", "text"}:
+                raise ValueError(f"downrank targetType is unsupported: {target_type}")
+            if not target_value:
+                raise ValueError("downrank requires targetValue")
 
 
 def _validate_cleanup_diff_row_for_apply(row: sqlite3.Row) -> None:
@@ -467,6 +510,24 @@ def _looks_like_long_sentence(text: str) -> bool:
     if len(compact) >= 20 and any(token in compact for token in ("，", "。", ",", ".", " ", "的", "了", "是")):
         return True
     return False
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _apply_add_stable_memory(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
@@ -552,6 +613,52 @@ def _apply_tombstone(conn: sqlite3.Connection, payload: dict[str, object]) -> di
     return {"tombstoneId": tombstone_id}
 
 
+def _apply_downrank(conn: sqlite3.Connection, *, diff_id: int, target_memory_id: str, payload: dict[str, object]) -> dict[str, object]:
+    target_type = compact_whitespace(str(payload.get("targetType", "memory_id"))) or "memory_id"
+    target_value = compact_whitespace(str(payload.get("targetValue", target_memory_id)))
+    strength = _optional_float(payload.get("strength"))
+    if strength is None:
+        strength = 0.6
+    strength = max(0.0, min(1.0, strength))
+    reason = compact_whitespace(str(payload.get("reason", ""))) or "cleanup:downrank"
+    expires_at_ms = _optional_int(payload.get("expiresAtMs"))
+    suppression_id = f"cleanup:downrank:{diff_id}"
+    rollback: dict[str, object] = {
+        "suppressionId": suppression_id,
+        "targetType": target_type,
+        "targetValue": target_value,
+    }
+    if target_type == "memory_id":
+        row = conn.execute(
+            "SELECT memory_id, quality_score FROM memory_items WHERE memory_id = ?",
+            (target_value,),
+        ).fetchone()
+        if row is not None:
+            previous_quality = float(row["quality_score"])
+            rollback["memoryId"] = str(row["memory_id"])
+            rollback["previousQualityScore"] = previous_quality
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET quality_score = MAX(0.05, quality_score - ?), updated_at_ms = ?
+                WHERE memory_id = ?
+                """,
+                (max(0.05, strength * 0.25), now_ms(), target_value),
+            )
+    match_type = "normalized_text" if target_type in {"normalized_text", "text"} else "memory_id"
+    match_value = normalize_text(target_value) if match_type == "normalized_text" else target_value
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO memory_candidate_suppressions(
+            id, match_type, match_value, action, reason, strength, expires_at_ms, created_at_ms
+        )
+        VALUES (?, ?, ?, 'downrank', ?, ?, ?, ?)
+        """,
+        (suppression_id, match_type, match_value, reason, strength, expires_at_ms, now_ms()),
+    )
+    return rollback
+
+
 def _prune_orphan_item_rows(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM memory_items_fts WHERE rowid NOT IN (SELECT id FROM memory_items)")
     conn.execute("DELETE FROM memory_item_vectors WHERE memory_item_id NOT IN (SELECT id FROM memory_items)")
@@ -567,6 +674,13 @@ def _apply_cleanup_diff_row(conn: sqlite3.Connection, *, row: sqlite3.Row) -> No
         rollback = _apply_add_phrase(conn, payload)
     elif str(row["op"]) == "tombstone":
         rollback = _apply_tombstone(conn, payload)
+    elif str(row["op"]) == "downrank":
+        rollback = _apply_downrank(
+            conn,
+            diff_id=int(row["id"]),
+            target_memory_id=compact_whitespace(str(row["target_memory_id"])),
+            payload=payload,
+        )
     else:
         return
     conn.execute(
@@ -595,6 +709,16 @@ def _rollback_cleanup_diff_row(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
         tombstone_id = int(rollback.get("tombstoneId") or 0)
         if tombstone_id:
             conn.execute("DELETE FROM memory_tombstones WHERE id = ?", (tombstone_id,))
+    elif str(row["op"]) == "downrank":
+        memory_id = compact_whitespace(str(rollback.get("memoryId", "")))
+        if memory_id and "previousQualityScore" in rollback:
+            conn.execute(
+                "UPDATE memory_items SET quality_score = ?, updated_at_ms = ? WHERE memory_id = ?",
+                (float(rollback["previousQualityScore"]), now_ms(), memory_id),
+            )
+        suppression_id = compact_whitespace(str(rollback.get("suppressionId", "")))
+        if suppression_id:
+            conn.execute("DELETE FROM memory_candidate_suppressions WHERE id = ?", (suppression_id,))
     conn.execute("UPDATE memory_cleanup_diffs SET status = 'rolled_back' WHERE id = ?", (int(row["id"]),))
 
 

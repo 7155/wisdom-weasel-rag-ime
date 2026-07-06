@@ -211,6 +211,97 @@ class CleanupPipelineCliTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertTrue(any(item["code"] == "missing_evidence_event_ids" for item in payload["errors"]))
 
+    def test_cleanup_downrank_apply_and_rollback_for_repeated_skips(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_200_001,
+                source="manual",
+                committed_text="噪声短语",
+                recent_context="RAG 输入法",
+                project="wisdom-weasel-rag-ime",
+                tags=("phrase-memory",),
+            )
+        )
+        for offset in range(2):
+            self.core.apply_action(
+                MemoryAction(
+                    action_id=None,
+                    created_at_ms=1_900_000_200_010 + offset,
+                    memory_id="event:1",
+                    action_type="skipped",
+                    query="噪声",
+                    metadata={"project": "wisdom-weasel-rag-ime"},
+                )
+            )
+        plan_path = Path(self.tmp.name) / "cleanup-downrank.json"
+
+        code, preview = self._run_cli_json(
+            "cleanup-preview",
+            "--provider",
+            "local-rule",
+            "--project",
+            "wisdom-weasel-rag-ime",
+            "--output",
+            str(plan_path),
+        )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(preview["validation"]["ok"])
+        self.assertGreaterEqual(preview["validation"]["counts"]["downrank"], 1)
+        downrank = next(
+            item
+            for item in preview["run"]["diffs"]
+            if item["op"] == "downrank" and item["targetMemoryId"] == "phrase:噪声短语"
+        )
+        self.assertEqual(downrank["payload"]["targetType"], "memory_id")
+        self.assertEqual(downrank["payload"]["reason"], "cleanup:repeated-negative-feedback")
+        before_item = next(
+            item
+            for item in self.core.inspect_memory_v2(project="wisdom-weasel-rag-ime", limit=20)["items"]
+            if item["memoryId"] == "phrase:噪声短语"
+        )
+
+        code, applied = self._run_cli_json("cleanup-apply", "--run", str(plan_path), "--apply")
+
+        self.assertEqual(code, 0)
+        self.assertTrue(applied["ok"])
+        after_item = next(
+            item
+            for item in self.core.inspect_memory_v2(project="wisdom-weasel-rag-ime", limit=20)["items"]
+            if item["memoryId"] == "phrase:噪声短语"
+        )
+        self.assertLess(after_item["qualityScore"], before_item["qualityScore"])
+        governance = self.core.inspect_memory_governance(limit=20)
+        self.assertTrue(
+            any(
+                item["matchType"] == "memory_id"
+                and item["matchValue"] == "phrase:噪声短语"
+                and item["action"] == "downrank"
+                for item in governance["suppressions"]
+            )
+        )
+
+        code, rolled_back = self._run_cli_json("cleanup-rollback", "--run-id", preview["run"]["runId"])
+
+        self.assertEqual(code, 0)
+        self.assertTrue(rolled_back["ok"])
+        final_item = next(
+            item
+            for item in self.core.inspect_memory_v2(project="wisdom-weasel-rag-ime", limit=20)["items"]
+            if item["memoryId"] == "phrase:噪声短语"
+        )
+        self.assertEqual(final_item["qualityScore"], before_item["qualityScore"])
+        final_governance = self.core.inspect_memory_governance(limit=20)
+        self.assertFalse(
+            any(
+                item["matchType"] == "memory_id"
+                and item["matchValue"] == "phrase:噪声短语"
+                and item["action"] == "downrank"
+                for item in final_governance["suppressions"]
+            )
+        )
+
     def test_cleanup_preview_x1api_is_dry_run_and_surfaces_validation(self) -> None:
         original = memory_compiler_module.VcpRebuildMemoryGenerator
         FakeCleanupCompilerGenerator.calls = []
