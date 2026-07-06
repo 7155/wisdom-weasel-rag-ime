@@ -255,8 +255,15 @@ in `manualRequired`, and `RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1` prints a
 concrete `sudo mv` cleanup command if root-owned backup bundles are later
 rediscovered. The latest read-only audit still reports
 `readiness.state=third-party-missing`, `wouldChangeHitoolbox=false`, and
-`wouldChangeThirdParty=true`. True foreground soak still requires the System
-Settings Add/select flow for `Squirrel - Simplified`. Cleanup diff apply now
+`wouldChangeThirdParty=true`. `scripts/prepare_squirrel_foreground_check.sh`
+now consolidates this handoff into one command: it writes the audit report,
+opens/waits for the System Settings Add flow when needed, waits for Squirrel
+selection, and checks sidecar health. A 2026-07-06 dry run with
+`--no-open --no-wait-typing` correctly refused to claim readiness and reported
+`readiness_state=third-party-missing` plus `duplicate_squirrel_app_paths=5`,
+which means LaunchServices rediscovered old backup app paths. True foreground
+soak still requires the System Settings Add/select flow for
+`Squirrel - Simplified`. Cleanup diff apply now
 re-validates stored diffs
 before writing, and memory optimizer evidence avoids leaking long stable-memory
 source sentences when the compiled IME candidate is short.
@@ -335,6 +342,10 @@ Scripts:
 - `scripts/build_patched_squirrel.sh`: build/install patched Squirrel.
 - `scripts/restart_rag_ime_runtime.sh`: restart local MLX predictor + sidecar.
 - `scripts/doctor_squirrel_integration.sh`: integration readiness doctor.
+- `scripts/prepare_squirrel_foreground_check.sh`: consolidated real-foreground
+  readiness helper; runs read-only input-source audit, opens/waits for the
+  System Settings Add flow when needed, waits for Squirrel selection, and
+  checks sidecar health without directly mutating macOS preferences.
 - `scripts/verify_squirrel_foreground_trace.sh`: foreground trace verifier.
 - `scripts/soak_squirrel_foreground_trace.sh`: longer real-foreground soak run
   that emits a machine-readable report.
@@ -1846,6 +1857,7 @@ Doctor:
 ```bash
 scripts/doctor_squirrel_integration.sh
 RAG_IME_DOCTOR_REQUIRE_TRYOUT=1 scripts/doctor_squirrel_integration.sh
+scripts/prepare_squirrel_foreground_check.sh
 scripts/wait_squirrel_typing_ready.sh
 scripts/verify_squirrel_foreground_trace.sh
 ```
@@ -1888,7 +1900,7 @@ remains important.
 Acceptance scenario:
 
 ```text
-Select RAG-IME - Simplified
+Select Squirrel - Simplified
 Type a Chinese context in TextEdit/Codex/browser
 Observe LLM/RAG/Rime source lanes
 Press 1/2/3 and confirm candidate commits instead of digit insertion
@@ -2004,6 +2016,7 @@ Goal: produce one clean single-session trace proving:
 Files likely involved:
 
 - `squirrel-patches/0001-add-rag-ime-sidecar.patch`
+- `scripts/prepare_squirrel_foreground_check.sh`
 - `scripts/verify_squirrel_foreground_trace.sh`
 - `scripts/check_squirrel_frontend_trace.py`
 - `tests/test_squirrel_frontend_trace.py`
