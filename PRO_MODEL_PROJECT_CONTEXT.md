@@ -231,12 +231,14 @@ HIToolbox-enabled, but `thirdPartyEnabled=false`; the current source is
 `duplicatePathCount=5` from old backup app paths under
 `/Users/undo/Desktop/rag-ime-input-method-backups/system/`; the tryout gate now
 promotes duplicate Squirrel app registrations to a top-level check when
-`--include-input-source-audit` is used. After rerunning
+`--include-input-source-audit` is used. Rerunning
 `refresh_squirrel_input_source_registration.sh` against the product
-`Squirrel.app` / `im.rime.inputmethod.Squirrel` route, the latest foreground
-gate reports `duplicate-squirrel-app-registrations.passed=true`,
-`duplicatePathCount=0`, and only the live app path. The latest read-only audit
-still reports `readiness.state=third-party-missing`,
+`Squirrel.app` / `im.rime.inputmethod.Squirrel` route unregisters those records,
+but root-owned backup bundles can be rediscovered by LaunchServices. The
+foreground gate now includes concrete duplicate paths in `manualRequired`, and
+`RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1` prints a concrete `sudo mv` cleanup
+command when the current user cannot move the backup app. The latest read-only
+audit still reports `readiness.state=third-party-missing`,
 `wouldChangeHitoolbox=false`, and `wouldChangeThirdParty=true`. True foreground
 soak still requires the System Settings Add/select flow for
 `Squirrel - Simplified`. Cleanup diff apply now re-validates stored diffs
@@ -244,7 +246,7 @@ before writing, and memory optimizer evidence avoids leaking long stable-memory
 source sentences when the compiled IME candidate is short.
 
 Latest default product-gate evidence: `scripts/run_product_readiness_gate.sh`
-passes with `576 tests OK`, deterministic `scripts/acceptance.py`,
+passes with `577 tests OK`, deterministic `scripts/acceptance.py`,
 `rag-pass-rate=0.9706`, `rime-sidecar-pass-rate=0.9706`, old-input echo `0.0`,
 warm suggestion/Rime cache hits, and no sidecar RAG/model timeouts. Latest
 backend product-gate evidence with the installed local MLX runtime:

@@ -7,6 +7,8 @@ BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-im.rime.inputmethod.Squirrel}"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
 CHECK_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/check_macos_input_source.sh}"
 SELECT_AFTER_REFRESH="${RAG_IME_SQUIRREL_AUTO_SELECT:-0}"
+QUARANTINE_STALE_APPS="${RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS:-0}"
+QUARANTINE_ROOT="${RAG_IME_STALE_SQUIRREL_QUARANTINE_DIR:-$HOME/Library/Application Support/RagIme/disabled-input-method-backups}"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-squirrel-input-source-refresh.XXXXXX")"
@@ -35,6 +37,7 @@ if [[ ! -x "$LSREGISTER" ]]; then
 fi
 
 canonical_app="$(cd "$(dirname "$APP")" && pwd -P)/$(basename "$APP")"
+timestamp="$(date +%Y%m%d-%H%M%S)"
 
 "$LSREGISTER" -dump >"$tmpdir/lsregister-before.txt" 2>/dev/null || true
 /usr/bin/python3 - "$tmpdir/lsregister-before.txt" "$canonical_app" "$BUNDLE_ID" >"$tmpdir/stale-paths.txt" <<'PY'
@@ -77,7 +80,22 @@ PY
 
 while IFS= read -r stale_path; do
   [[ -n "$stale_path" ]] || continue
+  quarantine_path=""
+  if bool_true "$QUARANTINE_STALE_APPS" && [[ -d "$stale_path" ]]; then
+    mkdir -p "$QUARANTINE_ROOT"
+    quarantine_path="$QUARANTINE_ROOT/$(basename "$stale_path").disabled-bundle-$timestamp"
+    if mv "$stale_path" "$quarantine_path" 2>/dev/null; then
+      echo "quarantined stale input method bundle path: $stale_path -> $quarantine_path"
+    else
+      echo "warning: could not quarantine stale input method bundle path: $stale_path" >&2
+      echo "warning: manual cleanup command: sudo mv \"${stale_path}\" \"${quarantine_path}\"" >&2
+      quarantine_path=""
+    fi
+  fi
   "$LSREGISTER" -u "$stale_path" >/dev/null 2>&1 || true
+  if [[ -n "$quarantine_path" ]]; then
+    "$LSREGISTER" -u "$quarantine_path" >/dev/null 2>&1 || true
+  fi
   echo "unregistered stale input method bundle path: $stale_path"
 done <"$tmpdir/stale-paths.txt"
 

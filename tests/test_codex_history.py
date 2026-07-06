@@ -1232,6 +1232,8 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertTrue(checks["sidecar-health"]["passed"])
         self.assertTrue(checks["sidecar-health"]["skipped"])
         self.assertTrue(checks["quality-gate"]["skipped"])
+        self.assertIn("macOS input menu -> Squirrel - Simplified", report["manualRequired"])
+        self.assertIn("scripts/wait_squirrel_typing_ready.sh", report["manualRequired"])
         self.assertEqual(json.loads(report_path.read_text(encoding="utf-8"))["schemaVersion"], report["schemaVersion"])
 
     def test_cli_squirrel_tryout_gate_runs_quality_gate_when_input_source_is_selected(self) -> None:

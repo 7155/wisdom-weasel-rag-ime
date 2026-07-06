@@ -9,7 +9,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime.cli import _tryout_duplicate_squirrel_apps_check, _tryout_input_source_audit
+from rag_ime.cli import (
+    _squirrel_tryout_manual_required,
+    _tryout_duplicate_squirrel_apps_check,
+    _tryout_input_source_audit,
+)
 
 
 class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
@@ -103,6 +107,31 @@ class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
 
         self.assertTrue(check["passed"])
         self.assertTrue(check["skipped"])
+
+    def test_tryout_manual_required_lists_duplicate_paths(self) -> None:
+        manual = _squirrel_tryout_manual_required(
+            input_source_report={
+                "typingReady": False,
+                "manualAction": "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel - Simplified",
+                "helperCommand": "scripts/open_squirrel_input_source_settings.sh --wait",
+                "verificationCommand": "scripts/wait_squirrel_input_source_added.sh",
+            },
+            duplicate_apps_check={
+                "passed": False,
+                "nextAction": "move old Squirrel.app backups out of LaunchServices-visible folders, then rerun audit",
+                "duplicatePaths": ["/Users/me/Desktop/backup/Squirrel.app"],
+            },
+        )
+
+        self.assertIn("move old Squirrel.app backups out of LaunchServices-visible folders, then rerun audit", manual)
+        self.assertIn(
+            "move duplicate Squirrel.app backup out of LaunchServices-visible folders: /Users/me/Desktop/backup/Squirrel.app",
+            manual,
+        )
+        self.assertIn(
+            "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel - Simplified",
+            manual,
+        )
 
 
 def _write_preferences(home: Path) -> None:

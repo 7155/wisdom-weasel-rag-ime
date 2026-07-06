@@ -2876,6 +2876,7 @@ def run_squirrel_tryout_gate(
             required_predictor_capabilities=required_predictor_capabilities,
             include_cases=include_cases,
         )
+    duplicate_apps_check = _tryout_duplicate_squirrel_apps_check(input_source_audit)
     checks = [
         {
             "name": "installed-bundle",
@@ -2910,7 +2911,7 @@ def run_squirrel_tryout_gate(
             "rimeDir": build_report.get("rimeDir"),
             "missingFiles": build_report.get("missingFiles"),
         },
-        _tryout_duplicate_squirrel_apps_check(input_source_audit),
+        duplicate_apps_check,
         {
             "name": "input-source-ready",
             "passed": input_ready,
@@ -2938,6 +2939,10 @@ def run_squirrel_tryout_gate(
             "skipped": quality_report is None,
         },
     ]
+    manual_required = _squirrel_tryout_manual_required(
+        input_source_report=input_source_report,
+        duplicate_apps_check=duplicate_apps_check,
+    )
     return {
         "schemaVersion": "rag-ime.squirrel-tryout-gate.v1",
         "passed": all(bool(item.get("passed")) for item in checks),
@@ -2945,11 +2950,7 @@ def run_squirrel_tryout_gate(
         "dbPath": str(db_path),
         "casesFile": str(cases_file),
         "checks": checks,
-        "manualRequired": [
-            "foreground editor typing verification",
-            "real Squirrel candidate panel visual check",
-            "side candidate number-key commit verification",
-        ],
+        "manualRequired": manual_required,
         "installedBundle": bundle_report,
         "installedRimeConfig": config_report,
         "installedRimeDefaults": defaults_report,
@@ -2960,6 +2961,41 @@ def run_squirrel_tryout_gate(
         "sidecar": sidecar_report,
         "qualityGate": quality_report,
     }
+
+
+def _squirrel_tryout_manual_required(
+    *,
+    input_source_report: dict[str, object],
+    duplicate_apps_check: dict[str, object],
+) -> list[str]:
+    items = [
+        "foreground editor typing verification",
+        "real Squirrel candidate panel visual check",
+        "side candidate number-key commit verification",
+    ]
+    if not bool(duplicate_apps_check.get("passed")):
+        next_action = str(duplicate_apps_check.get("nextAction") or "").strip()
+        if next_action:
+            items.append(next_action)
+        duplicate_paths = duplicate_apps_check.get("duplicatePaths")
+        if isinstance(duplicate_paths, list):
+            for path in duplicate_paths[:5]:
+                if path:
+                    items.append(f"move duplicate Squirrel.app backup out of LaunchServices-visible folders: {path}")
+    if not bool(input_source_report.get("typingReady")):
+        manual_action = str(input_source_report.get("manualAction") or "").strip()
+        helper_command = str(input_source_report.get("helperCommand") or "").strip()
+        verification_command = str(input_source_report.get("verificationCommand") or "").strip()
+        next_action = str(input_source_report.get("nextAction") or "").strip()
+        if manual_action:
+            items.append(manual_action)
+        elif next_action:
+            items.append(next_action)
+        if helper_command:
+            items.append(helper_command)
+        if verification_command:
+            items.append(verification_command)
+    return items
 
 
 def _tryout_duplicate_squirrel_apps_check(input_source_audit: dict[str, object] | None) -> dict[str, object]:

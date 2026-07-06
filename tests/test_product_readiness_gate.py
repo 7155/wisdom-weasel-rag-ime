@@ -229,6 +229,9 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn('Input Methods/Squirrel.app', script_text)
         self.assertIn('BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-im.rime.inputmethod.Squirrel}"', script_text)
         self.assertIn('INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"', script_text)
+        self.assertIn('RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS:-0', script_text)
+        self.assertIn('disabled-input-method-backups', script_text)
+        self.assertIn('.disabled-bundle-', script_text)
         self.assertNotIn('Input Methods/RAG-IME.app}"', script_text)
         self.assertNotIn('BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-im.rag-ime.inputmethod.RagIme}"', script_text)
 
