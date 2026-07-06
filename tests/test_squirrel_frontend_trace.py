@@ -217,6 +217,19 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     },
                     ensure_ascii=False,
                 )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 12,
+                        "inputGeneration": 9,
+                        "frontendRevision": 13,
+                        "selectionEpoch": 14,
+                        "committedContextHash": "sha256:abc",
+                        "committedContextChars": 7,
+                    },
+                    ensure_ascii=False,
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -242,6 +255,9 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["required"]["deleteResync"], True)
         self.assertEqual(report["latestDeleteResync"]["invalidation"]["inputGeneration"], 8)
         self.assertEqual(report["latestDeleteResync"]["resync"]["committedContextHash"], "sha256:abc")
+        self.assertEqual(report["latestPostDeleteContextUse"]["use"]["event"], "sidecar_request_scheduled")
+        self.assertEqual(report["latestPostDeleteContextUse"]["use"]["committedContextHash"], "sha256:abc")
+        self.assertEqual(report["postDeleteContextViolations"], [])
 
     def test_trace_check_fails_when_delete_resync_required_but_missing(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -281,6 +297,69 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertFalse(report["passed"])
         self.assertIsNone(report["latestDeleteResync"])
+
+    def test_trace_check_fails_when_post_delete_request_uses_old_context_hash(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-delete-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "display_invalidated_by_input_change",
+                        "timestampMs": 10,
+                        "reason": "delete_key",
+                        "keyCode": 51,
+                        "inputGeneration": 8,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "committed_context_resynced_after_delete",
+                        "timestampMs": 11,
+                        "keyCode": 51,
+                        "inputGeneration": 8,
+                        "committedContextHash": "sha256:new",
+                        "committedContextChars": 7,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 12,
+                        "inputGeneration": 9,
+                        "committedContextHash": "sha256:old",
+                        "committedContextChars": 11,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-delete-resync",
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertIsNone(report["latestPostDeleteContextUse"])
+        self.assertEqual(report["postDeleteContextViolations"][0]["reason"], "post_delete_context_hash_mismatch")
 
     def test_trace_check_passes_for_mixed_panel_and_side_commit(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1009,6 +1088,21 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     },
                     ensure_ascii=False,
                 )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "sidecar_request_scheduled",
+                        "timestampMs": 22,
+                        "rawInput": "xin",
+                        "preedit": "xin",
+                        "inputGeneration": 11,
+                        "frontendRevision": 6,
+                        "selectionEpoch": 11,
+                        "committedContextHash": "sha256:cccc",
+                        "committedContextChars": 18,
+                    },
+                    ensure_ascii=False,
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -1041,6 +1135,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["schemaVersion"], "rag-ime.squirrel-soak-report.v1")
         self.assertEqual(report["metrics"]["pairedSideCommitCount"], 1)
         self.assertTrue(report["metrics"]["deleteResyncObserved"])
+        self.assertTrue(report["metrics"]["postDeleteContextUseObserved"])
         self.assertEqual(report["latency"]["responseAgeMs"]["p50"], 42)
         self.assertEqual(report["latency"]["responseReceivedToAppliedMs"]["max"], 2)
         self.assertEqual(report["latency"]["postCommitFollowupMs"]["max"], 5)

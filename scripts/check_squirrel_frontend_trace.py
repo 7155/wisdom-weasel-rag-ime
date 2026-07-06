@@ -126,6 +126,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     prediction_trace_events = [event for event in events if is_prediction_trace_event(event)]
     commit_observed = latest_matching(events, lambda event: event.get("event") == "commit_observed")
     delete_resync = latest_delete_resync(events)
+    post_delete_context_use = latest_post_delete_context_use(events, delete_resync)
     side_commit_barrier_ms = max(
         event_timestamp_ms(mixed_panel),
         event_timestamp_ms(side_panel),
@@ -149,6 +150,8 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestPredictionTraceEvents": [summarize_event(event) for event in prediction_trace_events[-8:]],
         "latestCommitObserved": summarize_event(commit_observed),
         "latestDeleteResync": summarize_delete_resync(delete_resync),
+        "latestPostDeleteContextUse": summarize_post_delete_context_use(post_delete_context_use),
+        "postDeleteContextViolations": post_delete_context_violations(events, delete_resync),
         "latestMixedPanel": summarize_event(mixed_panel),
         "latestSidePanel": summarize_event(side_panel),
         "latestMixedTextLayout": summarize_event(mixed_text_layout),
@@ -461,6 +464,70 @@ def latest_delete_resync(events: list[dict[str, Any]]) -> dict[str, Any] | None:
     return latest
 
 
+def latest_post_delete_context_use(
+    events: list[dict[str, Any]],
+    delete_resync: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not delete_resync:
+        return None
+    resync_event = delete_resync.get("resync")
+    if not isinstance(resync_event, dict):
+        return None
+    target_hash = str(resync_event.get("committedContextHash") or "")
+    if not target_hash:
+        return None
+    min_timestamp_ms = event_timestamp_ms(resync_event)
+    latest: dict[str, Any] | None = None
+    for event in events:
+        if event_timestamp_ms(event) < min_timestamp_ms:
+            continue
+        if event.get("event") not in {"sidecar_request_scheduled", "sidecar_response_applied"}:
+            continue
+        observed_hash = str(event.get("committedContextHash") or "")
+        if observed_hash == target_hash:
+            latest = {"resync": resync_event, "use": event}
+    return latest
+
+
+def post_delete_context_violations(
+    events: list[dict[str, Any]],
+    delete_resync: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not delete_resync:
+        return []
+    resync_event = delete_resync.get("resync")
+    if not isinstance(resync_event, dict):
+        return []
+    target_hash = str(resync_event.get("committedContextHash") or "")
+    if not target_hash:
+        return []
+    min_timestamp_ms = event_timestamp_ms(resync_event)
+    violations: list[dict[str, Any]] = []
+    for event in events:
+        if event_timestamp_ms(event) < min_timestamp_ms:
+            continue
+        event_name = str(event.get("event") or "")
+        if event_name not in {"sidecar_request_scheduled", "sidecar_response_applied"}:
+            continue
+        observed_hash = str(event.get("committedContextHash") or "")
+        if not observed_hash:
+            continue
+        if observed_hash == target_hash:
+            break
+        violations.append(
+            {
+                "event": event_name,
+                "timestampMs": event.get("timestampMs"),
+                "reason": "post_delete_context_hash_mismatch",
+                "expectedCommittedContextHash": target_hash,
+                "committedContextHash": observed_hash,
+                "frontendRevision": event.get("frontendRevision"),
+                "selectionEpoch": event.get("selectionEpoch"),
+            }
+        )
+    return violations
+
+
 def frontend_transaction_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     violations: list[dict[str, Any]] = []
     for event in events:
@@ -732,6 +799,15 @@ def summarize_delete_resync(match: dict[str, Any] | None) -> dict[str, Any] | No
     }
 
 
+def summarize_post_delete_context_use(match: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not match:
+        return None
+    return {
+        "resync": summarize_event(match.get("resync")),
+        "use": summarize_event(match.get("use")),
+    }
+
+
 def report_passes(
     report: dict[str, Any],
     *,
@@ -757,6 +833,10 @@ def report_passes(
     if require_post_commit_followup and not report.get("latestPostCommitFollowup"):
         return False
     if require_delete_resync and not report.get("latestDeleteResync"):
+        return False
+    if require_delete_resync and not report.get("latestPostDeleteContextUse"):
+        return False
+    if require_delete_resync and report.get("postDeleteContextViolations"):
         return False
     if require_modern_prediction_session and not report.get("latestModernPredictionSession"):
         return False

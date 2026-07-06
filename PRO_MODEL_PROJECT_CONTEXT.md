@@ -433,6 +433,13 @@ from the actual client state. The Squirrel patch now includes
 `frontendRevision`, `selectionEpoch`, and `committedContextHash` on the resync
 event.
 
+The same gate now also requires a later `sidecar_request_scheduled` or
+`sidecar_response_applied` event to carry the resynced `committedContextHash`.
+If a post-delete request/response carries the old hash, the checker reports
+`post_delete_context_hash_mismatch` and fails. This is the concrete guard for
+the user's complaint that Backspace/Delete looked resynced while LLM/RAG still
+used deleted text.
+
 Prediction stability is now a first-class layer. `rag_ime/prediction_anchors.py`
 splits identity into `hardContextAnchor`, `queryAnchor`, and `displayAnchor` so
 Backspace/Delete/app/input-source changes can hard-clear old candidates while

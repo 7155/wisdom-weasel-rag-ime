@@ -158,6 +158,18 @@ def build_soak_report(
                     "candidate": violation.get("candidate"),
                 }
             )
+    for violation in frontend_report.get("postDeleteContextViolations") or []:
+        if isinstance(violation, dict):
+            violations.append(
+                {
+                    "type": "post_delete_context_violation",
+                    "event": violation.get("event"),
+                    "timestampMs": violation.get("timestampMs"),
+                    "reason": violation.get("reason"),
+                    "expectedCommittedContextHash": violation.get("expectedCommittedContextHash"),
+                    "committedContextHash": violation.get("committedContextHash"),
+                }
+            )
     if len(stale_applied) > max_stale_applied:
         for violation in stale_applied:
             violations.append(violation)
@@ -218,6 +230,7 @@ def build_soak_report(
             "unmatchedNumberKeyRouteCount": len(unmatched_routes),
             "postCommitFollowupCount": len(post_commit_followups),
             "deleteResyncObserved": bool(frontend_report.get("latestDeleteResync")),
+            "postDeleteContextUseObserved": bool(frontend_report.get("latestPostDeleteContextUse")),
             "staleAppliedResponseCount": len(stale_applied),
             "staleResponseDropCount": int(event_counts.get("sidecar_response_dropped_stale", 0))
             + int(event_counts.get("sidecar_response_dropped", 0)),
