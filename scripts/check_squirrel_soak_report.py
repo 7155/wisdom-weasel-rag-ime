@@ -49,6 +49,11 @@ def main() -> int:
     parser.add_argument("--require-delete-resync", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
     parser.add_argument("--require-balanced-quota", action="store_true")
+    parser.add_argument(
+        "--require-snapshot-selection-trace",
+        action="store_true",
+        help="Require accepted snapshot-selection trace coverage for paired side-candidate commits.",
+    )
     parser.add_argument("--min-sidecar-requests", type=int, default=1)
     parser.add_argument("--min-sidecar-applied", type=int, default=1)
     parser.add_argument("--min-panel-displays", type=int, default=1)
@@ -93,6 +98,7 @@ def main() -> int:
             require_delete_resync=args.require_delete_resync,
             require_modern_prediction_session=args.require_modern_prediction_session,
             require_balanced_quota=args.require_balanced_quota,
+            require_snapshot_selection_trace=args.require_snapshot_selection_trace,
             min_sidecar_requests=max(0, args.min_sidecar_requests),
             min_sidecar_applied=max(0, args.min_sidecar_applied),
             min_panel_displays=max(0, args.min_panel_displays),
@@ -128,6 +134,7 @@ def build_soak_report(
     require_delete_resync: bool,
     require_modern_prediction_session: bool,
     require_balanced_quota: bool,
+    require_snapshot_selection_trace: bool,
     min_sidecar_requests: int,
     min_sidecar_applied: int,
     min_panel_displays: int,
@@ -147,6 +154,10 @@ def build_soak_report(
     prediction_stability = summarize_prediction_stability(events, stale_applied_count=len(stale_applied))
     lane_stability = summarize_lane_stability(events)
     display_quality = summarize_display_quality(events, frontend_report=frontend_report)
+    selection_quality = summarize_selection_quality(
+        events,
+        paired_side_commit_count=len(side_commit_pairs),
+    )
     post_commit_barrier_violations = [
         violation
         for violation in frontend_report.get("postCommitBarrierViolations") or []
@@ -176,6 +187,7 @@ def build_soak_report(
         "maxFlickerCount": max_flicker_count,
         "maxMinVisibleViolations": max_min_visible_violations,
         "maxRagEmptyClearedPanel": max_rag_empty_cleared_panel,
+        "requireSnapshotSelectionTrace": require_snapshot_selection_trace,
     }
     threshold_results = {
         "sidecarRequests": int(event_counts.get("sidecar_request_scheduled", 0)) >= min_sidecar_requests,
@@ -188,6 +200,10 @@ def build_soak_report(
         "flickerCount": int(prediction_stability["flickerCount"]) <= max_flicker_count,
         "minVisibleViolations": int(prediction_stability["minVisibleViolationCount"]) <= max_min_visible_violations,
         "ragEmptyClearedPanel": int(lane_stability["ragEmptyClearedPanelCount"]) <= max_rag_empty_cleared_panel,
+        "snapshotSelectionTrace": (
+            not require_snapshot_selection_trace
+            or int(selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"]) == 0
+        ),
     }
 
     violations: list[dict[str, Any]] = []
@@ -293,6 +309,15 @@ def build_soak_report(
                 "expectedAtLeast": min_chain_depth,
             }
         )
+    if require_snapshot_selection_trace and int(selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"]) > 0:
+        violations.append(
+            {
+                "type": "snapshot_selection_trace_missing",
+                "actual": selection_quality["snapshotSelectionAcceptedCount"],
+                "expectedAtLeast": selection_quality["pairedSideCommitCount"],
+                "missing": selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"],
+            }
+        )
 
     response_age_values = [
         int(event.get("responseAgeMs") or 0)
@@ -331,6 +356,7 @@ def build_soak_report(
             "deleteResync": require_delete_resync,
             "modernPredictionSession": require_modern_prediction_session,
             "balancedQuota": require_balanced_quota,
+            "snapshotSelectionTrace": require_snapshot_selection_trace,
         },
         "thresholds": thresholds,
         "thresholdResults": threshold_results,
@@ -356,6 +382,7 @@ def build_soak_report(
         "predictionStability": prediction_stability,
         "laneStability": lane_stability,
         "displayQuality": display_quality,
+        "selectionQuality": selection_quality,
         "chain": chain,
         "latency": {
             "responseAgeMs": summarize_numeric(response_age_values),
@@ -624,6 +651,27 @@ def summarize_prediction_stability(events: list[dict[str, Any]], *, stale_applie
         "staleSelectionRejected": sum(1 for event in events if event.get("event") == "stale_candidate_selection_rejected"),
         "staleSelectionApplied": stale_applied_count,
         "snapshotSpans": snapshot_spans[:20],
+    }
+
+
+def summarize_selection_quality(events: list[dict[str, Any]], *, paired_side_commit_count: int) -> dict[str, Any]:
+    prediction_events = list(iter_prediction_trace_events(events))
+    accepted = [
+        event for event in prediction_events if event.get("event") == "candidate_snapshot_selection_accepted"
+    ]
+    rejected_stale = [
+        event for event in prediction_events if event.get("event") == "candidate_snapshot_selection_rejected_stale"
+    ]
+    legacy_stale_rejected_count = sum(1 for event in events if event.get("event") == "stale_candidate_selection_rejected")
+    accepted_count = len(dedupe_trace_events(accepted))
+    rejected_stale_count = len(dedupe_trace_events(rejected_stale))
+    return {
+        "snapshotSelectionAcceptedCount": accepted_count,
+        "snapshotSelectionRejectedStaleCount": rejected_stale_count,
+        "legacyStaleSelectionRejectedCount": legacy_stale_rejected_count,
+        "pairedSideCommitCount": paired_side_commit_count,
+        "sideCommitWithoutAcceptedSnapshotSelectionCount": max(0, paired_side_commit_count - accepted_count),
+        "acceptedSnapshotSelectionWithoutSideCommitCount": max(0, accepted_count - paired_side_commit_count),
     }
 
 

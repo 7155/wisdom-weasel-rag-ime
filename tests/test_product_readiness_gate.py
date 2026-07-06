@@ -48,6 +48,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--max-min-visible-violations", soak_help.stdout)
         self.assertIn("--max-rag-empty-cleared-panel", soak_help.stdout)
         self.assertIn("--min-chain-depth", soak_help.stdout)
+        self.assertIn("--require-snapshot-selection-trace", soak_help.stdout)
         seed_help = subprocess.run(
             ["python3", "-m", "rag_ime.cli", "seed-eval-cases", "--help"],
             cwd=root,
@@ -195,6 +196,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--require-delete-resync", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
         self.assertIn("--require-balanced-quota", result.stdout)
+        self.assertIn("--require-snapshot-selection-trace", result.stdout)
 
     def test_product_gate_macos_frontend_stops_after_failed_readiness_preflight(self) -> None:
         root = Path(__file__).resolve().parents[1]

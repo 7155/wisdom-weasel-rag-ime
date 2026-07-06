@@ -31,7 +31,9 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
 
         self.assertIn("chain_repeats=7", result.stdout)
         self.assertIn("min_chain_depth=7", result.stdout)
+        self.assertIn("require_snapshot_selection_trace=1", result.stdout)
         self.assertIn("--min-chain-depth 7", result.stdout)
+        self.assertIn("--require-snapshot-selection-trace", result.stdout)
         self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)
 
     def test_soak_foreground_dry_run_disables_chain_requirement_without_followup(self) -> None:
@@ -52,6 +54,24 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         self.assertIn("min_post_commit_followups=0", result.stdout)
         self.assertIn("min_chain_depth=0", result.stdout)
         self.assertIn("--min-chain-depth 0", result.stdout)
+
+    def test_soak_foreground_dry_run_can_disable_snapshot_selection_trace_requirement(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "soak_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--no-snapshot-selection-trace",
+            ],
+            cwd=root,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn("require_snapshot_selection_trace=0", result.stdout)
+        self.assertNotIn("--require-snapshot-selection-trace", result.stdout)
 
     def test_prepare_foreground_check_waits_for_typing_when_source_needs_switch(self) -> None:
         root = Path(__file__).resolve().parents[1]

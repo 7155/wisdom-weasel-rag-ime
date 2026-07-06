@@ -1394,6 +1394,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     "--require-post-commit-followup",
                     "--require-delete-resync",
                     "--require-modern-prediction-session",
+                    "--require-snapshot-selection-trace",
                 ],
                 cwd=root,
                 text=True,
@@ -1409,6 +1410,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["metrics"]["pairedSideCommitCount"], 1)
         self.assertTrue(report["metrics"]["deleteResyncObserved"])
         self.assertTrue(report["metrics"]["postDeleteContextUseObserved"])
+        self.assertTrue(report["required"]["snapshotSelectionTrace"])
+        self.assertTrue(report["thresholdResults"]["snapshotSelectionTrace"])
         self.assertEqual(report["latency"]["responseAgeMs"]["p50"], 42)
         self.assertEqual(report["latency"]["responseReceivedToAppliedMs"]["max"], 2)
         self.assertEqual(report["latency"]["postCommitFollowupMs"]["max"], 5)
@@ -1419,6 +1422,9 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["predictionStability"]["snapshotSelectionAccepted"], 1)
         self.assertEqual(report["predictionStability"]["snapshotSelectionRejectedStale"], 1)
         self.assertEqual(report["predictionStability"]["staleSelectionApplied"], 0)
+        self.assertEqual(report["selectionQuality"]["snapshotSelectionAcceptedCount"], 1)
+        self.assertEqual(report["selectionQuality"]["snapshotSelectionRejectedStaleCount"], 1)
+        self.assertEqual(report["selectionQuality"]["sideCommitWithoutAcceptedSnapshotSelectionCount"], 0)
         self.assertEqual(report["laneStability"]["modelTimeouts"], 1)
         self.assertEqual(report["laneStability"]["modelTimeoutsWithHoldover"], 1)
         self.assertEqual(report["laneStability"]["ragEmptyCount"], 1)
@@ -1429,6 +1435,67 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["displayQuality"]["postCommitNumberKeyViolation"], 0)
         self.assertEqual(report["displayQuality"]["snapshotOrdinalDriftViolation"], 0)
         self.assertTrue(persisted["passed"])
+
+    def test_soak_report_can_require_snapshot_selection_trace_for_side_commits(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-selection-trace-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "report.json"
+            candidate = _side_candidate("6", "rag", "session-a")
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "number_key_route",
+                        "timestampMs": 1,
+                        "key": "6",
+                        "candidate": candidate,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "side_candidate_commit",
+                        "timestampMs": 2,
+                        "candidate": candidate,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                    "--require-side-commit",
+                    "--require-snapshot-selection-trace",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(report["thresholdResults"]["snapshotSelectionTrace"])
+        self.assertEqual(report["selectionQuality"]["pairedSideCommitCount"], 1)
+        self.assertEqual(report["selectionQuality"]["snapshotSelectionAcceptedCount"], 0)
+        self.assertEqual(report["selectionQuality"]["sideCommitWithoutAcceptedSnapshotSelectionCount"], 1)
+        self.assertEqual(report["violations"][0]["type"], "snapshot_selection_trace_missing")
 
     def test_soak_report_surfaces_trace_privacy_violations(self) -> None:
         root = Path(__file__).resolve().parents[1]

@@ -230,7 +230,9 @@ reuses an existing `candidateOrdinal` / `selectionKey` for a different
 keeps "one-by-one candidates pop in" compatible with stable 1/2/3 selection.
 The Squirrel patch now emits `candidate_snapshot_selection_accepted` and
 `candidate_snapshot_selection_rejected_stale`, and the soak report surfaces
-both counts under `predictionStability`.
+both counts under `predictionStability`. The foreground soak wrapper and macOS
+product gate require accepted snapshot-selection trace coverage for paired
+side-candidate commits via `--require-snapshot-selection-trace`.
 It also treats raw-text leakage in default modern trace events as a foreground
 gate failure: when `traceIncludesText=false`, fields such as `rawInput`,
 `preedit`, `commitTextPreview`, `committedText`, `committedContextSuffix`,

@@ -325,7 +325,8 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     --require-post-commit-followup \
     --require-delete-resync \
     --require-modern-prediction-session \
-    --require-balanced-quota
+    --require-balanced-quota \
+    --require-snapshot-selection-trace
 else
   log "macOS Squirrel foreground checks skipped; set RAG_IME_REQUIRE_MACOS_FRONTEND=1 to require them"
 fi
