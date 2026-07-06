@@ -113,6 +113,7 @@ class CandidatePool:
         if side_budget is None:
             side_budget = model_count + suggestion_count
         budget = max(0, int(side_budget))
+        model_slot_cap = _prediction_max_model_slots(budget, has_suggestions=suggestion_count > 0)
         if budget <= 1:
             suggestion_reserve = 0 if model_count else min(suggestion_count, 1)
         elif budget == 2:
@@ -124,7 +125,7 @@ class CandidatePool:
                 _prediction_rag_block_reserve(budget),
                 max(0, budget - minimum_model_slots),
             )
-        model_limit = max(0, budget - suggestion_reserve)
+        model_limit = min(model_slot_cap, max(0, budget - suggestion_reserve))
 
         def push_one(name: str) -> None:
             while groups[name]:
@@ -145,7 +146,7 @@ class CandidatePool:
             push_one("rag")
             push_one("memory")
         if not suggestion_count:
-            while groups["model"]:
+            while len([item for item in ordered if item.source_type == "model"]) < model_slot_cap and groups["model"]:
                 push_one("model")
         return tuple(ordered)
 
@@ -164,6 +165,14 @@ def _prediction_rag_block_reserve(side_budget: int) -> int:
     if side_budget <= 3:
         return side_budget - 1
     return min(3, max(0, side_budget // 2))
+
+
+def _prediction_max_model_slots(side_budget: int, *, has_suggestions: bool) -> int:
+    if side_budget <= 0:
+        return 0
+    if has_suggestions:
+        return min(2, side_budget)
+    return min(3, side_budget)
 
 
 def _allow_semantic_side_candidates_for_prefix(prefix: str) -> bool:
@@ -301,6 +310,8 @@ def merge_prediction_first_candidates(
     rime_reserve = _rime_reserve_for_mode(snapshot, resolved_mode, max_visible)
     side_budget = min(snapshot.max_side_candidates, max(0, max_visible - rime_reserve))
     side_slot_limit = max(0, max_visible - rime_reserve)
+    max_model_side = _prediction_max_model_slots(side_budget, has_suggestions=bool(pool.rag or pool.memory))
+    rag_reserve = _prediction_rag_block_reserve(side_budget)
     prediction_candidates = pool.prediction_order(side_budget=side_budget)
     strict_prefix_constraint = (
         resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING
@@ -352,6 +363,8 @@ def merge_prediction_first_candidates(
         prefix_matched_side_inserted=prefix_matched_side_inserted,
         top1_guard=top1_guard,
         rime_reserve=rime_reserve,
+        max_model_side_candidates=max_model_side,
+        rag_block_reserve=rag_reserve,
     )
 
 
@@ -788,6 +801,8 @@ def _merge_result(
     prefix_matched_side_inserted: int = 0,
     top1_guard: dict[str, object] | None = None,
     rime_reserve: int = 0,
+    max_model_side_candidates: int = 0,
+    rag_block_reserve: int = 0,
 ) -> PredictionFirstMergeResult:
     return PredictionFirstMergeResult(
         mode=mode,
@@ -810,6 +825,8 @@ def _merge_result(
             "rawCommitInserted": raw_commit_inserted,
             "wanxiangFallbackCount": rime_fallback_count,
             "wanxiangReserve": rime_reserve,
+            "maxModelSideCandidates": max_model_side_candidates,
+            "ragBlockReserve": rag_block_reserve,
             "rimeCompositionOwnedByRime": mode in {InputMode.ANCHOR_COMPOSING, InputMode.PREFIX_CONSTRAINED_COMPOSING},
             "top1Guard": top1_guard or {"triggered": False},
         },

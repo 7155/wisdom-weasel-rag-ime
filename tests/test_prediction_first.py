@@ -356,6 +356,90 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertFalse(session.should_clear_prediction_panel)
         self.assertEqual(session.selection_scope, "prediction")
 
+    def test_model_candidates_do_not_occupy_all_side_slots_when_rag_and_rime_exist(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=47,
+            raw_input="sj",
+            preedit="sj",
+            committed_context="我想",
+            candidates=(
+                RimeCandidate(text="手机", label="1", comment="wanxiang", index=0),
+                RimeCandidate(text="世界", label="2", comment="wanxiang", index=1),
+                RimeCandidate(text="实际", label="3", comment="wanxiang", index=2),
+            ),
+            max_visible_candidates=8,
+            max_side_candidates=5,
+        )
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(
+                    text=f"设计输入法模型候选{i}",
+                    rank=i,
+                    provider_name="qwen-mlx",
+                    latency_ms=20,
+                    confidence=0.9 - (i * 0.01),
+                    metadata={"initials": f"sjsrfmxhx{i}"},
+                )
+                for i in range(1, 6)
+            ],
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="rag-1",
+                    surface_text="设计一个候选展示方式",
+                    suggestion_type="rag",
+                    source_event_id=1,
+                    evidence_preview="RAG should stay visible",
+                    confidence=0.88,
+                    metadata={"source_type": "rag", "initials": "sjyg hxzsfs"},
+                ),
+                InputSuggestion(
+                    suggestion_id="memory-1",
+                    surface_text="输入法候选弹窗要稳定",
+                    suggestion_type="phrase",
+                    source_event_id=2,
+                    evidence_preview="memory should stay visible",
+                    confidence=0.87,
+                    metadata={"source_type": "memory", "initials": "sjwd hxtc ywd"},
+                ),
+            ],
+        )
+
+        self.assertEqual(
+            [item.source_type for item in result.display_candidates],
+            ["model", "model", "rag", "memory", "rime", "rime", "rime"],
+        )
+        self.assertEqual(result.policy["sideInserted"], 4)
+        self.assertEqual(result.policy["wanxiangFallbackCount"], 3)
+        self.assertEqual(result.policy["maxModelSideCandidates"], 2)
+        self.assertEqual(result.policy["ragBlockReserve"], 2)
+        self.assertLessEqual([item.source_type for item in result.display_candidates].count("model"), 2)
+
+    def test_model_only_post_commit_still_shows_multiple_predictions(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=48,
+            committed_context="我想继续",
+            candidates=(),
+            max_visible_candidates=6,
+            max_side_candidates=6,
+        )
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(text=f"优化候选稳定性{i}", rank=i, provider_name="qwen-mlx", latency_ms=20)
+                for i in range(1, 6)
+            ],
+            suggestions=[],
+        )
+
+        self.assertEqual([item.source_type for item in result.display_candidates], ["model", "model", "model"])
+        self.assertEqual(result.policy["sideInserted"], 3)
+        self.assertEqual(result.policy["maxModelSideCandidates"], 3)
+
     def test_long_rag_evidence_is_not_rendered_as_candidate_text(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",

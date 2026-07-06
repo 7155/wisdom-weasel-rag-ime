@@ -2994,8 +2994,10 @@ def merge_display_candidates(
             rag_items.append((index, suggestion))
 
     side_inserted = 0
+    model_inserted = 0
     has_suggestion_items = bool(rag_items or memory_items)
     suggestion_count = len(rag_items) + len(memory_items)
+    model_slot_cap = _display_max_model_side_candidates(side_budget, has_suggestions=has_suggestion_items)
     if side_budget <= 1:
         suggestion_reserve = 0
     elif side_budget == 2:
@@ -3007,12 +3009,16 @@ def merge_display_candidates(
             rag_block_reserve(side_budget),
             max(0, side_budget - minimum_model_slots),
         )
-    model_before_suggestions_limit = max(0, side_budget - suggestion_reserve)
+    model_before_suggestions_limit = min(model_slot_cap, max(0, side_budget - suggestion_reserve))
 
     def append_model() -> bool:
-        nonlocal side_inserted
+        nonlocal side_inserted, model_inserted
         while model_items:
-            if side_inserted >= side_budget or len(display) >= max_visible - rime_reserve:
+            if (
+                side_inserted >= side_budget
+                or model_inserted >= model_slot_cap
+                or len(display) >= max_visible - rime_reserve
+            ):
                 return False
             prediction = model_items.pop(0)
             normalized_text = _display_text_norm(prediction.text)
@@ -3039,6 +3045,7 @@ def merge_display_candidates(
                 )
             )
             side_inserted += 1
+            model_inserted += 1
             return True
         return False
 
@@ -3193,7 +3200,15 @@ def _is_ascii_text_input(raw: str) -> bool:
 def max_model_side_candidates(side_budget: int) -> int:
     if side_budget <= 0:
         return 0
-    return side_budget
+    return min(2, side_budget)
+
+
+def _display_max_model_side_candidates(side_budget: int, *, has_suggestions: bool) -> int:
+    if side_budget <= 0:
+        return 0
+    if has_suggestions:
+        return max_model_side_candidates(side_budget)
+    return min(3, side_budget)
 
 
 def rag_block_reserve(side_budget: int) -> int:

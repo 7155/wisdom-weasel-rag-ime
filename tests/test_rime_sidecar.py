@@ -1158,9 +1158,11 @@ class RimeSidecarTests(unittest.TestCase):
         model_items = [item for item in display if item["sourceType"] == "model"]
         rag_items = [item for item in display if item["sourceType"] == "rag"]
         rime_items = [item for item in display if item["sourceType"] == "rime"]
-        self.assertEqual(len(model_items), 5)
+        self.assertEqual(len(model_items), 2)
         self.assertGreaterEqual(len(rag_items), 3)
-        self.assertFalse(rime_items)
+        self.assertEqual(len(rime_items), 1)
+        self.assertEqual(rime_items[0]["displayLayout"], "fallback")
+        self.assertEqual(rime_items[0]["displayLane"], "rime")
         self.assertTrue(all(item["displayLayout"] == "inline" for item in model_items))
         self.assertTrue(all(item["displayLane"] == "model" for item in model_items))
         self.assertTrue(all(item["displayLayout"] == "block" for item in rag_items))
@@ -1602,6 +1604,61 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual([item.text for item in display], ["推荐", "生成", "重复句子", "新的句子", "让"])
         self.assertEqual([item.source_type for item in display], ["model", "model", "rag", "rag", "rime"])
 
+    def test_display_merge_caps_model_slots_when_rag_memory_and_rime_exist(self) -> None:
+        snapshot = parse_rime_context_payload(
+            {
+                "sessionId": "squirrel-quota",
+                "requestSeq": 1,
+                "rawInput": "sj",
+                "preedit": "sj",
+                "committedContext": "我想",
+                "maxVisibleCandidates": 8,
+                "maxSideCandidates": 5,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "手机", "comment": "rime"},
+                        {"label": "2", "text": "世界", "comment": "rime"},
+                        {"label": "3", "text": "实际", "comment": "rime"},
+                    ]
+                },
+            },
+            default_project="wisdom-weasel-rag-ime",
+        )
+
+        display = merge_display_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(text=f"设计模型候选{i}", rank=i, provider_name="model", latency_ms=8)
+                for i in range(1, 6)
+            ],
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="rag-1",
+                    surface_text="设计一个候选展示方式",
+                    suggestion_type="rag",
+                    source_event_id=1,
+                    evidence_preview="rag",
+                    confidence=0.9,
+                    metadata={"source_type": "rag"},
+                ),
+                InputSuggestion(
+                    suggestion_id="memory-1",
+                    surface_text="输入法候选弹窗要稳定",
+                    suggestion_type="phrase",
+                    source_event_id=2,
+                    evidence_preview="memory",
+                    confidence=0.9,
+                    metadata={"source_type": "memory"},
+                ),
+            ],
+        )
+
+        self.assertEqual(
+            [item.source_type for item in display],
+            ["model", "model", "rag", "memory", "rime", "rime", "rime"],
+        )
+        self.assertLessEqual([item.source_type for item in display].count("model"), 2)
+
     def test_code_like_raw_input_gets_commit_candidate(self) -> None:
         response = build_rime_sidecar_response(
             payload={
@@ -1749,7 +1806,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
         self.assertEqual(response["modelLane"]["predictionCount"], 5)
         self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 5)
-        self.assertEqual([item["sourceType"] for item in display[:6]], ["model", "model", "model", "rag", "rag", "rag"])
+        self.assertEqual([item["sourceType"] for item in display[:6]], ["model", "model", "rag", "rag", "rag", "rag"])
         rag_count = sum(1 for item in display if item["sourceType"] == "rag")
         self.assertGreaterEqual(rag_count, 1)
         self.assertEqual([item["sourceType"] for item in display[-2:]], ["rime", "rime"])
