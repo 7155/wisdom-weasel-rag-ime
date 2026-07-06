@@ -2982,6 +2982,11 @@ def _squirrel_tryout_manual_required(
             for path in duplicate_paths[:5]:
                 if path:
                     items.append(f"move duplicate Squirrel.app backup out of LaunchServices-visible folders: {path}")
+        cleanup_commands = duplicate_apps_check.get("cleanupCommands")
+        if isinstance(cleanup_commands, list):
+            for command in cleanup_commands:
+                if command:
+                    items.append(str(command))
     if not bool(input_source_report.get("typingReady")):
         manual_action = str(input_source_report.get("manualAction") or "").strip()
         helper_command = str(input_source_report.get("helperCommand") or "").strip()
@@ -3019,6 +3024,7 @@ def _tryout_duplicate_squirrel_apps_check(input_source_audit: dict[str, object] 
     records = launch_services.get("matchingRecords") if isinstance(launch_services.get("matchingRecords"), list) else []
     paths = [str(item.get("path")) for item in records if isinstance(item, dict) and item.get("path")]
     duplicate_paths = paths[1:] if duplicate_count > 0 and len(paths) > 1 else []
+    cleanup_commands = _tryout_duplicate_squirrel_cleanup_commands(duplicate_paths) if duplicate_count > 0 else []
     return {
         "name": name,
         "passed": duplicate_count == 0,
@@ -3026,12 +3032,28 @@ def _tryout_duplicate_squirrel_apps_check(input_source_audit: dict[str, object] 
         "duplicatePathCount": duplicate_count,
         "paths": paths,
         "duplicatePaths": duplicate_paths,
+        "cleanupCommands": cleanup_commands,
         "nextAction": (
             "move old Squirrel.app backups out of LaunchServices-visible folders, then rerun audit"
             if duplicate_count > 0
             else ""
         ),
     }
+
+
+def _tryout_duplicate_squirrel_cleanup_commands(duplicate_paths: Sequence[str]) -> list[str]:
+    if not duplicate_paths:
+        return []
+    quarantine_root = Path.home() / "Library" / "Application Support" / "RagIme" / "disabled-input-method-backups"
+    commands = [f"sudo mkdir -p {shlex.quote(str(quarantine_root))}"]
+    for path in duplicate_paths[:5]:
+        if not path:
+            continue
+        target_prefix = f"{quarantine_root}/{Path(path).name}.disabled-bundle-"
+        commands.append(f"sudo mv {shlex.quote(str(path))} {shlex.quote(target_prefix)}$(date +%Y%m%d-%H%M%S)")
+    commands.append("RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh")
+    commands.append("python3 scripts/audit_squirrel_input_source.py")
+    return commands
 
 
 def _tryout_input_source_audit(*, input_source_id: str, input_source_check_script: Path | None) -> dict[str, object]:

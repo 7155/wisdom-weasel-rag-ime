@@ -100,6 +100,14 @@ class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
             check["duplicatePaths"],
             ["/Users/me/Desktop/backup/Squirrel.app", "/Users/me/Desktop/old/Squirrel.app"],
         )
+        self.assertTrue(check["cleanupCommands"][0].startswith("sudo mkdir -p "))
+        self.assertIn("sudo mv /Users/me/Desktop/backup/Squirrel.app", check["cleanupCommands"][1])
+        self.assertIn("sudo mv /Users/me/Desktop/old/Squirrel.app", check["cleanupCommands"][2])
+        self.assertIn(
+            "RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh",
+            check["cleanupCommands"],
+        )
+        self.assertIn("python3 scripts/audit_squirrel_input_source.py", check["cleanupCommands"])
         self.assertIn("LaunchServices-visible", check["nextAction"])
 
     def test_tryout_gate_duplicate_check_skips_without_audit(self) -> None:
@@ -120,6 +128,12 @@ class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
                 "passed": False,
                 "nextAction": "move old Squirrel.app backups out of LaunchServices-visible folders, then rerun audit",
                 "duplicatePaths": ["/Users/me/Desktop/backup/Squirrel.app"],
+                "cleanupCommands": [
+                    "sudo mkdir -p '/Users/me/Library/Application Support/RagIme/disabled-input-method-backups'",
+                    "sudo mv /Users/me/Desktop/backup/Squirrel.app '/Users/me/Library/Application Support/RagIme/disabled-input-method-backups/Squirrel.app.disabled-bundle-'$(date +%Y%m%d-%H%M%S)",
+                    "RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh",
+                    "python3 scripts/audit_squirrel_input_source.py",
+                ],
             },
         )
 
@@ -130,6 +144,10 @@ class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
         )
         self.assertIn(
             "System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel - Simplified",
+            manual,
+        )
+        self.assertIn(
+            "RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh",
             manual,
         )
 

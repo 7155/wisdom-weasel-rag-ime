@@ -235,10 +235,10 @@ promotes duplicate Squirrel app registrations to a top-level check when
 `refresh_squirrel_input_source_registration.sh` against the product
 `Squirrel.app` / `im.rime.inputmethod.Squirrel` route unregisters those records,
 but root-owned backup bundles can be rediscovered by LaunchServices. The
-foreground gate now includes concrete duplicate paths in `manualRequired`, and
-`RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1` prints a concrete `sudo mv` cleanup
-command when the current user cannot move the backup app. The latest read-only
-audit still reports `readiness.state=third-party-missing`,
+foreground gate now includes concrete duplicate paths plus `cleanupCommands` in
+`manualRequired`, and `RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1` prints a
+concrete `sudo mv` cleanup command when the current user cannot move the backup
+app. The latest read-only audit still reports `readiness.state=third-party-missing`,
 `wouldChangeHitoolbox=false`, and `wouldChangeThirdParty=true`. True foreground
 soak still requires the System Settings Add/select flow for
 `Squirrel - Simplified`. Cleanup diff apply now re-validates stored diffs
