@@ -22,6 +22,9 @@ class VcpRebuildConfig:
     upstream_wire_api: Literal["chat_completions", "responses"] = "chat_completions"
     request_timeout_seconds: float = 60.0
     model_reasoning_effort: str = ""
+    chat_thinking_type: str = ""
+    response_format: str = ""
+    optimize_max_tokens: int = 0
     disable_response_storage: bool = True
     env_path: Path | None = None
 
@@ -123,6 +126,12 @@ class VcpRebuildMemoryGenerator:
                 default=60.0,
             ),
             model_reasoning_effort=_first_env_value(values, "RAG_IME_AI_REASONING_EFFORT", "MODEL_REASONING_EFFORT"),
+            chat_thinking_type=_first_env_value(values, "RAG_IME_AI_THINKING", "MODEL_THINKING"),
+            response_format=_first_env_value(values, "RAG_IME_AI_RESPONSE_FORMAT", "MODEL_RESPONSE_FORMAT"),
+            optimize_max_tokens=_int_value(
+                _first_env_value(values, "RAG_IME_AI_OPTIMIZE_MAX_TOKENS", "MODEL_OPTIMIZE_MAX_TOKENS"),
+                default=0,
+            ),
             disable_response_storage=_bool_value(
                 _first_env_value(values, "RAG_IME_AI_DISABLE_RESPONSE_STORAGE", "DISABLE_RESPONSE_STORAGE"),
                 default=True,
@@ -171,6 +180,7 @@ class VcpRebuildMemoryGenerator:
                 "wireApi": self.config.upstream_wire_api,
                 "envPath": str(self.config.env_path) if self.config.env_path else "",
                 "itemCount": len(items),
+                **_response_debug_metadata(response),
             },
         )
 
@@ -206,7 +216,15 @@ class VcpRebuildMemoryGenerator:
             },
         ]
         started = time.perf_counter()
-        response = self._call_model(messages=messages, max_tokens=1200)
+        response = self._call_model(
+            messages=messages,
+            max_tokens=self.config.optimize_max_tokens
+            or _core_optimization_max_tokens(
+                max_memories=max_memory_count,
+                max_lexicon_phrases=max_phrase_count,
+                max_hide_suggestions=max_hide_count,
+            ),
+        )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         raw_text = _extract_chat_text(response)
         payload = _extract_json_object(raw_text)
@@ -227,6 +245,7 @@ class VcpRebuildMemoryGenerator:
                 "memoryCount": len(memories),
                 "lexiconPhraseCount": len(lexicon_phrases),
                 "hideSuggestionCount": len(hide_events),
+                **_response_debug_metadata(response),
             },
         )
 
@@ -250,6 +269,14 @@ class VcpRebuildMemoryGenerator:
                 "temperature": 0.1,
                 "max_tokens": max_tokens,
             }
+            response_format = compact_whitespace(self.config.response_format).lower()
+            if response_format in {"json", "json_object"}:
+                payload["response_format"] = {"type": "json_object"}
+            thinking_type = compact_whitespace(self.config.chat_thinking_type).lower()
+            if thinking_type in {"enabled", "disabled"}:
+                payload["thinking"] = {"type": thinking_type}
+            if self.config.model_reasoning_effort and thinking_type != "disabled":
+                payload["reasoning_effort"] = self.config.model_reasoning_effort
         request = urllib.request.Request(
             url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -498,6 +525,38 @@ def _extract_chat_text(response: dict[str, Any]) -> str:
             if isinstance(content, dict) and isinstance(content.get("text"), str):
                 parts.append(str(content["text"]))
     return "".join(parts)
+
+
+def _core_optimization_max_tokens(
+    *,
+    max_memories: int,
+    max_lexicon_phrases: int,
+    max_hide_suggestions: int,
+) -> int:
+    estimate = 600 + max(0, max_memories) * 220 + max(0, max_lexicon_phrases) * 120 + max(0, max_hide_suggestions) * 70
+    return max(1800, min(8000, estimate))
+
+
+def _response_debug_metadata(response: dict[str, Any]) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    choices = response.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        finish_reason = choices[0].get("finish_reason")
+        if isinstance(finish_reason, str):
+            metadata["finishReason"] = finish_reason
+    usage = response.get("usage")
+    if isinstance(usage, dict):
+        for key in (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "prompt_cache_hit_tokens",
+            "prompt_cache_miss_tokens",
+        ):
+            value = usage.get(key)
+            if isinstance(value, int):
+                metadata[key] = value
+    return metadata
 
 
 def _is_usable_generated_memory(text: str) -> bool:

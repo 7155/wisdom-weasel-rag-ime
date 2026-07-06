@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from rag_ime.memory_compiler import compiler_generator_from_env
 from rag_ime.memory_generator import (
     VcpRebuildMemoryGenerator,
     _build_openai_url,
+    _core_optimization_max_tokens,
     _extract_json_object,
     _parse_generated_lexicon_phrases,
     _parse_generated_memory_items,
@@ -78,6 +80,8 @@ class MemoryGeneratorTests(unittest.TestCase):
                         "X1API_API_KEY=secret-value",
                         "X1API_MODEL=deepseek-chat",
                         "RAG_IME_AI_WIRE_API=chat_completions",
+                        "RAG_IME_AI_THINKING=disabled",
+                        "RAG_IME_AI_RESPONSE_FORMAT=json_object",
                     ]
                 ),
                 encoding="utf-8",
@@ -88,6 +92,8 @@ class MemoryGeneratorTests(unittest.TestCase):
         self.assertEqual(generator.config.api_base_url, "https://x1api.top/v1")
         self.assertEqual(generator.config.model, "deepseek-chat")
         self.assertEqual(generator.config.api_key, "secret-value")
+        self.assertEqual(generator.config.chat_thinking_type, "disabled")
+        self.assertEqual(generator.config.response_format, "json_object")
         self.assertEqual(generator.provider_name, "x1api")
 
     def test_model_request_uses_gateway_friendly_user_agent(self) -> None:
@@ -119,6 +125,7 @@ class MemoryGeneratorTests(unittest.TestCase):
 
             def fake_urlopen(request, timeout):
                 captured["user_agent"] = request.get_header("User-agent")
+                captured["payload"] = json.loads(request.data.decode("utf-8"))
                 return FakeResponse()
 
             with patch("urllib.request.urlopen", side_effect=fake_urlopen):
@@ -126,6 +133,89 @@ class MemoryGeneratorTests(unittest.TestCase):
 
         self.assertEqual(report.provider, "model-api")
         self.assertEqual(captured["user_agent"], "rag-ime/1.0 curl-compatible")
+
+    def test_chat_completion_payload_can_disable_thinking_and_force_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "X1API_BASE_URL=https://api.example.com/v1",
+                        "X1API_API_KEY=secret-value",
+                        "X1API_MODEL=deepseek-v4-flash",
+                        "RAG_IME_AI_WIRE_API=chat_completions",
+                        "RAG_IME_AI_THINKING=disabled",
+                        "RAG_IME_AI_RESPONSE_FORMAT=json_object",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            generator = VcpRebuildMemoryGenerator.from_env_path(env_path)
+            captured = {}
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self):
+                    return b'{"choices":[{"message":{"content":"{\\"memories\\":[]}"}}]}'
+
+            def fake_urlopen(request, timeout):
+                captured["payload"] = json.loads(request.data.decode("utf-8"))
+                return FakeResponse()
+
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                generator.generate(text="测试离线整理模型", max_items=1)
+
+        self.assertEqual(captured["payload"]["thinking"], {"type": "disabled"})
+        self.assertEqual(captured["payload"]["response_format"], {"type": "json_object"})
+
+    def test_core_optimization_uses_larger_budget_for_large_diffs(self) -> None:
+        self.assertGreaterEqual(
+            _core_optimization_max_tokens(max_memories=8, max_lexicon_phrases=24, max_hide_suggestions=40),
+            7000,
+        )
+
+    def test_optimize_core_metadata_reports_finish_and_cache_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "X1API_BASE_URL=https://api.example.com/v1",
+                        "X1API_API_KEY=secret-value",
+                        "X1API_MODEL=deepseek-v4-flash",
+                        "RAG_IME_AI_WIRE_API=chat_completions",
+                        "RAG_IME_AI_RESPONSE_FORMAT=json_object",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            generator = VcpRebuildMemoryGenerator.from_env_path(env_path)
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self):
+                    return (
+                        b'{"choices":[{"finish_reason":"stop","message":{"content":"{\\"memories\\":[]}"}}],'
+                        b'"usage":{"prompt_cache_hit_tokens":12,"prompt_cache_miss_tokens":34,'
+                        b'"prompt_tokens":46,"completion_tokens":5,"total_tokens":51}}'
+                    )
+
+            with patch("urllib.request.urlopen", return_value=FakeResponse()):
+                report = generator.optimize_core(snapshot={"recentEvents": []})
+
+        self.assertEqual(report.metadata["finishReason"], "stop")
+        self.assertEqual(report.metadata["prompt_cache_hit_tokens"], 12)
+        self.assertEqual(report.metadata["prompt_cache_miss_tokens"], 34)
 
     def test_from_env_path_canonicalizes_x2app_to_current_x1api_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
