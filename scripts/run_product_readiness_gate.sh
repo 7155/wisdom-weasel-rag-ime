@@ -11,6 +11,8 @@ CASES_FILE="${RAG_IME_GATE_CASES_FILE:-docs/eval/codex-history-cases.example.jso
 SOAK_REPORT="${RAG_IME_SQUIRREL_SOAK_REPORT:-/tmp/rag-ime-squirrel-soak-report.json}"
 SIDECAR_LAUNCH_AGENT_PLIST="${RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST:-$HOME/Library/LaunchAgents/com.rag-ime.sidecar.plist}"
 REQUIRE_MACOS_FRONTEND="${RAG_IME_REQUIRE_MACOS_FRONTEND:-0}"
+REQUIRE_SICHUAN_FUZZY="${RAG_IME_REQUIRE_SICHUAN_FUZZY:-$REQUIRE_MACOS_FRONTEND}"
+SICHUAN_FUZZY_CHECK_SCRIPT="${RAG_IME_SICHUAN_FUZZY_CHECK_SCRIPT:-$ROOT/scripts/check_sichuan_fuzzy_profile.sh}"
 DRY_RUN=0
 RUN_UNIT_TESTS="${RAG_IME_GATE_RUN_UNIT_TESTS:-1}"
 RUN_ACCEPTANCE="${RAG_IME_GATE_RUN_ACCEPTANCE:-1}"
@@ -44,6 +46,7 @@ Options:
 
 Environment:
   RAG_IME_REQUIRE_MACOS_FRONTEND=1  Require Squirrel tryout + soak report checks.
+  RAG_IME_REQUIRE_SICHUAN_FUZZY=1   Require installed Sichuan mild fuzzy profile.
   RAG_IME_FRONTEND_DB_PATH=PATH      Installed frontend runtime DB path.
   RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST=PATH
                                     Sidecar plist used to recover local predictor env.
@@ -196,6 +199,7 @@ log "frontend_db_path=$FRONTEND_DB_PATH"
 log "sidecar_plist=$SIDECAR_LAUNCH_AGENT_PLIST"
 log "cases_file=$CASES_FILE"
 log "require_macos_frontend=$REQUIRE_MACOS_FRONTEND"
+log "require_sichuan_fuzzy=$REQUIRE_SICHUAN_FUZZY"
 log "require_predictor_capability=${REQUIRE_PREDICTOR_CAPABILITY:-none}"
 log "sidecar_latency_budget_ms=$SIDECAR_LATENCY_BUDGET_MS"
 log "reset_gate_db=$RESET_GATE_DB"
@@ -255,6 +259,13 @@ if [[ "$RUN_QUALITY_GATE" == "1" ]]; then
   run_cmd "${QUALITY_CMD[@]}"
 else
   log "quality gate skipped"
+fi
+
+if [[ "$REQUIRE_SICHUAN_FUZZY" == "1" ]]; then
+  log "Sichuan fuzzy profile check"
+  run_cmd "$SICHUAN_FUZZY_CHECK_SCRIPT"
+else
+  log "Sichuan fuzzy profile check skipped; set RAG_IME_REQUIRE_SICHUAN_FUZZY=1 to require it"
 fi
 
 if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then

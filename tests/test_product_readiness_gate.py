@@ -82,6 +82,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("frontend_db_path=", result.stdout)
         self.assertIn("sidecar_latency_budget_ms=300", result.stdout)
         self.assertIn("reset_gate_db=1", result.stdout)
+        self.assertIn("require_sichuan_fuzzy=0", result.stdout)
         self.assertIn("seed demo memories into gate DB", result.stdout)
         self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-product-gate.sqlite seed-demo --reset", result.stdout)
         self.assertIn("seed eval-case memories into gate DB", result.stdout)
@@ -96,9 +97,37 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--max-old-input-echo-rate 0.01", result.stdout)
         self.assertIn("require_predictor_capability=none", result.stdout)
         self.assertNotIn("--require-predictor-capability", result.stdout)
+        self.assertIn("Sichuan fuzzy profile check skipped", result.stdout)
+        self.assertNotIn("check_sichuan_fuzzy_profile.sh", result.stdout)
         self.assertIn("macOS Squirrel foreground checks skipped", result.stdout)
         self.assertNotIn("squirrel-tryout-gate", result.stdout)
         self.assertNotIn("check_squirrel_soak_report.py", result.stdout)
+
+    def test_product_gate_dry_run_can_require_sichuan_fuzzy_profile(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = root / "scripts" / "run_product_readiness_gate.sh"
+        env = dict(os.environ)
+        env["RAG_IME_REQUIRE_SICHUAN_FUZZY"] = "1"
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dry-run",
+                "--skip-unit-tests",
+                "--skip-acceptance",
+                "--skip-quality-gate",
+            ],
+            cwd=root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertIn("require_sichuan_fuzzy=1", result.stdout)
+        self.assertIn("Sichuan fuzzy profile check", result.stdout)
+        self.assertIn("scripts/check_sichuan_fuzzy_profile.sh", result.stdout)
 
     def test_product_gate_dry_run_can_require_macos_frontend_and_predictor_capability(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -134,7 +163,9 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("quality gate skipped", result.stdout)
         self.assertIn("db_path=/tmp/rag-ime-backend-gate.sqlite", result.stdout)
         self.assertIn("frontend_db_path=/tmp/rag-ime-frontend-runtime.sqlite", result.stdout)
+        self.assertIn("require_sichuan_fuzzy=1", result.stdout)
         self.assertIn("require_predictor_capability=seededPromptReplay", result.stdout)
+        self.assertIn("scripts/check_sichuan_fuzzy_profile.sh", result.stdout)
         self.assertIn("squirrel-tryout-gate", result.stdout)
         self.assertIn("-m rag_ime.cli --db-path /tmp/rag-ime-frontend-runtime.sqlite squirrel-tryout-gate", result.stdout)
         self.assertNotIn("-m rag_ime.cli --db-path /tmp/rag-ime-backend-gate.sqlite squirrel-tryout-gate", result.stdout)

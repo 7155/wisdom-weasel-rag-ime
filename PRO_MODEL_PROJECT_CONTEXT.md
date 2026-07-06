@@ -193,7 +193,12 @@ The real foreground verifier/soak scripts now default to
 `latestBalancedCandidatePanel` and `candidateQuotaViolations`.
 PR-8 has started: the Sichuan fuzzy-pinyin helper is now split into
 JSON check and explicit dry-run/apply scripts with backup, and the default
-profile is mild (`z_zh/c_ch/s_sh/en_eng/in_ing` on, `n_l/f_h` off). PR-9 has
+profile is mild (`z_zh/c_ch/s_sh/en_eng/in_ing` on, `n_l/f_h` off). The
+installed user Rime config at
+`/Users/undo/Library/Rime/luna_pinyin_simp.custom.yaml` passed the checker on
+2026-07-06, and the product gate can now require this with
+`RAG_IME_REQUIRE_SICHUAN_FUZZY=1` or automatically through
+`RAG_IME_REQUIRE_MACOS_FRONTEND=1`. PR-9 has
 started: `model-matrix-eval` is now a real alias for the local model matrix,
 reports product metrics for top-3 coverage, echo, duplicates, latency, and
 chain readiness. The winner now prefers lower noise, forbidden output, and
@@ -347,8 +352,9 @@ Scripts:
 - `scripts/benchmark_mlx_model_matrix.py`: local model benchmark helper.
 - `scripts/run_product_readiness_gate.sh`: one-command product-readiness gate.
   Default path runs unit tests, `scripts/acceptance.py`, and backend
-  `quality-gate`; `RAG_IME_REQUIRE_MACOS_FRONTEND=1` also requires real
-  Squirrel tryout and soak-report evidence.
+  `quality-gate`; `RAG_IME_REQUIRE_SICHUAN_FUZZY=1` requires the installed
+  Sichuan mild fuzzy profile; `RAG_IME_REQUIRE_MACOS_FRONTEND=1` also requires
+  that fuzzy check plus real Squirrel tryout and soak-report evidence.
 
 Useful PR-5 review CLI now present in `rag_ime/cli.py`:
 
@@ -1949,7 +1955,7 @@ Next steps:
 - optionally train/LoRA/rerank after collecting real logs:
   `context -> shown candidates -> accepted/skipped -> next user text`.
 
-### 6. Fuzzy pinyin has PR-8 scripts, but still needs real Rime confirmation
+### 6. Fuzzy pinyin has PR-8 scripts and local Rime confirmation
 
 PR-8 now has machine-readable scripts:
 
@@ -1960,9 +1966,13 @@ scripts/apply_sichuan_fuzzy_profile.sh --apply
 ```
 
 Default mild profile enables `z_zh`, `c_ch`, `s_sh`, `en_eng`, and `in_ing`.
-It intentionally keeps `n_l` and `f_h` disabled by default. The remaining check
-is real Rime/Squirrel confirmation after applying the profile and rebuilding
-user data.
+It intentionally keeps `n_l` and `f_h` disabled by default. On 2026-07-06,
+`scripts/check_sichuan_fuzzy_profile.sh` passed against
+`/Users/undo/Library/Rime/luna_pinyin_simp.custom.yaml`, which is managed as
+`sichuan-mild`. The focused product gate with
+`RAG_IME_REQUIRE_SICHUAN_FUZZY=1` also passed after this wiring. The remaining
+check is real foreground Squirrel typing after the macOS input source is
+manually selected.
 
 ### 7. Visual management UI v1 exists, but is not a large backend
 
