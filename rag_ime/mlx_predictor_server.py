@@ -299,7 +299,28 @@ class MlxLmEngine:
                 request_metadata=request_metadata,
             )
             if seeded_replay_payload is not None and seeded_replay_payload.get("candidates"):
-                return seeded_replay_payload
+                requested_candidates = max(1, int(max_candidates))
+                seeded_candidate_count = len(seeded_replay_payload.get("candidates") or [])
+                if seeded_candidate_count >= requested_candidates:
+                    return seeded_replay_payload
+                branch_payload = self.predict_no_input_continuation_branches(
+                    current_input=current_input,
+                    recent_context=recent_context,
+                    max_candidates=max(1, requested_candidates - seeded_candidate_count),
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    started=started,
+                    logits_elapsed_ms=logits_candidates.get("elapsedMs", 0),
+                    logits_quality_reason="seeded_replay_underfilled",
+                    request_metadata=request_metadata,
+                )
+                return _merge_seeded_replay_with_branch_payload(
+                    seeded_replay_payload,
+                    branch_payload,
+                    max_candidates=requested_candidates,
+                    started=started,
+                )
             branch_payload = self.predict_no_input_continuation_branches(
                 current_input=current_input,
                 recent_context=recent_context,
@@ -2118,6 +2139,79 @@ def _seeded_prompt_replay_candidate_scores(
             }
         )
     return result
+
+
+def _merge_seeded_replay_with_branch_payload(
+    seeded_payload: dict[str, Any],
+    branch_payload: dict[str, Any],
+    *,
+    max_candidates: int,
+    started: float,
+) -> dict[str, Any]:
+    target = max(1, int(max_candidates))
+    merged_candidates: list[str] = []
+    seeded_candidates = seeded_payload.get("candidates") if isinstance(seeded_payload.get("candidates"), list) else []
+    branch_candidates = branch_payload.get("candidates") if isinstance(branch_payload.get("candidates"), list) else []
+    for payload_candidates in (seeded_candidates, branch_candidates):
+        for item in payload_candidates:
+            text = compact_whitespace(str(item))
+            if not text or text in merged_candidates:
+                continue
+            merged_candidates.append(text)
+            if len(merged_candidates) >= target:
+                break
+        if len(merged_candidates) >= target:
+            break
+
+    score_by_text: dict[str, dict[str, Any]] = {}
+    for payload in (seeded_payload, branch_payload):
+        scores = payload.get("candidateScores") if isinstance(payload.get("candidateScores"), list) else []
+        for score in scores:
+            if not isinstance(score, dict):
+                continue
+            text = compact_whitespace(str(score.get("text") or ""))
+            if text and text not in score_by_text:
+                score_by_text[text] = dict(score)
+
+    total = max(1, len(merged_candidates))
+    merged_scores: list[dict[str, Any]] = []
+    for rank, text in enumerate(merged_candidates, start=1):
+        score = dict(score_by_text.get(text) or {"text": text, "source": "merged-fallback"})
+        score["text"] = text
+        score["rank"] = rank
+        score["confidence"] = max(0.0, min(1.0, 1.0 - ((rank - 1) / max(3, total + 1)) * 0.28))
+        merged_scores.append(score)
+
+    timing = dict(seeded_payload.get("timing") if isinstance(seeded_payload.get("timing"), dict) else {})
+    branch_timing = branch_payload.get("timing") if isinstance(branch_payload.get("timing"), dict) else {}
+    timing.update(
+        {
+            "candidateMode": "seeded-prompt-replay",
+            "underfilled": True,
+            "seededCandidateCount": len(seeded_candidates),
+            "fallbackCandidateMode": branch_payload.get("candidateMode"),
+            "fallbackCandidateCount": len(branch_candidates),
+            "filledByFallbackCount": max(0, len(merged_candidates) - len(seeded_candidates)),
+            "fallbackBranches": branch_timing.get("branches") if isinstance(branch_timing, dict) else [],
+        }
+    )
+
+    raw_parts = [
+        compact_whitespace(str(seeded_payload.get("rawText") or "")),
+        compact_whitespace(str(branch_payload.get("rawText") or "")),
+    ]
+    merged = dict(seeded_payload)
+    merged.update(
+        {
+            "rawText": "\n".join(part for part in raw_parts if part),
+            "candidates": merged_candidates,
+            "candidateScores": merged_scores,
+            "candidateMode": "seeded-prompt-replay",
+            "totalMs": int((time.perf_counter() - started) * 1000),
+            "timing": timing,
+        }
+    )
+    return merged
 
 
 def _prompt_cache_used_for_generation(prompt_cache: dict[str, Any]) -> bool:

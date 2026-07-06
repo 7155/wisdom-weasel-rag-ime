@@ -262,6 +262,40 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(calls["sampler_calls"], 3)
         self.assertIn("种子候选", calls["prompts"][1])
 
+    def test_no_input_seeded_prompt_replay_backfills_underfilled_seed_candidates(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=[
+                "候选排序",
+                "",
+                "来源诊断",
+                "补齐状态追踪 完成前台验证",
+            ],
+            logits_tokens=["优化", "补齐", "重建"],
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想把输入法候选质量再往上提一点",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "seeded-prompt-replay")
+        self.assertEqual(payload["candidates"], ["优化候选排序", "重建来源诊断", "补齐状态追踪"])
+        self.assertEqual([item["mode"] for item in payload["candidateScores"]], [
+            "seeded-prompt-replay",
+            "seeded-prompt-replay",
+            "continuation-branches",
+        ])
+        self.assertTrue(payload["timing"]["underfilled"])
+        self.assertEqual(payload["timing"]["seededCandidateCount"], 2)
+        self.assertEqual(payload["timing"]["fallbackCandidateMode"], "continuation-branches")
+        self.assertEqual(payload["timing"]["filledByFallbackCount"], 1)
+        self.assertEqual(calls["sampler_calls"], 4)
+
     def test_no_input_prediction_does_not_use_hardcoded_domain_fallback(self) -> None:
         modules, _calls = _fake_mlx_modules(
             generated_text=[

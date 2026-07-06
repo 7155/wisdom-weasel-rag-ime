@@ -1400,7 +1400,18 @@ def predict(
             request_metadata=request_metadata,
         )
         if seeded_replay_payload is not None and seeded_replay_payload.get("candidates"):
-            return seeded_replay_payload
+            if len(seeded_replay_payload["candidates"]) >= max_candidates:
+                return seeded_replay_payload
+            branch_payload = self.predict_no_input_continuation_branches(
+                max_candidates=max_candidates - len(seeded_replay_payload["candidates"]),
+                ...
+            )
+            return _merge_seeded_replay_with_branch_payload(
+                seeded_replay_payload,
+                branch_payload,
+                max_candidates=max_candidates,
+                started=started,
+            )
         return self.predict_no_input_continuation_branches(...)
 ```
 
@@ -1468,6 +1479,11 @@ Current PR-4 reality:
 - Seeded replay candidate scores expose `seedTokenId`, `branchRank`, and
   `branchCount` plus seed text/logprob/probability, so reviewers can verify
   that the three LLM candidates are separate top-logit seed branches.
+- Underfilled seed replay is also handled now: if top-k seed replay only yields
+  one or two usable candidates, the predictor requests only the missing slots
+  from the local continuation-branch path, merges/dedupes/reranks them, and
+  records `timing.underfilled`, `seededCandidateCount`,
+  `fallbackCandidateMode`, and `filledByFallbackCount`.
 - True KV fork is still future work; keep `sequenceFork=false` until there is a
   real cache-copy branch implementation.
 
@@ -1980,7 +1996,9 @@ Current MLX path now exposes `seededPromptReplay=true`, `kvFork=false`, and
 `sequenceFork=false`. It can take top next-token seeds, replay each seed against
 the prepared prompt, and return multiple phrase candidates in
 `candidate_mode=seeded-prompt-replay`. Candidate score metadata now includes
-seed token id and branch rank/count for each replayed branch.
+seed token id and branch rank/count for each replayed branch. If one or more
+seed branches underfill, it now backfills missing slots from the local
+continuation-branch path without switching to realtime cloud prediction.
 
 Still missing:
 
