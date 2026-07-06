@@ -176,10 +176,13 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("scripts/check_squirrel_soak_report.py", result.stdout)
         self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)
         self.assertIn("--max-stale-applied 0", result.stdout)
+        self.assertIn("--max-flicker-count 0", result.stdout)
+        self.assertIn("--max-rag-empty-cleared-panel 0", result.stdout)
         self.assertIn("--min-side-commits 50", result.stdout)
         self.assertIn("--min-post-commit-followups 30", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
+        self.assertIn("--require-balanced-quota", result.stdout)
 
     def test_product_gate_recovers_predictor_env_from_sidecar_launch_agent_plist(self) -> None:
         root = Path(__file__).resolve().parents[1]

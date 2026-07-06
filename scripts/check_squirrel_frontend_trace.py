@@ -23,6 +23,7 @@ SOURCE_COLOR_TOKENS = {
     "memory": "memoryPurple",
     "raw_english": "rawGray",
 }
+SIDE_SELECTION_ROUTE_EVENTS = {"number_key_route", "tab_key_route", "option_number_route"}
 
 
 def main() -> int:
@@ -118,6 +119,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     side_commit = latest_matching(events, lambda event: event.get("event") == "side_candidate_commit")
     valid_side_commit = latest_matching(events, is_valid_side_commit_event)
     number_route = latest_matching(events, lambda event: event.get("event") == "number_key_route")
+    side_selection_route = latest_matching(events, is_side_selection_route_event)
     sidecar_response = latest_matching(events, lambda event: event.get("event") == "sidecar_response_applied")
     balanced_candidate_panel = latest_matching(events, is_balanced_candidate_quota_event)
     stale_response_drop = latest_matching(events, is_stale_response_drop_event)
@@ -135,6 +137,8 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     )
     historical_number_key_side_commit = latest_number_key_side_commit(events)
     number_key_side_commit = latest_number_key_side_commit(events, min_timestamp_ms=side_commit_barrier_ms)
+    historical_side_selection_commit = latest_side_selection_commit(events)
+    side_selection_commit = latest_side_selection_commit(events, min_timestamp_ms=side_commit_barrier_ms)
     post_commit_followup = latest_post_commit_followup(events, min_timestamp_ms=side_commit_barrier_ms)
     return {
         "schemaVersion": "rag-ime.squirrel-frontend-trace-check.v1",
@@ -156,9 +160,12 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestSidePanel": summarize_event(side_panel),
         "latestMixedTextLayout": summarize_event(mixed_text_layout),
         "latestNumberKeyRoute": summarize_event(number_route),
+        "latestSideSelectionRoute": summarize_event(side_selection_route),
         "latestSideCommit": summarize_event(side_commit),
         "latestValidSideCommit": summarize_event(valid_side_commit),
         "sideCommitBarrierTimestampMs": side_commit_barrier_ms,
+        "latestSideSelectionCommit": summarize_side_selection_commit(side_selection_commit),
+        "latestHistoricalSideSelectionCommit": summarize_side_selection_commit(historical_side_selection_commit),
         "latestNumberKeySideCommit": summarize_number_key_side_commit(number_key_side_commit),
         "latestHistoricalNumberKeySideCommit": summarize_number_key_side_commit(historical_number_key_side_commit),
         "latestPostCommitFollowup": summarize_post_commit_followup(post_commit_followup),
@@ -574,9 +581,19 @@ def latest_number_key_side_commit(
     *,
     min_timestamp_ms: int = 0,
 ) -> dict[str, Any] | None:
+    return latest_side_selection_commit(events, min_timestamp_ms=min_timestamp_ms, route_events={"number_key_route"})
+
+
+def latest_side_selection_commit(
+    events: list[dict[str, Any]],
+    *,
+    min_timestamp_ms: int = 0,
+    route_events: set[str] | None = None,
+) -> dict[str, Any] | None:
+    allowed_events = route_events or SIDE_SELECTION_ROUTE_EVENTS
     latest: dict[str, Any] | None = None
     for route_index, route_event in enumerate(events):
-        if route_event.get("event") != "number_key_route":
+        if str(route_event.get("event") or "") not in allowed_events:
             continue
         if event_timestamp_ms(route_event) < min_timestamp_ms:
             continue
@@ -591,11 +608,12 @@ def latest_number_key_side_commit(
                 continue
             if not is_valid_side_commit_event(commit_event):
                 continue
-            if candidates_match_number_route(route_event, commit_event):
+            if candidates_match_selection_route(route_event, commit_event):
                 latest = {
                     "route": route_event,
                     "commit": commit_event,
                     "key": key,
+                    "routeEvent": route_event.get("event"),
                 }
             break
     return latest
@@ -655,11 +673,22 @@ def compact_trace_text(value: str) -> str:
     return " ".join(str(value or "").split())
 
 
+def is_side_selection_route_event(event: dict[str, Any]) -> bool:
+    if str(event.get("event") or "") not in SIDE_SELECTION_ROUTE_EVENTS:
+        return False
+    return isinstance(event.get("candidate"), dict)
+
+
 def candidates_match_number_route(route_event: dict[str, Any], commit_event: dict[str, Any]) -> bool:
+    return candidates_match_selection_route(route_event, commit_event)
+
+
+def candidates_match_selection_route(route_event: dict[str, Any], commit_event: dict[str, Any]) -> bool:
     route_candidate = route_event.get("candidate")
     commit_candidate = commit_event.get("candidate")
     if not isinstance(route_candidate, dict) or not isinstance(commit_candidate, dict):
         return False
+    route_name = str(route_event.get("event") or "")
     route_key = str(route_event.get("key") or "")
     route_candidate_key = str(route_candidate.get("selectionKey") or route_candidate.get("label") or "")
     commit_candidate_key = str(commit_candidate.get("selectionKey") or commit_candidate.get("label") or "")
@@ -685,10 +714,14 @@ def candidates_match_number_route(route_event: dict[str, Any], commit_event: dic
         if route_value is not None or commit_value is not None:
             if str(route_value) != str(commit_value):
                 return False
+    if route_name == "tab_key_route":
+        route_ordinal = str(route_event.get("ordinal") or route_candidate.get("candidateOrdinal") or "1")
+        commit_ordinal = str(commit_candidate.get("candidateOrdinal") or route_ordinal)
+        route_key_matches = route_ordinal == "1" and commit_ordinal == route_ordinal
+    else:
+        route_key_matches = bool(route_key) and route_key == route_candidate_key and route_key == commit_candidate_key
     return (
-        bool(route_key)
-        and route_key == route_candidate_key
-        and route_key == commit_candidate_key
+        route_key_matches
         and str(route_candidate.get("sourceType") or "") == str(commit_candidate.get("sourceType") or "")
         and str(route_candidate.get("selectionAction") or "") == "commit_side_candidate"
         and str(commit_candidate.get("selectionAction") or "") == "commit_side_candidate"
@@ -771,10 +804,15 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def summarize_number_key_side_commit(match: dict[str, Any] | None) -> dict[str, Any] | None:
+    return summarize_side_selection_commit(match)
+
+
+def summarize_side_selection_commit(match: dict[str, Any] | None) -> dict[str, Any] | None:
     if not match:
         return None
     return {
         "key": match.get("key"),
+        "routeEvent": match.get("routeEvent"),
         "route": summarize_event(match.get("route")),
         "commit": summarize_event(match.get("commit")),
     }
@@ -826,7 +864,7 @@ def report_passes(
         return False
     if require_side_panel and not report.get("latestSidePanel"):
         return False
-    if require_side_commit and not report.get("latestNumberKeySideCommit"):
+    if require_side_commit and not report.get("latestSideSelectionCommit"):
         return False
     if require_commit_observed and not report.get("latestCommitObserved"):
         return False

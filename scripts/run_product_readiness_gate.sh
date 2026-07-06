@@ -296,12 +296,15 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
   run_cmd "$PYTHON_BIN" scripts/check_squirrel_soak_report.py \
     --report-path "$SOAK_REPORT" \
     --max-stale-applied 0 \
+    --max-flicker-count 0 \
+    --max-rag-empty-cleared-panel 0 \
     --min-side-commits 50 \
     --min-post-commit-followups 30 \
     --require-side-commit \
     --require-commit-observed \
     --require-post-commit-followup \
-    --require-modern-prediction-session
+    --require-modern-prediction-session \
+    --require-balanced-quota
 else
   log "macOS Squirrel foreground checks skipped; set RAG_IME_REQUIRE_MACOS_FRONTEND=1 to require them"
 fi

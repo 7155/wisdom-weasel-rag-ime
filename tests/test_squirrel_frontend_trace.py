@@ -1279,6 +1279,77 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["violations"][0]["type"], "stale_applied_response")
         self.assertIn("requestFrontendRevision!=liveFrontendRevision", report["violations"][0]["mismatches"])
 
+    def test_soak_report_counts_option_number_side_selection_route(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-option-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            candidate = _side_candidate(label="1", source_type="model", session_fingerprint="session-a")
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": False,
+                        "candidateCounts": {"total": 1, "modelInline": 1, "ragBlock": 0, "rime": 0},
+                        "candidates": [candidate],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "option_number_route",
+                        "timestampMs": 2,
+                        "key": "1",
+                        "route": "option_number",
+                        "ordinal": 1,
+                        "candidate": candidate,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {"event": "side_candidate_commit", "timestampMs": 3, "candidate": candidate},
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--require-side-commit",
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "1",
+                    "--min-side-commits",
+                    "1",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["metrics"]["numberKeyRouteCount"], 0)
+        self.assertEqual(report["metrics"]["sideSelectionRouteCount"], 1)
+        self.assertEqual(report["metrics"]["pairedSideCommitCount"], 1)
+        self.assertEqual(report["metrics"]["pairedSideSelectionCommitCount"], 1)
+
     def test_trace_check_reports_sidecar_drop_reason_and_live_input(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-") as tmp:
@@ -2073,6 +2144,130 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertTrue(report["latestSideCommit"])
         self.assertIsNone(report["latestNumberKeySideCommit"])
+        self.assertIsNone(report["latestSideSelectionCommit"])
+
+    def test_trace_check_accepts_option_number_side_selection_route(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-option-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            candidate = _side_candidate(label="1", source_type="model", session_fingerprint="session-a")
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": False,
+                        "candidateCounts": {"total": 1, "modelInline": 1, "ragBlock": 0, "rime": 0},
+                        "candidates": [candidate],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "option_number_route",
+                        "timestampMs": 2,
+                        "key": "1",
+                        "route": "option_number",
+                        "ordinal": 1,
+                        "candidate": candidate,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {"event": "side_candidate_commit", "timestampMs": 3, "candidate": candidate},
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-side-panel",
+                    "--require-side-commit",
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertIsNone(report["latestNumberKeySideCommit"])
+        self.assertEqual(report["latestSideSelectionRoute"]["event"], "option_number_route")
+        self.assertEqual(report["latestSideSelectionCommit"]["routeEvent"], "option_number_route")
+        self.assertEqual(report["latestSideSelectionCommit"]["key"], "1")
+
+    def test_trace_check_accepts_tab_top_prediction_route(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-tab-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            candidate = _side_candidate(label="1", source_type="model", session_fingerprint="session-a")
+            candidate["candidateOrdinal"] = 1
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": False,
+                        "candidateCounts": {"total": 1, "modelInline": 1, "ragBlock": 0, "rime": 0},
+                        "candidates": [candidate],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "tab_key_route",
+                        "timestampMs": 2,
+                        "key": "tab",
+                        "route": "tab",
+                        "ordinal": 1,
+                        "candidate": candidate,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {"event": "side_candidate_commit", "timestampMs": 3, "candidate": candidate},
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--require-side-panel",
+                    "--require-side-commit",
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertIsNone(report["latestNumberKeySideCommit"])
+        self.assertEqual(report["latestSideSelectionRoute"]["event"], "tab_key_route")
+        self.assertEqual(report["latestSideSelectionCommit"]["routeEvent"], "tab_key_route")
+        self.assertEqual(report["latestSideSelectionCommit"]["key"], "tab")
 
     def test_trace_check_rejects_number_key_commit_with_selection_epoch_mismatch(self) -> None:
         root = Path(__file__).resolve().parents[1]

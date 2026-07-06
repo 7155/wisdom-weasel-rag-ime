@@ -12,9 +12,10 @@ from typing import Any
 from check_squirrel_frontend_trace import (
     DEFAULT_LOG_PATH,
     build_report,
-    candidates_match_number_route,
+    candidates_match_selection_route,
     event_timestamp_ms,
     is_post_commit_followup_request,
+    is_side_selection_route_event,
     is_valid_side_commit_event,
     load_events,
     report_passes,
@@ -254,8 +255,13 @@ def build_soak_report(
         "manualRequired": [item for item in manual_required if item],
         "metrics": {
             "numberKeyRouteCount": int(event_counts.get("number_key_route", 0)),
+            "sideSelectionRouteCount": int(event_counts.get("number_key_route", 0))
+            + int(event_counts.get("tab_key_route", 0))
+            + int(event_counts.get("option_number_route", 0)),
             "pairedSideCommitCount": len(side_commit_pairs),
+            "pairedSideSelectionCommitCount": len(side_commit_pairs),
             "unmatchedNumberKeyRouteCount": len(unmatched_routes),
+            "unmatchedSideSelectionRouteCount": len(unmatched_routes),
             "postCommitFollowupCount": len(post_commit_followups),
             "deleteResyncObserved": bool(frontend_report.get("latestDeleteResync")),
             "postDeleteContextUseObserved": bool(frontend_report.get("latestPostDeleteContextUse")),
@@ -515,7 +521,7 @@ def collect_number_key_side_commit_pairs(
     pairs: list[dict[str, Any]] = []
     unmatched_routes: list[dict[str, Any]] = []
     for route_index, route_event in enumerate(events):
-        if route_event.get("event") != "number_key_route":
+        if not is_side_selection_route_event(route_event):
             continue
         if not isinstance(route_event.get("candidate"), dict):
             continue
@@ -525,7 +531,7 @@ def collect_number_key_side_commit_pairs(
                 break
             if not is_valid_side_commit_event(commit_event):
                 continue
-            if candidates_match_number_route(route_event, commit_event):
+            if candidates_match_selection_route(route_event, commit_event):
                 matched_commit = commit_event
             break
         if matched_commit:
