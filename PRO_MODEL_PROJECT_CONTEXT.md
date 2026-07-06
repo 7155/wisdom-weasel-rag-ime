@@ -258,7 +258,10 @@ rediscovered. The latest read-only audit still reports
 `wouldChangeThirdParty=true`. `scripts/prepare_squirrel_foreground_check.sh`
 now consolidates this handoff into one command: it writes the audit report,
 opens/waits for the System Settings Add flow when needed, waits for Squirrel
-selection, and checks sidecar health. A 2026-07-06 dry run with
+selection, and checks sidecar health. It also prints duplicate
+LaunchServices-matching Squirrel paths plus cleanup hints, and
+`--refresh-registration` can run the existing Squirrel registration refresh
+before re-auditing. A 2026-07-06 dry run with
 `--no-open --no-wait-typing` correctly refused to claim readiness and reported
 `readiness_state=third-party-missing` plus `duplicate_squirrel_app_paths=5`,
 which means LaunchServices rediscovered old backup app paths. True foreground
@@ -345,7 +348,9 @@ Scripts:
 - `scripts/prepare_squirrel_foreground_check.sh`: consolidated real-foreground
   readiness helper; runs read-only input-source audit, opens/waits for the
   System Settings Add flow when needed, waits for Squirrel selection, and
-  checks sidecar health without directly mutating macOS preferences.
+  checks sidecar health without directly mutating macOS preferences. It prints
+  duplicate Squirrel registration paths and supports `--refresh-registration`
+  before the audit.
 - `scripts/verify_squirrel_foreground_trace.sh`: foreground trace verifier.
 - `scripts/soak_squirrel_foreground_trace.sh`: longer real-foreground soak run
   that emits a machine-readable report.

@@ -96,7 +96,7 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
                         "  esac",
                         "done",
                         "cat > \"$report\" <<'JSON'",
-                        '{"readiness":{"state":"third-party-missing","nextAction":"add Squirrel in System Settings"},"launchServices":{"duplicatePathCount":1}}',
+                        '{"readiness":{"state":"third-party-missing","nextAction":"add Squirrel in System Settings"},"launchServices":{"duplicatePathCount":1,"matchingRecords":[{"path":"/Users/me/Library/Input Methods/Squirrel.app"},{"path":"/Users/me/Desktop/backup/Squirrel.app"}]}}',
                         "JSON",
                         "exit 1",
                     ]
@@ -152,8 +152,88 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
 
         self.assertIn("readiness_state=third-party-missing", result.stdout)
         self.assertIn("duplicate_squirrel_app_paths=1", result.stdout)
+        self.assertIn("matching_squirrel_app_path=/Users/me/Desktop/backup/Squirrel.app", result.stdout)
+        self.assertIn("duplicate_cleanup_hint=scripts/prepare_squirrel_foreground_check.sh --refresh-registration", result.stdout)
+        self.assertIn("duplicate_quarantine_hint=RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh", result.stdout)
         self.assertEqual(open_args, "--wait")
         self.assertTrue(wait_log_exists)
+
+    def test_prepare_foreground_check_can_refresh_registration_before_audit(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-prepare-foreground-refresh-") as tmp:
+            tmp_path = Path(tmp)
+            report_path = tmp_path / "audit.json"
+            call_log = tmp_path / "calls.log"
+            refresh_script = tmp_path / "refresh.sh"
+            audit_script = tmp_path / "audit.sh"
+            wait_typing_script = tmp_path / "wait-typing.sh"
+            refresh_script.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        f"echo refresh >> {call_log}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            audit_script.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        f"echo audit >> {call_log}",
+                        "while [[ $# -gt 0 ]]; do",
+                        "  case \"$1\" in",
+                        "    --report-path) report=\"$2\"; shift 2 ;;",
+                        "    *) shift ;;",
+                        "  esac",
+                        "done",
+                        "cat > \"$report\" <<'JSON'",
+                        '{"readiness":{"state":"ready","nextAction":"type in a foreground text field"},"launchServices":{"duplicatePathCount":0,"matchingRecords":[]}}',
+                        "JSON",
+                        "exit 0",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            wait_typing_script.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        f"echo wait-typing >> {call_log}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            refresh_script.chmod(0o755)
+            audit_script.chmod(0o755)
+            wait_typing_script.chmod(0o755)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "prepare_squirrel_foreground_check.sh"),
+                    "--refresh-registration",
+                    "--report-path",
+                    str(report_path),
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT": str(refresh_script),
+                    "RAG_IME_AUDIT_SQUIRREL_INPUT_SOURCE_SCRIPT": str(audit_script),
+                    "RAG_IME_WAIT_SQUIRREL_TYPING_READY_SCRIPT": str(wait_typing_script),
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            calls = call_log.read_text(encoding="utf-8").splitlines()
+
+        self.assertIn("refreshing LaunchServices/Squirrel input-source registration", result.stdout)
+        self.assertEqual(calls, ["refresh", "audit", "wait-typing"])
 
     def test_prepare_foreground_check_does_not_claim_ready_when_manual_flow_is_skipped(self) -> None:
         root = Path(__file__).resolve().parents[1]

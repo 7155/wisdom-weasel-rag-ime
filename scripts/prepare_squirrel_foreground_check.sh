@@ -6,6 +6,7 @@ INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirre
 REPORT_PATH="${RAG_IME_INPUT_SOURCE_AUDIT_REPORT:-/tmp/rag-ime-input-source-audit.json}"
 AUDIT_SCRIPT="${RAG_IME_AUDIT_SQUIRREL_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/audit_squirrel_input_source.py}"
 OPEN_SETTINGS_SCRIPT="${RAG_IME_OPEN_INPUT_SOURCE_SETTINGS_SCRIPT:-$ROOT/scripts/open_squirrel_input_source_settings.sh}"
+REFRESH_REGISTRATION_SCRIPT="${RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT:-$ROOT/scripts/refresh_squirrel_input_source_registration.sh}"
 WAIT_ADDED_SCRIPT="${RAG_IME_WAIT_SQUIRREL_INPUT_SOURCE_ADDED_SCRIPT:-$ROOT/scripts/wait_squirrel_input_source_added.sh}"
 WAIT_TYPING_SCRIPT="${RAG_IME_WAIT_SQUIRREL_TYPING_READY_SCRIPT:-$ROOT/scripts/wait_squirrel_typing_ready.sh}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
@@ -13,6 +14,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 OPEN_SETTINGS=1
 WAIT_ADDED=1
 WAIT_TYPING=1
+REFRESH_REGISTRATION=0
 FOREGROUND_READY=0
 
 usage() {
@@ -26,6 +28,8 @@ selection -> sidecar health check.
 Options:
   --report-path PATH  Write the input-source audit JSON to PATH.
   --no-open           Do not open System Settings if the source is not added.
+  --refresh-registration
+                      Refresh LaunchServices/Squirrel registration before audit.
   --no-wait-added     Do not wait for the System Settings Add flow to complete.
   --no-wait-typing    Do not wait for the source to be selected/current.
   -h, --help          Show this help.
@@ -35,6 +39,7 @@ Environment:
   RAG_IME_INPUT_SOURCE_AUDIT_REPORT=PATH
   RAG_IME_AUDIT_SQUIRREL_INPUT_SOURCE_SCRIPT=PATH
   RAG_IME_OPEN_INPUT_SOURCE_SETTINGS_SCRIPT=PATH
+  RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT=PATH
   RAG_IME_WAIT_SQUIRREL_INPUT_SOURCE_ADDED_SCRIPT=PATH
   RAG_IME_WAIT_SQUIRREL_TYPING_READY_SCRIPT=PATH
 USAGE
@@ -48,6 +53,10 @@ while (($#)); do
       ;;
     --no-open)
       OPEN_SETTINGS=0
+      shift
+      ;;
+    --refresh-registration)
+      REFRESH_REGISTRATION=1
       shift
       ;;
     --no-wait-added)
@@ -98,8 +107,33 @@ else:
 PY
 }
 
+print_duplicate_paths() {
+  "$PYTHON_BIN" - "$REPORT_PATH" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+records = payload.get("launchServices", {}).get("matchingRecords", [])
+paths = []
+for record in records if isinstance(records, list) else []:
+    if not isinstance(record, dict):
+        continue
+    path = str(record.get("path") or "")
+    if path and path not in paths:
+        paths.append(path)
+for path in paths:
+    print(path)
+PY
+}
+
 log "input_source_id=$INPUT_SOURCE_ID"
 log "audit_report=$REPORT_PATH"
+
+if [[ "$REFRESH_REGISTRATION" == "1" ]]; then
+  log "refreshing LaunchServices/Squirrel input-source registration"
+  "$REFRESH_REGISTRATION_SCRIPT"
+fi
 
 set +e
 "$AUDIT_SCRIPT" --input-source-id "$INPUT_SOURCE_ID" --report-path "$REPORT_PATH"
@@ -117,6 +151,12 @@ if [[ -n "$next_action" ]]; then
 fi
 if [[ -n "$duplicate_count" && "$duplicate_count" != "0" ]]; then
   log "duplicate_squirrel_app_paths=$duplicate_count"
+  while IFS= read -r duplicate_path; do
+    [[ -n "$duplicate_path" ]] || continue
+    log "matching_squirrel_app_path=$duplicate_path"
+  done < <(print_duplicate_paths 2>/dev/null || true)
+  log "duplicate_cleanup_hint=scripts/prepare_squirrel_foreground_check.sh --refresh-registration"
+  log "duplicate_quarantine_hint=RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh"
 fi
 
 case "$state" in
