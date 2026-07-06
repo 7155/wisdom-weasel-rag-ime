@@ -3951,7 +3951,7 @@ def key_policy_for_prediction_session(prediction_session_payload: Mapping[str, o
     input_mode = _string(prediction_session_payload.get("inputMode"))
     if phase == "post_commit" or input_mode == "post_commit_predicting":
         return {
-            "numberKeys": "pass_through",
+            "numberKeys": "select_visible_candidate",
             "tab": "accept_top_prediction",
             "optionNumber": "select_prediction_by_ordinal",
             "escape": "dismiss_prediction",

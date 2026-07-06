@@ -1830,12 +1830,12 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertGreater(report["displayQuality"]["sourceBadgeMissingCount"], 0)
         self.assertEqual(report["displayQuality"]["modelOccupiedAllSlotsViolation"], 1)
         self.assertEqual(report["displayQuality"]["longCandidateViolation"], 1)
-        self.assertEqual(report["displayQuality"]["postCommitNumberKeyViolation"], 1)
+        self.assertEqual(report["displayQuality"]["postCommitNumberKeyViolation"], 0)
         violation_types = {item["type"] for item in report["violations"]}
         self.assertIn("source_badge_missing", violation_types)
         self.assertIn("model_occupied_all_slots", violation_types)
         self.assertIn("long_candidate", violation_types)
-        self.assertIn("post_commit_number_key", violation_types)
+        self.assertNotIn("post_commit_number_key", violation_types)
 
     def test_soak_report_can_require_foreground_multi_model_candidate_panel(self) -> None:
         root = Path(__file__).resolve().parents[1]

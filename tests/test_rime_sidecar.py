@@ -751,12 +751,12 @@ class RimeSidecarTests(unittest.TestCase):
         clear_prediction_manager_cache()
         clear_refresh_debounce_cache()
 
-    def test_post_commit_number_keys_are_pass_through(self) -> None:
+    def test_post_commit_number_keys_select_visible_predictions(self) -> None:
         policy = key_policy_for_prediction_session(
             {"phase": "post_commit", "inputMode": "post_commit_predicting"}
         )
 
-        self.assertEqual(policy["numberKeys"], "pass_through")
+        self.assertEqual(policy["numberKeys"], "select_visible_candidate")
 
     def test_post_commit_tab_accepts_top_prediction(self) -> None:
         policy = key_policy_for_prediction_session(
@@ -2684,7 +2684,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["predictionSession"]["snapshotId"], response["predictionSession"]["stableSnapshotId"])
         self.assertTrue(response["predictionSession"]["snapshotId"].startswith("snap:"))
         self.assertEqual(response["predictionSession"]["stablePanelAction"], "fresh")
-        self.assertEqual(response["keyPolicy"]["numberKeys"], "pass_through")
+        self.assertEqual(response["keyPolicy"]["numberKeys"], "select_visible_candidate")
         self.assertEqual(response["keyPolicy"]["tab"], "accept_top_prediction")
         self.assertEqual(response["keyPolicy"]["optionNumber"], "select_prediction_by_ordinal")
         self.assertTrue(response["refreshDecision"]["shouldRefresh"])
@@ -2708,7 +2708,7 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertEqual(item["candidateStableId"], item["metadata"]["candidateStableId"])
             self.assertEqual(item["sourceBadge"], item["badge"])
             self.assertEqual(item["sourceStability"], "fresh")
-            self.assertEqual(item["metadata"]["keyPolicy"]["numberKeys"], "pass_through")
+            self.assertEqual(item["metadata"]["keyPolicy"]["numberKeys"], "select_visible_candidate")
 
     def test_prediction_first_short_committed_context_skips_even_when_forced(self) -> None:
         core = CapturingCore()
@@ -3228,7 +3228,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(status_rows[0]["isStatus"])
         self.assertEqual(status_rows[0]["displayLane"], "post_commit_status")
         self.assertIn(response["uiMode"], {"post_commit_pending", "post_commit_prediction"})
-        self.assertEqual(response["keyPolicy"]["numberKeys"], "pass_through")
+        self.assertEqual(response["keyPolicy"]["numberKeys"], "select_visible_candidate")
         self.assertEqual(response["keyPolicy"]["tab"], "accept_top_prediction")
         self.assertEqual(response["keyPolicy"]["optionNumber"], "select_prediction_by_ordinal")
 

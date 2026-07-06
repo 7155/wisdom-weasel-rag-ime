@@ -856,6 +856,11 @@ def post_commit_number_key_violations(events: list[dict[str, Any]]) -> list[dict
         candidate_snapshot = str(candidate.get("snapshotId") or "") if isinstance(candidate, dict) else ""
         if active_post_commit_snapshot and candidate_snapshot and candidate_snapshot != active_post_commit_snapshot:
             continue
+        if isinstance(candidate, dict):
+            source_type = str(candidate.get("sourceType") or "")
+            selection_action = str(candidate.get("selectionAction") or "")
+            if selection_action == "commit_side_candidate" and source_type not in {"", "rime", "raw_english"}:
+                continue
         violations.append(
             {
                 "event": name,
