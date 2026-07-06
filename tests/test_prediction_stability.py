@@ -73,6 +73,87 @@ class PredictionStabilityTests(unittest.TestCase):
         self.assertEqual(diag["action"], "soft_hold")
         self.assertEqual(held.stale_level, "holdover")
 
+    def test_rag_empty_does_not_clear_existing_model_candidates(self) -> None:
+        state = StablePanelState()
+        anchors = _anchors()
+        _, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=anchors,
+            mode="post_commit_predicting",
+            fresh_candidates=(_candidate("继续优化候选展示", "model"),),
+            rag_lane={"called": True, "suggestionCount": 1},
+            model_lane={"called": True, "predictionCount": 1},
+            now_ms=1000,
+        )
+
+        reused, _, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=anchors,
+            mode="post_commit_predicting",
+            fresh_candidates=(),
+            trigger_decision={"shouldRefresh": True},
+            rag_lane={"called": True, "suggestionCount": 0},
+            model_lane={"called": False, "predictionCount": 0},
+            now_ms=3100,
+        )
+
+        self.assertIsNotNone(reused)
+        self.assertEqual(diag["action"], "reuse_last_good")
+        self.assertEqual([item.text for item in reused.candidates], ["继续优化候选展示"])
+        self.assertTrue(reused.reused_last_good)
+
+    def test_trigger_skipped_soft_holds_visible_snapshot_until_min_visible_ms(self) -> None:
+        state = StablePanelState()
+        anchors = _anchors(mode="prefix_constrained_composing")
+        _, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=anchors,
+            mode="prefix_constrained_composing",
+            fresh_candidates=(_candidate("设计输入法状态机", "model"),),
+            now_ms=1000,
+        )
+
+        held, _, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(mode="prefix_constrained_composing", semantic_query="sj 新查询"),
+            mode="prefix_constrained_composing",
+            fresh_candidates=(),
+            trigger_decision={"shouldRefresh": False, "reason": "skip: refresh debounce coalesced"},
+            rag_lane={"called": False},
+            model_lane={"called": False},
+            now_ms=1200,
+        )
+
+        self.assertIsNotNone(held)
+        self.assertEqual(diag["action"], "soft_hold")
+        self.assertEqual(diag["reason"], "min_visible_window")
+        self.assertEqual([item.text for item in held.candidates], ["设计输入法状态机"])
+
+    def test_query_anchor_change_refreshes_but_does_not_immediately_blank_panel(self) -> None:
+        state = StablePanelState()
+        _, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(mode="prefix_constrained_composing", semantic_query="sj 世界"),
+            mode="prefix_constrained_composing",
+            fresh_candidates=(_candidate("设计输入法状态机", "model", initials="sjsrfztj"),),
+            now_ms=1000,
+        )
+
+        held, _, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(mode="prefix_constrained_composing", semantic_query="sj 世界 候选变化"),
+            mode="prefix_constrained_composing",
+            fresh_candidates=(),
+            trigger_decision={"shouldRefresh": True},
+            rag_lane={"called": False},
+            model_lane={"called": False},
+            now_ms=1300,
+        )
+
+        self.assertIsNotNone(held)
+        self.assertEqual(diag["action"], "soft_hold")
+        self.assertEqual([item.text for item in held.candidates], ["设计输入法状态机"])
+
     def test_hard_anchor_change_clears_snapshot(self) -> None:
         state = StablePanelState()
         _, state, _ = render_stable_prediction_panel(
@@ -95,6 +176,116 @@ class PredictionStabilityTests(unittest.TestCase):
         self.assertIsNone(state.last_snapshot)
         self.assertEqual(diag["action"], "hard_clear")
         self.assertEqual(diag["reason"], "hard_context_anchor_changed")
+
+    def test_app_switch_hard_clears_prediction_snapshot(self) -> None:
+        state = StablePanelState()
+        _, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(front_app_bundle_id="com.apple.TextEdit"),
+            mode="post_commit_predicting",
+            fresh_candidates=(_candidate("继续预测", "model"),),
+            now_ms=1000,
+        )
+
+        cleared, state, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(front_app_bundle_id="com.apple.Terminal"),
+            mode="post_commit_predicting",
+            fresh_candidates=(),
+            now_ms=1200,
+        )
+
+        self.assertIsNone(cleared)
+        self.assertIsNone(state.last_snapshot)
+        self.assertEqual(diag["action"], "hard_clear")
+
+    def test_input_source_switch_hard_clears_prediction_snapshot(self) -> None:
+        state = StablePanelState()
+        _, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(input_source_id="im.rime.inputmethod.Squirrel.Hans"),
+            mode="post_commit_predicting",
+            fresh_candidates=(_candidate("继续预测", "model"),),
+            now_ms=1000,
+        )
+
+        cleared, state, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(input_source_id="com.apple.keylayout.ABC"),
+            mode="post_commit_predicting",
+            fresh_candidates=(),
+            now_ms=1200,
+        )
+
+        self.assertIsNone(cleared)
+        self.assertIsNone(state.last_snapshot)
+        self.assertEqual(diag["action"], "hard_clear")
+
+    def test_selection_epoch_change_hard_clears_prediction_snapshot(self) -> None:
+        state = StablePanelState()
+        _, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(selection_epoch=1),
+            mode="post_commit_predicting",
+            fresh_candidates=(_candidate("继续预测", "model"),),
+            now_ms=1000,
+        )
+
+        cleared, state, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(selection_epoch=2),
+            mode="post_commit_predicting",
+            fresh_candidates=(),
+            now_ms=1200,
+        )
+
+        self.assertIsNone(cleared)
+        self.assertIsNone(state.last_snapshot)
+        self.assertEqual(diag["action"], "hard_clear")
+
+    def test_committed_context_hash_change_after_delete_hard_clears_snapshot(self) -> None:
+        state = StablePanelState()
+        _, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(committed_context_hash="sha256:before-delete"),
+            mode="post_commit_predicting",
+            fresh_candidates=(_candidate("继续预测", "model"),),
+            now_ms=1000,
+        )
+
+        cleared, state, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(committed_context_hash="sha256:after-delete"),
+            mode="post_commit_predicting",
+            fresh_candidates=(),
+            now_ms=1200,
+        )
+
+        self.assertIsNone(cleared)
+        self.assertIsNone(state.last_snapshot)
+        self.assertEqual(diag["action"], "hard_clear")
+
+    def test_composition_hash_change_hard_clears_prediction_snapshot(self) -> None:
+        state = StablePanelState()
+        _, state, _ = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(mode="prefix_constrained_composing", composition_hash="sha256:composition-a"),
+            mode="prefix_constrained_composing",
+            fresh_candidates=(_candidate("设计输入法状态机", "model"),),
+            now_ms=1000,
+        )
+
+        cleared, state, diag = render_stable_prediction_panel(
+            state=state,
+            anchors=_anchors(mode="prefix_constrained_composing", composition_hash="sha256:composition-b"),
+            mode="prefix_constrained_composing",
+            fresh_candidates=(),
+            now_ms=1200,
+        )
+
+        self.assertIsNone(cleared)
+        self.assertIsNone(state.last_snapshot)
+        self.assertEqual(diag["action"], "hard_clear")
 
     def test_snapshot_expires_after_ttl(self) -> None:
         state = StablePanelState()
@@ -231,15 +422,19 @@ def _anchors(
     semantic_query: str = "继续 输入法",
     selection_epoch: int = 1,
     pinyin_prefix: str = "sj",
+    front_app_bundle_id: str = "com.apple.TextEdit",
+    input_source_id: str = "im.rime.inputmethod.Squirrel.Hans",
+    committed_context_hash: str = "sha256:context",
+    composition_hash: str = "sha256:composition",
 ):
     return build_prediction_anchors(
         session_id="squirrel-session",
         panel_session_id="panel-1",
-        front_app_bundle_id="com.apple.TextEdit",
-        input_source_id="im.rime.inputmethod.Squirrel.Hans",
+        front_app_bundle_id=front_app_bundle_id,
+        input_source_id=input_source_id,
         selection_epoch=selection_epoch,
-        committed_context_hash="sha256:context",
-        composition_hash="sha256:composition",
+        committed_context_hash=committed_context_hash,
+        composition_hash=composition_hash,
         mode=mode,
         semantic_query=semantic_query,
         query_basis="committedContext",

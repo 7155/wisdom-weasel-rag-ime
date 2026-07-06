@@ -17,15 +17,17 @@ from rag_ime.adapter import InputMethodAdapter
 from rag_ime.cli import main
 from rag_ime.core_client import FixtureCoreClient
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
+from rag_ime.models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction, RimeContextSnapshot, SideCandidateDisplayItem
 from rag_ime.predictor import CooldownPredictionProvider, OpenAICompatiblePredictionConfig
 from rag_ime.rime_sidecar import (
+    _bind_display_candidates_to_session,
     build_rime_sidecar_response,
     choose_semantic_query,
     clear_model_prediction_holdover_cache,
     clear_prediction_manager_cache,
     clear_refresh_debounce_cache,
     decide_side_candidate_refresh,
+    display_item_to_payload,
     key_policy_for_prediction_session,
     merge_display_candidates,
     parse_rime_context_payload,
@@ -743,6 +745,43 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(policy["numberKeys"], "select_visible_candidate")
         self.assertEqual(policy["tab"], "page_or_accept_by_rime_mode")
         self.assertEqual(policy["optionNumber"], "select_side_candidate")
+
+    def test_holdover_candidate_is_marked_dim_or_stable_in_metadata(self) -> None:
+        snapshot = RimeContextSnapshot(session_id="s1", request_seq=1, committed_context="我想")
+        bound = _bind_display_candidates_to_session(
+            display_candidates=[
+                SideCandidateDisplayItem(
+                    label="1",
+                    text="继续优化候选",
+                    insert_text="继续优化候选",
+                    source_type="model",
+                    selection_action="commit_side_candidate",
+                    source_index=0,
+                )
+            ],
+            snapshot=snapshot,
+            prediction_session_payload={
+                "phase": "post_commit",
+                "inputMode": "post_commit_predicting",
+                "sessionFingerprint": "session-1",
+                "contextFingerprint": "context-1",
+                "snapshotId": "snap:holdover",
+                "reusedLastGood": True,
+                "stablePanel": {
+                    "snapshot": {
+                        "staleLevel": "holdover",
+                        "minVisibleUntilMs": 1200,
+                        "expiresAtMs": 4200,
+                    }
+                },
+            },
+            key_policy={"numberKeys": "pass_through"},
+        )
+
+        payload = display_item_to_payload(bound[0])
+        self.assertEqual(bound[0].metadata["sourceStability"], "reused_last_good")
+        self.assertEqual(payload["sourceStability"], "reused_last_good")
+        self.assertEqual(payload["snapshotId"], "snap:holdover")
 
     def test_semantic_query_uses_rime_candidates_not_dirty_raw_pinyin(self) -> None:
         snapshot = parse_rime_context_payload(

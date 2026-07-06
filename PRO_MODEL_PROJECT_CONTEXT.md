@@ -458,6 +458,16 @@ timeout fields without raw text by default. Progressive snapshot actions emit
 `candidate_snapshot_progressive_append` or
 `candidate_snapshot_progressive_replace`.
 
+Latest stability proof coverage maps directly to the user's foreground
+complaints: RAG empty/model timeout no longer blanks a legal model snapshot,
+trigger-skipped refresh debounce soft-holds during the min-visible window, and
+QueryAnchor changes refresh without immediately emptying the panel. Strict
+hard-clear cases are covered for app switch, input-source switch, selection
+epoch change, delete/backspace committed-context hash change, and composition
+hash change. Holdover/reused-last-good candidates are bound with
+`sourceStability=reused_last_good` plus `snapshotId` so Squirrel can render them
+as dim/stable instead of pretending they are fresh.
+
 ### Sidecar merge path
 
 File: `rag_ime/rime_sidecar.py`
