@@ -145,6 +145,30 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(self._audit_count("memory_approve"), 1)
         self.assertEqual(self._audit_count("lexicon_reject"), 1)
 
+    def test_lexicon_rime_export_is_approved_phrase_dry_run_preview(self) -> None:
+        self._upsert_item(memory_id="phrase:approved", kind="phrase", text="连续预测", status="approved")
+        self._upsert_item(memory_id="phrase:pending", kind="phrase", text="待审核短语", status="pending")
+        self._upsert_item(memory_id="memory:approved", kind="stable_memory", text="稳定记忆", status="approved")
+
+        preview = self.service.management_lexicon_export_rime(
+            {"project": "wisdom-weasel-rag-ime", "status": "approved", "dryRun": True}
+        )
+        pending_attempt = self.service.management_lexicon_export_rime({"status": "pending", "dryRun": True})
+        apply_attempt = self.service.management_lexicon_export_rime({"dryRun": False})
+
+        self.assertTrue(preview["ok"])
+        self.assertTrue(preview["dryRun"])
+        self.assertFalse(preview["applySupported"])
+        self.assertEqual(preview["entryCount"], 1)
+        self.assertEqual(preview["entries"][0]["phrase"], "连续预测")
+        self.assertIn("连续预测", preview["text"])
+        self.assertNotIn("待审核短语", preview["text"])
+        self.assertNotIn("稳定记忆", preview["text"])
+        self.assertFalse(pending_attempt["ok"])
+        self.assertEqual(pending_attempt["requiredStatus"], "approved")
+        self.assertFalse(apply_attempt["ok"])
+        self.assertIn("dryRun", apply_attempt["error"])
+
     def test_cleanup_diff_apply_and_rollback_are_audited(self) -> None:
         self.core.record_event(
             InputEvent(
@@ -296,6 +320,7 @@ class DebugManagementApiTests(unittest.TestCase):
 
     def test_management_console_actions_use_selected_row(self) -> None:
         app_js = Path(__file__).resolve().parents[1].joinpath("debug", "app.js").read_text(encoding="utf-8")
+        index_html = Path(__file__).resolve().parents[1].joinpath("debug", "index.html").read_text(encoding="utf-8")
 
         self.assertIn("managementSelectedRowKey", app_js)
         self.assertIn("function managementRowKey", app_js)
@@ -303,8 +328,12 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("item.addEventListener(\"click\", () => selectManagementRow(rowKey))", app_js)
         self.assertIn("is-selected", app_js)
         self.assertNotIn("return rows[0]?.raw || null", app_js)
+        self.assertIn("managementExportButton", index_html)
+        self.assertIn("function exportManagementLexicon", app_js)
+        self.assertIn("/api/lexicon/export-rime", app_js)
+        self.assertIn("state.managementView !== \"lexicon\"", app_js)
 
-    def _upsert_item(self, *, memory_id: str, kind: str, text: str) -> None:
+    def _upsert_item(self, *, memory_id: str, kind: str, text: str, status: str = "pending") -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             upsert_memory_item(
                 conn,
@@ -318,7 +347,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 app="",
                 confidence=0.7,
                 quality_score=0.5,
-                status="pending",
+                status=status,
                 privacy_class="local",
                 created_at_ms=1_900_000_100_030,
                 updated_at_ms=1_900_000_100_030,

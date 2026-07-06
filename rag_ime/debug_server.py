@@ -502,6 +502,61 @@ class DebugImeService:
         report["schemaVersion"] = "rag-ime.management-lexicon.v1"
         return report
 
+    def management_lexicon_export_rime(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.management-lexicon-rime-export.v1",
+                "ok": False,
+                "error": "lexicon export is only available for local SQLite core",
+            }
+        dry_run = _bool(payload.get("dryRun"), default=True)
+        if not dry_run:
+            return {
+                "schemaVersion": "rag-ime.management-lexicon-rime-export.v1",
+                "ok": False,
+                "error": "Rime dictionary writes are not implemented; run dryRun first",
+                "dryRun": False,
+            }
+        status = _string(payload.get("status")) or "approved"
+        allow_non_approved = _bool(payload.get("allowNonApproved"), default=False)
+        if status != "approved" and not allow_non_approved:
+            return {
+                "schemaVersion": "rag-ime.management-lexicon-rime-export.v1",
+                "ok": False,
+                "error": 'lexicon export requires status="approved" unless allowNonApproved=true',
+                "requiredStatus": "approved",
+            }
+        kind = _string(payload.get("kind")) or "phrase"
+        limit = _bounded_int(payload.get("limit"), default=200, minimum=1, maximum=500)
+        project = _string(payload.get("project")) or self.config.project
+        report = self.core.inspect_memory_v2(
+            project=project,
+            limit=limit,
+            kind=kind,
+            status=status if status != "all" else "",
+        )
+        entries = [
+            _rime_lexicon_export_entry(item)
+            for item in report.get("items", [])
+            if isinstance(item, dict) and _string(item.get("text"))
+        ]
+        text = _rime_lexicon_export_text(project=project, status=status, entries=entries)
+        return {
+            "schemaVersion": "rag-ime.management-lexicon-rime-export.v1",
+            "ok": True,
+            "dryRun": True,
+            "applySupported": False,
+            "project": project,
+            "kind": kind,
+            "status": status,
+            "format": "rag-ime-rime-custom-phrase-preview.tsv",
+            "formatDescription": "dry-run preview: phrase<TAB>weight<TAB>memory_id",
+            "entryCount": len(entries),
+            "entries": entries,
+            "text": text,
+            "rawTextVisible": True,
+        }
+
     def management_memory_action(self, payload: dict[str, Any]) -> dict[str, object]:
         return self._management_item_action(payload, lexicon=False)
 
@@ -1586,6 +1641,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if parsed.path in ("/api/lexicon/export-rime",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management_lexicon_export_rime(
+                    {
+                        "limit": _query_first(query, "limit"),
+                        "project": _query_first(query, "project"),
+                        "status": _query_first(query, "status"),
+                        "kind": _query_first(query, "kind"),
+                        "dryRun": _query_first(query, "dryRun"),
+                    }
+                ),
+            )
+            return
         if parsed.path in ("/api/cleanup-diff",):
             self._write_json(
                 HTTPStatus.OK,
@@ -1675,6 +1744,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.management_memory_action(payload))
             elif path in ("/api/lexicon/action",):
                 self._write_json(HTTPStatus.OK, self.service.management_lexicon_action(payload))
+            elif path in ("/api/lexicon/export-rime",):
+                self._write_json(HTTPStatus.OK, self.service.management_lexicon_export_rime(payload))
             elif path in ("/api/cleanup-diff/apply",):
                 self._write_json(HTTPStatus.OK, self.service.management_cleanup_diff_apply(payload))
             elif path in ("/api/cleanup-diff/rollback",):
@@ -1813,6 +1884,36 @@ def _redact_memory_item(item: dict[str, object], *, include_text: bool, lexicon:
     if include_text:
         payload.update({"text": text, "normalizedText": normalized_text})
     return payload
+
+
+def _rime_lexicon_export_entry(item: dict[str, object]) -> dict[str, object]:
+    phrase = compact_whitespace(_string(item.get("text"))).replace("\t", " ")
+    quality_score = _float_or_default(item.get("qualityScore"), 0.5)
+    confidence = _float_or_default(item.get("confidence"), 0.5)
+    weight = max(1, min(100, int(round(((quality_score * 0.7) + (confidence * 0.3)) * 100))))
+    return {
+        "phrase": phrase,
+        "weight": weight,
+        "memoryId": _string(item.get("memoryId")),
+        "status": _string(item.get("status")),
+        "qualityScore": quality_score,
+        "confidence": confidence,
+    }
+
+
+def _rime_lexicon_export_text(*, project: str, status: str, entries: list[dict[str, object]]) -> str:
+    lines = [
+        "# RAG-IME lexicon export preview",
+        "# Dry-run only: review before importing or writing to Rime user files.",
+        f"# project: {project}",
+        f"# status: {status}",
+        "# format: phrase<TAB>weight<TAB>memory_id",
+    ]
+    for entry in entries:
+        phrase = _string(entry.get("phrase")).replace("\n", " ").replace("\r", " ").replace("\t", " ")
+        memory_id = _string(entry.get("memoryId")).replace("\t", " ")
+        lines.append(f"{phrase}\t{int(entry.get('weight') or 1)}\t{memory_id}")
+    return "\n".join(lines) + "\n"
 
 
 def _redact_mapping(value: dict[str, object], *, include_text: bool) -> dict[str, object]:
@@ -1972,6 +2073,19 @@ def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> 
     if parsed is None:
         return default
     return max(minimum, min(maximum, parsed))
+
+
+def _float_or_default(value: object, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _cleanup_review_status(payload: dict[str, object]) -> str:

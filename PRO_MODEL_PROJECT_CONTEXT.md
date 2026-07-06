@@ -54,9 +54,10 @@ Current state:
   harness.
 - The sidecar, local SQLite memory/RAG core, MLX local predictor, source-lane
   merge, feedback recording, and many tests exist.
-- Current verification after the latest product-gate/optimizer repair:
-  `python3 -W error::ResourceWarning -m unittest discover -s tests` reports
-  `Ran 534 tests in 98.077s`, `OK`.
+- Current verification after the latest product-gate/management repair:
+  `scripts/run_product_readiness_gate.sh` reports `Ran 596 tests`, `OK`,
+  deterministic acceptance passed, backend `quality-gate` passed, and
+  old-input echo remained `0.0`.
 - Earlier runtime repair verified selected input source
   `im.rag-ime.inputmethod.RagIme.Hans`, sidecar `127.0.0.1:8766`, MLX predictor
   `127.0.0.1:8767`, and mixed model/RAG candidates.
@@ -210,7 +211,11 @@ memory/lexicon review, cleanup diff apply/rollback, redacted-by-default raw
 history, and action audit logging. Cleanup diff apply/rollback on the PR-10
 management API now require explicit `confirm=apply` / `confirm=rollback`; the
 browser Management panel prompts before sending that mutating request and now
-acts on the selected row instead of implicitly mutating the first row. The
+acts on the selected row instead of implicitly mutating the first row. Lexicon
+Review now also exposes a dry-run Rime export preview through
+`GET/POST /api/lexicon/export-rime`; it returns approved phrase rows as
+`phrase<TAB>weight<TAB>memory_id` preview text and does not write user Rime
+files yet. The
 final integrated product gate has also
 started: `scripts/run_product_readiness_gate.sh` now runs unit tests,
 deterministic acceptance, backend `quality-gate`, and, when
@@ -1733,7 +1738,7 @@ OK
 Latest full-suite result after PR-10:
 
 ```text
-Ran 514 tests in 74.169s
+Ran 596 tests in 108.779s
 OK
 ```
 
@@ -2008,7 +2013,9 @@ a polished OpenLess-style management application.
 Remaining polish:
 
 - richer edit/merge flows for stable memories and lexicon phrases;
-- export to Rime user dictionary;
+- apply/write path for Rime user dictionary export, including backup and
+  explicit confirmation. The dry-run preview API and Lexicon-tab export button
+  are already present;
 - more visual grouping and pagination for large local databases.
 
 ## Suggested Next Engineering Plan
@@ -2131,7 +2138,7 @@ Important test files:
 - `tests/test_predictor.py`: predictor config boundaries and candidate parsing.
 - `tests/test_prediction_first.py`: source-lane merge.
 - `tests/test_debug_management_api.py`: PR-10 management API, redaction, audit,
-  and cleanup diff review.
+  cleanup diff review, selected-row actions, and lexicon Rime export dry-run.
 - `tests/test_product_readiness_gate.py`: final product gate script, CLI flag,
   dry-run, and optional macOS foreground-gate coverage.
 - `tests/test_install_squirrel_rag_config.py`: Rime/Squirrel config install.

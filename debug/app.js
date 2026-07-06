@@ -128,6 +128,7 @@ const elements = {
   managementQuery: document.getElementById("managementQuery"),
   managementRefreshButton: document.getElementById("managementRefreshButton"),
   managementActionButton: document.getElementById("managementActionButton"),
+  managementExportButton: document.getElementById("managementExportButton"),
   managementList: document.getElementById("managementList"),
   managementHint: document.getElementById("managementHint"),
 };
@@ -721,6 +722,7 @@ function renderManagementConsole() {
   }
   elements.managementRefreshButton.disabled = state.managementBusy;
   elements.managementActionButton.disabled = state.managementBusy || !managementActionTarget(rows);
+  elements.managementExportButton.disabled = state.managementBusy || state.managementView !== "lexicon";
   elements.managementActionButton.textContent = managementActionLabel(rows);
   elements.managementHint.textContent = [
     state.managementBusy ? "loading" : "",
@@ -921,6 +923,33 @@ async function runManagementAction() {
     if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
     state.managementLastAction = { message: `audit ${payload.auditId || "ok"}` };
     await refreshManagementConsole();
+  } catch (error) {
+    state.managementLastAction = { message: String(error) };
+  } finally {
+    state.managementBusy = false;
+    render();
+  }
+}
+
+async function exportManagementLexicon() {
+  if (state.managementView !== "lexicon") return;
+  state.managementBusy = true;
+  renderManagementConsole();
+  try {
+    const response = await fetch("/api/lexicon/export-rime", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project: "wisdom-weasel-rag-ime",
+        status: "approved",
+        dryRun: true,
+        limit: 200,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
+    state.managementLastAction = { message: `export preview ${payload.entryCount || 0}` };
+    state.lastPayload = payload;
   } catch (error) {
     state.managementLastAction = { message: String(error) };
   } finally {
@@ -1191,6 +1220,7 @@ elements.managementTabs.addEventListener("click", (event) => {
 });
 elements.managementRefreshButton.addEventListener("click", refreshManagementConsole);
 elements.managementActionButton.addEventListener("click", runManagementAction);
+elements.managementExportButton.addEventListener("click", exportManagementLexicon);
 elements.managementQuery.addEventListener("input", () => {
   window.clearTimeout(state.memoryTimer);
   state.memoryTimer = window.setTimeout(refreshManagementConsole, 250);
