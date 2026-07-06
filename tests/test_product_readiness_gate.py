@@ -43,6 +43,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         )
 
         self.assertIn("--max-old-input-echo-rate", quality_help.stdout)
+        self.assertIn("--require-production-rag-governance", quality_help.stdout)
         self.assertIn("--max-stale-applied", soak_help.stdout)
         self.assertIn("--max-flicker-count", soak_help.stdout)
         self.assertIn("--max-min-visible-violations", soak_help.stdout)
@@ -97,6 +98,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--sidecar-latency-budget-ms 300", result.stdout)
         self.assertIn("--force-side-candidates", result.stdout)
         self.assertIn("--require-suggestion-cache", result.stdout)
+        self.assertIn("--require-production-rag-governance", result.stdout)
         self.assertIn("--max-visible-candidates 8", result.stdout)
         self.assertIn("--max-side-candidates 5", result.stdout)
         self.assertIn("--max-old-input-echo-rate 0.01", result.stdout)

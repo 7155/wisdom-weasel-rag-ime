@@ -1087,6 +1087,8 @@ def recent_context_memory_suggestions(
                     "memory_id": f"recent-context:{index}",
                     "insert_text": text,
                     "fallback": "recent_context",
+                    "debugOnly": True,
+                    "governanceLayer": "recent_context",
                     **build_pinyin_metadata(text),
                 },
             )

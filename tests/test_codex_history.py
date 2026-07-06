@@ -979,6 +979,58 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(noise_checks["rag-noise-rate"]["expectedAtMost"], 0.0)
         self.assertEqual(report["rag"]["metrics"]["noiseRate"], 1.0)
 
+    def test_cli_quality_gate_fails_when_recent_context_candidates_enabled_for_production(self) -> None:
+        db_path = self.root / "quality-gate-production-governance.sqlite"
+        with redirect_stdout(io.StringIO()):
+            seed_code = main(["--db-path", str(db_path), "seed-demo", "--reset"])
+        self.assertEqual(seed_code, 0)
+
+        cases_file = self.root / "quality-gate-production-governance-cases.jsonl"
+        cases_file.write_text(
+            json.dumps(
+                {
+                    "id": "agent-hook",
+                    "query": "首次运行自动注入背景记忆",
+                    "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        gate_stdout = io.StringIO()
+        with patch.dict(os.environ, {"RAG_IME_RECENT_CONTEXT_CANDIDATES": "1"}):
+            with redirect_stdout(gate_stdout):
+                gate_code = main(
+                    [
+                        "--db-path",
+                        str(db_path),
+                        "quality-gate",
+                        "--cases-file",
+                        str(cases_file),
+                        "--min-rag-pass-rate",
+                        "0",
+                        "--min-sidecar-pass-rate",
+                        "0",
+                        "--max-sidecar-rag-timeout-rate",
+                        "1",
+                        "--max-sidecar-model-timeout-rate",
+                        "1",
+                        "--force-side-candidates",
+                        "--skip-acceptance-check",
+                        "--require-production-rag-governance",
+                    ]
+                )
+        self.assertEqual(gate_code, 1)
+        report = json.loads(gate_stdout.getvalue())
+        self.assertFalse(report["passed"])
+        self.assertTrue(report["thresholds"]["requireProductionRagGovernance"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertFalse(checks["production-rag-no-recent-context-candidates"]["passed"])
+        self.assertTrue(checks["production-rag-no-recent-context-candidates"]["debugOnlyFallbackEnabled"])
+        self.assertEqual(checks["production-rag-no-recent-context-candidates"]["actual"], "1")
+
     def test_cli_quality_gate_can_require_predictor_capabilities(self) -> None:
         db_path = self.root / "quality-gate-capability.sqlite"
         with redirect_stdout(io.StringIO()):

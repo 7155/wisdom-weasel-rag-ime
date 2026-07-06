@@ -177,7 +177,12 @@ tombstoned row cannot surface even if the later v2 governance post-filter is
 disabled or misses a target form. The recent-commit echo guard
 now also covers pinyin composition for raw-history/RAG event hits, while
 preserving `phrase-memory`, `curated`, generated memory, and API lexicon entries
-so accepted high-frequency phrases are not over-blocked. PR-6 now also has a real
+so accepted high-frequency phrases are not over-blocked. Direct recent-context
+slicing is now explicitly debug-only: `RAG_IME_RECENT_CONTEXT_CANDIDATES=1`
+adds `metadata.debugOnly=true` and `metadata.governanceLayer="recent_context"`
+to fallback suggestions, while `quality-gate --require-production-rag-governance`
+fails product runs if that escape hatch is enabled. `scripts/run_product_readiness_gate.sh`
+passes that production governance gate by default. PR-6 now also has a real
 offline cleanup CLI safety gate: `cleanup-preview` is dry-run only, plan files
 can be validated before apply, `cleanup-apply` requires explicit `--apply`, and
 rollback is exposed as a first-class command. Generated stable memory also now
@@ -1644,6 +1649,36 @@ This is the PR-5 insertion point for anti-echo governance: raw input log should
 not directly become production candidates; stable memory, lexicon boost,
 tombstone, skipped/cooldown, and raw echo penalties should act before
 `compiler.compile(...)` returns visible suggestions.
+
+The remaining recent-context fallback is intentionally marked as a diagnostic
+escape hatch, not production memory:
+
+```python
+metadata={
+    "source_type": "memory",
+    "memory_id": f"recent-context:{index}",
+    "insert_text": text,
+    "fallback": "recent_context",
+    "debugOnly": True,
+    "governanceLayer": "recent_context",
+    **build_pinyin_metadata(text),
+}
+```
+
+The product gate checks that this escape hatch is off:
+
+```python
+def _production_rag_governance_checks() -> list[dict[str, object]]:
+    recent_context_enabled = recent_context_candidate_fallback_enabled()
+    return [
+        {
+            "name": "production-rag-no-recent-context-candidates",
+            "passed": not recent_context_enabled,
+            "env": "RAG_IME_RECENT_CONTEXT_CANDIDATES",
+            "debugOnlyFallbackEnabled": recent_context_enabled,
+        },
+    ]
+```
 
 Current memory-v2 gate now does the same suppression/tombstone check before a
 candidate becomes visible:

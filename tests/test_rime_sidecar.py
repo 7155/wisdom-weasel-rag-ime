@@ -2093,6 +2093,37 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual([item["sourceType"] for item in display], ["model", "rime"])
         self.assertNotIn("recentContextFallbackCount", response["ragLane"])
 
+    def test_recent_context_fallback_candidates_are_debug_only_when_explicitly_enabled(self) -> None:
+        core = EmptySuggestionCore()
+        adapter = InputMethodAdapter(core)
+        with patch.dict(os.environ, {"RAG_IME_RECENT_CONTEXT_CANDIDATES": "1"}):
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "squirrel-debug-recent-context-fallback",
+                    "requestSeq": 55,
+                    "rawInput": "sj",
+                    "preedit": "sj",
+                    "committedContext": "我想设计一个候选展示方式，做一个预测优先的 RAG 输入法",
+                    "forceSideCandidates": True,
+                    "maxVisibleCandidates": 5,
+                    "maxSideCandidates": 5,
+                    "rimeContext": {"candidates": []},
+                },
+                adapter=adapter,
+                core=core,
+                predictor=EmptyPredictionProvider(),
+            )
+
+        debug_items = [
+            item
+            for item in response["displayCandidates"]
+            if item["metadata"].get("fallback") == "recent_context"
+        ]
+        self.assertGreaterEqual(len(debug_items), 1)
+        self.assertTrue(all(item["metadata"].get("debugOnly") is True for item in debug_items))
+        self.assertTrue(all(item["metadata"].get("governanceLayer") == "recent_context" for item in debug_items))
+        self.assertEqual(response["ragLane"]["recentContextFallbackCount"], len(debug_items))
+
     def test_prediction_first_post_commit_uses_commit_preview_as_prediction_anchor(self) -> None:
         core = CapturingCore()
         adapter = InputMethodAdapter(core)

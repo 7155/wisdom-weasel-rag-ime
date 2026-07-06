@@ -263,6 +263,7 @@ if [[ "$RUN_QUALITY_GATE" == "1" ]]; then
     --max-sidecar-rag-timeout-rate 0
     --max-sidecar-model-timeout-rate 0
     --max-old-input-echo-rate 0.01
+    --require-production-rag-governance
   )
   if [[ -n "$REQUIRE_PREDICTOR_CAPABILITY" ]]; then
     QUALITY_CMD+=(--require-predictor-capability "$REQUIRE_PREDICTOR_CAPABILITY")

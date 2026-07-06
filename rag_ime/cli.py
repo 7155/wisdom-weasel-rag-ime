@@ -60,7 +60,11 @@ from .predictor import (
 )
 from .renderer import render_agent_injection, render_terminal_panel
 from .reranker import rerank_candidate_dicts
-from .rime_sidecar import build_rime_sidecar_response, record_rime_side_candidate_selection
+from .rime_sidecar import (
+    build_rime_sidecar_response,
+    recent_context_candidate_fallback_enabled,
+    record_rime_side_candidate_selection,
+)
 from .scenarios import SCENARIOS, get_scenario
 from .text_utils import compact_whitespace, now_ms
 from .trigger_policy import TypingState, should_refresh_rag
@@ -736,6 +740,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--force-side-candidates", action="store_true")
     quality_gate.add_argument("--require-suggestion-cache", action="store_true")
     quality_gate.add_argument("--skip-acceptance-check", action="store_true")
+    quality_gate.add_argument(
+        "--require-production-rag-governance",
+        action="store_true",
+        help="Fail if debug-only recent-context candidates are enabled for production gate runs.",
+    )
     quality_gate.add_argument(
         "--require-input-source-ready",
         action="store_true",
@@ -2330,6 +2339,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             force_side_candidates=bool(args.force_side_candidates),
             require_suggestion_cache=bool(args.require_suggestion_cache),
             require_acceptance_check=not bool(args.skip_acceptance_check),
+            require_production_rag_governance=bool(args.require_production_rag_governance),
             require_input_source_ready=bool(args.require_input_source_ready),
             input_source_id=args.input_source_id,
             input_source_check_script=Path(args.input_source_check_script) if args.input_source_check_script else None,
@@ -2870,6 +2880,7 @@ def run_squirrel_tryout_gate(
             force_side_candidates=force_side_candidates,
             require_suggestion_cache=require_suggestion_cache,
             require_acceptance_check=require_acceptance_check,
+            require_production_rag_governance=True,
             require_input_source_ready=True,
             input_source_id=input_source_id,
             input_source_check_script=input_source_check_script,
@@ -3513,6 +3524,7 @@ def run_quality_gate(
     force_side_candidates: bool,
     require_suggestion_cache: bool,
     require_acceptance_check: bool,
+    require_production_rag_governance: bool,
     require_input_source_ready: bool,
     input_source_id: str,
     input_source_check_script: Path | None,
@@ -3624,6 +3636,7 @@ def run_quality_gate(
         max_model_ttfc_over_budget_rate=max_model_ttfc_over_budget_rate,
         require_suggestion_cache=require_suggestion_cache,
         require_acceptance_check=require_acceptance_check,
+        require_production_rag_governance=require_production_rag_governance,
         require_input_source_ready=require_input_source_ready,
         required_predictor_capabilities=required_predictor_capabilities,
     )
@@ -3659,6 +3672,7 @@ def run_quality_gate(
             "maxModelTtfcOverBudgetRate": max_model_ttfc_over_budget_rate,
             "requireSuggestionCache": require_suggestion_cache,
             "requireAcceptanceCheck": require_acceptance_check,
+            "requireProductionRagGovernance": require_production_rag_governance,
             "requireInputSourceReady": require_input_source_ready,
             "inputSourceId": input_source_id,
             "requiredPredictorCapabilities": list(required_predictor_capabilities),
@@ -3733,6 +3747,7 @@ def _quality_gate_checks(
     max_model_ttfc_over_budget_rate: float,
     require_suggestion_cache: bool,
     require_acceptance_check: bool,
+    require_production_rag_governance: bool,
     require_input_source_ready: bool,
     required_predictor_capabilities: tuple[str, ...],
 ) -> list[dict[str, object]]:
@@ -3814,8 +3829,24 @@ def _quality_gate_checks(
         )
     if require_input_source_ready:
         checks.extend(_input_source_ready_checks(input_source_report or {}))
+    if require_production_rag_governance:
+        checks.extend(_production_rag_governance_checks())
     checks.extend(_predictor_capability_checks(predictor_status, required_predictor_capabilities))
     return checks
+
+
+def _production_rag_governance_checks() -> list[dict[str, object]]:
+    recent_context_enabled = recent_context_candidate_fallback_enabled()
+    return [
+        {
+            "name": "production-rag-no-recent-context-candidates",
+            "passed": not recent_context_enabled,
+            "required": True,
+            "env": "RAG_IME_RECENT_CONTEXT_CANDIDATES",
+            "actual": os.environ.get("RAG_IME_RECENT_CONTEXT_CANDIDATES", ""),
+            "debugOnlyFallbackEnabled": recent_context_enabled,
+        },
+    ]
 
 
 def _input_source_ready_checks(report: dict[str, object]) -> list[dict[str, object]]:
