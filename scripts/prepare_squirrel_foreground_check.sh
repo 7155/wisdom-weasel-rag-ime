@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
 REPORT_PATH="${RAG_IME_INPUT_SOURCE_AUDIT_REPORT:-/tmp/rag-ime-input-source-audit.json}"
+SUMMARY_PATH="${RAG_IME_FOREGROUND_READINESS_REPORT:-/tmp/rag-ime-foreground-readiness.json}"
 AUDIT_SCRIPT="${RAG_IME_AUDIT_SQUIRREL_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/audit_squirrel_input_source.py}"
 OPEN_SETTINGS_SCRIPT="${RAG_IME_OPEN_INPUT_SOURCE_SETTINGS_SCRIPT:-$ROOT/scripts/open_squirrel_input_source_settings.sh}"
 REFRESH_REGISTRATION_SCRIPT="${RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT:-$ROOT/scripts/refresh_squirrel_input_source_registration.sh}"
@@ -16,6 +17,11 @@ WAIT_ADDED=1
 WAIT_TYPING=1
 REFRESH_REGISTRATION=0
 FOREGROUND_READY=0
+refresh_status=""
+audit_status=""
+state=""
+next_action=""
+duplicate_count=""
 
 usage() {
   cat <<'USAGE'
@@ -27,6 +33,7 @@ selection -> sidecar health check.
 
 Options:
   --report-path PATH  Write the input-source audit JSON to PATH.
+  --summary-path PATH Write foreground readiness summary JSON to PATH.
   --no-open           Do not open System Settings if the source is not added.
   --refresh-registration
                       Refresh LaunchServices/Squirrel registration before audit.
@@ -37,6 +44,7 @@ Options:
 Environment:
   RAG_IME_SQUIRREL_INPUT_SOURCE_ID=id  Defaults to im.rime.inputmethod.Squirrel.Hans.
   RAG_IME_INPUT_SOURCE_AUDIT_REPORT=PATH
+  RAG_IME_FOREGROUND_READINESS_REPORT=PATH
   RAG_IME_AUDIT_SQUIRREL_INPUT_SOURCE_SCRIPT=PATH
   RAG_IME_OPEN_INPUT_SOURCE_SETTINGS_SCRIPT=PATH
   RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT=PATH
@@ -49,6 +57,10 @@ while (($#)); do
   case "$1" in
     --report-path)
       REPORT_PATH="${2:?--report-path requires a value}"
+      shift 2
+      ;;
+    --summary-path)
+      SUMMARY_PATH="${2:?--summary-path requires a value}"
       shift 2
       ;;
     --no-open)
@@ -82,6 +94,105 @@ done
 log() {
   printf '[foreground-ready] %s\n' "$*"
 }
+
+write_summary() {
+  local exit_code="${1:-0}"
+  "$PYTHON_BIN" - "$SUMMARY_PATH" "$REPORT_PATH" "$INPUT_SOURCE_ID" "$exit_code" \
+    "${state:-}" "${next_action:-}" "${duplicate_count:-}" "${refresh_status:-}" "${audit_status:-}" \
+    "$FOREGROUND_READY" "$OPEN_SETTINGS" "$WAIT_ADDED" "$WAIT_TYPING" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+summary_path = Path(sys.argv[1]).expanduser()
+audit_path = Path(sys.argv[2]).expanduser()
+input_source_id = sys.argv[3]
+exit_code = int(sys.argv[4] or 0)
+state = sys.argv[5]
+next_action = sys.argv[6]
+duplicate_count_arg = sys.argv[7]
+refresh_status = sys.argv[8]
+audit_status = sys.argv[9]
+foreground_ready = sys.argv[10] == "1"
+open_settings = sys.argv[11] == "1"
+wait_added = sys.argv[12] == "1"
+wait_typing = sys.argv[13] == "1"
+
+audit_payload = {}
+if audit_path.exists():
+    try:
+        audit_payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # pragma: no cover - defensive helper path
+        audit_payload = {"readError": exc.__class__.__name__}
+
+readiness = audit_payload.get("readiness") if isinstance(audit_payload.get("readiness"), dict) else {}
+launch_services = audit_payload.get("launchServices") if isinstance(audit_payload.get("launchServices"), dict) else {}
+state = state or str(readiness.get("state") or "unknown")
+next_action = next_action or str(readiness.get("nextAction") or "")
+try:
+    duplicate_count = int(duplicate_count_arg or launch_services.get("duplicatePathCount") or 0)
+except (TypeError, ValueError):
+    duplicate_count = 0
+
+matching_paths = []
+records = launch_services.get("matchingRecords")
+for record in records if isinstance(records, list) else []:
+    if not isinstance(record, dict):
+        continue
+    path = str(record.get("path") or "")
+    if path and path not in matching_paths:
+        matching_paths.append(path)
+duplicate_paths = matching_paths if duplicate_count else []
+
+manual_required = []
+commands = []
+if duplicate_count:
+    manual_required.append("Remove or refresh stale Squirrel LaunchServices registrations.")
+    commands.append("scripts/prepare_squirrel_foreground_check.sh --refresh-registration --no-open --no-wait-typing")
+    commands.append("RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh")
+if state in {"third-party-missing", "preferences-incomplete"}:
+    manual_required.append("Use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel - Simplified.")
+    commands.append("scripts/open_squirrel_input_source_settings.sh --wait")
+    commands.append("scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run")
+elif state == "switch":
+    manual_required.append("Select Squirrel - Simplified from the macOS input menu.")
+    commands.append("scripts/wait_squirrel_typing_ready.sh")
+elif state == "missing":
+    manual_required.append("Install/register the patched Squirrel.app before foreground verification.")
+    commands.append("scripts/build_patched_squirrel.sh install")
+if foreground_ready:
+    commands.append("scripts/verify_squirrel_foreground_trace.sh")
+elif wait_typing:
+    commands.append("scripts/wait_squirrel_typing_ready.sh")
+
+payload = {
+    "schemaVersion": "rag-ime.foreground-readiness.v1",
+    "ok": exit_code == 0 and foreground_ready,
+    "exitCode": exit_code,
+    "inputSourceId": input_source_id,
+    "auditReportPath": str(audit_path),
+    "readinessState": state,
+    "nextAction": next_action,
+    "foregroundReady": foreground_ready,
+    "manualRequired": list(dict.fromkeys(item for item in manual_required if item)),
+    "commands": list(dict.fromkeys(item for item in commands if item)),
+    "duplicatePathCount": duplicate_count,
+    "duplicatePaths": duplicate_paths,
+    "matchingPaths": matching_paths,
+    "refreshRegistrationExitCode": int(refresh_status) if str(refresh_status).strip().lstrip("-").isdigit() else None,
+    "auditExitCode": int(audit_status) if str(audit_status).strip().lstrip("-").isdigit() else None,
+    "flow": {
+        "openSettings": open_settings,
+        "waitAdded": wait_added,
+        "waitTyping": wait_typing,
+    },
+}
+summary_path.parent.mkdir(parents=True, exist_ok=True)
+summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+trap 'status=$?; write_summary "$status" >/dev/null 2>&1 || true; exit "$status"' EXIT
 
 json_value() {
   "$PYTHON_BIN" - "$REPORT_PATH" "$1" <<'PY'
@@ -129,6 +240,7 @@ PY
 
 log "input_source_id=$INPUT_SOURCE_ID"
 log "audit_report=$REPORT_PATH"
+log "readiness_summary=$SUMMARY_PATH"
 
 if [[ "$REFRESH_REGISTRATION" == "1" ]]; then
   log "refreshing LaunchServices/Squirrel input-source registration"

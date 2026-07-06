@@ -322,14 +322,20 @@ opens/waits for the System Settings Add flow when needed, waits for Squirrel
 selection, and checks sidecar health. It also prints duplicate
 LaunchServices-matching Squirrel paths plus cleanup hints, and
 `--refresh-registration` can run the existing Squirrel registration refresh
-before re-auditing. A 2026-07-06 dry run with
+before re-auditing. It also writes `/tmp/rag-ime-foreground-readiness.json`
+by default, a compact machine-readable summary with `readinessState`,
+`foregroundReady`, `manualRequired`, next commands, duplicate path counts, and
+audit/refresh exit codes. A 2026-07-06 dry run with
 `--refresh-registration --no-open --no-wait-typing` unregistered seven stale
 backup/removed/temp paths and then correctly refused to claim readiness. The
 follow-up audit reports `duplicatePathCount=0`, only
 `/Users/undo/Library/Input Methods/Squirrel.app` remains, and the current
 blocker is `readiness_state=third-party-missing` with
-`thirdPartyEnabled=false` / `selected=false`. True foreground soak still
-requires the System Settings Add/select flow for
+`thirdPartyEnabled=false` / `selected=false`. The new foreground readiness
+summary reports `ok=false`, `foregroundReady=false`, and next commands
+`scripts/open_squirrel_input_source_settings.sh --wait` plus
+`scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run`. True foreground
+soak still requires the System Settings Add/select flow for
 `Squirrel - Simplified`. Cleanup diff apply now
 re-validates stored diffs
 before writing, and memory optimizer evidence avoids leaking long stable-memory

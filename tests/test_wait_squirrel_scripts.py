@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -310,6 +311,7 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="rag-ime-prepare-foreground-pending-") as tmp:
             tmp_path = Path(tmp)
             report_path = tmp_path / "audit.json"
+            summary_path = tmp_path / "foreground-readiness.json"
             audit_script = tmp_path / "audit.sh"
             audit_script.write_text(
                 "\n".join(
@@ -338,6 +340,8 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
                     str(root / "scripts" / "prepare_squirrel_foreground_check.sh"),
                     "--report-path",
                     str(report_path),
+                    "--summary-path",
+                    str(summary_path),
                     "--no-open",
                     "--no-wait-typing",
                 ],
@@ -349,14 +353,82 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
                 text=True,
                 capture_output=True,
             )
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("readiness_state=third-party-missing", result.stdout)
+        self.assertIn(f"readiness_summary={summary_path}", result.stdout)
         self.assertIn("duplicate_squirrel_app_paths=0", result.stdout)
         self.assertIn("third_party_allow_list_missing=1", result.stdout)
         self.assertIn("manual_add_hint=scripts/open_squirrel_input_source_settings.sh --wait", result.stdout)
         self.assertIn("foreground trace verification is still pending", result.stdout)
         self.assertNotIn("ready for foreground trace verification", result.stdout)
+        self.assertFalse(summary["ok"])
+        self.assertEqual(summary["exitCode"], 1)
+        self.assertEqual(summary["readinessState"], "third-party-missing")
+        self.assertFalse(summary["foregroundReady"])
+        self.assertIn("scripts/open_squirrel_input_source_settings.sh --wait", summary["commands"])
+        self.assertIn("scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run", summary["commands"])
+        self.assertTrue(any("System Settings" in item for item in summary["manualRequired"]))
+
+    def test_prepare_foreground_check_summary_reports_ready_next_trace_command(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-prepare-foreground-summary-ready-") as tmp:
+            tmp_path = Path(tmp)
+            report_path = tmp_path / "audit.json"
+            summary_path = tmp_path / "foreground-readiness.json"
+            audit_script = tmp_path / "audit.sh"
+            wait_typing_script = tmp_path / "wait-typing.sh"
+            audit_script.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env bash",
+                        "while [[ $# -gt 0 ]]; do",
+                        "  case \"$1\" in",
+                        "    --report-path) report=\"$2\"; shift 2 ;;",
+                        "    *) shift ;;",
+                        "  esac",
+                        "done",
+                        "cat > \"$report\" <<'JSON'",
+                        '{"readiness":{"state":"ready","nextAction":"type in a foreground text field"},"launchServices":{"duplicatePathCount":0,"matchingRecords":[]}}',
+                        "JSON",
+                        "exit 0",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            wait_typing_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            audit_script.chmod(0o755)
+            wait_typing_script.chmod(0o755)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "prepare_squirrel_foreground_check.sh"),
+                    "--report-path",
+                    str(report_path),
+                    "--summary-path",
+                    str(summary_path),
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_AUDIT_SQUIRREL_INPUT_SOURCE_SCRIPT": str(audit_script),
+                    "RAG_IME_WAIT_SQUIRREL_TYPING_READY_SCRIPT": str(wait_typing_script),
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+        self.assertIn("ready for foreground trace verification", result.stdout)
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["readinessState"], "ready")
+        self.assertTrue(summary["foregroundReady"])
+        self.assertEqual(summary["manualRequired"], [])
+        self.assertIn("scripts/verify_squirrel_foreground_trace.sh", summary["commands"])
 
     def test_open_settings_helper_skips_open_when_source_is_already_added(self) -> None:
         root = Path(__file__).resolve().parents[1]
