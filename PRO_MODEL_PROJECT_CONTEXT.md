@@ -1716,12 +1716,12 @@ def _production_rag_governance_checks() -> list[dict[str, object]]:
     ]
 ```
 
-`LocalSqliteCoreClient.organize_rag_database(...)` now also performs a
-conservative exact-duplicate pass for stale old-input rows. It reports
-`duplicateGroups`, `duplicateEventCount`, and `wouldHideDuplicates` in dry-run
-mode, and on apply it hides only low-value duplicate copies. The chosen
-representative plus accepted, pinned, and curated rows are preserved so this
-does not erase real high-frequency phrases:
+`LocalSqliteCoreClient.organize_rag_database(...)` now also performs
+conservative exact and similar duplicate passes for stale old-input rows. It
+reports `duplicateGroups`, `similarGroups`, event counts, and would-hide counts
+in dry-run mode, and on apply it hides only low-value duplicate/similar copies.
+The chosen representative plus accepted, pinned, and curated rows are preserved
+so this does not erase real high-frequency phrases:
 
 ```python
 duplicate_plan = _rag_database_duplicate_plan(rows, sample_size=max(0, int(sample_size)))
@@ -1733,6 +1733,12 @@ for item in duplicate_plan["hideCandidates"]:
     reason = str(item["reason"])
     matched[event_id] = (reason, row)
     reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+similar_plan = _rag_database_similar_duplicate_plan(
+    rows,
+    already_hidden_event_ids=set(matched),
+    sample_size=max(0, int(sample_size)),
+)
 ```
 
 Current memory-v2 gate now does the same suppression/tombstone check before a
@@ -2232,18 +2238,19 @@ Still missing: manual real Squirrel foreground confirmation that the colors and
 badges are visually low-distraction in the actual candidate bar after patch
 install, not only in JSON trace and patch tests.
 
-### 4. RAG database cleanup is still conservative, but exact duplicate cleanup now exists
+### 4. RAG database cleanup is still conservative, but duplicate cleanup now exists
 
-Some stale generated/complaint rows are filtered or hidden, and exact low-value
-duplicate text copies can now be reported/applied through `organize-rag-db`.
-Full `x1top` offline semantic cleanup is still pending:
+Some stale generated/complaint rows are filtered or hidden, and low-value exact
+or strongly similar duplicate text copies can now be reported/applied through
+`organize-rag-db`. Full `x1top` offline semantic cleanup is still pending:
 
 - the PR-6 CLI path now exists, and source-event/token-overlap matches now
   backfill `evidenceEventIds` plus `sourceStats`; repeated negative feedback
   can now create reversible `downrank` diffs, but it still needs real user data
   review to tune false positives/false negatives in the evidence linker;
 - summarize noisy history into stable memory facts;
-- deduplicate semantically similar old inputs beyond exact duplicate text;
+- deduplicate broader semantically similar old inputs beyond conservative
+  normalized-equal / containment / high-similarity matches;
 - extract high-frequency phrases;
 - provide reviewable cleanup suggestions.
 

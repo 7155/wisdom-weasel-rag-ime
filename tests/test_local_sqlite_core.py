@@ -882,6 +882,105 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(len(hidden_ids.intersection(int(item.removeprefix("event:")) for item in duplicate_ids)), 2)
         self.assertEqual(action_count, 2)
 
+    def test_organize_rag_database_reports_and_hides_similar_old_input_text(self) -> None:
+        self.core.reset()
+        now = 1_900_000_030_000
+        representative_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now,
+                source="manual_commit",
+                committed_text="我今天调试 RAG 输入法上下文管理和候选展示，需要保留真实输入",
+                recent_context="用户确认过的项目记忆",
+                project="wisdom-weasel-rag-ime",
+                tags=("user-input",),
+            )
+        )
+        similar_ids = [
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now + index + 1,
+                    source="manual_commit",
+                    committed_text=text,
+                    recent_context="旧输入重复进入 RAG",
+                    project="wisdom-weasel-rag-ime",
+                    tags=("user-input", "history"),
+                )
+            )
+            for index, text in enumerate(
+                [
+                    "我今天调试RAG输入法上下文管理和候选展示，需要保留真实输入。",
+                    "今天调试 RAG 输入法上下文管理和候选展示，需要保留真实输入",
+                ]
+            )
+        ]
+        short_peer_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now + 10,
+                source="manual_commit",
+                committed_text="候选展示",
+                recent_context="短语词库",
+                project="wisdom-weasel-rag-ime",
+                tags=("user-input",),
+            )
+        )
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=now + 20,
+                memory_id=representative_id,
+                action_type="accepted",
+                query="保留用户确认过的长文本代表",
+            )
+        )
+
+        dry_run = self.core.organize_rag_database(project="wisdom-weasel-rag-ime", dry_run=True)
+        report = self.core.organize_rag_database(project="wisdom-weasel-rag-ime")
+
+        self.assertEqual(dry_run["similarGroupCount"], 1)
+        self.assertEqual(dry_run["similarEventCount"], 2)
+        self.assertEqual(dry_run["wouldHideSimilar"], 2)
+        self.assertEqual(dry_run["reasonCounts"]["similar_low_value_text"], 2)
+        group = dry_run["similarGroups"][0]
+        self.assertEqual(group["representativeEventId"], int(representative_id.removeprefix("event:")))
+        self.assertEqual(sorted(group["hideEventIds"]), sorted(int(item.removeprefix("event:")) for item in similar_ids))
+        self.assertEqual(group["similarityReasons"], ["contains", "normalized_equal"])
+        self.assertEqual(report["hidden"], 2)
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            representative_deleted = conn.execute(
+                "SELECT deleted FROM memory_state WHERE event_id = ?",
+                (int(representative_id.removeprefix("event:")),),
+            ).fetchone()[0]
+            short_deleted = conn.execute(
+                "SELECT deleted FROM memory_state WHERE event_id = ?",
+                (int(short_peer_id.removeprefix("event:")),),
+            ).fetchone()[0]
+            hidden_similar_ids = {
+                row[0]
+                for row in conn.execute(
+                    """
+                    SELECT event_id
+                    FROM memory_state
+                    WHERE deleted = 1
+                    """
+                ).fetchall()
+            }
+            action_count = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM memory_actions
+                WHERE action_type = 'hide' AND query = 'rag-db-organize'
+                  AND metadata_json LIKE '%similar_low_value_text%'
+                """
+            ).fetchone()[0]
+
+        self.assertEqual(representative_deleted, 0)
+        self.assertEqual(short_deleted, 0)
+        self.assertEqual(hidden_similar_ids, {int(item.removeprefix("event:")) for item in similar_ids})
+        self.assertEqual(action_count, 2)
+
     def test_project_phrase_frequency_does_not_leak_between_projects(self) -> None:
         self.core.reset()
         now = now_ms()

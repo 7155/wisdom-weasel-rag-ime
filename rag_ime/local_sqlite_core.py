@@ -8,6 +8,7 @@ import sqlite3
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import replace
+from difflib import SequenceMatcher
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterator
@@ -1819,6 +1820,32 @@ class LocalSqliteCoreClient:
                             "inputFrequency": int(row["input_frequency"]),
                         }
                     )
+            similar_plan = _rag_database_similar_duplicate_plan(
+                rows,
+                already_hidden_event_ids=set(matched),
+                sample_size=max(0, int(sample_size)),
+            )
+            for item in similar_plan["hideCandidates"]:
+                event_id = int(item["eventId"])
+                row = item["row"]
+                if event_id in matched:
+                    continue
+                reason = str(item["reason"])
+                matched[event_id] = (reason, row)
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                if len(samples) < max(0, int(sample_size)):
+                    samples.append(
+                        {
+                            "eventId": event_id,
+                            "reason": reason,
+                            "text": truncate_text(str(row["committed_text"]), 80),
+                            "source": str(row["source"]),
+                            "providerName": str(row["provider_name"]),
+                            "tags": _row_tags(row),
+                            "acceptedCount": int(row["accepted_count"]),
+                            "inputFrequency": int(row["input_frequency"]),
+                        }
+                    )
             hidden_vector_count = int(
                 conn.execute(
                     """
@@ -1894,6 +1921,10 @@ class LocalSqliteCoreClient:
             "duplicateGroupCount": len(duplicate_plan["groups"]),
             "duplicateEventCount": duplicate_plan["duplicateEventCount"],
             "wouldHideDuplicates": duplicate_plan["wouldHideCount"],
+            "similarGroups": similar_plan["groups"],
+            "similarGroupCount": len(similar_plan["groups"]),
+            "similarEventCount": similar_plan["similarEventCount"],
+            "wouldHideSimilar": similar_plan["wouldHideCount"],
             "samples": samples,
         }
 
@@ -3520,6 +3551,97 @@ def _rag_database_duplicate_plan(rows: list[sqlite3.Row], *, sample_size: int) -
     }
 
 
+def _rag_database_similar_duplicate_plan(
+    rows: list[sqlite3.Row],
+    *,
+    already_hidden_event_ids: set[int],
+    sample_size: int,
+) -> dict[str, object]:
+    candidates: list[tuple[sqlite3.Row, str]] = []
+    for row in rows:
+        event_id = int(row["id"])
+        if event_id in already_hidden_event_ids:
+            continue
+        if not (_rag_duplicate_row_protected(row) or _rag_duplicate_row_hideable(row)):
+            continue
+        normalized = _rag_similarity_text(str(row["committed_text"]))
+        if len(normalized) < 18:
+            continue
+        candidates.append((row, normalized))
+
+    by_project: dict[str, list[tuple[sqlite3.Row, str]]] = {}
+    for row, normalized in candidates:
+        project = compact_whitespace(str(row["project"] or ""))
+        by_project.setdefault(project, []).append((row, normalized))
+
+    groups: list[dict[str, object]] = []
+    hide_candidates: list[dict[str, object]] = []
+    similar_event_count = 0
+    hidden_ids: set[int] = set()
+    for project, project_rows in by_project.items():
+        ordered = sorted(project_rows, key=lambda item: _rag_duplicate_representative_score(item[0]), reverse=True)
+        for representative, rep_norm in ordered:
+            rep_id = int(representative["id"])
+            if rep_id in hidden_ids:
+                continue
+            group_rows: list[tuple[sqlite3.Row, str, str]] = []
+            for row, normalized in ordered:
+                event_id = int(row["id"])
+                if event_id == rep_id or event_id in hidden_ids:
+                    continue
+                if compact_whitespace(str(row["committed_text"])) == compact_whitespace(str(representative["committed_text"])):
+                    continue
+                similarity_reason = _rag_similarity_reason(rep_norm, normalized)
+                if not similarity_reason:
+                    continue
+                if _rag_duplicate_row_protected(row) or not _rag_duplicate_row_hideable(row):
+                    continue
+                group_rows.append((row, normalized, similarity_reason))
+            if not group_rows:
+                continue
+            similar_event_count += len(group_rows)
+            group_hide: list[sqlite3.Row] = []
+            reasons: set[str] = set()
+            for row, _normalized, similarity_reason in group_rows:
+                event_id = int(row["id"])
+                hidden_ids.add(event_id)
+                group_hide.append(row)
+                reasons.add(similarity_reason)
+                hide_candidates.append(
+                    {
+                        "eventId": event_id,
+                        "reason": "similar_low_value_text",
+                        "similarityReason": similarity_reason,
+                        "row": row,
+                    }
+                )
+            if len(groups) < max(0, int(sample_size)):
+                groups.append(
+                    {
+                        "text": truncate_text(str(representative["committed_text"]), 80),
+                        "project": project,
+                        "count": 1 + len(group_rows),
+                        "representativeEventId": rep_id,
+                        "hideEventIds": [int(row["id"]) for row in group_hide],
+                        "similarityReasons": sorted(reasons),
+                        "sources": sorted(
+                            {str(row["source"]) for row, _norm, _reason in group_rows if str(row["source"])}
+                            | {str(representative["source"])}
+                        ),
+                        "tags": sorted(
+                            {tag for row, _norm, _reason in group_rows for tag in _row_tags(row)}
+                            | set(_row_tags(representative))
+                        ),
+                    }
+                )
+    return {
+        "groups": groups,
+        "hideCandidates": hide_candidates,
+        "similarEventCount": similar_event_count,
+        "wouldHideCount": len(hide_candidates),
+    }
+
+
 def _rag_duplicate_representative_score(row: sqlite3.Row) -> tuple[int, int, int, int, int]:
     return (
         1 if _row_has_curated_memory_tags(row) else 0,
@@ -3546,6 +3668,24 @@ def _rag_duplicate_row_hideable(row: sqlite3.Row) -> bool:
     if tags.intersection({"runtime-noise", "source:model", "source:rag", "codex-history", "raw", "history"}):
         return True
     return _row_is_generated_side_candidate(row) or _row_looks_like_retrieval_noise(row)
+
+
+def _rag_similarity_text(text: str) -> str:
+    return "".join(ch.lower() for ch in compact_whitespace(text) if ch.isalnum())
+
+
+def _rag_similarity_reason(left: str, right: str) -> str:
+    if not left or not right:
+        return ""
+    if left == right:
+        return "normalized_equal" if len(left) >= 18 else ""
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    if len(shorter) < 18:
+        return ""
+    if shorter in longer and len(shorter) / max(1, len(longer)) >= 0.72:
+        return "contains"
+    ratio = SequenceMatcher(None, left, right, autojunk=False).ratio()
+    return "high_similarity" if ratio >= 0.9 else ""
 
 
 def _row_should_skip_recent_context(row: sqlite3.Row) -> bool:
