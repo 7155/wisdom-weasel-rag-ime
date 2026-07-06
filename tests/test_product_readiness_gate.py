@@ -46,6 +46,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--max-stale-applied", soak_help.stdout)
         self.assertIn("--max-flicker-count", soak_help.stdout)
         self.assertIn("--max-rag-empty-cleared-panel", soak_help.stdout)
+        self.assertIn("--min-chain-depth", soak_help.stdout)
         seed_help = subprocess.run(
             ["python3", "-m", "rag_ime.cli", "seed-eval-cases", "--help"],
             cwd=root,
@@ -180,6 +181,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--max-rag-empty-cleared-panel 0", result.stdout)
         self.assertIn("--min-side-commits 50", result.stdout)
         self.assertIn("--min-post-commit-followups 30", result.stdout)
+        self.assertIn("--min-chain-depth 10", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
         self.assertIn("--require-balanced-quota", result.stdout)

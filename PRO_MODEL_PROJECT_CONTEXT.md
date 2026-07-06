@@ -56,7 +56,7 @@ Current state:
   merge, feedback recording, and many tests exist.
 - Current verification after the latest product-gate/management/RAG-governance
   and cached UI transaction repair:
-  `scripts/run_product_readiness_gate.sh` reports `Ran 602 tests`, `OK`,
+  `scripts/run_product_readiness_gate.sh` reports `Ran 604 tests`, `OK`,
   deterministic acceptance passed, backend `quality-gate` passed, and
   old-input echo remained `0.0`.
 - Earlier runtime repair verified selected input source
@@ -210,6 +210,10 @@ or RAG-empty panel clearing in the soak report.
 The soak report also exposes `displayQuality` and fails on source badge/color
 mismatch, model side-slot overrun, overlong model/RAG/memory candidate surfaces,
 or post-commit number-key selection.
+It now reports continuous chaining metrics as well: `chain.maxChainDepth`,
+`chain.chainedCommitCount`, and `chain.chainSuccessRate` count consecutive
+side-candidate commits that produce matching post-commit prediction requests.
+The macOS product gate requires `--min-chain-depth 10`.
 PR-8 has started: the Sichuan fuzzy-pinyin helper is now split into
 JSON check and explicit dry-run/apply scripts with backup, and the default
 profile is mild (`z_zh/c_ch/s_sh/en_eng/in_ing` on, `n_l/f_h` off). The
@@ -1760,7 +1764,7 @@ OK
 Latest full-suite result after PR-10:
 
 ```text
-Ran 602 tests in 117.564s
+Ran 604 tests in 123.631s
 OK
 ```
 

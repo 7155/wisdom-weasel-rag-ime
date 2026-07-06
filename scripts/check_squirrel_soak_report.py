@@ -48,6 +48,12 @@ def main() -> int:
     parser.add_argument("--min-panel-displays", type=int, default=1)
     parser.add_argument("--min-side-commits", type=int, default=1)
     parser.add_argument("--min-post-commit-followups", type=int, default=1)
+    parser.add_argument(
+        "--min-chain-depth",
+        type=int,
+        default=0,
+        help="Require this many consecutive side-candidate commits with matching post-commit follow-up requests.",
+    )
     parser.add_argument("--max-stale-applied", type=int, default=0)
     parser.add_argument("--max-flicker-count", type=int, default=0)
     parser.add_argument("--max-rag-empty-cleared-panel", type=int, default=0)
@@ -85,6 +91,7 @@ def main() -> int:
             min_panel_displays=max(0, args.min_panel_displays),
             min_side_commits=max(0, args.min_side_commits),
             min_post_commit_followups=max(0, args.min_post_commit_followups),
+            min_chain_depth=max(0, args.min_chain_depth),
             max_stale_applied=max(0, args.max_stale_applied),
             max_flicker_count=max(0, args.max_flicker_count),
             max_rag_empty_cleared_panel=max(0, args.max_rag_empty_cleared_panel),
@@ -118,6 +125,7 @@ def build_soak_report(
     min_panel_displays: int,
     min_side_commits: int,
     min_post_commit_followups: int,
+    min_chain_depth: int,
     max_stale_applied: int,
     max_flicker_count: int,
     max_rag_empty_cleared_panel: int,
@@ -125,6 +133,7 @@ def build_soak_report(
     event_counts = Counter(str(event.get("event") or "") for event in events if isinstance(event, dict))
     side_commit_pairs, unmatched_routes = collect_number_key_side_commit_pairs(events)
     post_commit_followups = collect_post_commit_followups(events)
+    chain = summarize_chaining(events)
     stale_applied = collect_stale_applied_responses(events)
     prediction_stability = summarize_prediction_stability(events, stale_applied_count=len(stale_applied))
     lane_stability = summarize_lane_stability(events)
@@ -148,6 +157,7 @@ def build_soak_report(
         "minPanelDisplays": min_panel_displays,
         "minSideCommits": min_side_commits,
         "minPostCommitFollowups": min_post_commit_followups,
+        "minChainDepth": min_chain_depth,
         "maxStaleApplied": max_stale_applied,
         "maxFlickerCount": max_flicker_count,
         "maxRagEmptyClearedPanel": max_rag_empty_cleared_panel,
@@ -158,6 +168,7 @@ def build_soak_report(
         "panelDisplays": int(event_counts.get("panel_display_candidates", 0)) >= min_panel_displays,
         "sideCommits": len(side_commit_pairs) >= min_side_commits,
         "postCommitFollowups": len(post_commit_followups) >= min_post_commit_followups,
+        "chainDepth": int(chain["maxChainDepth"]) >= min_chain_depth,
         "staleApplied": len(stale_applied) <= max_stale_applied,
         "flickerCount": int(prediction_stability["flickerCount"]) <= max_flicker_count,
         "ragEmptyClearedPanel": int(lane_stability["ragEmptyClearedPanelCount"]) <= max_rag_empty_cleared_panel,
@@ -225,6 +236,14 @@ def build_soak_report(
         actual = int(display_quality.get(key) or 0)
         if actual > 0:
             violations.append({"type": violation_type, "actual": actual, "expected": 0})
+    if int(chain["maxChainDepth"]) < min_chain_depth:
+        violations.append(
+            {
+                "type": "chain_depth_threshold",
+                "actual": chain["maxChainDepth"],
+                "expectedAtLeast": min_chain_depth,
+            }
+        )
 
     response_age_values = [
         int(event.get("responseAgeMs") or 0)
@@ -287,6 +306,7 @@ def build_soak_report(
         "predictionStability": prediction_stability,
         "laneStability": lane_stability,
         "displayQuality": display_quality,
+        "chain": chain,
         "latency": {
             "responseAgeMs": summarize_numeric(response_age_values),
             "responseReceivedToAppliedMs": summarize_numeric(response_apply_values),
@@ -676,20 +696,72 @@ def collect_post_commit_followups(events: list[dict[str, Any]]) -> list[dict[str
     for commit_index, commit_event in enumerate(events):
         if not is_valid_side_commit_event(commit_event):
             continue
-        schedule_event: dict[str, Any] | None = None
-        for event in events[commit_index + 1 :]:
-            if event.get("event") == "side_candidate_commit":
-                break
-            if event.get("event") in {"side_candidate_continuation_scheduled", "post_commit_prediction_scheduled"}:
-                schedule_event = event
-                continue
-            if event.get("event") != "sidecar_request_scheduled":
-                continue
-            if not is_post_commit_followup_request(event, commit_event):
-                continue
-            matches.append({"commit": commit_event, "scheduled": schedule_event, "request": event})
-            break
+        match = post_commit_followup_after_commit(events, commit_index, commit_event)
+        if match:
+            matches.append(match)
     return matches
+
+
+def summarize_chaining(events: list[dict[str, Any]]) -> dict[str, Any]:
+    valid_commit_indices = [
+        index
+        for index, event in enumerate(events)
+        if is_valid_side_commit_event(event)
+    ]
+    current_depth = 0
+    max_depth = 0
+    chained_commit_count = 0
+    broken_commit_count = 0
+    chain_breaks: list[dict[str, Any]] = []
+    for commit_index in valid_commit_indices:
+        commit_event = events[commit_index]
+        match = post_commit_followup_after_commit(events, commit_index, commit_event)
+        if match:
+            current_depth += 1
+            chained_commit_count += 1
+            max_depth = max(max_depth, current_depth)
+        else:
+            if current_depth > 0:
+                chain_breaks.append(
+                    {
+                        "timestampMs": commit_event.get("timestampMs"),
+                        "reason": "missing_post_commit_followup_after_commit",
+                        "depthBeforeBreak": current_depth,
+                    }
+                )
+            current_depth = 0
+            broken_commit_count += 1
+    valid_count = len(valid_commit_indices)
+    return {
+        "validSideCommitCount": valid_count,
+        "chainedCommitCount": chained_commit_count,
+        "brokenCommitCount": broken_commit_count,
+        "maxChainDepth": max_depth,
+        "chainSuccessRate": round(chained_commit_count / valid_count, 4) if valid_count else 0.0,
+        "chainBreaks": chain_breaks[:20],
+    }
+
+
+def post_commit_followup_after_commit(
+    events: list[dict[str, Any]],
+    commit_index: int,
+    commit_event: dict[str, Any],
+) -> dict[str, Any] | None:
+    schedule_event: dict[str, Any] | None = None
+    for event in events[commit_index + 1 :]:
+        if event.get("event") == "side_candidate_commit":
+            break
+        if event.get("event") in {"commit_observe_timeout", "post_commit_chain_cancelled"}:
+            return None
+        if event.get("event") in {"side_candidate_continuation_scheduled", "post_commit_prediction_scheduled"}:
+            schedule_event = event
+            continue
+        if event.get("event") != "sidecar_request_scheduled":
+            continue
+        if not is_post_commit_followup_request(event, commit_event):
+            continue
+        return {"commitIndex": commit_index, "commit": commit_event, "scheduled": schedule_event, "request": event}
+    return None
 
 
 def collect_stale_applied_responses(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

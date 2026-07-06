@@ -1373,6 +1373,89 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("long_candidate", violation_types)
         self.assertIn("post_commit_number_key", violation_types)
 
+    def test_soak_report_counts_continuous_chain_depth(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-chain-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            log_path.write_text(_chain_trace_events(depth=3), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                    "--min-chain-depth",
+                    "3",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["thresholds"]["minChainDepth"], 3)
+        self.assertTrue(report["thresholdResults"]["chainDepth"])
+        self.assertEqual(report["chain"]["validSideCommitCount"], 3)
+        self.assertEqual(report["chain"]["chainedCommitCount"], 3)
+        self.assertEqual(report["chain"]["maxChainDepth"], 3)
+        self.assertEqual(report["chain"]["chainSuccessRate"], 1.0)
+
+    def test_soak_report_fails_when_chain_depth_is_too_low(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-chain-low-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            log_path.write_text(_chain_trace_events(depth=2), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                    "--min-chain-depth",
+                    "3",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["thresholdResults"]["chainDepth"])
+        self.assertEqual(report["chain"]["maxChainDepth"], 2)
+        self.assertIn("chain_depth_threshold", {item["type"] for item in report["violations"]})
+
     def test_soak_report_counts_option_number_side_selection_route(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-option-") as tmp:
@@ -2586,6 +2669,57 @@ def _side_candidate(label: str, source_type: str, session_fingerprint: str) -> d
         "colorToken": _source_color_token(source_type),
         "sessionFingerprint": session_fingerprint,
     }
+
+
+def _chain_trace_events(depth: int) -> str:
+    lines: list[str] = []
+    for index in range(depth):
+        candidate = _side_candidate(label="1", source_type="model", session_fingerprint=f"session-{index}")
+        candidate["text"] = f"连续候选{index}"
+        candidate["insertText"] = f"连续候选{index}"
+        timestamp = index * 10
+        lines.append(
+            json.dumps(
+                {"event": "side_candidate_commit", "timestampMs": timestamp + 1, "candidate": candidate},
+                ensure_ascii=False,
+            )
+        )
+        lines.append(
+            json.dumps(
+                {
+                    "event": "commit_observed",
+                    "timestampMs": timestamp + 2,
+                    "committedText": candidate["insertText"],
+                    "committedContextChars": 12 + index,
+                    "sessionFingerprint": candidate["sessionFingerprint"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        lines.append(
+            json.dumps(
+                {
+                    "event": "post_commit_prediction_scheduled",
+                    "timestampMs": timestamp + 3,
+                    "selectionKey": candidate["selectionKey"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        lines.append(
+            json.dumps(
+                {
+                    "event": "sidecar_request_scheduled",
+                    "timestampMs": timestamp + 4,
+                    "rawInput": "",
+                    "preedit": "",
+                    "commitTextPreview": candidate["insertText"],
+                    "committedContextChars": 12 + index,
+                },
+                ensure_ascii=False,
+            )
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _source_badge(source_type: str) -> str:
