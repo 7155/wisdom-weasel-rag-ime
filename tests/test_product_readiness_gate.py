@@ -222,6 +222,16 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
 
         self.assertIn("reset_gate_db=0", result.stdout)
 
+    def test_squirrel_registration_refresh_defaults_to_product_squirrel_route(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script_text = (root / "scripts" / "refresh_squirrel_input_source_registration.sh").read_text(encoding="utf-8")
+
+        self.assertIn('Input Methods/Squirrel.app', script_text)
+        self.assertIn('BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-im.rime.inputmethod.Squirrel}"', script_text)
+        self.assertIn('INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"', script_text)
+        self.assertNotIn('Input Methods/RAG-IME.app}"', script_text)
+        self.assertNotIn('BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-im.rag-ime.inputmethod.RagIme}"', script_text)
+
     def test_product_gate_backend_path_passes_against_temp_eval_db(self) -> None:
         root = Path(__file__).resolve().parents[1]
         script = root / "scripts" / "run_product_readiness_gate.sh"

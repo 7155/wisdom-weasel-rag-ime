@@ -224,24 +224,27 @@ probe are good. A command-line preference repair backed up
 HIToolbox/inputsource plists but macOS denied direct persistence of
 `com.apple.inputsources`; atomic replace and in-place write both returned
 `PermissionError: Operation not permitted`. The remaining machine blocker is
-macOS user input-source activation plus duplicate backup Squirrel app
-registrations.
+macOS user input-source activation.
 `im.rime.inputmethod.Squirrel.Hans` is visible, enabled, selectable, and
 HIToolbox-enabled, but `thirdPartyEnabled=false`; the current source is
-`im.rag-ime.inputmethod.RagIme.Hans`. The latest read-only audit reports
-`readiness.state=third-party-missing`, `wouldChangeHitoolbox=false`,
-`wouldChangeThirdParty=true`, and `duplicatePathCount=5` from old backup app
-paths under `/Users/undo/Desktop/rag-ime-input-method-backups/system/`. The
-tryout gate now promotes duplicate Squirrel app registrations to a top-level
-check when `--include-input-source-audit` is used. True foreground soak still
-requires the System Settings Add/select flow for `Squirrel - Simplified` and
-moving old backup apps out of LaunchServices-visible folders. Cleanup diff
-apply now re-validates stored diffs before writing, and memory optimizer
-evidence avoids leaking long stable-memory source sentences when the compiled
-IME candidate is short.
+`com.apple.keylayout.ABC`. A previous read-only audit reported
+`duplicatePathCount=5` from old backup app paths under
+`/Users/undo/Desktop/rag-ime-input-method-backups/system/`; the tryout gate now
+promotes duplicate Squirrel app registrations to a top-level check when
+`--include-input-source-audit` is used. After rerunning
+`refresh_squirrel_input_source_registration.sh` against the product
+`Squirrel.app` / `im.rime.inputmethod.Squirrel` route, the latest foreground
+gate reports `duplicate-squirrel-app-registrations.passed=true`,
+`duplicatePathCount=0`, and only the live app path. The latest read-only audit
+still reports `readiness.state=third-party-missing`,
+`wouldChangeHitoolbox=false`, and `wouldChangeThirdParty=true`. True foreground
+soak still requires the System Settings Add/select flow for
+`Squirrel - Simplified`. Cleanup diff apply now re-validates stored diffs
+before writing, and memory optimizer evidence avoids leaking long stable-memory
+source sentences when the compiled IME candidate is short.
 
 Latest default product-gate evidence: `scripts/run_product_readiness_gate.sh`
-passes with `575 tests OK`, deterministic `scripts/acceptance.py`,
+passes with `576 tests OK`, deterministic `scripts/acceptance.py`,
 `rag-pass-rate=0.9706`, `rime-sidecar-pass-rate=0.9706`, old-input echo `0.0`,
 warm suggestion/Rime cache hits, and no sidecar RAG/model timeouts. Latest
 backend product-gate evidence with the installed local MLX runtime:
