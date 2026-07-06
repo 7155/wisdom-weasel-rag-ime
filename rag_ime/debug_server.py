@@ -30,6 +30,7 @@ from .memory_generator import (
 )
 from .models import MemoryAction
 from .payloads import action_response_payload, suggestions_response_payload
+from .prediction_anchors import build_prediction_anchors_from_snapshot
 from .predictor import (
     PredictionBenchmarkCase,
     PredictionProvider,
@@ -41,6 +42,7 @@ from .rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
     decide_side_candidate_refresh,
+    frontend_transaction_to_payload,
     parse_rime_context_payload,
     prediction_first_merge_enabled,
     record_rime_side_candidate_selection,
@@ -1452,6 +1454,8 @@ class DebugImeService:
         )
         response.update(
             {
+                **frontend_transaction_to_payload(snapshot.frontend_transaction),
+                "frontendTransaction": frontend_transaction_to_payload(snapshot.frontend_transaction),
                 "project": snapshot.project or self.config.project,
                 "rawInput": snapshot.raw_input,
                 "preedit": snapshot.preedit,
@@ -1474,6 +1478,7 @@ class DebugImeService:
         if isinstance(prediction_first, dict):
             prediction_first["enabled"] = prediction_first_merge_enabled(payload)
             prediction_first["pinyinPrefix"] = snapshot.preedit or snapshot.raw_input
+        _rebind_cached_rime_prediction_payload(response, snapshot=snapshot, semantic_query=semantic_query, query_basis=query_basis)
         _attach_rime_ranking_diagnostics(response)
 
     def _store_rime_response(self, cache_key: str, response: dict[str, object]) -> None:
@@ -1866,6 +1871,74 @@ def _redact_history_item(item: dict[str, object], *, include_text: bool) -> dict
     if include_text:
         payload.update({"text": text, "recentContext": recent_context, "preedit": preedit})
     return payload
+
+
+def _rebind_cached_rime_prediction_payload(
+    response: dict[str, object],
+    *,
+    snapshot: object,
+    semantic_query: str,
+    query_basis: str,
+) -> None:
+    prediction_session = response.get("predictionSession")
+    if not isinstance(prediction_session, dict):
+        return
+    input_mode = _string(prediction_session.get("inputMode")) or _string(
+        response.get("predictionFirst", {}).get("mode") if isinstance(response.get("predictionFirst"), dict) else ""
+    )
+    transaction_payload = frontend_transaction_to_payload(snapshot.frontend_transaction)
+    anchors = build_prediction_anchors_from_snapshot(
+        snapshot=snapshot,
+        mode=input_mode,
+        semantic_query=semantic_query,
+        query_basis=query_basis,
+        stable_short_pinyin_prefix=snapshot.preedit or snapshot.raw_input,
+    )
+    anchor_payload = {
+        "hardContextAnchor": anchors.hard_context_anchor,
+        "queryAnchor": anchors.query_anchor,
+        "displayAnchor": anchors.display_anchor,
+    }
+    prediction_session.update(
+        {
+            "requestSeq": snapshot.request_seq,
+            **transaction_payload,
+            **anchor_payload,
+            "cacheRebound": True,
+        }
+    )
+    stable_panel = prediction_session.get("stablePanel")
+    if isinstance(stable_panel, dict):
+        stable_panel.update(anchor_payload)
+        stable_panel["cacheRebound"] = True
+    for candidate in response.get("displayCandidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        metadata = candidate.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            candidate["metadata"] = metadata
+        rebound = {
+            "requestSeq": snapshot.request_seq,
+            "sessionId": snapshot.session_id,
+            **transaction_payload,
+            **anchor_payload,
+            "cacheRebound": True,
+        }
+        metadata.update(rebound)
+        candidate.update(
+            {
+                "hardContextAnchor": anchors.hard_context_anchor,
+                "queryAnchor": anchors.query_anchor,
+                "displayAnchor": anchors.display_anchor,
+            }
+        )
+    for trace_event in response.get("predictionTraceEvents") or []:
+        if not isinstance(trace_event, dict):
+            continue
+        fields = trace_event.get("fields")
+        if isinstance(fields, dict):
+            fields.update({**anchor_payload, "cacheRebound": True})
 
 
 def _redact_memory_item(item: dict[str, object], *, include_text: bool, lexicon: bool) -> dict[str, object]:

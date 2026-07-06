@@ -665,6 +665,83 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(prediction_first["predictionFirst"]["policy"]["sessionBound"])
         self.assertTrue(prediction_first["predictionFirst"]["policy"]["rimeCompositionOwnedByRime"])
 
+    def test_rime_suggest_cache_hit_rebinds_frontend_transaction_fields(self) -> None:
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "prediction-first-transaction-cache.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                core=PrefixFixtureCore(),
+                predictor=PrefixPredictionProvider(),
+            )
+        )
+        base_payload = {
+            "sessionId": "debug-cache-transaction-a",
+            "requestSeq": 71,
+            "frontendRevision": 10,
+            "selectionEpoch": 20,
+            "frontAppBundleId": "com.apple.TextEdit",
+            "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+            "compositionHash": "sha256:composition-a",
+            "committedContextHash": "sha256:context-a",
+            "panelSessionId": "panel-a",
+            "rawInput": "sj",
+            "preedit": "sj",
+            "committedContext": "我想",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "predictionFirstMerge": True,
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "手机", "comment": "wanxiang"},
+                    {"label": "2", "text": "世界", "comment": "wanxiang"},
+                ]
+            },
+        }
+        first = service.rime_suggest(base_payload)
+        second_payload = dict(base_payload)
+        second_payload.update(
+            {
+                "sessionId": "debug-cache-transaction-b",
+                "requestSeq": 72,
+                "frontendRevision": 11,
+                "selectionEpoch": 21,
+                "frontAppBundleId": "com.apple.Notes",
+                "inputSourceId": "im.rime.inputmethod.Squirrel.Hans.Patched",
+                "compositionHash": "sha256:composition-b",
+                "committedContextHash": "sha256:context-b",
+                "panelSessionId": "panel-b",
+            }
+        )
+        second = service.rime_suggest(second_payload)
+
+        self.assertFalse(first["cache"]["hit"])
+        self.assertTrue(second["cache"]["hit"])
+        self.assertEqual(second["sessionId"], "debug-cache-transaction-b")
+        self.assertEqual(second["requestSeq"], 72)
+        self.assertEqual(second["frontendRevision"], 11)
+        self.assertEqual(second["selectionEpoch"], 21)
+        self.assertEqual(second["frontendTransaction"]["panelSessionId"], "panel-b")
+        self.assertTrue(second["predictionSession"]["cacheRebound"])
+        self.assertEqual(second["predictionSession"]["requestSeq"], 72)
+        self.assertEqual(second["predictionSession"]["frontendRevision"], 11)
+        self.assertEqual(second["predictionSession"]["selectionEpoch"], 21)
+        self.assertEqual(second["predictionSession"]["frontAppBundleId"], "com.apple.Notes")
+        self.assertEqual(second["predictionSession"]["inputSourceId"], "im.rime.inputmethod.Squirrel.Hans.Patched")
+        self.assertEqual(second["predictionSession"]["compositionHash"], "sha256:composition-b")
+        self.assertEqual(second["predictionSession"]["committedContextHash"], "sha256:context-b")
+        self.assertEqual(second["predictionSession"]["panelSessionId"], "panel-b")
+        self.assertNotEqual(first["predictionSession"]["hardContextAnchor"], second["predictionSession"]["hardContextAnchor"])
+        for item in second["displayCandidates"]:
+            metadata = item["metadata"]
+            self.assertTrue(metadata["cacheRebound"])
+            self.assertEqual(metadata["requestSeq"], 72)
+            self.assertEqual(metadata["sessionId"], "debug-cache-transaction-b")
+            self.assertEqual(metadata["frontendRevision"], 11)
+            self.assertEqual(metadata["selectionEpoch"], 21)
+            self.assertEqual(metadata["panelSessionId"], "panel-b")
+            self.assertEqual(item["hardContextAnchor"], second["predictionSession"]["hardContextAnchor"])
+
     def test_rime_suggest_cache_hits_repeated_equivalent_payloads(self) -> None:
         predictor = FakePredictionProvider()
         self.service.predictor = predictor

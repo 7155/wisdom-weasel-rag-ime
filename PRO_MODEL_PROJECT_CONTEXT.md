@@ -54,8 +54,9 @@ Current state:
   harness.
 - The sidecar, local SQLite memory/RAG core, MLX local predictor, source-lane
   merge, feedback recording, and many tests exist.
-- Current verification after the latest product-gate/management/RAG-governance repair:
-  `scripts/run_product_readiness_gate.sh` reports `Ran 597 tests`, `OK`,
+- Current verification after the latest product-gate/management/RAG-governance
+  and cached UI transaction repair:
+  `scripts/run_product_readiness_gate.sh` reports `Ran 598 tests`, `OK`,
   deterministic acceptance passed, backend `quality-gate` passed, and
   old-input echo remained `0.0`.
 - Earlier runtime repair verified selected input source
@@ -192,6 +193,12 @@ changing selection keys, and the foreground trace checker rejects source visual
 mismatches. Candidate quota now prevents LLM/model output from occupying all
 side slots when RAG/memory exists: model display is capped at two visible slots,
 RAG/memory keeps block slots, and Rime/Wanxiang fallback keeps reserved slots.
+Rime-suggest cache hits now rebind cached UI payloads to the current foreground
+transaction before returning: top-level transaction echo, `predictionSession`,
+display-candidate metadata/anchors, and prediction trace fields are refreshed
+from the current `requestSeq/sessionId/frontendRevision/selectionEpoch/
+panelSessionId`. This keeps semantic cache reuse without handing Squirrel
+candidate metadata from an older panel session.
 The real foreground verifier/soak scripts now default to
 `--require-balanced-quota`, with trace output exposing
 `latestBalancedCandidatePanel` and `candidateQuotaViolations`.
@@ -1745,7 +1752,7 @@ OK
 Latest full-suite result after PR-10:
 
 ```text
-Ran 597 tests in 117.764s
+Ran 598 tests in 117.519s
 OK
 ```
 
