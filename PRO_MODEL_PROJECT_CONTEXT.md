@@ -223,7 +223,11 @@ Backspace/Delete committed-context resync evidence when
 candidate commit, and `--no-delete-resync` exists only for temporary debugging.
 The soak report also exposes `displayQuality` and fails on source badge/color
 mismatch, model side-slot overrun, overlong model/RAG/memory candidate surfaces,
-or post-commit number-key selection.
+or post-commit number-key selection. It now also checks progressive numbering:
+same-snapshot append is allowed and counted, but if the same `snapshotId`
+reuses an existing `candidateOrdinal` / `selectionKey` for a different
+`candidateStableId`, the report emits `snapshot_ordinal_drift` and fails. This
+keeps "one-by-one candidates pop in" compatible with stable 1/2/3 selection.
 It also treats raw-text leakage in default modern trace events as a foreground
 gate failure: when `traceIncludesText=false`, fields such as `rawInput`,
 `preedit`, `commitTextPreview`, `committedText`, `committedContextSuffix`,
@@ -2263,9 +2267,9 @@ Useful answer format:
 
 The best next code contribution is likely either:
 
-- a robust foreground trace/verification improvement proving continuous
-  selection, or
 - `MlxLmEngine` top-3 seed continuation branching with tests.
+- another foreground trace/verification improvement that can be proven without
+  manually changing macOS input-source state.
 
 Do not spend the next iteration adding more scattered docs. Keep this file and
 `docs/project-status.md` updated instead.

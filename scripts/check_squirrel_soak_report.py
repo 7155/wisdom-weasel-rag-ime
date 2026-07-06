@@ -279,6 +279,7 @@ def build_soak_report(
         "modelOccupiedAllSlotsViolation": "model_occupied_all_slots",
         "longCandidateViolation": "long_candidate",
         "postCommitNumberKeyViolation": "post_commit_number_key",
+        "snapshotOrdinalDriftViolation": "snapshot_ordinal_drift",
     }
     for key, violation_type in display_quality_violation_types.items():
         actual = int(display_quality.get(key) or 0)
@@ -391,12 +392,24 @@ def summarize_display_quality(events: list[dict[str, Any]], *, frontend_report: 
     source_badge_missing = sum(1 for candidate in panel_candidates if source_visual_violation(candidate))
     long_candidate_violation = sum(1 for candidate in panel_candidates if long_candidate_violation_for(candidate))
     quota_violations = candidate_quota_violations(events)
+    ordinal_drift_violations = snapshot_ordinal_drift_violations(events)
+    progressive_events = list(iter_prediction_trace_events(events))
+    progressive_appends = [
+        event for event in progressive_events if event.get("event") == "candidate_snapshot_progressive_append"
+    ]
+    progressive_replaces = [
+        event for event in progressive_events if event.get("event") == "candidate_snapshot_progressive_replace"
+    ]
     return {
         "sourceBadgeMissingCount": source_badge_missing,
         "modelOccupiedAllSlotsViolation": len(quota_violations),
         "longCandidateViolation": long_candidate_violation,
         "postCommitNumberKeyViolation": len(post_commit_number_key_violations(events)),
+        "snapshotOrdinalDriftViolation": len(ordinal_drift_violations),
+        "progressiveAppendCount": len(dedupe_trace_events(progressive_appends)),
+        "progressiveReplaceCount": len(dedupe_trace_events(progressive_replaces)),
         "candidateQuotaViolations": quota_violations[:20],
+        "snapshotOrdinalDriftViolations": ordinal_drift_violations[:20],
         "latestBalancedCandidatePanelPresent": bool(frontend_report.get("latestBalancedCandidatePanel")),
     }
 
@@ -442,6 +455,87 @@ def candidate_display_text(candidate: dict[str, Any]) -> str:
     if isinstance(value, str):
         return " ".join(value.split())
     return ""
+
+
+def snapshot_ordinal_drift_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: dict[tuple[str, str], dict[str, Any]] = {}
+    violations: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        snapshot_id = panel_snapshot_id(event)
+        if not snapshot_id:
+            continue
+        candidates = event.get("candidates")
+        if not isinstance(candidates, list):
+            continue
+        local_ordinals: set[str] = set()
+        for index, candidate in enumerate(candidates, start=1):
+            if not isinstance(candidate, dict):
+                continue
+            ordinal = candidate_ordinal(candidate, fallback=index)
+            if not ordinal:
+                continue
+            identity = candidate_stable_identity(candidate)
+            if not identity:
+                continue
+            key = (snapshot_id, ordinal)
+            if ordinal in local_ordinals:
+                violations.append(
+                    {
+                        "type": "duplicate_ordinal_in_panel",
+                        "timestampMs": event.get("timestampMs"),
+                        "snapshotId": snapshot_id,
+                        "ordinal": ordinal,
+                    }
+                )
+                continue
+            local_ordinals.add(ordinal)
+            previous = seen.get(key)
+            if previous is not None and previous.get("identity") != identity:
+                violations.append(
+                    {
+                        "type": "snapshot_ordinal_identity_changed",
+                        "timestampMs": event.get("timestampMs"),
+                        "snapshotId": snapshot_id,
+                        "ordinal": ordinal,
+                        "previousIdentity": previous.get("identity"),
+                        "currentIdentity": identity,
+                        "previousTimestampMs": previous.get("timestampMs"),
+                    }
+                )
+                continue
+            seen[key] = {
+                "identity": identity,
+                "timestampMs": event.get("timestampMs"),
+            }
+    return violations
+
+
+def candidate_ordinal(candidate: dict[str, Any], *, fallback: int) -> str:
+    value = (
+        candidate.get("candidateOrdinal")
+        or candidate.get("selectionRank")
+        or candidate.get("selectionKey")
+        or candidate.get("label")
+        or fallback
+    )
+    return str(value)
+
+
+def candidate_stable_identity(candidate: dict[str, Any]) -> str:
+    explicit = str(candidate.get("candidateStableId") or candidate.get("stableId") or "")
+    if explicit:
+        return explicit
+    text = str(candidate.get("insertText") or candidate.get("text") or candidate.get("displayText") or "")
+    return "|".join(
+        [
+            str(candidate.get("sourceType") or ""),
+            str(candidate.get("selectionAction") or ""),
+            str(candidate.get("selectionKey") or candidate.get("label") or ""),
+            " ".join(text.split()),
+        ]
+    )
 
 
 def post_commit_number_key_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -1396,6 +1396,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["displayQuality"]["modelOccupiedAllSlotsViolation"], 0)
         self.assertEqual(report["displayQuality"]["longCandidateViolation"], 0)
         self.assertEqual(report["displayQuality"]["postCommitNumberKeyViolation"], 0)
+        self.assertEqual(report["displayQuality"]["snapshotOrdinalDriftViolation"], 0)
         self.assertTrue(persisted["passed"])
 
     def test_soak_report_surfaces_trace_privacy_violations(self) -> None:
@@ -1590,6 +1591,150 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("model_occupied_all_slots", violation_types)
         self.assertIn("long_candidate", violation_types)
         self.assertIn("post_commit_number_key", violation_types)
+
+    def test_soak_report_allows_progressive_append_without_ordinal_drift(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-progressive-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            first = _side_candidate(label="1", source_type="model", session_fingerprint="session-a")
+            first.update({"snapshotId": "snap:append", "candidateStableId": "model:first", "candidateOrdinal": 1, "text": "继续"})
+            second = _side_candidate(label="2", source_type="rag", session_fingerprint="session-a")
+            second.update({"snapshotId": "snap:append", "candidateStableId": "rag:second", "candidateOrdinal": 2, "text": "继续写"})
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "predictionSession": {"snapshotId": "snap:append", "phase": "post_commit", "selectionScope": "prediction"},
+                        "candidateCounts": {"total": 1, "modelInline": 1, "ragBlock": 0, "rime": 0},
+                        "candidates": [first],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "candidate_snapshot_progressive_append",
+                        "timestampMs": 2,
+                        "fields": {
+                            "snapshotId": "snap:append",
+                            "previousSnapshotId": "snap:append",
+                            "preservedOrdinalCount": 1,
+                            "appendedCandidateCount": 1,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 3,
+                        "predictionSession": {"snapshotId": "snap:append", "phase": "post_commit", "selectionScope": "prediction"},
+                        "candidateCounts": {"total": 2, "modelInline": 1, "ragBlock": 1, "rime": 0},
+                        "candidates": [first, second],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["displayQuality"]["progressiveAppendCount"], 1)
+        self.assertEqual(report["displayQuality"]["snapshotOrdinalDriftViolation"], 0)
+
+    def test_soak_report_fails_when_snapshot_reuses_ordinal_for_different_candidate(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-ordinal-drift-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            first = _side_candidate(label="1", source_type="model", session_fingerprint="session-a")
+            first.update({"snapshotId": "snap:drift", "candidateStableId": "model:first", "candidateOrdinal": 1, "text": "继续"})
+            changed = _side_candidate(label="1", source_type="model", session_fingerprint="session-a")
+            changed.update({"snapshotId": "snap:drift", "candidateStableId": "model:changed", "candidateOrdinal": 1, "text": "换了"})
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "predictionSession": {"snapshotId": "snap:drift"},
+                        "candidateCounts": {"total": 1, "modelInline": 1, "ragBlock": 0, "rime": 0},
+                        "candidates": [first],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 2,
+                        "predictionSession": {"snapshotId": "snap:drift"},
+                        "candidateCounts": {"total": 1, "modelInline": 1, "ragBlock": 0, "rime": 0},
+                        "candidates": [changed],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["displayQuality"]["snapshotOrdinalDriftViolation"], 1)
+        self.assertIn("snapshot_ordinal_drift", {item["type"] for item in report["violations"]})
 
     def test_soak_report_fails_min_visible_violation(self) -> None:
         root = Path(__file__).resolve().parents[1]
