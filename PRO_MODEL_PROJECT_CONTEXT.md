@@ -209,7 +209,8 @@ now exposes localhost management APIs for candidate explain, history audit,
 memory/lexicon review, cleanup diff apply/rollback, redacted-by-default raw
 history, and action audit logging. Cleanup diff apply/rollback on the PR-10
 management API now require explicit `confirm=apply` / `confirm=rollback`; the
-browser Management panel prompts before sending that mutating request. The
+browser Management panel prompts before sending that mutating request and now
+acts on the selected row instead of implicitly mutating the first row. The
 final integrated product gate has also
 started: `scripts/run_product_readiness_gate.sh` now runs unit tests,
 deterministic acceptance, backend `quality-gate`, and, when
@@ -2006,8 +2007,6 @@ a polished OpenLess-style management application.
 
 Remaining polish:
 
-- per-row selection for choosing a specific reviewed item instead of acting on
-  the first listed row;
 - richer edit/merge flows for stable memories and lexicon phrases;
 - export to Rime user dictionary;
 - more visual grouping and pagination for large local databases.

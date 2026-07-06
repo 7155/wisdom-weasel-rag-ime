@@ -294,6 +294,16 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("confirmCleanupDiffAction", app_js)
         self.assertIn("confirm: action", app_js)
 
+    def test_management_console_actions_use_selected_row(self) -> None:
+        app_js = Path(__file__).resolve().parents[1].joinpath("debug", "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("managementSelectedRowKey", app_js)
+        self.assertIn("function managementRowKey", app_js)
+        self.assertIn("function selectManagementRow", app_js)
+        self.assertIn("item.addEventListener(\"click\", () => selectManagementRow(rowKey))", app_js)
+        self.assertIn("is-selected", app_js)
+        self.assertNotIn("return rows[0]?.raw || null", app_js)
+
     def _upsert_item(self, *, memory_id: str, kind: str, text: str) -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             upsert_memory_item(

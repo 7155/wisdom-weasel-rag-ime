@@ -23,6 +23,7 @@ const state = {
   memoryLastAction: null,
   managementView: "explain",
   managementResult: null,
+  managementSelectedRowKey: "",
   managementBusy: false,
   managementLastAction: null,
   health: null,
@@ -714,6 +715,7 @@ function renderMemoryConsole() {
 function renderManagementConsole() {
   const result = state.managementResult || {};
   const rows = managementRows(result);
+  ensureManagementSelection(rows);
   for (const button of elements.managementTabs.querySelectorAll("button")) {
     button.classList.toggle("is-active", button.dataset.view === state.managementView);
   }
@@ -731,8 +733,12 @@ function renderManagementConsole() {
     .join(" · ");
   elements.managementList.replaceChildren(
     ...rows.slice(0, 8).map((row) => {
+      const rowKey = managementRowKey(row);
       const item = document.createElement("div");
-      item.className = "memory-row management-row";
+      item.className = `memory-row management-row${rowKey === state.managementSelectedRowKey ? " is-selected" : ""}`;
+      item.tabIndex = 0;
+      item.setAttribute("role", "button");
+      item.setAttribute("aria-pressed", rowKey === state.managementSelectedRowKey ? "true" : "false");
       item.innerHTML = `
         <span class="source-chip">${escapeHtml(row.source)}</span>
         <span class="memory-row-main">
@@ -740,6 +746,12 @@ function renderManagementConsole() {
           <span class="memory-row-meta">${escapeHtml(row.meta)}</span>
         </span>
       `;
+      item.addEventListener("click", () => selectManagementRow(rowKey));
+      item.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        selectManagementRow(rowKey);
+      });
       return item;
     }),
   );
@@ -797,15 +809,41 @@ function managementRows(result) {
 }
 
 function managementActionTarget(rows) {
-  return rows[0]?.raw || null;
+  ensureManagementSelection(rows);
+  return rows.find((row) => managementRowKey(row) === state.managementSelectedRowKey)?.raw || null;
 }
 
 function managementActionLabel(rows) {
-  if (!managementActionTarget(rows)) return "action";
+  const target = managementActionTarget(rows);
+  if (!target) return "action";
   if (state.managementView === "history") return "tombstone";
   if (state.managementView === "memories" || state.managementView === "lexicon") return "approve";
-  if (state.managementView === "cleanup") return rows[0].raw.status === "applied" ? "rollback" : "apply";
+  if (state.managementView === "cleanup") return target.status === "applied" ? "rollback" : "apply";
   return "inspect";
+}
+
+function managementRowKey(row) {
+  const raw = row?.raw || {};
+  return [
+    state.managementView,
+    raw.diffId || raw.eventId || raw.memoryId || raw.candidateId || raw.textHash || raw.targetMemoryId || row.title || "",
+    raw.status || raw.op || row.source || "",
+  ].join(":");
+}
+
+function ensureManagementSelection(rows) {
+  if (!rows.length) {
+    state.managementSelectedRowKey = "";
+    return;
+  }
+  if (!rows.some((row) => managementRowKey(row) === state.managementSelectedRowKey)) {
+    state.managementSelectedRowKey = managementRowKey(rows[0]);
+  }
+}
+
+function selectManagementRow(rowKey) {
+  state.managementSelectedRowKey = rowKey;
+  renderManagementConsole();
 }
 
 function confirmCleanupDiffAction(action, target) {
@@ -833,6 +871,7 @@ async function refreshManagementConsole() {
     const response = await fetch(`${url}?${params.toString()}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.managementResult = await response.json();
+    ensureManagementSelection(managementRows(state.managementResult));
     state.apiOnline = true;
   } catch (error) {
     state.managementResult = { ok: false, error: String(error) };
@@ -1147,6 +1186,7 @@ elements.managementTabs.addEventListener("click", (event) => {
   if (!button) return;
   state.managementView = button.dataset.view;
   state.managementResult = null;
+  state.managementSelectedRowKey = "";
   refreshManagementConsole();
 });
 elements.managementRefreshButton.addEventListener("click", refreshManagementConsole);

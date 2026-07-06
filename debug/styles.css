@@ -615,6 +615,17 @@ button {
 
 .management-row {
   grid-template-columns: 58px minmax(0, 1fr);
+  cursor: pointer;
+}
+
+.management-row.is-selected {
+  border-color: rgba(59, 130, 246, 0.62);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.management-row:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.7);
+  outline-offset: 2px;
 }
 
 .source-chip {
