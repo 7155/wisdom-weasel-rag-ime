@@ -171,6 +171,7 @@ fi
 if [[ "$REQUIRE_SIDE_COMMIT" != "1" || "$REQUIRE_POST_COMMIT_FOLLOWUP" != "1" ]]; then
   MIN_CHAIN_DEPTH=0
 fi
+SELECT_REPORT_PATH="${RAG_IME_SELECT_INPUT_SOURCE_REPORT_PATH:-${REPORT_PATH%.json}.input-source-selection.json}"
 
 soak_args=(
   "$SOAK_CHECK_SCRIPT"
@@ -219,6 +220,7 @@ repo_root=$ROOT
 input_source_id=$INPUT_SOURCE_ID
 trace_log=$TRACE_LOG
 report_path=$REPORT_PATH
+select_report_path=$SELECT_REPORT_PATH
 wait_seconds=$WAIT_SECONDS
 test_file=$TEST_FILE
 open_app=$OPEN_APP
@@ -253,7 +255,7 @@ fi
 
 "$CHECK_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
 if [[ "$SELECT_INPUT_SOURCE" == "1" ]]; then
-  "$SELECT_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
+  "$SELECT_INPUT_SOURCE_SCRIPT" --report-path "$SELECT_REPORT_PATH" "$INPUT_SOURCE_ID"
 else
   "$CHECK_INPUT_SOURCE_SCRIPT" --require-selected "$INPUT_SOURCE_ID"
 fi

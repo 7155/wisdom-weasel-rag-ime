@@ -32,6 +32,7 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         self.assertIn("chain_repeats=7", result.stdout)
         self.assertIn("min_chain_depth=7", result.stdout)
         self.assertIn("require_snapshot_selection_trace=1", result.stdout)
+        self.assertIn("select_report_path=/tmp/custom-rag-ime-soak-report.input-source-selection.json", result.stdout)
         self.assertIn("--min-chain-depth 7", result.stdout)
         self.assertIn("--require-snapshot-selection-trace", result.stdout)
         self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)

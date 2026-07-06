@@ -315,7 +315,48 @@ evidence; the latest apply report is
 blocker is macOS user input-source activation.
 `im.rime.inputmethod.Squirrel.Hans` is visible, enabled, selectable, and
 HIToolbox-enabled, but `thirdPartyEnabled=false`; the current source is
-`com.apple.keylayout.ABC`. A 2026-07-06 read-only audit
+not Squirrel. A 2026-07-06 command-line select attempt now writes structured
+evidence to `/tmp/rag-ime-squirrel-select-attempt.json`:
+
+```json
+{
+  "schemaVersion": "rag-ime.macos-input-source-selection.v1",
+  "ok": false,
+  "exitCode": 4,
+  "phase": "select",
+  "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+  "selectPhaseExitCode": 4,
+  "checkPhaseExitCode": 0,
+  "tisSelectStatus": -50,
+  "failureKind": "tis-select-failed",
+  "source": {
+    "id": "im.rime.inputmethod.Squirrel.Hans",
+    "name": "Squirrel - Simplified",
+    "enabled": true,
+    "selectable": true,
+    "selected": false,
+    "tisSelected": false,
+    "current": "com.bytedance.inputmethod.doubaoime.pinyin",
+    "hitoolboxEnabled": true,
+    "thirdPartyEnabled": false
+  }
+}
+```
+
+The relevant selection-script behavior is:
+
+```bash
+scripts/select_macos_input_source.sh \
+  --report-path /tmp/rag-ime-squirrel-select-attempt.json \
+  im.rime.inputmethod.Squirrel.Hans
+
+# On TIS failure, the script now still runs a read-only input-source audit and
+# writes rag-ime.macos-input-source-selection.v1 with tisSelectStatus,
+# selected/current/hitoolboxEnabled/thirdPartyEnabled, manualRequired, and
+# next commands. Existing stdout/stderr and exit codes are preserved.
+```
+
+A 2026-07-06 read-only audit
 initially reported `duplicatePathCount=7` from old backup/removed/temp app
 paths, mostly under `/Users/undo/Desktop/rag-ime-input-method-backups/system/`.
 Running
