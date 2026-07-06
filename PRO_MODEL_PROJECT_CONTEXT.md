@@ -1716,6 +1716,25 @@ def _production_rag_governance_checks() -> list[dict[str, object]]:
     ]
 ```
 
+`LocalSqliteCoreClient.organize_rag_database(...)` now also performs a
+conservative exact-duplicate pass for stale old-input rows. It reports
+`duplicateGroups`, `duplicateEventCount`, and `wouldHideDuplicates` in dry-run
+mode, and on apply it hides only low-value duplicate copies. The chosen
+representative plus accepted, pinned, and curated rows are preserved so this
+does not erase real high-frequency phrases:
+
+```python
+duplicate_plan = _rag_database_duplicate_plan(rows, sample_size=max(0, int(sample_size)))
+for item in duplicate_plan["hideCandidates"]:
+    event_id = int(item["eventId"])
+    row = item["row"]
+    if event_id in matched:
+        continue
+    reason = str(item["reason"])
+    matched[event_id] = (reason, row)
+    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+```
+
 Current memory-v2 gate now does the same suppression/tombstone check before a
 candidate becomes visible:
 
@@ -2213,17 +2232,18 @@ Still missing: manual real Squirrel foreground confirmation that the colors and
 badges are visually low-distraction in the actual candidate bar after patch
 install, not only in JSON trace and patch tests.
 
-### 4. RAG database cleanup is only conservative so far
+### 4. RAG database cleanup is still conservative, but exact duplicate cleanup now exists
 
-Some stale generated/complaint rows were filtered or hidden, but full `x1top`
-offline cleanup is still pending:
+Some stale generated/complaint rows are filtered or hidden, and exact low-value
+duplicate text copies can now be reported/applied through `organize-rag-db`.
+Full `x1top` offline semantic cleanup is still pending:
 
 - the PR-6 CLI path now exists, and source-event/token-overlap matches now
   backfill `evidenceEventIds` plus `sourceStats`; repeated negative feedback
   can now create reversible `downrank` diffs, but it still needs real user data
   review to tune false positives/false negatives in the evidence linker;
 - summarize noisy history into stable memory facts;
-- deduplicate similar old inputs;
+- deduplicate semantically similar old inputs beyond exact duplicate text;
 - extract high-frequency phrases;
 - provide reviewable cleanup suggestions.
 

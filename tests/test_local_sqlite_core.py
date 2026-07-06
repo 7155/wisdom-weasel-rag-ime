@@ -775,6 +775,113 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(user_deleted, 0)
         self.assertEqual(curated_deleted, 0)
 
+    def test_organize_rag_database_reports_and_hides_low_value_duplicate_text(self) -> None:
+        self.core.reset()
+        now = 1_900_000_020_000
+        duplicate_text = "这是一段很长的旧输入内容，重复进入 RAG 后不应该反复出现"
+        duplicate_ids = [
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now + index,
+                    source="manual_commit",
+                    committed_text=duplicate_text,
+                    recent_context="RAG 老是之前输入",
+                    project="wisdom-weasel-rag-ime",
+                    tags=("user-input", "history"),
+                )
+            )
+            for index in range(3)
+        ]
+        protected_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now + 10,
+                source="manual_commit",
+                committed_text="受保护的重复短语",
+                recent_context="用户接受过",
+                project="wisdom-weasel-rag-ime",
+                tags=("user-input",),
+            )
+        )
+        unprotected_peer_id = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=now + 11,
+                source="manual_commit",
+                committed_text="受保护的重复短语",
+                recent_context="重复进入",
+                project="wisdom-weasel-rag-ime",
+                tags=("user-input",),
+            )
+        )
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=now + 12,
+                memory_id=protected_id,
+                action_type="accepted",
+                query="保留用户确认过的短语",
+            )
+        )
+
+        dry_run = self.core.organize_rag_database(project="wisdom-weasel-rag-ime", dry_run=True)
+        report = self.core.organize_rag_database(project="wisdom-weasel-rag-ime")
+
+        self.assertEqual(dry_run["hidden"], 0)
+        self.assertEqual(dry_run["duplicateGroupCount"], 2)
+        self.assertEqual(dry_run["duplicateEventCount"], 3)
+        self.assertEqual(dry_run["wouldHideDuplicates"], 2)
+        self.assertEqual(dry_run["reasonCounts"]["duplicate_low_value_text"], 2)
+        duplicate_group = next(item for item in dry_run["duplicateGroups"] if item["text"] == duplicate_text)
+        self.assertEqual(len(duplicate_group["hideEventIds"]), 2)
+        protected_group = next(item for item in dry_run["duplicateGroups"] if item["text"] == "受保护的重复短语")
+        self.assertEqual(protected_group["hideEventIds"], [])
+        self.assertEqual(protected_group["representativeEventId"], int(protected_id.removeprefix("event:")))
+        self.assertEqual(report["hidden"], 2)
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            active_duplicate_count = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM input_events e
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE e.committed_text = ? AND s.deleted = 0
+                """,
+                (duplicate_text,),
+            ).fetchone()[0]
+            protected_deleted = conn.execute(
+                "SELECT deleted FROM memory_state WHERE event_id = ?",
+                (int(protected_id.removeprefix("event:")),),
+            ).fetchone()[0]
+            unprotected_peer_deleted = conn.execute(
+                "SELECT deleted FROM memory_state WHERE event_id = ?",
+                (int(unprotected_peer_id.removeprefix("event:")),),
+            ).fetchone()[0]
+            hidden_ids = {
+                row[0]
+                for row in conn.execute(
+                    """
+                    SELECT event_id
+                    FROM memory_state
+                    WHERE deleted = 1
+                    """
+                ).fetchall()
+            }
+            action_count = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM memory_actions
+                WHERE action_type = 'hide' AND query = 'rag-db-organize'
+                  AND metadata_json LIKE '%duplicate_low_value_text%'
+                """
+            ).fetchone()[0]
+
+        self.assertEqual(active_duplicate_count, 1)
+        self.assertEqual(protected_deleted, 0)
+        self.assertEqual(unprotected_peer_deleted, 0)
+        self.assertEqual(len(hidden_ids.intersection(int(item.removeprefix("event:")) for item in duplicate_ids)), 2)
+        self.assertEqual(action_count, 2)
+
     def test_project_phrase_frequency_does_not_leak_between_projects(self) -> None:
         self.core.reset()
         now = now_ms()
