@@ -253,7 +253,12 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(payload["candidateMode"], "seeded-prompt-replay")
         self.assertEqual(payload["candidates"], ["优化候选排序", "补齐来源诊断", "重建上下文管理"])
         self.assertEqual([item["seedText"] for item in payload["candidateScores"]], ["优化", "补齐", "重建"])
+        self.assertEqual([item["seedTokenId"] for item in payload["candidateScores"]], [1000, 1001, 1002])
+        self.assertEqual([item["branchRank"] for item in payload["candidateScores"]], [1, 2, 3])
+        self.assertEqual([item["branchCount"] for item in payload["candidateScores"]], [3, 3, 3])
         self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["seed:优化", "seed:补齐", "seed:重建"])
+        self.assertEqual([item["seedTokenId"] for item in payload["timing"]["branches"]], [1000, 1001, 1002])
+        self.assertEqual([item["branchRank"] for item in payload["timing"]["branches"]], [1, 2, 3])
         self.assertEqual(calls["sampler_calls"], 3)
         self.assertIn("种子候选", calls["prompts"][1])
 

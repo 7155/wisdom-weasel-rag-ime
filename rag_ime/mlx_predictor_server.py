@@ -528,7 +528,8 @@ class MlxLmEngine:
         branch_timings: list[dict[str, Any]] = []
         per_seed_max_tokens = max(8, min(24, int(max_tokens)))
         replay_temperature = max(0.05, min(float(temperature), 0.18))
-        for seed in seeds:
+        branch_count = len(seeds)
+        for branch_rank, seed in enumerate(seeds, start=1):
             if len(candidates) >= max(1, int(max_candidates)):
                 break
             seed_text = str(seed.get("text") or "")
@@ -555,7 +556,10 @@ class MlxLmEngine:
             branch_timings.append(
                 {
                     "label": f"seed:{seed_text}",
+                    "branchRank": branch_rank,
+                    "branchCount": branch_count,
                     "seedText": seed_text,
+                    "seedTokenId": seed.get("tokenId"),
                     "logprob": seed.get("logprob"),
                     "probability": seed.get("probability"),
                     "maxTokens": per_seed_max_tokens,
@@ -2104,7 +2108,10 @@ def _seeded_prompt_replay_candidate_scores(
                 "rank": index,
                 "source": str(branch.get("label") or "seed-replay"),
                 "mode": "seeded-prompt-replay",
+                "branchRank": branch.get("branchRank"),
+                "branchCount": branch.get("branchCount"),
                 "seedText": branch.get("seedText"),
+                "seedTokenId": branch.get("seedTokenId"),
                 "probability": branch.get("probability"),
                 "logprob": branch.get("logprob"),
                 "confidence": max(0.0, min(1.0, 1.0 - ((index - 1) / max(3, total + 1)) * 0.28)),

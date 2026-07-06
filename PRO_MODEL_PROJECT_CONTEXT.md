@@ -1393,6 +1393,9 @@ Current PR-4 reality:
 - The branch count is capped at top-3 seed tokens.
 - Each branch is prompt replay, not true KV-cache fork.
 - `candidateMode: "seeded-prompt-replay"` is already test-covered.
+- Seeded replay candidate scores expose `seedTokenId`, `branchRank`, and
+  `branchCount` plus seed text/logprob/probability, so reviewers can verify
+  that the three LLM candidates are separate top-logit seed branches.
 - True KV fork is still future work; keep `sequenceFork=false` until there is a
   real cache-copy branch implementation.
 
@@ -1892,7 +1895,8 @@ Confirm next sidecar request uses the deleted-current context
 Current MLX path now exposes `seededPromptReplay=true`, `kvFork=false`, and
 `sequenceFork=false`. It can take top next-token seeds, replay each seed against
 the prepared prompt, and return multiple phrase candidates in
-`candidate_mode=seeded-prompt-replay`.
+`candidate_mode=seeded-prompt-replay`. Candidate score metadata now includes
+seed token id and branch rank/count for each replayed branch.
 
 Still missing:
 
