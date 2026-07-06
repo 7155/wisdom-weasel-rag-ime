@@ -909,8 +909,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
 
     def test_soak_report_passes_for_valid_trace(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        candidates = _mixed_side_first_candidates(session_fingerprint="session-a")
-        selected_candidate = dict(candidates[5])
+        candidates = _balanced_quota_candidates(session_fingerprint="session-a")
+        selected_candidate = dict(candidates[2])
         selected_candidate["text"] = "继续预测"
         selected_candidate["insertText"] = "继续预测"
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-") as tmp:
@@ -948,7 +948,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "event": "sidecar_response_applied",
                         "timestampMs": 8,
                         "responseAgeMs": 42,
-                        "displayCount": 8,
+                        "displayCount": 5,
                         "frontendRevision": 4,
                         "selectionEpoch": 9,
                         "panelSessionId": "panel-a",
@@ -985,7 +985,13 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "panelSessionId": "panel-a",
                         "compositionHash": "sha256:aaaa",
                         "committedContextHash": "sha256:bbbb",
-                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
+                        "predictionSession": {
+                            "phase": "post_commit",
+                            "selectionScope": "prediction",
+                            "snapshotId": "snap:soak",
+                            "expiresAfterMs": 8000,
+                        },
+                        "candidateCounts": {"total": 5, "modelInline": 2, "ragBlock": 2, "rime": 1},
                         "candidates": candidates,
                     },
                     ensure_ascii=False,
@@ -997,8 +1003,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "timestampMs": 10,
                         "fields": {
                             "snapshotId": "snap:soak",
-                            "visibleCandidateCount": 8,
-                            "sourceSummary": {"model": 5, "rag": 3},
+                            "visibleCandidateCount": 5,
+                            "sourceSummary": {"model": 2, "rag": 1, "memory": 1, "rime": 1},
                             "action": "fresh",
                             "reason": "visible_candidates",
                         },
@@ -1012,8 +1018,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "timestampMs": 11,
                         "fields": {
                             "snapshotId": "snap:soak",
-                            "visibleCandidateCount": 8,
-                            "sourceSummary": {"model": 5, "rag": 3},
+                            "visibleCandidateCount": 5,
+                            "sourceSummary": {"model": 2, "rag": 1, "memory": 1, "rime": 1},
                             "action": "soft_hold",
                             "reason": "model timeout; last-good valid",
                             "modelTimedOut": True,
@@ -1031,7 +1037,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "timestampMs": 12,
                         "fields": {
                             "snapshotId": "snap:soak",
-                            "visibleCandidateCount": 8,
+                            "visibleCandidateCount": 5,
                             "action": "soft_hold",
                             "reason": "rag empty; model still visible",
                             "modelTimedOut": False,
@@ -1048,7 +1054,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "timestampMs": 13,
                         "fields": {
                             "snapshotId": "snap:soak",
-                            "visibleCandidateCount": 8,
+                            "visibleCandidateCount": 5,
                             "action": "soft_hold",
                             "reason": "model timeout; reused last-good snapshot",
                             "modelTimedOut": True,
@@ -1071,8 +1077,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "panelSessionId": "panel-a",
                         "compositionHash": "sha256:aaaa",
                         "committedContextHash": "sha256:bbbb",
-                        "candidateCounts": {"total": 8, "modelInline": 5, "ragBlock": 3, "rime": 0},
-                        "separators": ["", "  ", "  ", "  ", "  ", "\n", "\n", "\n"],
+                        "candidateCounts": {"total": 5, "modelInline": 2, "ragBlock": 2, "rime": 1},
+                        "separators": ["", "  ", "\n", "\n", "\n"],
                         "candidates": candidates,
                     },
                     ensure_ascii=False,
@@ -1080,9 +1086,11 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + "\n"
                 + json.dumps(
                     {
-                        "event": "number_key_route",
+                        "event": "option_number_route",
                         "timestampMs": 15,
-                        "key": "6",
+                        "key": "3",
+                        "route": "option_number",
+                        "ordinal": 3,
                         "candidate": selected_candidate,
                     },
                     ensure_ascii=False,
@@ -1094,7 +1102,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                         "timestampMs": 16,
                         "committedText": "继续预测",
                         "committedContextChars": 24,
-                        "selectionKey": "6",
+                        "selectionKey": "3",
                         "sessionFingerprint": "session-a",
                     },
                     ensure_ascii=False,
@@ -1113,7 +1121,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     {
                         "event": "post_commit_prediction_scheduled",
                         "timestampMs": 18,
-                        "selectionKey": "6",
+                        "selectionKey": "3",
                     },
                     ensure_ascii=False,
                 )
@@ -1216,6 +1224,10 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["laneStability"]["modelTimeoutsWithHoldover"], 1)
         self.assertEqual(report["laneStability"]["ragEmptyCount"], 1)
         self.assertEqual(report["laneStability"]["ragEmptyClearedPanelCount"], 0)
+        self.assertEqual(report["displayQuality"]["sourceBadgeMissingCount"], 0)
+        self.assertEqual(report["displayQuality"]["modelOccupiedAllSlotsViolation"], 0)
+        self.assertEqual(report["displayQuality"]["longCandidateViolation"], 0)
+        self.assertEqual(report["displayQuality"]["postCommitNumberKeyViolation"], 0)
         self.assertTrue(persisted["passed"])
 
     def test_soak_report_fails_on_stale_applied_response(self) -> None:
@@ -1278,6 +1290,88 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["manualRequired"], ["Accessibility typing failed"])
         self.assertEqual(report["violations"][0]["type"], "stale_applied_response")
         self.assertIn("requestFrontendRevision!=liveFrontendRevision", report["violations"][0]["mismatches"])
+
+    def test_soak_report_fails_display_quality_violations(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-display-quality-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            candidates = [
+                _side_candidate(label=str(index), source_type="model", session_fingerprint="session-a")
+                for index in range(1, 5)
+            ]
+            candidates[0].pop("badge", None)
+            candidates[0].pop("colorToken", None)
+            candidates[0]["text"] = "这个候选文本非常非常非常非常非常非常非常非常长不应该直接塞进候选栏"
+            for candidate in candidates:
+                candidate["snapshotId"] = "snap:post-commit"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "forcesHorizontalLayout": False,
+                        "predictionSession": {
+                            "phase": "post_commit",
+                            "selectionScope": "prediction",
+                            "snapshotId": "snap:post-commit",
+                            "expiresAfterMs": 8000,
+                        },
+                        "candidateCounts": {"total": 4, "modelInline": 4, "ragBlock": 0, "rime": 0},
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "number_key_route",
+                        "timestampMs": 2,
+                        "key": "1",
+                        "candidate": candidates[0],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertGreater(report["displayQuality"]["sourceBadgeMissingCount"], 0)
+        self.assertEqual(report["displayQuality"]["modelOccupiedAllSlotsViolation"], 1)
+        self.assertEqual(report["displayQuality"]["longCandidateViolation"], 1)
+        self.assertEqual(report["displayQuality"]["postCommitNumberKeyViolation"], 1)
+        violation_types = {item["type"] for item in report["violations"]}
+        self.assertIn("source_badge_missing", violation_types)
+        self.assertIn("model_occupied_all_slots", violation_types)
+        self.assertIn("long_candidate", violation_types)
+        self.assertIn("post_commit_number_key", violation_types)
 
     def test_soak_report_counts_option_number_side_selection_route(self) -> None:
         root = Path(__file__).resolve().parents[1]

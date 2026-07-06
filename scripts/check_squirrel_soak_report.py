@@ -11,7 +11,10 @@ from typing import Any
 
 from check_squirrel_frontend_trace import (
     DEFAULT_LOG_PATH,
+    SOURCE_BADGES,
+    SOURCE_COLOR_TOKENS,
     build_report,
+    candidate_quota_violations,
     candidates_match_selection_route,
     event_timestamp_ms,
     is_post_commit_followup_request,
@@ -125,6 +128,7 @@ def build_soak_report(
     stale_applied = collect_stale_applied_responses(events)
     prediction_stability = summarize_prediction_stability(events, stale_applied_count=len(stale_applied))
     lane_stability = summarize_lane_stability(events)
+    display_quality = summarize_display_quality(events, frontend_report=frontend_report)
 
     frontend_ok = report_passes(
         frontend_report,
@@ -211,6 +215,16 @@ def build_soak_report(
                 "expectedAtMost": max_rag_empty_cleared_panel,
             }
         )
+    display_quality_violation_types = {
+        "sourceBadgeMissingCount": "source_badge_missing",
+        "modelOccupiedAllSlotsViolation": "model_occupied_all_slots",
+        "longCandidateViolation": "long_candidate",
+        "postCommitNumberKeyViolation": "post_commit_number_key",
+    }
+    for key, violation_type in display_quality_violation_types.items():
+        actual = int(display_quality.get(key) or 0)
+        if actual > 0:
+            violations.append({"type": violation_type, "actual": actual, "expected": 0})
 
     response_age_values = [
         int(event.get("responseAgeMs") or 0)
@@ -272,6 +286,7 @@ def build_soak_report(
         },
         "predictionStability": prediction_stability,
         "laneStability": lane_stability,
+        "displayQuality": display_quality,
         "latency": {
             "responseAgeMs": summarize_numeric(response_age_values),
             "responseReceivedToAppliedMs": summarize_numeric(response_apply_values),
@@ -300,6 +315,115 @@ PREDICTION_TRACE_EVENT_NAMES = {
     "candidate_snapshot_progressive_append",
     "candidate_snapshot_progressive_replace",
 }
+
+
+def summarize_display_quality(events: list[dict[str, Any]], *, frontend_report: dict[str, Any]) -> dict[str, Any]:
+    panel_candidates = list(iter_panel_candidates(events))
+    source_badge_missing = sum(1 for candidate in panel_candidates if source_visual_violation(candidate))
+    long_candidate_violation = sum(1 for candidate in panel_candidates if long_candidate_violation_for(candidate))
+    quota_violations = candidate_quota_violations(events)
+    return {
+        "sourceBadgeMissingCount": source_badge_missing,
+        "modelOccupiedAllSlotsViolation": len(quota_violations),
+        "longCandidateViolation": long_candidate_violation,
+        "postCommitNumberKeyViolation": len(post_commit_number_key_violations(events)),
+        "candidateQuotaViolations": quota_violations[:20],
+        "latestBalancedCandidatePanelPresent": bool(frontend_report.get("latestBalancedCandidatePanel")),
+    }
+
+
+def iter_panel_candidates(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        panel_candidates = event.get("candidates")
+        if not isinstance(panel_candidates, list):
+            continue
+        for candidate in panel_candidates:
+            if isinstance(candidate, dict):
+                candidates.append(candidate)
+    return candidates
+
+
+def source_visual_violation(candidate: dict[str, Any]) -> bool:
+    source_type = str(candidate.get("sourceType") or "")
+    expected_badge = SOURCE_BADGES.get(source_type)
+    expected_color = SOURCE_COLOR_TOKENS.get(source_type)
+    if expected_badge is None or expected_color is None:
+        return False
+    observed_badge = str(candidate.get("sourceBadge") or candidate.get("badge") or "")
+    observed_color = str(candidate.get("colorToken") or "")
+    return observed_badge != expected_badge or observed_color != expected_color
+
+
+def long_candidate_violation_for(candidate: dict[str, Any]) -> bool:
+    source_type = str(candidate.get("sourceType") or "")
+    if source_type not in {"model", "rag", "memory"}:
+        return False
+    text = candidate_display_text(candidate)
+    if not text:
+        return False
+    # Candidate rows should be short surfaces, not evidence/debug paragraphs.
+    return len(text) > 32
+
+
+def candidate_display_text(candidate: dict[str, Any]) -> str:
+    value = candidate.get("text") or candidate.get("displayText") or ""
+    if isinstance(value, str):
+        return " ".join(value.split())
+    return ""
+
+
+def post_commit_number_key_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    active_post_commit_snapshot = ""
+    active_post_commit_panel = False
+    for event in events:
+        name = str(event.get("event") or "")
+        if name == "panel_display_candidates":
+            session = event.get("predictionSession")
+            session = session if isinstance(session, dict) else {}
+            phase = str(session.get("phase") or "")
+            selection_scope = str(session.get("selectionScope") or "")
+            active_post_commit_panel = phase == "post_commit" or selection_scope == "prediction"
+            active_post_commit_snapshot = panel_snapshot_id(event) if active_post_commit_panel else ""
+            continue
+        if name in {"display_invalidated_by_input_change", "prediction_panel_hard_clear", "prediction_panel_soft_hide"}:
+            active_post_commit_panel = False
+            active_post_commit_snapshot = ""
+            continue
+        if name != "number_key_route" or not active_post_commit_panel:
+            continue
+        candidate = event.get("candidate")
+        candidate_snapshot = str(candidate.get("snapshotId") or "") if isinstance(candidate, dict) else ""
+        if active_post_commit_snapshot and candidate_snapshot and candidate_snapshot != active_post_commit_snapshot:
+            continue
+        violations.append(
+            {
+                "event": name,
+                "timestampMs": event.get("timestampMs"),
+                "key": event.get("key"),
+                "snapshotId": candidate_snapshot or active_post_commit_snapshot,
+            }
+        )
+    return violations
+
+
+def panel_snapshot_id(event: dict[str, Any]) -> str:
+    session = event.get("predictionSession")
+    if isinstance(session, dict):
+        snapshot_id = str(session.get("snapshotId") or session.get("stableSnapshotId") or "")
+        if snapshot_id:
+            return snapshot_id
+    candidates = event.get("candidates")
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                snapshot_id = str(candidate.get("snapshotId") or candidate.get("stableSnapshotId") or "")
+                if snapshot_id:
+                    return snapshot_id
+    return str(event.get("snapshotId") or "")
 
 
 def summarize_prediction_stability(events: list[dict[str, Any]], *, stale_applied_count: int) -> dict[str, Any]:
