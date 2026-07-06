@@ -256,6 +256,7 @@ class VcpRebuildMemoryGenerator:
             headers={
                 "Authorization": f"Bearer {self.config.api_key}",
                 "Content-Type": "application/json",
+                "User-Agent": "rag-ime/1.0 curl-compatible",
             },
             method="POST",
         )
