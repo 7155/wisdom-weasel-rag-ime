@@ -197,7 +197,7 @@ def cleanup_plan_from_compiler_report(
         if key in seen_targets:
             continue
         seen_targets.add(key)
-        evidence_event_ids = _resolve_compiler_evidence_event_ids(
+        evidence_event_ids, source_stats = _resolve_compiler_evidence(
             provided=item.evidence_event_ids,
             text=text,
             tags=item.tags,
@@ -217,6 +217,7 @@ def cleanup_plan_from_compiler_report(
                     "source": compact_whitespace(item.source),
                     "tags": list(_unique_strings(("compiled-memory", *item.tags))),
                     "evidenceEventIds": evidence_event_ids,
+                    "sourceStats": source_stats,
                 },
             )
         )
@@ -230,7 +231,7 @@ def cleanup_plan_from_compiler_report(
         if key in seen_targets:
             continue
         seen_targets.add(key)
-        evidence_event_ids = _resolve_compiler_evidence_event_ids(
+        evidence_event_ids, source_stats = _resolve_compiler_evidence(
             provided=item.evidence_event_ids,
             text=text,
             tags=item.tags,
@@ -249,6 +250,7 @@ def cleanup_plan_from_compiler_report(
                     "reason": compact_whitespace(item.reason),
                     "tags": list(_unique_strings(("compiled-phrase", *item.tags))),
                     "evidenceEventIds": evidence_event_ids,
+                    "sourceStats": source_stats,
                 },
             )
         )
@@ -325,20 +327,39 @@ def _build_cleanup_evidence_index(bundle: dict[str, object]) -> list[dict[str, o
     return list(rows_by_event_id.values())
 
 
-def _resolve_compiler_evidence_event_ids(
+def _resolve_compiler_evidence(
     *,
     provided: tuple[int, ...],
     text: str,
     tags: tuple[str, ...],
     reason: str,
     evidence_index: list[dict[str, object]],
-) -> list[int]:
+) -> tuple[list[int], dict[str, object]]:
     provided_ids = [int(event_id) for event_id in provided if int(event_id) > 0]
     if provided_ids:
-        return list(dict.fromkeys(provided_ids))
+        selected_ids = list(dict.fromkeys(provided_ids))
+        known_ids = {int(row.get("eventId") or 0) for row in evidence_index}
+        known_selected_ids = [event_id for event_id in selected_ids if event_id in known_ids]
+        return selected_ids, {
+            "strategy": "model-provided",
+            "totalEventCount": len(evidence_index),
+            "matchedEventCount": len(known_selected_ids) or len(selected_ids),
+            "selectedEventIds": selected_ids,
+            "bestScore": 10.0 if selected_ids else 0.0,
+            "minAcceptedScore": 3.0,
+            "matchDetails": [
+                {
+                    "eventId": event_id,
+                    "score": 10.0,
+                    "matchKind": "model-provided",
+                    "knownInBundle": event_id in known_ids,
+                }
+                for event_id in selected_ids[:3]
+            ],
+        }
     normalized = normalize_text(text)
     query_terms = set(token_terms(f"{text} {reason} {' '.join(tags)}", max_terms=24))
-    scored: list[tuple[float, int]] = []
+    scored: list[tuple[float, int, dict[str, object]]] = []
     for row in evidence_index:
         event_id = int(row.get("eventId") or 0)
         if event_id <= 0:
@@ -359,9 +380,39 @@ def _resolve_compiler_evidence_event_ids(
         score += min(1.0, int(row.get("acceptedCount") or 0) * 0.2)
         score += min(1.0, int(row.get("inputFrequency") or 0) * 0.1)
         if score >= 3.0:
-            scored.append((score, event_id))
+            match_kind = "token-overlap"
+            if normalized and normalize_text(event_text) == normalized:
+                match_kind = "exact-text"
+            elif normalized and normalize_text(event_text) and (
+                normalized in normalize_text(event_text) or normalize_text(event_text) in normalized
+            ):
+                match_kind = "text-substring"
+            scored.append(
+                (
+                    score,
+                    event_id,
+                    {
+                        "eventId": event_id,
+                        "score": round(score, 3),
+                        "matchKind": match_kind,
+                        "overlapTerms": sorted(overlaps)[:8],
+                        "acceptedCount": int(row.get("acceptedCount") or 0),
+                        "inputFrequency": int(row.get("inputFrequency") or 0),
+                    },
+                )
+            )
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    return [event_id for _score, event_id in scored[:3]]
+    selected = scored[:3]
+    selected_ids = [event_id for _score, event_id, _details in selected]
+    return selected_ids, {
+        "strategy": "auto-backfill",
+        "totalEventCount": len(evidence_index),
+        "matchedEventCount": len(scored),
+        "selectedEventIds": selected_ids,
+        "bestScore": round(scored[0][0], 3) if scored else 0.0,
+        "minAcceptedScore": 3.0,
+        "matchDetails": [details for _score, _event_id, details in selected],
+    }
 
 
 def memory_compile_report_payload(

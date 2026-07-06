@@ -182,8 +182,14 @@ offline cleanup CLI safety gate: `cleanup-preview` is dry-run only, plan files
 can be validated before apply, `cleanup-apply` requires explicit `--apply`, and
 rollback is exposed as a first-class command. Generated stable memory also now
 supports explicit `evidenceEventIds` from the model plus local event-evidence
-backfill when the exported bundle contains a strong matching source event.
-Cleanup diffs now support `downrank` as a reversible governance operation:
+backfill when the exported bundle contains a strong matching source event or
+token-overlap match. Generated stable-memory diffs now also include
+privacy-safe `sourceStats` (`strategy`, `matchedEventCount`,
+`selectedEventIds`, `bestScore`, compact match details), and validation rejects
+stable-memory suggestions whose source stats explicitly show no/weak evidence.
+Lexicon phrase diffs preserve source stats for review, but only stable memory
+uses source-strength as a hard apply gate. Cleanup diffs now support `downrank`
+as a reversible governance operation:
 repeatedly skipped phrase/raw-event memories with no accepts can be planned for
 quality-score reduction plus temporary candidate suppression, and rollback
 restores the old score and removes the suppression row.
@@ -2040,10 +2046,10 @@ install, not only in JSON trace and patch tests.
 Some stale generated/complaint rows were filtered or hidden, but full `x1top`
 offline cleanup is still pending:
 
-- the PR-6 CLI path now exists, and strong source-event matches now backfill
-  `evidenceEventIds`; repeated negative feedback can now create reversible
-  `downrank` diffs, but weaker abstract summaries can still fail strict
-  validation until evidence linking becomes smarter;
+- the PR-6 CLI path now exists, and source-event/token-overlap matches now
+  backfill `evidenceEventIds` plus `sourceStats`; repeated negative feedback
+  can now create reversible `downrank` diffs, but it still needs real user data
+  review to tune false positives/false negatives in the evidence linker;
 - summarize noisy history into stable memory facts;
 - deduplicate similar old inputs;
 - extract high-frequency phrases;

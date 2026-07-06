@@ -194,6 +194,9 @@ class MemoryCompilerDiffTests(unittest.TestCase):
             self.assertEqual(FakeCompilerGenerator.calls[-1]["model"], "fake-gpt-compiler")
             stable_diff = next(item for item in compile_payload["run"]["diffs"] if item["op"] == "add_stable_memory")
             self.assertEqual(stable_diff["payload"]["evidenceEventIds"], [2])
+            self.assertEqual(stable_diff["payload"]["sourceStats"]["strategy"], "auto-backfill")
+            self.assertEqual(stable_diff["payload"]["sourceStats"]["selectedEventIds"], [2])
+            self.assertGreaterEqual(stable_diff["payload"]["sourceStats"]["bestScore"], 3.0)
 
             code, apply_payload = self._run_cli_json(
                 "memory-compile-apply",

@@ -69,6 +69,23 @@ def build_cleanup_plan(
                         "text": text,
                         "project": str(row["project"] or ""),
                         "evidenceEventIds": [int(row["source_event_id"] or 0)],
+                        "sourceStats": {
+                            "strategy": "local-rule",
+                            "totalEventCount": 1,
+                            "matchedEventCount": 1 if int(row["source_event_id"] or 0) > 0 else 0,
+                            "selectedEventIds": [int(row["source_event_id"] or 0)] if int(row["source_event_id"] or 0) > 0 else [],
+                            "bestScore": 10.0,
+                            "minAcceptedScore": 3.0,
+                            "matchDetails": [
+                                {
+                                    "eventId": int(row["source_event_id"] or 0),
+                                    "score": 10.0,
+                                    "matchKind": "local-rule-source-event",
+                                }
+                            ]
+                            if int(row["source_event_id"] or 0) > 0
+                            else [],
+                        },
                         "confidence": min(0.95, 0.55 + accepted_count * 0.1 + min(input_frequency, 4) * 0.05),
                     },
                 )
@@ -407,6 +424,14 @@ def inspect_cleanup_plan(plan: CleanupRunPlan) -> dict[str, object]:
             evidence_ids = [int(item) for item in (payload.get("evidenceEventIds") or []) if int(item or 0) > 0]
             if not evidence_ids:
                 errors.append(_cleanup_issue(diff_id=diff_id, op=op, field="evidenceEventIds", code="missing_evidence_event_ids"))
+            _inspect_cleanup_source_stats(
+                errors=errors,
+                warnings=warnings,
+                diff_id=diff_id,
+                op=op,
+                source_stats=payload.get("sourceStats"),
+                evidence_ids=evidence_ids,
+            )
             if _looks_like_long_sentence(text):
                 warnings.append(_cleanup_issue(diff_id=diff_id, op=op, field="text", code="stable_memory_sentence_like", preview=truncate_text(text, 80)))
         elif op == "add_phrase":
@@ -414,6 +439,9 @@ def inspect_cleanup_plan(plan: CleanupRunPlan) -> dict[str, object]:
             text = compact_whitespace(str(payload.get("text", "")))
             if len(text) > 32:
                 errors.append(_cleanup_issue(diff_id=diff_id, op=op, field="text", code="phrase_text_too_long", value=len(text)))
+            source_stats = payload.get("sourceStats")
+            if not isinstance(source_stats, dict):
+                warnings.append(_cleanup_issue(diff_id=diff_id, op=op, field="sourceStats", code="missing_source_stats"))
             if _looks_like_long_sentence(text):
                 warnings.append(_cleanup_issue(diff_id=diff_id, op=op, field="text", code="phrase_sentence_like", preview=truncate_text(text, 80)))
         elif op == "tombstone":
@@ -503,6 +531,48 @@ def _cleanup_issue(*, diff_id: int, op: str, field: str, code: str, value: objec
     if preview:
         payload["preview"] = preview
     return payload
+
+
+def _inspect_cleanup_source_stats(
+    *,
+    errors: list[dict[str, object]],
+    warnings: list[dict[str, object]],
+    diff_id: int,
+    op: str,
+    source_stats: object,
+    evidence_ids: list[int],
+    require_evidence_overlap: bool = True,
+) -> None:
+    if not isinstance(source_stats, dict):
+        warnings.append(_cleanup_issue(diff_id=diff_id, op=op, field="sourceStats", code="missing_source_stats"))
+        return
+    matched_count = _optional_int(source_stats.get("matchedEventCount"))
+    best_score = _optional_float(source_stats.get("bestScore"))
+    selected_ids = [int(item) for item in (source_stats.get("selectedEventIds") or []) if int(item or 0) > 0]
+    if matched_count is None or matched_count <= 0:
+        errors.append(_cleanup_issue(diff_id=diff_id, op=op, field="sourceStats.matchedEventCount", code="source_stats_no_matches"))
+    if best_score is None:
+        warnings.append(_cleanup_issue(diff_id=diff_id, op=op, field="sourceStats.bestScore", code="missing_source_best_score"))
+    elif best_score < 3.0:
+        errors.append(
+            _cleanup_issue(
+                diff_id=diff_id,
+                op=op,
+                field="sourceStats.bestScore",
+                code="source_stats_weak_match",
+                value=best_score,
+            )
+        )
+    if require_evidence_overlap and evidence_ids and selected_ids and not set(evidence_ids).intersection(selected_ids):
+        errors.append(
+            _cleanup_issue(
+                diff_id=diff_id,
+                op=op,
+                field="sourceStats.selectedEventIds",
+                code="source_stats_selected_ids_mismatch_evidence",
+                value=selected_ids,
+            )
+        )
 
 
 def _looks_like_long_sentence(text: str) -> bool:

@@ -65,10 +65,10 @@ class FakeCleanupCompilerGenerator:
             elapsed_ms=19,
             memories=(
                 GeneratedMemoryItem(
-                    text="本地检索优先",
+                    text="输入法优先使用本地检索",
                     tags=("memory",),
                     importance=0.9,
-                    reason="归纳项目偏好",
+                    reason="归纳项目偏好: 本地检索优先",
                     source="cleanup-preview",
                 ),
             ),
@@ -344,3 +344,51 @@ class CleanupPipelineCliTests(unittest.TestCase):
         self.assertTrue(payload["validation"]["ok"])
         stable_diff = next(item for item in payload["run"]["diffs"] if item["op"] == "add_stable_memory")
         self.assertEqual(stable_diff["payload"]["evidenceEventIds"], [1])
+        self.assertEqual(stable_diff["payload"]["sourceStats"]["strategy"], "auto-backfill")
+        self.assertEqual(stable_diff["payload"]["sourceStats"]["selectedEventIds"], [1])
+        self.assertGreaterEqual(stable_diff["payload"]["sourceStats"]["bestScore"], 3.0)
+
+    def test_cleanup_validate_rejects_weak_source_stats_even_with_evidence_id(self) -> None:
+        plan_path = Path(self.tmp.name) / "weak-source-stats.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "runId": "cleanup_weak_source",
+                    "provider": "x1api",
+                    "model": "fake-gpt",
+                    "summary": "stable=1",
+                    "diffs": [
+                        {
+                            "op": "add_stable_memory",
+                            "targetMemoryId": "stable:输入法优先使用本地检索",
+                            "payload": {
+                                "memoryId": "stable:输入法优先使用本地检索",
+                                "text": "输入法优先使用本地检索",
+                                "project": "wisdom-weasel-rag-ime",
+                                "confidence": 0.9,
+                                "evidenceEventIds": [1],
+                                "sourceStats": {
+                                    "strategy": "auto-backfill",
+                                    "totalEventCount": 20,
+                                    "matchedEventCount": 0,
+                                    "selectedEventIds": [1],
+                                    "bestScore": 1.2,
+                                    "minAcceptedScore": 3.0,
+                                },
+                            },
+                            "status": "pending",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        code, payload = self._run_cli_json("cleanup-validate", "--run", str(plan_path))
+
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["ok"])
+        codes = {item["code"] for item in payload["errors"]}
+        self.assertIn("source_stats_no_matches", codes)
+        self.assertIn("source_stats_weak_match", codes)
