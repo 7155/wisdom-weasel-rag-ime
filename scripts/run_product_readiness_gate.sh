@@ -22,6 +22,7 @@ RUN_QUALITY_GATE="${RAG_IME_GATE_RUN_QUALITY_GATE:-1}"
 SEED_DEMO="${RAG_IME_GATE_SEED_DEMO:-1}"
 RESET_GATE_DB="${RAG_IME_GATE_RESET_DB:-1}"
 REQUIRE_PREDICTOR_CAPABILITY="${RAG_IME_REQUIRE_PREDICTOR_CAPABILITY:-}"
+REQUIRE_MODEL_CANDIDATE_COUNT="${RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT:-0}"
 SIDECAR_LATENCY_BUDGET_MS="${RAG_IME_GATE_SIDECAR_LATENCY_BUDGET_MS:-}"
 
 usage() {
@@ -59,6 +60,10 @@ Environment:
   RAG_IME_REQUIRE_PREDICTOR_CAPABILITY=name
                                     Add a local predictor capability requirement,
                                     for example seededPromptReplay.
+  RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT=N
+                                    Require each local model probe case to return
+                                    at least N candidates; use 3 for IME-style
+                                    multi-candidate prediction.
   RAG_IME_GATE_SIDECAR_LATENCY_BUDGET_MS=MS
                                     Override sidecar eval latency budget.
 USAGE
@@ -268,6 +273,9 @@ if [[ "$RUN_QUALITY_GATE" == "1" ]]; then
   if [[ -n "$REQUIRE_PREDICTOR_CAPABILITY" ]]; then
     QUALITY_CMD+=(--require-predictor-capability "$REQUIRE_PREDICTOR_CAPABILITY")
   fi
+  if [[ "$REQUIRE_MODEL_CANDIDATE_COUNT" != "0" ]]; then
+    QUALITY_CMD+=(--require-model-candidate-count "$REQUIRE_MODEL_CANDIDATE_COUNT")
+  fi
   run_cmd "${QUALITY_CMD[@]}"
 else
   log "quality gate skipped"
@@ -308,6 +316,9 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
   )
   if [[ -n "$REQUIRE_PREDICTOR_CAPABILITY" ]]; then
     TRYOUT_CMD+=(--require-predictor-capability "$REQUIRE_PREDICTOR_CAPABILITY")
+  fi
+  if [[ "$REQUIRE_MODEL_CANDIDATE_COUNT" != "0" ]]; then
+    TRYOUT_CMD+=(--require-model-candidate-count "$REQUIRE_MODEL_CANDIDATE_COUNT")
   fi
   run_cmd "${TRYOUT_CMD[@]}"
 

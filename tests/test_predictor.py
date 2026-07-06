@@ -2151,6 +2151,100 @@ class PredictionProviderTests(unittest.TestCase):
             ["qwen3.5:0.8b-mlx", "qwen3.5:2b-mlx"],
         )
 
+    def test_cli_quality_gate_can_require_multiple_model_candidates(self) -> None:
+        _MockOpenAIHandler.response_content = "本地记忆\n上下文管理\n连续预测"
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOpenAIHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-quality-model-count-") as tmp:
+                db_path = os.path.join(tmp, "quality.sqlite")
+                with redirect_stdout(io.StringIO()):
+                    seed_code = main(["--db-path", db_path, "seed-demo", "--reset"])
+                self.assertEqual(seed_code, 0)
+
+                eval_cases_file = os.path.join(tmp, "quality-cases.jsonl")
+                with open(eval_cases_file, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "id": "agent-hook",
+                                "query": "首次运行自动注入背景记忆",
+                                "expectedTerms": ["PROJECT_MEMORY_BLOCK"],
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+
+                with patch.dict(
+                    os.environ,
+                    {
+                        "RAG_IME_PREDICTOR_PROVIDER": "openai-compatible",
+                        "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+                        "RAG_IME_PREDICTOR_MODEL": "Qwen3-0.6B",
+                        "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                    },
+                    clear=False,
+                ):
+                    pass_stdout = io.StringIO()
+                    with redirect_stdout(pass_stdout):
+                        pass_code = main(
+                            [
+                                "--db-path",
+                                db_path,
+                                "quality-gate",
+                                "--cases-file",
+                                eval_cases_file,
+                                "--min-rag-pass-rate",
+                                "0",
+                                "--min-sidecar-pass-rate",
+                                "0",
+                                "--force-side-candidates",
+                                "--require-suggestion-cache",
+                                "--require-model-candidate-count",
+                                "3",
+                            ]
+                        )
+                    self.assertEqual(pass_code, 0)
+                    pass_report = json.loads(pass_stdout.getvalue())
+                    self.assertTrue(pass_report["passed"])
+                    self.assertEqual(pass_report["thresholds"]["requireModelCandidateCount"], 3)
+                    self.assertEqual(pass_report["modelCandidateCount"]["minCandidateCount"], 3)
+                    pass_checks = {item["name"]: item for item in pass_report["checks"]}
+                    self.assertTrue(pass_checks["model-candidate-count"]["passed"])
+
+                    _MockOpenAIHandler.response_content = "唯一候选"
+                    fail_stdout = io.StringIO()
+                    with redirect_stdout(fail_stdout):
+                        fail_code = main(
+                            [
+                                "--db-path",
+                                db_path,
+                                "quality-gate",
+                                "--cases-file",
+                                eval_cases_file,
+                                "--min-rag-pass-rate",
+                                "0",
+                                "--min-sidecar-pass-rate",
+                                "0",
+                                "--force-side-candidates",
+                                "--require-suggestion-cache",
+                                "--require-model-candidate-count",
+                                "3",
+                            ]
+                        )
+                    self.assertEqual(fail_code, 1)
+                    fail_report = json.loads(fail_stdout.getvalue())
+                    self.assertFalse(fail_report["passed"])
+                    fail_checks = {item["name"]: item for item in fail_report["checks"]}
+                    self.assertFalse(fail_checks["model-candidate-count"]["passed"])
+                    self.assertEqual(fail_checks["model-candidate-count"]["actualMinCandidateCount"], 1)
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
     def test_cli_predictor_ttft_counts_missing_first_chunk_as_over_budget(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _MockOllamaEmptyStreamingHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

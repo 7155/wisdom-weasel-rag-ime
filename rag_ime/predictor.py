@@ -799,6 +799,7 @@ class MlxPredictionServiceProvider:
                 "kvFork": bool(health_capabilities.get("kvFork", capabilities["kvFork"])),
                 "sequenceFork": bool(health_capabilities.get("sequenceFork")),
                 "batchCandidates": bool(health_capabilities.get("batchCandidates")),
+                "logitsTopK": bool(health_capabilities.get("logitsTopK", capabilities["logitsTopK"])),
                 "serverTiming": bool(health_capabilities.get("serverTiming", capabilities["serverTiming"])),
             }
         )

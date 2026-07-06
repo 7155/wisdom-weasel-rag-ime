@@ -2214,6 +2214,14 @@ continuation-branch path without switching to realtime cloud prediction. Seed
 exploration is no longer accidentally capped by the UI display limit, so a
 one-candidate caller can still exercise the top-three local branch path.
 
+The repo also has an opt-in quality gate for this product requirement:
+`quality-gate --require-model-candidate-count 3` probes the configured local
+predictor against the normal eval cases and fails if any case returns fewer
+than three model candidates. `scripts/run_product_readiness_gate.sh` exposes the
+same check through `RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT=3`. This does not make
+the small model smarter; it prevents silent regression to a single Tab-like LLM
+candidate during MLX/Ollama experiments.
+
 Still missing:
 
 ```text

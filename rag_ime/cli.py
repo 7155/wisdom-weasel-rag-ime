@@ -729,6 +729,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--model-ttfc-latency-budget-ms", type=int, default=200)
     quality_gate.add_argument("--max-model-ttfc-p95-ms", type=int, default=200)
     quality_gate.add_argument("--max-model-ttfc-over-budget-rate", type=float, default=0.0)
+    quality_gate.add_argument(
+        "--require-model-candidate-count",
+        type=int,
+        default=int(os.environ.get("RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT", "0")),
+        help="Require each local model probe case to return at least this many candidates. Use 3 for IME-style multi-candidate prediction.",
+    )
+    quality_gate.add_argument(
+        "--model-candidate-count-repeat",
+        type=int,
+        default=int(os.environ.get("RAG_IME_MODEL_CANDIDATE_COUNT_REPEAT", "1")),
+        help="Repeat count for the optional local model candidate-count gate.",
+    )
     quality_gate.add_argument("--cache-repeat", type=int, default=3)
     quality_gate.add_argument("--cache-current-input", default="RAG 输入法")
     quality_gate.add_argument("--cache-recent-context", default="quality gate cache probe")
@@ -856,6 +868,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     squirrel_tryout_gate.add_argument("--model-ttfc-latency-budget-ms", type=int, default=200)
     squirrel_tryout_gate.add_argument("--max-model-ttfc-p95-ms", type=int, default=200)
     squirrel_tryout_gate.add_argument("--max-model-ttfc-over-budget-rate", type=float, default=0.0)
+    squirrel_tryout_gate.add_argument(
+        "--require-model-candidate-count",
+        type=int,
+        default=int(os.environ.get("RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT", "0")),
+        help="Require each local model probe case to return at least this many candidates.",
+    )
+    squirrel_tryout_gate.add_argument(
+        "--model-candidate-count-repeat",
+        type=int,
+        default=int(os.environ.get("RAG_IME_MODEL_CANDIDATE_COUNT_REPEAT", "1")),
+    )
     squirrel_tryout_gate.add_argument(
         "--require-predictor-capability",
         action="append",
@@ -2328,6 +2351,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             model_ttfc_latency_budget_ms=max(1, args.model_ttfc_latency_budget_ms),
             max_model_ttfc_p95_ms=max(1, args.max_model_ttfc_p95_ms),
             max_model_ttfc_over_budget_rate=max(0.0, min(1.0, args.max_model_ttfc_over_budget_rate)),
+            require_model_candidate_count=max(0, args.require_model_candidate_count),
+            model_candidate_count_repeat=max(1, args.model_candidate_count_repeat),
             cache_current_input=args.cache_current_input,
             cache_recent_context=args.cache_recent_context,
             cache_repeat=max(1, args.cache_repeat),
@@ -2382,6 +2407,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             model_ttfc_latency_budget_ms=max(1, args.model_ttfc_latency_budget_ms),
             max_model_ttfc_p95_ms=max(1, args.max_model_ttfc_p95_ms),
             max_model_ttfc_over_budget_rate=max(0.0, min(1.0, args.max_model_ttfc_over_budget_rate)),
+            require_model_candidate_count=max(0, args.require_model_candidate_count),
+            model_candidate_count_repeat=max(1, args.model_candidate_count_repeat),
             cache_current_input=args.cache_current_input,
             cache_recent_context=args.cache_recent_context,
             cache_repeat=max(1, args.cache_repeat),
@@ -2761,6 +2788,8 @@ def run_squirrel_tryout_gate(
     model_ttfc_latency_budget_ms: int,
     max_model_ttfc_p95_ms: int,
     max_model_ttfc_over_budget_rate: float,
+    require_model_candidate_count: int,
+    model_candidate_count_repeat: int,
     cache_current_input: str,
     cache_recent_context: str,
     cache_repeat: int,
@@ -2869,6 +2898,8 @@ def run_squirrel_tryout_gate(
             model_ttfc_latency_budget_ms=model_ttfc_latency_budget_ms,
             max_model_ttfc_p95_ms=max_model_ttfc_p95_ms,
             max_model_ttfc_over_budget_rate=max_model_ttfc_over_budget_rate,
+            require_model_candidate_count=require_model_candidate_count,
+            model_candidate_count_repeat=model_candidate_count_repeat,
             cache_current_input=cache_current_input,
             cache_recent_context=cache_recent_context,
             cache_repeat=cache_repeat,
@@ -3513,6 +3544,8 @@ def run_quality_gate(
     model_ttfc_latency_budget_ms: int,
     max_model_ttfc_p95_ms: int,
     max_model_ttfc_over_budget_rate: float,
+    require_model_candidate_count: int,
+    model_candidate_count_repeat: int,
     cache_current_input: str,
     cache_recent_context: str,
     cache_repeat: int,
@@ -3612,6 +3645,16 @@ def run_quality_gate(
             failure_cooldown_ms=0,
             include_cases=False,
         )
+    model_candidate_count_report: dict[str, object] | None = None
+    if require_model_candidate_count > 0:
+        model_candidate_count_report = _probe_model_candidate_count(
+            predictor,
+            core=core,
+            cases_file=cases_file,
+            project=project,
+            min_candidates=require_model_candidate_count,
+            repeat=max(1, model_candidate_count_repeat),
+        )
     checks = _quality_gate_checks(
         acceptance_report=acceptance_report,
         rag_report=rag_report,
@@ -3619,6 +3662,7 @@ def run_quality_gate(
         cache_report=cache_report,
         predictor_status=predictor_status,
         model_ttfc_report=model_ttfc_report,
+        model_candidate_count_report=model_candidate_count_report,
         input_source_report=input_source_report,
         min_rag_pass_rate=min_rag_pass_rate,
         min_sidecar_pass_rate=min_sidecar_pass_rate,
@@ -3634,6 +3678,7 @@ def run_quality_gate(
         require_model_ttfc=require_model_ttfc,
         max_model_ttfc_p95_ms=max_model_ttfc_p95_ms,
         max_model_ttfc_over_budget_rate=max_model_ttfc_over_budget_rate,
+        require_model_candidate_count=require_model_candidate_count,
         require_suggestion_cache=require_suggestion_cache,
         require_acceptance_check=require_acceptance_check,
         require_production_rag_governance=require_production_rag_governance,
@@ -3670,6 +3715,8 @@ def run_quality_gate(
             "modelTtfcLatencyBudgetMs": max(1, model_ttfc_latency_budget_ms),
             "maxModelTtfcP95Ms": max_model_ttfc_p95_ms,
             "maxModelTtfcOverBudgetRate": max_model_ttfc_over_budget_rate,
+            "requireModelCandidateCount": require_model_candidate_count,
+            "modelCandidateCountRepeat": max(1, model_candidate_count_repeat),
             "requireSuggestionCache": require_suggestion_cache,
             "requireAcceptanceCheck": require_acceptance_check,
             "requireProductionRagGovernance": require_production_rag_governance,
@@ -3685,6 +3732,7 @@ def run_quality_gate(
         "rag": rag_payload,
         "rimeSidecar": rime_payload,
         "modelTtfc": model_ttfc_report,
+        "modelCandidateCount": model_candidate_count_report,
         "inputSource": input_source_report,
         "cacheProbe": cache_report,
     }
@@ -3722,6 +3770,81 @@ def _compact_eval_report(report: dict[str, object]) -> dict[str, object]:
     return compact
 
 
+def _probe_model_candidate_count(
+    predictor,
+    *,
+    core,
+    cases_file: Path,
+    project: str,
+    min_candidates: int,
+    repeat: int,
+) -> dict[str, object]:
+    cases = load_eval_cases(cases_file)
+    required_min = max(1, int(min_candidates))
+    requested_max = max(3, required_min)
+    provider_configured = not _is_null_prediction_provider(predictor)
+    provider_name = _prediction_provider_name(predictor)
+    samples: list[dict[str, object]] = []
+    counts: list[int] = []
+    total_elapsed_ms = 0
+
+    for repeat_index in range(1, max(1, repeat) + 1):
+        for case in cases:
+            eval_case = _case_for_eval_repeat(case, repeat_index=repeat_index, repeat_count=max(1, repeat))
+            prediction_context = build_prediction_context(
+                core,
+                explicit_recent_context=eval_case.recent_context,
+                project=eval_case.project or project,
+            )
+            started = time.perf_counter()
+            predictions = predictor.predict(
+                current_input=eval_case.query,
+                recent_context=prediction_context,
+                max_candidates=requested_max,
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            total_elapsed_ms += elapsed_ms
+            if predictions:
+                provider_name = predictions[0].provider_name
+            surfaces = [compact_whitespace(item.text) for item in predictions if compact_whitespace(item.text)]
+            candidate_count = len(surfaces)
+            counts.append(candidate_count)
+            samples.append(
+                {
+                    "caseId": eval_case.case_id,
+                    "currentInputHash": _stable_eval_hash(eval_case.query),
+                    "recentContextHash": _stable_eval_hash(prediction_context),
+                    "requestedMaxCandidates": requested_max,
+                    "candidateCount": candidate_count,
+                    "passed": provider_configured and candidate_count >= required_min,
+                    "elapsedMs": elapsed_ms,
+                    "topSurfaces": surfaces[:requested_max],
+                }
+            )
+
+    min_count = min(counts) if counts else 0
+    avg_count = (sum(counts) / len(counts)) if counts else 0.0
+    return {
+        "schemaVersion": "rag-ime.model-candidate-count.v1",
+        "providerName": provider_name,
+        "providerProfile": _prediction_provider_profile(predictor),
+        "providerConfigured": provider_configured,
+        "casesFile": str(cases_file),
+        "requiredMinCandidates": required_min,
+        "requestedMaxCandidates": requested_max,
+        "repeat": {
+            "requested": max(1, repeat),
+            "baseCaseCount": len(cases),
+            "effectiveCaseCount": len(samples),
+        },
+        "minCandidateCount": min_count,
+        "avgCandidateCount": avg_count,
+        "totalElapsedMs": total_elapsed_ms,
+        "passed": provider_configured and bool(samples) and min_count >= required_min,
+        "cases": samples,
+    }
+
+
 def _quality_gate_checks(
     *,
     acceptance_report: dict[str, object],
@@ -3730,6 +3853,7 @@ def _quality_gate_checks(
     cache_report: dict[str, object],
     predictor_status: dict[str, object],
     model_ttfc_report: dict[str, object] | None,
+    model_candidate_count_report: dict[str, object] | None,
     input_source_report: dict[str, object] | None,
     min_rag_pass_rate: float,
     min_sidecar_pass_rate: float,
@@ -3745,6 +3869,7 @@ def _quality_gate_checks(
     require_model_ttfc: bool,
     max_model_ttfc_p95_ms: int,
     max_model_ttfc_over_budget_rate: float,
+    require_model_candidate_count: int,
     require_suggestion_cache: bool,
     require_acceptance_check: bool,
     require_production_rag_governance: bool,
@@ -3827,6 +3952,13 @@ def _quality_gate_checks(
                 max_over_budget_rate=max_model_ttfc_over_budget_rate,
             )
         )
+    if require_model_candidate_count > 0:
+        checks.extend(
+            _model_candidate_count_checks(
+                model_candidate_count_report or {},
+                required_min_candidates=require_model_candidate_count,
+            )
+        )
     if require_input_source_ready:
         checks.extend(_input_source_ready_checks(input_source_report or {}))
     if require_production_rag_governance:
@@ -3869,6 +4001,27 @@ def _input_source_ready_checks(report: dict[str, object]) -> list[dict[str, obje
             "selected": report.get("selected"),
             "current": report.get("current"),
         },
+    ]
+
+
+def _model_candidate_count_checks(
+    report: dict[str, object],
+    *,
+    required_min_candidates: int,
+) -> list[dict[str, object]]:
+    required = max(1, int(required_min_candidates))
+    return [
+        {
+            "name": "model-candidate-count",
+            "passed": bool(report.get("passed")),
+            "required": True,
+            "providerConfigured": bool(report.get("providerConfigured")),
+            "providerName": report.get("providerName"),
+            "actualMinCandidateCount": int(report.get("minCandidateCount") or 0),
+            "actualAvgCandidateCount": float(report.get("avgCandidateCount") or 0.0),
+            "expectedAtLeast": required,
+            "requestedMaxCandidates": int(report.get("requestedMaxCandidates") or max(3, required)),
+        }
     ]
 
 
