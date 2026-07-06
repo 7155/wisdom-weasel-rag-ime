@@ -3480,7 +3480,6 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
     selection_key = item.label
     source_badge = candidate_source_badge(item.source_type)
     color_token = candidate_color_token(item.source_type)
-    comment = item.comment if candidate_diagnostics_enabled() else ""
     metadata = dict(item.metadata)
     text = _strip_candidate_source_suffix(item.text)
     insert_text = _strip_candidate_source_suffix(item.insert_text or text)
@@ -3508,7 +3507,7 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "sourceType": item.source_type,
         "selectionAction": item.selection_action,
         "sourceIndex": item.source_index,
-        "comment": comment,
+        "comment": "",
         "badge": source_badge,
         "sourceBadge": metadata.get("sourceBadge") or source_badge,
         "colorToken": color_token,

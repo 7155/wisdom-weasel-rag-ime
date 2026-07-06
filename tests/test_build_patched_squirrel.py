@@ -201,8 +201,14 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("return ragImeStripSourceSuffix(text)", patch_text)
         self.assertIn("let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)", patch_text)
         self.assertIn("if !stripped.isEmpty", patch_text)
-        self.assertIn('guard ragImeCandidateDiagnosticsEnabled() else', patch_text)
-        self.assertIn('return ""', patch_text)
+        self.assertIn("func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String", patch_text)
+        self.assertIn(
+            "+  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {\n"
+            '+    return ""\n'
+            "+  }",
+            patch_text,
+        )
+        self.assertNotIn('return "\\(badge)·\\(candidate.comment)"', patch_text)
         self.assertNotIn("ragImeDisplayCandidates.map { $0.text }", patch_text)
         self.assertIn("RAG_IME_CANDIDATE_SOURCE_BADGES", patch_text)
         self.assertIn("RAG_IME_CANDIDATE_SOURCE_COLORS", patch_text)

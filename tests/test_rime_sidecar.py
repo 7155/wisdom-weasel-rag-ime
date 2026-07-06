@@ -911,7 +911,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[1]["selectionAction"], "select_rime_candidate")
         self.assertEqual(response["modelLane"]["predictionCount"], 1)
 
-    def test_display_candidates_hide_diagnostics_by_default_but_can_enable_them(self) -> None:
+    def test_display_candidates_hide_comments_even_when_diagnostics_enabled(self) -> None:
         payload = {
             "sessionId": "squirrel-display-diagnostics",
             "requestSeq": 420,
@@ -943,7 +943,7 @@ class RimeSidecarTests(unittest.TestCase):
                 predictor=self.predictor,
             )
 
-        self.assertEqual(diagnostic_response["displayCandidates"][0]["comment"], "fake-rime-model")
+        self.assertEqual(diagnostic_response["displayCandidates"][0]["comment"], "")
 
     def test_display_payload_strips_source_suffix_from_text_and_insert_text(self) -> None:
         model_item = display_item_to_payload(

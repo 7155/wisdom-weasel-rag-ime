@@ -2405,17 +2405,7 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {
-+    let badge = ragImeDisplayBadge(for: candidate)
-+    guard ragImeCandidateDiagnosticsEnabled() else {
-+      return ""
-+    }
-+    guard !candidate.comment.isEmpty else {
-+      return badge
-+    }
-+    guard !badge.isEmpty else {
-+      return candidate.comment
-+    }
-+    return "\(badge)·\(candidate.comment)"
++    return ""
 +  }
 +
 +  func ragImeSelectionKey(for candidate: RagImeDisplayCandidate) -> String {
