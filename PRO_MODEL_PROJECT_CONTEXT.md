@@ -307,11 +307,15 @@ Rime config/defaults/build, LaunchAgent, sidecar health, and `/rime-suggest`
 probe are good. A command-line preference repair backed up
 HIToolbox/inputsource plists but macOS denied direct persistence of
 `com.apple.inputsources`; atomic replace and in-place write both returned
-`PermissionError: Operation not permitted`. The remaining machine blocker is
-macOS user input-source activation.
+`PermissionError: Operation not permitted`. The repair helper now supports
+`--report-path` so dry-run/apply attempts can leave machine-readable JSON
+evidence; the latest apply report is
+`/tmp/rag-ime-squirrel-repair-apply.json` and records
+`deniedPreferenceDomains=["com.apple.inputsources"]`. The remaining machine
+blocker is macOS user input-source activation.
 `im.rime.inputmethod.Squirrel.Hans` is visible, enabled, selectable, and
 HIToolbox-enabled, but `thirdPartyEnabled=false`; the current source is
-`com.bytedance.inputmethod.doubaoime.pinyin`. A 2026-07-06 read-only audit
+`com.apple.keylayout.ABC`. A 2026-07-06 read-only audit
 initially reported `duplicatePathCount=7` from old backup/removed/temp app
 paths, mostly under `/Users/undo/Desktop/rag-ime-input-method-backups/system/`.
 Running
@@ -342,8 +346,9 @@ blocker is `readiness_state=third-party-missing` with
 `thirdPartyEnabled=false` / `selected=false`. The new foreground readiness
 summary reports `ok=false`, `foregroundReady=false`, and next commands
 `scripts/open_squirrel_input_source_settings.sh --wait` plus
-`scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run`. True foreground
-soak still requires the System Settings Add/select flow for
+`scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path
+/tmp/rag-ime-squirrel-repair-dryrun.json`. True foreground soak still requires
+the System Settings Add/select flow for
 `Squirrel - Simplified`. Cleanup diff apply now
 re-validates stored diffs
 before writing, and memory optimizer evidence avoids leaking long stable-memory

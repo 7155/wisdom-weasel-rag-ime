@@ -153,7 +153,7 @@ if duplicate_count:
 if state in {"third-party-missing", "preferences-incomplete"}:
     manual_required.append("Use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel - Simplified.")
     commands.append("scripts/open_squirrel_input_source_settings.sh --wait")
-    commands.append("scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run")
+    commands.append("scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path /tmp/rag-ime-squirrel-repair-dryrun.json")
 elif state == "switch":
     manual_required.append("Select Squirrel - Simplified from the macOS input menu.")
     commands.append("scripts/wait_squirrel_typing_ready.sh")
@@ -287,6 +287,7 @@ case "$state" in
   third-party-missing|preferences-incomplete)
     log "third_party_allow_list_missing=1"
     log "command_line_repair_hint=scripts/enable_squirrel_hitoolbox_input_source.sh"
+    log "command_line_repair_report_hint=scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path /tmp/rag-ime-squirrel-repair-dryrun.json"
     log "manual_add_hint=scripts/open_squirrel_input_source_settings.sh --wait"
     if [[ "$OPEN_SETTINGS" == "1" ]]; then
       log "opening System Settings Add flow"

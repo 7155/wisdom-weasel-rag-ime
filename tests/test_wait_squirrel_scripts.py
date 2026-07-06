@@ -222,6 +222,7 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         self.assertIn("duplicate_quarantine_hint=RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS=1 scripts/refresh_squirrel_input_source_registration.sh", result.stdout)
         self.assertIn("third_party_allow_list_missing=1", result.stdout)
         self.assertIn("command_line_repair_hint=scripts/enable_squirrel_hitoolbox_input_source.sh", result.stdout)
+        self.assertIn("command_line_repair_report_hint=scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path /tmp/rag-ime-squirrel-repair-dryrun.json", result.stdout)
         self.assertIn("manual_add_hint=scripts/open_squirrel_input_source_settings.sh --wait", result.stdout)
         self.assertEqual(open_args, "--wait")
         self.assertTrue(wait_log_exists)
@@ -432,7 +433,10 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         self.assertEqual(summary["readinessState"], "third-party-missing")
         self.assertFalse(summary["foregroundReady"])
         self.assertIn("scripts/open_squirrel_input_source_settings.sh --wait", summary["commands"])
-        self.assertIn("scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run", summary["commands"])
+        self.assertIn(
+            "scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run --report-path /tmp/rag-ime-squirrel-repair-dryrun.json",
+            summary["commands"],
+        )
         self.assertTrue(any("System Settings" in item for item in summary["manualRequired"]))
 
     def test_prepare_foreground_check_summary_reports_ready_next_trace_command(self) -> None:

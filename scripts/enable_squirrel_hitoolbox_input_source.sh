@@ -7,12 +7,17 @@ PREF_DOMAIN="${RAG_IME_HITOOLBOX_DOMAIN:-com.apple.HIToolbox}"
 INPUTSOURCES_DOMAIN="${RAG_IME_INPUTSOURCES_DOMAIN:-com.apple.inputsources}"
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$(dirname "${BASH_SOURCE[0]}")/check_macos_input_source.sh}"
+REPORT_PATH="${RAG_IME_ENABLE_SQUIRREL_REPAIR_REPORT:-}"
 DRY_RUN=0
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
     --dry-run)
       DRY_RUN=1
       shift
+      ;;
+    --report-path)
+      REPORT_PATH="${2:?--report-path requires a value}"
+      shift 2
       ;;
     *)
       echo "unknown option: $1" >&2
@@ -22,7 +27,6 @@ while [[ "${1:-}" == --* ]]; do
 done
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-hitoolbox.XXXXXX")"
-trap 'rm -rf "$tmpdir"' EXIT
 
 if [[ ! -x /usr/bin/python3 ]]; then
   echo "/usr/bin/python3 is required to update the HIToolbox plist safely" >&2
@@ -35,6 +39,80 @@ inputs_before="$tmpdir/inputs-before.plist"
 inputs_after="$tmpdir/inputs-after.plist"
 backup="$HOME/Desktop/com.apple.HIToolbox.rag-ime-backup.$(date +%Y%m%d-%H%M%S).plist"
 inputs_backup="$HOME/Desktop/com.apple.inputsources.rag-ime-backup.$(date +%Y%m%d-%H%M%S).plist"
+hitoolbox_changed=""
+third_party_changed=""
+hitoolbox_backup=""
+inputsources_backup=""
+hitoolbox_direct_write_denied=0
+inputsources_import_failed=0
+inputsources_direct_write_denied=0
+
+write_report() {
+  local exit_code="${1:-0}"
+  [[ -n "$REPORT_PATH" ]] || return 0
+  /usr/bin/python3 - "$REPORT_PATH" "$exit_code" "$DRY_RUN" "$INPUT_SOURCE_ID" "$BUNDLE_ID" \
+    "$PREF_DOMAIN" "$INPUTSOURCES_DOMAIN" "$hitoolbox_changed" "$third_party_changed" \
+    "$hitoolbox_backup" "$inputsources_backup" "$hitoolbox_direct_write_denied" \
+    "$inputsources_import_failed" "$inputsources_direct_write_denied" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+(
+    report_path,
+    exit_code,
+    dry_run,
+    input_source_id,
+    bundle_id,
+    hitoolbox_domain,
+    inputsources_domain,
+    hitoolbox_changed,
+    third_party_changed,
+    hitoolbox_backup,
+    inputsources_backup,
+    hitoolbox_direct_write_denied,
+    inputsources_import_failed,
+    inputsources_direct_write_denied,
+) = sys.argv[1:15]
+
+denied = []
+if hitoolbox_direct_write_denied == "1":
+    denied.append(hitoolbox_domain)
+if inputsources_import_failed == "1" or inputsources_direct_write_denied == "1":
+    denied.append(inputsources_domain)
+
+needs_manual_add = inputsources_import_failed == "1" or inputsources_direct_write_denied == "1"
+payload = {
+    "schemaVersion": "rag-ime.squirrel-hitoolbox-repair.v1",
+    "exitCode": int(exit_code or 0),
+    "ok": int(exit_code or 0) == 0,
+    "dryRun": dry_run == "1",
+    "inputSourceId": input_source_id,
+    "bundleId": bundle_id,
+    "hitoolboxChanged": hitoolbox_changed == "true",
+    "thirdPartyChanged": third_party_changed == "true",
+    "backups": [item for item in [hitoolbox_backup, inputsources_backup] if item],
+    "deniedPreferenceDomains": list(dict.fromkeys(denied)),
+    "inputsourcesImportFailed": inputsources_import_failed == "1",
+    "inputsourcesDirectWriteDenied": inputsources_direct_write_denied == "1",
+    "hitoolboxDirectWriteDenied": hitoolbox_direct_write_denied == "1",
+    "manualRequired": [
+        "Use System Settings -> Keyboard -> Input Sources -> Add -> Chinese, Simplified -> Squirrel - Simplified."
+    ] if needs_manual_add else [],
+    "commands": [
+        "scripts/open_squirrel_input_source_settings.sh --wait",
+        "scripts/prepare_squirrel_foreground_check.sh --refresh-registration",
+    ] if needs_manual_add else [],
+}
+path = Path(report_path).expanduser()
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+trap 'status=$?; write_report "$status" >/dev/null 2>&1 || true; rm -rf "$tmpdir"; exit "$status"' EXIT
 
 write_plist_directly() {
   local source_path="$1"
@@ -85,7 +163,7 @@ PY
   inputsources_existed=0
 fi
 
-/usr/bin/python3 - "$before" "$after" "$BUNDLE_ID" "$INPUT_SOURCE_ID" <<'PY'
+hitoolbox_change_output="$(/usr/bin/python3 - "$before" "$after" "$BUNDLE_ID" "$INPUT_SOURCE_ID" <<'PY'
 import plistlib
 import sys
 
@@ -132,8 +210,15 @@ with open(after_path, "wb") as handle:
 
 print("changed=true" if changed else "changed=false")
 PY
+)"
+echo "$hitoolbox_change_output"
+if [[ "$hitoolbox_change_output" == *"changed=true"* ]]; then
+  hitoolbox_changed=true
+else
+  hitoolbox_changed=false
+fi
 
-/usr/bin/python3 - "$inputs_before" "$inputs_after" "$BUNDLE_ID" "$INPUT_SOURCE_ID" <<'PY'
+third_party_change_output="$(/usr/bin/python3 - "$inputs_before" "$inputs_after" "$BUNDLE_ID" "$INPUT_SOURCE_ID" <<'PY'
 import plistlib
 import sys
 
@@ -180,6 +265,13 @@ with open(after_path, "wb") as handle:
 
 print("third_party_changed=true" if changed else "third_party_changed=false")
 PY
+)"
+echo "$third_party_change_output"
+if [[ "$third_party_change_output" == *"third_party_changed=true"* ]]; then
+  third_party_changed=true
+else
+  third_party_changed=false
+fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "dry-run: would import $PREF_DOMAIN from $after"
@@ -195,9 +287,11 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 cp "$before" "$backup"
+hitoolbox_backup="$backup"
 echo "backup: $backup"
 if [[ "$inputsources_existed" == "1" ]]; then
   cp "$inputs_before" "$inputs_backup"
+  inputsources_backup="$inputs_backup"
   echo "backup: $inputs_backup"
 else
   echo "backup: <none; $INPUTSOURCES_DOMAIN did not exist>"
@@ -206,6 +300,7 @@ fi
 killall cfprefsd >/dev/null 2>&1 || true
 defaults import "$PREF_DOMAIN" "$after"
 defaults import "$INPUTSOURCES_DOMAIN" "$inputs_after" || {
+  inputsources_import_failed=1
   echo "warning: cannot import $INPUTSOURCES_DOMAIN; add Squirrel from System Settings -> Keyboard -> Input Sources" >&2
 }
 killall cfprefsd >/dev/null 2>&1 || true
@@ -220,6 +315,7 @@ if ! plutil -extract AppleEnabledInputSources xml1 -o "$tmpdir/hitoolbox-after-i
     killall cfprefsd >/dev/null 2>&1 || true
     sleep 0.5
   else
+    hitoolbox_direct_write_denied=1
     echo "warning: macOS denied direct write to $HOME/Library/Preferences/$PREF_DOMAIN.plist" >&2
     sed 's/^/warning: direct write detail: /' "$direct_err" >&2
     echo "warning: add $INPUT_SOURCE_ID from System Settings -> Keyboard -> Input Sources -> Add." >&2
@@ -235,6 +331,7 @@ if ! plutil -extract AppleEnabledThirdPartyInputSources xml1 -o "$tmpdir/third-p
     killall cfprefsd >/dev/null 2>&1 || true
     sleep 0.5
   else
+    inputsources_direct_write_denied=1
     echo "warning: macOS denied direct write to $HOME/Library/Preferences/$INPUTSOURCES_DOMAIN.plist" >&2
     sed 's/^/warning: direct write detail: /' "$direct_err" >&2
     echo "warning: add $INPUT_SOURCE_ID from System Settings -> Keyboard -> Input Sources -> Add." >&2

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import plistlib
 import subprocess
 import tempfile
@@ -18,12 +19,15 @@ class EnableSquirrelHitoolboxInputSourceScriptTests(unittest.TestCase):
             fake_bin = _write_fake_tools(tmp_path)
             check_script = _write_fake_check_script(tmp_path)
             calls_log = tmp_path / "calls.log"
+            report_path = tmp_path / "repair-report.json"
 
             result = subprocess.run(
                 [
                     "bash",
                     str(root / "scripts" / "enable_squirrel_hitoolbox_input_source.sh"),
                     "--dry-run",
+                    "--report-path",
+                    str(report_path),
                 ],
                 cwd=root,
                 env={
@@ -39,6 +43,7 @@ class EnableSquirrelHitoolboxInputSourceScriptTests(unittest.TestCase):
             )
 
             calls = calls_log.read_text(encoding="utf-8")
+            report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertIn("defaults export com.apple.HIToolbox", calls)
             self.assertIn("defaults export com.apple.inputsources", calls)
             self.assertNotIn("defaults import", calls)
@@ -48,6 +53,11 @@ class EnableSquirrelHitoolboxInputSourceScriptTests(unittest.TestCase):
             self.assertIn("Current strict readiness:", result.stdout)
             self.assertIn("fake readiness still failing", result.stdout)
             self.assertFalse((home / "Desktop").exists())
+            self.assertEqual(report["schemaVersion"], "rag-ime.squirrel-hitoolbox-repair.v1")
+            self.assertTrue(report["dryRun"])
+            self.assertTrue(report["hitoolboxChanged"])
+            self.assertTrue(report["thirdPartyChanged"])
+            self.assertEqual(report["backups"], [])
 
     def test_apply_uses_direct_write_when_defaults_import_does_not_persist(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -62,11 +72,14 @@ class EnableSquirrelHitoolboxInputSourceScriptTests(unittest.TestCase):
             fake_bin = _write_fake_tools(tmp_path)
             check_script = _write_successful_check_script(tmp_path)
             calls_log = tmp_path / "calls.log"
+            report_path = tmp_path / "repair-report.json"
 
             result = subprocess.run(
                 [
                     "bash",
                     str(root / "scripts" / "enable_squirrel_hitoolbox_input_source.sh"),
+                    "--report-path",
+                    str(report_path),
                 ],
                 cwd=root,
                 env={
@@ -85,9 +98,15 @@ class EnableSquirrelHitoolboxInputSourceScriptTests(unittest.TestCase):
             inputsources = plistlib.loads((preferences / "com.apple.inputsources.plist").read_bytes())
             third_party = inputsources["AppleEnabledThirdPartyInputSources"]
             backups = sorted(desktop.glob("com.apple.inputsources.rag-ime-backup.*.plist"))
+            report = json.loads(report_path.read_text(encoding="utf-8"))
 
         self.assertIn("warning: defaults import did not persist com.apple.inputsources", result.stderr)
         self.assertTrue(backups)
+        self.assertTrue(report["ok"])
+        self.assertFalse(report["dryRun"])
+        self.assertTrue(report["thirdPartyChanged"])
+        self.assertTrue(report["backups"])
+        self.assertEqual(report["deniedPreferenceDomains"], [])
         self.assertTrue(any(item.get("Input Mode") == "im.rime.inputmethod.Squirrel.Hans" for item in third_party))
         self.assertTrue(
             any(
