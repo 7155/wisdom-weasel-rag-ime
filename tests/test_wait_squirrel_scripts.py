@@ -30,12 +30,18 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         )
 
         self.assertIn("chain_repeats=7", result.stdout)
+        self.assertIn("auto_case_count=6", result.stdout)
+        self.assertIn("auto_app_switch=1", result.stdout)
         self.assertIn("min_chain_depth=7", result.stdout)
         self.assertIn("require_snapshot_selection_trace=1", result.stdout)
         self.assertIn("select_report_path=/tmp/custom-rag-ime-soak-report.input-source-selection.json", result.stdout)
+        self.assertIn("--input-source-selection-report /tmp/custom-rag-ime-soak-report.input-source-selection.json", result.stdout)
         self.assertIn("--min-chain-depth 7", result.stdout)
         self.assertIn("--require-snapshot-selection-trace", result.stdout)
         self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)
+        self.assertIn("ordinary_pinyin_with_app_switch", result.stdout)
+        self.assertIn("raw_english_path", result.stdout)
+        self.assertIn("url_passthrough", result.stdout)
 
     def test_soak_foreground_dry_run_disables_chain_requirement_without_followup(self) -> None:
         root = Path(__file__).resolve().parents[1]

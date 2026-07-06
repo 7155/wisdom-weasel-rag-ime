@@ -39,6 +39,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build and validate a machine-readable Squirrel foreground soak report.")
     parser.add_argument("--log-path", default=str(DEFAULT_LOG_PATH))
     parser.add_argument("--report-path", default=str(DEFAULT_REPORT_PATH))
+    parser.add_argument(
+        "--input-source-selection-report",
+        default="",
+        help="Optional JSON report from select_macos_input_source.sh --report-path.",
+    )
     parser.add_argument("--wait", type=float, default=0.0, help="Wait this many seconds for the soak gate to pass.")
     parser.add_argument("--print-last", type=int, default=8)
     parser.add_argument("--require-mixed-panel", action="store_true")
@@ -82,6 +87,7 @@ def main() -> int:
     deadline = time.monotonic() + max(0.0, args.wait)
 
     soak_report: dict[str, Any] = {}
+    input_source_selection = load_input_source_selection_report(args.input_source_selection_report)
     while True:
         events = load_events(log_path)
         frontend_report = build_report(events, log_path=log_path, print_last=max(0, args.print_last))
@@ -89,6 +95,7 @@ def main() -> int:
             events,
             frontend_report=frontend_report,
             log_path=log_path,
+            input_source_selection=input_source_selection,
             manual_required=args.manual_required,
             require_mixed_panel=args.require_mixed_panel,
             require_side_panel=args.require_side_panel,
@@ -125,6 +132,7 @@ def build_soak_report(
     *,
     frontend_report: dict[str, Any],
     log_path: Path,
+    input_source_selection: dict[str, Any] | None,
     manual_required: list[str],
     require_mixed_panel: bool,
     require_side_panel: bool,
@@ -188,8 +196,13 @@ def build_soak_report(
         "maxMinVisibleViolations": max_min_visible_violations,
         "maxRagEmptyClearedPanel": max_rag_empty_cleared_panel,
         "requireSnapshotSelectionTrace": require_snapshot_selection_trace,
+        "inputSourceSelectionReport": bool(input_source_selection),
     }
+    input_source_selection_ok = True
+    if input_source_selection is not None:
+        input_source_selection_ok = bool(input_source_selection.get("ok"))
     threshold_results = {
+        "inputSourceSelection": input_source_selection_ok,
         "sidecarRequests": int(event_counts.get("sidecar_request_scheduled", 0)) >= min_sidecar_requests,
         "sidecarApplied": int(event_counts.get("sidecar_response_applied", 0)) >= min_sidecar_applied,
         "panelDisplays": int(event_counts.get("panel_display_candidates", 0)) >= min_panel_displays,
@@ -207,6 +220,20 @@ def build_soak_report(
     }
 
     violations: list[dict[str, Any]] = []
+    if input_source_selection is not None and not input_source_selection_ok:
+        source = input_source_selection.get("source")
+        source = source if isinstance(source, dict) else {}
+        violations.append(
+            {
+                "type": "input_source_selection_failed",
+                "inputSourceId": input_source_selection.get("inputSourceId"),
+                "failureKind": input_source_selection.get("failureKind"),
+                "tisSelectStatus": input_source_selection.get("tisSelectStatus"),
+                "current": source.get("current"),
+                "selected": source.get("selected"),
+                "thirdPartyEnabled": source.get("thirdPartyEnabled"),
+            }
+        )
     for violation in frontend_report.get("frontendTransactionViolations") or []:
         if isinstance(violation, dict):
             violations.append(
@@ -361,6 +388,7 @@ def build_soak_report(
         "thresholds": thresholds,
         "thresholdResults": threshold_results,
         "manualRequired": [item for item in manual_required if item],
+        "inputSourceSelection": input_source_selection,
         "metrics": {
             "numberKeyRouteCount": int(event_counts.get("number_key_route", 0)),
             "sideSelectionRouteCount": int(event_counts.get("number_key_route", 0))
@@ -393,6 +421,39 @@ def build_soak_report(
         "frontendTrace": frontend_report,
         "passed": passed,
     }
+
+
+def load_input_source_selection_report(path_value: str) -> dict[str, Any] | None:
+    if not path_value:
+        return None
+    path = Path(path_value).expanduser()
+    if not path.exists():
+        return {
+            "schemaVersion": "rag-ime.macos-input-source-selection.v1",
+            "ok": False,
+            "path": str(path),
+            "failureKind": "selection-report-missing",
+        }
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {
+            "schemaVersion": "rag-ime.macos-input-source-selection.v1",
+            "ok": False,
+            "path": str(path),
+            "failureKind": "selection-report-invalid-json",
+            "error": str(exc),
+        }
+    if not isinstance(payload, dict):
+        return {
+            "schemaVersion": "rag-ime.macos-input-source-selection.v1",
+            "ok": False,
+            "path": str(path),
+            "failureKind": "selection-report-not-object",
+        }
+    payload = dict(payload)
+    payload.setdefault("path", str(path))
+    return payload
 
 
 PREDICTION_TRACE_EVENT_NAMES = {

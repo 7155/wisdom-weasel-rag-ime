@@ -1436,6 +1436,68 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["displayQuality"]["snapshotOrdinalDriftViolation"], 0)
         self.assertTrue(persisted["passed"])
 
+    def test_soak_report_fails_with_input_source_selection_report_failure(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-input-source-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            selection_path = Path(tmp) / "selection.json"
+            log_path.write_text("", encoding="utf-8")
+            selection_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.macos-input-source-selection.v1",
+                        "ok": False,
+                        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+                        "failureKind": "tis-select-failed",
+                        "tisSelectStatus": -50,
+                        "source": {
+                            "current": "com.bytedance.inputmethod.doubaoime.pinyin",
+                            "selected": False,
+                            "thirdPartyEnabled": False,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--input-source-selection-report",
+                    str(selection_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-panel-displays",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["thresholdResults"]["inputSourceSelection"])
+        self.assertEqual(report["inputSourceSelection"]["tisSelectStatus"], -50)
+        self.assertEqual(report["inputSourceSelection"]["source"]["thirdPartyEnabled"], False)
+        self.assertEqual(report["violations"][0]["type"], "input_source_selection_failed")
+        self.assertEqual(report["violations"][0]["current"], "com.bytedance.inputmethod.doubaoime.pinyin")
+
     def test_soak_report_can_require_snapshot_selection_trace_for_side_commits(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-selection-trace-") as tmp:

@@ -243,6 +243,26 @@ It now reports continuous chaining metrics as well: `chain.maxChainDepth`,
 `chain.chainedCommitCount`, and `chain.chainSuccessRate` count consecutive
 side-candidate commits that produce matching post-commit prediction requests.
 The macOS product gate requires `--min-chain-depth 10` and
+the default soak wrapper now drives a six-case foreground script: continuous
+`er qi` selection, `zhe ge fang an`, `lian xu yu ce`, raw English/path
+`open /`, shell path `cd ~/Downloads`, and URL passthrough
+`https://example.com`. The second case can app-switch away and back to test
+stale invalidation. This is still a real foreground gate, not a backend-only
+mock: it needs the Squirrel input source to be active for the typing evidence to
+pass.
+If Squirrel cannot be selected, the wrapper now keeps evidence instead of
+exiting silently. It passes
+`--input-source-selection-report <report>.input-source-selection.json` into
+`check_squirrel_soak_report.py`; the soak report includes
+`inputSourceSelection`, sets
+`thresholdResults.inputSourceSelection=false`, and emits an
+`input_source_selection_failed` violation containing `tisSelectStatus`, current
+input source, selected state, and `thirdPartyEnabled`.
+A no-GUI current-state run wrote `/tmp/rag-ime-squirrel-soak-current.json` and
+`/tmp/rag-ime-squirrel-soak-current.input-source-selection.json`; it failed for
+the expected external blocker with `tisSelectStatus=-50`,
+`current=com.apple.keylayout.ABC`, `selected=false`, and
+`thirdPartyEnabled=false`, while preserving the manual six-case checklist.
 `--max-min-visible-violations 0`.
 PR-8 has started: the Sichuan fuzzy-pinyin helper is now split into
 JSON check and explicit dry-run/apply scripts with backup, and the default

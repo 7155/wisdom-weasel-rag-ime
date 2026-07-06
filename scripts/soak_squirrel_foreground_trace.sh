@@ -33,6 +33,7 @@ AUTO_KEY="${RAG_IME_FOREGROUND_SOAK_AUTO_KEY:-6}"
 AUTO_TYPE_DELAY="${RAG_IME_FOREGROUND_SOAK_AUTO_DELAY_SECONDS:-2.5}"
 AUTO_CHAR_DELAY="${RAG_IME_FOREGROUND_SOAK_AUTO_CHAR_DELAY_SECONDS:-0.04}"
 CHAIN_REPEATS="${RAG_IME_FOREGROUND_SOAK_CHAIN_REPEATS:-10}"
+AUTO_APP_SWITCH="${RAG_IME_FOREGROUND_SOAK_APP_SWITCH:-1}"
 MIN_SIDECAR_REQUESTS="${RAG_IME_FOREGROUND_SOAK_MIN_SIDECAR_REQUESTS:-1}"
 MIN_SIDECAR_APPLIED="${RAG_IME_FOREGROUND_SOAK_MIN_SIDECAR_APPLIED:-1}"
 MIN_PANEL_DISPLAYS="${RAG_IME_FOREGROUND_SOAK_MIN_PANEL_DISPLAYS:-1}"
@@ -70,6 +71,7 @@ Options:
   --auto-query TEXT     Text used for auto typing / manual instructions
   --auto-key KEY        Number key used for auto typing / manual instructions
   --chain-repeats N     Repeat side-candidate selection N times for chaining evidence (default: 10)
+  --no-app-switch       Do not include an automated app switch between soak cases
   --min-chain-depth N   Required successful chain depth (default: chain repeats)
   --dry-run             Print resolved commands without changing local state
   -h, --help            Show this help
@@ -139,6 +141,9 @@ while [[ $# -gt 0 ]]; do
       CHAIN_REPEATS="$2"
       shift
       ;;
+    --no-app-switch)
+      AUTO_APP_SWITCH=0
+      ;;
     --min-chain-depth)
       MIN_CHAIN_DEPTH="$2"
       shift
@@ -172,6 +177,26 @@ if [[ "$REQUIRE_SIDE_COMMIT" != "1" || "$REQUIRE_POST_COMMIT_FOLLOWUP" != "1" ]]
   MIN_CHAIN_DEPTH=0
 fi
 SELECT_REPORT_PATH="${RAG_IME_SELECT_INPUT_SOURCE_REPORT_PATH:-${REPORT_PATH%.json}.input-source-selection.json}"
+if [[ -n "${RAG_IME_FOREGROUND_SOAK_CASES:-}" ]]; then
+  AUTO_CASES_TEXT="$RAG_IME_FOREGROUND_SOAK_CASES"
+else
+  AUTO_CASES_TEXT="$(cat <<EOF
+er qi	$AUTO_KEY	$CHAIN_REPEATS	continuous_pinyin
+zhe ge fang an	$AUTO_KEY	2	ordinary_pinyin_with_app_switch
+lian xu yu ce	$AUTO_KEY	2	ordinary_pinyin
+open /		0	raw_english_path
+cd ~/Downloads		0	shell_path
+https://example.com		0	url_passthrough
+EOF
+)"
+fi
+AUTO_CASE_COUNT="$(RAG_IME_FOREGROUND_SOAK_CASES_RESOLVED="$AUTO_CASES_TEXT" "$PYTHON_EXECUTABLE" - <<'PY'
+import os
+
+cases = [line for line in os.environ.get("RAG_IME_FOREGROUND_SOAK_CASES_RESOLVED", "").splitlines() if line.strip()]
+print(len(cases))
+PY
+)"
 
 soak_args=(
   "$SOAK_CHECK_SCRIPT"
@@ -186,6 +211,9 @@ soak_args=(
   --min-post-commit-followups "$MIN_POST_COMMIT_FOLLOWUPS"
   --min-chain-depth "$MIN_CHAIN_DEPTH"
 )
+if [[ "$SELECT_INPUT_SOURCE" == "1" ]]; then
+  soak_args+=(--input-source-selection-report "$SELECT_REPORT_PATH")
+fi
 if [[ "$REQUIRE_MIXED_PANEL" == "1" ]]; then
   soak_args+=(--require-mixed-panel)
 fi
@@ -231,6 +259,8 @@ auto_type=$AUTO_TYPE
 auto_query=$AUTO_QUERY
 auto_key=$AUTO_KEY
 chain_repeats=$CHAIN_REPEATS
+auto_case_count=$AUTO_CASE_COUNT
+auto_app_switch=$AUTO_APP_SWITCH
 auto_type_delay=$AUTO_TYPE_DELAY
 auto_char_delay=$AUTO_CHAR_DELAY
 require_mixed_panel=$REQUIRE_MIXED_PANEL
@@ -249,15 +279,42 @@ min_side_commits=$MIN_SIDE_COMMITS
 min_post_commit_followups=$MIN_POST_COMMIT_FOLLOWUPS
 min_chain_depth=$MIN_CHAIN_DEPTH
 soak_check_command=$PYTHON_EXECUTABLE ${soak_args[*]}
+auto_cases:
+$AUTO_CASES_TEXT
 EOF
   exit 0
 fi
 
-"$CHECK_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
-if [[ "$SELECT_INPUT_SOURCE" == "1" ]]; then
-  "$SELECT_INPUT_SOURCE_SCRIPT" --report-path "$SELECT_REPORT_PATH" "$INPUT_SOURCE_ID"
+manual_required=()
+input_source_ready=1
+if ! input_source_status="$("$CHECK_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID" 2>&1)"; then
+  input_source_ready=0
+  printf '%s\n' "$input_source_status" >&2
+  manual_required+=("Squirrel input source is not ready; add/select $INPUT_SOURCE_ID before foreground typing.")
 else
+  printf '%s\n' "$input_source_status"
+fi
+if [[ "$SELECT_INPUT_SOURCE" == "1" ]]; then
+  set +e
+  "$SELECT_INPUT_SOURCE_SCRIPT" --report-path "$SELECT_REPORT_PATH" "$INPUT_SOURCE_ID"
+  select_status=$?
+  set -e
+  if [[ "$select_status" != "0" ]]; then
+    input_source_ready=0
+    AUTO_TYPE=0
+    manual_required+=("Programmatic input-source selection failed; see $SELECT_REPORT_PATH.")
+    manual_required+=("Open System Settings -> Keyboard -> Input Sources, add/select Squirrel - Simplified, then rerun the soak gate.")
+  fi
+else
+  set +e
   "$CHECK_INPUT_SOURCE_SCRIPT" --require-selected "$INPUT_SOURCE_ID"
+  selected_status=$?
+  set -e
+  if [[ "$selected_status" != "0" ]]; then
+    input_source_ready=0
+    AUTO_TYPE=0
+    manual_required+=("The active input source is not $INPUT_SOURCE_ID; select it before foreground typing.")
+  fi
 fi
 
 if [[ "$CLEAR_TRACE" == "1" ]]; then
@@ -266,52 +323,100 @@ fi
 
 if [[ "$OPEN_TEST_FILE" == "1" ]]; then
   mkdir -p "$(dirname "$TEST_FILE")"
-  "$PYTHON_EXECUTABLE" - "$TEST_FILE" "$AUTO_QUERY" "$AUTO_KEY" "$INPUT_SOURCE_ID" "$CHAIN_REPEATS" <<'PY'
+  RAG_IME_FOREGROUND_SOAK_CASES_RESOLVED="$AUTO_CASES_TEXT" "$PYTHON_EXECUTABLE" - "$TEST_FILE" "$INPUT_SOURCE_ID" "$AUTO_APP_SWITCH" <<'PY'
 from pathlib import Path
+import os
 import sys
 
 path = Path(sys.argv[1]).expanduser()
-query = sys.argv[2]
-key = sys.argv[3]
-input_source = sys.argv[4]
-chain_repeats = int(sys.argv[5])
+input_source = sys.argv[2]
+app_switch = sys.argv[3] == "1"
+cases: list[tuple[str, str, int, str]] = []
+for line in os.environ.get("RAG_IME_FOREGROUND_SOAK_CASES_RESOLVED", "").splitlines():
+    if not line.strip():
+        continue
+    parts = line.split("\t")
+    query = parts[0].strip()
+    key = parts[1].strip() if len(parts) > 1 else ""
+    repeats_text = parts[2].strip() if len(parts) > 2 else "0"
+    label = parts[3].strip() if len(parts) > 3 else "case"
+    try:
+        repeats = int(repeats_text or "0")
+    except ValueError:
+        repeats = 0
+    cases.append((query, key, max(0, repeats), label))
+
+steps = [
+    "RAG-IME foreground soak test",
+    "",
+    f"1. Make sure the active input source is {input_source}.",
+    "2. For pinyin cases, wait for visible model, RAG, and memory side candidates.",
+    "3. For raw English/path/URL cases, verify side candidates do not hijack normal typing.",
+    "4. After side-candidate selection, wait for the next prediction before selecting again.",
+    "5. Press Backspace/Delete near the end and verify the next request uses updated foreground context.",
+]
+if app_switch:
+    steps.append("6. Switch away from this editor once during the second case, then return; stale candidates must not commit.")
+steps.append("")
+steps.append("Cases:")
+for index, (query, key, repeats, label) in enumerate(cases, start=1):
+    action = f"press visible side-candidate key {key} {repeats} time(s)" if key and repeats else "type only; normal text must pass through"
+    steps.append(f"- {index}. [{label}] type `{query}`; {action}.")
+steps.append("")
 path.write_text(
-    "RAG-IME foreground soak test\n\n"
-    f"1. Make sure the active input source is {input_source}.\n"
-    f"2. Type: {query}.\n"
-    "3. Wait for visible model, RAG, and memory side candidates.\n"
-    f"4. Press candidate number {key} (or any visible side-candidate number), wait for the next prediction, then repeat {chain_repeats} total side-candidate selections.\n"
-    "5. Press Backspace/Delete, then wait for the next request to use the updated foreground context.\n\n",
+    "\n".join(steps),
     encoding="utf-8",
 )
 PY
   "$OPEN_COMMAND" -a "$OPEN_APP" "$TEST_FILE" >/dev/null 2>&1 || true
 fi
 
-manual_required=()
 if [[ "$AUTO_TYPE" == "1" ]]; then
   set +e
-  osascript - "$OPEN_APP" "$AUTO_QUERY" "$AUTO_KEY" "$AUTO_TYPE_DELAY" "$AUTO_CHAR_DELAY" "$CHAIN_REPEATS" <<'APPLESCRIPT'
+  osascript - "$OPEN_APP" "$AUTO_TYPE_DELAY" "$AUTO_CHAR_DELAY" "$AUTO_APP_SWITCH" "$AUTO_CASES_TEXT" <<'APPLESCRIPT'
 on run argv
   set appName to item 1 of argv
-  set queryText to item 2 of argv
-  set sideKey to item 3 of argv
-  set waitSeconds to (item 4 of argv) as number
-  set charDelaySeconds to (item 5 of argv) as number
-  set chainRepeats to (item 6 of argv) as integer
+  set waitSeconds to (item 2 of argv) as number
+  set charDelaySeconds to (item 3 of argv) as number
+  set shouldAppSwitch to ((item 4 of argv) as integer)
+  set caseText to item 5 of argv
   tell application appName to activate
   delay 0.8
   tell application "System Events"
     keystroke return
     delay 0.2
-    repeat with charIndex from 1 to length of queryText
-      keystroke (character charIndex of queryText)
-      delay charDelaySeconds
-    end repeat
-    delay waitSeconds
-    repeat with chainIndex from 1 to chainRepeats
-      keystroke sideKey
-      delay waitSeconds
+    set caseLines to paragraphs of caseText
+    set caseIndex to 0
+    repeat with caseLine in caseLines
+      set lineText to caseLine as text
+      if lineText is not "" then
+        set AppleScript's text item delimiters to tab
+        set fields to text items of lineText
+        set AppleScript's text item delimiters to ""
+        set queryText to item 1 of fields
+        set sideKey to ""
+        set chainRepeats to 0
+        if (count of fields) is greater than 1 then set sideKey to item 2 of fields
+        if (count of fields) is greater than 2 then set chainRepeats to (item 3 of fields) as integer
+        set caseIndex to caseIndex + 1
+        keystroke return
+        delay 0.2
+        repeat with charIndex from 1 to length of queryText
+          keystroke (character charIndex of queryText)
+          delay charDelaySeconds
+        end repeat
+        delay waitSeconds
+        if shouldAppSwitch is 1 and caseIndex is 2 then
+          key code 48 using {command down}
+          delay 0.8
+          tell application appName to activate
+          delay 0.8
+        end if
+        repeat with chainIndex from 1 to chainRepeats
+          if sideKey is not "" then keystroke sideKey
+          delay waitSeconds
+        end repeat
+      end if
     end repeat
     key code 51
   end tell
@@ -328,13 +433,16 @@ fi
 
 manual_required+=("Foreground editor typing verification")
 manual_required+=("Real Squirrel candidate panel visual check")
-manual_required+=("Side candidate number-key commit verification, repeated ${CHAIN_REPEATS} times for continuous prediction chaining")
+manual_required+=("Side candidate number-key commit verification across ${AUTO_CASE_COUNT} foreground soak cases, including ${CHAIN_REPEATS} continuous prediction selections")
 manual_required+=("Backspace/Delete committed-context resync verification")
+if [[ "$AUTO_APP_SWITCH" == "1" ]]; then
+  manual_required+=("App switch stale-candidate invalidation verification")
+fi
 
 echo "Foreground soak gate is collecting real Squirrel AppKit events."
 echo "Trace log: $TRACE_LOG"
 echo "Report path: $REPORT_PATH"
-echo "Manual action if needed: type '$AUTO_QUERY', then press a visible side-candidate number such as '$AUTO_KEY' ${CHAIN_REPEATS} times, waiting for the next prediction after each commit."
+echo "Manual action if needed: follow the ${AUTO_CASE_COUNT} cases in $TEST_FILE, waiting for the next prediction after each side-candidate commit."
 
 for item in "${manual_required[@]}"; do
   soak_args+=(--manual-required "$item")
