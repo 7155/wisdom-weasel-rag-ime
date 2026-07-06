@@ -2910,6 +2910,7 @@ def run_squirrel_tryout_gate(
             "rimeDir": build_report.get("rimeDir"),
             "missingFiles": build_report.get("missingFiles"),
         },
+        _tryout_duplicate_squirrel_apps_check(input_source_audit),
         {
             "name": "input-source-ready",
             "passed": input_ready,
@@ -2958,6 +2959,42 @@ def run_squirrel_tryout_gate(
         "launchAgent": launch_agent_report,
         "sidecar": sidecar_report,
         "qualityGate": quality_report,
+    }
+
+
+def _tryout_duplicate_squirrel_apps_check(input_source_audit: dict[str, object] | None) -> dict[str, object]:
+    name = "duplicate-squirrel-app-registrations"
+    if not isinstance(input_source_audit, dict):
+        return {
+            "name": name,
+            "passed": True,
+            "skipped": True,
+            "reason": "input source audit not requested",
+        }
+    launch_services = input_source_audit.get("launchServices")
+    if not isinstance(launch_services, dict) or not launch_services.get("available", True):
+        return {
+            "name": name,
+            "passed": True,
+            "skipped": True,
+            "reason": "LaunchServices audit unavailable",
+        }
+    duplicate_count = _safe_int(launch_services.get("duplicatePathCount"))
+    records = launch_services.get("matchingRecords") if isinstance(launch_services.get("matchingRecords"), list) else []
+    paths = [str(item.get("path")) for item in records if isinstance(item, dict) and item.get("path")]
+    duplicate_paths = paths[1:] if duplicate_count > 0 and len(paths) > 1 else []
+    return {
+        "name": name,
+        "passed": duplicate_count == 0,
+        "skipped": False,
+        "duplicatePathCount": duplicate_count,
+        "paths": paths,
+        "duplicatePaths": duplicate_paths,
+        "nextAction": (
+            "move old Squirrel.app backups out of LaunchServices-visible folders, then rerun audit"
+            if duplicate_count > 0
+            else ""
+        ),
     }
 
 

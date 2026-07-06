@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime.cli import _tryout_input_source_audit
+from rag_ime.cli import _tryout_duplicate_squirrel_apps_check, _tryout_input_source_audit
 
 
 class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
@@ -73,6 +73,36 @@ class AuditSquirrelInputSourceScriptTests(unittest.TestCase):
         self.assertEqual(report["readiness"]["state"], "third-party-missing")
         self.assertTrue(report["preferences"]["wouldChangeThirdParty"])
         self.assertEqual(report["launchServices"]["duplicatePathCount"], 1)
+
+    def test_tryout_gate_check_flags_duplicate_squirrel_app_registrations(self) -> None:
+        audit = {
+            "launchServices": {
+                "available": True,
+                "duplicatePathCount": 2,
+                "matchingRecords": [
+                    {"path": "/Users/me/Library/Input Methods/Squirrel.app"},
+                    {"path": "/Users/me/Desktop/backup/Squirrel.app"},
+                    {"path": "/Users/me/Desktop/old/Squirrel.app"},
+                ],
+            }
+        }
+
+        check = _tryout_duplicate_squirrel_apps_check(audit)
+
+        self.assertEqual(check["name"], "duplicate-squirrel-app-registrations")
+        self.assertFalse(check["passed"])
+        self.assertEqual(check["duplicatePathCount"], 2)
+        self.assertEqual(
+            check["duplicatePaths"],
+            ["/Users/me/Desktop/backup/Squirrel.app", "/Users/me/Desktop/old/Squirrel.app"],
+        )
+        self.assertIn("LaunchServices-visible", check["nextAction"])
+
+    def test_tryout_gate_duplicate_check_skips_without_audit(self) -> None:
+        check = _tryout_duplicate_squirrel_apps_check(None)
+
+        self.assertTrue(check["passed"])
+        self.assertTrue(check["skipped"])
 
 
 def _write_preferences(home: Path) -> None:
