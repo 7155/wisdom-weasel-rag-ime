@@ -3277,12 +3277,18 @@ def decide_side_candidate_refresh(
         return RimeSideCandidateTriggerDecision(False, "skip: raw ascii passthrough")
 
     if query_basis == "rimeCandidates" and _active_rime_candidates_are_low_information(snapshot):
+        if compact_whitespace(snapshot.raw_input or snapshot.preedit):
+            return RimeSideCandidateTriggerDecision(True, "refresh: active composition warmup")
         return RimeSideCandidateTriggerDecision(False, "skip: low-information Rime candidates")
 
     if query_basis == "committedContext" and _committed_context_is_low_information(snapshot, semantic_query):
+        if snapshot.idle_ms <= _POST_COMMIT_PANEL_TTL_MS:
+            return RimeSideCandidateTriggerDecision(True, "refresh: short post-commit continuation")
         return RimeSideCandidateTriggerDecision(False, "skip: low-information committed context")
 
     if query_basis == "rawInputFallback":
+        if compact_whitespace(snapshot.raw_input or snapshot.preedit):
+            return RimeSideCandidateTriggerDecision(True, "refresh: raw pinyin warmup")
         return RimeSideCandidateTriggerDecision(False, "skip: raw pinyin fallback")
 
     if query_basis == "rawSemanticInput":
@@ -3292,12 +3298,12 @@ def decide_side_candidate_refresh(
         return RimeSideCandidateTriggerDecision(True, "refresh: commit preview")
 
     if query_basis == "rimeCandidates":
-        if not _rime_candidates_have_meaningful_signal(snapshot):
-            return RimeSideCandidateTriggerDecision(False, "skip: low-information Rime candidates")
         if signal_len >= 3:
             return RimeSideCandidateTriggerDecision(True, "refresh: stable Rime candidates")
         if snapshot.idle_ms >= 300 and signal_len >= 2:
             return RimeSideCandidateTriggerDecision(True, "refresh: idle short Rime candidate")
+        if compact_whitespace(snapshot.raw_input or snapshot.preedit) and signal_len >= 1:
+            return RimeSideCandidateTriggerDecision(True, "refresh: active composition warmup")
         return RimeSideCandidateTriggerDecision(False, "skip: Rime candidate signal too short")
 
     if query_basis == "preedit":

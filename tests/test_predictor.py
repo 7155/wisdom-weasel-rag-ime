@@ -33,6 +33,7 @@ from rag_ime.predictor import (
     prediction_provider_status,
     _filter_repeated_input_candidates,
     _filter_low_value_ime_candidates,
+    _finalize_mlx_payload_candidates,
     _parse_streaming_prediction_candidates,
 )
 
@@ -853,6 +854,32 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertFalse(status["capabilities"]["streaming"])
         self.assertTrue(status["cooldown"]["enabled"])
 
+    def test_local_resident_predictor_stream_first_defaults_match_lane(self) -> None:
+        ollama_provider = prediction_provider_from_env(
+            {
+                "RAG_IME_PREDICTOR_PROVIDER": "ollama",
+                "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:8767",
+                "RAG_IME_PREDICTOR_MODEL": "local-small-ime",
+                "RAG_IME_PREDICTOR_PROFILE": "instant",
+            }
+        )
+        mlx_provider = prediction_provider_from_env(
+            {
+                "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:8767",
+                "RAG_IME_PREDICTOR_MODEL": "local-small-ime",
+                "RAG_IME_PREDICTOR_PROFILE": "qwen3_06b_ime_hot",
+            }
+        )
+
+        ollama_status = prediction_provider_status(ollama_provider)
+        mlx_status = prediction_provider_status(mlx_provider)
+
+        self.assertTrue(ollama_status["configured"])
+        self.assertTrue(ollama_status["streamFirstCandidate"])
+        self.assertTrue(mlx_status["configured"])
+        self.assertTrue(mlx_status["streamFirstCandidate"])
+
     def test_model_env_file_does_not_configure_realtime_predictor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / ".env"
@@ -986,6 +1013,7 @@ class PredictionProviderTests(unittest.TestCase):
                     "RAG_IME_PREDICTOR_MODEL": "qwen3.5:0.8b",
                     "RAG_IME_PREDICTOR_PROFILE": "instant",
                     "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_STREAM_FIRST": "0",
                     "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
                 }
             )
@@ -1063,6 +1091,21 @@ class PredictionProviderTests(unittest.TestCase):
             [],
         )
 
+    def test_mlx_payload_preserves_rime_backfill_candidates(self) -> None:
+        payload = {
+            "candidates": ["稳定性", "显示", "候选"],
+            "candidateScores": [
+                {"text": "稳定性", "source": "rime-backfill", "mode": "rime-candidate-backfill"},
+                {"text": "显示", "source": "rime-backfill", "mode": "rime-candidate-backfill"},
+                {"text": "候选", "source": "rime-backfill", "mode": "rime-candidate-backfill"},
+            ],
+        }
+
+        self.assertEqual(
+            _finalize_mlx_payload_candidates(payload, payload["candidates"], "", max_items=3),
+            ["稳定性", "显示", "候选"],
+        )
+
     def test_prediction_filter_removes_repeated_current_input_tokens(self) -> None:
         self.assertEqual(
             _filter_repeated_input_candidates(["RAG", "候选展示"], "RAG 输入法"),
@@ -1126,6 +1169,7 @@ class PredictionProviderTests(unittest.TestCase):
                     "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
                     "RAG_IME_PREDICTOR_PROFILE": "instant",
                     "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_STREAM_FIRST": "0",
                     "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
                 }
             )

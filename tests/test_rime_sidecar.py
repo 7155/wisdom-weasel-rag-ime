@@ -1164,7 +1164,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertGreaterEqual(response["predictionFirst"]["policy"]["sideInserted"], 1)
         self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
 
-    def test_low_information_rime_candidates_skip_side_lanes_even_when_forced(self) -> None:
+    def test_low_information_rime_candidates_trigger_model_warmup_when_forced(self) -> None:
         core = CapturingCore()
         adapter = InputMethodAdapter(core)
         predictor = CapturingRequestPredictionProvider()
@@ -1193,15 +1193,13 @@ class RimeSidecarTests(unittest.TestCase):
         )
 
         self.assertEqual(response["queryBasis"], "rimeCandidates")
-        self.assertEqual(response["triggerDecision"]["reason"], "skip: low-information Rime candidates")
-        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
-        self.assertFalse(response["ragLane"]["called"])
-        self.assertFalse(response["modelLane"]["called"])
-        self.assertEqual(core.last_suggest_current_input, "")
-        self.assertEqual(predictor.last_current_input, "")
-        self.assertEqual([item["text"] for item in response["displayCandidates"]], ["得", "地"])
-        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime", "rime"])
-        self.assertFalse(response["predictionFirst"]["policy"]["candidatePoolActive"])
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: active composition warmup")
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertTrue(response["ragLane"]["called"])
+        self.assertTrue(response["modelLane"]["called"])
+        self.assertIn("de", predictor.last_current_input)
+        self.assertIn("预测感觉随机", predictor.last_recent_context)
+        self.assertTrue(response["predictionFirst"]["policy"]["candidatePoolActive"])
 
     def test_rag_prompt_leaks_and_session_ids_are_filtered_from_display(self) -> None:
         core = DirtySuggestionCore()
@@ -2748,7 +2746,7 @@ class RimeSidecarTests(unittest.TestCase):
             self.assertEqual(item["sourceStability"], "fresh")
             self.assertEqual(item["metadata"]["keyPolicy"]["numberKeys"], "select_visible_candidate")
 
-    def test_prediction_first_short_committed_context_skips_even_when_forced(self) -> None:
+    def test_prediction_first_short_committed_context_triggers_warmup_when_forced(self) -> None:
         core = CapturingCore()
         adapter = InputMethodAdapter(core)
         predictor = FakePredictionProvider()
@@ -2773,15 +2771,12 @@ class RimeSidecarTests(unittest.TestCase):
         )
 
         self.assertEqual(response["queryBasis"], "committedContext")
-        self.assertEqual(response["triggerDecision"]["reason"], "skip: low-information committed context")
-        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
-        self.assertFalse(response["ragLane"]["called"])
-        self.assertFalse(response["modelLane"]["called"])
-        self.assertEqual(response["displayCandidates"], [])
-        self.assertEqual(predictor.last_current_input, "")
-        self.assertEqual(core.last_suggest_current_input, "")
-        self.assertEqual(response["predictionSession"]["phase"], "hidden")
-        self.assertTrue(response["predictionSession"]["shouldClearPredictionPanel"])
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: short post-commit continuation")
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertTrue(response["ragLane"]["called"])
+        self.assertTrue(response["modelLane"]["called"])
+        self.assertEqual(predictor.last_recent_context, "阿斯顿")
+        self.assertEqual(core.last_suggest_current_input, "阿斯顿")
 
     def test_prediction_first_post_commit_suppresses_rag_only_when_model_empty(self) -> None:
         core = CapturingCore()
@@ -3591,7 +3586,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(breakdown["rawSignals"]["acceptedCount"], 1)
         self.assertIn("weights", breakdown)
 
-    def test_dirty_raw_pinyin_without_rime_candidates_skips_side_lanes(self) -> None:
+    def test_dirty_raw_pinyin_without_rime_candidates_triggers_model_warmup(self) -> None:
         response = build_rime_sidecar_response(
             payload={
                 "sessionId": "squirrel-dirty-pinyin",
@@ -3606,13 +3601,11 @@ class RimeSidecarTests(unittest.TestCase):
             core=self.core,
             predictor=self.predictor,
         )
-        self.assertEqual(self.predictor.last_current_input, "")
-        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
-        self.assertEqual(response["triggerDecision"]["reason"], "skip: raw pinyin fallback")
-        self.assertEqual(response["modelPredictions"], [])
-        self.assertEqual(response["ragCandidates"], [])
-        self.assertEqual(response["displayCandidates"], [])
-        self.assertFalse(response["mergePolicy"]["sideCandidatesEnabled"])
+        self.assertEqual(self.predictor.last_current_input, "jiubiruwopinshishur")
+        self.assertTrue(response["triggerDecision"]["shouldRefresh"])
+        self.assertEqual(response["triggerDecision"]["reason"], "refresh: raw pinyin warmup")
+        self.assertGreaterEqual(len(response["modelPredictions"]), 1)
+        self.assertTrue(response["mergePolicy"]["sideCandidatesEnabled"])
 
     def test_dirty_raw_pinyin_without_rime_candidate_refreshes_from_committed_context(self) -> None:
         response = build_rime_sidecar_response(
@@ -3664,8 +3657,8 @@ class RimeSidecarTests(unittest.TestCase):
             semantic_query=semantic_query,
             query_basis=query_basis,
         )
-        self.assertFalse(decision.should_refresh)
-        self.assertEqual(decision.reason, "skip: low-information Rime candidates")
+        self.assertTrue(decision.should_refresh)
+        self.assertEqual(decision.reason, "refresh: active composition warmup")
 
     def test_force_side_candidates_overrides_low_information_rime_candidates(self) -> None:
         predictor = XiangPrefixPredictionProvider()

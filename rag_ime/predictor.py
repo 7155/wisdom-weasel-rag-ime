@@ -667,10 +667,7 @@ class MlxPredictionServiceProvider:
         raw_texts = _mlx_raw_texts_from_payload(payload)
         payload_candidates = _candidate_parts_from_json_value(payload.get("candidates"))
         if payload_candidates:
-            candidates = _finalize_ime_prediction_candidates(
-                _parse_prediction_candidate_texts(payload_candidates, max_candidates=max_items),
-                query,
-            )[:max_items]
+            candidates = _finalize_mlx_payload_candidates(payload, payload_candidates, query, max_items=max_items)
         else:
             candidates = parse_ime_prediction_candidates(
                 raw_texts,
@@ -955,7 +952,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
                 provider_name="local-ollama",
                 extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
                 extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
-                stream_first_candidate=_bool_env(source, "RAG_IME_PREDICTOR_STREAM_FIRST", default=False),
+                stream_first_candidate=_bool_env(source, "RAG_IME_PREDICTOR_STREAM_FIRST", default=True),
             )
         )
     elif provider in {"mlx", "mlx-lm", "mlx-service"}:
@@ -971,7 +968,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
                 provider_name="local-mlx",
                 extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
                 extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
-                stream_first_candidate=_bool_env(source, "RAG_IME_PREDICTOR_STREAM_FIRST", default=False),
+                stream_first_candidate=_bool_env(source, "RAG_IME_PREDICTOR_STREAM_FIRST", default=True),
             )
         )
     else:
@@ -2573,6 +2570,52 @@ def _mlx_raw_texts_from_payload(payload: dict[str, Any]) -> list[str]:
     if not raw_texts and isinstance(payload.get("candidates"), list):
         raw_texts.extend(str(item) for item in payload["candidates"] if isinstance(item, str))
     return raw_texts
+
+
+def _finalize_mlx_payload_candidates(
+    payload: dict[str, Any],
+    payload_candidates: list[str],
+    current_input: str,
+    *,
+    max_items: int,
+) -> list[str]:
+    parsed = _parse_prediction_candidate_texts(payload_candidates, max_candidates=max_items)
+    rime_passthrough = _mlx_rime_passthrough_candidates(payload)
+    if not rime_passthrough:
+        return _finalize_ime_prediction_candidates(parsed, current_input)[:max_items]
+    normal_items = [item for item in parsed if compact_whitespace(item) not in rime_passthrough]
+    filtered_normal = set(_finalize_ime_prediction_candidates(normal_items, current_input))
+    result: list[str] = []
+    for item in parsed:
+        text = compact_whitespace(item)
+        if not text or text in result:
+            continue
+        if text in rime_passthrough or text in filtered_normal:
+            result.append(text)
+        if len(result) >= max_items:
+            break
+    return result
+
+
+def _mlx_rime_passthrough_candidates(payload: dict[str, Any]) -> set[str]:
+    scores = payload.get("candidateScores")
+    if not isinstance(scores, list):
+        return set()
+    result: set[str] = set()
+    for item in scores:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "")
+        mode = str(item.get("mode") or "")
+        if source not in {"rime-fallback", "rime-backfill"} and mode not in {
+            "rime-candidate-fallback",
+            "rime-candidate-backfill",
+        }:
+            continue
+        text = compact_whitespace(str(item.get("text") or ""))
+        if text:
+            result.add(text)
+    return result
 
 
 def _mlx_stream_text_delta(payload: dict[str, Any]) -> str:
