@@ -39,6 +39,7 @@ from .predictor import (
     PredictionProvider,
     predict_with_optional_request_context,
 )
+from .runtime_flags import assert_deepseek_not_called
 from .side_lane_scheduler import LaneRequestToken, LatestWinsLaneScheduler
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms
 
@@ -622,7 +623,7 @@ def build_rime_sidecar_response(
             "maxRimeVisibleCandidates": max(0, snapshot.max_visible_candidates - min(snapshot.max_side_candidates, snapshot.max_visible_candidates)),
             "maxModelSideCandidates": max_model_side_candidates(snapshot.max_side_candidates),
             "ragBlockReserve": rag_block_reserve(snapshot.max_side_candidates),
-            "ragKeepsRemainingSideSlots": True,
+            "ragKeepsRemainingSideSlots": False,
             "rawPinyinFallback": query_basis == "rawInputFallback",
             "sideCandidatesEnabled": trigger_decision.should_refresh,
             "fallbackOrder": ["model", "rag", "rime"],
@@ -733,6 +734,18 @@ def _realtime_rag_adapter(*, adapter: InputMethodAdapter, core: CoreClient, budg
     )
 
 
+def _predictor_provider_name(predictor: PredictionProvider) -> str:
+    config = getattr(predictor, "config", None)
+    value = getattr(config, "provider_name", "") if config is not None else ""
+    return compact_whitespace(str(value or predictor.__class__.__name__))
+
+
+def _predictor_model_name(predictor: PredictionProvider) -> str:
+    config = getattr(predictor, "config", None)
+    value = getattr(config, "model", "") if config is not None else ""
+    return compact_whitespace(str(value or ""))
+
+
 def run_side_lanes_with_latency_budget(
     *,
     adapter: InputMethodAdapter,
@@ -805,6 +818,24 @@ def run_side_lanes_with_latency_budget(
                 reason="superseded_before_model",
                 budget_ms=latency_budget_ms,
                 token=lane_token,
+                request_type=request_type,
+                rime_candidate_count=rime_candidate_count,
+                requested_max_candidates=model_candidate_limit,
+            )
+            return
+        try:
+            assert_deepseek_not_called(
+                "passive_per_key",
+                provider_name=_predictor_provider_name(predictor),
+                model=_predictor_model_name(predictor),
+            )
+        except RuntimeError as exc:
+            model_result["predictions"] = []
+            model_result["lane"] = _model_lane_status(
+                called=False,
+                timed_out=False,
+                skipped_reason=str(exc),
+                budget_ms=latency_budget_ms,
                 request_type=request_type,
                 rime_candidate_count=rime_candidate_count,
                 requested_max_candidates=model_candidate_limit,
@@ -3099,11 +3130,12 @@ def merge_display_candidates(
 
     side_inserted = 0
     model_inserted = 0
+    suggestion_inserted = 0
     has_suggestion_items = bool(rag_items or memory_items)
     suggestion_count = len(rag_items) + len(memory_items)
     model_slot_cap = _display_max_model_side_candidates(side_budget, has_suggestions=has_suggestion_items)
     if side_budget <= 1:
-        suggestion_reserve = 0
+        suggestion_reserve = 0 if model_items else min(suggestion_count, 1)
     elif side_budget == 2:
         suggestion_reserve = min(suggestion_count, 1)
     else:
@@ -3158,9 +3190,13 @@ def merge_display_candidates(
         return False
 
     def append_suggestion(group: list[tuple[int, InputSuggestion]]) -> bool:
-        nonlocal side_inserted
+        nonlocal side_inserted, suggestion_inserted
         while group:
-            if side_inserted >= side_budget or len(display) >= max_visible - rime_reserve:
+            if (
+                side_inserted >= side_budget
+                or suggestion_inserted >= suggestion_reserve
+                or len(display) >= max_visible - rime_reserve
+            ):
                 return False
             source_index, suggestion = group.pop(0)
             candidate_text = _strip_candidate_source_suffix(suggestion.surface_text)
@@ -3195,6 +3231,7 @@ def merge_display_candidates(
                 )
             )
             side_inserted += 1
+            suggestion_inserted += 1
             return True
         return False
 
@@ -3204,10 +3241,7 @@ def merge_display_candidates(
     append_suggestion(rag_items)
     append_suggestion(memory_items)
     while side_inserted < side_budget and len(display) < max_visible - rime_reserve:
-        if has_suggestion_items:
-            progressed = append_suggestion(rag_items) or append_suggestion(memory_items)
-        else:
-            progressed = append_model()
+        progressed = append_model()
         if not progressed:
             break
     for candidate in snapshot.candidates:
@@ -3326,11 +3360,7 @@ def _display_max_model_side_candidates(side_budget: int, *, has_suggestions: boo
 def rag_block_reserve(side_budget: int) -> int:
     if side_budget <= 1:
         return 0
-    if side_budget <= 3:
-        return side_budget - 1
-    if side_budget <= 4:
-        return 2
-    return 3
+    return 1
 
 
 def rime_context_to_payload(snapshot: RimeContextSnapshot) -> dict[str, object]:

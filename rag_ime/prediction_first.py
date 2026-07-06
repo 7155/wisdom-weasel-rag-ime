@@ -108,6 +108,7 @@ class CandidatePool:
         }
         ordered: list[PredictionCandidate] = []
         seen: set[tuple[str, int, str]] = set()
+        suggestion_inserted = 0
         model_count = len(groups["model"])
         suggestion_count = len(groups["rag"]) + len(groups["memory"])
         if side_budget is None:
@@ -127,7 +128,7 @@ class CandidatePool:
             )
         model_limit = min(model_slot_cap, max(0, budget - suggestion_reserve))
 
-        def push_one(name: str) -> None:
+        def push_one(name: str) -> bool:
             while groups[name]:
                 candidate = groups[name].pop(0)
                 key = (candidate.source_type, candidate.source_index, candidate.display_text)
@@ -135,16 +136,20 @@ class CandidatePool:
                     continue
                 ordered.append(candidate)
                 seen.add(key)
-                return
+                return True
+            return False
 
         while len([item for item in ordered if item.source_type == "model"]) < model_limit and groups["model"]:
             before = len(ordered)
             push_one("model")
             if len(ordered) == before:
                 break
-        while groups["rag"] or groups["memory"]:
-            push_one("rag")
-            push_one("memory")
+        while suggestion_inserted < suggestion_reserve and (groups["rag"] or groups["memory"]):
+            inserted = push_one("rag") or push_one("memory")
+            if inserted:
+                suggestion_inserted += 1
+            else:
+                break
         if not suggestion_count:
             while len([item for item in ordered if item.source_type == "model"]) < model_slot_cap and groups["model"]:
                 push_one("model")
@@ -162,9 +167,7 @@ class PredictionFirstMergeResult:
 def _prediction_rag_block_reserve(side_budget: int) -> int:
     if side_budget <= 1:
         return 0
-    if side_budget <= 3:
-        return side_budget - 1
-    return min(3, max(0, side_budget // 2))
+    return 1
 
 
 def _prediction_max_model_slots(side_budget: int, *, has_suggestions: bool) -> int:

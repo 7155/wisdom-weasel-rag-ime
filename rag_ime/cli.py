@@ -2670,6 +2670,10 @@ def run_rime_sidecar_eval(
             elapsed_ms_by_case[eval_case.case_id] = int((time.perf_counter() - started) * 1000)
             display_candidates = response.get("displayCandidates") if isinstance(response, dict) else []
             side_suggestions = _rime_display_side_candidates_as_eval_suggestions(display_candidates)
+            eval_suggestions = (
+                _rime_rag_candidates_as_eval_suggestions(response.get("ragCandidates") if isinstance(response, dict) else None)
+                or side_suggestions
+            )
             side_counts.append(len(side_suggestions))
             model_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "model_prediction"))
             rag_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "rag_candidate"))
@@ -2688,7 +2692,7 @@ def run_rime_sidecar_eval(
                     model_lane_called_count += 1
                 if bool(model_lane.get("timedOut")):
                     model_lane_timeout_count += 1
-            results.append(evaluate_suggestions(eval_case, side_suggestions, match=match))
+            results.append(evaluate_suggestions(eval_case, eval_suggestions, match=match))
     report = eval_report(results)
     report["schemaVersion"] = "rag-ime.rime-sidecar-eval.v1"
     report["casesFile"] = str(cases_file)
@@ -4482,6 +4486,47 @@ def _rime_display_side_candidates_as_eval_suggestions(display_candidates: object
                 evidence_preview=str(item.get("evidencePreview") or item.get("comment") or source_type),
                 confidence=_safe_float(metadata.get("confidence")),
                 expanded_evidence=insert_text,
+                metadata=metadata,
+            )
+        )
+    return suggestions
+
+
+def _rime_rag_candidates_as_eval_suggestions(rag_candidates: object) -> list[InputSuggestion]:
+    if not isinstance(rag_candidates, list):
+        return []
+    suggestions: list[InputSuggestion] = []
+    for index, item in enumerate(rag_candidates, start=1):
+        if not isinstance(item, dict):
+            continue
+        surface_text = str(item.get("surfaceText") or item.get("text") or item.get("insertText") or "")
+        insert_text = str(item.get("insertText") or surface_text)
+        if not surface_text and not insert_text:
+            continue
+        metadata = dict(item.get("metadata") or {})
+        metadata["insert_text"] = insert_text
+        actions = item.get("actions")
+        action_text = " ".join(str(action) for action in actions) if isinstance(actions, list) else ""
+        expanded_evidence = compact_whitespace(
+            " ".join(
+                [
+                    str(item.get("expandedEvidence") or ""),
+                    str(metadata.get("expanded_evidence") or ""),
+                    action_text,
+                ]
+            )
+        )
+        source_event_id = item.get("sourceEventId") or metadata.get("source_event_id")
+        source_event_id = source_event_id if isinstance(source_event_id, int) else 0
+        suggestions.append(
+            InputSuggestion(
+                suggestion_id=str(item.get("suggestionId") or metadata.get("suggestion_id") or f"rag-lane:{index}"),
+                surface_text=surface_text or insert_text,
+                suggestion_type=str(item.get("suggestionType") or metadata.get("suggestion_type") or "rag_candidate"),
+                source_event_id=source_event_id,
+                evidence_preview=str(item.get("evidencePreview") or metadata.get("preview_text") or ""),
+                confidence=_safe_float(item.get("confidence") or metadata.get("confidence")),
+                expanded_evidence=expanded_evidence,
                 metadata=metadata,
             )
         )

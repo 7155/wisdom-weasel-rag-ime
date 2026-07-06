@@ -126,19 +126,19 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertTrue(result.policy["rimeCompositionOwnedByRime"])
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["设计输入法状态机", "设计一个候选展示方式", "手机", "世界"],
+            ["设计输入法状态机", "手机", "世界"],
         )
         self.assertEqual(
             [item.source_type for item in result.display_candidates],
-            ["model", "rag", "rime", "rime"],
+            ["model", "rime", "rime"],
         )
-        self.assertEqual([item.label for item in result.display_candidates], ["1", "2", "3", "4"])
-        self.assertEqual(result.policy["sideInserted"], 2)
-        self.assertEqual(result.policy["prefixMatchedSideInserted"], 2)
+        self.assertEqual([item.label for item in result.display_candidates], ["1", "2", "3"])
+        self.assertEqual(result.policy["sideInserted"], 1)
+        self.assertEqual(result.policy["prefixMatchedSideInserted"], 1)
         self.assertEqual(result.policy["wanxiangFallbackCount"], 2)
         self.assertEqual(result.policy["wanxiangReserve"], 2)
         self.assertEqual(result.display_candidates[0].display_lane, "model")
-        self.assertEqual(result.display_candidates[1].metadata["candidate_mode"], "prefix_constrained_composing")
+        self.assertEqual(result.display_candidates[0].metadata["candidate_mode"], "prefix_constrained_composing")
         session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
         self.assertEqual(session.phase, PredictionSessionPhase.PREFIX_CONSTRAINED)
         self.assertTrue(session.candidate_panel_visible)
@@ -344,10 +344,10 @@ class PredictionFirstTests(unittest.TestCase):
         )
 
         self.assertEqual(result.mode, InputMode.POST_COMMIT_PREDICTING)
-        self.assertEqual([item.source_type for item in result.display_candidates], ["model", "rag", "memory"])
+        self.assertEqual([item.source_type for item in result.display_candidates], ["model", "rag"])
         self.assertEqual(
             [item.text for item in result.display_candidates],
-            ["做一个本地 RAG 输入法", "把这个项目整理成面试项目", "高频实时场景里的个人记忆系统"],
+            ["做一个本地 RAG 输入法", "把这个项目整理成面试项目"],
         )
         self.assertFalse(result.policy["rimeCompositionOwnedByRime"])
         session = resolve_prediction_session(snapshot=snapshot, merge_result=result)
@@ -409,12 +409,12 @@ class PredictionFirstTests(unittest.TestCase):
 
         self.assertEqual(
             [item.source_type for item in result.display_candidates],
-            ["model", "model", "rag", "memory", "rime", "rime", "rime"],
+            ["model", "model", "rag", "rime", "rime", "rime"],
         )
-        self.assertEqual(result.policy["sideInserted"], 4)
+        self.assertEqual(result.policy["sideInserted"], 3)
         self.assertEqual(result.policy["wanxiangFallbackCount"], 3)
         self.assertEqual(result.policy["maxModelSideCandidates"], 2)
-        self.assertEqual(result.policy["ragBlockReserve"], 2)
+        self.assertEqual(result.policy["ragBlockReserve"], 1)
         self.assertLessEqual([item.source_type for item in result.display_candidates].count("model"), 2)
 
     def test_model_only_post_commit_still_shows_multiple_predictions(self) -> None:
@@ -614,7 +614,7 @@ class PredictionFirstTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual([item.source_type for item in pool.prediction_order()[:3]], ["model", "rag", "memory"])
+        self.assertEqual([item.source_type for item in pool.prediction_order()[:3]], ["model", "rag"])
 
     def test_mode_inference_distinguishes_anchor_prefix_and_post_commit(self) -> None:
         self.assertEqual(

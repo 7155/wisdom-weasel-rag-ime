@@ -342,12 +342,13 @@ class PredictionStabilityTests(unittest.TestCase):
 
         self.assertIsNotNone(first)
         self.assertIsNotNone(updated)
-        self.assertEqual(diag["action"], "progressive_append")
-        self.assertEqual(updated.snapshot_id, first.snapshot_id)
+        self.assertEqual(diag["action"], "progressive_replace")
+        self.assertNotEqual(updated.snapshot_id, first.snapshot_id)
         self.assertEqual([item.text for item in updated.candidates[:2]], ["继续预测", "整理 RAG 记忆"])
         self.assertEqual([item.text for item in updated.candidates], ["继续预测", "整理 RAG 记忆", "补一个后续预测"])
         self.assertEqual(diag["preservedOrdinalCount"], 2)
-        self.assertEqual(diag["appendedCandidateCount"], 1)
+        self.assertEqual(diag["appendedCandidateCount"], 0)
+        self.assertEqual(diag["replacedCandidateCount"], 3)
 
     def test_progressive_update_can_append_but_not_reorder_visible_candidates(self) -> None:
         state = StablePanelState()
@@ -379,12 +380,12 @@ class PredictionStabilityTests(unittest.TestCase):
 
         self.assertIsNotNone(first)
         self.assertIsNotNone(replaced)
-        self.assertEqual(diag["action"], "progressive_append")
-        self.assertEqual(diag["reason"], "progressive_reorder_rejected_appended_empty_slots")
-        self.assertEqual(replaced.snapshot_id, first.snapshot_id)
-        self.assertEqual([item.text for item in replaced.candidates], ["先显示 RAG", "第二个记忆", "模型回来后想排第一"])
+        self.assertEqual(diag["action"], "progressive_replace")
+        self.assertEqual(diag["reason"], "progressive_replaced_prediction_panel")
+        self.assertNotEqual(replaced.snapshot_id, first.snapshot_id)
+        self.assertEqual([item.text for item in replaced.candidates], ["模型回来后想排第一", "先显示 RAG", "第二个记忆"])
         self.assertEqual(diag["preservedOrdinalCount"], 0)
-        self.assertTrue(diag["progressiveReorderRejected"])
+        self.assertEqual(diag["replacedCandidateCount"], 3)
 
     def test_prefix_filter_removes_only_incompatible_holdover_candidates(self) -> None:
         state = StablePanelState()

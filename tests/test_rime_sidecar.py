@@ -848,16 +848,13 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(display[1]["badge"], "查")
         self.assertEqual(display[1]["colorToken"], "ragTeal")
         self.assertIsInstance(display[1]["sourceEventId"], int)
-        self.assertEqual(display[2]["sourceType"], "rag")
-        self.assertEqual(display[2]["badge"], "查")
-        self.assertEqual(display[2]["selectionAction"], "commit_side_candidate")
-        self.assertEqual(display[3]["sourceType"], "rime")
-        self.assertEqual(display[3]["selectionAction"], "select_rime_candidate")
-        self.assertEqual(display[3]["displayLayout"], "fallback")
-        self.assertEqual(display[3]["displayLane"], "rime")
-        self.assertEqual(display[3]["badge"], "词")
-        self.assertEqual(display[3]["colorToken"], "rimeOrange")
-        self.assertEqual(display[3]["rimeIndex"], 0)
+        self.assertEqual(display[2]["sourceType"], "rime")
+        self.assertEqual(display[2]["selectionAction"], "select_rime_candidate")
+        self.assertEqual(display[2]["displayLayout"], "fallback")
+        self.assertEqual(display[2]["displayLane"], "rime")
+        self.assertEqual(display[2]["badge"], "词")
+        self.assertEqual(display[2]["colorToken"], "rimeOrange")
+        self.assertEqual(display[2]["rimeIndex"], 0)
         self.assertEqual([item["label"] for item in display[:4]], ["1", "2", "3", "4"])
         self.assertEqual([item["selectionKey"] for item in display[:4]], ["1", "2", "3", "4"])
         self.assertEqual([item["selectionRank"] for item in display[:4]], [1, 2, 3, 4])
@@ -1198,7 +1195,7 @@ class RimeSidecarTests(unittest.TestCase):
         rag_items = [item for item in display if item["sourceType"] == "rag"]
         rime_items = [item for item in display if item["sourceType"] == "rime"]
         self.assertEqual(len(model_items), 2)
-        self.assertGreaterEqual(len(rag_items), 3)
+        self.assertEqual(len(rag_items), 1)
         self.assertEqual(len(rime_items), 1)
         self.assertEqual(rime_items[0]["displayLayout"], "fallback")
         self.assertEqual(rime_items[0]["displayLane"], "rime")
@@ -1461,7 +1458,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(side_items[1]["sourceType"], "rag")
         self.assertEqual(response["mergePolicy"]["maxModelSideCandidates"], 2)
         self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 1)
-        self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
+        self.assertFalse(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
         self.assertTrue(response["triggerDecision"]["shouldRefresh"])
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: stable Rime candidates")
 
@@ -1575,18 +1572,18 @@ class RimeSidecarTests(unittest.TestCase):
         )
 
         display = response["displayCandidates"]
-        self.assertEqual(len(display), 8)
-        self.assertEqual([item["label"] for item in display], ["1", "2", "3", "4", "5", "6", "7", "8"])
+        self.assertEqual(len(display), 6)
+        self.assertEqual([item["label"] for item in display], ["1", "2", "3", "4", "5", "6"])
         self.assertEqual(
             [item["sourceType"] for item in display],
-            ["model", "model", "rag", "rag", "rag", "rime", "rime", "rime"],
+            ["model", "model", "rag", "rime", "rime", "rime"],
         )
-        self.assertEqual([item["displayLayout"] for item in display[:5]], ["inline", "inline", "block", "block", "block"])
-        self.assertEqual([item["displayLane"] for item in display[:5]], ["model", "model", "memory", "memory", "memory"])
-        self.assertTrue(all(item["displayLayout"] == "fallback" for item in display[5:8]))
-        self.assertTrue(all(item["displayLane"] == "rime" for item in display[5:8]))
-        self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 3)
-        self.assertTrue(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
+        self.assertEqual([item["displayLayout"] for item in display[:3]], ["inline", "inline", "block"])
+        self.assertEqual([item["displayLane"] for item in display[:3]], ["model", "model", "memory"])
+        self.assertTrue(all(item["displayLayout"] == "fallback" for item in display[3:6]))
+        self.assertTrue(all(item["displayLane"] == "rime" for item in display[3:6]))
+        self.assertEqual(response["mergePolicy"]["ragBlockReserve"], 1)
+        self.assertFalse(response["mergePolicy"]["ragKeepsRemainingSideSlots"])
         self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 5)
 
     def test_display_merge_deduplicates_sources_and_fills_later_candidates(self) -> None:
@@ -1640,8 +1637,8 @@ class RimeSidecarTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual([item.text for item in display], ["推荐", "生成", "重复句子", "新的句子", "让"])
-        self.assertEqual([item.source_type for item in display], ["model", "model", "rag", "rag", "rime"])
+        self.assertEqual([item.text for item in display], ["推荐", "生成", "重复句子", "让"])
+        self.assertEqual([item.source_type for item in display], ["model", "model", "rag", "rime"])
 
     def test_display_merge_caps_model_slots_when_rag_memory_and_rime_exist(self) -> None:
         snapshot = parse_rime_context_payload(
@@ -1694,7 +1691,7 @@ class RimeSidecarTests(unittest.TestCase):
 
         self.assertEqual(
             [item.source_type for item in display],
-            ["model", "model", "rag", "memory", "rime", "rime", "rime"],
+            ["model", "model", "rag", "rime", "rime", "rime"],
         )
         self.assertLessEqual([item.source_type for item in display].count("model"), 2)
 
@@ -1845,7 +1842,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["triggerDecision"]["reason"], "refresh: semantic raw input")
         self.assertEqual(response["modelLane"]["predictionCount"], 5)
         self.assertEqual(response["modelLane"]["requestedMaxCandidates"], 5)
-        self.assertEqual([item["sourceType"] for item in display[:6]], ["model", "model", "rag", "rag", "rag", "rag"])
+        self.assertEqual([item["sourceType"] for item in display[:5]], ["model", "model", "rag", "rime", "rime"])
         rag_count = sum(1 for item in display if item["sourceType"] == "rag")
         self.assertGreaterEqual(rag_count, 1)
         self.assertEqual([item["sourceType"] for item in display[-2:]], ["rime", "rime"])
@@ -2161,7 +2158,8 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertGreaterEqual(len(debug_items), 1)
         self.assertTrue(all(item["metadata"].get("debugOnly") is True for item in debug_items))
         self.assertTrue(all(item["metadata"].get("governanceLayer") == "recent_context" for item in debug_items))
-        self.assertEqual(response["ragLane"]["recentContextFallbackCount"], len(debug_items))
+        self.assertEqual(len(debug_items), 1)
+        self.assertGreaterEqual(response["ragLane"]["recentContextFallbackCount"], len(debug_items))
 
     def test_prediction_first_post_commit_uses_commit_preview_as_prediction_anchor(self) -> None:
         core = CapturingCore()
@@ -2949,25 +2947,24 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(followup["modelPredictions"])
         self.assertTrue(followup["progressive"]["enabled"])
         self.assertFalse(followup["progressive"]["shouldFollowUp"])
-        self.assertEqual(followup["displayCandidates"][0]["sourceType"], "rag")
-        self.assertTrue(any(item["sourceType"] == "model" for item in followup["displayCandidates"][1:]))
-        self.assertEqual(followup["predictionSession"]["stablePanelAction"], "progressive_append")
+        self.assertEqual(followup["displayCandidates"][0]["sourceType"], "model")
+        self.assertTrue(any(item["sourceType"] == "rag" for item in followup["displayCandidates"][1:]))
+        self.assertEqual(followup["predictionSession"]["stablePanelAction"], "progressive_replace")
         self.assertEqual(
             followup["predictionSession"]["stablePanelReason"],
-            "progressive_reorder_rejected_appended_empty_slots",
+            "progressive_replaced_prediction_panel",
         )
         self.assertIn(
-            "candidate_snapshot_progressive_append",
+            "candidate_snapshot_progressive_replace",
             [item["event"] for item in followup["predictionTraceEvents"]],
         )
-        append_event = next(
+        replace_event = next(
             item
             for item in followup["predictionTraceEvents"]
-            if item["event"] == "candidate_snapshot_progressive_append"
+            if item["event"] == "candidate_snapshot_progressive_replace"
         )
-        self.assertEqual(append_event["fields"]["preservedOrdinalCount"], 0)
-        self.assertTrue(append_event["fields"]["progressiveReorderRejected"])
-        self.assertIn("previousSnapshotId", append_event["fields"])
+        self.assertEqual(replace_event["fields"]["preservedOrdinalCount"], 0)
+        self.assertIn("previousSnapshotId", replace_event["fields"])
 
     def test_progressive_first_response_does_not_reuse_stale_model_holdover(self) -> None:
         payload = {
