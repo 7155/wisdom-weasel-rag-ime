@@ -335,6 +335,7 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     --min-post-commit-followups 30 \
     --min-backspaces 1 \
     --min-app-switches 1 \
+    --min-source-triplet-panels 1 \
     --min-chain-depth 10 \
     --require-side-commit \
     --require-commit-observed \

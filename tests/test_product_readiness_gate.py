@@ -51,6 +51,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--min-chain-depth", soak_help.stdout)
         self.assertIn("--min-model-candidates-per-panel", soak_help.stdout)
         self.assertIn("--min-model-multi-candidate-panels", soak_help.stdout)
+        self.assertIn("--min-source-triplet-panels", soak_help.stdout)
         self.assertIn("--require-snapshot-selection-trace", soak_help.stdout)
         seed_help = subprocess.run(
             ["python3", "-m", "rag_ime.cli", "seed-eval-cases", "--help"],
@@ -201,6 +202,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--min-post-commit-followups 30", result.stdout)
         self.assertIn("--min-backspaces 1", result.stdout)
         self.assertIn("--min-app-switches 1", result.stdout)
+        self.assertIn("--min-source-triplet-panels 1", result.stdout)
         self.assertIn("--min-chain-depth 10", result.stdout)
         self.assertIn("--min-model-candidates-per-panel 3", result.stdout)
         self.assertIn("--min-model-multi-candidate-panels 1", result.stdout)

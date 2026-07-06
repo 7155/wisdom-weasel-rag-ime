@@ -80,6 +80,12 @@ def main() -> int:
         help="Require this many foreground panels to contain at least --min-model-candidates-per-panel model candidates.",
     )
     parser.add_argument(
+        "--min-source-triplet-panels",
+        type=int,
+        default=0,
+        help="Require this many foreground panels to contain model, RAG/memory, and Rime candidates together.",
+    )
+    parser.add_argument(
         "--min-chain-depth",
         type=int,
         default=0,
@@ -131,6 +137,7 @@ def main() -> int:
             min_app_switches=max(0, args.min_app_switches),
             min_model_candidates_per_panel=max(0, args.min_model_candidates_per_panel),
             min_model_multi_candidate_panels=max(0, args.min_model_multi_candidate_panels),
+            min_source_triplet_panels=max(0, args.min_source_triplet_panels),
             min_chain_depth=max(0, args.min_chain_depth),
             max_stale_applied=max(0, args.max_stale_applied),
             max_flicker_count=max(0, args.max_flicker_count),
@@ -173,6 +180,7 @@ def build_soak_report(
     min_app_switches: int,
     min_model_candidates_per_panel: int,
     min_model_multi_candidate_panels: int,
+    min_source_triplet_panels: int,
     min_chain_depth: int,
     max_stale_applied: int,
     max_flicker_count: int,
@@ -225,6 +233,7 @@ def build_soak_report(
         "minAppSwitches": min_app_switches,
         "minModelCandidatesPerPanel": min_model_candidates_per_panel,
         "minModelMultiCandidatePanels": min_model_multi_candidate_panels,
+        "minSourceTripletPanels": min_source_triplet_panels,
         "minChainDepth": min_chain_depth,
         "maxStaleApplied": max_stale_applied,
         "maxFlickerCount": max_flicker_count,
@@ -249,6 +258,7 @@ def build_soak_report(
         "modelMultiCandidatePanels": (
             int(display_quality["multiModelCandidatePanelCount"]) >= min_model_multi_candidate_panels
         ),
+        "sourceTripletPanels": int(display_quality["sourceTripletPanelCount"]) >= min_source_triplet_panels,
         "chainDepth": int(chain["maxChainDepth"]) >= min_chain_depth,
         "staleApplied": len(stale_applied) <= max_stale_applied,
         "flickerCount": int(prediction_stability["flickerCount"]) <= max_flicker_count,
@@ -411,6 +421,15 @@ def build_soak_report(
                 "maxModelCandidateCountInPanel": display_quality["maxModelCandidateCountInPanel"],
             }
         )
+    if int(display_quality["sourceTripletPanelCount"]) < min_source_triplet_panels:
+        violations.append(
+            {
+                "type": "source_triplet_panel_threshold",
+                "actual": display_quality["sourceTripletPanelCount"],
+                "expectedAtLeast": min_source_triplet_panels,
+                "maxSourceFamilyCountInPanel": display_quality["maxSourceFamilyCountInPanel"],
+            }
+        )
     if require_snapshot_selection_trace and int(selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"]) > 0:
         violations.append(
             {
@@ -566,6 +585,7 @@ def summarize_display_quality(
         events,
         min_model_candidates_per_panel=min_model_candidates_per_panel,
     )
+    source_triplet_coverage = summarize_source_triplet_panel_coverage(events)
     progressive_events = list(iter_prediction_trace_events(events))
     progressive_appends = [
         event for event in progressive_events if event.get("event") == "candidate_snapshot_progressive_append"
@@ -580,12 +600,69 @@ def summarize_display_quality(
         "postCommitNumberKeyViolation": len(post_commit_number_key_violations(events)),
         "snapshotOrdinalDriftViolation": len(ordinal_drift_violations),
         **model_panel_coverage,
+        **source_triplet_coverage,
         "progressiveAppendCount": len(dedupe_trace_events(progressive_appends)),
         "progressiveReplaceCount": len(dedupe_trace_events(progressive_replaces)),
         "candidateQuotaViolations": quota_violations[:20],
         "snapshotOrdinalDriftViolations": ordinal_drift_violations[:20],
         "latestBalancedCandidatePanelPresent": bool(frontend_report.get("latestBalancedCandidatePanel")),
     }
+
+
+def summarize_source_triplet_panel_coverage(events: list[dict[str, Any]]) -> dict[str, Any]:
+    panel_count = 0
+    max_family_count = 0
+    samples: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        candidates = event.get("candidates")
+        if not isinstance(candidates, list):
+            continue
+        counts = source_family_counts(candidates)
+        family_count = sum(
+            1
+            for present in (
+                counts["model"] > 0,
+                counts["ragMemory"] > 0,
+                counts["rime"] > 0,
+            )
+            if present
+        )
+        max_family_count = max(max_family_count, family_count)
+        if counts["model"] > 0 and counts["ragMemory"] > 0 and counts["rime"] > 0:
+            panel_count += 1
+            samples.append(
+                {
+                    "timestampMs": event.get("timestampMs"),
+                    "snapshotId": panel_snapshot_id(event),
+                    "sourceFamilyCounts": counts,
+                    "phase": prediction_session_phase(event),
+                }
+            )
+    return {
+        "sourceTripletPanelCount": panel_count,
+        "maxSourceFamilyCountInPanel": max_family_count,
+        "sourceTripletPanelSamples": samples[:12],
+    }
+
+
+def source_family_counts(candidates: list[Any]) -> dict[str, int]:
+    counts = {"model": 0, "ragMemory": 0, "rime": 0, "other": 0}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            counts["other"] += 1
+            continue
+        source_type = str(candidate.get("sourceType") or "")
+        if source_type == "model":
+            counts["model"] += 1
+        elif source_type in {"rag", "memory"}:
+            counts["ragMemory"] += 1
+        elif source_type == "rime":
+            counts["rime"] += 1
+        else:
+            counts["other"] += 1
+    return counts
 
 
 def summarize_model_candidate_panel_coverage(

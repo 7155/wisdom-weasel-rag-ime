@@ -1974,6 +1974,123 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         violation_types = {item["type"] for item in report["violations"]}
         self.assertIn("model_multi_candidate_panel_threshold", violation_types)
 
+    def test_soak_report_can_require_source_triplet_panel(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-source-triplet-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            candidates = _balanced_quota_candidates(session_fingerprint="session-a")
+            for candidate in candidates:
+                candidate["snapshotId"] = "snap:source-triplet"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "predictionSession": {
+                            "phase": "composition",
+                            "selectionScope": "mixed",
+                            "snapshotId": "snap:source-triplet",
+                        },
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                    "--min-source-triplet-panels",
+                    "1",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertTrue(report["thresholdResults"]["sourceTripletPanels"])
+        self.assertEqual(report["thresholds"]["minSourceTripletPanels"], 1)
+        self.assertEqual(report["displayQuality"]["sourceTripletPanelCount"], 1)
+        self.assertEqual(report["displayQuality"]["maxSourceFamilyCountInPanel"], 3)
+
+    def test_soak_report_fails_source_triplet_when_rime_lane_missing(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-source-triplet-missing-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            candidates = _balanced_quota_candidates(session_fingerprint="session-a")[:-1]
+            for candidate in candidates:
+                candidate["snapshotId"] = "snap:source-triplet-missing"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 1,
+                        "predictionSession": {
+                            "phase": "composition",
+                            "selectionScope": "mixed",
+                            "snapshotId": "snap:source-triplet-missing",
+                        },
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--min-sidecar-requests",
+                    "0",
+                    "--min-sidecar-applied",
+                    "0",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                    "--min-source-triplet-panels",
+                    "1",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["thresholdResults"]["sourceTripletPanels"])
+        self.assertEqual(report["displayQuality"]["sourceTripletPanelCount"], 0)
+        self.assertEqual(report["displayQuality"]["maxSourceFamilyCountInPanel"], 2)
+        violation_types = {item["type"] for item in report["violations"]}
+        self.assertIn("source_triplet_panel_threshold", violation_types)
+
     def test_soak_report_allows_progressive_append_without_ordinal_drift(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-soak-progressive-") as tmp:

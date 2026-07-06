@@ -2228,6 +2228,13 @@ at least one real `panel_display_candidates` event with the requested number of
 visible `model` candidates. This matters because backend predictor JSON can be
 green while the Squirrel product panel still shows only one LLM row.
 
+The macOS foreground product gate now also passes
+`--min-source-triplet-panels 1` to `check_squirrel_soak_report.py`. A passing
+foreground report must therefore include at least one real panel with visible
+`model`, `rag`/`memory`, and `rime` candidates and valid badge/color metadata,
+so the "model/RAG/dictionary three colors" requirement is checked at the product
+candidate layer.
+
 Still missing:
 
 ```text
