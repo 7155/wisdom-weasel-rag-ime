@@ -980,7 +980,7 @@ index c2adf74..3cfc0e5 100644
 +        return false
 +      }
 +      if candidate.selectionAction == "commit_side_candidate" {
-+        let insertText = candidate.insertText.isEmpty ? candidate.text : candidate.insertText
++        let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
 +        guard !insertText.isEmpty else { return false }
 +        let query = ragImeDisplaySemanticQuery.isEmpty ? ragImeDisplayRawInput : ragImeDisplaySemanticQuery
 +        let recentContext = syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
@@ -2340,19 +2340,22 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func ragImeDisplayText(for candidate: RagImeDisplayCandidate) -> String {
-+    let insertText = candidate.insertText.trimmingCharacters(in: .whitespacesAndNewlines)
-+    if !insertText.isEmpty {
-+      return ragImeStripSourceSuffix(insertText)
++    let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
++    if !text.isEmpty {
++      return ragImeStripSourceSuffix(text)
 +    }
-+    return ragImeStripSourceSuffix(candidate.text)
++    return ragImeStripSourceSuffix(candidate.insertText)
 +  }
 +
 +  func ragImeStripSourceSuffix(_ text: String) -> String {
 +    var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
 +    for suffix in ["_model", "_rag", "_memory", " [LLM]", " [RAG]", " LLM", " RAG", " 模", " 查", " 忆"] {
 +      if value.hasSuffix(suffix) {
-+        value = String(value.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-+        break
++        let stripped = String(value.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
++        if !stripped.isEmpty {
++          value = stripped
++          break
++        }
 +      }
 +    }
 +    return value

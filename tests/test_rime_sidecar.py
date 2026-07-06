@@ -945,6 +945,45 @@ class RimeSidecarTests(unittest.TestCase):
 
         self.assertEqual(diagnostic_response["displayCandidates"][0]["comment"], "fake-rime-model")
 
+    def test_display_payload_strips_source_suffix_from_text_and_insert_text(self) -> None:
+        model_item = display_item_to_payload(
+            SideCandidateDisplayItem(
+                label="1",
+                text="那么 LLM",
+                insert_text="那么 LLM",
+                source_type="model",
+                selection_action="commit_side_candidate",
+                source_index=0,
+            )
+        )
+        rag_item = display_item_to_payload(
+            SideCandidateDisplayItem(
+                label="2",
+                text="设计一个候选展示方式 RAG",
+                insert_text="设计一个候选展示方式 RAG",
+                source_type="rag",
+                selection_action="commit_side_candidate",
+                source_index=0,
+            )
+        )
+        content_item = display_item_to_payload(
+            SideCandidateDisplayItem(
+                label="3",
+                text="RAG 输入法",
+                insert_text="RAG 输入法",
+                source_type="rag",
+                selection_action="commit_side_candidate",
+                source_index=1,
+            )
+        )
+
+        self.assertEqual(model_item["text"], "那么")
+        self.assertEqual(model_item["insertText"], "那么")
+        self.assertEqual(rag_item["text"], "设计一个候选展示方式")
+        self.assertEqual(rag_item["insertText"], "设计一个候选展示方式")
+        self.assertEqual(content_item["text"], "RAG 输入法")
+        self.assertEqual(content_item["insertText"], "RAG 输入法")
+
     def test_model_lane_receives_pinyin_constrained_request_context(self) -> None:
         predictor = CapturingRequestPredictionProvider()
         response = build_rime_sidecar_response(

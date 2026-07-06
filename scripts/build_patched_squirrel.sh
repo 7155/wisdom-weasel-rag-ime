@@ -200,7 +200,7 @@ payload = {
     "hantInputSourceId": "$HANT_INPUT_SOURCE_ID",
     "displayName": "$DISPLAY_NAME",
     "features": {
-        "displayTextUsesInsertText": True,
+        "displayTextPrefersCleanText": True,
         "sourceCommentsHiddenByDefault": True,
         "sourceSuffixStripper": True,
         "foregroundTrace": "rag-ime.foreground-trace.v2",

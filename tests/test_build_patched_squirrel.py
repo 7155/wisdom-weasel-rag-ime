@@ -197,6 +197,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func ragImeDisplayText(for candidate: RagImeDisplayCandidate) -> String", patch_text)
         self.assertIn("func ragImeStripSourceSuffix(_ text: String) -> String", patch_text)
         self.assertIn("ragImeDisplayCandidates.map { ragImeDisplayText(for: $0) }", patch_text)
+        self.assertIn("let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)", patch_text)
+        self.assertIn("return ragImeStripSourceSuffix(text)", patch_text)
+        self.assertIn("let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)", patch_text)
+        self.assertIn("if !stripped.isEmpty", patch_text)
         self.assertIn('guard ragImeCandidateDiagnosticsEnabled() else', patch_text)
         self.assertIn('return ""', patch_text)
         self.assertNotIn("ragImeDisplayCandidates.map { $0.text }", patch_text)
@@ -209,6 +213,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("return .systemPurple", patch_text)
         self.assertIn("return .systemOrange", patch_text)
         self.assertIn("return .systemGray", patch_text)
+        build_script = (root / "scripts" / "build_patched_squirrel.sh").read_text(encoding="utf-8")
+        self.assertIn('"displayTextPrefersCleanText": True', build_script)
+        self.assertNotIn('"displayTextUsesInsertText": True', build_script)
         self.assertIn(
             "+    committedContext: String,\n"
             "+    page: Int,\n"

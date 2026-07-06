@@ -137,6 +137,18 @@ _SOURCE_COLOR_TOKEN_MAP = {
     "raw_english": "rawGray",
     "status": "statusGray",
 }
+_CANDIDATE_SOURCE_SUFFIXES = (
+    "_model",
+    "_rag",
+    "_memory",
+    " [LLM]",
+    " [RAG]",
+    " LLM",
+    " RAG",
+    " 模",
+    " 查",
+    " 忆",
+)
 _RECENT_MEMORY_KEYWORDS = (
     "输入法",
     "RAG",
@@ -1093,6 +1105,17 @@ def candidate_color_token(source_type: str, env: Mapping[str, str] | None = None
     if not candidate_source_colors_enabled(env):
         return ""
     return _SOURCE_COLOR_TOKEN_MAP.get(source_type, "")
+
+
+def _strip_candidate_source_suffix(text: str) -> str:
+    value = _string(text).strip()
+    for suffix in _CANDIDATE_SOURCE_SUFFIXES:
+        if not value.endswith(suffix):
+            continue
+        stripped = value[: -len(suffix)].strip()
+        if stripped:
+            return stripped
+    return value
 
 
 def _has_progressive_visible_lane_result(
@@ -3159,15 +3182,19 @@ def merge_display_candidates(
             ):
                 return False
             prediction = model_items.pop(0)
-            normalized_text = _display_text_norm(prediction.text)
+            candidate_text = _strip_candidate_source_suffix(prediction.text)
+            candidate_insert_text = _strip_candidate_source_suffix(
+                str(prediction.metadata.get("insert_text") or candidate_text)
+            )
+            normalized_text = _display_text_norm(candidate_text)
             if not normalized_text or normalized_text in display_texts:
                 continue
             display_texts.add(normalized_text)
             display.append(
                 SideCandidateDisplayItem(
                     label=_display_label("", len(display)),
-                    text=prediction.text,
-                    insert_text=str(prediction.metadata.get("insert_text") or prediction.text),
+                    text=candidate_text,
+                    insert_text=candidate_insert_text,
                     source_type="model",
                     selection_action="commit_side_candidate",
                     source_index=prediction.rank - 1,
@@ -3193,7 +3220,11 @@ def merge_display_candidates(
             if side_inserted >= side_budget or len(display) >= max_visible - rime_reserve:
                 return False
             source_index, suggestion = group.pop(0)
-            normalized_text = _display_text_norm(suggestion.surface_text)
+            candidate_text = _strip_candidate_source_suffix(suggestion.surface_text)
+            candidate_insert_text = _strip_candidate_source_suffix(
+                str(suggestion.metadata.get("insert_text") or candidate_text)
+            )
+            normalized_text = _display_text_norm(candidate_text)
             if not normalized_text or normalized_text in display_texts:
                 continue
             display_texts.add(normalized_text)
@@ -3204,8 +3235,8 @@ def merge_display_candidates(
             display.append(
                 SideCandidateDisplayItem(
                     label=_display_label("", len(display)),
-                    text=suggestion.surface_text,
-                    insert_text=str(metadata.get("insert_text") or suggestion.surface_text),
+                    text=candidate_text,
+                    insert_text=candidate_insert_text,
                     source_type=source_type,
                     selection_action="commit_side_candidate",
                     source_index=source_index,
@@ -3451,6 +3482,8 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
     color_token = candidate_color_token(item.source_type)
     comment = item.comment if candidate_diagnostics_enabled() else ""
     metadata = dict(item.metadata)
+    text = _strip_candidate_source_suffix(item.text)
+    insert_text = _strip_candidate_source_suffix(item.insert_text or text)
     return {
         "label": item.label,
         "visibleLabel": metadata.get("visibleLabel") or item.label,
@@ -3470,8 +3503,8 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
             minimum=0,
             maximum=2**63 - 1,
         ),
-        "text": item.text,
-        "insertText": item.insert_text,
+        "text": text,
+        "insertText": insert_text,
         "sourceType": item.source_type,
         "selectionAction": item.selection_action,
         "sourceIndex": item.source_index,
