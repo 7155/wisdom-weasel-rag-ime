@@ -45,6 +45,8 @@ def main() -> int:
     parser.add_argument("--min-side-commits", type=int, default=1)
     parser.add_argument("--min-post-commit-followups", type=int, default=1)
     parser.add_argument("--max-stale-applied", type=int, default=0)
+    parser.add_argument("--max-flicker-count", type=int, default=0)
+    parser.add_argument("--max-rag-empty-cleared-panel", type=int, default=0)
     parser.add_argument(
         "--manual-required",
         action="append",
@@ -80,6 +82,8 @@ def main() -> int:
             min_side_commits=max(0, args.min_side_commits),
             min_post_commit_followups=max(0, args.min_post_commit_followups),
             max_stale_applied=max(0, args.max_stale_applied),
+            max_flicker_count=max(0, args.max_flicker_count),
+            max_rag_empty_cleared_panel=max(0, args.max_rag_empty_cleared_panel),
         )
         if soak_report["passed"] or time.monotonic() >= deadline:
             break
@@ -111,11 +115,15 @@ def build_soak_report(
     min_side_commits: int,
     min_post_commit_followups: int,
     max_stale_applied: int,
+    max_flicker_count: int,
+    max_rag_empty_cleared_panel: int,
 ) -> dict[str, Any]:
     event_counts = Counter(str(event.get("event") or "") for event in events if isinstance(event, dict))
     side_commit_pairs, unmatched_routes = collect_number_key_side_commit_pairs(events)
     post_commit_followups = collect_post_commit_followups(events)
     stale_applied = collect_stale_applied_responses(events)
+    prediction_stability = summarize_prediction_stability(events, stale_applied_count=len(stale_applied))
+    lane_stability = summarize_lane_stability(events)
 
     frontend_ok = report_passes(
         frontend_report,
@@ -136,6 +144,8 @@ def build_soak_report(
         "minSideCommits": min_side_commits,
         "minPostCommitFollowups": min_post_commit_followups,
         "maxStaleApplied": max_stale_applied,
+        "maxFlickerCount": max_flicker_count,
+        "maxRagEmptyClearedPanel": max_rag_empty_cleared_panel,
     }
     threshold_results = {
         "sidecarRequests": int(event_counts.get("sidecar_request_scheduled", 0)) >= min_sidecar_requests,
@@ -144,6 +154,8 @@ def build_soak_report(
         "sideCommits": len(side_commit_pairs) >= min_side_commits,
         "postCommitFollowups": len(post_commit_followups) >= min_post_commit_followups,
         "staleApplied": len(stale_applied) <= max_stale_applied,
+        "flickerCount": int(prediction_stability["flickerCount"]) <= max_flicker_count,
+        "ragEmptyClearedPanel": int(lane_stability["ragEmptyClearedPanelCount"]) <= max_rag_empty_cleared_panel,
     }
 
     violations: list[dict[str, Any]] = []
@@ -180,6 +192,22 @@ def build_soak_report(
                 "timestampMs": route.get("timestampMs"),
                 "key": route.get("key"),
                 "candidate": route.get("candidate"),
+            }
+        )
+    if int(prediction_stability["flickerCount"]) > max_flicker_count:
+        violations.append(
+            {
+                "type": "prediction_flicker_threshold",
+                "actual": prediction_stability["flickerCount"],
+                "expectedAtMost": max_flicker_count,
+            }
+        )
+    if int(lane_stability["ragEmptyClearedPanelCount"]) > max_rag_empty_cleared_panel:
+        violations.append(
+            {
+                "type": "rag_empty_cleared_panel",
+                "actual": lane_stability["ragEmptyClearedPanelCount"],
+                "expectedAtMost": max_rag_empty_cleared_panel,
             }
         )
 
@@ -236,6 +264,8 @@ def build_soak_report(
             + int(event_counts.get("sidecar_response_dropped", 0)),
             "staleSelectionRejectedCount": int(event_counts.get("stale_candidate_selection_rejected", 0)),
         },
+        "predictionStability": prediction_stability,
+        "laneStability": lane_stability,
         "latency": {
             "responseAgeMs": summarize_numeric(response_age_values),
             "responseReceivedToAppliedMs": summarize_numeric(response_apply_values),
@@ -245,6 +275,238 @@ def build_soak_report(
         "frontendTrace": frontend_report,
         "passed": passed,
     }
+
+
+PREDICTION_TRACE_EVENT_NAMES = {
+    "prediction_anchor_computed",
+    "prediction_refresh_decision",
+    "prediction_show_decision",
+    "prediction_snapshot_created",
+    "prediction_snapshot_reused",
+    "prediction_panel_soft_hold",
+    "prediction_panel_soft_hide",
+    "prediction_panel_hard_clear",
+    "prediction_empty_lane_did_not_clear_panel",
+    "prediction_lane_timeout_with_holdover",
+    "prediction_lane_timeout_without_holdover",
+    "candidate_snapshot_selection_accepted",
+    "candidate_snapshot_selection_rejected_stale",
+    "candidate_snapshot_progressive_append",
+    "candidate_snapshot_progressive_replace",
+}
+
+
+def summarize_prediction_stability(events: list[dict[str, Any]], *, stale_applied_count: int) -> dict[str, Any]:
+    prediction_events = list(iter_prediction_trace_events(events))
+    panel_events = [event for event in events if event.get("event") == "panel_display_candidates"]
+    snapshot_spans = collect_visible_snapshot_spans(panel_events, prediction_events)
+    visible_durations = [span["durationMs"] for span in snapshot_spans if span["snapshotId"]]
+    flicker_count = count_prediction_flickers(events, prediction_events)
+    min_visible_violations = count_min_visible_violations(prediction_events)
+    unique_snapshot_ids = {
+        str(span["snapshotId"])
+        for span in snapshot_spans
+        if span.get("snapshotId")
+    }
+    unique_snapshot_ids.update(
+        str(event.get("snapshotId"))
+        for event in prediction_events
+        if event.get("snapshotId") and event.get("event") in {"prediction_snapshot_created", "prediction_snapshot_reused"}
+    )
+    return {
+        "visibleSnapshots": len(unique_snapshot_ids),
+        "averageVisibleMs": round(sum(visible_durations) / len(visible_durations), 2) if visible_durations else 0,
+        "minVisibleViolationCount": min_visible_violations,
+        "flickerCount": flicker_count,
+        "hardClearCount": sum(1 for event in prediction_events if event.get("event") == "prediction_panel_hard_clear")
+        + sum(1 for event in events if event.get("event") == "display_invalidated_by_input_change"),
+        "softHoldCount": sum(1 for event in prediction_events if event.get("event") == "prediction_panel_soft_hold"),
+        "lastGoodReuseCount": sum(1 for event in prediction_events if prediction_event_reuses_last_good(event)),
+        "staleSelectionRejected": sum(1 for event in events if event.get("event") == "stale_candidate_selection_rejected"),
+        "staleSelectionApplied": stale_applied_count,
+        "snapshotSpans": snapshot_spans[:20],
+    }
+
+
+def summarize_lane_stability(events: list[dict[str, Any]]) -> dict[str, Any]:
+    prediction_events = list(iter_prediction_trace_events(events))
+    model_timeouts = [
+        event
+        for event in prediction_events
+        if bool(event.get("modelTimedOut")) and str(event.get("event")) in {
+            "prediction_lane_timeout_with_holdover",
+            "prediction_lane_timeout_without_holdover",
+            "prediction_show_decision",
+        }
+    ]
+    model_timeouts_with_holdover = [
+        event
+        for event in model_timeouts
+        if bool(event.get("holdoverHit")) or event.get("event") == "prediction_lane_timeout_with_holdover"
+    ]
+    rag_timeout_events = [
+        event
+        for event in prediction_events
+        if bool(event.get("ragTimedOut")) and str(event.get("event")) in {
+            "prediction_lane_timeout_with_holdover",
+            "prediction_lane_timeout_without_holdover",
+            "prediction_show_decision",
+        }
+    ]
+    empty_lane_events = [
+        event for event in prediction_events if event.get("event") == "prediction_empty_lane_did_not_clear_panel"
+    ]
+    rag_empty_cleared_panel = [
+        event
+        for event in prediction_events
+        if event.get("event") in {"prediction_panel_soft_hide", "prediction_panel_hard_clear"}
+        and "rag" in str(event.get("reason") or event.get("showReason") or "").lower()
+        and "empty" in str(event.get("reason") or event.get("showReason") or "").lower()
+    ]
+    return {
+        "modelTimeouts": len(dedupe_trace_events(model_timeouts)),
+        "modelTimeoutsWithHoldover": len(dedupe_trace_events(model_timeouts_with_holdover)),
+        "ragTimeouts": len(dedupe_trace_events(rag_timeout_events)),
+        "ragEmptyCount": len(dedupe_trace_events(empty_lane_events)),
+        "ragEmptyClearedPanelCount": len(dedupe_trace_events(rag_empty_cleared_panel)),
+        "emptyLaneDidNotClearPanelCount": len(dedupe_trace_events(empty_lane_events)),
+    }
+
+
+def iter_prediction_trace_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    flattened: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        name = str(event.get("event") or "")
+        if name in PREDICTION_TRACE_EVENT_NAMES:
+            flattened.append(normalize_prediction_trace_event(event))
+        nested_events = event.get("predictionTraceEvents")
+        if not isinstance(nested_events, list):
+            continue
+        for nested in nested_events:
+            if not isinstance(nested, dict):
+                continue
+            normalized = normalize_prediction_trace_event(nested)
+            normalized.setdefault("timestampMs", event.get("timestampMs"))
+            flattened.append(normalized)
+    return flattened
+
+
+def normalize_prediction_trace_event(event: dict[str, Any]) -> dict[str, Any]:
+    fields = event.get("fields")
+    fields = fields if isinstance(fields, dict) else {}
+    normalized = {**fields, **{key: value for key, value in event.items() if key != "fields"}}
+    if "timestampMs" not in normalized and event.get("timestampMs") is not None:
+        normalized["timestampMs"] = event.get("timestampMs")
+    return normalized
+
+
+def collect_visible_snapshot_spans(
+    panel_events: list[dict[str, Any]],
+    prediction_events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    first_seen: dict[str, int] = {}
+    last_seen: dict[str, int] = {}
+    for event in panel_events:
+        snapshot_id = panel_snapshot_id(event)
+        if not snapshot_id:
+            continue
+        timestamp = event_timestamp_ms(event)
+        first_seen.setdefault(snapshot_id, timestamp)
+        last_seen[snapshot_id] = max(timestamp, last_seen.get(snapshot_id, timestamp))
+    for event in prediction_events:
+        snapshot_id = str(event.get("snapshotId") or "")
+        if not snapshot_id:
+            continue
+        timestamp = event_timestamp_ms(event)
+        first_seen.setdefault(snapshot_id, timestamp)
+        last_seen[snapshot_id] = max(timestamp, last_seen.get(snapshot_id, timestamp))
+    return [
+        {
+            "snapshotId": snapshot_id,
+            "firstSeenMs": first_seen[snapshot_id],
+            "lastSeenMs": last_seen.get(snapshot_id, first_seen[snapshot_id]),
+            "durationMs": max(0, last_seen.get(snapshot_id, first_seen[snapshot_id]) - first_seen[snapshot_id]),
+        }
+        for snapshot_id in sorted(first_seen, key=lambda key: first_seen[key])
+    ]
+
+
+def panel_snapshot_id(event: dict[str, Any]) -> str:
+    prediction_session = event.get("predictionSession")
+    if isinstance(prediction_session, dict):
+        snapshot_id = str(prediction_session.get("snapshotId") or prediction_session.get("stableSnapshotId") or "")
+        if snapshot_id:
+            return snapshot_id
+    candidates = event.get("candidates")
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                snapshot_id = str(candidate.get("snapshotId") or candidate.get("stableSnapshotId") or "")
+                if snapshot_id:
+                    return snapshot_id
+    return str(event.get("snapshotId") or "")
+
+
+def panel_candidate_count(event: dict[str, Any]) -> int:
+    counts = event.get("candidateCounts")
+    if isinstance(counts, dict):
+        total = _optional_int(counts.get("total"))
+        if total is not None:
+            return total
+    candidates = event.get("candidates")
+    if isinstance(candidates, list):
+        return len(candidates)
+    return _optional_int(event.get("displayCount")) or _optional_int(event.get("visibleCandidateCount")) or 0
+
+
+def count_prediction_flickers(events: list[dict[str, Any]], prediction_events: list[dict[str, Any]]) -> int:
+    flickers = sum(1 for event in prediction_events if event.get("event") == "prediction_panel_soft_hide")
+    previous_visible: dict[str, Any] | None = None
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        count = panel_candidate_count(event)
+        if previous_visible and count == 0 and event_timestamp_ms(event) - event_timestamp_ms(previous_visible) <= 500:
+            flickers += 1
+        if count > 0:
+            previous_visible = event
+    return flickers
+
+
+def count_min_visible_violations(prediction_events: list[dict[str, Any]]) -> int:
+    count = 0
+    for event in prediction_events:
+        if event.get("event") not in {"prediction_panel_soft_hide", "prediction_panel_hard_clear"}:
+            continue
+        remaining = _optional_int(event.get("minVisibleRemainingMs"))
+        if remaining is not None and remaining > 0 and event.get("event") == "prediction_panel_soft_hide":
+            count += 1
+    return count
+
+
+def prediction_event_reuses_last_good(event: dict[str, Any]) -> bool:
+    action = str(event.get("action") or "")
+    if bool(event.get("reusedLastGood")):
+        return True
+    return event.get("event") == "prediction_snapshot_reused" or action in {"soft_hold", "reuse_last_good", "prefix_filter"}
+
+
+def dedupe_trace_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str, int]] = set()
+    unique: list[dict[str, Any]] = []
+    for event in events:
+        key = (
+            str(event.get("event") or ""),
+            str(event.get("snapshotId") or event.get("hardContextAnchor") or ""),
+            event_timestamp_ms(event),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(event)
+    return unique
 
 
 def collect_number_key_side_commit_pairs(
@@ -382,6 +644,18 @@ def percentile(values: list[int], fraction: float) -> int:
         return 0
     index = max(0, min(len(values) - 1, math.ceil(len(values) * fraction) - 1))
     return int(values[index])
+
+
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
 
 
 if __name__ == "__main__":

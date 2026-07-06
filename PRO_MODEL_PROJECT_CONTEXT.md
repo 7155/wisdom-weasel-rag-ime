@@ -221,7 +221,11 @@ started: `scripts/run_product_readiness_gate.sh` now runs unit tests,
 deterministic acceptance, backend `quality-gate`, and, when
 `RAG_IME_REQUIRE_MACOS_FRONTEND=1`, the real Squirrel tryout plus soak-report
 checker. `quality-gate` now has `--max-old-input-echo-rate`, and
-`check_squirrel_soak_report.py` now has `--max-stale-applied`. The memory
+`check_squirrel_soak_report.py` now has `--max-stale-applied`,
+`--max-flicker-count`, and `--max-rag-empty-cleared-panel`; its report includes
+`predictionStability` and `laneStability` sections for visible snapshots,
+flicker, soft hold, last-good reuse, model timeout holdover, and RAG-empty panel
+clearing. The memory
 optimizer fail-closed path also now treats explicit degraded optimizer results
 as lane failures: the sidecar reports `failClosed=true` and returns no RAG
 candidates from that degraded optimizer pass. Memory feedback and governance
@@ -1738,7 +1742,7 @@ OK
 Latest full-suite result after PR-10:
 
 ```text
-Ran 596 tests in 108.779s
+Ran 596 tests in 120.378s
 OK
 ```
 
@@ -1746,6 +1750,7 @@ Additional final-gate verification after adding the integrated product gate:
 
 ```bash
 python3 -m unittest tests.test_product_readiness_gate
+python3 -m unittest tests.test_squirrel_frontend_trace tests.test_product_readiness_gate
 python3 -m unittest tests.test_memory_optimizer_sidecar_integration
 python3 -m py_compile rag_ime/cli.py rag_ime/rime_sidecar.py scripts/check_squirrel_soak_report.py
 ```

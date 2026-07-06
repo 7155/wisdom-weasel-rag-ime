@@ -993,8 +993,76 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + "\n"
                 + json.dumps(
                     {
-                        "event": "panel_text_layout",
+                        "event": "prediction_snapshot_created",
                         "timestampMs": 10,
+                        "fields": {
+                            "snapshotId": "snap:soak",
+                            "visibleCandidateCount": 8,
+                            "sourceSummary": {"model": 5, "rag": 3},
+                            "action": "fresh",
+                            "reason": "visible_candidates",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "prediction_panel_soft_hold",
+                        "timestampMs": 11,
+                        "fields": {
+                            "snapshotId": "snap:soak",
+                            "visibleCandidateCount": 8,
+                            "sourceSummary": {"model": 5, "rag": 3},
+                            "action": "soft_hold",
+                            "reason": "model timeout; last-good valid",
+                            "modelTimedOut": True,
+                            "ragTimedOut": False,
+                            "holdoverHit": True,
+                            "reusedLastGood": True,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "prediction_empty_lane_did_not_clear_panel",
+                        "timestampMs": 12,
+                        "fields": {
+                            "snapshotId": "snap:soak",
+                            "visibleCandidateCount": 8,
+                            "action": "soft_hold",
+                            "reason": "rag empty; model still visible",
+                            "modelTimedOut": False,
+                            "ragTimedOut": False,
+                            "holdoverHit": False,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "prediction_lane_timeout_with_holdover",
+                        "timestampMs": 13,
+                        "fields": {
+                            "snapshotId": "snap:soak",
+                            "visibleCandidateCount": 8,
+                            "action": "soft_hold",
+                            "reason": "model timeout; reused last-good snapshot",
+                            "modelTimedOut": True,
+                            "ragTimedOut": False,
+                            "holdoverHit": True,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "event": "panel_text_layout",
+                        "timestampMs": 14,
                         "forcesHorizontalLayout": True,
                         "linear": True,
                         "vertical": False,
@@ -1013,7 +1081,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "number_key_route",
-                        "timestampMs": 11,
+                        "timestampMs": 15,
                         "key": "6",
                         "candidate": selected_candidate,
                     },
@@ -1023,7 +1091,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "commit_observed",
-                        "timestampMs": 12,
+                        "timestampMs": 16,
                         "committedText": "继续预测",
                         "committedContextChars": 24,
                         "selectionKey": "6",
@@ -1035,7 +1103,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "side_candidate_commit",
-                        "timestampMs": 13,
+                        "timestampMs": 17,
                         "candidate": selected_candidate,
                     },
                     ensure_ascii=False,
@@ -1044,7 +1112,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "post_commit_prediction_scheduled",
-                        "timestampMs": 14,
+                        "timestampMs": 18,
                         "selectionKey": "6",
                     },
                     ensure_ascii=False,
@@ -1053,7 +1121,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "sidecar_request_scheduled",
-                        "timestampMs": 18,
+                        "timestampMs": 22,
                         "rawInput": "",
                         "preedit": "",
                         "commitTextPreview": selected_candidate["insertText"],
@@ -1065,7 +1133,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "display_invalidated_by_input_change",
-                        "timestampMs": 20,
+                        "timestampMs": 24,
                         "reason": "delete_key",
                         "keyCode": 51,
                         "inputGeneration": 10,
@@ -1078,7 +1146,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "committed_context_resynced_after_delete",
-                        "timestampMs": 21,
+                        "timestampMs": 25,
                         "keyCode": 51,
                         "inputGeneration": 10,
                         "frontendRevision": 5,
@@ -1092,7 +1160,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 + json.dumps(
                     {
                         "event": "sidecar_request_scheduled",
-                        "timestampMs": 22,
+                        "timestampMs": 26,
                         "rawInput": "xin",
                         "preedit": "xin",
                         "inputGeneration": 11,
@@ -1139,6 +1207,15 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["latency"]["responseAgeMs"]["p50"], 42)
         self.assertEqual(report["latency"]["responseReceivedToAppliedMs"]["max"], 2)
         self.assertEqual(report["latency"]["postCommitFollowupMs"]["max"], 5)
+        self.assertEqual(report["predictionStability"]["visibleSnapshots"], 1)
+        self.assertEqual(report["predictionStability"]["flickerCount"], 0)
+        self.assertEqual(report["predictionStability"]["softHoldCount"], 1)
+        self.assertGreaterEqual(report["predictionStability"]["lastGoodReuseCount"], 1)
+        self.assertEqual(report["predictionStability"]["staleSelectionApplied"], 0)
+        self.assertEqual(report["laneStability"]["modelTimeouts"], 1)
+        self.assertEqual(report["laneStability"]["modelTimeoutsWithHoldover"], 1)
+        self.assertEqual(report["laneStability"]["ragEmptyCount"], 1)
+        self.assertEqual(report["laneStability"]["ragEmptyClearedPanelCount"], 0)
         self.assertTrue(persisted["passed"])
 
     def test_soak_report_fails_on_stale_applied_response(self) -> None:

@@ -44,6 +44,8 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
 
         self.assertIn("--max-old-input-echo-rate", quality_help.stdout)
         self.assertIn("--max-stale-applied", soak_help.stdout)
+        self.assertIn("--max-flicker-count", soak_help.stdout)
+        self.assertIn("--max-rag-empty-cleared-panel", soak_help.stdout)
         seed_help = subprocess.run(
             ["python3", "-m", "rag_ime.cli", "seed-eval-cases", "--help"],
             cwd=root,
