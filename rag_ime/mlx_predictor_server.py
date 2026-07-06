@@ -257,22 +257,33 @@ class MlxLmEngine:
                 "requestMeta": dict(request_metadata or {}),
             }
 
+        display_candidate_limit = max(1, int(max_candidates))
+        logits_probe_candidate_limit = display_candidate_limit
+        if resolved_request_type == PREDICTION_REQUEST_NO_INPUT and not stream_first_candidate:
+            logits_probe_candidate_limit = max(3, display_candidate_limit)
+
         logits_candidates = self.predict_next_token_logits(
             current_input=current_input,
             recent_context=recent_context,
-            max_candidates=max_candidates,
+            max_candidates=logits_probe_candidate_limit,
             request_type=resolved_request_type,
             rime_candidates=rime_candidate_tuple,
             request_metadata=request_metadata,
         )
         if _logits_candidates_are_ime_quality(logits_candidates["candidates"], max_candidates=max_candidates):
+            visible_logits_candidates = logits_candidates["candidates"][:display_candidate_limit]
+            visible_logits_scores = [
+                dict(item)
+                for item in (logits_candidates.get("candidateScores") or [])[:display_candidate_limit]
+                if isinstance(item, dict)
+            ]
             total_ms = int((time.perf_counter() - started) * 1000)
             return {
                 "ok": True,
                 "model": self.model_id,
-                "rawText": " ".join(logits_candidates["candidates"]),
-                "candidates": logits_candidates["candidates"],
-                "candidateScores": logits_candidates["candidateScores"],
+                "rawText": " ".join(visible_logits_candidates),
+                "candidates": visible_logits_candidates,
+                "candidateScores": visible_logits_scores,
                 "candidateMode": "next-token-logits",
                 "requestType": resolved_request_type,
                 "totalMs": total_ms,
@@ -280,6 +291,8 @@ class MlxLmEngine:
                 "timing": {
                     "candidateMode": "next-token-logits",
                     "logitsMs": logits_candidates["elapsedMs"],
+                    "logitsProbeCandidateLimit": logits_probe_candidate_limit,
+                    "displayCandidateLimit": display_candidate_limit,
                     "fallbackJson": False,
                     "requestType": resolved_request_type,
                 },
@@ -537,9 +550,10 @@ class MlxLmEngine:
         logits_candidates: dict[str, Any],
         request_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        display_limit = max(1, int(max_candidates))
         seeds = _seed_replay_specs_from_logits(
             logits_candidates.get("candidateScores"),
-            max_seeds=max(1, min(3, int(max_candidates))),
+            max_seeds=3,
         )
         if not seeds:
             return None
@@ -551,8 +565,6 @@ class MlxLmEngine:
         replay_temperature = max(0.05, min(float(temperature), 0.18))
         branch_count = len(seeds)
         for branch_rank, seed in enumerate(seeds, start=1):
-            if len(candidates) >= max(1, int(max_candidates)):
-                break
             seed_text = str(seed.get("text") or "")
             if not seed_text:
                 continue
@@ -593,14 +605,15 @@ class MlxLmEngine:
                 candidates.append(candidate)
         if not candidates:
             return None
+        displayed_candidates = candidates[:display_limit]
         total_ms = int((time.perf_counter() - started) * 1000)
         return {
             "ok": True,
             "model": self.model_id,
             "rawText": "\n".join(raw_texts),
-            "candidates": candidates[: max(1, int(max_candidates))],
+            "candidates": displayed_candidates,
             "candidateScores": _seeded_prompt_replay_candidate_scores(
-                candidates[: max(1, int(max_candidates))],
+                displayed_candidates,
                 branch_timings=branch_timings,
             ),
             "candidateMode": "seeded-prompt-replay",
@@ -613,6 +626,9 @@ class MlxLmEngine:
                 "fallbackJson": False,
                 "fallbackReason": "top_logits_seed_replay",
                 "requestType": PREDICTION_REQUEST_NO_INPUT,
+                "seedReplayBranchCount": len(branch_timings),
+                "seedReplayDisplayedCount": len(displayed_candidates),
+                "displayCandidateLimit": display_limit,
                 "branches": branch_timings,
             },
             "requestMeta": dict(request_metadata or {}),

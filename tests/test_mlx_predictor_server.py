@@ -262,6 +262,34 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(calls["sampler_calls"], 3)
         self.assertIn("种子候选", calls["prompts"][1])
 
+    def test_seeded_prompt_replay_explores_top_three_even_when_display_limit_is_one(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=[
+                "候选排序",
+                "来源诊断",
+                "上下文管理",
+            ],
+            logits_tokens=["优化", "补齐", "重建"],
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想把输入法候选质量再往上提一点",
+                max_candidates=1,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "seeded-prompt-replay")
+        self.assertEqual(payload["candidates"], ["优化候选排序"])
+        self.assertEqual(payload["timing"]["seedReplayBranchCount"], 3)
+        self.assertEqual(payload["timing"]["seedReplayDisplayedCount"], 1)
+        self.assertEqual(payload["timing"]["displayCandidateLimit"], 1)
+        self.assertEqual([item["seedText"] for item in payload["timing"]["branches"]], ["优化", "补齐", "重建"])
+        self.assertEqual(calls["sampler_calls"], 3)
+
     def test_no_input_seeded_prompt_replay_backfills_underfilled_seed_candidates(self) -> None:
         modules, calls = _fake_mlx_modules(
             generated_text=[

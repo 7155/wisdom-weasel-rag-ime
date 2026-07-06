@@ -1495,6 +1495,10 @@ Current PR-4 reality:
 - `seededPromptReplay=true`, `kvFork=false`, `sequenceFork=false` are exposed in
   predictor health.
 - The branch count is capped at top-3 seed tokens.
+- Top-3 seed exploration is now independent from the final display limit. Even
+  when `maxCandidates=1`, the seeded replay path explores three seed branches,
+  returns one visible candidate, and records `seedReplayBranchCount`,
+  `seedReplayDisplayedCount`, and `displayCandidateLimit`.
 - Each branch is prompt replay, not true KV-cache fork.
 - `candidateMode: "seeded-prompt-replay"` is already test-covered.
 - Seeded replay candidate scores expose `seedTokenId`, `branchRank`, and
@@ -2019,7 +2023,9 @@ the prepared prompt, and return multiple phrase candidates in
 `candidate_mode=seeded-prompt-replay`. Candidate score metadata now includes
 seed token id and branch rank/count for each replayed branch. If one or more
 seed branches underfill, it now backfills missing slots from the local
-continuation-branch path without switching to realtime cloud prediction.
+continuation-branch path without switching to realtime cloud prediction. Seed
+exploration is no longer accidentally capped by the UI display limit, so a
+one-candidate caller can still exercise the top-three local branch path.
 
 Still missing:
 
