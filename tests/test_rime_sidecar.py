@@ -2649,7 +2649,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertTrue(any(item["sourceType"] == "rag" for item in first["displayCandidates"]))
         self.assertTrue(any(item["sourceType"] == "rag" for item in second["displayCandidates"]))
 
-    def test_busy_model_lane_reuses_short_model_holdover_for_horizontal_row(self) -> None:
+    def test_busy_model_lane_does_not_reuse_model_holdover_for_foreground_context(self) -> None:
         payload = {
             "sessionId": "squirrel-model-holdover-prime",
             "requestSeq": 1,
@@ -2696,12 +2696,11 @@ class RimeSidecarTests(unittest.TestCase):
             blocking_predictor.release.set()
             worker.join(timeout=2)
 
-        self.assertTrue(busy_response["modelPredictions"])
+        self.assertEqual(busy_response["modelPredictions"], [])
         self.assertFalse(busy_response["modelLane"]["called"])
-        self.assertTrue(busy_response["modelLane"]["holdoverHit"])
-        self.assertIn("reused recent model holdover", busy_response["modelLane"]["skippedReason"])
-        self.assertEqual(busy_response["displayCandidates"][0]["sourceType"], "model")
-        self.assertEqual(busy_response["displayCandidates"][0]["displayLayout"], "inline")
+        self.assertFalse(busy_response["modelLane"]["holdoverHit"])
+        self.assertEqual(busy_response["modelLane"]["skippedReason"], "model lane already running")
+        self.assertFalse(any(item["sourceType"] == "model" for item in busy_response["displayCandidates"]))
 
     def test_busy_model_lane_does_not_reuse_nearby_post_commit_holdover_after_context_extension(self) -> None:
         payload = {
@@ -2813,7 +2812,7 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertFalse(changed_prefix_response["modelLane"]["holdoverHit"])
         self.assertEqual(changed_prefix_response["modelLane"]["skippedReason"], "model lane already running")
 
-    def test_model_lane_timeout_reuses_holdover_for_horizontal_row(self) -> None:
+    def test_model_lane_timeout_does_not_reuse_model_holdover_for_foreground_context(self) -> None:
         payload = {
             "sessionId": "squirrel-model-timeout-holdover-prime",
             "requestSeq": 1,
@@ -2855,13 +2854,12 @@ class RimeSidecarTests(unittest.TestCase):
 
         self.assertLess(elapsed_ms, 100)
         self.assertEqual(slow_predictor.calls, 1)
-        self.assertTrue(timeout_response["modelPredictions"])
+        self.assertEqual(timeout_response["modelPredictions"], [])
         self.assertTrue(timeout_response["modelLane"]["called"])
         self.assertTrue(timeout_response["modelLane"]["timedOut"])
-        self.assertTrue(timeout_response["modelLane"]["holdoverHit"])
-        self.assertIn("reused recent model holdover", timeout_response["modelLane"]["skippedReason"])
-        self.assertEqual(timeout_response["displayCandidates"][0]["sourceType"], "model")
-        self.assertEqual(timeout_response["displayCandidates"][0]["displayLayout"], "inline")
+        self.assertFalse(timeout_response["modelLane"]["holdoverHit"])
+        self.assertEqual(timeout_response["modelLane"]["skippedReason"], "model dispatch exceeded latency budget")
+        self.assertFalse(any(item["sourceType"] == "model" for item in timeout_response["displayCandidates"]))
 
     def test_model_lane_timeout_keeps_rag_candidates_responsive(self) -> None:
         slow_predictor = SlowPredictionProvider(sleep_s=0.12)
@@ -2970,6 +2968,45 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(append_event["fields"]["preservedOrdinalCount"], 0)
         self.assertTrue(append_event["fields"]["progressiveReorderRejected"])
         self.assertIn("previousSnapshotId", append_event["fields"])
+
+    def test_progressive_first_response_does_not_reuse_stale_model_holdover(self) -> None:
+        payload = {
+            "sessionId": "squirrel-progressive-no-stale-model",
+            "requestSeq": 201,
+            "latencyBudgetMs": 1200,
+            "forceSideCandidates": True,
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 3,
+            "committedContext": "我正在测试 LLM 上下文切换是否跟随当前输入",
+            "rimeContext": {
+                "candidates": [
+                    {"label": "1", "text": "上下文", "comment": "rime"},
+                ]
+            },
+        }
+        primed = build_rime_sidecar_response(
+            payload=payload,
+            adapter=self.adapter,
+            core=self.core,
+            predictor=CapturingRequestPredictionProvider(),
+        )
+        self.assertTrue(primed["modelPredictions"])
+
+        slow_predictor = SlowPredictionProvider(sleep_s=0.28)
+        with patch.dict("os.environ", {"RAG_IME_PROGRESSIVE_FIRST_RESPONSE_MS": "120"}):
+            response = build_rime_sidecar_response(
+                payload={**payload, "requestSeq": 202},
+                adapter=self.adapter,
+                core=self.core,
+                predictor=slow_predictor,
+            )
+
+        self.assertEqual(response["modelPredictions"], [])
+        self.assertFalse(response["modelLane"]["holdoverHit"])
+        self.assertEqual(response["modelLane"]["skippedReason"], "model lane pending after progressive first response")
+        self.assertTrue(response["progressive"]["shouldFollowUp"])
+        self.assertIn("model", response["progressive"]["pendingLanes"])
+        self.assertFalse(any(item["sourceType"] == "model" for item in response["displayCandidates"]))
 
     def test_rag_lane_timeout_does_not_block_parallel_model_lane(self) -> None:
         core = SlowSuggestionCore(sleep_s=0.12)

@@ -895,46 +895,25 @@ def run_side_lanes_with_latency_budget(
     model_lane = model_result.get("lane")
     model_pending = model_thread.is_alive()
     if not isinstance(model_lane, dict):
-        predictions = _get_model_holdover_predictions(
-            project=project,
-            current_input=current_input,
-            explicit_recent_context=explicit_recent_context,
-            max_candidates=model_candidate_limit,
-            allow_nearby=False,
+        predictions = []
+        model_lane = _model_lane_status(
+            called=True,
+            timed_out=not (progressive_partial and model_pending),
+            skipped_reason="model lane pending after progressive first response"
+            if progressive_partial and model_pending
+            else "model dispatch exceeded latency budget",
+            budget_ms=max(0, int(latency_budget_ms)),
+            request_type=request_type,
+            rime_candidate_count=rime_candidate_count,
+            requested_max_candidates=model_candidate_limit,
         )
-        if predictions:
-            model_lane = _model_lane_status(
-                called=True,
-                timed_out=not (progressive_partial and model_pending),
-                skipped_reason="model lane pending after progressive first response; reused recent model holdover"
-                if progressive_partial and model_pending
-                else "model dispatch exceeded latency budget; reused recent model holdover",
-                budget_ms=max(0, int(latency_budget_ms)),
-                prediction_count=len(predictions),
-                holdover_hit=True,
-                request_type=request_type,
-                rime_candidate_count=rime_candidate_count,
-                requested_max_candidates=model_candidate_limit,
-            )
-        else:
-            model_lane = _model_lane_status(
-                called=True,
-                timed_out=not (progressive_partial and model_pending),
-                skipped_reason="model lane pending after progressive first response"
-                if progressive_partial and model_pending
-                else "model dispatch exceeded latency budget",
-                budget_ms=max(0, int(latency_budget_ms)),
-                request_type=request_type,
-                rime_candidate_count=rime_candidate_count,
-                requested_max_candidates=model_candidate_limit,
-            )
         if progressive_partial and model_pending:
             model_lane["pending"] = True
 
     if isinstance(model_lane, dict):
         model_lane["requestedMaxCandidates"] = model_candidate_limit
     pending_lanes = _progressive_pending_lanes(rag_lane=rag_lane, model_lane=model_lane)
-    should_follow_up = bool(pending_lanes) and not bool(model_lane.get("holdoverHit"))
+    should_follow_up = bool(pending_lanes)
     progressive_state = _progressive_state(
         enabled=progressive_enabled,
         partial=progressive_partial,
@@ -1886,24 +1865,6 @@ def predict_model_with_latency_budget(
             rime_candidate_count=len(rime_candidate_texts),
         )
     if not _MODEL_LANE_SEMAPHORE.acquire(blocking=False):
-        cached_predictions = _get_model_holdover_predictions(
-            project=project,
-            current_input=current_input,
-            explicit_recent_context=explicit_recent_context,
-            max_candidates=max_candidates,
-            allow_nearby=False,
-        )
-        if cached_predictions:
-            return cached_predictions, _model_lane_status(
-                called=False,
-                timed_out=False,
-                skipped_reason="model lane already running; reused recent model holdover",
-                budget_ms=budget_ms,
-                prediction_count=len(cached_predictions),
-                holdover_hit=True,
-                request_type=request_type,
-                rime_candidate_count=len(rime_candidate_texts),
-            )
         return [], _model_lane_status(
             called=False,
             timed_out=False,
@@ -1990,24 +1951,6 @@ def predict_model_with_latency_budget(
 
     Thread(target=run_prediction, name="rag-ime-model-lane", daemon=True).start()
     if not done.wait(timeout=budget_ms / 1000):
-        cached_predictions = _get_model_holdover_predictions(
-            project=project,
-            current_input=current_input,
-            explicit_recent_context=explicit_recent_context,
-            max_candidates=max_candidates,
-            allow_nearby=False,
-        )
-        if cached_predictions:
-            return cached_predictions, _model_lane_status(
-                called=True,
-                timed_out=True,
-                skipped_reason="model lane exceeded latency budget; reused recent model holdover",
-                budget_ms=budget_ms,
-                prediction_count=len(cached_predictions),
-                holdover_hit=True,
-                request_type=request_type,
-                rime_candidate_count=len(rime_candidate_texts),
-            )
         return [], _model_lane_status(
             called=True,
             timed_out=True,
