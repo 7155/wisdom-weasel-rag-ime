@@ -303,3 +303,50 @@ class MemorySchemaV2Tests(unittest.TestCase):
         texts = [item["text"] for item in payload["candidates"]]
         self.assertIn("连续补齐", texts)
         self.assertNotIn("连续预测", texts)
+
+    def test_retrieve_candidates_v2_never_surfaces_status_tombstoned_item(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_000_013,
+                source="manual",
+                committed_text="连续预测",
+                recent_context="RAG 输入法需要更好的候选",
+                project="wisdom-weasel-rag-ime",
+                tags=("phrase-memory",),
+            )
+        )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_000_014,
+                source="manual",
+                committed_text="连续补齐",
+                recent_context="RAG 输入法需要更好的候选",
+                project="wisdom-weasel-rag-ime",
+                tags=("phrase-memory",),
+            )
+        )
+        self.core.add_memory_tombstone(
+            target_type="memory_id",
+            target_value="phrase:连续预测",
+            reason="manual-test",
+        )
+        self.core.v2_governance_filter_enabled = False
+
+        payload = self.core.retrieve_candidates_v2(
+            context=ImeQueryContext(
+                current_input="连续",
+                recent_context="我想继续写连续",
+                project="wisdom-weasel-rag-ime",
+                top_k=3,
+            )
+        )
+        inspect_payload = self.core.inspect_memory_v2(status="tombstoned", project="wisdom-weasel-rag-ime", limit=10)
+
+        tombstoned_ids = {item["memoryId"] for item in inspect_payload["items"]}
+        texts = [item["text"] for item in payload["candidates"]]
+        self.assertIn("raw:event:1", tombstoned_ids)
+        self.assertIn("phrase:连续预测", tombstoned_ids)
+        self.assertIn("连续补齐", texts)
+        self.assertNotIn("连续预测", texts)

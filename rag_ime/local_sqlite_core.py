@@ -1980,7 +1980,7 @@ class LocalSqliteCoreClient:
     ) -> list[sqlite3.Row]:
         params: list[Any] = []
         joins = ""
-        where = ["mi.status IN ('active', 'approved', 'tombstoned')", "mi.privacy_class != 'sensitive'"]
+        where = ["mi.status IN ('active', 'approved')", "mi.privacy_class != 'sensitive'"]
         order = "mi.updated_at_ms DESC"
         if kind:
             where.append("mi.kind = ?")
@@ -2035,7 +2035,7 @@ class LocalSqliteCoreClient:
         params: list[Any] = list(ids[: max(1, limit)])
         where = [
             f"mi.id IN ({placeholders})",
-            "mi.status IN ('active', 'approved', 'tombstoned')",
+            "mi.status IN ('active', 'approved')",
             "mi.privacy_class != 'sensitive'",
         ]
         if project:

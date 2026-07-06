@@ -54,8 +54,8 @@ Current state:
   harness.
 - The sidecar, local SQLite memory/RAG core, MLX local predictor, source-lane
   merge, feedback recording, and many tests exist.
-- Current verification after the latest product-gate/management repair:
-  `scripts/run_product_readiness_gate.sh` reports `Ran 596 tests`, `OK`,
+- Current verification after the latest product-gate/management/RAG-governance repair:
+  `scripts/run_product_readiness_gate.sh` reports `Ran 597 tests`, `OK`,
   deterministic acceptance passed, backend `quality-gate` passed, and
   old-input echo remained `0.0`.
 - Earlier runtime repair verified selected input source
@@ -170,7 +170,10 @@ phrase candidate. Current PR-5 follow-up also unified governance on both
 retrieval paths: repeated-skip suppression and manual tombstones now apply to
 legacy suggestions and memory-v2 candidates consistently, and tombstoning a
 phrase candidate also tombstones sibling rows from the same source event so the
-same text does not bounce back as `raw:event:*`. The recent-commit echo guard
+same text does not bounce back as `raw:event:*`. Memory-v2 production retrieval
+now also excludes `status='tombstoned'` rows at the SQL query layer, so a
+tombstoned row cannot surface even if the later v2 governance post-filter is
+disabled or misses a target form. The recent-commit echo guard
 now also covers pinyin composition for raw-history/RAG event hits, while
 preserving `phrase-memory`, `curated`, generated memory, and API lexicon entries
 so accepted high-frequency phrases are not over-blocked. PR-6 now also has a real
@@ -1742,7 +1745,7 @@ OK
 Latest full-suite result after PR-10:
 
 ```text
-Ran 596 tests in 120.378s
+Ran 597 tests in 117.764s
 OK
 ```
 
