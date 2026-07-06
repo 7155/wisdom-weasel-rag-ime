@@ -426,7 +426,10 @@ Scripts:
   before the audit.
 - `scripts/verify_squirrel_foreground_trace.sh`: foreground trace verifier.
 - `scripts/soak_squirrel_foreground_trace.sh`: longer real-foreground soak run
-  that emits a machine-readable report.
+  that emits a machine-readable report. Its default path now repeats
+  side-candidate selection 10 times, waits for post-commit follow-up prediction
+  after each commit, then presses Backspace/Delete to prove committed-context
+  resync.
 - `scripts/check_squirrel_frontend_trace.py`: parse frontend JSONL trace.
 - `scripts/check_squirrel_soak_report.py`: validate the soak JSON report and
   fail on stale application, wrong commit, missing commit barrier events, or

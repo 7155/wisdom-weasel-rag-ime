@@ -9,6 +9,50 @@ from pathlib import Path
 
 
 class WaitSquirrelScriptsTests(unittest.TestCase):
+    def test_soak_foreground_dry_run_requires_continuous_chain_by_default(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "soak_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--chain-repeats",
+                "7",
+                "--auto-key",
+                "4",
+                "--report-path",
+                "/tmp/custom-rag-ime-soak-report.json",
+            ],
+            cwd=root,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn("chain_repeats=7", result.stdout)
+        self.assertIn("min_chain_depth=7", result.stdout)
+        self.assertIn("--min-chain-depth 7", result.stdout)
+        self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)
+
+    def test_soak_foreground_dry_run_disables_chain_requirement_without_followup(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "soak_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--no-followup",
+            ],
+            cwd=root,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn("min_post_commit_followups=0", result.stdout)
+        self.assertIn("min_chain_depth=0", result.stdout)
+        self.assertIn("--min-chain-depth 0", result.stdout)
+
     def test_prepare_foreground_check_waits_for_typing_when_source_needs_switch(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-prepare-foreground-switch-") as tmp:

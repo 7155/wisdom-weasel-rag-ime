@@ -31,11 +31,13 @@ AUTO_QUERY="${RAG_IME_FOREGROUND_SOAK_AUTO_QUERY:-er qi}"
 AUTO_KEY="${RAG_IME_FOREGROUND_SOAK_AUTO_KEY:-6}"
 AUTO_TYPE_DELAY="${RAG_IME_FOREGROUND_SOAK_AUTO_DELAY_SECONDS:-2.5}"
 AUTO_CHAR_DELAY="${RAG_IME_FOREGROUND_SOAK_AUTO_CHAR_DELAY_SECONDS:-0.04}"
+CHAIN_REPEATS="${RAG_IME_FOREGROUND_SOAK_CHAIN_REPEATS:-10}"
 MIN_SIDECAR_REQUESTS="${RAG_IME_FOREGROUND_SOAK_MIN_SIDECAR_REQUESTS:-1}"
 MIN_SIDECAR_APPLIED="${RAG_IME_FOREGROUND_SOAK_MIN_SIDECAR_APPLIED:-1}"
 MIN_PANEL_DISPLAYS="${RAG_IME_FOREGROUND_SOAK_MIN_PANEL_DISPLAYS:-1}"
 MIN_SIDE_COMMITS="${RAG_IME_FOREGROUND_SOAK_MIN_SIDE_COMMITS:-1}"
 MIN_POST_COMMIT_FOLLOWUPS="${RAG_IME_FOREGROUND_SOAK_MIN_POST_COMMIT_FOLLOWUPS:-1}"
+MIN_CHAIN_DEPTH="${RAG_IME_FOREGROUND_SOAK_MIN_CHAIN_DEPTH:-}"
 DRY_RUN=0
 
 usage() {
@@ -64,6 +66,8 @@ Options:
   --no-balanced-quota   Do not require product model/RAG/Rime quota trace
   --auto-query TEXT     Text used for auto typing / manual instructions
   --auto-key KEY        Number key used for auto typing / manual instructions
+  --chain-repeats N     Repeat side-candidate selection N times for chaining evidence (default: 10)
+  --min-chain-depth N   Required successful chain depth (default: chain repeats)
   --dry-run             Print resolved commands without changing local state
   -h, --help            Show this help
 USAGE
@@ -125,6 +129,14 @@ while [[ $# -gt 0 ]]; do
       AUTO_KEY="$2"
       shift
       ;;
+    --chain-repeats)
+      CHAIN_REPEATS="$2"
+      shift
+      ;;
+    --min-chain-depth)
+      MIN_CHAIN_DEPTH="$2"
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       ;;
@@ -147,6 +159,12 @@ fi
 if [[ "$REQUIRE_POST_COMMIT_FOLLOWUP" != "1" ]]; then
   MIN_POST_COMMIT_FOLLOWUPS=0
 fi
+if [[ -z "$MIN_CHAIN_DEPTH" ]]; then
+  MIN_CHAIN_DEPTH="$CHAIN_REPEATS"
+fi
+if [[ "$REQUIRE_SIDE_COMMIT" != "1" || "$REQUIRE_POST_COMMIT_FOLLOWUP" != "1" ]]; then
+  MIN_CHAIN_DEPTH=0
+fi
 
 soak_args=(
   "$SOAK_CHECK_SCRIPT"
@@ -159,6 +177,7 @@ soak_args=(
   --min-panel-displays "$MIN_PANEL_DISPLAYS"
   --min-side-commits "$MIN_SIDE_COMMITS"
   --min-post-commit-followups "$MIN_POST_COMMIT_FOLLOWUPS"
+  --min-chain-depth "$MIN_CHAIN_DEPTH"
 )
 if [[ "$REQUIRE_MIXED_PANEL" == "1" ]]; then
   soak_args+=(--require-mixed-panel)
@@ -200,6 +219,7 @@ select_input_source=$SELECT_INPUT_SOURCE
 auto_type=$AUTO_TYPE
 auto_query=$AUTO_QUERY
 auto_key=$AUTO_KEY
+chain_repeats=$CHAIN_REPEATS
 auto_type_delay=$AUTO_TYPE_DELAY
 auto_char_delay=$AUTO_CHAR_DELAY
 require_mixed_panel=$REQUIRE_MIXED_PANEL
@@ -215,6 +235,7 @@ min_sidecar_applied=$MIN_SIDECAR_APPLIED
 min_panel_displays=$MIN_PANEL_DISPLAYS
 min_side_commits=$MIN_SIDE_COMMITS
 min_post_commit_followups=$MIN_POST_COMMIT_FOLLOWUPS
+min_chain_depth=$MIN_CHAIN_DEPTH
 soak_check_command=$PYTHON_EXECUTABLE ${soak_args[*]}
 EOF
   exit 0
@@ -233,7 +254,7 @@ fi
 
 if [[ "$OPEN_TEST_FILE" == "1" ]]; then
   mkdir -p "$(dirname "$TEST_FILE")"
-  "$PYTHON_EXECUTABLE" - "$TEST_FILE" "$AUTO_QUERY" "$AUTO_KEY" "$INPUT_SOURCE_ID" <<'PY'
+  "$PYTHON_EXECUTABLE" - "$TEST_FILE" "$AUTO_QUERY" "$AUTO_KEY" "$INPUT_SOURCE_ID" "$CHAIN_REPEATS" <<'PY'
 from pathlib import Path
 import sys
 
@@ -241,14 +262,14 @@ path = Path(sys.argv[1]).expanduser()
 query = sys.argv[2]
 key = sys.argv[3]
 input_source = sys.argv[4]
+chain_repeats = int(sys.argv[5])
 path.write_text(
     "RAG-IME foreground soak test\n\n"
     f"1. Make sure the active input source is {input_source}.\n"
     f"2. Type: {query}.\n"
     "3. Wait for visible model, RAG, and memory side candidates.\n"
-    f"4. Press candidate number {key} (or any visible side-candidate number).\n"
-    "5. Wait for the next post-commit prediction attempt.\n"
-    "6. Press Backspace/Delete, then wait for the next request to use the updated foreground context.\n\n",
+    f"4. Press candidate number {key} (or any visible side-candidate number), wait for the next prediction, then repeat {chain_repeats} total side-candidate selections.\n"
+    "5. Press Backspace/Delete, then wait for the next request to use the updated foreground context.\n\n",
     encoding="utf-8",
 )
 PY
@@ -258,13 +279,14 @@ fi
 manual_required=()
 if [[ "$AUTO_TYPE" == "1" ]]; then
   set +e
-  osascript - "$OPEN_APP" "$AUTO_QUERY" "$AUTO_KEY" "$AUTO_TYPE_DELAY" "$AUTO_CHAR_DELAY" <<'APPLESCRIPT'
+  osascript - "$OPEN_APP" "$AUTO_QUERY" "$AUTO_KEY" "$AUTO_TYPE_DELAY" "$AUTO_CHAR_DELAY" "$CHAIN_REPEATS" <<'APPLESCRIPT'
 on run argv
   set appName to item 1 of argv
   set queryText to item 2 of argv
   set sideKey to item 3 of argv
   set waitSeconds to (item 4 of argv) as number
   set charDelaySeconds to (item 5 of argv) as number
+  set chainRepeats to (item 6 of argv) as integer
   tell application appName to activate
   delay 0.8
   tell application "System Events"
@@ -275,8 +297,10 @@ on run argv
       delay charDelaySeconds
     end repeat
     delay waitSeconds
-    keystroke sideKey
-    delay waitSeconds
+    repeat with chainIndex from 1 to chainRepeats
+      keystroke sideKey
+      delay waitSeconds
+    end repeat
     key code 51
   end tell
 end run
@@ -292,13 +316,13 @@ fi
 
 manual_required+=("Foreground editor typing verification")
 manual_required+=("Real Squirrel candidate panel visual check")
-manual_required+=("Side candidate number-key commit verification")
+manual_required+=("Side candidate number-key commit verification, repeated ${CHAIN_REPEATS} times for continuous prediction chaining")
 manual_required+=("Backspace/Delete committed-context resync verification")
 
 echo "Foreground soak gate is collecting real Squirrel AppKit events."
 echo "Trace log: $TRACE_LOG"
 echo "Report path: $REPORT_PATH"
-echo "Manual action if needed: type '$AUTO_QUERY', then press a visible side-candidate number such as '$AUTO_KEY'."
+echo "Manual action if needed: type '$AUTO_QUERY', then press a visible side-candidate number such as '$AUTO_KEY' ${CHAIN_REPEATS} times, waiting for the next prediction after each commit."
 
 for item in "${manual_required[@]}"; do
   soak_args+=(--manual-required "$item")
