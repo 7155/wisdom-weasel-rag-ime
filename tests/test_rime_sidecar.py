@@ -950,6 +950,44 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["predictionCount"], 1)
         self.assertEqual(response["modelLane"]["totalLatencyBudgetMs"], 300)
 
+    def test_response_includes_redacted_context_frame_and_views(self) -> None:
+        response = build_rime_sidecar_response(
+            payload={
+                "sessionId": "ctx-frame-response",
+                "requestSeq": 77,
+                "rawInput": "chuxian",
+                "preedit": "chuxian",
+                "committedContext": "这里有不该进入 trace 的真实上下文",
+                "inputGeneration": 9,
+                "rimeContext": {
+                    "candidates": [
+                        {"label": "1", "text": "出现", "comment": "rime"},
+                    ],
+                },
+                "foregroundText": {
+                    "available": True,
+                    "source": "rime_composition",
+                    "confidence": 1.0,
+                    "surroundingBefore": "chuxian",
+                    "captureEpoch": 9,
+                },
+            },
+            adapter=self.adapter,
+            core=self.core,
+            predictor=self.predictor,
+        )
+
+        frame = response["contextFrame"]
+        views = response["contextViews"]
+        self.assertEqual(frame["schemaVersion"], "rag-ime.context-frame.v1")
+        self.assertEqual(frame["session"]["inputGeneration"], 9)
+        self.assertEqual(frame["foregroundText"]["source"], "rime_composition")
+        self.assertIn("rawInputHash", frame["composition"])
+        self.assertNotIn("真实上下文", repr(frame))
+        self.assertEqual(views["rime"]["candidateCount"], 1)
+        self.assertEqual(views["model"]["requestType"], "composition_warmup")
+        self.assertEqual(views["display"]["keyPolicy"]["numberKeys"], "select_rime_candidate")
+
     def test_rag_database_exception_fails_closed_to_model_and_rime(self) -> None:
         payload = {
             "sessionId": "squirrel-rag-db-fail",

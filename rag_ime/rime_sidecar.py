@@ -9,6 +9,14 @@ from threading import BoundedSemaphore, Event, RLock, Thread
 from typing import Any, Mapping
 
 from .adapter import InputMethodAdapter, SuggestionRequest
+from .context_frame import build_current_input_frame, context_frame_trace_payload
+from .context_views import (
+    build_display_view,
+    build_model_prompt_view,
+    build_rag_retrieval_view,
+    build_rime_view,
+    context_views_trace_payload,
+)
 from .core_client import CoreClient
 from .deepseek_completion import DeepSeekCompletionRequest
 from .embeddings import NullEmbeddingProvider
@@ -614,6 +622,22 @@ def build_rime_sidecar_response(
         model_lane=model_lane,
         display_candidates=display_candidates,
     )
+    context_frame = build_current_input_frame(
+        snapshot,
+        ui_mode=ui_mode,
+        semantic_query=semantic_query,
+        query_basis=query_basis,
+        foreground_text_payload=payload.get("foregroundText") if isinstance(payload.get("foregroundText"), Mapping) else None,
+    )
+    rime_view = build_rime_view(context_frame)
+    model_view = build_model_prompt_view(context_frame)
+    rag_view = build_rag_retrieval_view(context_frame, semantic_query=semantic_query, query_basis=query_basis)
+    display_view = build_display_view(
+        context_frame,
+        candidates=tuple(display_candidates),
+        key_policy={str(key): str(value) for key, value in key_policy.items()},
+    )
+    include_context_text = os.environ.get("RAG_IME_TRACE_INCLUDE_TEXT") == "1"
     return {
         "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
         "sessionId": snapshot.session_id,
@@ -648,6 +672,13 @@ def build_rime_sidecar_response(
         "historyContextMeta": prediction_context_metadata(prediction_context),
         "latencyBudgetMs": snapshot.latency_budget_ms,
         "uiMode": ui_mode,
+        "contextFrame": context_frame_trace_payload(context_frame, include_text=include_context_text),
+        "contextViews": context_views_trace_payload(
+            rime_view=rime_view,
+            model_view=model_view,
+            rag_view=rag_view,
+            display_view=display_view,
+        ),
         "laneStatus": lane_status_payload(
             rag_lane=rag_lane,
             model_lane=model_lane,
@@ -3084,6 +3115,12 @@ def _frontend_transaction_from_payload(
     return FrontendTransaction(
         frontend_revision=frontend_revision,
         selection_epoch=selection_epoch,
+        input_generation=_bounded_int(
+            _first_present(dict(payload), dict(rime_context), "inputGeneration"),
+            default=frontend_revision,
+            minimum=0,
+            maximum=2**63 - 1,
+        ),
         front_app_bundle_id=front_app_bundle_id,
         input_source_id=input_source_id,
         composition_hash=composition_hash,
@@ -3802,6 +3839,7 @@ def frontend_transaction_to_payload(transaction: FrontendTransaction) -> dict[st
     return {
         "frontendRevision": transaction.frontend_revision,
         "selectionEpoch": transaction.selection_epoch,
+        "inputGeneration": transaction.input_generation,
         "frontAppBundleId": transaction.front_app_bundle_id,
         "inputSourceId": transaction.input_source_id,
         "compositionHash": transaction.composition_hash,

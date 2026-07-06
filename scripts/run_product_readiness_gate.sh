@@ -24,6 +24,9 @@ RESET_GATE_DB="${RAG_IME_GATE_RESET_DB:-1}"
 REQUIRE_PREDICTOR_CAPABILITY="${RAG_IME_REQUIRE_PREDICTOR_CAPABILITY:-}"
 REQUIRE_MODEL_CANDIDATE_COUNT="${RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT:-0}"
 SIDECAR_LATENCY_BUDGET_MS="${RAG_IME_GATE_SIDECAR_LATENCY_BUDGET_MS:-}"
+PRODUCT_SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/RAG-IME.app}"
+PRODUCT_SQUIRREL_BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-im.rag-ime.inputmethod.RagIme}"
+PRODUCT_SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$PRODUCT_SQUIRREL_BUNDLE_ID.Hans}"
 
 usage() {
   cat <<'USAGE'
@@ -214,6 +217,9 @@ log "frontend_db_path=$FRONTEND_DB_PATH"
 log "sidecar_plist=$SIDECAR_LAUNCH_AGENT_PLIST"
 log "cases_file=$CASES_FILE"
 log "foreground_readiness_report=$FOREGROUND_READINESS_REPORT"
+log "squirrel_app=$PRODUCT_SQUIRREL_APP"
+log "squirrel_bundle_id=$PRODUCT_SQUIRREL_BUNDLE_ID"
+log "squirrel_input_source_id=$PRODUCT_SQUIRREL_INPUT_SOURCE_ID"
 log "require_macos_frontend=$REQUIRE_MACOS_FRONTEND"
 log "require_sichuan_fuzzy=$REQUIRE_SICHUAN_FUZZY"
 log "require_predictor_capability=${REQUIRE_PREDICTOR_CAPABILITY:-none}"
@@ -290,8 +296,14 @@ else
 fi
 
 if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
+  FRONTEND_ENV=(
+    env
+    "RAG_IME_SQUIRREL_APP=$PRODUCT_SQUIRREL_APP"
+    "RAG_IME_SQUIRREL_BUNDLE_ID=$PRODUCT_SQUIRREL_BUNDLE_ID"
+    "RAG_IME_SQUIRREL_INPUT_SOURCE_ID=$PRODUCT_SQUIRREL_INPUT_SOURCE_ID"
+  )
   log "foreground readiness preflight"
-  run_cmd "$PREPARE_FOREGROUND_SCRIPT" \
+  run_cmd "${FRONTEND_ENV[@]}" "$PREPARE_FOREGROUND_SCRIPT" \
     --refresh-registration \
     --no-open \
     --no-wait-typing \
@@ -299,6 +311,7 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
 
   log "macOS Squirrel tryout gate"
   TRYOUT_CMD=(
+    "${FRONTEND_ENV[@]}"
     "$PYTHON_BIN" -m rag_ime.cli
     --db-path "$FRONTEND_DB_PATH"
     squirrel-tryout-gate
@@ -326,6 +339,7 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
 
   log "foreground soak report check"
   SOAK_CMD=(
+    "${FRONTEND_ENV[@]}"
     "$PYTHON_BIN" scripts/check_squirrel_soak_report.py
     --report-path "$SOAK_REPORT" \
     --max-stale-applied 0 \

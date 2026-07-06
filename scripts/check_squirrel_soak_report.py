@@ -767,6 +767,8 @@ def snapshot_ordinal_drift_violations(events: list[dict[str, Any]]) -> list[dict
         for index, candidate in enumerate(candidates, start=1):
             if not isinstance(candidate, dict):
                 continue
+            if is_status_candidate(candidate):
+                continue
             ordinal = candidate_ordinal(candidate, fallback=index)
             if not ordinal:
                 continue
@@ -807,14 +809,22 @@ def snapshot_ordinal_drift_violations(events: list[dict[str, Any]]) -> list[dict
 
 
 def candidate_ordinal(candidate: dict[str, Any], *, fallback: int) -> str:
-    value = (
-        candidate.get("candidateOrdinal")
-        or candidate.get("selectionRank")
-        or candidate.get("selectionKey")
-        or candidate.get("label")
-        or fallback
+    for key in ("candidateOrdinal", "selectionRank", "selectionKey", "label"):
+        if key not in candidate:
+            continue
+        value = candidate.get(key)
+        if value is None or value == "":
+            continue
+        return str(value)
+    return str(fallback)
+
+
+def is_status_candidate(candidate: dict[str, Any]) -> bool:
+    return (
+        str(candidate.get("sourceType") or "") == "status"
+        or str(candidate.get("displayLayout") or "") == "status_row"
+        or candidate.get("isStatus") is True
     )
-    return str(value)
 
 
 def candidate_stable_identity(candidate: dict[str, Any]) -> str:

@@ -22,6 +22,9 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         "RAG_IME_FRONTEND_DB_PATH",
         "RAG_IME_FOREGROUND_READINESS_REPORT",
         "RAG_IME_SQUIRREL_SOAK_REPORT",
+        "RAG_IME_SQUIRREL_APP",
+        "RAG_IME_SQUIRREL_BUNDLE_ID",
+        "RAG_IME_SQUIRREL_INPUT_SOURCE_ID",
     )
 
     def _gate_env(self, **overrides: str) -> dict[str, str]:
@@ -197,6 +200,10 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("db_path=/tmp/rag-ime-backend-gate.sqlite", result.stdout)
         self.assertIn("frontend_db_path=/tmp/rag-ime-frontend-runtime.sqlite", result.stdout)
         self.assertIn("foreground_readiness_report=/tmp/custom-rag-ime-foreground-readiness.json", result.stdout)
+        self.assertIn("squirrel_app=", result.stdout)
+        self.assertIn("Input Methods/RAG-IME.app", result.stdout)
+        self.assertIn("squirrel_bundle_id=im.rag-ime.inputmethod.RagIme", result.stdout)
+        self.assertIn("squirrel_input_source_id=im.rag-ime.inputmethod.RagIme.Hans", result.stdout)
         self.assertIn("require_sichuan_fuzzy=1", result.stdout)
         self.assertIn("require_predictor_capability=seededPromptReplay", result.stdout)
         self.assertIn("require_model_candidate_count=3", result.stdout)

@@ -85,6 +85,7 @@ class FrontendTransaction:
 
     frontend_revision: int = 0
     selection_epoch: int = 0
+    input_generation: int = 0
     front_app_bundle_id: str = ""
     input_source_id: str = ""
     composition_hash: str = ""

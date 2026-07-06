@@ -560,7 +560,22 @@ index 0000000..784162d
 +  let maxSideCandidates: Int
 +  let forceSideCandidates: Bool
 +  let progressiveFollowUp: Bool
++  let foregroundText: RagImeForegroundTextSnapshot
 +  let rimeContext: RagImeRimeContextPayload
++}
++
++struct RagImeForegroundTextSnapshot: Codable {
++  let available: Bool
++  let source: String
++  let confidence: Double
++  let freshnessMs: Int
++  let selectedTextHash: String
++  let selectedTextChars: Int
++  let selectedTextPreview: String
++  let surroundingBefore: String
++  let surroundingAfter: String
++  let canReplaceSelection: Bool
++  let captureEpoch: Int
 +}
 +
 +struct RagImeRimeContextPayload: Codable {
@@ -1324,6 +1339,19 @@ index c2adf74..3cfc0e5 100644
 +    let committedContextHash = ragImeStableTextHash(ragImeCommittedContext)
 +    let panelSessionId = UUID().uuidString
 +    let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty
++    let foregroundText = RagImeForegroundTextSnapshot(
++      available: !rawInput.isEmpty || !preedit.isEmpty || !ragImeCommittedContext.isEmpty,
++      source: (!rawInput.isEmpty || !preedit.isEmpty) ? "rime_composition" : "ime_commit_ledger",
++      confidence: (!rawInput.isEmpty || !preedit.isEmpty) ? 1.0 : 0.65,
++      freshnessMs: 0,
++      selectedTextHash: "",
++      selectedTextChars: 0,
++      selectedTextPreview: "",
++      surroundingBefore: (!rawInput.isEmpty || !preedit.isEmpty) ? compositionText : boundedRagImeCommittedContext(ragImeCommittedContext),
++      surroundingAfter: "",
++      canReplaceSelection: false,
++      captureEpoch: ragImeInputGeneration
++    )
 +    let request = RagImeSidecarRequest(
 +      frontendBuild: "rag-ime.foreground-trace.v2",
 +      schemaVersion: "rag-ime.squirrel-frontend-trace.v1",
@@ -1347,6 +1375,7 @@ index c2adf74..3cfc0e5 100644
 +      maxSideCandidates: sidecarClient.maxSideCandidates,
 +      forceSideCandidates: forceSideCandidates,
 +      progressiveFollowUp: false,
++      foregroundText: foregroundText,
 +      rimeContext: RagImeRimeContextPayload(
 +        candidates: rimeCandidates,
 +        highlightedIndex: highlighted,
@@ -1975,6 +2004,7 @@ index c2adf74..3cfc0e5 100644
 +        maxSideCandidates: request.maxSideCandidates,
 +        forceSideCandidates: request.forceSideCandidates,
 +        progressiveFollowUp: true,
++        foregroundText: request.foregroundText,
 +        rimeContext: request.rimeContext
 +      )
 +      self.ragImePendingRequestFingerprint = fingerprint
@@ -2366,6 +2396,34 @@ index c2adf74..3cfc0e5 100644
 +    }
 +  }
 +
++  func ragImeDisplayTraceTransactionFields() -> [String: Any] {
++    guard let candidate = ragImeDisplayCandidates.first(where: { $0.sourceType != "status" }) ?? ragImeDisplayCandidates.first else {
++      return [:]
++    }
++    var fields: [String: Any] = [:]
++    let frontendRevision = ragImeDisplayCandidateIntMetadata(candidate, "frontendRevision")
++    if frontendRevision >= 0 {
++      fields["frontendRevision"] = frontendRevision
++    }
++    let selectionEpoch = ragImeDisplayCandidateIntMetadata(candidate, "selectionEpoch")
++    if selectionEpoch >= 0 {
++      fields["selectionEpoch"] = selectionEpoch
++    }
++    let panelSessionId = ragImeDisplayCandidateStringMetadata(candidate, "panelSessionId")
++    if !panelSessionId.isEmpty {
++      fields["panelSessionId"] = panelSessionId
++    }
++    let compositionHash = ragImeDisplayCandidateStringMetadata(candidate, "compositionHash")
++    if !compositionHash.isEmpty {
++      fields["compositionHash"] = compositionHash
++    }
++    let committedContextHash = ragImeDisplayCandidateStringMetadata(candidate, "committedContextHash")
++    if !committedContextHash.isEmpty {
++      fields["committedContextHash"] = committedContextHash
++    }
++    return fields
++  }
++
 +  func ragImeDisplayPanelPayload(fallbackLabels: [String]) -> (candidates: [String], comments: [String], labels: [String]) {
 +    let candidates = ragImeDisplayCandidates.map { ragImeDisplayText(for: $0) }
 +    let comments = ragImeDisplayCandidates.map { ragImeDisplayComment(for: $0) }
@@ -2517,6 +2575,11 @@ index c2adf74..3cfc0e5 100644
 +    payload["timestampMs"] = Int(Date().timeIntervalSince1970 * 1000)
 +    payload["sessionId"] = String(session)
 +    payload["schemaId"] = schemaId
++    if event == "panel_display_candidates" {
++      for (key, value) in ragImeDisplayTraceTransactionFields() {
++        payload[key] = payload[key] ?? value
++      }
++    }
 +    payload["frontendRevision"] = payload["frontendRevision"] ?? ragImeFrontendRevision
 +    payload["selectionEpoch"] = payload["selectionEpoch"] ?? ragImeSelectionEpoch
 +    payload["panelSessionId"] = payload["panelSessionId"] ?? ragImeDisplayPanelSessionId
