@@ -818,6 +818,48 @@ class RimeSidecarTests(unittest.TestCase):
         self.assertEqual(payload["sourceStability"], "reused_last_good")
         self.assertEqual(payload["snapshotId"], "snap:holdover")
 
+    def test_display_binding_renumbers_candidates_across_sources(self) -> None:
+        snapshot = RimeContextSnapshot(session_id="s1", request_seq=1, committed_context="我想")
+        bound = _bind_display_candidates_to_session(
+            display_candidates=[
+                SideCandidateDisplayItem(
+                    label="1",
+                    text="模型候选",
+                    insert_text="模型候选",
+                    source_type="model",
+                    selection_action="commit_side_candidate",
+                    source_index=0,
+                ),
+                SideCandidateDisplayItem(
+                    label="1",
+                    text="RAG 候选",
+                    insert_text="RAG 候选",
+                    source_type="rag",
+                    selection_action="commit_side_candidate",
+                    source_index=0,
+                ),
+                SideCandidateDisplayItem(
+                    label="1",
+                    text="词库候选",
+                    insert_text="词库候选",
+                    source_type="rime",
+                    selection_action="select_rime_candidate",
+                    source_index=0,
+                    rime_index=0,
+                    display_layout="fallback",
+                ),
+            ],
+            snapshot=snapshot,
+            prediction_session_payload={"snapshotId": "snap:renumber"},
+            key_policy={"numberKeys": "select_visible_candidate"},
+        )
+
+        payloads = [display_item_to_payload(item) for item in bound]
+        self.assertEqual([item["label"] for item in payloads], ["1", "2", "3"])
+        self.assertEqual([item["selectionKey"] for item in payloads], ["1", "2", "3"])
+        self.assertEqual([item["candidateOrdinal"] for item in payloads], [1, 2, 3])
+        self.assertEqual([item["visibleLabel"] for item in payloads], ["1", "2", "3"])
+
     def test_semantic_query_uses_rime_candidates_not_dirty_raw_pinyin(self) -> None:
         snapshot = parse_rime_context_payload(
             {

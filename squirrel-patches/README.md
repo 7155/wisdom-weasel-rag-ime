@@ -175,8 +175,8 @@ Squirrel's normal config has one global candidate-list layout. RAG-IME adds
 per-candidate metadata instead:
 
 ```text
-displayLayout=inline  -> LLM short predictions share a horizontal line
-displayLayout=block   -> RAG/memory sentence snippets start a new row
+displayLayout=inline  -> raw/input helper candidates may follow compact layout
+displayLayout=block   -> model, RAG, and memory candidates each get a row
 displayLayout=fallback -> Rime fallback rows follow the native layout rule
 ```
 

@@ -1055,10 +1055,23 @@ index c2adf74..3cfc0e5 100644
 +    guard ragImePanelUsesDisplayCandidates else {
 +      return false
 +    }
++    guard !ragImePanelForcesVerticalList() else {
++      return false
++    }
 +    return ragImeDisplayCandidates.contains { candidate in
 +      let layout = candidate.displayLayout ?? ""
 +      let lane = candidate.displayLane ?? candidate.sourceType
 +      return layout == "inline" && (lane == "model" || candidate.sourceType == "model")
++    }
++  }
++
++  func ragImePanelForcesVerticalList() -> Bool {
++    guard ragImePanelUsesDisplayCandidates else {
++      return false
++    }
++    return ragImeDisplayCandidates.contains { candidate in
++      let layout = candidate.displayLayout ?? ""
++      return layout == "block" || layout == "status_row"
 +    }
 +  }
 +
@@ -1086,6 +1099,7 @@ index c2adf74..3cfc0e5 100644
 +      "linear": linear,
 +      "vertical": vertical,
 +      "forcesHorizontalLayout": ragImePanelForcesHorizontalLayout(),
++      "forcesVerticalList": ragImePanelForcesVerticalList(),
 +      "candidateCounts": ragImeTraceCandidateCounts(),
 +      "candidates": ragImeTraceCandidateSummaries(),
 +    ])
@@ -2122,6 +2136,7 @@ index c2adf74..3cfc0e5 100644
 +        "holdover": true,
 +        "postCommitHoldover": true,
 +        "forcesHorizontalLayout": ragImePanelForcesHorizontalLayout(),
++        "forcesVerticalList": ragImePanelForcesVerticalList(),
 +        "candidateCounts": ragImeTraceCandidateCounts(),
 +        "candidates": ragImeTraceCandidateSummaries(),
 +      ])
@@ -2150,6 +2165,7 @@ index c2adf74..3cfc0e5 100644
 +      "exactMatch": exactMatch,
 +      "holdover": canHold,
 +      "forcesHorizontalLayout": ragImePanelForcesHorizontalLayout(),
++      "forcesVerticalList": ragImePanelForcesVerticalList(),
 +      "candidateCounts": ragImeTraceCandidateCounts(),
 +      "candidates": ragImeTraceCandidateSummaries(),
 +    ])
@@ -2881,10 +2897,16 @@ index a9e2dae..c4aa52a 100644
      view.currentTheme.vertical
    }
 +  var ragImePanelLinear: Bool {
-+    inputController?.ragImePanelForcesHorizontalLayout() == true ? true : linear
++    if inputController?.ragImePanelForcesVerticalList() == true {
++      return false
++    }
++    return inputController?.ragImePanelForcesHorizontalLayout() == true ? true : linear
 +  }
 +  var ragImePanelVertical: Bool {
-+    inputController?.ragImePanelForcesHorizontalLayout() == true ? false : vertical
++    if inputController?.ragImePanelForcesVerticalList() == true {
++      return false
++    }
++    return inputController?.ragImePanelForcesHorizontalLayout() == true ? false : vertical
 +  }
    var inlinePreedit: Bool {
      view.currentTheme.inlinePreedit

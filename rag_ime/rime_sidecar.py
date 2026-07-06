@@ -4230,6 +4230,7 @@ def _bind_display_candidates_to_session(
         if selectable:
             ordinal += 1
         candidate_ordinal = ordinal if selectable else 0
+        display_label = _display_label("", candidate_ordinal - 1) if selectable else ""
         metadata = dict(item.metadata)
         metadata.update(
             {
@@ -4244,7 +4245,7 @@ def _bind_display_candidates_to_session(
                 "snapshotGeneration": snapshot_generation,
                 "candidateStableId": _candidate_stable_id(item, snapshot_id=stable_snapshot_id),
                 "candidateOrdinal": candidate_ordinal,
-                "visibleLabel": item.label,
+                "visibleLabel": display_label,
                 "sourceBadge": candidate_source_badge(item.source_type),
                 "sourceStability": source_stability,
                 "expiresAtMs": expires_at_ms,
@@ -4263,7 +4264,7 @@ def _bind_display_candidates_to_session(
                 "panelSessionId": transaction.panel_session_id,
             }
         )
-        bound.append(replace(item, metadata=metadata))
+        bound.append(replace(item, label=display_label, metadata=metadata))
     return bound
 
 
