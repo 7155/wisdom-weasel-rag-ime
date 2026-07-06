@@ -6,7 +6,7 @@ import unittest
 import json
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -171,11 +171,17 @@ class DebugManagementApiTests(unittest.TestCase):
         diff_id = int(run["items"][0]["diffs"][0]["diffId"])
 
         inspected = self.service.management_cleanup_diff({"id": diff_id})
-        applied = self.service.management_cleanup_diff_apply({"diffId": diff_id})
-        rolled_back = self.service.management_cleanup_diff_rollback({"diffId": diff_id})
+        missing_apply_confirm = self.service.management_cleanup_diff_apply({"diffId": diff_id})
+        applied = self.service.management_cleanup_diff_apply({"diffId": diff_id, "confirm": "apply"})
+        missing_rollback_confirm = self.service.management_cleanup_diff_rollback({"diffId": diff_id})
+        rolled_back = self.service.management_cleanup_diff_rollback({"diffId": diff_id, "confirm": "rollback"})
 
         self.assertTrue(inspected["ok"])
+        self.assertFalse(missing_apply_confirm["ok"])
+        self.assertEqual(missing_apply_confirm["requiredConfirm"], "apply")
         self.assertTrue(applied["ok"])
+        self.assertFalse(missing_rollback_confirm["ok"])
+        self.assertEqual(missing_rollback_confirm["requiredConfirm"], "rollback")
         self.assertTrue(rolled_back["ok"])
         self.assertGreater(int(applied["auditId"]), 0)
         self.assertEqual(self._audit_count("cleanup_diff_apply"), 1)
@@ -219,6 +225,74 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(payload["schemaVersion"], "rag-ime.management-history.v1")
         self.assertFalse(payload["rawTextVisible"])
         self.assertNotIn("text", payload["items"][0])
+
+    def test_management_cleanup_diff_http_requires_confirmation(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_050,
+                source="manual",
+                committed_text="离线整理稳定记忆",
+                recent_context="用户接受过这个短语",
+                project="wisdom-weasel-rag-ime",
+                tags=("memory",),
+            )
+        )
+        self.core.apply_action(
+            MemoryAction(
+                action_id=None,
+                created_at_ms=1_900_000_100_051,
+                memory_id="event:1",
+                action_type="accepted",
+                query="离线整理",
+            )
+        )
+        plan = self.core.build_memory_cleanup_plan(project="wisdom-weasel-rag-ime")
+        run = self.core.list_memory_cleanup_runs(run_id=str(plan["runId"]), limit=1)
+        diff_id = int(run["items"][0]["diffs"][0]["diffId"])
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            missing_request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/cleanup-diff/apply",
+                data=json.dumps({"diffId": diff_id}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(missing_request, timeout=5) as missing_response:
+                missing_payload = json.loads(missing_response.read().decode("utf-8"))
+
+            apply_request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/cleanup-diff/apply",
+                data=json.dumps({"diffId": diff_id, "confirm": "apply"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(apply_request, timeout=5) as apply_response:
+                apply_payload = json.loads(apply_response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertFalse(missing_payload["ok"])
+        self.assertEqual(missing_payload["requiredConfirm"], "apply")
+        self.assertTrue(apply_payload["ok"])
+        self.assertEqual(apply_payload["result"]["diff"]["status"], "applied")
+        self.assertEqual(self._audit_count("cleanup_diff_apply"), 1)
+
+    def test_management_console_sends_cleanup_confirmation(self) -> None:
+        app_js = Path(__file__).resolve().parents[1].joinpath("debug", "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("confirmCleanupDiffAction", app_js)
+        self.assertIn("confirm: action", app_js)
 
     def _upsert_item(self, *, memory_id: str, kind: str, text: str) -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]

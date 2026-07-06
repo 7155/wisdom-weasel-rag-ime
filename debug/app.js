@@ -808,6 +808,11 @@ function managementActionLabel(rows) {
   return "inspect";
 }
 
+function confirmCleanupDiffAction(action, target) {
+  const diffId = target.diffId || target.id || "";
+  return window.confirm(`Confirm cleanup diff ${action}${diffId ? ` #${diffId}` : ""}?`);
+}
+
 async function refreshManagementConsole() {
   state.managementBusy = true;
   renderManagementConsole();
@@ -857,8 +862,13 @@ async function runManagementAction() {
       endpoint = "/api/lexicon/action";
       body = { memoryId: target.memoryId, action: "approve" };
     } else if (state.managementView === "cleanup") {
-      endpoint = target.status === "applied" ? "/api/cleanup-diff/rollback" : "/api/cleanup-diff/apply";
-      body = { diffId: target.diffId };
+      const action = target.status === "applied" ? "rollback" : "apply";
+      if (!confirmCleanupDiffAction(action, target)) {
+        state.managementLastAction = { message: `${action} cancelled` };
+        return;
+      }
+      endpoint = action === "rollback" ? "/api/cleanup-diff/rollback" : "/api/cleanup-diff/apply";
+      body = { diffId: target.diffId, confirm: action };
     } else {
       await refreshManagementConsole();
       return;

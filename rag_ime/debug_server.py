@@ -536,6 +536,9 @@ class DebugImeService:
 
     def management_cleanup_diff_apply(self, payload: dict[str, Any]) -> dict[str, object]:
         diff_id = _optional_int(payload.get("id") or payload.get("diffId"))
+        confirmation = self._management_cleanup_confirmation(payload, expected="apply")
+        if confirmation:
+            return confirmation
         result = self.memory_cleanup_diff_apply(diff_id or 0)
         audit_id = self._record_management_audit(
             action="cleanup_diff_apply",
@@ -553,6 +556,9 @@ class DebugImeService:
 
     def management_cleanup_diff_rollback(self, payload: dict[str, Any]) -> dict[str, object]:
         diff_id = _optional_int(payload.get("id") or payload.get("diffId"))
+        confirmation = self._management_cleanup_confirmation(payload, expected="rollback")
+        if confirmation:
+            return confirmation
         result = self.memory_cleanup_diff_rollback(diff_id or 0)
         audit_id = self._record_management_audit(
             action="cleanup_diff_rollback",
@@ -566,6 +572,17 @@ class DebugImeService:
             "ok": bool(result.get("ok")),
             "auditId": audit_id,
             "result": result,
+        }
+
+    def _management_cleanup_confirmation(self, payload: dict[str, Any], *, expected: str) -> dict[str, object]:
+        confirm = _string(payload.get("confirm"))
+        if confirm == expected:
+            return {}
+        return {
+            "schemaVersion": "rag-ime.management-cleanup-diff-action.v1",
+            "ok": False,
+            "error": f'confirmation required: set confirm="{expected}"',
+            "requiredConfirm": expected,
         }
 
     def _management_memory_items(self, payload: dict[str, Any], *, lexicon: bool) -> dict[str, object]:
