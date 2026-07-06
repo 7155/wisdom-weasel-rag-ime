@@ -87,3 +87,39 @@ class MemoryOptimizerAntiEchoTests(unittest.TestCase):
         self.assertEqual(tombstone_decision.reason, "tombstone_memory_id")
         self.assertEqual(suppressed_decision.reason, "suppressed_text")
 
+    def test_blocks_recent_committed_echo_during_pinyin_composition(self) -> None:
+        context = ContextFrame(
+            session_id="anti-echo-pinyin",
+            request_seq=2,
+            front_app_bundle_id="com.apple.TextEdit",
+            input_mode="pinyin_composition",
+            raw_input="sj",
+            preedit="sj",
+            committed_tail="",
+            selected_rime_candidates=["设计", "世纪"],
+            semantic_query="设计",
+            semantic_query_source="rime_candidate",
+            composition_hash="sha256:compose2",
+            context_hash="sha256:context2",
+            active_tags=["设计"],
+            project_scope="wisdom-weasel-rag-ime",
+            timestamp_ms=2,
+        )
+        hit = RawRetrievalHit(
+            id="event:127",
+            text="刚才旧句子",
+            source="fts",
+            score=0.9,
+            memory_atom_id=None,
+            evidence="recent raw history",
+            metadata={"tags": ["user-input"], "source_type": "rag"},
+        )
+
+        decision = self.governor.should_block(
+            hit=hit,
+            context=context,
+            governance={"recentCommittedTexts": ["刚才旧句子"]},
+        )
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.reason, "recent_committed_echo")

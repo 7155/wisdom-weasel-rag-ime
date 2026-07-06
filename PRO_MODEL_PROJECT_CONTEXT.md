@@ -169,7 +169,10 @@ phrase candidate. Current PR-5 follow-up also unified governance on both
 retrieval paths: repeated-skip suppression and manual tombstones now apply to
 legacy suggestions and memory-v2 candidates consistently, and tombstoning a
 phrase candidate also tombstones sibling rows from the same source event so the
-same text does not bounce back as `raw:event:*`. PR-6 now also has a real
+same text does not bounce back as `raw:event:*`. The recent-commit echo guard
+now also covers pinyin composition for raw-history/RAG event hits, while
+preserving `phrase-memory`, `curated`, generated memory, and API lexicon entries
+so accepted high-frequency phrases are not over-blocked. PR-6 now also has a real
 offline cleanup CLI safety gate: `cleanup-preview` is dry-run only, plan files
 can be validated before apply, `cleanup-apply` requires explicit `--apply`, and
 rollback is exposed as a first-class command. Generated stable memory also now

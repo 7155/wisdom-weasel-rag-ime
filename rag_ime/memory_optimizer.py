@@ -146,7 +146,10 @@ class AntiEchoGovernor:
         if _overlap_ratio(normalized, _normalize_candidate_text(context.raw_input)) > 0.95:
             return BlockedCandidate(id=hit.id, reason="raw_input_overlap")
         recent_texts = set(governance.get("recentCommittedTexts") or [])
-        if overlap_guard_enabled and not allow_recent_echo and normalized in recent_texts:
+        if normalized in recent_texts and (
+            (overlap_guard_enabled and not allow_recent_echo)
+            or _should_block_recent_committed_echo(hit=hit, raw_history_hit=raw_history_hit)
+        ):
             return BlockedCandidate(id=hit.id, reason="recent_committed_echo")
         return None
 
@@ -805,6 +808,13 @@ def _looks_like_raw_history_hit(hit: RawRetrievalHit) -> bool:
     if source_type == "rag" and hit.source == "fts" and hit.id.startswith(("event:", "sug-event:")):
         return True
     return False
+
+
+def _should_block_recent_committed_echo(*, hit: RawRetrievalHit, raw_history_hit: bool) -> bool:
+    tags = {str(tag).lower() for tag in hit.metadata.get("tags") or []}
+    if tags.intersection({"memory", "curated", "phrase-memory", "generated-memory", "api-core-optimized", "api-lexicon"}):
+        return False
+    return raw_history_hit
 
 
 def _allow_recent_echo_candidate(
