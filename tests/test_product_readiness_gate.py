@@ -13,6 +13,24 @@ from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 
 
 class ProductReadinessGateScriptTests(unittest.TestCase):
+    _GATE_ENV_KEYS = (
+        "RAG_IME_REQUIRE_MACOS_FRONTEND",
+        "RAG_IME_REQUIRE_SICHUAN_FUZZY",
+        "RAG_IME_REQUIRE_PREDICTOR_CAPABILITY",
+        "RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT",
+        "RAG_IME_PREPARE_SQUIRREL_FOREGROUND_CHECK_SCRIPT",
+        "RAG_IME_FRONTEND_DB_PATH",
+        "RAG_IME_FOREGROUND_READINESS_REPORT",
+        "RAG_IME_SQUIRREL_SOAK_REPORT",
+    )
+
+    def _gate_env(self, **overrides: str) -> dict[str, str]:
+        env = dict(os.environ)
+        for key in self._GATE_ENV_KEYS:
+            env.pop(key, None)
+        env.update(overrides)
+        return env
+
     def test_acceptance_empty_local_db_returns_failed_report_instead_of_crashing(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-empty-acceptance-") as tmp:
             db_path = Path(tmp) / "acceptance-empty.sqlite"
@@ -80,6 +98,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                 "docs/eval/codex-history-cases.example.jsonl",
             ],
             cwd=root,
+            env=self._gate_env(),
             text=True,
             capture_output=True,
             check=True,
@@ -117,7 +136,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
     def test_product_gate_dry_run_can_require_sichuan_fuzzy_profile(self) -> None:
         root = Path(__file__).resolve().parents[1]
         script = root / "scripts" / "run_product_readiness_gate.sh"
-        env = dict(os.environ)
+        env = self._gate_env()
         env["RAG_IME_REQUIRE_SICHUAN_FUZZY"] = "1"
 
         result = subprocess.run(
@@ -143,7 +162,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
     def test_product_gate_dry_run_can_require_macos_frontend_and_predictor_capability(self) -> None:
         root = Path(__file__).resolve().parents[1]
         script = root / "scripts" / "run_product_readiness_gate.sh"
-        env = dict(os.environ)
+        env = self._gate_env()
         env["RAG_IME_REQUIRE_MACOS_FRONTEND"] = "1"
         env["RAG_IME_REQUIRE_PREDICTOR_CAPABILITY"] = "seededPromptReplay"
         env["RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT"] = "3"
@@ -241,7 +260,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             prepare_script.chmod(0o755)
-            env = dict(os.environ)
+            env = self._gate_env()
             env["RAG_IME_REQUIRE_MACOS_FRONTEND"] = "1"
             env["RAG_IME_PREPARE_SQUIRREL_FOREGROUND_CHECK_SCRIPT"] = str(prepare_script)
 
@@ -289,7 +308,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                     }
                 )
             )
-            env = dict(os.environ)
+            env = self._gate_env()
             env["HOME"] = str(tmp_path)
             env["RAG_IME_REQUIRE_PREDICTOR_CAPABILITY"] = "seededPromptReplay"
             for key in list(env):
@@ -335,6 +354,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                 "/tmp/rag-ime-product-gate.sqlite",
             ],
             cwd=root,
+            env=self._gate_env(),
             text=True,
             capture_output=True,
             check=True,
@@ -369,6 +389,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                     str(Path(tmp) / "gate.sqlite"),
                 ],
                 cwd=root,
+                env=self._gate_env(),
                 text=True,
                 capture_output=True,
                 check=True,

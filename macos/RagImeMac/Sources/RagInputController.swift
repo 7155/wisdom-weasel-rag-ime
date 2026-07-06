@@ -134,7 +134,7 @@ final class RagInputController: IMKInputController {
 
     override func candidates(_ sender: Any!) -> [Any]! {
         if !latestDisplayCandidates.isEmpty {
-            return latestDisplayCandidates.map(\.text)
+            return latestDisplayCandidates.map(displayTextForSystemCandidate)
         }
         return latestModelPredictions.map(\.text) + latestSuggestions.map(\.surfaceText)
     }
@@ -865,6 +865,25 @@ final class RagInputController: IMKInputController {
             return latestDisplayCandidates[number - 1]
         }
         return nil
+    }
+
+    private func displayTextForSystemCandidate(_ candidate: RimeDisplayCandidate) -> String {
+        let insertText = candidate.insertText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !insertText.isEmpty {
+            return stripSourceSuffix(insertText)
+        }
+        return stripSourceSuffix(candidate.text)
+    }
+
+    private func stripSourceSuffix(_ text: String) -> String {
+        var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in ["_model", "_rag", "_memory", " [LLM]", " [RAG]", " LLM", " RAG", " 模", " 查", " 忆"] {
+            if value.hasSuffix(suffix) {
+                value = String(value.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+        return value
     }
 
     private func canSelectPanelCandidate(_ candidate: RimeDisplayCandidate, response: RimeSidecarResponse) -> Bool {

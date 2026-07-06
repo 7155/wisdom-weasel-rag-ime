@@ -12,6 +12,7 @@ INSTALL_APP_NAME="${RAG_IME_SQUIRREL_INSTALL_APP_NAME:-Squirrel}"
 ACTION="${1:-${RAG_IME_SQUIRREL_BUILD_ACTION:-build}}"
 DRY_RUN="${RAG_IME_SQUIRREL_BUILD_DRY_RUN:-0}"
 XCODEBUILD="${RAG_IME_XCODEBUILD:-$(command -v xcodebuild || true)}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 PREINSTALL="${RAG_IME_SQUIRREL_PREINSTALL:-auto}"
 NO_DOWNLOAD="${RAG_IME_SQUIRREL_NO_DOWNLOAD:-0}"
 SKIP_POSTINSTALL="${RAG_IME_SQUIRREL_SKIP_POSTINSTALL:-0}"
@@ -136,6 +137,78 @@ require_file() {
     echo "$message: $path" >&2
     exit 1
   fi
+}
+
+sha256_file() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    "$PYTHON_BIN" - "$1" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+  fi
+}
+
+write_rag_ime_build_marker() {
+  local app_path="$1"
+  local marker_path="$app_path/Contents/Resources/rag-ime-build-marker.json"
+  local patch_path="$ROOT/squirrel-patches/0001-add-rag-ime-sidecar.patch"
+  local git_commit="unknown"
+  local git_branch="unknown"
+  local git_dirty="unknown"
+  local patch_sha256="missing"
+  local generated_at
+
+  mkdir -p "$(dirname "$marker_path")"
+  generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git_commit="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || printf unknown)"
+    git_branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || printf unknown)"
+    if [[ -n "$(git -C "$ROOT" status --short --untracked-files=no 2>/dev/null)" ]]; then
+      git_dirty="true"
+    else
+      git_dirty="false"
+    fi
+  fi
+  if [[ -f "$patch_path" ]]; then
+    patch_sha256="$(sha256_file "$patch_path")"
+  fi
+
+  "$PYTHON_BIN" - "$marker_path" <<PY
+import json
+import sys
+from pathlib import Path
+
+payload = {
+    "schemaVersion": "rag-ime.squirrel-build-marker.v1",
+    "generatedAt": "$generated_at",
+    "repoRoot": "$ROOT",
+    "gitCommit": "$git_commit",
+    "gitBranch": "$git_branch",
+    "gitDirty": "$git_dirty",
+    "patchPath": "squirrel-patches/0001-add-rag-ime-sidecar.patch",
+    "patchSha256": "$patch_sha256",
+    "installAppName": "$INSTALL_APP_NAME",
+    "bundleId": "$BUNDLE_ID",
+    "inputSourceId": "$INPUT_SOURCE_ID",
+    "hantInputSourceId": "$HANT_INPUT_SOURCE_ID",
+    "displayName": "$DISPLAY_NAME",
+    "features": {
+        "displayTextUsesInsertText": True,
+        "sourceCommentsHiddenByDefault": True,
+        "sourceSuffixStripper": True,
+        "foregroundTrace": "rag-ime.foreground-trace.v2",
+    },
+}
+Path(sys.argv[1]).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+  printf '[OK] wrote RAG-IME build marker: %s\n' "$marker_path"
 }
 
 require_text() {
@@ -352,6 +425,8 @@ install_squirrel_app() {
       "$ROOT/scripts/brand_squirrel_app.sh" "$TARGET_APP"
     printf '[OK] branded patched Squirrel.app as %s (%s)\n' "$DISPLAY_NAME" "$BUNDLE_ID"
   fi
+
+  write_rag_ime_build_marker "$TARGET_APP"
 
   if bool_true "$SKIP_CODESIGN"; then
     printf '[WARN] skipped Squirrel codesign; input source registration may fail\n' >&2

@@ -119,6 +119,19 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("candidate.selectionRank", source)
         self.assertIn("candidate.selectionKey", source)
 
+    def test_native_candidate_text_does_not_append_source_suffixes(self) -> None:
+        controller = _controller_source()
+        panel = _panel_source()
+
+        self.assertIn("latestDisplayCandidates.map(displayTextForSystemCandidate)", controller)
+        self.assertIn("private func stripSourceSuffix", controller)
+        self.assertIn('"_model"', controller)
+        self.assertIn('"_rag"', controller)
+        self.assertIn("candidateDisplayText(candidate)", panel)
+        self.assertIn("source: \"\"", panel)
+        self.assertNotIn("source: candidate.sourceType", panel)
+        self.assertNotIn("source: sourceBadge(candidate)", panel)
+
     def test_native_frontend_selects_by_backend_selection_rank(self) -> None:
         source = _controller_source()
 

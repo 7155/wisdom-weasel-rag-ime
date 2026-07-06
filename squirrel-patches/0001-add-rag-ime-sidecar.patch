@@ -2331,12 +2331,31 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func ragImeDisplayPanelPayload(fallbackLabels: [String]) -> (candidates: [String], comments: [String], labels: [String]) {
-+    let candidates = ragImeDisplayCandidates.map { $0.text }
++    let candidates = ragImeDisplayCandidates.map { ragImeDisplayText(for: $0) }
 +    let comments = ragImeDisplayCandidates.map { ragImeDisplayComment(for: $0) }
 +    let labels = ragImeDisplayCandidates.enumerated().map { index, candidate in
 +      candidate.label.isEmpty ? ragImeFallbackLabel(index: index, fallbackLabels: fallbackLabels) : candidate.label
 +    }
 +    return (candidates, comments, labels)
++  }
++
++  func ragImeDisplayText(for candidate: RagImeDisplayCandidate) -> String {
++    let insertText = candidate.insertText.trimmingCharacters(in: .whitespacesAndNewlines)
++    if !insertText.isEmpty {
++      return ragImeStripSourceSuffix(insertText)
++    }
++    return ragImeStripSourceSuffix(candidate.text)
++  }
++
++  func ragImeStripSourceSuffix(_ text: String) -> String {
++    var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
++    for suffix in ["_model", "_rag", "_memory", " [LLM]", " [RAG]", " LLM", " RAG", " 模", " 查", " 忆"] {
++      if value.hasSuffix(suffix) {
++        value = String(value.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
++        break
++      }
++    }
++    return value
 +  }
 +
 +  func ragImeBoolEnvEnabled(_ key: String, default defaultValue: Bool) -> Bool {
@@ -2384,7 +2403,10 @@ index c2adf74..3cfc0e5 100644
 +
 +  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {
 +    let badge = ragImeDisplayBadge(for: candidate)
-+    guard ragImeCandidateDiagnosticsEnabled(), !candidate.comment.isEmpty else {
++    guard ragImeCandidateDiagnosticsEnabled() else {
++      return ""
++    }
++    guard !candidate.comment.isEmpty else {
 +      return badge
 +    }
 +    guard !badge.isEmpty else {

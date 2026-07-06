@@ -281,8 +281,8 @@ final class RagCandidatePanel {
             button.action = #selector(ClosureSleeve.invoke)
             button.attributedTitle = attributedCandidateTitle(
                 label: displayLabel(for: candidate, fallback: index + 1),
-                text: candidate.text,
-                source: candidate.sourceType,
+                text: candidateDisplayText(candidate),
+                source: "",
                 fontSize: 12
             )
             button.widthAnchor.constraint(equalToConstant: width).isActive = true
@@ -326,8 +326,8 @@ final class RagCandidatePanel {
         button.action = #selector(ClosureSleeve.invoke)
         button.attributedTitle = attributedCandidateTitle(
             label: displayLabel(for: candidate, fallback: number),
-            text: candidate.text,
-            source: sourceBadge(candidate),
+            text: candidateDisplayText(candidate),
+            source: "",
             fontSize: 13
         )
         button.widthAnchor.constraint(equalToConstant: Metrics.contentWidth).isActive = true
@@ -466,6 +466,25 @@ final class RagCandidatePanel {
             ))
         }
         return title
+    }
+
+    private func candidateDisplayText(_ candidate: RimeDisplayCandidate) -> String {
+        let insertText = candidate.insertText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !insertText.isEmpty {
+            return stripSourceSuffix(insertText)
+        }
+        return stripSourceSuffix(candidate.text)
+    }
+
+    private func stripSourceSuffix(_ text: String) -> String {
+        var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in ["_model", "_rag", "_memory", " [LLM]", " [RAG]", " LLM", " RAG", " 模", " 查", " 忆"] {
+            if value.hasSuffix(suffix) {
+                value = String(value.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+        return value
     }
 
     private func displayLabel(for candidate: RimeDisplayCandidate, fallback: Int) -> String {
