@@ -155,8 +155,9 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         context: str = "我想彻底整理项目，先把",
         commit_preview: str = "先把",
         progressive_follow_up: bool = False,
+        foreground: bool = True,
     ) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "sessionId": "v1-post-commit",
             "requestSeq": request_seq,
             "rawInput": "",
@@ -174,6 +175,24 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
             "panelSessionId": "panel-v1",
         }
+        if foreground:
+            payload["foregroundText"] = {
+                "available": True,
+                "source": "text_input_client",
+                "confidence": 0.78,
+                "freshnessMs": 0,
+                "selectedTextHash": "",
+                "selectedTextChars": 0,
+                "selectedTextPreview": "",
+                "surroundingBefore": context,
+                "surroundingAfter": "",
+                "wholeValueHash": "",
+                "wholeValueChars": 0,
+                "canReplaceSelection": False,
+                "captureEpoch": request_seq,
+                "warnings": ["text_input_client_context"],
+            }
+        return payload
 
     def _response(
         self,
@@ -230,6 +249,130 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime", "rime"])
         self.assertEqual(response["keyPolicy"]["numberKeys"], "select_rime_candidate")
 
+    def test_v1_accessibility_foreground_context_feeds_side_lanes(self) -> None:
+        core = CuratedMemoryCore([_memory("fg:1", "真实前台文本相关候选", accepted_count=2)])
+        payload = self._composition_payload(request_seq=11)
+        payload["committedContext"] = "旧的输入法 ledger 不应该优先进入 side lane"
+        payload["foregroundText"] = {
+            "available": True,
+            "source": "accessibility",
+            "confidence": 0.86,
+            "freshnessMs": 0,
+            "selectedTextHash": "",
+            "selectedTextChars": 0,
+            "selectedTextPreview": "",
+            "surroundingBefore": "真实前台文本 正在写输入法上下文",
+            "surroundingAfter": "后面还有编辑器正文",
+            "wholeValueHash": "sha256:foreground-whole-value",
+            "wholeValueChars": 38,
+            "canReplaceSelection": False,
+            "captureEpoch": 11,
+            "warnings": ["string_for_range"],
+        }
+
+        response = self._response(payload, core=core, predictor=RecordingPredictionProvider([]))
+        foreground_context = response["ragLane"]["foregroundContext"]
+
+        self.assertEqual(response["queryBasis"], "rimeCandidates")
+        self.assertTrue(foreground_context["applied"])
+        self.assertEqual(foreground_context["source"], "accessibility")
+        self.assertEqual(foreground_context["wholeValueHash"], "sha256:foreground-whole-value")
+        self.assertIn("真实前台文本", core.last_current_input)
+        self.assertIn("真实前台文本", core.last_recent_context)
+        self.assertNotIn("旧的输入法 ledger", core.last_recent_context)
+
+    def test_v1_accessibility_foreground_context_can_drive_query_without_rime(self) -> None:
+        core = CuratedMemoryCore([_memory("fg:2", "前台正文续写候选", accepted_count=2)])
+        payload = self._post_commit_payload(request_seq=12, context="旧 ledger", commit_preview="")
+        payload["progressiveFollowUp"] = True
+        payload["forceSideCandidates"] = True
+        payload["foregroundText"] = {
+            "available": True,
+            "source": "accessibility",
+            "confidence": 0.86,
+            "freshnessMs": 0,
+            "surroundingBefore": "前台正文正在讨论 DeepSeek 生成输入法候选",
+            "surroundingAfter": "",
+            "wholeValueHash": "sha256:foreground-only",
+            "wholeValueChars": 25,
+            "canReplaceSelection": False,
+            "captureEpoch": 12,
+            "warnings": ["ax_value_fallback"],
+        }
+
+        response = self._response(payload, core=core, predictor=RecordingPredictionProvider([]))
+
+        self.assertEqual(response["queryBasis"], "foregroundText")
+        self.assertTrue(response["ragLane"]["foregroundContext"]["applied"])
+        self.assertEqual(core.last_current_input, "前台正文正在讨论 DeepSeek 生成输入法候选")
+        self.assertEqual(core.last_recent_context, "前台正文正在讨论 DeepSeek 生成输入法候选")
+
+    def test_v1_text_input_client_context_drives_post_commit_query(self) -> None:
+        core = CuratedMemoryCore([_memory("fg:3", "前台输入框续写候选", accepted_count=2)])
+        payload = self._post_commit_payload(
+            request_seq=13,
+            context="旧 ledger 不应该进入模型",
+            commit_preview="",
+            foreground=False,
+        )
+        payload["progressiveFollowUp"] = True
+        payload["forceSideCandidates"] = True
+        payload["foregroundText"] = {
+            "available": True,
+            "source": "text_input_client",
+            "confidence": 0.78,
+            "freshnessMs": 0,
+            "surroundingBefore": "真实输入框上下文来自 IMKTextInput",
+            "surroundingAfter": "",
+            "wholeValueHash": "",
+            "wholeValueChars": 0,
+            "canReplaceSelection": False,
+            "captureEpoch": 13,
+            "warnings": ["text_input_client_context"],
+        }
+
+        response = self._response(payload, core=core, predictor=RecordingPredictionProvider([]))
+
+        self.assertEqual(response["queryBasis"], "foregroundText")
+        self.assertTrue(response["triggerDecision"]["foregroundContextGate"]["allowed"])
+        self.assertEqual(response["ragLane"]["foregroundContext"]["source"], "text_input_client")
+        self.assertEqual(core.last_current_input, "真实输入框上下文来自 IMKTextInput")
+        self.assertEqual(core.last_recent_context, "真实输入框上下文来自 IMKTextInput")
+
+    def test_v1_post_commit_without_reliable_foreground_context_skips_side_lanes(self) -> None:
+        predictor = RecordingPredictionProvider()
+        core = CuratedMemoryCore([_memory("stale:1", "旧上下文候选", accepted_count=3)])
+        payload = self._post_commit_payload(
+            request_seq=14,
+            context="旧 ledger 不可信",
+            commit_preview="",
+            foreground=False,
+        )
+        payload["forceSideCandidates"] = True
+        payload["foregroundText"] = {
+            "available": True,
+            "source": "ime_commit_ledger",
+            "confidence": 0.65,
+            "freshnessMs": 0,
+            "surroundingBefore": "旧 ledger 不可信",
+            "surroundingAfter": "",
+            "wholeValueHash": "",
+            "wholeValueChars": 0,
+            "canReplaceSelection": False,
+            "captureEpoch": 14,
+            "warnings": [],
+        }
+
+        response = self._response(payload, core=core, predictor=predictor)
+
+        self.assertEqual(predictor.calls, 0)
+        self.assertEqual(core.calls, 0)
+        self.assertFalse(response["triggerDecision"]["shouldRefresh"])
+        self.assertFalse(response["triggerDecision"]["foregroundContextGate"]["allowed"])
+        self.assertIn("reliable foreground context required", response["triggerDecision"]["reason"])
+        self.assertFalse(response["modelLane"]["called"])
+        self.assertFalse(response["ragLane"]["called"])
+
     def test_v1_post_commit_async_first_response_under_250ms(self) -> None:
         predictor = RecordingPredictionProvider(sleep_s=0.35)
         started = time.perf_counter()
@@ -261,6 +404,24 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(follow_up["modelLane"]["requestType"], "post_commit_completion")
         self.assertEqual(follow_up["progressive"]["retryAfterMs"], 250)
 
+    def test_v1_post_commit_completion_cache_respects_memory_bound(self) -> None:
+        predictor = RecordingPredictionProvider(sleep_s=0.01)
+        last_response: dict[str, object] = {}
+        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS": "2"}):
+            for index in range(3):
+                last_response = self._response(
+                    self._post_commit_payload(
+                        request_seq=20 + index,
+                        context=f"我想整理第 {index} 段真实前台上下文",
+                        commit_preview=f"第{index}段",
+                    ),
+                    predictor=predictor,
+                )
+
+        model_lane = last_response["modelLane"]
+        self.assertEqual(model_lane["completionCacheMaxSize"], 2)
+        self.assertLessEqual(model_lane["completionCacheSize"], 2)
+
     def test_v1_post_commit_model_candidates_not_pinyin_filtered(self) -> None:
         _, follow_up, predictor, _ = self._prime_post_commit(
             predictor=RecordingPredictionProvider(["真实输入链路跑通", "v1 范围收缩"])
@@ -282,10 +443,14 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         )
         _, follow_up, _, actual_core = self._prime_post_commit(core=core)
         surfaces = [item["text"] for item in follow_up["displayCandidates"]]
+        rag_surfaces = [item["surfaceText"] for item in follow_up["ragCandidates"]]
 
         self.assertEqual(actual_core.last_current_input, "先把")
         self.assertNotIn("我想彻底整理项目，先把", surfaces)
-        self.assertIn("真实输入链路跑通", surfaces)
+        self.assertNotIn("我想彻底整理项目，先把", rag_surfaces)
+        self.assertIn("真实输入链路跑通", rag_surfaces)
+        self.assertTrue(follow_up["ragLane"]["directDisplaySuppressed"])
+        self.assertEqual(follow_up["ragLane"]["displaySuggestionCount"], 0)
         self.assertGreaterEqual(follow_up["ragLane"]["filteredSuggestionCount"], 1)
 
     def test_v1_rag_prompt_leaks_filtered(self) -> None:
@@ -298,10 +463,14 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         )
         _, follow_up, _, _ = self._prime_post_commit(core=core)
         surfaces = [item["text"] for item in follow_up["displayCandidates"]]
+        rag_surfaces = [item["surfaceText"] for item in follow_up["ragCandidates"]]
 
         self.assertFalse(any("019f1228" in item for item in surfaces))
         self.assertFalse(any("sessionId" in item for item in surfaces))
-        self.assertIn("候选质量验收", surfaces)
+        self.assertFalse(any("019f1228" in item for item in rag_surfaces))
+        self.assertFalse(any("sessionId" in item for item in rag_surfaces))
+        self.assertIn("候选质量验收", rag_surfaces)
+        self.assertTrue(follow_up["ragLane"]["directDisplaySuppressed"])
         self.assertGreaterEqual(follow_up["ragLane"]["filteredSuggestionCount"], 2)
 
     def test_v1_timeout_does_not_clear_legal_panel(self) -> None:
@@ -345,6 +514,29 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
         self.assertEqual([item["text"] for item in model_candidates], ["继续补齐需求"])
         self.assertEqual(follow_up["modelLane"]["fallbackReason"], "demo_safe_empty_post_commit_fallback")
+
+    def test_v1_repeated_context_does_not_show_demo_fallback_echo(self) -> None:
+        _, follow_up, _, _ = self._prime_post_commit(
+            core=CuratedMemoryCore(),
+            predictor=RecordingPredictionProvider(["您已"]),
+            context="你好明天明天见继续完善一下继续完善一下继续完善一下",
+            commit_preview="",
+        )
+        model_candidates = [item for item in follow_up["displayCandidates"] if item["sourceType"] == "model"]
+
+        self.assertFalse(any(item["text"].startswith("继续完善") or item["text"] == "继续" for item in model_candidates))
+        self.assertNotEqual(follow_up["modelLane"].get("fallbackReason"), "demo_safe_empty_post_commit_fallback")
+
+    def test_v1_post_commit_rag_rejects_short_context_echo_even_when_accepted(self) -> None:
+        _, follow_up, _, _ = self._prime_post_commit(
+            core=CuratedMemoryCore([_memory("echo:welcome", "欢迎", accepted_count=9)]),
+            predictor=RecordingPredictionProvider([""]),
+            context="你好欢迎欢迎使用继续继续完善一下欢迎继续欢迎欢迎",
+            commit_preview="",
+        )
+        surfaces = [item["text"] for item in follow_up["displayCandidates"]]
+
+        self.assertNotIn("欢迎", surfaces)
 
     def test_v1_post_commit_presentation_streams_candidate_prefixes(self) -> None:
         with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1"}):
@@ -500,15 +692,20 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(follow_up["ragLane"]["filteredSuggestionCount"], 0)
         self.assertEqual(follow_up["ragLane"]["postCommitQualityFilteredCount"], 0)
 
-    def test_v1_memory_display_candidate_exposes_source_reason(self) -> None:
+    def test_v1_memory_evidence_candidate_exposes_source_reason_without_direct_display(self) -> None:
         _, follow_up, _, _ = self._prime_post_commit(
             core=CuratedMemoryCore([_memory("good:1", "真实输入链路跑通", accepted_count=2)]),
             predictor=RecordingPredictionProvider(["候选质量验收"]),
         )
         memory_candidates = [item for item in follow_up["displayCandidates"] if item["sourceType"] == "memory"]
+        memory_evidence = [
+            item for item in follow_up["ragCandidates"] if item["metadata"].get("source_type") == "memory"
+        ]
 
-        self.assertTrue(memory_candidates)
-        self.assertEqual(memory_candidates[0]["metadata"]["sourceReason"], "accepted_memory")
+        self.assertFalse(memory_candidates)
+        self.assertTrue(memory_evidence)
+        self.assertEqual(memory_evidence[0]["metadata"]["sourceReason"], "accepted_memory")
+        self.assertTrue(follow_up["ragLane"]["directDisplaySuppressed"])
 
     def test_v1_filter_post_commit_completion_rejects_context_echo(self) -> None:
         from rag_ime.rime_sidecar import parse_rime_context_payload
@@ -529,6 +726,27 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual([item.text for item in kept], ["上屏后短补全"])
         self.assertEqual(kept[0].metadata["requestType"], "post_commit_completion")
         self.assertTrue(kept[0].metadata["noPinyinFilter"])
+
+    def test_v1_filter_post_commit_completion_rejects_repeated_tail_echo(self) -> None:
+        from rag_ime.rime_sidecar import parse_rime_context_payload
+
+        rime_snapshot = parse_rime_context_payload(
+            self._post_commit_payload(
+                context="你好明天明天见继续完善一下继续完善一下继续完善一下",
+                commit_preview="",
+            ),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        kept = filter_post_commit_model_completions(
+            [
+                ModelPrediction("继续完善", 1, "model", 1, 0.9),
+                ModelPrediction("换一个方向", 2, "model", 1, 0.9),
+            ],
+            snapshot=rime_snapshot,
+            max_candidates=3,
+        )
+
+        self.assertEqual([item.text for item in kept], ["换一个方向"])
 
     def test_v1_key_policy_keeps_composition_numbers_for_rime(self) -> None:
         composition_policy = key_policy_for_prediction_session(

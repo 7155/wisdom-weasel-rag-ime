@@ -76,6 +76,10 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_VECTOR_CANDIDATES": "48",
                 "RAG_IME_VECTOR_WEIGHT": "1.7",
                 "RAG_IME_VECTOR_AUTO_REBUILD_LIMIT": "5000",
+                "RAG_IME_DEEPSEEK_BASE_URL": "https://api.kukuit.com",
+                "RAG_IME_DEEPSEEK_API_KEY": "test-deepseek-key",
+                "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
+                "RAG_IME_DEEPSEEK_ACTIVE_RAG": "1",
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
@@ -96,7 +100,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
 
         self.assertEqual(payload["Label"], "com.rag-ime.sidecar")
         self.assertTrue(payload["RunAtLoad"])
-        self.assertTrue(payload["KeepAlive"])
+        self.assertFalse(payload["KeepAlive"])
         self.assertNotIn("PYTHONPATH", payload["EnvironmentVariables"])
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_SOURCE_ROOT"], str(root))
         self.assertTrue(payload["EnvironmentVariables"]["RAG_IME_ROOT"].endswith("RagIme/app"))
@@ -113,18 +117,76 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_CANDIDATES"], "48")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_WEIGHT"], "1.7")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_AUTO_REBUILD_LIMIT"], "5000")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_BASE_URL"], "https://api.kukuit.com")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_API_KEY"], "test-deepseek-key")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_MODEL"], "deepseek-v4-flash")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_ACTIVE_RAG"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_COMPOSING_MODEL"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS"], "150")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS"], "250")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_COMPLETION_TTL_MS"], "12000")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS"], "8")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS"], "12000")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "900")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES"], "32")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES"], "16")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES"], "128")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES"], "32")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_SUGGESTION_CACHE_SIZE"], "32")
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
         self.assertIn("sidecar-server", payload["ProgramArguments"])
         self.assertIn("18766", payload["ProgramArguments"])
         self.assertIn("sidecar_launch.py", " ".join(payload["ProgramArguments"]))
+
+    def test_install_sidecar_launch_agent_can_opt_into_keepalive(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-keepalive-test-") as tmp:
+            env = {
+                **os.environ,
+                "HOME": tmp,
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+                "RAG_IME_LAUNCH_KEEP_ALIVE": "1",
+            }
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            plist_path = Path(tmp) / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist"
+            with plist_path.open("rb") as fh:
+                payload = plistlib.load(fh)
+
+        self.assertTrue(payload["KeepAlive"])
+
+    def test_install_sidecar_launch_agent_rejects_broken_python(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-bad-python-test-") as tmp:
+            fake_python = Path(tmp) / "python3"
+            fake_python.write_text("#!/usr/bin/env bash\nexit 42\n", encoding="utf-8")
+            fake_python.chmod(0o755)
+            env = {
+                **os.environ,
+                "HOME": tmp,
+                "RAG_IME_PYTHON": str(fake_python),
+                "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sqlite3/hashlib/ssl", result.stderr)
 
     def test_install_sidecar_launch_agent_allows_explicit_v1_budget_override(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -169,6 +231,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
                             "RAG_IME_EMBEDDING_PROVIDER": "local-hash",
                             "RAG_IME_VECTOR_CANDIDATES": "80",
                             "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "4500",
+                            "RAG_IME_DEEPSEEK_BASE_URL": "https://api.kukuit.com",
+                            "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
                         },
                     },
                     fh,
@@ -204,6 +268,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_STREAM_FIRST"], "1")
         self.assertEqual(env_vars["RAG_IME_EMBEDDING_PROVIDER"], "local-hash")
         self.assertEqual(env_vars["RAG_IME_VECTOR_CANDIDATES"], "80")
+        self.assertEqual(env_vars["RAG_IME_DEEPSEEK_BASE_URL"], "https://api.kukuit.com")
+        self.assertEqual(env_vars["RAG_IME_DEEPSEEK_MODEL"], "deepseek-v4-flash")
         self.assertEqual(env_vars["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "900")
 
     def test_install_sidecar_launch_agent_can_enable_local_vector_baseline(self) -> None:
@@ -254,6 +320,11 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_MLX_MODEL": "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local",
                 "RAG_IME_MLX_PROFILE": "qwen3_06b_ime_hot",
                 "RAG_IME_MLX_PROMPT_CACHE": "1",
+                "RAG_IME_MLX_PREFIX_CACHE": "0",
+                "RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES": "8",
+                "RAG_IME_MLX_PREFIX_CACHE_MAX_MB": "32",
+                "RAG_IME_MLX_PROMPT_MODE": "base-completion",
+                "RAG_IME_MEMORY_PROFILE": "low",
                 "RAG_IME_HF_HOME": str(Path(tmp) / "hf-cache"),
             }
             result = subprocess.run(
@@ -274,6 +345,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 payload = plistlib.load(fh)
 
         self.assertEqual(payload["Label"], "com.rag-ime.mlx-predictor")
+        self.assertFalse(payload["KeepAlive"])
         self.assertIn("mlx-predictor-server", payload["ProgramArguments"])
         self.assertIn("18767", payload["ProgramArguments"])
         self.assertIn("/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local", payload["ProgramArguments"])
@@ -284,11 +356,39 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_MLX_MODEL"], "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local")
         self.assertEqual(env_vars["RAG_IME_MLX_PROFILE"], "qwen3_06b_ime_hot")
         self.assertEqual(env_vars["RAG_IME_MLX_PORT"], "18767")
+        self.assertEqual(env_vars["RAG_IME_MLX_PROMPT_MODE"], "base-completion")
+        self.assertEqual(env_vars["RAG_IME_MLX_PREFIX_CACHE"], "0")
+        self.assertEqual(env_vars["RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES"], "8")
+        self.assertEqual(env_vars["RAG_IME_MLX_PREFIX_CACHE_MAX_MB"], "32")
+        self.assertEqual(env_vars["RAG_IME_MEMORY_PROFILE"], "low")
         self.assertEqual(env_vars["HTTP_PROXY"], "")
         self.assertEqual(env_vars["HTTPS_PROXY"], "")
         self.assertEqual(env_vars["ALL_PROXY"], "")
         self.assertEqual(env_vars["HF_HOME"], str(Path(tmp) / "hf-cache"))
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
+
+    def test_install_mlx_predictor_launch_agent_rejects_broken_python(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-mlx-bad-python-test-") as tmp:
+            fake_python = Path(tmp) / "python3"
+            fake_python.write_text("#!/usr/bin/env bash\nexit 42\n", encoding="utf-8")
+            fake_python.chmod(0o755)
+            env = {
+                **os.environ,
+                "HOME": tmp,
+                "RAG_IME_MLX_PYTHON": str(fake_python),
+                "RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN": "1",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "install_mlx_predictor_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sqlite3/hashlib/ssl", result.stderr)
 
 
 if __name__ == "__main__":

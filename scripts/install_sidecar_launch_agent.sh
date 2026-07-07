@@ -27,7 +27,15 @@ detect_python() {
   candidates+=("/usr/local/bin/python3")
 
   for candidate in "${candidates[@]}"; do
-    if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" - <<'PY' >/dev/null 2>&1; then
+import hashlib
+import sqlite3
+import ssl
+import sys
+
+hashlib.md5(b"rag-ime").hexdigest()
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -68,6 +76,20 @@ PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(detect_python || true)}"
 
 if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
   echo "python executable not found or not executable: $PYTHON_EXECUTABLE" >&2
+  exit 1
+fi
+
+if ! "$PYTHON_EXECUTABLE" - <<'PY' >/dev/null 2>&1; then
+import hashlib
+import sqlite3
+import ssl
+import sys
+
+hashlib.md5(b"rag-ime").hexdigest()
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+  echo "python executable cannot import required stdlib modules (sqlite3/hashlib/ssl): $PYTHON_EXECUTABLE" >&2
+  echo "Set RAG_IME_PYTHON to a healthy Homebrew or project virtualenv Python." >&2
   exit 1
 fi
 
@@ -156,8 +178,15 @@ env_vars = {
     "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
     "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
     "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
+    "RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS": "8",
     "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
     "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
+    "RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT": "1",
+    "RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES": "32",
+    "RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES": "16",
+    "RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES": "128",
+    "RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES": "32",
+    "RAG_IME_SUGGESTION_CACHE_SIZE": "32",
 }
 ssl_cert_file = os.environ.get("SSL_CERT_FILE_DEFAULT", "")
 if ssl_cert_file:
@@ -178,6 +207,22 @@ preserve_existing_keys = {
     "X1API_BASE_URL",
     "X1API_MODEL",
     "X1API_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "DEEPSEEK_MODEL",
+    "DEEPSEEK_WIRE_API",
+    "DEEPSEEK_STREAM",
+    "DEEPSEEK_JSON",
+    "RAG_IME_DEEPSEEK_API_KEY",
+    "RAG_IME_DEEPSEEK_BASE_URL",
+    "RAG_IME_DEEPSEEK_MODEL",
+    "RAG_IME_DEEPSEEK_WIRE_API",
+    "RAG_IME_DEEPSEEK_STREAM",
+    "RAG_IME_DEEPSEEK_JSON",
+    "RAG_IME_DEEPSEEK_TIMEOUT_SECONDS",
+    "RAG_IME_DEEPSEEK_ACTIVE_RAG",
+    "RAG_IME_DEEPSEEK_POST_COMMIT",
+    "RAG_IME_DEEPSEEK_PREVIEW_TOKEN",
     "RAG_IME_PREDICTOR_PROVIDER",
     "RAG_IME_PREDICTOR_BASE_URL",
     "RAG_IME_PREDICTOR_MODEL",
@@ -194,6 +239,13 @@ preserve_existing_keys = {
     "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON",
     "RAG_IME_PREDICTOR_API_KEY",
     "RAG_IME_MLX_MODEL",
+    "RAG_IME_RIME_CACHE_TTL_MS",
+    "RAG_IME_SUGGESTION_CACHE_SIZE",
+    "RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES",
+    "RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES",
+    "RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES",
+    "RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS",
+    "RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES",
     "RAG_IME_EMBEDDING_PROVIDER",
     "RAG_IME_EMBEDDING_BASE_URL",
     "RAG_IME_EMBEDDING_MODEL",
@@ -222,8 +274,14 @@ for key in (
     "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS",
     "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS",
     "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS",
+    "RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS",
     "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS",
     "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS",
+    "RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT",
+    "RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES",
+    "RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES",
+    "RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES",
+    "RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES",
     "SSL_CERT_FILE",
     "RAG_IME_MODEL_ENV",
     "RAG_IME_X1API_ENV",
@@ -239,6 +297,22 @@ for key in (
     "X1API_BASE_URL",
     "X1API_MODEL",
     "X1API_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "DEEPSEEK_MODEL",
+    "DEEPSEEK_WIRE_API",
+    "DEEPSEEK_STREAM",
+    "DEEPSEEK_JSON",
+    "RAG_IME_DEEPSEEK_API_KEY",
+    "RAG_IME_DEEPSEEK_BASE_URL",
+    "RAG_IME_DEEPSEEK_MODEL",
+    "RAG_IME_DEEPSEEK_WIRE_API",
+    "RAG_IME_DEEPSEEK_STREAM",
+    "RAG_IME_DEEPSEEK_JSON",
+    "RAG_IME_DEEPSEEK_TIMEOUT_SECONDS",
+    "RAG_IME_DEEPSEEK_ACTIVE_RAG",
+    "RAG_IME_DEEPSEEK_POST_COMMIT",
+    "RAG_IME_DEEPSEEK_PREVIEW_TOKEN",
     "RAG_IME_PREDICTOR_PROVIDER",
     "RAG_IME_PREDICTOR_BASE_URL",
     "RAG_IME_PREDICTOR_MODEL",
@@ -287,7 +361,8 @@ payload = {
     "Label": label,
     "ProgramArguments": args,
     "RunAtLoad": True,
-    "KeepAlive": True,
+    "KeepAlive": os.environ.get("RAG_IME_LAUNCH_KEEP_ALIVE", "0").strip().lower()
+    not in {"0", "false", "no", "off"},
     "ThrottleInterval": 10,
     "StandardOutPath": str(Path(os.environ["LOG_DIR"]) / "sidecar.out.log"),
     "StandardErrorPath": str(Path(os.environ["LOG_DIR"]) / "sidecar.err.log"),

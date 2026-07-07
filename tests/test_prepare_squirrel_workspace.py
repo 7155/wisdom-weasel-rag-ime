@@ -9,6 +9,109 @@ from pathlib import Path
 
 
 class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
+    def _create_minimal_squirrel_upstream(self, tmp_path: Path) -> tuple[Path, Path]:
+        upstream = tmp_path / "upstream-squirrel"
+        patch_file = tmp_path / "rag-ime-sidecar.patch"
+        upstream.mkdir()
+        (upstream / "sources").mkdir()
+        subprocess.run(["git", "init"], cwd=upstream, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=upstream, check=True)
+        subprocess.run(["git", "config", "user.name", "RAG IME Test"], cwd=upstream, check=True)
+        (upstream / "README.md").write_text("fake squirrel\n", encoding="utf-8")
+        (upstream / "sources" / "RagImeSidecarModels.swift").write_text(
+            "import Foundation\nstruct RagImeSidecarRequest: Codable {}\n"
+            "struct RagImeDisplayCandidate { let displayLayout: String? }\n",
+            encoding="utf-8",
+        )
+        (upstream / "sources" / "RagImeSidecarClient.swift").write_text(
+            "import Foundation\nstruct RagImeSidecarClient {\n"
+            "  init?(config: SquirrelConfig?) {}\n"
+            "  func call() { _ = \"rime-suggest\"; _ = \"rime-select\" }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (upstream / "sources" / "RagImeSelectedTextProvider.swift").write_text(
+            "import ApplicationServices\nfinal class RagImeSelectedTextProvider {\n"
+            "  func captureForegroundTextForSidecar() {\n"
+            "    _ = kAXSelectedTextRangeAttribute\n"
+            "    _ = kAXStringForRangeParameterizedAttribute\n"
+            "    _ = kAXValueAttribute\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (upstream / "sources" / "SquirrelInputController.swift").write_text(
+            "\n".join(
+                [
+                    "final class SquirrelInputController {",
+                    "  func selectRagImeSideCandidate() {}",
+                    "  func ragImeRequestFingerprint() {}",
+                    "  func mergedRagImePanelCandidates() {}",
+                    "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
+                    "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
+                    "  func traceRagImeFrontendEvent() {}",
+                    "  func traceRagImePanelTextLayout() { _ = \"panel_text_layout\" }",
+                    "  func traceSidecarRequestScheduled() { _ = \"sidecar_request_scheduled\" }",
+                    "  func traceSidecarEmptyResponseCleared() { _ = \"sidecar_empty_response_cleared\" }",
+                    "  func traceV2() { _ = \"rag-ime.foreground-trace.v2\" }",
+                    "  func foregroundSnapshot() { _ = \"ragImeSelectedTextProvider.captureForegroundTextForSidecar\" }",
+                    "  func ragImeDisplayComment() { _ = \"candidate.sourceType == \\\"model\\\"\" }",
+                    "}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (upstream / "sources" / "SquirrelPanel.swift").write_text(
+            "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; "
+            "func candidateSeparator(before index: Int) -> String { \"\\n\" }; "
+            "func traceRagImePanelTextLayout() {} }\n",
+            encoding="utf-8",
+        )
+        (upstream / "sources" / "Main.swift").write_text(
+            "\n".join(
+                [
+                    "import Foundation",
+                    "struct SquirrelApp {",
+                    '  static let appDir = "/Library/Input Library/Squirrel.app".withCString { dir in',
+                    "    URL(fileURLWithFileSystemRepresentation: dir, isDirectory: false, relativeTo: nil)",
+                    "  }",
+                    '  static let logDir = FileManager.default.temporaryDirectory.appending(component: "rime.squirrel", directoryHint: .isDirectory)',
+                    "}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "README.md", "sources"], cwd=upstream, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=upstream, check=True, capture_output=True, text=True)
+
+        (upstream / "sources" / "Main.swift").write_text(
+            "\n".join(
+                [
+                    "import Foundation",
+                    "struct SquirrelApp {",
+                    "  static let appDir = Bundle.main.bundleURL",
+                    '  static let logDir = FileManager.default.temporaryDirectory.appending(component: "rime.squirrel", directoryHint: .isDirectory)',
+                    "}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        patch_file.write_text(
+            subprocess.run(
+                ["git", "diff", "--binary"],
+                cwd=upstream,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout,
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=upstream, check=True, capture_output=True, text=True)
+        return upstream, patch_file
+
     def test_prepare_squirrel_workspace_dry_run_reports_paths(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-squirrel-prepare-") as tmp:
@@ -36,6 +139,45 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             f"db_path={Path(tmp) / 'Library' / 'Application Support' / 'RagIme' / 'rag-ime.sqlite'}",
             result.stdout,
         )
+
+    def test_prepare_squirrel_workspace_reset_recovers_invalid_git_checkout(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-squirrel-reset-") as tmp:
+            tmp_path = Path(tmp)
+            upstream, patch_file = self._create_minimal_squirrel_upstream(tmp_path)
+            workdir = tmp_path / "patched-squirrel"
+            (workdir / ".git").mkdir(parents=True)
+            (workdir / "stale-marker.txt").write_text("broken checkout\n", encoding="utf-8")
+            env = {
+                **os.environ,
+                "RAG_IME_SQUIRREL_REPO_URL": str(upstream),
+                "RAG_IME_SQUIRREL_BASE_REF": "HEAD",
+                "RAG_IME_SQUIRREL_WORKDIR": str(workdir),
+                "RAG_IME_SQUIRREL_PATCH": str(patch_file),
+                "RAG_IME_SQUIRREL_RESET": "1",
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_DB_PATH": str(tmp_path / "rag-ime.sqlite"),
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "prepare_squirrel_workspace.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+            git_check = subprocess.run(
+                ["git", "-C", str(workdir), "rev-parse", "--is-inside-work-tree"],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertIn("Prepared patched Squirrel workdir", result.stdout)
+        self.assertIn("Resetting Squirrel workdir", result.stderr)
+        self.assertEqual(git_check.stdout.strip(), "true")
+        self.assertFalse((workdir / "stale-marker.txt").exists())
 
     def test_prepare_squirrel_workspace_applies_patch_and_writes_config_offline(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -73,6 +215,22 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            (upstream / "sources" / "RagImeSelectedTextProvider.swift").write_text(
+                "\n".join(
+                    [
+                        "import ApplicationServices",
+                        "final class RagImeSelectedTextProvider {",
+                        "  func captureForegroundTextForSidecar() {",
+                        "    _ = kAXSelectedTextRangeAttribute",
+                        "    _ = kAXStringForRangeParameterizedAttribute",
+                        "    _ = kAXValueAttribute",
+                        "  }",
+                        "}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             (upstream / "sources" / "SquirrelInputController.swift").write_text(
                 "\n".join(
                     [
@@ -87,6 +245,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         '  func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }',
                         '  func traceSidecarEmptyResponseCleared() { _ = "sidecar_empty_response_cleared" }',
                         '  func traceV2() { _ = "rag-ime.foreground-trace.v2" }',
+                        '  func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }',
                         '  func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" }',
                         "}",
                     ]
@@ -195,6 +354,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             self.assertIn("Prepared patched Squirrel workdir", result.stdout)
             self.assertTrue((workdir / "sources" / "RagImeSidecarModels.swift").is_file())
             self.assertTrue((workdir / "sources" / "RagImeSidecarClient.swift").is_file())
+            self.assertTrue((workdir / "sources" / "RagImeSelectedTextProvider.swift").is_file())
             self.assertTrue((workdir / "sources" / "SquirrelInputController.swift").is_file())
             self.assertIn(
                 "static let appDir = Bundle.main.bundleURL",

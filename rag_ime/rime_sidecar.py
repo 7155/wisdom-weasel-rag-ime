@@ -9,7 +9,8 @@ from threading import BoundedSemaphore, Event, RLock, Thread
 from typing import Any, Mapping
 
 from .adapter import InputMethodAdapter, SuggestionRequest
-from .context_frame import build_current_input_frame, context_frame_trace_payload
+from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
+from .context_frame import build_current_input_frame, context_frame_trace_payload, foreground_text_from_payload
 from .context_views import (
     build_display_view,
     build_model_prompt_view,
@@ -137,6 +138,12 @@ _POST_COMMIT_MODEL_HARD_TIMEOUT_MS = 12000
 _POST_COMMIT_PANEL_TTL_MS = 8000
 _PREFIX_CONSTRAINED_PANEL_TTL_MS = 2600
 _REFRESH_DEBOUNCE_MS = 100
+_MODEL_HOLDOVER_MAX_ENTRIES = 32
+_PREDICTION_MANAGER_MAX_ENTRIES = 16
+_REFRESH_DEBOUNCE_MAX_ENTRIES = 128
+_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS = 8
+_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES = 32
+_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS = 1500
 _MODEL_LANE_LOCK = RLock()
 _MODEL_LANE_ACTIVE_TOKEN: str | None = None
 _MODEL_LANE_ACTIVE_STARTED_AT = 0.0
@@ -377,6 +384,7 @@ class PostCommitCompletionCache:
                 state="pending",
             )
             self._jobs[key] = job
+            self._drop_over_limit_locked()
             predictions, lane = self._payload_for_job_locked(job, now=now, cache_hit=False, started=True)
             start_kwargs = {
                 "job": job,
@@ -510,6 +518,7 @@ class PostCommitCompletionCache:
                 "requestType": PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
                 "providerCallCount": job.provider_call_count,
                 "completionCacheSize": len(self._jobs),
+                "completionCacheMaxSize": post_commit_completion_cache_max_jobs(),
                 "presentationStreaming": bool(presentation_stage_count > 1),
                 "presentationStage": presentation_stage,
                 "presentationStageCount": presentation_stage_count,
@@ -527,6 +536,19 @@ class PostCommitCompletionCache:
         ]
         for key in expired:
             self._jobs.pop(key, None)
+        self._drop_over_limit_locked()
+
+    def _drop_over_limit_locked(self) -> None:
+        limit = post_commit_completion_cache_max_jobs()
+        while len(self._jobs) > limit:
+            oldest_key = min(
+                self._jobs,
+                key=lambda item: (
+                    self._jobs[item].state == "pending",
+                    self._jobs[item].created_at,
+                ),
+            )
+            self._jobs.pop(oldest_key, None)
 
 
 def _post_commit_presentation_stream_predictions(
@@ -596,14 +618,32 @@ def build_rime_sidecar_response(
     default_project: str = "wisdom-weasel-rag-ime",
 ) -> dict[str, object]:
     snapshot = parse_rime_context_payload(payload, default_project=default_project)
-    semantic_query, query_basis = choose_semantic_query(snapshot)
+    foreground_context, foreground_context_meta = foreground_context_for_side_lanes(payload, snapshot=snapshot)
+    effective_snapshot = (
+        replace(snapshot, committed_context=foreground_context)
+        if foreground_context
+        else snapshot
+    )
+    semantic_query, query_basis = choose_semantic_query(
+        effective_snapshot,
+        foreground_context=foreground_context,
+    )
     trigger_decision = decide_side_candidate_refresh(
-        snapshot=snapshot,
+        snapshot=effective_snapshot,
         semantic_query=semantic_query,
         query_basis=query_basis,
     )
+    foreground_context_gate = post_commit_foreground_context_gate(
+        snapshot=effective_snapshot,
+        foreground_context_meta=foreground_context_meta,
+    )
+    if trigger_decision.should_refresh and not bool(foreground_context_gate.get("allowed")):
+        trigger_decision = RimeSideCandidateTriggerDecision(
+            False,
+            _string(foreground_context_gate.get("reason")) or "skip: reliable foreground context required",
+        )
     trigger_decision, refresh_debounce = apply_refresh_debounce(
-        snapshot=snapshot,
+        snapshot=effective_snapshot,
         trigger_decision=trigger_decision,
         semantic_query=semantic_query,
         query_basis=query_basis,
@@ -616,11 +656,11 @@ def build_rime_sidecar_response(
             core=core,
             predictor=predictor,
             deepseek_completion_provider=deepseek_completion_provider,
-            snapshot=snapshot,
+            snapshot=effective_snapshot,
             current_input=semantic_query,
             query_basis=query_basis,
-            recent_context=snapshot.committed_context,
-            explicit_recent_context=snapshot.committed_context,
+            recent_context=effective_snapshot.committed_context,
+            explicit_recent_context=effective_snapshot.committed_context,
             project=snapshot.project or default_project,
             app=snapshot.app,
             top_k=snapshot.max_side_candidates,
@@ -640,7 +680,7 @@ def build_rime_sidecar_response(
             raw_model_prediction_count = len(model_predictions)
         model_predictions = _filter_model_predictions_for_snapshot(
             model_predictions,
-            snapshot=snapshot,
+            snapshot=effective_snapshot,
             query_basis=query_basis,
         )
         model_lane["filteredPredictionCount"] = raw_model_prediction_count - len(model_predictions)
@@ -649,7 +689,7 @@ def build_rime_sidecar_response(
         raw_suggestion_count = len(suggestions)
         suggestions = _filter_rag_suggestions_for_query(
             suggestions,
-            snapshot=snapshot,
+            snapshot=effective_snapshot,
             semantic_query=semantic_query,
             query_basis=query_basis,
             prediction_context=prediction_context,
@@ -657,7 +697,7 @@ def build_rime_sidecar_response(
         post_commit_filtered_suggestions = len(suggestions)
         suggestions = _filter_post_commit_rag_suggestions_for_query(
             suggestions,
-            snapshot=snapshot,
+            snapshot=effective_snapshot,
             semantic_query=semantic_query,
             query_basis=query_basis,
         )
@@ -671,7 +711,7 @@ def build_rime_sidecar_response(
             suggestions = []
         suggestions, optimizer_trace = optimize_suggestions_if_enabled(
             core=core,
-            snapshot=snapshot,
+            snapshot=effective_snapshot,
             semantic_query=semantic_query,
             query_basis=query_basis,
             input_mode=infer_input_mode(snapshot),
@@ -680,11 +720,25 @@ def build_rime_sidecar_response(
             latency_budget_ms=snapshot.latency_budget_ms,
         )
         rag_lane["suggestionCount"] = len(suggestions)
+        if foreground_context_meta.get("applied"):
+            rag_lane["foregroundContext"] = foreground_context_meta
+            model_lane["foregroundContext"] = foreground_context_meta
+        retrieved_suggestions = list(suggestions)
+        display_suggestions = list(suggestions)
+        if rag_direct_display_enabled():
+            rag_lane["directDisplaySuppressed"] = False
+            rag_lane["suppressedDisplaySuggestionCount"] = 0
+            rag_lane["displaySuggestionCount"] = len(display_suggestions)
+        else:
+            rag_lane["directDisplaySuppressed"] = bool(display_suggestions)
+            rag_lane["suppressedDisplaySuggestionCount"] = len(display_suggestions)
+            rag_lane["displaySuggestionCount"] = 0
+            display_suggestions = []
         fallback_predictions = _post_commit_empty_result_fallback_predictions(
             snapshot=snapshot,
             semantic_query=semantic_query,
             model_predictions=model_predictions,
-            suggestions=suggestions,
+            suggestions=display_suggestions,
             rag_lane=rag_lane,
             model_lane=model_lane,
             progressive_state=progressive_state,
@@ -718,6 +772,7 @@ def build_rime_sidecar_response(
                 "sideLaneMode": "parallel",
                 "sideLaneElapsedMs": total_elapsed_ms,
                 "memoryOptimizer": optimizer_trace,
+                "foregroundContext": foreground_context_meta,
             }
         )
         model_lane.update(
@@ -726,12 +781,15 @@ def build_rime_sidecar_response(
                 "elapsedBeforeModelMs": 0,
                 "sideLaneMode": "parallel",
                 "sideLaneElapsedMs": total_elapsed_ms,
+                "foregroundContext": foreground_context_meta,
             }
         )
     else:
         prediction_context = ""
         model_predictions = []
         suggestions = []
+        retrieved_suggestions = []
+        display_suggestions = []
         optimizer_trace = {"enabled": False, "traceEnabled": False, "maxMs": 15}
         progressive_state = _progressive_state(
             enabled=progressive_sidecar_updates_enabled(),
@@ -745,10 +803,14 @@ def build_rime_sidecar_response(
             "suggestionCount": 0,
             "filteredSuggestionCount": 0,
             "postCommitQualityFilteredCount": 0,
+            "directDisplaySuppressed": False,
+            "suppressedDisplaySuggestionCount": 0,
+            "displaySuggestionCount": 0,
             "latencyBudgetMs": 0,
             "elapsedMs": 0,
             "totalLatencyBudgetMs": snapshot.latency_budget_ms,
             "memoryOptimizer": optimizer_trace,
+            "foregroundContext": foreground_context_meta,
         }
         model_lane = {
             "called": False,
@@ -760,6 +822,7 @@ def build_rime_sidecar_response(
             "elapsedMs": 0,
             "totalLatencyBudgetMs": snapshot.latency_budget_ms,
             "elapsedBeforeModelMs": 0,
+            "foregroundContext": foreground_context_meta,
         }
     prediction_first_enabled = prediction_first_merge_enabled(payload)
     if prediction_first_enabled:
@@ -771,11 +834,11 @@ def build_rime_sidecar_response(
             raw_commit_text=raw_commit_text,
         ):
             prediction_manager.clear()
-        source_update = trigger_decision.should_refresh or bool(model_predictions) or bool(suggestions)
+        source_update = trigger_decision.should_refresh or bool(model_predictions) or bool(display_suggestions)
         manager_result = prediction_manager.render(
             snapshot=snapshot,
             model_predictions=model_predictions if source_update else None,
-            suggestions=suggestions if source_update else None,
+            suggestions=display_suggestions if source_update else None,
             raw_commit_text=raw_commit_text,
             now_ms=now_ms(),
         )
@@ -828,7 +891,7 @@ def build_rime_sidecar_response(
         display_candidates = merge_display_candidates(
             snapshot=snapshot,
             model_predictions=model_predictions,
-            suggestions=suggestions,
+            suggestions=display_suggestions,
         )
         input_mode = infer_input_mode(snapshot)
         prediction_session_payload = {
@@ -988,6 +1051,7 @@ def build_rime_sidecar_response(
             "idleMs": snapshot.idle_ms,
             "semanticSignalLength": semantic_signal_length(semantic_query),
             "forceSideCandidates": snapshot.force_side_candidates,
+            "foregroundContextGate": foreground_context_gate,
         },
         "refreshDecision": refresh_decision,
         "showDecision": show_decision,
@@ -1012,7 +1076,7 @@ def build_rime_sidecar_response(
         "modelLane": model_lane,
         "rimeContext": rime_context_to_payload(snapshot),
         "modelPredictions": [model_prediction_to_payload(item) for item in model_predictions],
-        "ragCandidates": [suggestion_to_payload(item) for item in suggestions],
+        "ragCandidates": [suggestion_to_payload(item) for item in retrieved_suggestions],
         "displayCandidates": [display_item_to_payload(item) for item in display_candidates],
         "predictionFirst": prediction_first_payload,
         "predictionSession": prediction_session_payload,
@@ -1032,6 +1096,7 @@ def build_rime_sidecar_response(
             "maxModelSideCandidates": max_model_side_candidates(snapshot.max_side_candidates),
             "ragBlockReserve": rag_block_reserve(snapshot.max_side_candidates),
             "ragKeepsRemainingSideSlots": False,
+            "ragDirectDisplayEnabled": rag_direct_display_enabled(),
             "rawPinyinFallback": query_basis == "rawInputFallback",
             "sideCandidatesEnabled": trigger_decision.should_refresh,
             "fallbackOrder": ["model", "rag", "rime"],
@@ -1589,6 +1654,13 @@ def lane_status_payload(
             "state": lane_status_state(rag_lane, count_key="suggestionCount"),
             "elapsedMs": lane_elapsed_ms(rag_lane),
             "candidateCount": _bounded_int(rag_lane.get("suggestionCount"), default=0, minimum=0, maximum=999),
+            "displayCandidateCount": _bounded_int(
+                rag_lane.get("displaySuggestionCount"),
+                default=_bounded_int(rag_lane.get("suggestionCount"), default=0, minimum=0, maximum=999),
+                minimum=0,
+                maximum=999,
+            ),
+            "directDisplaySuppressed": bool(rag_lane.get("directDisplaySuppressed")),
             "dropReason": _string(rag_lane.get("dropReason") or rag_lane.get("staleReason") or rag_lane.get("skippedReason")),
         },
         "model": {
@@ -1738,6 +1810,16 @@ def post_commit_completion_ttl_ms(env: Mapping[str, str] | None = None) -> int:
     )
 
 
+def post_commit_completion_cache_max_jobs(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS"),
+        default=_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS,
+        minimum=1,
+        maximum=128,
+    )
+
+
 def post_commit_model_hard_timeout_ms(env: Mapping[str, str] | None = None) -> int:
     source = env if env is not None else os.environ
     return _bounded_int(
@@ -1764,6 +1846,52 @@ def post_commit_pending_preview_enabled(env: Mapping[str, str] | None = None) ->
     source = env if env is not None else os.environ
     value = str(source.get("RAG_IME_POST_COMMIT_PENDING_PREVIEW", "1")).strip().lower()
     return value not in _FALSEY_ENV_VALUES
+
+
+def post_commit_requires_foreground_context(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT", "1")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def model_holdover_max_entries(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES"),
+        default=_MODEL_HOLDOVER_MAX_ENTRIES,
+        minimum=0,
+        maximum=512,
+    )
+
+
+def prediction_manager_max_entries(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES"),
+        default=_PREDICTION_MANAGER_MAX_ENTRIES,
+        minimum=0,
+        maximum=512,
+    )
+
+
+def refresh_debounce_max_entries(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES"),
+        default=_REFRESH_DEBOUNCE_MAX_ENTRIES,
+        minimum=1,
+        maximum=4096,
+    )
+
+
+def post_commit_presentation_stream_max_entries(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES"),
+        default=_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES,
+        minimum=1,
+        maximum=512,
+    )
 
 
 def composing_model_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -1804,6 +1932,12 @@ def candidate_diagnostics_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
     value = str(source.get("RAG_IME_CANDIDATE_DIAGNOSTICS", "0")).strip().lower()
     return value not in _FALSEY_ENV_VALUES
+
+
+def rag_direct_display_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_RAG_DIRECT_DISPLAY", "0")).strip().lower()
+    return bool(value) and value not in _FALSEY_ENV_VALUES
 
 
 def candidate_source_badge(source_type: str, env: Mapping[str, str] | None = None) -> str:
@@ -2314,6 +2448,8 @@ def _filter_post_commit_rag_suggestions_for_query(
         return suggestions
     result: list[InputSuggestion] = []
     for suggestion in suggestions:
+        if _post_commit_fallback_text_echoes_snapshot(suggestion.surface_text, snapshot):
+            continue
         if _post_commit_model_prediction_echoes_context(
             suggestion.surface_text,
             snapshot.committed_context,
@@ -2371,7 +2507,7 @@ def _post_commit_empty_result_fallback_predictions(
     if bool(rag_lane.get("pending")) or bool(model_lane.get("pending")) or bool(model_lane.get("inFlight")):
         return []
     text = _post_commit_empty_result_fallback_text(snapshot=snapshot, semantic_query=semantic_query)
-    if not text:
+    if not text or _post_commit_fallback_text_echoes_snapshot(text, snapshot):
         return []
     return [
         ModelPrediction(
@@ -2407,6 +2543,8 @@ def _post_commit_pending_preview_predictions(
     if not (bool(model_lane.get("pending")) or bool(model_lane.get("inFlight"))):
         return [], {}
     final_text = _post_commit_empty_result_fallback_text(snapshot=snapshot, semantic_query=semantic_query)
+    if _post_commit_fallback_text_echoes_snapshot(final_text, snapshot):
+        return [], {}
     steps = _post_commit_presentation_stream_steps(final_text)
     if not steps:
         return [], {}
@@ -2469,6 +2607,23 @@ def _post_commit_empty_result_fallback_text(*, snapshot: RimeContextSnapshot, se
     if "LLM" in context or "llm" in context or "模型" in context:
         return "继续检查模型输出"
     return "继续完善一下"
+
+
+def _post_commit_fallback_text_echoes_snapshot(text: str, snapshot: RimeContextSnapshot) -> bool:
+    surface = compact_whitespace(text)
+    if not surface:
+        return True
+    if candidate_has_self_repetition(surface):
+        return True
+    for context in (
+        snapshot.committed_context,
+        snapshot.commit_text_preview,
+        snapshot.raw_input,
+        snapshot.preedit,
+    ):
+        if candidate_echoes_text(surface, context, reject_single_occurrence=True):
+            return True
+    return False
 
 
 def _stage_post_commit_fallback_presentation_stream(
@@ -2554,6 +2709,13 @@ def _drop_expired_post_commit_presentation_stream_keys(now: float) -> None:
     ]
     for key in expired:
         _POST_COMMIT_PRESENTATION_STREAM_STAGES.pop(key, None)
+    limit = post_commit_presentation_stream_max_entries()
+    while len(_POST_COMMIT_PRESENTATION_STREAM_STAGES) > limit:
+        oldest_key = min(
+            _POST_COMMIT_PRESENTATION_STREAM_STAGES,
+            key=lambda item: _POST_COMMIT_PRESENTATION_STREAM_STAGES[item][1],
+        )
+        _POST_COMMIT_PRESENTATION_STREAM_STAGES.pop(oldest_key, None)
 
 
 def filter_post_commit_model_completions(
@@ -2576,6 +2738,8 @@ def filter_post_commit_model_completions(
         text = _clean_post_commit_completion_text(prediction.text)
         normalized = compact_whitespace(text).lower()
         if not normalized or normalized in seen or normalized in duplicate_surfaces:
+            continue
+        if _post_commit_fallback_text_echoes_snapshot(text, snapshot):
             continue
         if _post_commit_model_prediction_echoes_context(text, committed) or _post_commit_model_prediction_echoes_context(
             text, commit_preview
@@ -3335,14 +3499,12 @@ def _model_prediction_repeats_context(
     explicit_recent_context: str,
     prediction_context: str,
 ) -> bool:
-    candidate_norm = _repeat_norm(surface)
-    if not candidate_norm:
+    if not _repeat_norm(surface):
+        return True
+    if candidate_has_self_repetition(surface):
         return True
     for context in (current_input, explicit_recent_context, prediction_context):
-        context_norm = _repeat_norm(context)
-        if not context_norm:
-            continue
-        if candidate_norm == context_norm or candidate_norm in context_norm:
+        if candidate_echoes_text(surface, context, reject_single_occurrence=True):
             return True
     return False
 
@@ -3460,10 +3622,16 @@ def _prediction_manager_for_snapshot(
     session_id = compact_whitespace(snapshot.session_id)
     key = (project, app, session_id)
     with _PREDICTION_MANAGER_LOCK:
-        manager = _PREDICTION_MANAGERS.get(key)
-        if manager is None:
-            manager = PredictionManager(candidate_pool_ttl_ms=_POST_COMMIT_PANEL_TTL_MS)
+        manager = _PREDICTION_MANAGERS.pop(key, None)
+        if manager is not None:
             _PREDICTION_MANAGERS[key] = manager
+            return manager
+        manager = PredictionManager(candidate_pool_ttl_ms=_POST_COMMIT_PANEL_TTL_MS)
+        limit = prediction_manager_max_entries()
+        if limit > 0:
+            _PREDICTION_MANAGERS[key] = manager
+            while len(_PREDICTION_MANAGERS) > limit:
+                _PREDICTION_MANAGERS.pop(next(iter(_PREDICTION_MANAGERS)), None)
         return manager
 
 
@@ -3507,6 +3675,9 @@ def _store_model_holdover_predictions(
     if not visible:
         return
     with _MODEL_HOLDOVER_LOCK:
+        if model_holdover_max_entries() <= 0:
+            _MODEL_HOLDOVERS.clear()
+            return
         _MODEL_HOLDOVERS[(project, fingerprint)] = _ModelPredictionHoldover(
             project=project,
             input_state_fingerprint=fingerprint,
@@ -3515,6 +3686,7 @@ def _store_model_holdover_predictions(
             predictions=visible,
             created_at=time.monotonic(),
         )
+        _prune_model_holdovers_locked(time.monotonic())
 
 
 def _get_model_holdover_predictions(
@@ -3534,6 +3706,7 @@ def _get_model_holdover_predictions(
     now = time.monotonic()
     limit = max(1, min(10, int(max_candidates)))
     with _MODEL_HOLDOVER_LOCK:
+        _prune_model_holdovers_locked(now)
         cached = _MODEL_HOLDOVERS.get((project, fingerprint))
         if cached is not None and now - cached.created_at > _MODEL_HOLDOVER_TTL_MS / 1000:
             _MODEL_HOLDOVERS.pop((project, fingerprint), None)
@@ -3565,6 +3738,23 @@ def _get_model_holdover_predictions(
         if nearby is None:
             return []
         return list(nearby.predictions[:limit])
+
+
+def _prune_model_holdovers_locked(now: float) -> None:
+    max_entries = model_holdover_max_entries()
+    if max_entries <= 0:
+        _MODEL_HOLDOVERS.clear()
+        return
+    expired = [
+        key
+        for key, candidate in _MODEL_HOLDOVERS.items()
+        if now - candidate.created_at > _MODEL_HOLDOVER_TTL_MS / 1000
+    ]
+    for key in expired:
+        _MODEL_HOLDOVERS.pop(key, None)
+    while len(_MODEL_HOLDOVERS) > max_entries:
+        oldest_key = min(_MODEL_HOLDOVERS, key=lambda item: _MODEL_HOLDOVERS[item].created_at)
+        _MODEL_HOLDOVERS.pop(oldest_key, None)
 
 
 def _holdover_input_state_fingerprint(*, explicit_recent_context: str, current_input: str) -> str:
@@ -3948,7 +4138,7 @@ def _hash_from_payload(value: object, *, fallback_text: str) -> str:
     return stable_text_hash(fallback_text)
 
 
-def choose_semantic_query(snapshot: RimeContextSnapshot) -> tuple[str, str]:
+def choose_semantic_query(snapshot: RimeContextSnapshot, *, foreground_context: str = "") -> tuple[str, str]:
     commit_preview = compact_whitespace(snapshot.commit_text_preview)
     if commit_preview:
         return commit_preview, "commitTextPreview"
@@ -3958,7 +4148,7 @@ def choose_semantic_query(snapshot: RimeContextSnapshot) -> tuple[str, str]:
     candidate_text = compact_whitespace(" ".join(item.text for item in snapshot.candidates[:3] if item.text))
     if candidate_text:
         prefix = stable_short_pinyin_prefix(snapshot)
-        context = compact_whitespace(snapshot.committed_context)
+        context = compact_whitespace(foreground_context or snapshot.committed_context)
         query_parts = tuple(part for part in (context[-160:] if context else "", prefix, candidate_text) if part)
         if context:
             return compact_whitespace(" ".join(query_parts)), "rimeCandidates"
@@ -3969,9 +4159,9 @@ def choose_semantic_query(snapshot: RimeContextSnapshot) -> tuple[str, str]:
     raw_input = compact_whitespace(snapshot.raw_input)
     if preedit and preedit != raw_input:
         return preedit, "preedit"
-    context = compact_whitespace(snapshot.committed_context)
+    context = compact_whitespace(foreground_context or snapshot.committed_context)
     if context:
-        return context[-240:], "committedContext"
+        return context[-240:], "foregroundText" if foreground_context else "committedContext"
     return raw_input, "rawInputFallback"
 
 
@@ -4035,7 +4225,8 @@ def apply_refresh_debounce(
             request_seq=snapshot.request_seq,
             semantic_query_hash=semantic_hash,
         )
-        if len(_REFRESH_DEBOUNCE) > 512:
+        max_entries = refresh_debounce_max_entries()
+        while len(_REFRESH_DEBOUNCE) > max_entries:
             oldest_key = min(_REFRESH_DEBOUNCE, key=lambda item: _REFRESH_DEBOUNCE[item].created_at_ms)
             _REFRESH_DEBOUNCE.pop(oldest_key, None)
     return (
@@ -4054,6 +4245,99 @@ def _refresh_debounce_ms() -> int:
         return max(0, min(1000, int(raw)))
     except ValueError:
         return _REFRESH_DEBOUNCE_MS
+
+
+def foreground_context_for_side_lanes(
+    payload: Mapping[str, object],
+    *,
+    snapshot: RimeContextSnapshot,
+) -> tuple[str, dict[str, object]]:
+    raw_payload = payload.get("foregroundText")
+    if not isinstance(raw_payload, Mapping):
+        return "", {"applied": False, "source": "missing", "reason": "foregroundText payload missing"}
+    foreground = foreground_text_from_payload(
+        raw_payload,
+        snapshot=snapshot,
+        created_at_ms=now_ms(),
+    )
+    meta: dict[str, object] = {
+        "applied": False,
+        "source": foreground.source,
+        "confidence": foreground.confidence,
+        "freshnessMs": foreground.freshness_ms,
+        "selectedTextChars": foreground.selected_text_chars,
+        "surroundingBeforeChars": len(compact_whitespace(foreground.surrounding_before)),
+        "surroundingAfterChars": len(compact_whitespace(foreground.surrounding_after)),
+        "wholeValueHash": foreground.whole_value_hash,
+        "wholeValueChars": foreground.whole_value_chars,
+        "warnings": list(foreground.warnings),
+    }
+    if foreground.source not in {"accessibility", "text_input_client"}:
+        meta["reason"] = "foreground source is not an external text context"
+        return "", meta
+    if not foreground.available:
+        meta["reason"] = "foreground context unavailable"
+        return "", meta
+    max_freshness = foreground_context_max_freshness_ms()
+    if foreground.freshness_ms > max_freshness:
+        meta["reason"] = "foreground context stale"
+        meta["maxFreshnessMs"] = max_freshness
+        return "", meta
+    context = compact_whitespace(
+        " ".join(
+            part
+            for part in (
+                foreground.surrounding_before,
+                foreground.selected_text_preview,
+                foreground.surrounding_after,
+            )
+            if compact_whitespace(part)
+        )
+    )
+    if not context:
+        meta["reason"] = "foreground context empty"
+        return "", meta
+    meta["applied"] = True
+    meta["reason"] = "foreground context applied"
+    meta["contextHash"] = stable_text_hash(context)
+    meta["contextChars"] = len(context)
+    return context[-600:], meta
+
+
+def foreground_context_max_freshness_ms(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS"),
+        default=_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS,
+        minimum=0,
+        maximum=10000,
+    )
+
+
+def post_commit_foreground_context_gate(
+    *,
+    snapshot: RimeContextSnapshot,
+    foreground_context_meta: Mapping[str, object],
+) -> dict[str, object]:
+    if not _is_post_commit_prediction_snapshot(snapshot):
+        return {"allowed": True, "reason": "not post-commit", "required": False}
+    if not post_commit_requires_foreground_context():
+        return {"allowed": True, "reason": "foreground context gate disabled", "required": False}
+    if bool(foreground_context_meta.get("applied")):
+        return {
+            "allowed": True,
+            "reason": "reliable foreground context applied",
+            "required": True,
+            "source": _string(foreground_context_meta.get("source")),
+            "contextHash": _string(foreground_context_meta.get("contextHash")),
+        }
+    return {
+        "allowed": False,
+        "reason": "skip: reliable foreground context required",
+        "required": True,
+        "source": _string(foreground_context_meta.get("source")),
+        "foregroundReason": _string(foreground_context_meta.get("reason")),
+    }
 
 
 def decide_side_candidate_refresh(
@@ -4117,6 +4401,11 @@ def decide_side_candidate_refresh(
             return RimeSideCandidateTriggerDecision(True, "refresh: idle semantic preedit")
         return RimeSideCandidateTriggerDecision(False, "skip: preedit not stable enough")
 
+    if query_basis == "foregroundText":
+        if signal_len >= 4:
+            return RimeSideCandidateTriggerDecision(True, "refresh: foreground accessibility context")
+        return RimeSideCandidateTriggerDecision(False, "skip: foreground context too short")
+
     if query_basis == "committedContext":
         no_active_composition = not compact_whitespace(snapshot.raw_input) and not compact_whitespace(snapshot.preedit)
         if signal_len >= 4:
@@ -4173,7 +4462,7 @@ def _forced_refresh_has_side_signal(snapshot: RimeContextSnapshot, query_basis: 
         return False
     if query_basis == "rawInputFallback":
         return True
-    if query_basis not in {"rimeCandidates", "rawSemanticInput", "preedit"}:
+    if query_basis not in {"rimeCandidates", "rawSemanticInput", "preedit", "foregroundText"}:
         return False
     pinyin_signal = re.sub(r"[^A-Za-z0-9]+", "", active_input)
     return len(pinyin_signal) >= 4

@@ -16,8 +16,13 @@ PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-qwen3_06b_ime_hot}}
 MAX_TOKENS="${RAG_IME_MLX_MAX_TOKENS:-8}"
 TEMPERATURE="${RAG_IME_MLX_TEMPERATURE:-0.15}"
 TOP_P="${RAG_IME_MLX_TOP_P:-0.85}"
-PROMPT_CACHE="${RAG_IME_MLX_PROMPT_CACHE:-1}"
+PROMPT_CACHE="${RAG_IME_MLX_PROMPT_CACHE:-0}"
 PROMPT_CACHE_MAX_KV_SIZE="${RAG_IME_MLX_PROMPT_CACHE_MAX_KV_SIZE:-0}"
+PREFIX_CACHE="${RAG_IME_MLX_PREFIX_CACHE:-0}"
+PREFIX_CACHE_MAX_ENTRIES="${RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES:-8}"
+PREFIX_CACHE_MAX_MB="${RAG_IME_MLX_PREFIX_CACHE_MAX_MB:-32}"
+PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-}"
+MEMORY_PROFILE="${RAG_IME_MEMORY_PROFILE:-low}"
 HF_HOME_VALUE="${RAG_IME_HF_HOME:-}"
 DRY_RUN="${RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN:-0}"
 
@@ -33,7 +38,15 @@ detect_python() {
   candidates+=("$(command -v python3 2>/dev/null || true)")
 
   for candidate in "${candidates[@]}"; do
-    if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" - <<'PY' >/dev/null 2>&1; then
+import hashlib
+import sqlite3
+import ssl
+import sys
+
+hashlib.md5(b"rag-ime").hexdigest()
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -45,6 +58,20 @@ PYTHON_EXECUTABLE="${RAG_IME_MLX_PYTHON:-${RAG_IME_PYTHON:-$(detect_python || tr
 
 if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
   echo "python executable not found or not executable: $PYTHON_EXECUTABLE" >&2
+  exit 1
+fi
+
+if ! "$PYTHON_EXECUTABLE" - <<'PY' >/dev/null 2>&1; then
+import hashlib
+import sqlite3
+import ssl
+import sys
+
+hashlib.md5(b"rag-ime").hexdigest()
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+  echo "python executable cannot import required stdlib modules (sqlite3/hashlib/ssl): $PYTHON_EXECUTABLE" >&2
+  echo "Set RAG_IME_MLX_PYTHON or RAG_IME_PYTHON to a healthy Python." >&2
   exit 1
 fi
 
@@ -83,6 +110,11 @@ TEMPERATURE="$TEMPERATURE" \
 TOP_P="$TOP_P" \
 PROMPT_CACHE="$PROMPT_CACHE" \
 PROMPT_CACHE_MAX_KV_SIZE="$PROMPT_CACHE_MAX_KV_SIZE" \
+PREFIX_CACHE="$PREFIX_CACHE" \
+PREFIX_CACHE_MAX_ENTRIES="$PREFIX_CACHE_MAX_ENTRIES" \
+PREFIX_CACHE_MAX_MB="$PREFIX_CACHE_MAX_MB" \
+PROMPT_MODE="$PROMPT_MODE" \
+MEMORY_PROFILE="$MEMORY_PROFILE" \
 HF_HOME_VALUE="$HF_HOME_VALUE" \
 "$PYTHON_EXECUTABLE" - <<'PY'
 import os
@@ -132,6 +164,10 @@ env_vars = {
     "RAG_IME_MLX_TOP_P": os.environ["TOP_P"],
     "RAG_IME_MLX_PROMPT_CACHE": os.environ["PROMPT_CACHE"],
     "RAG_IME_MLX_PROMPT_CACHE_MAX_KV_SIZE": os.environ["PROMPT_CACHE_MAX_KV_SIZE"],
+    "RAG_IME_MLX_PREFIX_CACHE": os.environ["PREFIX_CACHE"],
+    "RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES": os.environ["PREFIX_CACHE_MAX_ENTRIES"],
+    "RAG_IME_MLX_PREFIX_CACHE_MAX_MB": os.environ["PREFIX_CACHE_MAX_MB"],
+    "RAG_IME_MEMORY_PROFILE": os.environ["MEMORY_PROFILE"],
     "HTTP_PROXY": "",
     "HTTPS_PROXY": "",
     "ALL_PROXY": "",
@@ -139,6 +175,9 @@ env_vars = {
     "https_proxy": "",
     "all_proxy": "",
 }
+prompt_mode = os.environ.get("PROMPT_MODE", "").strip()
+if prompt_mode:
+    env_vars["RAG_IME_MLX_PROMPT_MODE"] = prompt_mode
 hf_home = os.environ.get("HF_HOME_VALUE", "").strip()
 if hf_home:
     env_vars["HF_HOME"] = hf_home
@@ -148,7 +187,8 @@ payload = {
     "Label": label,
     "ProgramArguments": args,
     "RunAtLoad": True,
-    "KeepAlive": True,
+    "KeepAlive": os.environ.get("RAG_IME_LAUNCH_KEEP_ALIVE", "0").strip().lower()
+    not in {"0", "false", "no", "off"},
     "ThrottleInterval": 10,
     "StandardOutPath": str(Path(os.environ["LOG_DIR"]) / "mlx-predictor.out.log"),
     "StandardErrorPath": str(Path(os.environ["LOG_DIR"]) / "mlx-predictor.err.log"),

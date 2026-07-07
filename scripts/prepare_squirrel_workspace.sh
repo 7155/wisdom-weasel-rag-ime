@@ -13,9 +13,9 @@ SIDECAR_HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
 SIDECAR_PORT="${RAG_IME_SIDECAR_PORT:-8766}"
 MAX_VISIBLE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_VISIBLE_CANDIDATES:-8}"
 MAX_SIDE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_SIDE_CANDIDATES:-8}"
-LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-900}"
+LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-450}"
 DEBOUNCE_MS="${RAG_IME_SQUIRREL_DEBOUNCE_MS:-40}"
-TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-1200}"
+TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-600}"
 FRONTEND_TRACE="${RAG_IME_SQUIRREL_FRONTEND_TRACE:-true}"
 RESET="${RAG_IME_SQUIRREL_RESET:-0}"
 DRY_RUN="${RAG_IME_SQUIRREL_DRY_RUN:-0}"
@@ -46,9 +46,32 @@ EOF
   exit 0
 fi
 
+reset_squirrel_workdir() {
+  if [[ -z "$SQUIRREL_WORKDIR" || "$SQUIRREL_WORKDIR" == "/" ]]; then
+    echo "refusing to reset unsafe Squirrel workdir: $SQUIRREL_WORKDIR" >&2
+    exit 1
+  fi
+  echo "Resetting Squirrel workdir because RAG_IME_SQUIRREL_RESET=1: $SQUIRREL_WORKDIR" >&2
+  rm -rf "$SQUIRREL_WORKDIR"
+}
+
 if [[ -e "$SQUIRREL_WORKDIR" && ! -d "$SQUIRREL_WORKDIR/.git" ]]; then
-  echo "target exists but is not a git checkout: $SQUIRREL_WORKDIR" >&2
-  exit 1
+  if [[ "$RESET" == "1" ]]; then
+    reset_squirrel_workdir
+  else
+    echo "target exists but is not a git checkout: $SQUIRREL_WORKDIR" >&2
+    exit 1
+  fi
+fi
+
+if [[ -d "$SQUIRREL_WORKDIR/.git" ]] && ! git -C "$SQUIRREL_WORKDIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [[ "$RESET" == "1" ]]; then
+    reset_squirrel_workdir
+  else
+    echo "target contains an invalid git checkout: $SQUIRREL_WORKDIR" >&2
+    echo "Set RAG_IME_SQUIRREL_RESET=1 to recreate that Squirrel workdir." >&2
+    exit 1
+  fi
 fi
 
 if [[ ! -d "$SQUIRREL_WORKDIR/.git" ]]; then
@@ -265,6 +288,7 @@ require_patch_text() {
 
 require_patch_file "sources/RagImeSidecarModels.swift"
 require_patch_file "sources/RagImeSidecarClient.swift"
+require_patch_file "sources/RagImeSelectedTextProvider.swift"
 require_patch_file "sources/SquirrelInputController.swift"
 require_patch_file "sources/SquirrelPanel.swift"
 require_patch_text "sources/RagImeSidecarClient.swift" "rime-suggest" "sidecar suggestion request hook"
@@ -281,6 +305,10 @@ require_patch_text "sources/SquirrelInputController.swift" "sidecar_empty_respon
 require_patch_text "sources/SquirrelInputController.swift" "rag-ime.foreground-trace.v2" "foreground trace v2 marker"
 require_patch_text "sources/SquirrelInputController.swift" "let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty" "foreground post-commit-only LLM/RAG candidate request"
 require_patch_text "sources/SquirrelInputController.swift" "forceSideCandidates: forceSideCandidates" "foreground dynamic LLM/RAG candidate request"
+require_patch_text "sources/SquirrelInputController.swift" "ragImeSelectedTextProvider.captureForegroundTextForSidecar" "focused text accessibility foreground snapshot request"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXSelectedTextRangeAttribute" "focused text selected range accessibility capture"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXStringForRangeParameterizedAttribute" "focused text surrounding range accessibility capture"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXValueAttribute" "focused text whole-value fallback"
 require_patch_text "sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
 require_patch_text "sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate layout"
 require_patch_text "sources/SquirrelPanel.swift" "ragImePanelLinear" "forced horizontal panel layout for LLM inline candidates"

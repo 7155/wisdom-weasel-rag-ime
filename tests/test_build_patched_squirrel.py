@@ -101,9 +101,24 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("clearRagImeDisplayCandidates()", patch_text)
         self.assertIn("rag-ime.foreground-trace.v2", patch_text)
         self.assertIn("struct RagImeForegroundTextSnapshot: Codable", patch_text)
+        self.assertIn("captureForegroundTextForSidecar", patch_text)
+        self.assertIn("RagImeSelectedTextProvider.swift in Sources", patch_text)
+        self.assertIn("private let ragImeSelectedTextProvider = RagImeSelectedTextProvider()", patch_text)
+        self.assertIn("kAXSelectedTextRangeAttribute", patch_text)
+        self.assertIn("kAXStringForRangeParameterizedAttribute", patch_text)
+        self.assertIn("kAXValueAttribute", patch_text)
+        self.assertIn('source: "accessibility"', patch_text)
+        self.assertIn("let wholeValueHash: String", patch_text)
+        self.assertIn("let wholeValueChars: Int", patch_text)
+        self.assertIn("let warnings: [String]", patch_text)
         self.assertIn("foregroundText: foregroundText", patch_text)
         self.assertIn("foregroundText: request.foregroundText", patch_text)
-        self.assertIn('source: (!rawInput.isEmpty || !preedit.isEmpty) ? "rime_composition" : "ime_commit_ledger"', patch_text)
+        self.assertIn('let textInputClientContext = (!rawInput.isEmpty || !preedit.isEmpty)', patch_text)
+        self.assertIn('"text_input_client"', patch_text)
+        self.assertIn('"ime_commit_ledger"', patch_text)
+        self.assertIn('"text_input_client_context"', patch_text)
+        self.assertIn('"foregroundTextSource": foregroundText.source', patch_text)
+        self.assertIn('"foregroundTextSource": request.foregroundText.source', patch_text)
         self.assertIn("selectedTextHash: \"\"", patch_text)
         self.assertIn("selectedTextPreview: \"\"", patch_text)
         self.assertIn("canReplaceSelection: false", patch_text)
@@ -236,6 +251,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertNotIn('"displayTextUsesInsertText": True', build_script)
         self.assertIn(
             "+    committedContext: String,\n"
+            "+    foregroundText: RagImeForegroundTextSnapshot,\n"
             "+    page: Int,\n"
             "+    highlighted: Int,\n"
             "+    candidates: [RagImeRimeCandidatePayload]\n"
@@ -247,6 +263,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             "+      committedContext,",
             patch_text,
         )
+        self.assertIn("+      ragImeStableTextHash(foregroundText.surroundingBefore),", patch_text)
+        self.assertIn("+      ragImeStableTextHash(foregroundText.surroundingAfter),", patch_text)
+        self.assertIn("+      foregroundText.wholeValueHash,", patch_text)
         self.assertIn(
             "+  func selectRagImeSideCandidate(forKey key: String) -> Bool {\n"
             "+    guard ragImePanelUsesDisplayCandidates else {\n"
@@ -281,6 +300,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
 
         self.assertIn("RagImeSelectedTextProvider.swift", patch_text)
+        self.assertIn("RagImeSelectedTextProvider.swift in Sources", patch_text)
         self.assertIn("struct RagImeActiveRagRequest: Codable", patch_text)
         self.assertIn("struct RagImeActiveRagResponse: Codable", patch_text)
         self.assertIn("func captureSelectedTextForActiveRag", patch_text)
@@ -529,6 +549,17 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
     (workdir / "sources").mkdir()
     (workdir / "sources" / "RagImeSidecarModels.swift").write_text("// models\n", encoding="utf-8")
     (workdir / "sources" / "RagImeSidecarClient.swift").write_text("// client\n", encoding="utf-8")
+    (workdir / "sources" / "RagImeSelectedTextProvider.swift").write_text(
+        (
+            "import ApplicationServices\n"
+            "final class RagImeSelectedTextProvider { "
+            "func captureForegroundTextForSidecar() { "
+            "_ = kAXSelectedTextRangeAttribute; "
+            "_ = kAXStringForRangeParameterizedAttribute; "
+            "_ = kAXValueAttribute } }\n"
+        ),
+        encoding="utf-8",
+    )
     (workdir / "sources" / "SquirrelInputController.swift").write_text(
         (
             'final class SquirrelInputController { func ragImePanelForcesHorizontalLayout() -> Bool { false }; '
@@ -537,6 +568,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func traceSidecarEmptyResponseCleared() { _ = "sidecar_empty_response_cleared" }; '
             'func traceV2() { _ = "rag-ime.foreground-trace.v2" }; '
             'func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = "forceSideCandidates: forceSideCandidates" }; '
+            'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
             'func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" } }\n'
         ),
         encoding="utf-8",
@@ -565,9 +597,9 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 8",
-                "  latency_budget_ms: 900",
+                "  latency_budget_ms: 450",
                 "  debounce_ms: 40",
-                "  timeout_ms: 1200",
+                "  timeout_ms: 600",
                 "  frontend_trace: true",
             ]
         )
