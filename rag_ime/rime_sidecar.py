@@ -549,6 +549,7 @@ def _post_commit_presentation_stream_predictions(
             "presentationStageCount": len(steps),
             "presentationPartial": presentation_pending,
             "presentationFinalTextHash": stable_text_hash(first.text),
+            "presentationStreamSlotKey": _post_commit_completion_stream_slot_key(job.job_id),
         }
     )
     staged_first = replace(
@@ -627,6 +628,16 @@ def build_rime_sidecar_response(
             latency_budget_ms=snapshot.latency_budget_ms,
         )
         raw_model_prediction_count = len(model_predictions)
+        pending_preview_predictions, pending_preview_lane_update = _post_commit_pending_preview_predictions(
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            model_predictions=model_predictions,
+            model_lane=model_lane,
+        )
+        if pending_preview_predictions:
+            model_predictions = pending_preview_predictions
+            model_lane.update(pending_preview_lane_update)
+            raw_model_prediction_count = len(model_predictions)
         model_predictions = _filter_model_predictions_for_snapshot(
             model_predictions,
             snapshot=snapshot,
@@ -682,6 +693,7 @@ def build_rime_sidecar_response(
             fallback_predictions, fallback_lane_update = _stage_post_commit_fallback_presentation_stream(
                 snapshot=snapshot,
                 predictions=fallback_predictions,
+                slot_key=_post_commit_model_lane_stream_slot_key(model_lane),
             )
             model_predictions = fallback_predictions
             model_lane["predictionCount"] = len(model_predictions)
@@ -1748,6 +1760,12 @@ def post_commit_presentation_stream_enabled(env: Mapping[str, str] | None = None
     return value not in _FALSEY_ENV_VALUES
 
 
+def post_commit_pending_preview_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_POST_COMMIT_PENDING_PREVIEW", "1")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
 def composing_model_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
     value = str(source.get("RAG_IME_ENABLE_COMPOSING_MODEL", "0")).strip().lower()
@@ -2373,6 +2391,61 @@ def _post_commit_empty_result_fallback_predictions(
     ]
 
 
+def _post_commit_pending_preview_predictions(
+    *,
+    snapshot: RimeContextSnapshot,
+    semantic_query: str,
+    model_predictions: list[ModelPrediction],
+    model_lane: Mapping[str, object],
+) -> tuple[list[ModelPrediction], dict[str, object]]:
+    if model_predictions:
+        return [], {}
+    if not post_commit_pending_preview_enabled() or not post_commit_presentation_stream_enabled():
+        return [], {}
+    if not _is_post_commit_prediction_snapshot(snapshot):
+        return [], {}
+    if not (bool(model_lane.get("pending")) or bool(model_lane.get("inFlight"))):
+        return [], {}
+    final_text = _post_commit_empty_result_fallback_text(snapshot=snapshot, semantic_query=semantic_query)
+    steps = _post_commit_presentation_stream_steps(final_text)
+    if not steps:
+        return [], {}
+    slot_key = _post_commit_model_lane_stream_slot_key(model_lane)
+    if not slot_key:
+        slot_key = _post_commit_fallback_presentation_stream_key(snapshot=snapshot, final_text=final_text)
+    metadata = {
+        "requestType": PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+        "noPinyinFilter": True,
+        "pendingPreview": True,
+        "fallbackSource": "post_commit_pending_preview",
+        "presentationStreaming": True,
+        "presentationStage": 1,
+        "presentationStageCount": len(steps),
+        "presentationPartial": True,
+        "presentationFinalTextHash": stable_text_hash(final_text),
+        "presentationStreamSlotKey": slot_key,
+        "previewFinalTextHash": stable_text_hash(final_text),
+        "queryHash": stable_text_hash(semantic_query),
+    }
+    return [
+        ModelPrediction(
+            text=steps[0],
+            rank=1,
+            provider_name="post-commit-preview",
+            latency_ms=int(model_lane.get("elapsedMs") or 0),
+            confidence=0.25,
+            metadata=metadata,
+        )
+    ], {
+        "pendingPreview": True,
+        "predictionCount": 1,
+        "presentationStreaming": True,
+        "presentationStage": 1,
+        "presentationStageCount": len(steps),
+        "skippedReason": "",
+    }
+
+
 def _post_commit_empty_result_fallback_text(*, snapshot: RimeContextSnapshot, semantic_query: str) -> str:
     context = compact_whitespace(
         " ".join(
@@ -2402,6 +2475,7 @@ def _stage_post_commit_fallback_presentation_stream(
     *,
     snapshot: RimeContextSnapshot,
     predictions: list[ModelPrediction],
+    slot_key: str = "",
 ) -> tuple[list[ModelPrediction], dict[str, object]]:
     if not predictions or not post_commit_presentation_stream_enabled():
         return predictions, {}
@@ -2413,7 +2487,7 @@ def _stage_post_commit_fallback_presentation_stream(
             "presentationStage": len(steps),
             "presentationStageCount": len(steps),
         }
-    key = _post_commit_fallback_presentation_stream_key(snapshot=snapshot, final_text=first.text)
+    key = slot_key or _post_commit_fallback_presentation_stream_key(snapshot=snapshot, final_text=first.text)
     now = time.time()
     with _POST_COMMIT_PRESENTATION_STREAM_LOCK:
         _drop_expired_post_commit_presentation_stream_keys(now)
@@ -2429,6 +2503,7 @@ def _stage_post_commit_fallback_presentation_stream(
             "presentationStageCount": len(steps),
             "presentationPartial": pending,
             "presentationFinalTextHash": stable_text_hash(first.text),
+            "presentationStreamSlotKey": key,
         }
     )
     staged_first = replace(first, text=steps[stage - 1], metadata=metadata)
@@ -2441,6 +2516,18 @@ def _stage_post_commit_fallback_presentation_stream(
         "presentationStage": stage,
         "presentationStageCount": len(steps),
     }
+
+
+def _post_commit_completion_stream_slot_key(job_id: object) -> str:
+    job_id_text = compact_whitespace(str(job_id or ""))
+    return f"post-commit-completion:{job_id_text}" if job_id_text else ""
+
+
+def _post_commit_model_lane_stream_slot_key(model_lane: Mapping[str, object]) -> str:
+    configured = compact_whitespace(str(model_lane.get("presentationStreamSlotKey") or ""))
+    if configured:
+        return configured
+    return _post_commit_completion_stream_slot_key(model_lane.get("completionJobId"))
 
 
 def _post_commit_fallback_presentation_stream_key(*, snapshot: RimeContextSnapshot, final_text: str) -> str:

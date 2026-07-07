@@ -630,6 +630,14 @@ def _presentation_stream_slot_key(candidate: object) -> str:
     metadata = _candidate_metadata(candidate)
     if not bool(metadata.get("presentationStreaming")):
         return ""
+    explicit_slot = compact_whitespace(str(metadata.get("presentationStreamSlotKey") or ""))
+    if explicit_slot:
+        return json.dumps(
+            {"slot": explicit_slot},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     final_hash = compact_whitespace(str(metadata.get("presentationFinalTextHash") or ""))
     if not final_hash:
         return ""

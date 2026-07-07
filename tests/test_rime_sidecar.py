@@ -355,7 +355,10 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
                 core=core,
                 predictor=predictor,
             )
-            self.assertEqual(first["uiMode"], "post_commit_pending")
+            self.assertEqual(first["uiMode"], "post_commit_prediction")
+            first_model_candidates = [item for item in first["displayCandidates"] if item["sourceType"] == "model"]
+            self.assertEqual(first_model_candidates[0]["text"], "继续")
+            self.assertTrue(first_model_candidates[0]["metadata"]["pendingPreview"])
             self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=2.0))
 
             streamed_surfaces: list[str] = []
@@ -390,7 +393,10 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
                 core=core,
                 predictor=predictor,
             )
-            self.assertEqual(first["uiMode"], "post_commit_pending")
+            self.assertEqual(first["uiMode"], "post_commit_prediction")
+            first_model_candidates = [item for item in first["displayCandidates"] if item["sourceType"] == "model"]
+            self.assertEqual(first_model_candidates[0]["text"], "继续")
+            self.assertTrue(first_model_candidates[0]["metadata"]["pendingPreview"])
             self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=2.0))
 
             streamed_surfaces: list[str] = []
