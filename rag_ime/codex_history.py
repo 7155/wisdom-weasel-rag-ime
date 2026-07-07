@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,11 @@ TEXT_KEYS = {
 ROLE_KEYS = ("role", "author")
 FALLBACK_ROLE_KEYS = ("source", "type")
 TIMESTAMP_KEYS = ("created_at_ms", "timestamp_ms", "time_ms", "createdAtMs", "created_at", "timestamp")
+SENSITIVE_CONTEXT_RE = re.compile(
+    r"(sk-[A-Za-z0-9]{8,}|bearer\s+[A-Za-z0-9._-]{10,}|api[_ -]?key[\"'：:\s]+[A-Za-z0-9._-]{8,}|"
+    r"Token\s+[•A-Za-z0-9._-]{8,}|ws://127\.0\.0\.1:\d+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -455,12 +461,20 @@ def _looks_like_metadata(text: str) -> bool:
         return True
     if text.startswith(("/", "~/")) and len(text.split()) <= 2:
         return True
+    if text.startswith(("file://", "vscode://", "cursor://")) and len(text.split()) <= 2:
+        return True
     return False
 
 
 def _looks_like_runtime_context(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
+        return True
+    if SENSITIVE_CONTEXT_RE.search(stripped):
+        return True
+    if stripped.startswith(("file://", "vscode://", "cursor://")) and len(stripped.split()) <= 2:
+        return True
+    if re.match(r"^\[\d+\]\s+tool\s+", stripped):
         return True
     prefixes = (
         "# AGENTS.md instructions",
@@ -469,11 +483,18 @@ def _looks_like_runtime_context(text: str) -> bool:
         "<apps_instructions>",
         "<collaboration_mode>",
         "<environment_context>",
+        "<image ",
         "<plugins_instructions>",
         "<permissions instructions>",
+        "<personality_spec>",
         "<skills_instructions>",
         "<codex_internal_context",
         "<subagent_notification>",
+        "<turn_aborted>",
+        "# Files mentioned by the user:",
+        "## My request for Codex:",
+        "Welcome to fish,",
+        "❯ ",
         "Knowledge cutoff:",
         "You are Codex,",
         "You are an AI assistant",
@@ -486,6 +507,10 @@ def _looks_like_runtime_context(text: str) -> bool:
         "Original token count:",
         "(eval):",
         "The following is the Codex agent history",
+        "The attached pasted text file(s) contain",
+        "The user interrupted the previous turn",
+        "Any running unified exec processes",
+        "Assess the exact planned action below.",
         "已读取",
         "已搜索",
         "已列出",
@@ -509,6 +534,9 @@ def _looks_like_runtime_context(text: str) -> bool:
         "rollout_summaries",
         "<subagent_notification>",
         "# AGENTS.md instructions",
+        "codex-clipboard-",
+        "x-scoutpi-browser-token",
+        "curl -s -H",
         "Read ",
         "Searched for ",
         "Listed files ",
@@ -534,4 +562,8 @@ def _looks_like_runtime_context(text: str) -> bool:
         "read 0001-add-rag-ime-sidecar.patch",
         "验证模型指令",
     )
-    return any(marker in stripped for marker in markers)
+    if any(marker in stripped for marker in markers):
+        return True
+    # Rich shell prompts from captured terminal panes are not durable user
+    # memory, and often include local paths, tokens, or transient diagnostics.
+    return "" in stripped or "" in stripped

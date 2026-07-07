@@ -388,6 +388,190 @@ class CodexHistoryTests(unittest.TestCase):
                                 "content": [
                                     {
                                         "type": "input_text",
+                                        "text": "file:///Volumes/undo%204t/git/learnA/wisdom-weasel-rag-ime",
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": "[317] tool update_plan result: Plan updated",
+                                    },
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "[461] tool write_stdin result: Chunk ID: abc "
+                                            "Wall time: 30.0030 seconds Output: ........"
+                                        ),
+                                    },
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": "Assess the exact planned action below. Use read-only tool checks when local state matters.",
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "Welcome to fish, the friendly interactive shell "
+                                            "❯ cd \"/Volumes/undo 4t/langchain\" "
+                                            "curl -s -H \"x-scoutpi-browser-token: $TOKEN\" http://127.0.0.1:17391/doctor"
+                                        ),
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "<turn_aborted> The user interrupted the previous turn on purpose. "
+                                            "Any running unified exec processes may still be running."
+                                        ),
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "ScoutPi BrowserBridge Bridge URL ws://127.0.0.1:17391/extension "
+                                            "Token ••••••••••••••••••••••••••••••••••••••••••• Connect Connected"
+                                        ),
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": '{"key":"sk-real-looking-secret-token","url":"https://api.example.com"}',
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "<personality_spec> The user has requested a new communication style. "
+                                            "Future messages should adhere to the following personality."
+                                        ),
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "# Files mentioned by the user:\n"
+                                            "## codex-clipboard-demo.png: /var/folders/tmp/codex-clipboard-demo.png\n"
+                                            "## My request for Codex:"
+                                        ),
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": "<image name=[Image #1] path=\"/tmp/codex-clipboard-demo.png\">",
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
                                         "text": (
                                             "<skills_instructions>\n"
                                             "## Skills\n"

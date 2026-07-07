@@ -96,6 +96,126 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertTrue(any(item["code"] == "missing_source_event_ids" for item in report["errors"]))
 
+    def test_memory_book_compile_backfills_source_ids_from_bundle(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["dailyBooks"][0]["sourceEventIds"] = []
+        output["memoryAtoms"][0]["sourceEventIds"] = []
+        output["tagEdges"][0]["evidenceEventIds"] = []
+        output["phraseCandidates"][0]["sourceEventIds"] = []
+        bundle = {
+            "recentEvents": [
+                {
+                    "eventId": self.event_id,
+                    "createdAtMs": now_ms(),
+                    "text": "RAG 输入法多路召回方案，需要用 DeepSeek 整理真实历史。",
+                    "recentContext": "BM25 向量 TagMemo Time",
+                    "tags": ["RAG", "输入法"],
+                }
+            ]
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        report = inspect_memory_book_plan(plan)
+
+        self.assertTrue(report["ok"])
+        payloads = [item["payload"] for item in plan["diffs"]]
+        self.assertTrue(all(self.event_id in item.get("sourceEventIds", item.get("evidenceEventIds", [])) for item in payloads))
+
+    def test_memory_book_compile_drops_empty_edges_and_bad_phrases(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["dailyBooks"] = []
+        output["tagEdges"] = [{}, {"src": "", "dst": "RAG"}, {"src": "RAG", "dst": ""}]
+        output["phraseCandidates"] = [{}, {"text": ""}, {"text": "这是一个很长很长的历史原句不应该作为短候选"}]
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        report = inspect_memory_book_plan(plan)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["counts"]["tagEdges"], 0)
+        self.assertEqual(report["counts"]["phraseCandidates"], 0)
+
+    def test_memory_book_compile_synthesizes_daily_book_when_model_omits_books(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["dailyBooks"] = []
+        bundle = {
+            "recentEvents": [
+                {
+                    "eventId": self.event_id,
+                    "createdAtMs": now_ms(),
+                    "text": "RAG 输入法多路召回方案，需要用 DeepSeek 整理真实历史。",
+                    "recentContext": "Memory Book preview validate apply",
+                    "tags": ["RAG", "输入法"],
+                }
+            ]
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        report = inspect_memory_book_plan(plan)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["counts"]["memoryBooks"], 1)
+        self.assertIn("daily_book_synthesized_from_atoms", plan["metadata"]["warnings"])
+
+    def test_memory_book_compile_uses_local_fallback_when_model_returns_empty(self) -> None:
+        bundle = {
+            "recentEvents": [
+                {
+                    "eventId": self.event_id,
+                    "createdAtMs": now_ms(),
+                    "text": "用 DeepSeek 整理真实历史库，跑 memory-book-preview -> validate -> apply，再用 eval gate 看候选质量。",
+                    "recentContext": "RAG DB 面试展示",
+                    "tags": ["RAG", "DeepSeek"],
+                },
+                {
+                    "eventId": self.event_id + 1,
+                    "createdAtMs": now_ms(),
+                    "text": "还是没有流式输出，需要真实 Squirrel/Rime 链路里显示首帧候选。",
+                    "recentContext": "输入法 post-commit",
+                    "tags": ["输入法", "流式"],
+                },
+            ]
+        }
+        empty_output = {
+            "schemaVersion": "rag-ime.memory-book-compile.v1",
+            "dailyBooks": [],
+            "memoryAtoms": [],
+            "tagEdges": [],
+            "phraseCandidates": [],
+            "warnings": [],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            empty_output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        report = inspect_memory_book_plan(plan)
+
+        self.assertTrue(report["ok"])
+        self.assertGreaterEqual(report["counts"]["memoryBooks"], 1)
+        self.assertGreaterEqual(report["counts"]["memoryAtoms"], 2)
+        self.assertGreaterEqual(report["counts"]["phraseCandidates"], 2)
+        self.assertIn("local_source_bundle_fallback_used", plan["metadata"]["warnings"])
+
     def test_memory_book_compile_rejects_long_surface_hint(self) -> None:
         output = sample_compile_output(self.event_id)
         output["memoryAtoms"][0]["surfaceHints"] = ["这是一个很长很长的历史原句不应该作为候选"]

@@ -1556,6 +1556,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 project=args.project,
                 provider=organizer.provider_name,
                 model=config.model,
+                source_bundle=bundle,
             )
         except (DeepSeekMemoryOrganizerError, ValueError) as exc:
             print(json.dumps({"schemaVersion": MEMORY_BOOK_PREVIEW_SCHEMA_VERSION, "ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
