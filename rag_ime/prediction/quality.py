@@ -40,12 +40,25 @@ def reject_prompt_leak(candidate: str) -> bool:
     surface = _compact(candidate)
     if not surface:
         return True
-    if re.search(r"(?i)(sessionId|requestSeq|frontendRevision|system prompt|developer message)", surface):
+    if re.search(r"(?i)(system prompt|developer message)", surface):
         return True
     if re.search(r"(?i)(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])", surface):
         return True
     if surface.startswith(("{", "[", "```")) and any(marker in surface for marker in ("schemaVersion", "session", "request")):
         return True
+    if _looks_like_frontend_trace_leak(surface):
+        return True
+    return False
+
+
+def _looks_like_frontend_trace_leak(surface: str) -> bool:
+    if re.search(r"(?i)[\"']?(sessionId|requestSeq|frontendRevision)[\"']?\s*[:=]", surface):
+        return True
+    if re.search(r"(?i)\b(sessionId|frontendRevision)\b", surface):
+        return True
+    if re.search(r"(?i)\brequestSeq\b", surface):
+        concept_markers = ("stale", "guard", "旧候选", "覆盖", "新输入", "异步", "保护")
+        return not any(marker in surface for marker in concept_markers)
     return False
 
 

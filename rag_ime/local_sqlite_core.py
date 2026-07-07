@@ -31,7 +31,7 @@ from .memory_dedup import select_diverse
 from .memory_ingest import sync_event_to_memory_v2
 from .memory_models import CandidateFeedbackV2, CleanupRunPlan, ImeQueryContext, MemoryCandidateV2
 from .memory_optimizer_models import ContextFrame, OptimizerResult, RawRetrievalHit
-from .memory_schema_v2 import ensure_memory_v2_schema
+from .memory_schema_v2 import ensure_memory_v2_schema, memory_v2_table_names
 from .memory_tag_graph import propagate_tag_energy, recompute_tag_graph, score_memory_items_from_tag_energy
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
 from .pinyin_index import pinyin_search_document
@@ -273,19 +273,26 @@ class LocalSqliteCoreClient:
             )
 
     def reset(self) -> None:
-        with self._connect() as conn:
-            conn.executescript(
-                """
-                DROP TABLE IF EXISTS memory_vectors;
-                DROP TABLE IF EXISTS memory_actions;
-                DROP TABLE IF EXISTS memory_state;
-                DROP TABLE IF EXISTS input_events;
-                DROP TABLE IF EXISTS memory_fts;
-                DROP TABLE IF EXISTS phrase_stats;
-                DROP TABLE IF EXISTS phrase_project_stats;
-                DROP TABLE IF EXISTS phrase_app_stats;
-                """
+        table_names = tuple(
+            dict.fromkeys(
+                (
+                    *memory_v2_table_names(),
+                    "memory_vectors",
+                    "memory_actions",
+                    "memory_state",
+                    "input_events",
+                    "memory_fts",
+                    "phrase_stats",
+                    "phrase_project_stats",
+                    "phrase_app_stats",
+                )
             )
+        )
+        with self._connect() as conn:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            for table in table_names:
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
+            conn.execute("PRAGMA foreign_keys = ON")
         self.initialize()
         self._clear_suggestion_cache()
 

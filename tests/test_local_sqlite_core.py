@@ -85,6 +85,35 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertTrue(all(item.evidence_preview for item in suggestions))
         self.assertTrue(all(item.metadata.get("memory_id", "").startswith("event:") for item in suggestions))
 
+    def test_reset_clears_v2_governance_state_for_deterministic_gates(self) -> None:
+        self.core.add_memory_tombstone(
+            target_type="phrase",
+            target_value="默认本地完成, 不上传个人输入历史",
+            reason="test",
+        )
+        self.core.record_memory_feedback(
+            {
+                "event": "skipped",
+                "candidateId": "event:1",
+                "candidateText": "默认本地完成, 不上传个人输入历史",
+                "sourceType": "memory",
+                "contextHash": "ctx:reset",
+                "timestampMs": now_ms(),
+            }
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM memory_tombstones").fetchone()[0], 0)
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM memory_feedback_events").fetchone()[0], 0)
+
+        self.core.reset()
+
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM input_events").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_items").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_tombstones").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_candidate_suppressions").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_feedback_events").fetchone()[0], 0)
+
     def test_core_optimization_snapshot_includes_recent_events_and_high_frequency_phrases(self) -> None:
         for _ in range(3):
             self.adapter.commit_text("四川模糊音", project="wisdom-weasel-rag-ime", source="manual")

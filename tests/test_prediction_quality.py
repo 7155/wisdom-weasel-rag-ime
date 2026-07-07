@@ -28,8 +28,11 @@ class PredictionQualityV1Tests(unittest.TestCase):
 
     def test_v1_rejects_prompt_and_session_leaks(self) -> None:
         self.assertTrue(reject_prompt_leak('{"sessionId":"debug","requestSeq":1}'))
+        self.assertTrue(reject_prompt_leak("requestSeq: 42"))
+        self.assertTrue(reject_prompt_leak("sessionId debug request"))
         self.assertTrue(reject_prompt_leak("019f1228-34de-74b3-a627-c546f091e87e 继续调试"))
         self.assertFalse(reject_prompt_leak("候选质量验收"))
+        self.assertFalse(reject_prompt_leak("requestSeq stale guard 防止旧候选覆盖新输入"))
 
     def test_v1_keeps_durable_user_memory(self) -> None:
         context = CandidateQualityContext(committed_context="现在要准备面试展示", strong_terms=("面试",))
