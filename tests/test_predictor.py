@@ -24,11 +24,14 @@ from rag_ime.predictor import (
     PREDICTION_REQUEST_NO_INPUT,
     PREDICTION_REQUEST_PINYIN_CONSTRAINED,
     PREDICTION_REQUEST_RIME_REORDER,
+    PREDICTION_REQUEST_SELECTED_TEXT_RAG,
     PredictionBenchmarkCase,
     benchmark_prediction_provider,
+    build_selected_text_rag_prompt,
     doctor_prediction_provider,
     parse_ime_prediction_candidates,
     parse_prediction_candidates,
+    parse_selected_text_rag_candidates,
     prediction_provider_from_env,
     prediction_provider_status,
     _filter_repeated_input_candidates,
@@ -404,6 +407,56 @@ class PredictionProviderTests(unittest.TestCase):
             max_candidates=4,
         )
         self.assertEqual(parsed, ["接入本地记忆", "验证 LLM 候选", "预测流程完成"])
+
+    def test_selected_text_rag_prompt_mentions_ime_candidate_constraints(self) -> None:
+        prompt = build_selected_text_rag_prompt(
+            selected_text="候选一会弹出，一会输入几个字后又不预测",
+            evidence_items=("trigger policy 和 sidecar latency 是排查入口",),
+            max_candidates=3,
+        )
+
+        self.assertIn("输入法 Active RAG", prompt)
+        self.assertIn("只输出 JSON 字符串数组", prompt)
+        self.assertIn("不要解释", prompt)
+        self.assertIn("不要输出 Markdown", prompt)
+        self.assertIn("不要复读选区原文", prompt)
+
+    def test_selected_text_rag_parser_accepts_json_candidates(self) -> None:
+        parsed = parse_selected_text_rag_candidates(
+            '["候选消失排查路径","本地优先","根据上述可以继续"]',
+            selected_text="候选一会弹出，一会输入几个字后又不预测",
+            max_candidates=3,
+        )
+
+        self.assertEqual(parsed, ["候选消失排查路径", "本地优先"])
+
+    def test_selected_text_rag_parser_accepts_line_candidates(self) -> None:
+        parsed = parse_selected_text_rag_candidates(
+            "1. 候选显示状态机\n2. StableCandidateSnapshot\n3. 不要解释",
+            selected_text="我想优化候选栏",
+            max_candidates=3,
+        )
+
+        self.assertEqual(parsed, ["候选显示状态机", "StableCandidateSnapshot"])
+
+    def test_selected_text_rag_filters_generic_filler_and_prompt_echo(self) -> None:
+        parsed = parse_selected_text_rag_candidates(
+            '["RAG","输入法候选","不要解释","选区 RAG 助手","候选稳定"]',
+            selected_text="选区 RAG 助手会不会偷读我选中的内容",
+            max_candidates=5,
+        )
+
+        self.assertEqual(parsed, ["候选稳定"])
+
+    def test_ime_parser_routes_selected_text_rag_request(self) -> None:
+        parsed = parse_ime_prediction_candidates(
+            '["候选一会弹出，一会输入几个字后又不预测","候选消失排查路径"]',
+            current_input="候选一会弹出，一会输入几个字后又不预测",
+            request_type=PREDICTION_REQUEST_SELECTED_TEXT_RAG,
+            max_candidates=2,
+        )
+
+        self.assertEqual(parsed, ["候选消失排查路径"])
 
     def test_parse_ime_prediction_candidates_turns_sentence_into_short_continuations(self) -> None:
         parsed = parse_ime_prediction_candidates(
@@ -878,7 +931,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertTrue(ollama_status["configured"])
         self.assertTrue(ollama_status["streamFirstCandidate"])
         self.assertTrue(mlx_status["configured"])
-        self.assertTrue(mlx_status["streamFirstCandidate"])
+        self.assertFalse(mlx_status["streamFirstCandidate"])
 
     def test_model_env_file_does_not_configure_realtime_predictor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1468,6 +1521,46 @@ class PredictionProviderTests(unittest.TestCase):
             _MockMlxHandler.stream_chunks = None
 
         self.assertEqual(predictions, [])
+
+    def test_mlx_stream_first_candidate_preserves_rime_candidate(self) -> None:
+        _MockMlxHandler.captured_path = ""
+        _MockMlxHandler.captured_payload = {}
+        _MockMlxHandler.health_payload = {}
+        _MockMlxHandler.stream_chunks = [
+            {"delta": "稳定性", "elapsedMs": 18},
+            {"event": "candidate_delta", "candidate": "稳定性", "index": 0, "elapsedMs": 18},
+            {"done": True, "candidates": ["稳定性"], "totalMs": 19},
+        ]
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MockMlxHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = prediction_provider_from_env(
+                {
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
+                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
+                    "RAG_IME_PREDICTOR_STREAM_FIRST": "1",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                }
+            )
+            predictions = provider.predict(
+                current_input="",
+                recent_context="这个输入法目前最影响体验的是",
+                max_candidates=3,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+                rime_candidates=("稳定性", "候选", "显示"),
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+            _MockMlxHandler.stream_chunks = None
+
+        self.assertEqual([item.text for item in predictions], ["稳定性"])
+        self.assertTrue(predictions[0].metadata["stream_first_candidate"])
         self.assertEqual(_MockMlxHandler.captured_path, "/predict-stream")
 
     def test_prediction_cooldown_skips_repeat_failures(self) -> None:

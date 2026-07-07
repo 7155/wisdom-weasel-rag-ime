@@ -21,6 +21,7 @@ from .text_utils import compact_whitespace
 
 
 PREDICTION_REQUEST_NO_INPUT = "no_input_prediction"
+PREDICTION_REQUEST_POST_COMMIT_COMPLETION = "post_commit_completion"
 PREDICTION_REQUEST_PINYIN_CONSTRAINED = "pinyin_constrained_prediction"
 PREDICTION_REQUEST_RIME_REORDER = "rime_reorder"
 PREDICTION_REQUEST_GENERIC = "generic_prediction"
@@ -28,6 +29,7 @@ PREDICTION_REQUEST_IME_HOT = "ime_hot"
 PREDICTION_REQUEST_IME_POST_COMMIT = "ime_post_commit"
 PREDICTION_REQUEST_IME_QUALITY = "ime_quality"
 PREDICTION_REQUEST_ACTIVE_RAG = "active_rag"
+PREDICTION_REQUEST_SELECTED_TEXT_RAG = "selected_text_rag"
 
 OPENAI_CHAT_SYSTEM_PROMPT = (
     "你是一个本地中文输入法预测器。只输出候选词或短语, "
@@ -624,7 +626,11 @@ class MlxPredictionServiceProvider:
             )
             if not streamed:
                 return []
-            streamed_candidates = _finalize_ime_prediction_candidates([streamed["candidate"]], query)
+            streamed_candidates = _finalize_realtime_prediction_candidates(
+                [streamed["candidate"]],
+                query,
+                rime_candidates=rime_candidate_tuple,
+            )
             if not streamed_candidates:
                 return []
             streamed_candidate = streamed_candidates[0]
@@ -968,7 +974,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
                 provider_name="local-mlx",
                 extra_body=_json_object_env(source, "RAG_IME_PREDICTOR_EXTRA_BODY_JSON"),
                 extra_headers=_json_string_map_env(source, "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON"),
-                stream_first_candidate=_bool_env(source, "RAG_IME_PREDICTOR_STREAM_FIRST", default=True),
+                stream_first_candidate=_bool_env(source, "RAG_IME_PREDICTOR_STREAM_FIRST", default=False),
             )
         )
     else:
@@ -1464,6 +1470,7 @@ def _measure_mlx_stream_ttft(
 ) -> dict[str, Any]:
     query = compact_whitespace(current_input)
     context = compact_whitespace(recent_context)[-420:]
+    rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
     body = _mlx_predict_body(
         config,
         context=context,
@@ -1471,7 +1478,7 @@ def _measure_mlx_stream_ttft(
         max_candidates=max_candidates,
         stream=True,
         request_type=request_type,
-        rime_candidates=rime_candidates,
+        rime_candidates=rime_candidate_tuple,
     )
     if stop_after_first_candidate:
         body["streamFirstCandidate"] = True
@@ -1557,7 +1564,7 @@ def _measure_mlx_stream_ttft(
     total_ms = int((time.perf_counter() - started) * 1000)
     candidates = final_candidates or _parse_prediction_candidate_texts([full_text], max_candidates=max_candidates)
     candidates = _parse_prediction_candidate_texts(candidates, max_candidates=max_candidates)
-    candidates = _finalize_ime_prediction_candidates(candidates, query)
+    candidates = _finalize_realtime_prediction_candidates(candidates, query, rime_candidates=rime_candidate_tuple)
     return {
         "ok": first_chunk_ms is not None,
         "firstChunkMs": first_chunk_ms,
@@ -1618,6 +1625,59 @@ def parse_prediction_candidates(text: str, *, max_candidates: int = 5) -> list[s
     return _parse_prediction_candidate_texts([text], max_candidates=max_candidates)
 
 
+def build_selected_text_rag_prompt(
+    *,
+    selected_text: str,
+    evidence_items: tuple[str, ...] | list[str] = (),
+    intent: str = "rewrite",
+    max_candidates: int = 5,
+) -> str:
+    selected = compact_whitespace(selected_text)
+    evidence_lines = [
+        f"- {compact_whitespace(str(item))[:120]}"
+        for item in evidence_items
+        if compact_whitespace(str(item))
+    ][:8]
+    evidence_block = "\n".join(evidence_lines) if evidence_lines else "- 无"
+    return (
+        "你是输入法 Active RAG 选区候选生成器。\n"
+        "任务: 根据用户显式选中的文本和本地 RAG/记忆证据, 生成可直接上屏的短候选。\n"
+        "硬规则: 只输出 JSON 字符串数组; 不要解释; 不要输出 Markdown; 不要输出历史原句; 不要复读选区原文。\n"
+        f"候选数量: 1 到 {max(1, int(max_candidates))} 个, 每个候选 2 到 24 个字符。\n"
+        f"意图: {compact_whitespace(intent) or 'rewrite'}\n"
+        f"选中文本: {selected[:240]}\n"
+        f"RAG/记忆证据:\n{evidence_block}\n"
+        '输出示例: ["候选消失排查路径","本地优先","多路召回"]'
+    )
+
+
+def parse_selected_text_rag_candidates(
+    text: str | list[str],
+    *,
+    selected_text: str = "",
+    max_candidates: int = 5,
+) -> list[str]:
+    texts = [text] if isinstance(text, str) else [str(item) for item in text if str(item).strip()]
+    raw_candidates = _structured_prediction_candidate_texts(texts, max_candidates=max_candidates)
+    if not raw_candidates:
+        raw_candidates = _parse_prediction_candidate_texts(texts, max_candidates=max_candidates * 2)
+    selected = compact_whitespace(selected_text)
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in raw_candidates:
+        item = compact_whitespace(candidate)
+        if not _selected_text_rag_candidate_allowed(item, selected_text=selected):
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+        if len(result) >= max(1, int(max_candidates)):
+            break
+    return result
+
+
 def parse_ime_prediction_candidates(
     text: str | list[str],
     *,
@@ -1632,10 +1692,25 @@ def parse_ime_prediction_candidates(
     resolved_request_type = normalize_prediction_request_type(request_type)
     rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
 
+    if resolved_request_type == PREDICTION_REQUEST_ACTIVE_RAG:
+        return parse_selected_text_rag_candidates(texts, selected_text=current_input, max_candidates=max_items)
+
     if resolved_request_type == PREDICTION_REQUEST_RIME_REORDER and rime_candidate_tuple:
         reordered = _rime_reorder_candidates_from_texts(texts, rime_candidate_tuple, max_candidates=max_items)
         if reordered:
             return reordered
+
+    if resolved_request_type == PREDICTION_REQUEST_POST_COMMIT_COMPLETION:
+        candidates = _structured_prediction_candidate_texts(texts, max_candidates=max_items)
+        if not candidates:
+            candidates = _parse_prediction_candidate_texts(texts, max_candidates=max_items)
+        if not candidates:
+            candidates = [compact_whitespace(item) for item in texts if compact_whitespace(item)]
+        if recent_context:
+            candidates = [trim_context_overlap(candidate, recent_context) for candidate in candidates]
+            candidates = _filter_repeated_context_candidates(candidates, recent_context)
+        finalized = _finalize_realtime_prediction_candidates(candidates, current_input, rime_candidates=())
+        return finalized[:max_items]
 
     candidates = _structured_prediction_candidate_texts(texts, max_candidates=max_items)
     if not candidates:
@@ -1654,7 +1729,7 @@ def parse_ime_prediction_candidates(
     )
     if recent_context:
         candidates = [trim_context_overlap(candidate, recent_context) for candidate in candidates]
-    if resolved_request_type == PREDICTION_REQUEST_NO_INPUT:
+    if resolved_request_type in {PREDICTION_REQUEST_NO_INPUT, PREDICTION_REQUEST_POST_COMMIT_COMPLETION}:
         candidates = _filter_repeated_context_candidates(candidates, recent_context)
     allowed_ascii_candidates = rime_candidate_tuple if resolved_request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED else ()
     finalized = _finalize_ime_prediction_candidates(
@@ -1703,6 +1778,26 @@ def _pinyin_constrained_rime_phrase_fallback(
             if len(result) >= max(1, int(max_candidates)):
                 return result
     return result
+
+
+def _selected_text_rag_candidate_allowed(candidate: str, *, selected_text: str) -> bool:
+    item = compact_whitespace(candidate)
+    if not item:
+        return False
+    if len(item) > 24:
+        return False
+    if item.isascii() and any(char.isalpha() for char in item) and len(item) <= 12:
+        return False
+    if len(item) > 6 and selected_text and item in selected_text:
+        return False
+    lowered = item.lower()
+    if any(secret in lowered for secret in ("sk-", "api_key", "apikey", "token=", "password", "cookie")):
+        return False
+    if any(marker in item for marker in ("根据上述", "可以进行", "可以继续", "不要解释", "Markdown", "输出示例")):
+        return False
+    if item in _LOW_VALUE_IME_CANDIDATES:
+        return False
+    return True
 
 
 def trim_context_overlap(candidate: str, recent_context: str) -> str:
@@ -2400,6 +2495,11 @@ def _openai_prediction_system_prompt(request_type: str) -> str:
             f"{OPENAI_CHAT_SYSTEM_PROMPT} 当前没有正在编辑的拼音, "
             "只预测最可能接在已上屏上下文后面的短候选。"
         )
+    if resolved == PREDICTION_REQUEST_ACTIVE_RAG:
+        return (
+            "你是输入法 Active RAG 选区候选生成器。只输出 JSON 字符串数组; "
+            "不要解释, 不要 Markdown, 不要复读选区原文或历史原句。"
+        )
     return OPENAI_CHAT_SYSTEM_PROMPT
 
 
@@ -2431,6 +2531,13 @@ def _openai_prediction_user_content(
         return (
             f"已上屏上下文: {context}\n"
             f"请预测 {max_candidates} 个最可能接在上下文后面的短候选, 用空格分隔。"
+        )
+    if resolved == PREDICTION_REQUEST_ACTIVE_RAG:
+        return build_selected_text_rag_prompt(
+            selected_text=query,
+            evidence_items=(context,),
+            intent="rewrite",
+            max_candidates=max_candidates,
         )
     return (
         f"上下文: {context}\n"
@@ -2572,6 +2679,28 @@ def _mlx_raw_texts_from_payload(payload: dict[str, Any]) -> list[str]:
     return raw_texts
 
 
+def _finalize_realtime_prediction_candidates(
+    candidates: list[str],
+    current_input: str,
+    *,
+    rime_candidates: tuple[str, ...] = (),
+) -> list[str]:
+    parsed = _parse_prediction_candidate_texts(candidates, max_candidates=len(candidates) or 1)
+    result: list[str] = []
+    rime_set = {compact_whitespace(item) for item in rime_candidates if compact_whitespace(item)}
+    for item in parsed:
+        text = compact_whitespace(item)
+        if not text or text in result:
+            continue
+        if text in rime_set:
+            result.append(text)
+        else:
+            result.extend(candidate for candidate in _finalize_ime_prediction_candidates([text], current_input) if candidate)
+        if len(result) >= len(parsed):
+            break
+    return result
+
+
 def _finalize_mlx_payload_candidates(
     payload: dict[str, Any],
     payload_candidates: list[str],
@@ -2651,6 +2780,7 @@ def normalize_prediction_request_type(value: object) -> str:
     text = compact_whitespace(str(value or "")).lower().replace("-", "_")
     if text in {
         PREDICTION_REQUEST_NO_INPUT,
+        PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
         PREDICTION_REQUEST_PINYIN_CONSTRAINED,
         PREDICTION_REQUEST_RIME_REORDER,
         PREDICTION_REQUEST_IME_HOT,
@@ -2659,6 +2789,8 @@ def normalize_prediction_request_type(value: object) -> str:
         PREDICTION_REQUEST_ACTIVE_RAG,
     }:
         return text
+    if text == PREDICTION_REQUEST_SELECTED_TEXT_RAG:
+        return PREDICTION_REQUEST_ACTIVE_RAG
     return PREDICTION_REQUEST_GENERIC
 
 

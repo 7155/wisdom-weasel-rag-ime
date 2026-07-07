@@ -54,9 +54,9 @@ index 0000000..44ee9f8
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 8
-+  latency_budget_ms: 6500
++  latency_budget_ms: 900
 +  debounce_ms: 40
-+  timeout_ms: 12000
++  timeout_ms: 1200
 +  frontend_trace: true
 diff --git a/sources/InputSource.swift b/sources/InputSource.swift
 index 89c1214..a240173 100644
@@ -230,9 +230,9 @@ index 0000000..e4aaed0
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 8, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 6500, range: 30...20000)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 900, range: 30...20000)
 +    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 40, range: 0...500)
-+    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 12000, range: 100...30000)) / 1000
++    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 100...30000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
 +    self.frontendTrace = config?.getBool("rag_ime/frontend_trace") == true
 +  }
@@ -259,6 +259,32 @@ index 0000000..e4aaed0
 +      requestFile.path,
 +    ])
 +    return try JSONDecoder().decode(RagImeSidecarResponse.self, from: outputData)
++  }
++
++  func postActiveRagStart(_ request: RagImeActiveRagRequest, completion: @escaping (RagImeActiveRagResponse) -> Void) {
++    DispatchQueue.global(qos: .userInitiated).async {
++      do {
++        let outputData: Data
++        if let sidecarURL {
++          outputData = try postJSON(request, to: endpoint("active-rag/start", base: sidecarURL))
++        } else {
++          outputData = try runCli([
++            "active-rag-demo",
++            "--selected-text", request.selectedText,
++            "--surrounding-before", request.surroundingBefore,
++            "--surrounding-after", request.surroundingAfter,
++            "--intent", request.intent,
++            "--placement", request.placement,
++            "--project", request.project,
++            "--max-candidates", String(request.maxCandidates),
++          ])
++        }
++        let response = try JSONDecoder().decode(RagImeActiveRagResponse.self, from: outputData)
++        DispatchQueue.main.async { completion(response) }
++      } catch {
++        print("RAG IME Active RAG start failed: \(error)")
++      }
++    }
 +  }
 +
 +  func recordSideCandidateCommit(
@@ -523,6 +549,142 @@ index 0000000..e4aaed0
 +    return environment
 +  }
 +}
+diff --git a/sources/RagImeSelectedTextProvider.swift b/sources/RagImeSelectedTextProvider.swift
+new file mode 100644
+index 0000000..9a7f4c2
+--- /dev/null
++++ b/sources/RagImeSelectedTextProvider.swift
+@@ -0,0 +1,119 @@
++//
++//  RagImeSelectedTextProvider.swift
++//  Squirrel
++//
++
++import AppKit
++import ApplicationServices
++import CryptoKit
++import Foundation
++
++struct RagImeSelectedTextCapture {
++  let selectedText: String
++  let selectedTextHash: String
++  let selectedTextChars: Int
++  let selectedTextPreview: String
++  let surroundingBefore: String
++  let surroundingAfter: String
++  let canReplaceSelection: Bool
++  let captureEpoch: Int
++  let captureSource: String
++}
++
++final class RagImeSelectedTextProvider {
++  func captureSelectedTextForActiveRag(
++    captureEpoch: Int,
++    allowAccessibility: Bool = true,
++    allowClipboardFallback: Bool = true
++  ) -> RagImeSelectedTextCapture? {
++    if allowAccessibility, let axCapture = captureSelectedTextViaAccessibility(captureEpoch: captureEpoch) {
++      return axCapture
++    }
++    guard allowClipboardFallback else { return nil }
++    return captureSelectedTextViaClipboardFallbackPreservingPasteboard(captureEpoch: captureEpoch)
++  }
++
++  private func captureSelectedTextViaAccessibility(captureEpoch: Int) -> RagImeSelectedTextCapture? {
++    let systemWide = AXUIElementCreateSystemWide()
++    var focusedObject: AnyObject?
++    let focusedResult = AXUIElementCopyAttributeValue(
++      systemWide,
++      kAXFocusedUIElementAttribute as CFString,
++      &focusedObject
++    )
++    guard focusedResult == .success, let focused = focusedObject else {
++      return nil
++    }
++    var selectedObject: AnyObject?
++    let selectedResult = AXUIElementCopyAttributeValue(
++      focused as! AXUIElement,
++      kAXSelectedTextAttribute as CFString,
++      &selectedObject
++    )
++    guard selectedResult == .success, let selectedText = selectedObject as? String else {
++      return nil
++    }
++    return makeCapture(
++      selectedText: selectedText,
++      surroundingBefore: "",
++      surroundingAfter: "",
++      canReplaceSelection: true,
++      captureEpoch: captureEpoch,
++      captureSource: "accessibility_selected_text"
++    )
++  }
++
++  private func captureSelectedTextViaClipboardFallbackPreservingPasteboard(captureEpoch: Int) -> RagImeSelectedTextCapture? {
++    let pasteboard = NSPasteboard.general
++    let previousChangeCount = pasteboard.changeCount
++    let previousItems = pasteboard.pasteboardItems ?? []
++    sendCopyShortcutForActiveRagSelection()
++    Thread.sleep(forTimeInterval: 0.08)
++    let selectedText = pasteboard.string(forType: .string) ?? ""
++    restorePasteboardItems(previousItems, previousChangeCount: previousChangeCount)
++    return makeCapture(
++      selectedText: selectedText,
++      surroundingBefore: "",
++      surroundingAfter: "",
++      canReplaceSelection: !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
++      captureEpoch: captureEpoch,
++      captureSource: "clipboard_fallback_restored"
++    )
++  }
++
++  private func sendCopyShortcutForActiveRagSelection() {
++    let source = CGEventSource(stateID: .combinedSessionState)
++    let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: true)
++    let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: false)
++    keyDown?.flags = .maskCommand
++    keyUp?.flags = .maskCommand
++    keyDown?.post(tap: .cghidEventTap)
++    keyUp?.post(tap: .cghidEventTap)
++  }
++
++  private func restorePasteboardItems(_ items: [NSPasteboardItem], previousChangeCount: Int) {
++    let pasteboard = NSPasteboard.general
++    pasteboard.clearContents()
++    if !items.isEmpty {
++      pasteboard.writeObjects(items)
++    }
++    traceRagImeSelectedTextProviderContract("clipboard_fallback_restores_clipboard_contract", previousChangeCount: previousChangeCount)
++  }
++
++  private func makeCapture(
++    selectedText: String,
++    surroundingBefore: String,
++    surroundingAfter: String,
++    canReplaceSelection: Bool,
++    captureEpoch: Int,
++    captureSource: String
++  ) -> RagImeSelectedTextCapture? {
++    let compact = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
++    guard !compact.isEmpty else { return nil }
++    return RagImeSelectedTextCapture(
++      selectedText: compact,
++      selectedTextHash: ragImeStableTextHash(compact),
++      selectedTextChars: compact.count,
++      selectedTextPreview: String(compact.prefix(48)),
++      surroundingBefore: surroundingBefore,
++      surroundingAfter: surroundingAfter,
++      canReplaceSelection: canReplaceSelection,
++      captureEpoch: captureEpoch,
++      captureSource: captureSource
++    )
++  }
++}
++
++func traceRagImeSelectedTextProviderContract(_ event: String, previousChangeCount: Int) {
++  _ = event
++  _ = previousChangeCount
++}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
 index 0000000..784162d
@@ -576,6 +738,45 @@ index 0000000..784162d
 +  let surroundingAfter: String
 +  let canReplaceSelection: Bool
 +  let captureEpoch: Int
++}
++
++struct RagImeActiveRagRequest: Codable {
++  let schemaVersion: String
++  let sessionId: String
++  let selectedText: String
++  let selectedTextHash: String
++  let selectedTextChars: Int
++  let selectedTextPreview: String
++  let frontendRevision: Int
++  let selectionEpoch: Int
++  let panelSessionId: String
++  let frontAppBundleId: String
++  let surroundingBefore: String
++  let surroundingAfter: String
++  let canReplaceSelection: Bool
++  let captureEpoch: Int
++  let placement: String
++  let intent: String
++  let project: String
++  let maxCandidates: Int
++}
++
++struct RagImeActiveRagResponse: Codable {
++  let schemaVersion: String
++  let sessionId: String
++  let status: String
++  let thinkingRow: Bool
++  let uiMode: String
++  let selectedTextHash: String
++  let frontendRevision: Int
++  let selectionEpoch: Int
++  let panelSessionId: String
++  let frontAppBundleId: String
++  let placement: String
++  let intent: String
++  let candidateCount: Int
++  let candidates: [RagImeDisplayCandidate]
++  let keyPolicy: RagImeKeyPolicyPayload?
 +}
 +
 +struct RagImeRimeContextPayload: Codable {
@@ -909,6 +1110,10 @@ index c2adf74..3cfc0e5 100644
 +  private var ragImeFrontendRevision: Int = 0
 +  private var ragImeSelectionEpoch: Int = 0
 +  private var ragImeDisplayPanelSessionId: String = ""
++  private var ragImeActiveRagSelectedTextHash: String = ""
++  private var ragImeActiveRagFrontAppBundleId: String = ""
++  private var ragImeActiveRagFrontendRevision: Int = 0
++  private var ragImeActiveRagSelectionEpoch: Int = 0
 +  private var ragImeDisplayCompositionHash: String = ""
 +  private var ragImeDisplayCommittedContextHash: String = ""
 +  private var ragImeLastRequestFingerprint: String = ""
@@ -932,6 +1137,15 @@ index c2adf74..3cfc0e5 100644
        }
  
        let keyCode = event.keyCode
++      if matchesRagImeActiveRagShortcut(keyCode, modifiers: modifiers)
++        && startRagImeActiveRagAssistFromSelection() {
++        let shortcut = ragImeActiveRagShortcutSetting()
++        traceRagImeFrontendEvent("active_rag_shortcut_triggered", fields: [
++          "shortcut": shortcut,
++          "selectionEpoch": ragImeSelectionEpoch,
++        ])
++        return true
++      }
 +      if isRagImeDeleteKey(keyCode, modifiers: modifiers) {
 +        invalidateRagImeDisplayForInputChange(reason: "delete_key", keyCode: keyCode)
 +      }
@@ -939,6 +1153,7 @@ index c2adf74..3cfc0e5 100644
 +        && !modifiers.contains(.command)
 +        && !modifiers.contains(.control)
 +        && !modifiers.contains(.option)
++        && ragImeDisplayIsPostCommitPrediction()
 +        && ragImeDisplayTabPolicy == "accept_top_prediction"
 +        && selectRagImePredictionCandidate(atOrdinal: 1, route: "tab", key: "tab") {
 +        return true
@@ -955,9 +1170,6 @@ index c2adf74..3cfc0e5 100644
 +          && !modifiers.contains(.control)
 +          && ragImeDisplayOptionNumberPolicy == "select_prediction_by_ordinal"
 +          && selectRagImePredictionCandidate(forKey: String(char), route: "option_number") {
-+          return true
-+        }
-+        if !modifiers.contains(.control) && !modifiers.contains(.option) && ragImeDisplayNumberKeyPolicy == "select_visible_candidate" && selectRagImeSideCandidate(forKey: String(char)) {
 +          return true
 +        }
          let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
@@ -1024,6 +1236,15 @@ index c2adf74..3cfc0e5 100644
 +          "query": query,
 +          "preedit": sourcePreedit,
 +          "recentContextChars": recentContext.count,
++        ])
++        traceRagImeFrontendEvent("active_rag_candidate_committed", fields: [
++          "index": index,
++          "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++          "selectedTextHash": ragImeActiveRagSelectedTextHash,
++          "frontendRevision": ragImeActiveRagFrontendRevision,
++          "selectionEpoch": ragImeActiveRagSelectionEpoch,
++          "panelSessionId": ragImeDisplayPanelSessionId,
++          "frontAppBundleId": ragImeActiveRagFrontAppBundleId,
 +        ])
 +        commit(string: insertText)
 +        rimeAPI.clear_composition(session)
@@ -1170,7 +1391,7 @@ index c2adf74..3cfc0e5 100644
 +    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {
 +      return false
 +    }
-+    guard ragImeDisplayCandidates[index].sourceType != "raw_english" else {
++    guard ragImeDisplayCandidates[index].sourceType == "rime" else {
 +      return false
 +    }
 +    guard canSelectRagImeDisplayCandidate(ragImeDisplayCandidates[index]) else {
@@ -1281,6 +1502,128 @@ index c2adf74..3cfc0e5 100644
 +      "candidate": ragImeTraceCandidateSummary(candidate, index: index),
 +    ])
 +    return selectCandidate(index)
++  }
++
++  func startRagImeActiveRagAssistFromSelection() -> Bool {
++    guard let sidecarClient = ragImeSidecarClient else { return false }
++    let provider = RagImeSelectedTextProvider()
++    ragImeFrontendRevision += 1
++    ragImeSelectionEpoch += 1
++    let frontendRevision = ragImeFrontendRevision
++    let selectionEpoch = ragImeSelectionEpoch
++    let panelSessionId = UUID().uuidString
++    let allowAccessibility = ragImeActiveRagAccessibilityCaptureEnabled()
++    let allowClipboardFallback = ragImeActiveRagClipboardFallbackEnabled()
++    guard let capture = provider.captureSelectedTextForActiveRag(
++      captureEpoch: selectionEpoch,
++      allowAccessibility: allowAccessibility,
++      allowClipboardFallback: allowClipboardFallback
++    ) else {
++      traceRagImeFrontendEvent("active_rag_selected_text_capture_failed", fields: [
++        "frontendRevision": frontendRevision,
++        "selectionEpoch": selectionEpoch,
++        "panelSessionId": panelSessionId,
++        "frontAppBundleId": currentApp,
++        "allowAccessibility": allowAccessibility,
++        "allowClipboardFallback": allowClipboardFallback,
++      ])
++      return false
++    }
++    let request = RagImeActiveRagRequest(
++      schemaVersion: "rag-ime.active-rag-request.v1",
++      sessionId: String(session),
++      selectedText: capture.selectedText,
++      selectedTextHash: capture.selectedTextHash,
++      selectedTextChars: capture.selectedTextChars,
++      selectedTextPreview: capture.selectedTextPreview,
++      frontendRevision: frontendRevision,
++      selectionEpoch: selectionEpoch,
++      panelSessionId: panelSessionId,
++      frontAppBundleId: currentApp,
++      surroundingBefore: capture.surroundingBefore,
++      surroundingAfter: capture.surroundingAfter,
++      canReplaceSelection: capture.canReplaceSelection,
++      captureEpoch: capture.captureEpoch,
++      placement: capture.canReplaceSelection ? "replace_selection" : "show_only",
++      intent: "rewrite",
++      project: sidecarClient.project,
++      maxCandidates: sidecarClient.maxSideCandidates
++    )
++    traceRagImeFrontendEvent("active_rag_thinking_displayed", fields: [
++      "selectedTextHash": request.selectedTextHash,
++      "selectedTextChars": request.selectedTextChars,
++      "selectedTextPreview": request.selectedTextPreview,
++      "frontendRevision": frontendRevision,
++      "selectionEpoch": selectionEpoch,
++      "panelSessionId": panelSessionId,
++      "frontAppBundleId": currentApp,
++      "captureSource": capture.captureSource,
++      "allowAccessibility": allowAccessibility,
++      "allowClipboardFallback": allowClipboardFallback,
++      "traceIncludesText": false,
++    ])
++    ragImeActiveRagSelectedTextHash = request.selectedTextHash
++    ragImeActiveRagFrontAppBundleId = request.frontAppBundleId
++    ragImeActiveRagFrontendRevision = request.frontendRevision
++    ragImeActiveRagSelectionEpoch = request.selectionEpoch
++    sendRagImeActiveRagStartRequest(request, sidecarClient: sidecarClient)
++    return true
++  }
++
++  func sendRagImeActiveRagStartRequest(_ request: RagImeActiveRagRequest, sidecarClient: RagImeSidecarClient) {
++    traceRagImeFrontendEvent("active_rag_start_request_scheduled", fields: [
++      "selectedTextHash": request.selectedTextHash,
++      "selectedTextChars": request.selectedTextChars,
++      "frontendRevision": request.frontendRevision,
++      "selectionEpoch": request.selectionEpoch,
++      "panelSessionId": request.panelSessionId,
++      "frontAppBundleId": request.frontAppBundleId,
++      "endpoint": "/api/active-rag/start",
++    ])
++    sidecarClient.postActiveRagStart(request) { [weak self] response in
++      self?.applyRagImeActiveRagResponse(response, request: request)
++    }
++  }
++
++  func applyRagImeActiveRagResponse(_ response: RagImeActiveRagResponse, request: RagImeActiveRagRequest) {
++    guard response.selectedTextHash == request.selectedTextHash
++      && response.frontendRevision == request.frontendRevision
++      && response.selectionEpoch == request.selectionEpoch
++      && response.panelSessionId == request.panelSessionId
++      && response.frontAppBundleId == request.frontAppBundleId else {
++      traceRagImeFrontendEvent("active_rag_response_dropped_stale", fields: [
++        "reason": "active_rag_anchor_mismatch",
++        "selectedTextHash": request.selectedTextHash,
++        "frontendRevision": request.frontendRevision,
++        "selectionEpoch": request.selectionEpoch,
++        "panelSessionId": request.panelSessionId,
++        "frontAppBundleId": request.frontAppBundleId,
++      ])
++      return
++    }
++    ragImeDisplayCandidates = response.candidates
++    ragImePanelUsesDisplayCandidates = !response.candidates.isEmpty || response.thinkingRow
++    ragImeDisplayNumberKeyPolicy = response.keyPolicy?.numberKeys ?? "select_candidate_when_ready_else_noop"
++    ragImeDisplayTabPolicy = response.keyPolicy?.tab ?? "accept_top_when_ready"
++    ragImeDisplayOptionNumberPolicy = response.keyPolicy?.optionNumber ?? "select_candidate_by_ordinal"
++    ragImeDisplayPanelSessionId = response.panelSessionId
++    ragImeActiveRagSelectedTextHash = response.selectedTextHash
++    ragImeActiveRagFrontAppBundleId = response.frontAppBundleId
++    ragImeActiveRagFrontendRevision = response.frontendRevision
++    ragImeActiveRagSelectionEpoch = response.selectionEpoch
++    traceRagImeFrontendEvent(response.thinkingRow ? "active_rag_thinking_displayed" : "active_rag_ready_displayed", fields: [
++      "selectedTextHash": response.selectedTextHash,
++      "selectedTextChars": request.selectedTextChars,
++      "selectedTextPreview": request.selectedTextPreview,
++      "frontendRevision": response.frontendRevision,
++      "selectionEpoch": response.selectionEpoch,
++      "panelSessionId": response.panelSessionId,
++      "frontAppBundleId": response.frontAppBundleId,
++      "candidateCount": response.candidateCount,
++      "uiMode": response.uiMode,
++      "traceIncludesText": false,
++    ])
++    rimeUpdate(clearReservedComments: false, requestSidecar: false)
 +  }
 +
 +  func refreshRagImeSidecar(
@@ -1692,6 +2035,15 @@ index c2adf74..3cfc0e5 100644
 +    }
 +    guard response.selectionEpoch == ragImeSelectionEpoch else {
 +      dropRagImeSidecarResponse("live_selection_epoch_changed", response: response, request: request, fingerprint: fingerprint)
++      return
++    }
++    guard request.frontAppBundleId == currentApp else {
++      dropRagImeSidecarResponse("front_app_changed", response: response, request: request, fingerprint: fingerprint, clearDisplay: true)
++      return
++    }
++    let liveInputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
++    guard request.inputSourceId == liveInputSourceId else {
++      dropRagImeSidecarResponse("input_source_changed", response: response, request: request, fingerprint: fingerprint, clearDisplay: true)
 +      return
 +    }
 +    let currentRawInput = rimeAPI.get_input(session).map { String(cString: $0) } ?? ""
@@ -2244,6 +2596,78 @@ index c2adf74..3cfc0e5 100644
 +    return keyCode == 51 || keyCode == 117
 +  }
 +
++  func matchesRagImeActiveRagShortcut(_ keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
++    let shortcut = ragImeActiveRagShortcutSetting()
++    let parts = Set(shortcut.split(separator: "+").map { String($0).lowercased() })
++    guard let keyName = parts.first(where: { !["cmd", "command", "ctrl", "control", "option", "alt", "shift"].contains($0) }) else {
++      return false
++    }
++    guard ragImeShortcutKeyCode(keyName) == keyCode else { return false }
++    if parts.contains("ctrl") || parts.contains("control") {
++      guard modifiers.contains(.control) else { return false }
++    } else if modifiers.contains(.control) {
++      return false
++    }
++    if parts.contains("option") || parts.contains("alt") {
++      guard modifiers.contains(.option) else { return false }
++    } else if modifiers.contains(.option) {
++      return false
++    }
++    if parts.contains("cmd") || parts.contains("command") {
++      guard modifiers.contains(.command) else { return false }
++    } else if modifiers.contains(.command) {
++      return false
++    }
++    if parts.contains("shift") {
++      guard modifiers.contains(.shift) else { return false }
++    } else if modifiers.contains(.shift) {
++      return false
++    }
++    return true
++  }
++
++  func ragImeActiveRagShortcutSetting() -> String {
++    let defaultsValue = UserDefaults.standard.string(forKey: "RagImeActiveRagShortcut") ?? ""
++    let envValue = ProcessInfo.processInfo.environment["RAG_IME_ACTIVE_RAG_SHORTCUT"] ?? ""
++    let raw = defaultsValue.isEmpty ? envValue : defaultsValue
++    return raw.isEmpty ? "ctrl+enter" : raw.lowercased().replacingOccurrences(of: " ", with: "")
++  }
++
++  func ragImeActiveRagAccessibilityCaptureEnabled() -> Bool {
++    return ragImeBooleanSetting(
++      userDefaultsKey: "RagImeActiveRagCaptureAccessibility",
++      environmentKey: "RAG_IME_ACTIVE_RAG_CAPTURE_ACCESSIBILITY",
++      defaultValue: true
++    )
++  }
++
++  func ragImeActiveRagClipboardFallbackEnabled() -> Bool {
++    return ragImeBooleanSetting(
++      userDefaultsKey: "RagImeActiveRagCaptureClipboardFallback",
++      environmentKey: "RAG_IME_ACTIVE_RAG_CAPTURE_CLIPBOARD_FALLBACK",
++      defaultValue: true
++    )
++  }
++
++  func ragImeBooleanSetting(userDefaultsKey: String, environmentKey: String, defaultValue: Bool) -> Bool {
++    if let defaultsValue = UserDefaults.standard.object(forKey: userDefaultsKey) as? Bool {
++      return defaultsValue
++    }
++    let envValue = (ProcessInfo.processInfo.environment[environmentKey] ?? "").lowercased()
++    if ["1", "true", "yes", "on"].contains(envValue) { return true }
++    if ["0", "false", "no", "off"].contains(envValue) { return false }
++    return defaultValue
++  }
++
++  func ragImeShortcutKeyCode(_ keyName: String) -> UInt16? {
++    switch keyName.lowercased() {
++    case "r": return 15
++    case "space": return 49
++    case "return", "enter": return 36
++    default: return nil
++    }
++  }
++
 +  func invalidateRagImeDisplayForInputChange(reason: String, keyCode: UInt16) {
 +    ragImeInputGeneration += 1
 +    ragImeFrontendRevision += 1
@@ -2274,19 +2698,39 @@ index c2adf74..3cfc0e5 100644
 +      "selectionEpoch": selectionEpoch,
 +      "previousDisplayCount": previousCount,
 +    ])
-+    DispatchQueue.main.async { [weak self] in
-+      guard let self else { return }
-+      let actual = self.syncRagImeCommittedContextFromClient(excludingMarkedText: "")
-+      self.traceRagImeFrontendEvent("committed_context_resynced_after_delete", fields: [
-+        "keyCode": Int(keyCode),
-+        "inputGeneration": generation,
-+        "frontendRevision": frontendRevision,
-+        "selectionEpoch": selectionEpoch,
-+        "committedContextHash": ragImeStableTextHash(actual),
-+        "committedContextChars": actual.count,
-+        "committedContextSuffix": String(actual.suffix(80)),
-+      ])
-+    }
++    let actual = syncRagImeCommittedContextFromClient(excludingMarkedText: "")
++    traceRagImeFrontendEvent("committed_context_resynced_after_delete", fields: [
++      "keyCode": Int(keyCode),
++      "inputGeneration": generation,
++      "frontendRevision": frontendRevision,
++      "selectionEpoch": selectionEpoch,
++      "committedContextHash": ragImeStableTextHash(actual),
++      "committedContextChars": actual.count,
++      "committedContextSuffix": String(actual.suffix(80)),
++    ])
++  }
++
++  func invalidateRagImeForegroundTransaction(reason: String, keyCode: UInt16 = 0) {
++    ragImeInputGeneration += 1
++    ragImeFrontendRevision += 1
++    ragImeSelectionEpoch += 1
++    let previousCount = ragImeDisplayCandidates.count
++    clearRagImeDisplayCandidates()
++    ragImePendingRequestWorkItem?.cancel()
++    ragImePendingRequestWorkItem = nil
++    ragImePendingRequestFingerprint = ""
++    ragImeLastRequestFingerprint = ""
++    cancelRagImePendingContinuation(reason: reason, keyCode: keyCode)
++    traceRagImeFrontendEvent("foreground_transaction_invalidated", fields: [
++      "reason": reason,
++      "keyCode": Int(keyCode),
++      "inputGeneration": ragImeInputGeneration,
++      "frontendRevision": ragImeFrontendRevision,
++      "selectionEpoch": ragImeSelectionEpoch,
++      "previousDisplayCount": previousCount,
++      "frontAppBundleId": currentApp,
++      "inputSourceId": SquirrelInstaller.currentInputSourceID() ?? "",
++    ])
 +  }
 +
 +  func ragImeDisplaySessionStillLive(now: Date = Date()) -> Bool {
@@ -2438,10 +2882,15 @@ index c2adf74..3cfc0e5 100644
 +
 +  func ragImeDisplayText(for candidate: RagImeDisplayCandidate) -> String {
 +    let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
-+    if !text.isEmpty {
-+      return ragImeStripSourceSuffix(text)
++    let base = ragImeStripSourceSuffix(text.isEmpty ? candidate.insertText : text)
++    switch candidate.sourceType {
++    case "model", "rag", "memory", "status":
++      let badge = ragImeDisplayBadge(for: candidate)
++      guard !badge.isEmpty else { return base }
++      return "[\(badge)] \(base)"
++    default:
++      return base
 +    }
-+    return ragImeStripSourceSuffix(candidate.insertText)
 +  }
 +
 +  func ragImeStripSourceSuffix(_ text: String) -> String {
@@ -2503,6 +2952,10 @@ index c2adf74..3cfc0e5 100644
 +
 +  func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String {
 +    return ""
++  }
++
++  func ragImeDisplayIsPostCommitPrediction() -> Bool {
++    return ragImeDisplayRawInput.isEmpty && ragImeDisplayPreedit.isEmpty && !ragImeDisplayCandidates.isEmpty
 +  }
 +
 +  func ragImeSelectionKey(for candidate: RagImeDisplayCandidate) -> String {
@@ -2865,7 +3318,11 @@ index c2adf74..3cfc0e5 100644
 @@ -360,6 +1478,7 @@ private extension SquirrelInputController {
  
      if session != 0 {
++      let previousApp = currentApp
        updateAppOptions()
++      if !previousApp.isEmpty && previousApp != currentApp {
++        invalidateRagImeForegroundTransaction(reason: "front_app_changed")
++      }
 +      configureRagImeSidecar()
      }
    }

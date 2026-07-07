@@ -1,0 +1,9 @@
+{
+  "count": 20000,
+  "min_len": 12,
+  "max_len": 40,
+  "avg_len": 18.7688,
+  "contains_ascii": 0,
+  "unique": 20000,
+  "seed": 20260707
+}

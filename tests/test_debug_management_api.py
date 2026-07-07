@@ -287,6 +287,33 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(self._audit_count("settings_update"), 1)
         self.assertEqual(self._audit_count("settings_reset_section"), 1)
 
+    def test_active_rag_shortcut_update_returns_runtime_sync_commands(self) -> None:
+        result = self.service.active_rag_settings_update(
+            {
+                "shortcut": "ctrl+r",
+                "capture": {
+                    "accessibility": True,
+                    "clipboardFallback": False,
+                },
+            }
+        )
+        runtime_sync = result["runtimeSync"]
+        commands = runtime_sync["commands"]
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["settings"]["activeRag"]["shortcut"], "ctrl+r")
+        self.assertEqual(runtime_sync["shortcut"], "ctrl+r")
+        self.assertIn("activeRag.shortcut", result["changedKeys"])
+        self.assertNotIn("confirmText", result["settings"])
+        self.assertIn(
+            ["defaults", "write", "im.rime.inputmethod.Squirrel", "RagImeActiveRagShortcut", "-string", "ctrl+r"],
+            commands,
+        )
+        self.assertIn(
+            ["defaults", "write", "im.rime.inputmethod.Squirrel", "RagImeActiveRagCaptureClipboardFallback", "-bool", "false"],
+            commands,
+        )
+
     def test_display_badge_customization_applies_to_rime_suggest_preview(self) -> None:
         self.service.settings_update({"display.badges.model": "AI", "display.maxPostCommitCandidates": 2})
         payload = {

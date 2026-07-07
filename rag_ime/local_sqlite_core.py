@@ -178,6 +178,21 @@ class LocalSqliteCoreClient:
                     FOREIGN KEY(event_id) REFERENCES input_events(id) ON DELETE SET NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS memory_feedback_events (
+                    id TEXT PRIMARY KEY,
+                    candidate_id TEXT,
+                    candidate_text TEXT NOT NULL DEFAULT '',
+                    candidate_source TEXT NOT NULL DEFAULT 'unknown',
+                    action TEXT NOT NULL,
+                    context_hash TEXT,
+                    front_app_bundle_id TEXT,
+                    raw_input TEXT,
+                    preedit TEXT,
+                    committed_tail TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at_ms INTEGER NOT NULL
+                );
+
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
                     content_text,
                     committed_text,
@@ -2514,7 +2529,7 @@ class LocalSqliteCoreClient:
         effective_now_ms = max(created_at_ms, now_ms())
         memory_id = candidate_id
         normalized_text = _optimizer_norm(candidate_text)
-        if memory_id and action in {"accepted", "accept"}:
+        if memory_id and action in {"accepted", "accept", "active_rag_accept"}:
             conn.execute(
                 """
                 UPDATE memory_items
@@ -2547,7 +2562,14 @@ class LocalSqliteCoreClient:
                 expires_at_ms=effective_now_ms + 7 * 24 * 60 * 60 * 1000,
             )
             changed = True
-        if memory_id and action in {"backspace_after_accept", "edited_after_accept", "ignored_repeatedly", "session_invalidated"}:
+        if memory_id and action in {
+            "backspace_after_accept",
+            "backspace_after_active_rag_accept",
+            "edited_after_accept",
+            "active_rag_edited_after_accept",
+            "ignored_repeatedly",
+            "session_invalidated",
+        }:
             self._upsert_candidate_suppression(
                 conn,
                 match_type="memory_id",
@@ -2559,7 +2581,7 @@ class LocalSqliteCoreClient:
                 expires_at_ms=effective_now_ms + 24 * 60 * 60 * 1000,
             )
             changed = True
-        if memory_id and action in {"skipped", "skip"}:
+        if memory_id and action in {"skipped", "skip", "active_rag_skip"}:
             cooldown_scope = context_hash or _optimizer_feedback_scope(metadata)
             params: list[Any] = [memory_id, max(0, created_at_ms - 7 * 24 * 60 * 60 * 1000)]
             where = ["candidate_id = ?", "action IN ('skipped', 'skip')", "created_at_ms >= ?"]

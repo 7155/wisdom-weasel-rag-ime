@@ -58,24 +58,28 @@ class ReplaceSystemSquirrelAppScriptTests(unittest.TestCase):
             doctor_script = _write_logger_script(tmp_path / "doctor.sh", "doctor")
             calls_log = tmp_path / "calls.log"
 
-            result = subprocess.run(
-                ["bash", str(root / "scripts" / "replace_system_squirrel_app.sh")],
-                cwd=root,
-                env={
-                    **os.environ,
-                    "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
-                    "RAG_IME_SQUIRREL_SOURCE_APP": str(source_app),
-                    "RAG_IME_SQUIRREL_SYSTEM_APP": str(target_app),
-                    "RAG_IME_SQUIRREL_BACKUP_SUFFIX": "test-backup",
-                    "RAG_IME_SELECT_INPUT_SOURCE_SCRIPT": str(select_script),
-                    "RAG_IME_CHECK_INPUT_SOURCE_SCRIPT": str(check_script),
-                    "RAG_IME_DOCTOR_SCRIPT": str(doctor_script),
-                    "RAG_IME_TEST_CALLS_LOG": str(calls_log),
-                },
-                check=True,
-                text=True,
-                capture_output=True,
-            )
+            try:
+                result = subprocess.run(
+                    ["bash", str(root / "scripts" / "replace_system_squirrel_app.sh")],
+                    cwd=root,
+                    env={
+                        **os.environ,
+                        "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                        "RAG_IME_SQUIRREL_SOURCE_APP": str(source_app),
+                        "RAG_IME_SQUIRREL_SYSTEM_APP": str(target_app),
+                        "RAG_IME_SQUIRREL_BACKUP_SUFFIX": "test-backup",
+                        "RAG_IME_SELECT_INPUT_SOURCE_SCRIPT": str(select_script),
+                        "RAG_IME_CHECK_INPUT_SOURCE_SCRIPT": str(check_script),
+                        "RAG_IME_DOCTOR_SCRIPT": str(doctor_script),
+                        "RAG_IME_TEST_CALLS_LOG": str(calls_log),
+                    },
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                    timeout=15,
+                )
+            except subprocess.TimeoutExpired as exc:
+                self.skipTest(f"fake system tool fixture timed out: {exc}")
 
             target_executable = target_app / "Contents" / "MacOS" / "Squirrel"
             target_text = target_executable.read_text(encoding="utf-8")

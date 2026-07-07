@@ -572,6 +572,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[OK] model generation path: MLX model candidates available", result.stdout)
         self.assertIn("[OK] RAG ranking diagnostics available", result.stdout)
         self.assertIn("[OK] sidecar LaunchAgent plist: matches current sidecar provider/model env", result.stdout)
+        self.assertIn("[OK] sidecar LaunchAgent v1 foreground defaults", result.stdout)
         self.assertIn("[OK] MLX predictor LaunchAgent plist: matches text-only MLX model", result.stdout)
         self.assertIn("[OK] tryout runtime path has launchd or healthy HTTP sidecar", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
@@ -626,6 +627,56 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("[FAIL] MLX predictor LaunchAgent plist: drift:", result.stdout)
         self.assertIn("RAG_IME_MLX_MODEL='/tmp/old-qwen-model'", result.stdout)
 
+    def test_doctor_fails_required_launch_agent_plist_when_v1_budget_drifts(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        _DoctorSidecarHandler.use_mlx_logits()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _DoctorSidecarHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-launchd-v1-drift-") as tmp:
+                tmp_path = Path(tmp)
+                sidecar_plist = _write_sidecar_launch_agent_plist(
+                    tmp_path / "sidecar.plist",
+                    root=root,
+                    model=_DoctorSidecarHandler.model,
+                    base_url="http://127.0.0.1:18767",
+                    extra_env={"RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "4500"},
+                )
+                mlx_plist = _write_mlx_launch_agent_plist(
+                    tmp_path / "mlx.plist",
+                    root=root,
+                    model=_DoctorSidecarHandler.model,
+                    port="18767",
+                )
+                env = {
+                    **os.environ,
+                    "RAG_IME_PYTHON": sys.executable,
+                    "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
+                    "RAG_IME_SIDECAR_HOST": "127.0.0.1",
+                    "RAG_IME_SIDECAR_PORT": str(server.server_port),
+                    "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
+                    "RAG_IME_DOCTOR_REQUIRE_LAUNCH_AGENT_PLIST": "1",
+                    "RAG_IME_DOCTOR_EXPECT_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST": str(sidecar_plist),
+                    "RAG_IME_MLX_LAUNCH_AGENT_PLIST": str(mlx_plist),
+                }
+                result = subprocess.run(
+                    ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
+                    cwd="/tmp",
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[FAIL] sidecar LaunchAgent v1 foreground defaults: drift:", result.stdout)
+        self.assertIn("RAG_IME_POST_COMMIT_MODEL_BUDGET_MS='4500', expected '900'", result.stdout)
+
     def test_doctor_tryout_mode_fails_when_squirrel_workdir_is_missing(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-tryout-") as tmp:
@@ -675,7 +726,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             swift.chmod(0o755)
 
             env = {
-                **os.environ,
+                **{key: value for key, value in os.environ.items() if not key.startswith("RAG_IME_")},
                 "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
                 "RAG_IME_PYTHON": sys.executable,
                 "RAG_IME_SQUIRREL_WORKDIR": str(tmp_path / "missing-squirrel"),
@@ -684,6 +735,9 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 "RAG_IME_SIDECAR_PORT": "19876",
                 "RAG_IME_DOCTOR_CHECK_LAUNCHD": "0",
                 "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "1",
+                "RAG_IME_DOCTOR_REFRESH_INPUT_SOURCE": "1",
+                "RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE": "0",
+                "RAG_IME_DOCTOR_REQUIRE_PATCHED_APP": "0",
                 "SQUIRREL_CALLS_LOG": str(calls_log),
             }
             result = subprocess.run(
@@ -694,6 +748,8 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 text=True,
                 capture_output=True,
             )
+            if not calls_log.exists() and "Killed: 9" in result.stderr:
+                self.skipTest("macOS killed the fake Squirrel.app fixture")
             calls = calls_log.read_text(encoding="utf-8")
 
         self.assertIn("[OK] installed Squirrel.app executable exists", result.stdout)
@@ -1048,7 +1104,14 @@ def _write_fake_squirrel_app(
     return path
 
 
-def _write_sidecar_launch_agent_plist(path: Path, *, root: Path, model: str, base_url: str) -> Path:
+def _write_sidecar_launch_agent_plist(
+    path: Path,
+    *,
+    root: Path,
+    model: str,
+    base_url: str,
+    extra_env: dict[str, str] | None = None,
+) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "Label": "com.rag-ime.sidecar",
@@ -1079,8 +1142,17 @@ def _write_sidecar_launch_agent_plist(path: Path, *, root: Path, model: str, bas
             "RAG_IME_PREDICTOR_MODEL": model,
             "RAG_IME_PREDICTOR_PROFILE": "instant",
             "RAG_IME_PREDICTOR_STREAM_FIRST": "0",
+            "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
+            "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
+            "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
+            "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
+            "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
+            "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
+            "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
+            "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
         },
     }
+    payload["EnvironmentVariables"].update(extra_env or {})
     with path.open("wb") as handle:
         plistlib.dump(payload, handle)
     return path

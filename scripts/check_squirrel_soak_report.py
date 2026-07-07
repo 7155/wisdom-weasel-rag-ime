@@ -4,10 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from check_squirrel_frontend_trace import (
     DEFAULT_LOG_PATH,
@@ -24,15 +29,22 @@ from check_squirrel_frontend_trace import (
     report_passes,
     summarize_event,
 )
+from rag_ime.contracts.trace import (
+    INPUT_SOURCE_SELECTION_SCHEMA_VERSION,
+    POST_COMMIT_BARRIER_EVENTS,
+    PREDICTION_TRACE_EVENT_NAMES,
+    RAG_MEMORY_SOURCE_TYPES,
+    REALTIME_SIDE_SOURCE_TYPES,
+    REQUIRED_TRACE_EVENT_NAMES,
+    SOAK_REPORT_SCHEMA_VERSION,
+    SOURCE_MODEL,
+    SOURCE_RIME,
+    SOURCE_STATUS,
+    VISIBLE_SOURCE_TYPES,
+)
 
 
 DEFAULT_REPORT_PATH = Path("/tmp/rag-ime-squirrel-soak-report.json")
-POST_COMMIT_BARRIER_EVENTS = {
-    "commit_observe_timeout",
-    "post_commit_chain_cancelled",
-    "display_invalidated_by_input_change",
-    "frontend_transaction_invalidated",
-}
 
 
 def main() -> int:
@@ -54,6 +66,36 @@ def main() -> int:
     parser.add_argument("--require-delete-resync", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
     parser.add_argument("--require-balanced-quota", action="store_true")
+    parser.add_argument(
+        "--require-rime-composition-ok",
+        action="store_true",
+        help="Require proof that composition-time Rime candidates remained owned by Rime, not the post-commit predictor.",
+    )
+    parser.add_argument(
+        "--require-post-commit-visible",
+        action="store_true",
+        help="Require at least one real non-status post-commit prediction panel in the foreground trace.",
+    )
+    parser.add_argument(
+        "--require-source-badges",
+        action="store_true",
+        help="Require every displayed typed side/Rime candidate to carry the expected source badge and color token.",
+    )
+    parser.add_argument(
+        "--require-post-commit-key-policy",
+        action="store_true",
+        help="Require evidence that post-commit panels route number keys to Rime and side picks through tab/option-number.",
+    )
+    parser.add_argument(
+        "--require-app-switch-stale-drop",
+        action="store_true",
+        help="Require app/focus/input-source switch evidence plus stale response drop/reject coverage.",
+    )
+    parser.add_argument(
+        "--require-followup-after-select",
+        action="store_true",
+        help="Require a candidate selection/commit followed by a post-commit sidecar request.",
+    )
     parser.add_argument(
         "--require-snapshot-selection-trace",
         action="store_true",
@@ -92,9 +134,27 @@ def main() -> int:
         help="Require this many consecutive side-candidate commits with matching post-commit follow-up requests.",
     )
     parser.add_argument("--max-stale-applied", type=int, default=0)
+    parser.add_argument(
+        "--max-stale-apply-count",
+        type=int,
+        dest="max_stale_applied",
+        help="Alias for --max-stale-applied, named for the v1 foreground acceptance gate.",
+    )
     parser.add_argument("--max-flicker-count", type=int, default=0)
     parser.add_argument("--max-min-visible-violations", type=int, default=0)
     parser.add_argument("--max-rag-empty-cleared-panel", type=int, default=0)
+    parser.add_argument(
+        "--max-first-visible-ms",
+        type=int,
+        default=-1,
+        help="Fail if first real post-commit foreground candidate appears after this many ms from commit/schedule.",
+    )
+    parser.add_argument(
+        "--max-context-echo-count",
+        type=int,
+        default=-1,
+        help="Fail if post-commit foreground candidates echo committed context more than this count.",
+    )
     parser.add_argument(
         "--manual-required",
         action="append",
@@ -126,6 +186,12 @@ def main() -> int:
             require_delete_resync=args.require_delete_resync,
             require_modern_prediction_session=args.require_modern_prediction_session,
             require_balanced_quota=args.require_balanced_quota,
+            require_rime_composition_ok=args.require_rime_composition_ok,
+            require_post_commit_visible=args.require_post_commit_visible,
+            require_source_badges=args.require_source_badges,
+            require_post_commit_key_policy=args.require_post_commit_key_policy,
+            require_app_switch_stale_drop=args.require_app_switch_stale_drop,
+            require_followup_after_select=args.require_followup_after_select,
             require_snapshot_selection_trace=args.require_snapshot_selection_trace,
             min_sidecar_requests=max(0, args.min_sidecar_requests),
             min_sidecar_applied=max(0, args.min_sidecar_applied),
@@ -143,6 +209,8 @@ def main() -> int:
             max_flicker_count=max(0, args.max_flicker_count),
             max_min_visible_violations=max(0, args.max_min_visible_violations),
             max_rag_empty_cleared_panel=max(0, args.max_rag_empty_cleared_panel),
+            max_first_visible_ms=int(args.max_first_visible_ms),
+            max_context_echo_count=int(args.max_context_echo_count),
         )
         if soak_report["passed"] or time.monotonic() >= deadline:
             break
@@ -169,6 +237,12 @@ def build_soak_report(
     require_delete_resync: bool,
     require_modern_prediction_session: bool,
     require_balanced_quota: bool,
+    require_rime_composition_ok: bool,
+    require_post_commit_visible: bool,
+    require_source_badges: bool,
+    require_post_commit_key_policy: bool,
+    require_app_switch_stale_drop: bool,
+    require_followup_after_select: bool,
     require_snapshot_selection_trace: bool,
     min_sidecar_requests: int,
     min_sidecar_applied: int,
@@ -186,6 +260,8 @@ def build_soak_report(
     max_flicker_count: int,
     max_min_visible_violations: int,
     max_rag_empty_cleared_panel: int,
+    max_first_visible_ms: int,
+    max_context_echo_count: int,
 ) -> dict[str, Any]:
     event_counts = Counter(str(event.get("event") or "") for event in events if isinstance(event, dict))
     side_commit_pairs, unmatched_routes = collect_number_key_side_commit_pairs(events)
@@ -204,6 +280,16 @@ def build_soak_report(
         events,
         paired_side_commit_count=len(side_commit_pairs),
     )
+    v1_foreground = summarize_v1_foreground(
+        events,
+        frontend_report=frontend_report,
+        display_quality=display_quality,
+        foreground_coverage=foreground_coverage,
+        selection_quality=selection_quality,
+        post_commit_followup_count=len(post_commit_followups),
+        stale_applied_count=len(stale_applied),
+    )
+    required_trace_events = summarize_required_trace_events(events)
     post_commit_barrier_violations = [
         violation
         for violation in frontend_report.get("postCommitBarrierViolations") or []
@@ -239,6 +325,14 @@ def build_soak_report(
         "maxFlickerCount": max_flicker_count,
         "maxMinVisibleViolations": max_min_visible_violations,
         "maxRagEmptyClearedPanel": max_rag_empty_cleared_panel,
+        "maxFirstVisibleMs": max_first_visible_ms,
+        "maxContextEchoCount": max_context_echo_count,
+        "requireRimeCompositionOk": require_rime_composition_ok,
+        "requirePostCommitVisible": require_post_commit_visible,
+        "requireSourceBadges": require_source_badges,
+        "requirePostCommitKeyPolicy": require_post_commit_key_policy,
+        "requireAppSwitchStaleDrop": require_app_switch_stale_drop,
+        "requireFollowupAfterSelect": require_followup_after_select,
         "requireSnapshotSelectionTrace": require_snapshot_selection_trace,
         "inputSourceSelectionReport": bool(input_source_selection),
     }
@@ -267,6 +361,32 @@ def build_soak_report(
         "snapshotSelectionTrace": (
             not require_snapshot_selection_trace
             or int(selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"]) == 0
+        ),
+        "rimeCompositionOk": not require_rime_composition_ok or bool(v1_foreground["rimeCompositionOk"]),
+        "postCommitVisible": not require_post_commit_visible or bool(v1_foreground["postCommitVisible"]),
+        "sourceBadges": not require_source_badges or int(display_quality["sourceBadgeMissingCount"]) == 0,
+        "postCommitKeyPolicy": (
+            not require_post_commit_key_policy
+            or bool(v1_foreground["postCommitKeyPolicyOk"])
+        ),
+        "appSwitchStaleDrop": (
+            not require_app_switch_stale_drop
+            or bool(v1_foreground["appSwitchStaleDropOk"])
+        ),
+        "followupAfterSelect": (
+            not require_followup_after_select
+            or bool(v1_foreground["followupAfterSelectOk"])
+        ),
+        "firstVisibleMs": (
+            max_first_visible_ms < 0
+            or (
+                int(v1_foreground["firstPostCommitVisibleMs"]) >= 0
+                and int(v1_foreground["firstPostCommitVisibleMs"]) <= max_first_visible_ms
+            )
+        ),
+        "contextEchoCount": (
+            max_context_echo_count < 0
+            or int(v1_foreground["contextEchoCount"]) <= max_context_echo_count
         ),
     }
 
@@ -439,6 +559,33 @@ def build_soak_report(
                 "missing": selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"],
             }
         )
+    v1_violation_checks = [
+        (require_rime_composition_ok and not v1_foreground["rimeCompositionOk"], "rime_composition_not_proven"),
+        (require_post_commit_visible and not v1_foreground["postCommitVisible"], "post_commit_visible_not_proven"),
+        (require_post_commit_key_policy and not v1_foreground["postCommitKeyPolicyOk"], "post_commit_key_policy_not_proven"),
+        (require_app_switch_stale_drop and not v1_foreground["appSwitchStaleDropOk"], "app_switch_stale_drop_not_proven"),
+        (require_followup_after_select and not v1_foreground["followupAfterSelectOk"], "followup_after_select_not_proven"),
+    ]
+    for failed, violation_type in v1_violation_checks:
+        if failed:
+            violations.append({"type": violation_type, "v1Foreground": v1_foreground})
+    if max_first_visible_ms >= 0 and not threshold_results["firstVisibleMs"]:
+        violations.append(
+            {
+                "type": "first_post_commit_visible_too_slow",
+                "actual": v1_foreground["firstPostCommitVisibleMs"],
+                "expectedAtMost": max_first_visible_ms,
+            }
+        )
+    if max_context_echo_count >= 0 and not threshold_results["contextEchoCount"]:
+        violations.append(
+            {
+                "type": "context_echo_threshold",
+                "actual": v1_foreground["contextEchoCount"],
+                "expectedAtMost": max_context_echo_count,
+                "samples": v1_foreground["contextEchoSamples"],
+            }
+        )
 
     response_age_values = [
         int(event.get("responseAgeMs") or 0)
@@ -463,7 +610,7 @@ def build_soak_report(
 
     passed = frontend_ok and all(threshold_results.values()) and not violations
     return {
-        "schemaVersion": "rag-ime.squirrel-soak-report.v1",
+        "schemaVersion": SOAK_REPORT_SCHEMA_VERSION,
         "generatedAtMs": int(time.time() * 1000),
         "logPath": str(log_path),
         "eventCount": len(events),
@@ -477,6 +624,12 @@ def build_soak_report(
             "deleteResync": require_delete_resync,
             "modernPredictionSession": require_modern_prediction_session,
             "balancedQuota": require_balanced_quota,
+            "rimeCompositionOk": require_rime_composition_ok,
+            "postCommitVisible": require_post_commit_visible,
+            "sourceBadges": require_source_badges,
+            "postCommitKeyPolicy": require_post_commit_key_policy,
+            "appSwitchStaleDrop": require_app_switch_stale_drop,
+            "followupAfterSelect": require_followup_after_select,
             "snapshotSelectionTrace": require_snapshot_selection_trace,
         },
         "thresholds": thresholds,
@@ -504,6 +657,8 @@ def build_soak_report(
         "predictionStability": prediction_stability,
         "laneStability": lane_stability,
         "displayQuality": display_quality,
+        "v1Foreground": v1_foreground,
+        "requiredTraceEvents": required_trace_events,
         "foregroundCoverage": foreground_coverage,
         "selectionQuality": selection_quality,
         "chain": chain,
@@ -524,7 +679,7 @@ def load_input_source_selection_report(path_value: str) -> dict[str, Any] | None
     path = Path(path_value).expanduser()
     if not path.exists():
         return {
-            "schemaVersion": "rag-ime.macos-input-source-selection.v1",
+            "schemaVersion": INPUT_SOURCE_SELECTION_SCHEMA_VERSION,
             "ok": False,
             "path": str(path),
             "failureKind": "selection-report-missing",
@@ -533,7 +688,7 @@ def load_input_source_selection_report(path_value: str) -> dict[str, Any] | None
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         return {
-            "schemaVersion": "rag-ime.macos-input-source-selection.v1",
+            "schemaVersion": INPUT_SOURCE_SELECTION_SCHEMA_VERSION,
             "ok": False,
             "path": str(path),
             "failureKind": "selection-report-invalid-json",
@@ -541,7 +696,7 @@ def load_input_source_selection_report(path_value: str) -> dict[str, Any] | None
         }
     if not isinstance(payload, dict):
         return {
-            "schemaVersion": "rag-ime.macos-input-source-selection.v1",
+            "schemaVersion": INPUT_SOURCE_SELECTION_SCHEMA_VERSION,
             "ok": False,
             "path": str(path),
             "failureKind": "selection-report-not-object",
@@ -551,23 +706,384 @@ def load_input_source_selection_report(path_value: str) -> dict[str, Any] | None
     return payload
 
 
-PREDICTION_TRACE_EVENT_NAMES = {
-    "prediction_anchor_computed",
-    "prediction_refresh_decision",
-    "prediction_show_decision",
-    "prediction_snapshot_created",
-    "prediction_snapshot_reused",
-    "prediction_panel_soft_hold",
-    "prediction_panel_soft_hide",
-    "prediction_panel_hard_clear",
-    "prediction_empty_lane_did_not_clear_panel",
-    "prediction_lane_timeout_with_holdover",
-    "prediction_lane_timeout_without_holdover",
-    "candidate_snapshot_selection_accepted",
-    "candidate_snapshot_selection_rejected_stale",
-    "candidate_snapshot_progressive_append",
-    "candidate_snapshot_progressive_replace",
-}
+def summarize_v1_foreground(
+    events: list[dict[str, Any]],
+    *,
+    frontend_report: dict[str, Any],
+    display_quality: dict[str, Any],
+    foreground_coverage: dict[str, Any],
+    selection_quality: dict[str, Any],
+    post_commit_followup_count: int,
+    stale_applied_count: int,
+) -> dict[str, Any]:
+    first_visible_ms = first_post_commit_visible_latency_ms(events)
+    context_echoes = collect_context_echo_candidates(events)
+    source_counts = summarize_visible_source_counts(events)
+    source_badge_coverage = summarize_source_badge_coverage(events)
+    pending_panel_clear_count = count_pending_panel_clears(events)
+    followup_restart_count = count_followup_restarts(events)
+    stale_drop_count = sum(
+        1
+        for event in events
+        if str(event.get("event") or "") in {"sidecar_response_dropped_stale", "sidecar_response_dropped"}
+    )
+    stale_reject_count = int(selection_quality.get("snapshotSelectionRejectedStaleCount") or 0) + int(
+        selection_quality.get("legacyStaleSelectionRejectedCount") or 0
+    )
+    return {
+        "rimeCompositionOk": bool(frontend_report.get("latestRimeCompositionMode")),
+        "postCommitVisible": has_post_commit_visible_panel(events),
+        "sourceBadgesOk": int(display_quality.get("sourceBadgeMissingCount") or 0) == 0,
+        "postCommitKeyPolicyOk": int(display_quality.get("postCommitNumberKeyViolation") or 0) == 0
+        and has_post_commit_visible_panel(events),
+        "appSwitchStaleDropOk": int(foreground_coverage.get("appSwitchCount") or 0) > 0
+        and (stale_drop_count + stale_reject_count) > 0,
+        "followupAfterSelectOk": post_commit_followup_count > 0
+        and int(selection_quality.get("snapshotSelectionAcceptedCount") or 0) > 0,
+        "firstPostCommitVisibleMs": first_visible_ms,
+        "firstVisibleMs": first_visible_ms,
+        "firstUsefulCandidateMs": first_visible_ms,
+        "modelCandidateCount": source_counts["modelCandidateCount"],
+        "ragMemoryCandidateCount": source_counts["ragMemoryCandidateCount"],
+        "rimeCandidateCount": source_counts["rimeCandidateCount"],
+        "sourceBadgeCoverage": source_badge_coverage,
+        "contextEchoCount": len(context_echoes),
+        "contextEchoSamples": context_echoes[:8],
+        "staleDropCount": stale_drop_count,
+        "staleAppliedCount": stale_applied_count,
+        "staleRejectCount": stale_reject_count,
+        "pendingPanelClearCount": pending_panel_clear_count,
+        "followupRestartCount": followup_restart_count,
+        "selectionAcceptedCount": int(selection_quality.get("snapshotSelectionAcceptedCount") or 0),
+        "deleteResyncObserved": bool(foreground_coverage.get("deleteResyncCount")),
+        "appSwitchInvalidationObserved": bool(foreground_coverage.get("appSwitchCount")),
+    }
+
+
+def has_post_commit_visible_panel(events: list[dict[str, Any]]) -> bool:
+    return any(event_is_visible_post_commit_panel(event) for event in events)
+
+
+def event_is_visible_post_commit_panel(event: dict[str, Any]) -> bool:
+    if event.get("event") != "panel_display_candidates":
+        return False
+    if not panel_is_post_commit_event(event):
+        return False
+    return any(candidate_is_real_side_candidate(candidate) for candidate in event_candidates(event))
+
+
+def panel_is_post_commit_event(event: dict[str, Any]) -> bool:
+    ui_mode = str(event.get("uiMode") or "")
+    if ui_mode in {"post_commit_prediction", "post_commit_pending"}:
+        return True
+    session = event.get("predictionSession")
+    if isinstance(session, dict):
+        phase = str(session.get("phase") or "")
+        selection_scope = str(session.get("selectionScope") or "")
+        return phase == "post_commit" or selection_scope == "prediction"
+    return False
+
+
+def candidate_is_real_side_candidate(candidate: Any) -> bool:
+    if not isinstance(candidate, dict) or is_status_candidate(candidate):
+        return False
+    text = candidate_display_text(candidate) or str(candidate.get("insertText") or "").strip()
+    return bool(text) and str(candidate.get("sourceType") or "") in REALTIME_SIDE_SOURCE_TYPES
+
+
+def first_post_commit_visible_latency_ms(events: list[dict[str, Any]]) -> int:
+    anchor_ms = -1
+    best_ms: int | None = None
+    for event in events:
+        name = str(event.get("event") or "")
+        if name in {
+            "commit_observed",
+            "side_candidate_commit",
+            "side_candidate_commit_observed",
+            "post_commit_prediction_scheduled",
+            "side_candidate_continuation_scheduled",
+        }:
+            timestamp = event_timestamp_ms(event)
+            if timestamp > 0 and (anchor_ms < 0 or name != "post_commit_prediction_scheduled"):
+                anchor_ms = timestamp
+        if not event_is_visible_post_commit_panel(event) or anchor_ms < 0:
+            continue
+        latency = max(0, event_timestamp_ms(event) - anchor_ms)
+        best_ms = latency if best_ms is None else min(best_ms, latency)
+    return -1 if best_ms is None else best_ms
+
+
+def collect_context_echo_candidates(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    echoes: list[dict[str, Any]] = []
+    for event in events:
+        if not event_is_visible_post_commit_panel(event):
+            continue
+        contexts = event_context_strings(event)
+        if not contexts:
+            continue
+        for candidate in event_candidates(event):
+            if not candidate_is_real_side_candidate(candidate):
+                continue
+            text = candidate_display_text(candidate) or str(candidate.get("insertText") or "")
+            if candidate_echoes_context(text, contexts):
+                echoes.append(
+                    {
+                        "timestampMs": event.get("timestampMs"),
+                        "sourceType": candidate.get("sourceType"),
+                        "text": compact_context_sample(text),
+                    }
+                )
+    return echoes
+
+
+def summarize_visible_source_counts(events: list[dict[str, Any]]) -> dict[str, int]:
+    max_counts = {"modelCandidateCount": 0, "ragMemoryCandidateCount": 0, "rimeCandidateCount": 0}
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        counts = source_family_counts(event_candidates(event))
+        max_counts["modelCandidateCount"] = max(max_counts["modelCandidateCount"], counts["model"])
+        max_counts["ragMemoryCandidateCount"] = max(max_counts["ragMemoryCandidateCount"], counts["ragMemory"])
+        max_counts["rimeCandidateCount"] = max(max_counts["rimeCandidateCount"], counts["rime"])
+    return max_counts
+
+
+def summarize_source_badge_coverage(events: list[dict[str, Any]]) -> dict[str, Any]:
+    expected = 0
+    valid = 0
+    missing_by_source: dict[str, int] = {}
+    seen_by_source: dict[str, int] = {}
+    for candidate in iter_panel_candidates(events):
+        source_type = str(candidate.get("sourceType") or "")
+        if source_type not in VISIBLE_SOURCE_TYPES:
+            continue
+        expected += 1
+        seen_by_source[source_type] = seen_by_source.get(source_type, 0) + 1
+        if source_visual_violation(candidate):
+            missing_by_source[source_type] = missing_by_source.get(source_type, 0) + 1
+        else:
+            valid += 1
+    return {
+        "expectedCount": expected,
+        "validCount": valid,
+        "missingCount": expected - valid,
+        "coverageRate": round(valid / expected, 4) if expected else 0.0,
+        "seenBySource": dict(sorted(seen_by_source.items())),
+        "missingBySource": dict(sorted(missing_by_source.items())),
+    }
+
+
+def count_pending_panel_clears(events: list[dict[str, Any]]) -> int:
+    previous_real_panel: dict[str, Any] | None = None
+    clears = 0
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        if not panel_is_post_commit_event(event):
+            continue
+        candidates = event_candidates(event)
+        real_candidate_visible = any(candidate_is_real_side_candidate(candidate) for candidate in candidates)
+        if real_candidate_visible:
+            previous_real_panel = event
+            continue
+        status_only = bool(candidates) and all(isinstance(candidate, dict) and is_status_candidate(candidate) for candidate in candidates)
+        if status_only and previous_real_panel is not None:
+            elapsed_ms = event_timestamp_ms(event) - event_timestamp_ms(previous_real_panel)
+            if 0 <= elapsed_ms <= 1000:
+                clears += 1
+    return clears
+
+
+def count_followup_restarts(events: list[dict[str, Any]]) -> int:
+    restart_events = {
+        "post_commit_followup_restarted",
+        "post_commit_model_provider_restarted",
+        "model_provider_restarted",
+    }
+    count = 0
+    for event in events:
+        name = str(event.get("event") or "")
+        if name in restart_events:
+            count += 1
+            continue
+        if name != "sidecar_request_scheduled":
+            continue
+        if not bool(event.get("progressiveFollowUp") or event.get("followup") or event.get("isFollowup")):
+            continue
+        if bool(event.get("providerRestarted") or event.get("modelProviderRestarted")):
+            count += 1
+    return count
+
+
+def event_candidates(event: dict[str, Any]) -> list[Any]:
+    candidates = event.get("candidates")
+    return candidates if isinstance(candidates, list) else []
+
+
+def event_context_strings(event: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ("committedContext", "committedContextSuffix", "commitTextPreview", "previousCommittedContext"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(" ".join(value.split()))
+    session = event.get("predictionSession")
+    if isinstance(session, dict):
+        for key in ("committedContext", "committedContextSuffix", "commitTextPreview"):
+            value = session.get(key)
+            if isinstance(value, str) and value.strip():
+                values.append(" ".join(value.split()))
+    return values
+
+
+def candidate_echoes_context(text: str, contexts: list[str]) -> bool:
+    normalized = " ".join(str(text or "").split())
+    if len(normalized) < 2:
+        return False
+    for context in contexts:
+        if len(context) < 2:
+            continue
+        if normalized == context:
+            return True
+        if len(normalized) >= 4 and normalized in context:
+            return True
+    return False
+
+
+def compact_context_sample(value: str) -> str:
+    compact = " ".join(str(value or "").split())
+    return compact[:48]
+
+
+def summarize_required_trace_events(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    statuses = {
+        "rime_composition_started": trace_event_status(
+            events,
+            direct_names={"rime_composition_started"},
+            alias_names={"sidecar_request_scheduled"},
+            alias_predicate=lambda event: bool(str(event.get("rawInput") or event.get("preedit") or "")),
+        ),
+        "rime_composition_candidates_visible": trace_event_status(
+            events,
+            direct_names={"rime_composition_candidates_visible"},
+            alias_names={"panel_display_candidates"},
+            alias_predicate=lambda event: is_rime_composition_panel(event),
+        ),
+        "rime_commit_observed": trace_event_status(
+            events,
+            direct_names={"rime_commit_observed"},
+            alias_names={"commit_observed"},
+        ),
+        "post_commit_prediction_scheduled": trace_event_status(
+            events,
+            direct_names={"post_commit_prediction_scheduled"},
+            alias_names={"side_candidate_continuation_scheduled"},
+        ),
+        "sidecar_request_sent": trace_event_status(
+            events,
+            direct_names={"sidecar_request_sent"},
+            alias_names={"sidecar_request_scheduled"},
+        ),
+        "sidecar_response_received": trace_event_status(events, direct_names={"sidecar_response_received"}),
+        "panel_display_candidates": trace_event_status(events, direct_names={"panel_display_candidates"}),
+        "post_commit_prediction_applied": trace_event_status(
+            events,
+            direct_names={"post_commit_prediction_applied"},
+            alias_names={"sidecar_response_applied"},
+            alias_predicate=lambda event: str(event.get("uiMode") or "") == "post_commit_prediction"
+            or panel_is_post_commit_event(event),
+        ),
+        "sidecar_response_dropped_stale": trace_event_status(
+            events,
+            direct_names={"sidecar_response_dropped_stale"},
+            alias_names={"sidecar_response_dropped"},
+        ),
+        "sidecar_progressive_followup_sent": trace_event_status(
+            events,
+            direct_names={"sidecar_progressive_followup_sent"},
+            alias_names={"sidecar_request_scheduled"},
+            alias_predicate=lambda event: bool(event.get("progressiveFollowUp") or event.get("followup") or event.get("isFollowup")),
+        ),
+        "sidecar_progressive_followup_skipped": trace_event_status(
+            events,
+            direct_names={"sidecar_progressive_followup_skipped"},
+        ),
+        "candidate_snapshot_selection_accepted": trace_event_status(
+            events,
+            direct_names={"candidate_snapshot_selection_accepted"},
+        ),
+        "candidate_snapshot_selection_rejected_stale": trace_event_status(
+            events,
+            direct_names={"candidate_snapshot_selection_rejected_stale"},
+            alias_names={"stale_candidate_selection_rejected"},
+        ),
+        "side_candidate_commit_observed": trace_event_status(
+            events,
+            direct_names={"side_candidate_commit_observed"},
+            alias_names={"side_candidate_commit"},
+        ),
+        "delete_context_resynced": trace_event_status(
+            events,
+            direct_names={"delete_context_resynced"},
+            alias_names={"committed_context_resynced_after_delete"},
+        ),
+        "app_switch_context_invalidated": trace_event_status(
+            events,
+            direct_names={"app_switch_context_invalidated"},
+            alias_names={"frontend_transaction_invalidated"},
+            alias_predicate=lambda event: foreground_switch_reason(
+                str(event.get("reason") or event.get("invalidationReason") or "")
+            )
+            and "focus" not in str(event.get("reason") or event.get("invalidationReason") or "").lower(),
+        ),
+        "focus_context_invalidated": trace_event_status(
+            events,
+            direct_names={"focus_context_invalidated"},
+            alias_names={"frontend_transaction_invalidated"},
+            alias_predicate=lambda event: "focus" in str(event.get("reason") or event.get("invalidationReason") or "").lower(),
+        ),
+    }
+    return {name: statuses[name] for name in REQUIRED_TRACE_EVENT_NAMES}
+
+
+def trace_event_status(
+    events: list[dict[str, Any]],
+    *,
+    direct_names: set[str],
+    alias_names: set[str] | None = None,
+    alias_predicate: Any | None = None,
+) -> dict[str, Any]:
+    alias_names = alias_names or set()
+    direct = [event for event in events if str(event.get("event") or "") in direct_names]
+    aliases = []
+    for event in events:
+        if str(event.get("event") or "") not in alias_names:
+            continue
+        if alias_predicate is not None and not alias_predicate(event):
+            continue
+        aliases.append(event)
+    first_event = direct[0] if direct else aliases[0] if aliases else None
+    return {
+        "observed": bool(direct or aliases),
+        "directCount": len(direct),
+        "aliasCount": len(aliases),
+        "directNames": sorted(direct_names),
+        "aliasNames": sorted(alias_names),
+        "firstTimestampMs": event_timestamp_ms(first_event) if first_event else 0,
+    }
+
+
+def is_rime_composition_panel(event: dict[str, Any]) -> bool:
+    if event.get("event") != "panel_display_candidates":
+        return False
+    if not (str(event.get("rawInput") or "") or str(event.get("preedit") or "")):
+        return False
+    candidates = event_candidates(event)
+    return bool(candidates) and all(
+        isinstance(candidate, dict)
+        and not is_status_candidate(candidate)
+        and str(candidate.get("sourceType") or "") == SOURCE_RIME
+        for candidate in candidates
+    )
 
 
 def summarize_display_quality(
@@ -654,11 +1170,11 @@ def source_family_counts(candidates: list[Any]) -> dict[str, int]:
             counts["other"] += 1
             continue
         source_type = str(candidate.get("sourceType") or "")
-        if source_type == "model":
+        if source_type == SOURCE_MODEL:
             counts["model"] += 1
-        elif source_type in {"rag", "memory"}:
+        elif source_type in RAG_MEMORY_SOURCE_TYPES:
             counts["ragMemory"] += 1
-        elif source_type == "rime":
+        elif source_type == SOURCE_RIME:
             counts["rime"] += 1
         else:
             counts["other"] += 1
@@ -735,7 +1251,7 @@ def source_visual_violation(candidate: dict[str, Any]) -> bool:
 
 def long_candidate_violation_for(candidate: dict[str, Any]) -> bool:
     source_type = str(candidate.get("sourceType") or "")
-    if source_type not in {"model", "rag", "memory"}:
+    if source_type not in REALTIME_SIDE_SOURCE_TYPES:
         return False
     text = candidate_display_text(candidate)
     if not text:
@@ -821,7 +1337,7 @@ def candidate_ordinal(candidate: dict[str, Any], *, fallback: int) -> str:
 
 def is_status_candidate(candidate: dict[str, Any]) -> bool:
     return (
-        str(candidate.get("sourceType") or "") == "status"
+        str(candidate.get("sourceType") or "") == SOURCE_STATUS
         or str(candidate.get("displayLayout") or "") == "status_row"
         or candidate.get("isStatus") is True
     )

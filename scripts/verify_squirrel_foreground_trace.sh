@@ -10,6 +10,8 @@ OPEN_APP="${RAG_IME_FOREGROUND_TRACE_APP:-TextEdit}"
 CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/check_macos_input_source.sh}"
 SELECT_INPUT_SOURCE_SCRIPT="${RAG_IME_SELECT_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/select_macos_input_source.sh}"
 TRACE_CHECK_SCRIPT="${RAG_IME_TRACE_CHECK_SCRIPT:-$ROOT/scripts/check_squirrel_frontend_trace.py}"
+SOAK_CHECK_SCRIPT="${RAG_IME_SOAK_CHECK_SCRIPT:-$ROOT/scripts/check_squirrel_soak_report.py}"
+SOAK_REPORT_PATH="${RAG_IME_SQUIRREL_SOAK_REPORT_PATH:-/tmp/rag-ime-v1-soak-report.json}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
 OPEN_COMMAND="${RAG_IME_OPEN_COMMAND:-open}"
 
@@ -25,6 +27,16 @@ REQUIRE_SIDE_PANEL=0
 REQUIRE_HITOOLBOX_ENABLED="${RAG_IME_FOREGROUND_TRACE_REQUIRE_HITOOLBOX_ENABLED:-0}"
 REQUIRE_MODERN_PREDICTION_SESSION=1
 REQUIRE_BALANCED_QUOTA=1
+REQUIRE_RIME_COMPOSITION_OK=0
+REQUIRE_POST_COMMIT_VISIBLE=0
+REQUIRE_SOURCE_BADGES=0
+REQUIRE_POST_COMMIT_KEY_POLICY=0
+REQUIRE_APP_SWITCH_STALE_DROP=0
+REQUIRE_FOLLOWUP_AFTER_SELECT=0
+MAX_FIRST_VISIBLE_MS=""
+MAX_STALE_APPLY_COUNT=""
+MAX_CONTEXT_ECHO_COUNT=""
+USE_V1_SOAK_GATE=0
 DRY_RUN=0
 AUTO_TYPE=0
 AUTO_QUERY="${RAG_IME_FOREGROUND_TRACE_AUTO_QUERY:-er qi}"
@@ -57,6 +69,25 @@ Options:
                        Also require the HIToolbox preference gate before typing
   --no-modern-session   Do not require a non-legacy predictionSession trace
   --no-balanced-quota   Do not require product model/RAG/Rime quota trace
+  --report-path PATH    Output JSON report when v1 soak gates are requested
+  --require-rime-composition-ok
+                       Require composition-time Rime ownership evidence
+  --require-post-commit-visible
+                       Require a real non-status post-commit prediction panel
+  --require-source-badges
+                       Require source badge/color coverage
+  --require-post-commit-key-policy
+                       Require post-commit number-key pass-through policy evidence
+  --require-app-switch-stale-drop
+                       Require app/focus/input-source stale-drop evidence
+  --require-followup-after-select
+                       Require side-candidate selection followed by post-commit request
+  --max-first-visible-ms N
+                       Maximum first useful post-commit visible latency
+  --max-stale-apply-count N
+                       Maximum stale responses allowed to apply
+  --max-context-echo-count N
+                       Maximum context-echo candidates allowed
   --auto-type           Try to type the test query and side-candidate key with AppleScript
   --auto-query TEXT     Text used by --auto-type (default: er qi)
   --auto-key KEY        Number key used by --auto-type (default: 6)
@@ -110,6 +141,66 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-balanced-quota)
       REQUIRE_BALANCED_QUOTA=0
+      ;;
+    --report-path)
+      if [[ $# -lt 2 ]]; then
+        echo "--report-path requires a value" >&2
+        exit 2
+      fi
+      SOAK_REPORT_PATH="$2"
+      USE_V1_SOAK_GATE=1
+      shift
+      ;;
+    --require-rime-composition-ok)
+      REQUIRE_RIME_COMPOSITION_OK=1
+      USE_V1_SOAK_GATE=1
+      ;;
+    --require-post-commit-visible)
+      REQUIRE_POST_COMMIT_VISIBLE=1
+      USE_V1_SOAK_GATE=1
+      ;;
+    --require-source-badges)
+      REQUIRE_SOURCE_BADGES=1
+      USE_V1_SOAK_GATE=1
+      ;;
+    --require-post-commit-key-policy)
+      REQUIRE_POST_COMMIT_KEY_POLICY=1
+      USE_V1_SOAK_GATE=1
+      ;;
+    --require-app-switch-stale-drop)
+      REQUIRE_APP_SWITCH_STALE_DROP=1
+      USE_V1_SOAK_GATE=1
+      ;;
+    --require-followup-after-select)
+      REQUIRE_FOLLOWUP_AFTER_SELECT=1
+      USE_V1_SOAK_GATE=1
+      ;;
+    --max-first-visible-ms)
+      if [[ $# -lt 2 ]]; then
+        echo "--max-first-visible-ms requires a value" >&2
+        exit 2
+      fi
+      MAX_FIRST_VISIBLE_MS="$2"
+      USE_V1_SOAK_GATE=1
+      shift
+      ;;
+    --max-stale-apply-count)
+      if [[ $# -lt 2 ]]; then
+        echo "--max-stale-apply-count requires a value" >&2
+        exit 2
+      fi
+      MAX_STALE_APPLY_COUNT="$2"
+      USE_V1_SOAK_GATE=1
+      shift
+      ;;
+    --max-context-echo-count)
+      if [[ $# -lt 2 ]]; then
+        echo "--max-context-echo-count requires a value" >&2
+        exit 2
+      fi
+      MAX_CONTEXT_ECHO_COUNT="$2"
+      USE_V1_SOAK_GATE=1
+      shift
       ;;
     --auto-type)
       AUTO_TYPE=1
@@ -185,11 +276,78 @@ if [[ "$REQUIRE_BALANCED_QUOTA" == "1" ]]; then
   trace_args+=(--require-balanced-quota)
 fi
 
+soak_args=(
+  "$SOAK_CHECK_SCRIPT"
+  --log-path "$TRACE_LOG"
+  --report-path "$SOAK_REPORT_PATH"
+  --wait "$WAIT_SECONDS"
+  --print-last 8
+)
+if [[ "$REQUIRE_MIXED_PANEL" == "1" ]]; then
+  soak_args+=(--require-mixed-panel)
+fi
+if [[ "$REQUIRE_SIDE_PANEL" == "1" ]]; then
+  soak_args+=(--require-side-panel)
+fi
+if [[ "$REQUIRE_SIDE_COMMIT" == "1" ]]; then
+  soak_args+=(--require-side-commit)
+fi
+if [[ "$REQUIRE_COMMIT_OBSERVED" == "1" ]]; then
+  soak_args+=(--require-commit-observed)
+fi
+if [[ "$REQUIRE_POST_COMMIT_FOLLOWUP" == "1" ]]; then
+  soak_args+=(--require-post-commit-followup)
+fi
+if [[ "$REQUIRE_DELETE_RESYNC" == "1" ]]; then
+  soak_args+=(--require-delete-resync)
+fi
+if [[ "$REQUIRE_MODERN_PREDICTION_SESSION" == "1" ]]; then
+  soak_args+=(--require-modern-prediction-session)
+fi
+if [[ "$REQUIRE_BALANCED_QUOTA" == "1" ]]; then
+  soak_args+=(--require-balanced-quota)
+fi
+if [[ "$REQUIRE_RIME_COMPOSITION_OK" == "1" ]]; then
+  soak_args+=(--require-rime-composition-ok)
+fi
+if [[ "$REQUIRE_POST_COMMIT_VISIBLE" == "1" ]]; then
+  soak_args+=(--require-post-commit-visible)
+fi
+if [[ "$REQUIRE_SOURCE_BADGES" == "1" ]]; then
+  soak_args+=(--require-source-badges)
+fi
+if [[ "$REQUIRE_POST_COMMIT_KEY_POLICY" == "1" ]]; then
+  soak_args+=(--require-post-commit-key-policy)
+fi
+if [[ "$REQUIRE_APP_SWITCH_STALE_DROP" == "1" ]]; then
+  soak_args+=(--require-app-switch-stale-drop)
+fi
+if [[ "$REQUIRE_FOLLOWUP_AFTER_SELECT" == "1" ]]; then
+  soak_args+=(--require-followup-after-select)
+fi
+if [[ -n "$MAX_FIRST_VISIBLE_MS" ]]; then
+  soak_args+=(--max-first-visible-ms "$MAX_FIRST_VISIBLE_MS")
+fi
+if [[ -n "$MAX_STALE_APPLY_COUNT" ]]; then
+  soak_args+=(--max-stale-apply-count "$MAX_STALE_APPLY_COUNT")
+fi
+if [[ -n "$MAX_CONTEXT_ECHO_COUNT" ]]; then
+  soak_args+=(--max-context-echo-count "$MAX_CONTEXT_ECHO_COUNT")
+fi
+
+gate_mode="trace"
+gate_args=("${trace_args[@]}")
+if [[ "$USE_V1_SOAK_GATE" == "1" ]]; then
+  gate_mode="v1-soak"
+  gate_args=("${soak_args[@]}")
+fi
+
 if [[ "$DRY_RUN" == "1" ]]; then
   cat <<EOF
 repo_root=$ROOT
 input_source_id=$INPUT_SOURCE_ID
 trace_log=$TRACE_LOG
+soak_report_path=$SOAK_REPORT_PATH
 wait_seconds=$WAIT_SECONDS
 test_file=$TEST_FILE
 open_app=$OPEN_APP
@@ -205,6 +363,16 @@ require_side_panel=$REQUIRE_SIDE_PANEL
 require_hitoolbox_enabled=$REQUIRE_HITOOLBOX_ENABLED
 require_modern_prediction_session=$REQUIRE_MODERN_PREDICTION_SESSION
 require_balanced_quota=$REQUIRE_BALANCED_QUOTA
+require_rime_composition_ok=$REQUIRE_RIME_COMPOSITION_OK
+require_post_commit_visible=$REQUIRE_POST_COMMIT_VISIBLE
+require_source_badges=$REQUIRE_SOURCE_BADGES
+require_post_commit_key_policy=$REQUIRE_POST_COMMIT_KEY_POLICY
+require_app_switch_stale_drop=$REQUIRE_APP_SWITCH_STALE_DROP
+require_followup_after_select=$REQUIRE_FOLLOWUP_AFTER_SELECT
+max_first_visible_ms=$MAX_FIRST_VISIBLE_MS
+max_stale_apply_count=$MAX_STALE_APPLY_COUNT
+max_context_echo_count=$MAX_CONTEXT_ECHO_COUNT
+gate_mode=$gate_mode
 auto_type=$AUTO_TYPE
 auto_query=$AUTO_QUERY
 auto_key=$AUTO_KEY
@@ -213,6 +381,8 @@ auto_char_delay=$AUTO_CHAR_DELAY
 check_input_source_script=$CHECK_INPUT_SOURCE_SCRIPT
 select_input_source_script=$SELECT_INPUT_SOURCE_SCRIPT
 trace_check_command=$PYTHON_EXECUTABLE ${trace_args[*]}
+soak_check_command=$PYTHON_EXECUTABLE ${soak_args[*]}
+gate_command=$PYTHON_EXECUTABLE ${gate_args[*]}
 EOF
   exit 0
 fi
@@ -310,4 +480,4 @@ Trace log:
   $TRACE_LOG
 EOF
 
-"$PYTHON_EXECUTABLE" "${trace_args[@]}"
+"$PYTHON_EXECUTABLE" "${gate_args[@]}"

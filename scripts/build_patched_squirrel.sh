@@ -66,7 +66,7 @@ Environment:
   RAG_IME_SQUIRREL_BUILD_SETTINGS extra xcodebuild settings (default: CODE_SIGNING_ALLOWED=NO)
   RAG_IME_SQUIRREL_CODESIGN_IDENTITY codesign identity after copy (default: - for ad-hoc)
   RAG_IME_SQUIRREL_SKIP_CODESIGN skip post-copy codesign
-  RAG_IME_SQUIRREL_SKIP_POSTINSTALL skip Squirrel scripts/postinstall after install
+  RAG_IME_SQUIRREL_SKIP_POSTINSTALL skip user-data bootstrap and Squirrel scripts/postinstall after install
   RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR allow direct HIToolbox/inputsource plist repair after branded install
   RAG_IME_SQUIRREL_AUTO_SELECT select the branded input source after install
   RAG_IME_SQUIRREL_INPUT_SOURCE_ID input source checked after install
@@ -445,14 +445,15 @@ install_squirrel_app() {
     "$ROOT/scripts/install_squirrel_rag_config.sh"
   printf '[OK] installed RAG-IME Squirrel config\n'
 
+  if bool_true "$SKIP_POSTINSTALL"; then
+    printf '[WARN] skipped Squirrel user-data bootstrap and postinstall; input source may need manual registration\n' >&2
+    return 0
+  fi
+
   RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
     RAG_IME_SQUIRREL_APP="$TARGET_APP" \
     "$ROOT/scripts/bootstrap_squirrel_user_data.sh"
 
-  if bool_true "$SKIP_POSTINSTALL"; then
-    printf '[WARN] skipped Squirrel postinstall; input source may need manual registration\n' >&2
-    return 0
-  fi
   if should_brand_app; then
     run_branded_postinstall "$TARGET_APP"
   elif [[ -f "$SQUIRREL_WORKDIR/scripts/postinstall" ]]; then

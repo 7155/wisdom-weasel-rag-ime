@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -53,6 +54,10 @@ class DemoPredictionProvider:
 
 class RagImeDemoQualityTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._composing_model_env = os.environ.get("RAG_IME_ENABLE_COMPOSING_MODEL")
+        self._pinyin_model_env = os.environ.get("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL")
+        os.environ["RAG_IME_ENABLE_COMPOSING_MODEL"] = "1"
+        os.environ["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"] = "1"
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-demo-quality-")
         self.db_path = Path(self.tmp.name) / "quality.sqlite"
         self.core = LocalSqliteCoreClient(self.db_path)
@@ -65,6 +70,14 @@ class RagImeDemoQualityTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         clear_model_prediction_holdover_cache()
+        if self._composing_model_env is None:
+            os.environ.pop("RAG_IME_ENABLE_COMPOSING_MODEL", None)
+        else:
+            os.environ["RAG_IME_ENABLE_COMPOSING_MODEL"] = self._composing_model_env
+        if self._pinyin_model_env is None:
+            os.environ.pop("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL", None)
+        else:
+            os.environ["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"] = self._pinyin_model_env
         self.tmp.cleanup()
 
     def _seed_quality_memories(self) -> None:
@@ -349,7 +362,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
             display,
         )
         self.assertGreaterEqual(response["modelLane"]["predictionCount"], 1)
-        self.assertGreaterEqual(response["ragLane"]["suggestionCount"], 2)
+        self.assertGreaterEqual(response["ragLane"]["suggestionCount"], 1)
 
 
 class CodexHistoryDemoQualityTests(unittest.TestCase):

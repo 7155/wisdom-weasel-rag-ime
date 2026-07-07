@@ -3,11 +3,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIP_CACHE_DIR="${RAG_IME_PIP_CACHE_DIR:-$ROOT/.pip-cache}"
-PACKAGE="${RAG_IME_MLX_PACKAGE:-mlx-lm}"
+PACKAGE="${RAG_IME_MLX_PACKAGE:-mlx-lm==0.31.3}"
 
 detect_python() {
   local candidate
-  for candidate in "$(command -v python3 2>/dev/null || true)" "$(command -v python3.13 2>/dev/null || true)"; do
+  for candidate in "$(command -v python3.13 2>/dev/null || true)" "$(command -v python3 2>/dev/null || true)"; do
     if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
       printf '%s\n' "$candidate"
       return 0
@@ -34,7 +34,7 @@ fi
 USE_SYSTEM_SITE_PACKAGES="${RAG_IME_MLX_USE_SYSTEM_SITE_PACKAGES:-auto}"
 if [[ "$USE_SYSTEM_SITE_PACKAGES" == "auto" ]]; then
   if python_has_mlx "$PYTHON"; then
-    USE_SYSTEM_SITE_PACKAGES=1
+    USE_SYSTEM_SITE_PACKAGES=0
   else
     USE_SYSTEM_SITE_PACKAGES=0
   fi
@@ -43,7 +43,7 @@ fi
 if [[ -n "${RAG_IME_MLX_VENV:-}" ]]; then
   VENV_DIR="$RAG_IME_MLX_VENV"
 elif [[ "$USE_SYSTEM_SITE_PACKAGES" == "1" || "$USE_SYSTEM_SITE_PACKAGES" == "true" || "$USE_SYSTEM_SITE_PACKAGES" == "TRUE" ]]; then
-  VENV_DIR="$ROOT/.venv-mlx314sys"
+  VENV_DIR="$ROOT/.venv-mlx313"
 else
   VENV_DIR="$ROOT/.venv-mlx313"
 fi
@@ -78,9 +78,10 @@ pip_no_proxy() {
 
 if python_has_mlx "$VENV_DIR/bin/python"; then
   pip_no_proxy install --no-deps "$PACKAGE"
-  pip_no_proxy install "transformers>=5.0.0" sentencepiece protobuf pyyaml jinja2
+  pip_no_proxy install "transformers<5" sentencepiece protobuf pyyaml jinja2
 else
-  pip_no_proxy install "$PACKAGE"
+  pip_no_proxy install --no-deps "$PACKAGE"
+  pip_no_proxy install "mlx>=0.31.2" "transformers<5" sentencepiece protobuf pyyaml jinja2
 fi
 
 "$VENV_DIR/bin/python" - <<'PY'

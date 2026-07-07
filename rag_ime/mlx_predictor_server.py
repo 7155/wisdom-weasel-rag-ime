@@ -8,6 +8,7 @@ import os
 import re
 import tempfile
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +22,7 @@ from .predictor import (
     PREDICTION_REQUEST_IME_QUALITY,
     PREDICTION_REQUEST_NO_INPUT,
     PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+    PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
     PREDICTION_REQUEST_RIME_REORDER,
     normalize_prediction_request_type,
     normalized_rime_candidate_texts,
@@ -35,6 +37,7 @@ from .predictor_latency import (
     append_latency_trace,
     trace_from_prediction_payload,
 )
+from .sequence_fork import BranchSpec, run_sequence_fork
 from .text_utils import compact_whitespace
 
 
@@ -150,6 +153,67 @@ class _ContinuationBranchSpec:
     max_candidate_chars: int
 
 
+class _LocalTokenizersBackendWrapper:
+    def __init__(self, tokenizer: Any, *, eos_token_id: int | None = None) -> None:
+        self._tokenizer = tokenizer
+        self.eos_token_id = eos_token_id
+
+    def encode(self, text: str) -> list[int]:
+        encoded = self._tokenizer.encode(str(text))
+        ids = getattr(encoded, "ids", encoded)
+        return [int(item) for item in ids]
+
+    def decode(self, tokens: Iterable[int]) -> str:
+        return str(self._tokenizer.decode([int(item) for item in tokens]))
+
+
+def _load_mlx_model_and_tokenizer(model_id: str) -> tuple[Any, Any]:
+    try:
+        from mlx_lm import load  # type: ignore
+    except ImportError as exc:  # pragma: no cover - depends on local Mac setup
+        raise RuntimeError("Install mlx-lm before running mlx-predictor-server") from exc
+
+    try:
+        return load(model_id)
+    except ValueError as exc:
+        if not _should_use_local_tokenizers_backend_fallback(model_id, exc):
+            raise
+        from mlx_lm.utils import load_model  # type: ignore
+        from tokenizers import Tokenizer  # type: ignore
+
+        model_path = Path(model_id).expanduser()
+        model, _config = load_model(model_path, lazy=False)
+        tokenizer = Tokenizer.from_file(str(model_path / "tokenizer.json"))
+        eos_token_id = _local_tokenizers_backend_eos_id(model_path, tokenizer)
+        return model, _LocalTokenizersBackendWrapper(tokenizer, eos_token_id=eos_token_id)
+
+
+def _should_use_local_tokenizers_backend_fallback(model_id: str, exc: ValueError) -> bool:
+    model_path = Path(model_id).expanduser()
+    if not model_path.exists() or not model_path.joinpath("tokenizer.json").exists():
+        return False
+    message = str(exc)
+    return "TokenizersBackend" in message or "qwen3_5" in message
+
+
+def _local_tokenizers_backend_eos_id(model_path: Path, tokenizer: Any) -> int | None:
+    config_path = model_path / "tokenizer_config.json"
+    if not config_path.exists():
+        return None
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    eos_token = config.get("eos_token")
+    if not eos_token:
+        return None
+    token_to_id = getattr(tokenizer, "token_to_id", None)
+    if not callable(token_to_id):
+        return None
+    token_id = token_to_id(str(eos_token))
+    return int(token_id) if token_id is not None else None
+
+
 class MlxLmEngine:
     """Resident MLX-LM engine for the IME model lane.
 
@@ -168,15 +232,10 @@ class MlxLmEngine:
     ):
         if not model_id:
             raise RuntimeError("MLX predictor requires --model or RAG_IME_MLX_MODEL")
-        try:
-            from mlx_lm import load  # type: ignore
-        except ImportError as exc:  # pragma: no cover - depends on local Mac setup
-            raise RuntimeError("Install mlx-lm before running mlx-predictor-server") from exc
-
         self.model_id = model_id
         self.profile = profile_by_id(profile_id)
         self.model_info = _inspect_local_mlx_model(model_id)
-        self.model, self.tokenizer = load(model_id)
+        self.model, self.tokenizer = _load_mlx_model_and_tokenizer(model_id)
         self._base_completion_mode = _is_base_completion_model(model_id, self.model_info)
         self._prompt_cache = _PromptCacheState(
             enabled=bool(enable_prompt_cache) and not self._base_completion_mode,
@@ -225,8 +284,8 @@ class MlxLmEngine:
                 "prefixCache": bool(self._prefix_cache_enabled),
                 "textOnlyModel": bool(self.model_info.get("textOnly")),
                 "seededPromptReplay": True,
-                "kvFork": False,
-                "sequenceFork": False,
+                "kvFork": bool(self.profile.sequence_fork),
+                "sequenceFork": bool(self.profile.sequence_fork),
                 "batchCandidates": True,
                 "logitsTopK": True,
                 "continuationBranches": True,
@@ -342,6 +401,25 @@ class MlxLmEngine:
             })
 
         display_candidate_limit = max(1, int(max_candidates))
+        if _should_use_realtime_post_commit_fast_path(
+            resolved_request_type,
+            current_input=current_input,
+            stream_first_candidate=stream_first_candidate,
+        ):
+            return finalize(
+                self.predict_realtime_post_commit_fast_path(
+                    current_input=current_input,
+                    recent_context=recent_context,
+                    rime_candidates=rime_candidate_tuple,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    started=started,
+                    request_type=resolved_request_type,
+                    request_metadata=metadata,
+                )
+            )
+
         logits_probe_candidate_limit = display_candidate_limit
         if resolved_request_type == PREDICTION_REQUEST_NO_INPUT and not stream_first_candidate:
             logits_probe_candidate_limit = max(3, display_candidate_limit)
@@ -455,7 +533,36 @@ class MlxLmEngine:
             request_type=resolved_request_type,
             rime_candidates=rime_candidate_tuple,
         )
-        return finalize({
+        if not candidates and not current_input.strip() and resolved_request_type in {
+            PREDICTION_REQUEST_IME_HOT,
+            PREDICTION_REQUEST_IME_POST_COMMIT,
+            PREDICTION_REQUEST_ACTIVE_RAG,
+        }:
+            branch_payload = self.predict_no_input_continuation_branches(
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=max_candidates,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                started=started,
+                logits_elapsed_ms=logits_candidates.get("elapsedMs", 0),
+                logits_quality_reason="json_generation_empty_for_empty_input",
+                request_metadata=metadata,
+            )
+            branch_payload["requestType"] = resolved_request_type
+            timing = branch_payload.get("timing")
+            if isinstance(timing, dict):
+                timing["requestType"] = resolved_request_type
+            if rime_candidate_tuple:
+                _backfill_payload_candidates_with_rime(
+                    branch_payload,
+                    rime_candidates=rime_candidate_tuple,
+                    max_candidates=max_candidates,
+                    empty_mode="rime-candidate-fallback",
+                )
+            return finalize(branch_payload)
+        json_payload = {
             "ok": True,
             "model": self.model_id,
             "rawText": raw_text,
@@ -472,7 +579,87 @@ class MlxLmEngine:
                 "requestType": resolved_request_type,
             },
             "requestMeta": dict(metadata),
-        })
+        }
+        if rime_candidate_tuple and resolved_request_type in {
+            PREDICTION_REQUEST_IME_HOT,
+            PREDICTION_REQUEST_IME_POST_COMMIT,
+            PREDICTION_REQUEST_ACTIVE_RAG,
+        }:
+            _backfill_payload_candidates_with_rime(
+                json_payload,
+                rime_candidates=rime_candidate_tuple,
+                max_candidates=max_candidates,
+                empty_mode="rime-candidate-fallback",
+            )
+        return finalize(json_payload)
+
+    def predict_realtime_post_commit_fast_path(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        started: float,
+        request_type: str,
+        rime_candidates: tuple[str, ...] = (),
+        request_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        metadata = dict(request_metadata or {})
+        token_budget = _realtime_post_commit_token_budget(max_tokens)
+        raw_text = "".join(
+            self.stream_text(
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidates=1,
+                max_tokens=token_budget,
+                temperature=max(0.05, min(float(temperature), 0.16)),
+                top_p=top_p,
+                request_type=request_type,
+                rime_candidates=(),
+                stream_first_candidate=False,
+                request_metadata=metadata,
+            )
+        )
+        candidate = _realtime_post_commit_candidate(
+            raw_text,
+            current_input=current_input,
+            recent_context=recent_context,
+        )
+        candidates = [candidate] if candidate else []
+        if not candidates and rime_candidates:
+            candidates = list(rime_candidates[:1])
+        total_ms = int((time.perf_counter() - started) * 1000)
+        return {
+            "ok": True,
+            "model": self.model_id,
+            "rawText": raw_text,
+            "candidates": candidates,
+            "candidateScores": [
+                {
+                    "text": candidate,
+                    "source": "realtime-post-commit",
+                    "mode": "realtime-post-commit-fast-path",
+                    "rank": 1,
+                }
+                for candidate in candidates
+            ],
+            "candidateMode": "realtime-post-commit",
+            "requestType": request_type,
+            "totalMs": total_ms,
+            "promptCache": self.prompt_cache_status(),
+            "timing": {
+                "candidateMode": "realtime-post-commit",
+                "fallbackJson": False,
+                "logitsMs": 0,
+                "requestType": request_type,
+                "fastPath": True,
+                "branchCount": 0,
+                "maxTokens": token_budget,
+            },
+            "requestMeta": dict(metadata),
+        }
 
     def predict_no_input_continuation_branches(
         self,
@@ -644,6 +831,20 @@ class MlxLmEngine:
         )
         if not seeds:
             return None
+        sequence_fork_payload = self._predict_no_input_seeded_sequence_fork(
+            current_input=current_input,
+            recent_context=recent_context,
+            max_candidates=max_candidates,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            started=started,
+            logits_candidates=logits_candidates,
+            seeds=seeds,
+            request_metadata=request_metadata,
+        )
+        if sequence_fork_payload is not None:
+            return sequence_fork_payload
         kv_fork_available = False
         sequence_fork_available = False
         replay_fallback_reason = "cache_clone_unsupported"
@@ -730,6 +931,199 @@ class MlxLmEngine:
                 "seedReplayBranchCount": len(branch_timings),
                 "seedReplayDisplayedCount": len(displayed_candidates),
                 "displayCandidateLimit": display_limit,
+                "branches": branch_timings,
+            },
+            "requestMeta": dict(request_metadata or {}),
+        }
+
+    def _predict_no_input_seeded_sequence_fork(
+        self,
+        *,
+        current_input: str,
+        recent_context: str,
+        max_candidates: int,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        started: float,
+        logits_candidates: dict[str, Any],
+        seeds: list[dict[str, Any]],
+        request_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        metadata = dict(request_metadata or {})
+        cancel_request_id = str(metadata.get("requestId") or "")
+        display_limit = max(1, int(max_candidates))
+        per_seed_max_tokens = max(8, min(24, int(max_tokens)))
+        replay_temperature = max(0.05, min(float(temperature), 0.18))
+        base_prompt = _build_seeded_sequence_fork_base_prompt(recent_context=recent_context)
+        try:
+            base_tokens = tuple(int(item) for item in self.tokenizer.encode(base_prompt))
+        except Exception:
+            return None
+        if not base_tokens:
+            return None
+
+        branch_specs = tuple(
+            BranchSpec(
+                branch_id=f"seed-{rank}",
+                seed_text=str(seed.get("text") or ""),
+                temperature=replay_temperature,
+                max_tokens=per_seed_max_tokens,
+                max_candidate_chars=max(12, min(24, per_seed_max_tokens * 2)),
+            )
+            for rank, seed in enumerate(seeds, start=1)
+            if str(seed.get("text") or "")
+        )
+        if not branch_specs:
+            return None
+
+        seed_by_text = {str(seed.get("text") or ""): seed for seed in seeds}
+        try:
+            from mlx_lm.generate import generate_step  # type: ignore
+            from mlx_lm.models.cache import make_prompt_cache  # type: ignore
+            from mlx_lm.sample_utils import make_sampler  # type: ignore
+            import mlx.core as mx  # type: ignore
+        except Exception:
+            return None
+
+        def prefill(prompt_tokens: tuple[int, ...]) -> object:
+            kwargs: dict[str, Any] = {}
+            if self._prompt_cache.max_kv_size > 0:
+                kwargs["max_kv_size"] = self._prompt_cache.max_kv_size
+            cache = make_prompt_cache(self.model, **kwargs)
+            for _token, _logprobs in generate_step(
+                mx.array(prompt_tokens),
+                self.model,
+                max_tokens=0,
+                prompt_cache=cache,
+            ):
+                pass
+            try:
+                mx.eval([item.state for item in cache])
+            except Exception:
+                pass
+            return cache
+
+        def clone_cache(cache_obj: object) -> object:
+            return deepcopy(cache_obj)
+
+        def decode_branch(cache_obj: object, branch: BranchSpec) -> tuple[str, int]:
+            seed_tokens = tuple(int(item) for item in self.tokenizer.encode(branch.seed_text))
+            if not seed_tokens:
+                return "", 0
+            sampler = make_sampler(temp=max(0.0, float(branch.temperature)), top_p=max(0.0, float(top_p)))
+            emitted = ""
+            generated_tokens: list[int] = []
+            for token, _logprobs in generate_step(
+                mx.array(seed_tokens),
+                self.model,
+                max_tokens=max(1, min(64, int(branch.max_tokens))),
+                prompt_cache=cache_obj,
+                sampler=sampler,
+            ):
+                if cancel_request_id and self._scheduler.is_cancelled(cancel_request_id):
+                    break
+                token_id = _token_to_int(token)
+                if _token_is_eos(self.tokenizer, token_id):
+                    break
+                generated_tokens.append(token_id)
+                decoded = self.tokenizer.decode(generated_tokens)
+                if isinstance(decoded, bytes):
+                    decoded = decoded.decode("utf-8", errors="ignore")
+                if not isinstance(decoded, str):
+                    decoded = str(decoded)
+                decoded, reached_stop = _visible_generation_text(decoded)
+                if "\ufffd" in decoded:
+                    continue
+                emitted = decoded
+                if reached_stop:
+                    break
+            candidate = _seeded_replay_candidate(
+                seed_text=branch.seed_text,
+                raw_text=emitted,
+                current_input=current_input,
+                recent_context=recent_context,
+                max_candidate_chars=branch.max_candidate_chars,
+            )
+            return candidate, len(generated_tokens)
+
+        try:
+            fork_results = run_sequence_fork(
+                prompt_tokens=base_tokens,
+                branches=branch_specs,
+                prefill=prefill,
+                clone_cache=clone_cache,
+                decode_branch=decode_branch,
+                is_cancelled=lambda: bool(cancel_request_id and self._scheduler.is_cancelled(cancel_request_id)),
+            )
+        except Exception:
+            return None
+        if not fork_results or not all(item.cache_fork_supported for item in fork_results):
+            return None
+
+        branch_count = len(branch_specs)
+        raw_texts: list[str] = []
+        candidates: list[str] = []
+        seen: set[str] = set()
+        branch_timings: list[dict[str, Any]] = []
+        for rank, result in enumerate(fork_results, start=1):
+            branch = branch_specs[rank - 1]
+            seed = seed_by_text.get(branch.seed_text, {})
+            branch_candidates = [result.candidate] if result.candidate else []
+            if result.candidate:
+                raw_texts.append(result.candidate)
+            branch_timings.append(
+                {
+                    "label": f"seed:{branch.seed_text}",
+                    "branchRank": rank,
+                    "branchCount": branch_count,
+                    "seedText": branch.seed_text,
+                    "seedTokenId": seed.get("tokenId"),
+                    "logprob": seed.get("logprob"),
+                    "probability": seed.get("probability"),
+                    "maxTokens": branch.max_tokens,
+                    "tokensGenerated": result.tokens_generated,
+                    "elapsedMs": int(result.elapsed_ms),
+                    "kvFork": True,
+                    "sequenceFork": True,
+                    "cacheForkSupported": True,
+                    "candidates": branch_candidates,
+                }
+            )
+            if result.candidate and result.candidate not in seen:
+                seen.add(result.candidate)
+                candidates.append(result.candidate)
+        if not candidates:
+            return None
+        displayed_candidates = candidates[:display_limit]
+        total_ms = int((time.perf_counter() - started) * 1000)
+        return {
+            "ok": True,
+            "model": self.model_id,
+            "rawText": "\n".join(raw_texts),
+            "candidates": displayed_candidates,
+            "candidateScores": _seeded_prompt_replay_candidate_scores(
+                displayed_candidates,
+                branch_timings=branch_timings,
+                mode="seeded-sequence-fork",
+            ),
+            "candidateMode": "seeded-sequence-fork",
+            "requestType": PREDICTION_REQUEST_NO_INPUT,
+            "totalMs": total_ms,
+            "promptCache": self.prompt_cache_status(),
+            "timing": {
+                "candidateMode": "seeded-sequence-fork",
+                "logitsMs": int(logits_candidates.get("elapsedMs") or 0),
+                "fallbackJson": False,
+                "fallbackReason": "",
+                "kvFork": True,
+                "sequenceFork": True,
+                "seedReplayReason": "top_logits_seed_sequence_fork",
+                "requestType": PREDICTION_REQUEST_NO_INPUT,
+                "seedReplayBranchCount": len(branch_timings),
+                "seedReplayDisplayedCount": len(displayed_candidates),
+                "displayCandidateLimit": display_limit,
+                "prefillTokenCount": len(base_tokens),
                 "branches": branch_timings,
             },
             "requestMeta": dict(request_metadata or {}),
@@ -1437,6 +1831,18 @@ def _build_mlx_dynamic_prompt(
     rime_candidates: tuple[str, ...] = (),
     stream_first_candidate: bool = False,
 ) -> str:
+    resolved_request_type = normalize_prediction_request_type(request_type)
+    if (
+        stream_first_candidate
+        and resolved_request_type in {PREDICTION_REQUEST_NO_INPUT, PREDICTION_REQUEST_POST_COMMIT_COMPLETION, PREDICTION_REQUEST_IME_POST_COMMIT}
+    ):
+        context_tail = _tail_chars(compact_whitespace(recent_context), 180)
+        return (
+            f"已上屏文本: {context_tail}\n"
+            "请只输出一个可直接插入光标后的短补全短语。"
+            "不要 JSON, 不要编号, 不要解释, 不要复述已上屏文本, 不要输出拼音。\n"
+            "补全:"
+        )
     if os.environ.get("RAG_IME_MLX_LEGACY_PROMPT", "").strip().lower() not in {"1", "true", "yes", "on"}:
         return _build_imev1_dynamic_prompt(
             current_input=current_input,
@@ -1446,7 +1852,6 @@ def _build_mlx_dynamic_prompt(
             rime_candidates=rime_candidates,
             stream_first_candidate=stream_first_candidate,
         )
-    resolved_request_type = normalize_prediction_request_type(request_type)
     rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
     rime_line = _rime_candidates_prompt_line(rime_candidate_tuple)
     mode_instruction = _request_type_prompt_instruction(resolved_request_type)
@@ -1528,7 +1933,7 @@ def _build_imev1_dynamic_prompt(
 
 def _imev1_mode(request_type: str) -> str:
     resolved = normalize_prediction_request_type(request_type)
-    if resolved in {PREDICTION_REQUEST_NO_INPUT, PREDICTION_REQUEST_IME_POST_COMMIT}:
+    if resolved in {PREDICTION_REQUEST_NO_INPUT, PREDICTION_REQUEST_POST_COMMIT_COMPLETION, PREDICTION_REQUEST_IME_POST_COMMIT}:
         return "POST"
     if resolved in {PREDICTION_REQUEST_IME_HOT, PREDICTION_REQUEST_PINYIN_CONSTRAINED}:
         return "HOT"
@@ -1543,12 +1948,14 @@ def _imev1_mode(request_type: str) -> str:
 
 def _request_type_prompt_instruction(request_type: str) -> str:
     resolved = normalize_prediction_request_type(request_type)
-    if resolved == PREDICTION_REQUEST_NO_INPUT:
+    if resolved in {PREDICTION_REQUEST_NO_INPUT, PREDICTION_REQUEST_POST_COMMIT_COMPLETION}:
         return "用户刚上屏了一段文字, 现在需要预测后文接龙, 不要做拼音转汉字。"
     if resolved == PREDICTION_REQUEST_PINYIN_CONSTRAINED:
         return "用户正在用拼音约束预测方向, 候选必须尽量匹配当前拼音或首字母约束。"
     if resolved == PREDICTION_REQUEST_RIME_REORDER:
         return "当前已有 Rime/Wanxiang 候选, 只在候选之间选择或补充极短候选, 不要自由发挥长句。"
+    if resolved == PREDICTION_REQUEST_ACTIVE_RAG:
+        return "当前是用户显式触发的选区 RAG Assist, 只生成可上屏短候选, 不解释, 不输出 Markdown, 不复读选区原文。"
     return "根据上下文给出输入法候选。"
 
 
@@ -2046,6 +2453,20 @@ def _build_seeded_replay_prompt(*, recent_context: str, seed_text: str) -> str:
     )
 
 
+def _build_seeded_sequence_fork_base_prompt(*, recent_context: str) -> str:
+    return (
+        f"<|im_start|>system\n{STREAM_FIRST_SYSTEM_PROMPT}<|im_end|>\n"
+        "<|im_start|>user\n"
+        f"上下文：\"{recent_context}\"\n"
+        "当前输入：\"\"\n"
+        "任务：assistant 会先给出一个种子候选。"
+        "请只把这个种子候选续写成一个可直接上屏的短语。"
+        "不要解释，不要换行，不要输出多个候选。"
+        "<|im_end|>\n"
+        f"{QWEN_NON_THINKING_ASSISTANT_PREFIX}"
+    )
+
+
 def _space_list_continuation_candidates(
     raw_text: str,
     *,
@@ -2083,6 +2504,52 @@ def _space_list_continuation_candidates(
         if len(result) >= max(1, int(max_candidates)):
             break
     return result
+
+
+def _should_use_realtime_post_commit_fast_path(
+    request_type: str,
+    *,
+    current_input: str,
+    stream_first_candidate: bool,
+) -> bool:
+    if compact_whitespace(current_input):
+        return False
+    resolved = normalize_prediction_request_type(request_type)
+    if stream_first_candidate and resolved in {
+        PREDICTION_REQUEST_NO_INPUT,
+        PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+        PREDICTION_REQUEST_IME_POST_COMMIT,
+    }:
+        return True
+    return resolved in {
+        PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+        PREDICTION_REQUEST_IME_POST_COMMIT,
+    }
+
+
+def _realtime_post_commit_token_budget(max_tokens: int) -> int:
+    return max(4, min(12, int(max_tokens)))
+
+
+def _realtime_post_commit_candidate(
+    raw_text: str,
+    *,
+    current_input: str,
+    recent_context: str,
+) -> str:
+    candidate = _branch_continuation_candidate(
+        raw_text,
+        current_input=current_input,
+        recent_context=recent_context,
+        max_candidate_chars=14,
+    )
+    if (
+        not candidate
+        or _is_low_value_base_candidate(candidate)
+        or _looks_like_meta_completion_candidate(candidate)
+    ):
+        return ""
+    return candidate
 
 
 def _continuation_branch_specs(*, temperature: float, max_tokens: int) -> list[_ContinuationBranchSpec]:
@@ -2418,6 +2885,7 @@ def _seeded_prompt_replay_candidate_scores(
     candidates: list[str],
     *,
     branch_timings: list[dict[str, Any]],
+    mode: str = "seeded-prompt-replay",
 ) -> list[dict[str, Any]]:
     branch_by_candidate: dict[str, dict[str, Any]] = {}
     for branch in branch_timings:
@@ -2440,7 +2908,7 @@ def _seeded_prompt_replay_candidate_scores(
                 "text": text,
                 "rank": index,
                 "source": str(branch.get("label") or "seed-replay"),
-                "mode": "seeded-prompt-replay",
+                "mode": mode,
                 "branchRank": branch.get("branchRank"),
                 "branchCount": branch.get("branchCount"),
                 "seedText": branch.get("seedText"),
@@ -2451,6 +2919,65 @@ def _seeded_prompt_replay_candidate_scores(
             }
         )
     return result
+
+
+def _backfill_payload_candidates_with_rime(
+    payload: dict[str, Any],
+    *,
+    rime_candidates: tuple[str, ...],
+    max_candidates: int,
+    empty_mode: str,
+) -> None:
+    target = max(1, int(max_candidates))
+    existing = [
+        compact_whitespace(str(item))
+        for item in payload.get("candidates", [])
+        if compact_whitespace(str(item))
+    ]
+    candidates = list(existing)
+    for item in rime_candidates:
+        text = compact_whitespace(str(item))
+        if text and text not in candidates:
+            candidates.append(text)
+        if len(candidates) >= target:
+            break
+    if candidates == existing:
+        return
+    was_empty = not existing
+    payload["candidates"] = candidates[:target]
+    scores = [
+        dict(item)
+        for item in payload.get("candidateScores", [])
+        if isinstance(item, dict) and compact_whitespace(str(item.get("text") or ""))
+    ]
+    scored_texts = {compact_whitespace(str(item.get("text") or "")) for item in scores}
+    for index, text in enumerate(payload["candidates"], start=1):
+        if text in scored_texts:
+            continue
+        scores.append(
+            {
+                "text": text,
+                "rank": index,
+                "source": "rime-fallback" if was_empty else "rime-backfill",
+                "mode": "rime-candidate-fallback" if was_empty else "rime-candidate-backfill",
+                "confidence": max(0.0, min(1.0, 0.82 - (index - 1) * 0.08)),
+            }
+        )
+    for index, score in enumerate(scores, start=1):
+        score["rank"] = index
+    payload["candidateScores"] = scores[:target]
+    if was_empty:
+        payload["candidateMode"] = empty_mode
+        payload["rawText"] = " ".join(payload["candidates"])
+    timing = payload.get("timing")
+    if isinstance(timing, dict):
+        if was_empty:
+            timing["candidateMode"] = empty_mode
+            timing["rimeFallback"] = True
+            timing["rimeFallbackReason"] = "model_empty_after_empty_input_fallback"
+        else:
+            timing["rimeBackfill"] = True
+            timing["rimeBackfillCount"] = max(0, len(payload["candidates"]) - len(existing))
 
 
 def _merge_seeded_replay_with_branch_payload(
@@ -2496,9 +3023,10 @@ def _merge_seeded_replay_with_branch_payload(
 
     timing = dict(seeded_payload.get("timing") if isinstance(seeded_payload.get("timing"), dict) else {})
     branch_timing = branch_payload.get("timing") if isinstance(branch_payload.get("timing"), dict) else {}
+    seeded_mode = str(seeded_payload.get("candidateMode") or "seeded-prompt-replay")
     timing.update(
         {
-            "candidateMode": "seeded-prompt-replay",
+            "candidateMode": seeded_mode,
             "underfilled": True,
             "seededCandidateCount": len(seeded_candidates),
             "fallbackCandidateMode": branch_payload.get("candidateMode"),
@@ -2518,7 +3046,7 @@ def _merge_seeded_replay_with_branch_payload(
             "rawText": "\n".join(part for part in raw_parts if part),
             "candidates": merged_candidates,
             "candidateScores": merged_scores,
-            "candidateMode": "seeded-prompt-replay",
+            "candidateMode": seeded_mode,
             "totalMs": int((time.perf_counter() - started) * 1000),
             "timing": timing,
         }

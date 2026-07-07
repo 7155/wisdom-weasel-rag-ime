@@ -423,6 +423,39 @@ def _render_progressive_fresh_candidates(
     if now_ms > previous.expires_at_ms:
         return None
 
+    presentation_replaced = _replace_presentation_stream_candidates(
+        previous_candidates=previous.candidates,
+        fresh_candidates=fresh_candidates,
+        max_visible_candidates=max_visible_candidates,
+    )
+    if presentation_replaced is not None:
+        snapshot = replace(
+            previous,
+            query_anchor=anchors.query_anchor,
+            updated_at_ms=now_ms,
+            candidates=presentation_replaced,
+            source_summary=source_summary(presentation_replaced),
+            lane_status=lane_status,
+            min_visible_until_ms=max(previous.min_visible_until_ms, now_ms + MIN_VISIBLE_MS),
+            expires_at_ms=max(previous.expires_at_ms, now_ms + _ttl_for_mode(mode)),
+            stale_level="fresh",
+        )
+        next_state = StablePanelState(last_snapshot=snapshot, generation=state.generation)
+        return snapshot, next_state, _diagnostics(
+            action="progressive_replace",
+            reason="presentation_stream_candidate_replaced",
+            anchors=anchors,
+            snapshot=snapshot,
+            previous=previous,
+            now_ms=now_ms,
+            extra={
+                "previousCandidateCount": len(previous.candidates),
+                "freshCandidateCount": len(fresh_candidates),
+                "appendedCandidateCount": max(0, len(presentation_replaced) - len(previous.candidates)),
+                "replacedCandidateCount": 1,
+            },
+        )
+
     previous_keys = [_candidate_key(item) for item in previous.candidates]
     fresh_keys = [_candidate_key(item) for item in fresh_candidates]
     preserved_count = _preserved_prefix_count(previous_keys, fresh_keys)
@@ -552,6 +585,65 @@ def _append_only_candidates(
         if len(appendable) >= remaining_slots:
             break
     return tuple(appendable)
+
+
+def _replace_presentation_stream_candidates(
+    *,
+    previous_candidates: tuple[object, ...],
+    fresh_candidates: tuple[object, ...],
+    max_visible_candidates: int | None,
+) -> tuple[object, ...] | None:
+    previous_keys = [_presentation_stream_slot_key(item) for item in previous_candidates]
+    fresh_keys = [_presentation_stream_slot_key(item) for item in fresh_candidates]
+    if not any(fresh_keys):
+        return None
+    replaced = False
+    result = list(previous_candidates)
+    for fresh, fresh_key in zip(fresh_candidates, fresh_keys):
+        if not fresh_key:
+            continue
+        try:
+            index = previous_keys.index(fresh_key)
+        except ValueError:
+            continue
+        result[index] = fresh
+        replaced = True
+    if not replaced:
+        return None
+    existing_keys = {_stable_candidate_key_json(item) for item in result}
+    try:
+        limit = max(0, int(max_visible_candidates)) if max_visible_candidates is not None else len(result)
+    except (TypeError, ValueError):
+        limit = len(result)
+    for fresh, fresh_key in zip(fresh_candidates, fresh_keys):
+        if fresh_key:
+            continue
+        stable_key = _stable_candidate_key_json(fresh)
+        if stable_key in existing_keys or len(result) >= limit:
+            continue
+        result.append(fresh)
+        existing_keys.add(stable_key)
+    return tuple(result)
+
+
+def _presentation_stream_slot_key(candidate: object) -> str:
+    metadata = _candidate_metadata(candidate)
+    if not bool(metadata.get("presentationStreaming")):
+        return ""
+    final_hash = compact_whitespace(str(metadata.get("presentationFinalTextHash") or ""))
+    if not final_hash:
+        return ""
+    key = _candidate_key(candidate)
+    return json.dumps(
+        {
+            "sourceType": key.get("sourceType"),
+            "sourceIndex": key.get("sourceIndex"),
+            "finalTextHash": final_hash,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _stable_candidate_key_json(candidate: object) -> str:

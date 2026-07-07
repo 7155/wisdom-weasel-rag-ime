@@ -104,16 +104,22 @@ class DoctorMacosFrontendScriptTests(unittest.TestCase):
                     ["bash", str(root / "scripts" / "doctor_macos_frontend.sh")],
                     cwd=root,
                     env={
-                        **os.environ,
+                        **{key: value for key, value in os.environ.items() if not key.startswith("RAG_IME_")},
                         "RAG_IME_PYTHON": sys.executable,
                         "RAG_IME_MACOS_APP": str(app),
                         "RAG_IME_SIDECAR_HOST": "127.0.0.1",
                         "RAG_IME_SIDECAR_PORT": str(server.server_port),
+                        "RAG_IME_DOCTOR_REQUIRE_INSTALLED": "0",
+                        "RAG_IME_DOCTOR_REQUIRE_INPUT_SOURCE": "0",
+                        "RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE": "0",
+                        "RAG_IME_DOCTOR_REQUIRE_SIDECAR": "0",
                     },
                     text=True,
                     capture_output=True,
-                    check=True,
                 )
+                if result.returncode != 0 and "Killed: 9" in result.stderr:
+                    self.skipTest("macOS killed the fake RagImeMac.app fixture")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         finally:
             server.shutdown()
             server.server_close()

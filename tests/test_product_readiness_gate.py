@@ -22,9 +22,20 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         "RAG_IME_FRONTEND_DB_PATH",
         "RAG_IME_FOREGROUND_READINESS_REPORT",
         "RAG_IME_SQUIRREL_SOAK_REPORT",
+        "RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST",
         "RAG_IME_SQUIRREL_APP",
         "RAG_IME_SQUIRREL_BUNDLE_ID",
         "RAG_IME_SQUIRREL_INPUT_SOURCE_ID",
+        "RAG_IME_PREDICTOR_PROVIDER",
+        "RAG_IME_PREDICTOR_BASE_URL",
+        "RAG_IME_PREDICTOR_MODEL",
+        "RAG_IME_PREDICTOR_PROFILE",
+        "RAG_IME_PREDICTOR_TIMEOUT_MS",
+        "RAG_IME_PREDICTOR_MAX_TOKENS",
+        "RAG_IME_PREDICTOR_TEMPERATURE",
+        "RAG_IME_PREDICTOR_TOP_P",
+        "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS",
+        "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS",
     )
 
     def _gate_env(self, **overrides: str) -> dict[str, str]:
@@ -66,6 +77,9 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--max-old-input-echo-rate", quality_help.stdout)
         self.assertIn("--require-production-rag-governance", quality_help.stdout)
         self.assertIn("--max-stale-applied", soak_help.stdout)
+        self.assertIn("--max-stale-apply-count", soak_help.stdout)
+        self.assertIn("--max-first-visible-ms", soak_help.stdout)
+        self.assertIn("--max-context-echo-count", soak_help.stdout)
         self.assertIn("--max-flicker-count", soak_help.stdout)
         self.assertIn("--max-min-visible-violations", soak_help.stdout)
         self.assertIn("--max-rag-empty-cleared-panel", soak_help.stdout)
@@ -73,6 +87,12 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--min-model-candidates-per-panel", soak_help.stdout)
         self.assertIn("--min-model-multi-candidate-panels", soak_help.stdout)
         self.assertIn("--min-source-triplet-panels", soak_help.stdout)
+        self.assertIn("--require-rime-composition-ok", soak_help.stdout)
+        self.assertIn("--require-post-commit-visible", soak_help.stdout)
+        self.assertIn("--require-source-badges", soak_help.stdout)
+        self.assertIn("--require-post-commit-key-policy", soak_help.stdout)
+        self.assertIn("--require-app-switch-stale-drop", soak_help.stdout)
+        self.assertIn("--require-followup-after-select", soak_help.stdout)
         self.assertIn("--require-snapshot-selection-trace", soak_help.stdout)
         seed_help = subprocess.run(
             ["python3", "-m", "rag_ime.cli", "seed-eval-cases", "--help"],
@@ -82,6 +102,35 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
             check=True,
         )
         self.assertIn("--cases-file", seed_help.stdout)
+
+    def test_default_eval_cases_file_is_checked_in_and_seedable(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        cases_file = root / "docs" / "eval" / "codex-history-cases.example.jsonl"
+
+        self.assertTrue(cases_file.is_file())
+        self.assertGreaterEqual(
+            sum(1 for line in cases_file.read_text(encoding="utf-8").splitlines() if line.strip()),
+            30,
+        )
+        with tempfile.TemporaryDirectory(prefix="rag-ime-default-cases-") as tmp:
+            result = subprocess.run(
+                [
+                    "python3",
+                    "-m",
+                    "rag_ime.cli",
+                    "--db-path",
+                    str(Path(tmp) / "seed.sqlite"),
+                    "seed-eval-cases",
+                    "--cases-file",
+                    str(cases_file),
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        self.assertIn("seeded_eval_cases", result.stdout)
 
     def test_product_gate_dry_run_lists_backend_and_optional_frontend_gates(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -169,6 +218,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         env["RAG_IME_REQUIRE_MACOS_FRONTEND"] = "1"
         env["RAG_IME_REQUIRE_PREDICTOR_CAPABILITY"] = "seededPromptReplay"
         env["RAG_IME_REQUIRE_MODEL_CANDIDATE_COUNT"] = "3"
+        env["RAG_IME_SIDECAR_LAUNCH_AGENT_PLIST"] = str(root / ".missing-sidecar-launch-agent-for-tests.plist")
 
         result = subprocess.run(
             [
@@ -207,6 +257,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("require_sichuan_fuzzy=1", result.stdout)
         self.assertIn("require_predictor_capability=seededPromptReplay", result.stdout)
         self.assertIn("require_model_candidate_count=3", result.stdout)
+        self.assertIn("sidecar_latency_budget_ms=900", result.stdout)
         self.assertIn("scripts/check_sichuan_fuzzy_profile.sh", result.stdout)
         self.assertIn("foreground readiness preflight", result.stdout)
         self.assertIn("scripts/prepare_squirrel_foreground_check.sh", result.stdout)
@@ -221,7 +272,9 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--require-model-candidate-count 3", result.stdout)
         self.assertIn("scripts/check_squirrel_soak_report.py", result.stdout)
         self.assertIn("--report-path /tmp/custom-rag-ime-soak-report.json", result.stdout)
-        self.assertIn("--max-stale-applied 0", result.stdout)
+        self.assertIn("--max-stale-apply-count 0", result.stdout)
+        self.assertIn("--max-first-visible-ms 500", result.stdout)
+        self.assertIn("--max-context-echo-count 0", result.stdout)
         self.assertIn("--max-flicker-count 0", result.stdout)
         self.assertIn("--max-min-visible-violations 0", result.stdout)
         self.assertIn("--max-rag-empty-cleared-panel 0", result.stdout)
@@ -235,6 +288,12 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("--min-model-multi-candidate-panels 1", result.stdout)
         self.assertIn("--require-commit-observed", result.stdout)
         self.assertIn("--require-delete-resync", result.stdout)
+        self.assertIn("--require-rime-composition-ok", result.stdout)
+        self.assertIn("--require-post-commit-visible", result.stdout)
+        self.assertIn("--require-source-badges", result.stdout)
+        self.assertIn("--require-post-commit-key-policy", result.stdout)
+        self.assertIn("--require-app-switch-stale-drop", result.stdout)
+        self.assertIn("--require-followup-after-select", result.stdout)
         self.assertIn("--require-modern-prediction-session", result.stdout)
         self.assertIn("--require-balanced-quota", result.stdout)
         self.assertIn("--require-snapshot-selection-trace", result.stdout)
@@ -312,6 +371,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                             "RAG_IME_PREDICTOR_MODEL": "/tmp/local-mlx-model",
                             "RAG_IME_PREDICTOR_PROFILE": "instant",
                             "RAG_IME_PREDICTOR_TIMEOUT_MS": "4321",
+                            "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "777",
                         },
                     }
                 )
@@ -342,7 +402,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
         self.assertIn("predictor_env_source=launch-agent-plist", result.stdout)
         self.assertIn("predictor_provider=mlx", result.stdout)
         self.assertIn("predictor_base_url=http://127.0.0.1:8767", result.stdout)
-        self.assertIn("sidecar_latency_budget_ms=4321", result.stdout)
+        self.assertIn("sidecar_latency_budget_ms=777", result.stdout)
         self.assertIn(f"sidecar_plist={plist_path}", result.stdout)
 
     def test_product_gate_can_preserve_gate_db_when_explicitly_requested(self) -> None:

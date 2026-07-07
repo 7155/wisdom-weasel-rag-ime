@@ -208,7 +208,11 @@ class DebugImeServiceTests(unittest.TestCase):
         self._optimizer_env = {
             "RAG_IME_MEMORY_OPTIMIZER": os.environ.get("RAG_IME_MEMORY_OPTIMIZER"),
             "RAG_IME_MEMORY_OPTIMIZER_TRACE": os.environ.get("RAG_IME_MEMORY_OPTIMIZER_TRACE"),
+            "RAG_IME_ENABLE_COMPOSING_MODEL": os.environ.get("RAG_IME_ENABLE_COMPOSING_MODEL"),
+            "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": os.environ.get("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"),
         }
+        os.environ["RAG_IME_ENABLE_COMPOSING_MODEL"] = "1"
+        os.environ["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"] = "1"
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-debug-test-")
         self.service = DebugImeService(
             DebugServerConfig(
@@ -864,6 +868,28 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertFalse(third["cache"]["hit"])
         self.assertEqual(predictor.calls, 2)
 
+    def test_rime_suggest_cache_bypasses_progressive_followup(self) -> None:
+        predictor = FakePredictionProvider()
+        self.service.predictor = predictor
+        payload = {
+            "sessionId": "cache-progressive-a",
+            "requestSeq": 31,
+            "rawInput": "ragshurufa",
+            "preedit": "ragshurufa",
+            "committedContext": "用户正在写 RAG 输入法",
+            "maxVisibleCandidates": 5,
+            "maxSideCandidates": 2,
+            "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
+        }
+        first = self.service.rime_suggest(payload)
+        second_payload = dict(payload)
+        second_payload.update({"sessionId": "cache-progressive-b", "requestSeq": 32, "progressiveFollowUp": True})
+        second = self.service.rime_suggest(second_payload)
+
+        self.assertFalse(first["cache"]["hit"])
+        self.assertFalse(second["cache"]["hit"])
+        self.assertEqual(predictor.calls, 2)
+
     def test_rime_suggest_dedupes_in_flight_equivalent_payloads(self) -> None:
         predictor = BlockingPredictionProvider()
         self.service.predictor = predictor
@@ -1026,12 +1052,12 @@ class DebugImeServiceTests(unittest.TestCase):
                 "preedit": "ragshurufa",
                 "committedContext": "用户正在写 RAG 输入法",
                 "forceSideCandidates": True,
-                "maxVisibleCandidates": 5,
-                "maxSideCandidates": 2,
+                "maxVisibleCandidates": 6,
+                "maxSideCandidates": 4,
                 "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
             }
         )
-        rag_candidate = next(item for item in response["displayCandidates"] if item["sourceType"] == "rag")
+        rag_candidate = next(item for item in response["displayCandidates"] if item["sourceType"] in {"rag", "memory"})
         selection = self.service.rime_select(
             {
                 "candidate": rag_candidate,

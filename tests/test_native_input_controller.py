@@ -136,6 +136,7 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         source = _controller_source()
 
         self.assertIn("displayCandidate(matchingSelectionNumber:", source)
+        self.assertIn('latestKeyPolicy?.numberKeys == "select_visible_candidate"', source)
         self.assertIn("candidate.selectionRank == number", source)
         self.assertIn("candidate.selectionKey == \"\\(number)\"", source)
         self.assertIn("selectionNumber(forKey:", source)

@@ -17,6 +17,8 @@ from .context_views import (
     build_rime_view,
     context_views_trace_payload,
 )
+from .contracts.key_policy import key_policy_for_prediction_session as contract_key_policy_for_prediction_session
+from .contracts.source import source_badge_for, source_color_token_for
 from .core_client import CoreClient
 from .deepseek_completion import DeepSeekCompletionRequest
 from .embeddings import NullEmbeddingProvider
@@ -32,6 +34,11 @@ from .models import (
     RimeContextSnapshot,
     SideCandidateDisplayItem,
 )
+from .memory.curated_store import (
+    RealtimeMemoryContext,
+    annotate_realtime_memory_candidate,
+    decide_realtime_memory_candidate,
+)
 from .payloads import action_response_payload, model_prediction_to_payload, suggestion_to_payload
 from .pinyin_index import build_pinyin_metadata, text_initials
 from .prediction_anchors import build_prediction_anchors_from_snapshot, prediction_mode_family
@@ -40,11 +47,14 @@ from .prediction_first import (
     infer_input_mode,
     prediction_session_to_payload,
 )
+from .prediction.quality import reject_context_echo as quality_reject_context_echo
+from .prediction.quality import reject_prompt_leak as quality_reject_prompt_leak
 from .prediction_manager import PredictionManager
 from .prediction_status import prediction_status_row
 from .predictor import (
     PREDICTION_REQUEST_NO_INPUT,
     PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+    PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
     PREDICTION_REQUEST_RIME_REORDER,
     PredictionProvider,
     predict_with_optional_request_context,
@@ -121,6 +131,9 @@ _MODEL_HOLDOVER_TTL_MS = 5000
 _MODEL_LANE_LEASE_TTL_MS = 3000
 _PROGRESSIVE_FIRST_RESPONSE_MS = 700
 _PROGRESSIVE_FOLLOW_UP_RETRY_MS = 280
+_POST_COMMIT_FIRST_RESPONSE_MS = 150
+_POST_COMMIT_COMPLETION_TTL_MS = 12000
+_POST_COMMIT_MODEL_HARD_TIMEOUT_MS = 12000
 _POST_COMMIT_PANEL_TTL_MS = 8000
 _PREFIX_CONSTRAINED_PANEL_TTL_MS = 2600
 _REFRESH_DEBOUNCE_MS = 100
@@ -134,23 +147,10 @@ _PREDICTION_MANAGERS: dict[tuple[str, str, str], PredictionManager] = {}
 _REFRESH_DEBOUNCE_LOCK = RLock()
 _REFRESH_DEBOUNCE: dict[tuple[str, str, str, str, str], "_RefreshDebounceState"] = {}
 _SIDE_LANE_SCHEDULER = LatestWinsLaneScheduler()
+_POST_COMMIT_COMPLETION_CACHE: "PostCommitCompletionCache"
+_POST_COMMIT_PRESENTATION_STREAM_LOCK = RLock()
+_POST_COMMIT_PRESENTATION_STREAM_STAGES: dict[str, tuple[int, float]] = {}
 _FALSEY_ENV_VALUES = {"0", "false", "no", "off"}
-_SOURCE_BADGE_MAP = {
-    "rime": "词",
-    "model": "模",
-    "rag": "查",
-    "memory": "忆",
-    "raw_english": "input",
-    "status": "查忆",
-}
-_SOURCE_COLOR_TOKEN_MAP = {
-    "rime": "rimeOrange",
-    "model": "modelBlue",
-    "rag": "ragTeal",
-    "memory": "memoryPurple",
-    "raw_english": "rawGray",
-    "status": "statusGray",
-}
 _CANDIDATE_SOURCE_SUFFIXES = (
     "_model",
     "_rag",
@@ -302,6 +302,289 @@ class _RefreshDebounceState:
     semantic_query_hash: str
 
 
+@dataclass(frozen=True)
+class PostCommitCompletionKey:
+    project: str
+    app: str
+    hard_context_anchor: str
+    context_fingerprint: str
+    commit_text_hash: str
+    commit_text_length: int
+    input_source_id: str
+    selection_epoch: int
+    request_type: str = PREDICTION_REQUEST_POST_COMMIT_COMPLETION
+
+
+@dataclass
+class PostCommitCompletionJob:
+    key: PostCommitCompletionKey
+    job_id: str
+    created_at: float
+    started_at_ms: int
+    hard_timeout_ms: int
+    state: str = "pending"
+    predictions: tuple[ModelPrediction, ...] = ()
+    error: str = ""
+    completed_at: float = 0.0
+    provider_call_count: int = 0
+    presentation_stage: int = 0
+
+
+class PostCommitCompletionCache:
+    def __init__(self, *, ttl_ms: int = _POST_COMMIT_COMPLETION_TTL_MS) -> None:
+        self._ttl_ms = max(1000, int(ttl_ms))
+        self._lock = RLock()
+        self._jobs: dict[PostCommitCompletionKey, PostCommitCompletionJob] = {}
+
+    def poll_or_start(
+        self,
+        *,
+        key: PostCommitCompletionKey,
+        snapshot: RimeContextSnapshot,
+        core: CoreClient,
+        predictor: PredictionProvider,
+        project: str,
+        explicit_recent_context: str,
+        max_candidates: int,
+        ttl_ms: int,
+        hard_timeout_ms: int,
+    ) -> tuple[list[ModelPrediction], dict[str, object]]:
+        now = time.time()
+        ttl_ms = max(1000, int(ttl_ms))
+        hard_timeout_ms = max(500, int(hard_timeout_ms))
+        start_kwargs: dict[str, object] | None = None
+        with self._lock:
+            self._ttl_ms = ttl_ms
+            self._drop_expired_locked(now)
+            job = self._jobs.get(key)
+            if job is not None:
+                return self._payload_for_job_locked(job, now=now, cache_hit=job.state == "completed")
+            job_id = _short_stable_id(
+                "post-commit-completion",
+                key.project,
+                key.app,
+                key.context_fingerprint,
+                key.commit_text_hash,
+                str(key.selection_epoch),
+                key.input_source_id,
+            )
+            job = PostCommitCompletionJob(
+                key=key,
+                job_id=job_id,
+                created_at=now,
+                started_at_ms=now_ms(),
+                hard_timeout_ms=hard_timeout_ms,
+                state="pending",
+            )
+            self._jobs[key] = job
+            predictions, lane = self._payload_for_job_locked(job, now=now, cache_hit=False, started=True)
+            start_kwargs = {
+                "job": job,
+                "snapshot": snapshot,
+                "core": core,
+                "predictor": predictor,
+                "project": project,
+                "explicit_recent_context": explicit_recent_context,
+                "max_candidates": max_candidates,
+            }
+        Thread(
+            target=self._run_job,
+            name=f"rag-ime-post-commit-completion-{job.job_id}",
+            kwargs=start_kwargs,
+            daemon=True,
+        ).start()
+        return predictions, lane
+
+    def clear(self) -> None:
+        with self._lock:
+            self._jobs.clear()
+
+    def _run_job(
+        self,
+        *,
+        job: PostCommitCompletionJob,
+        snapshot: RimeContextSnapshot,
+        core: CoreClient,
+        predictor: PredictionProvider,
+        project: str,
+        explicit_recent_context: str,
+        max_candidates: int,
+    ) -> None:
+        started = time.perf_counter()
+        predictions: list[ModelPrediction] = []
+        state = "completed"
+        error = ""
+        try:
+            recent_context = compact_whitespace(explicit_recent_context)[-420:]
+            if not recent_context:
+                context_event_limit, context_char_limit = model_prediction_context_limits()
+                recent_context = build_prediction_context(
+                    core,
+                    explicit_recent_context=explicit_recent_context,
+                    project=project,
+                    limit=context_event_limit,
+                    max_chars=context_char_limit,
+                )
+            raw_predictions = predict_with_optional_request_context(
+                predictor,
+                current_input="",
+                recent_context=recent_context,
+                max_candidates=max_candidates,
+                request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                rime_candidates=(),
+            )
+            predictions = filter_post_commit_model_completions(
+                raw_predictions,
+                snapshot=snapshot,
+                existing_texts=(),
+                max_candidates=max_candidates,
+            )
+            if int((time.perf_counter() - started) * 1000) > job.hard_timeout_ms:
+                state = "timeout"
+                predictions = []
+        except Exception as exc:  # pragma: no cover - defensive fail-closed guard
+            state = "error"
+            error = exc.__class__.__name__
+        with self._lock:
+            current = self._jobs.get(job.key)
+            if current is not job:
+                return
+            current.provider_call_count += 1
+            current.completed_at = time.time()
+            current.error = error
+            current.state = state
+            current.predictions = tuple(predictions)
+
+    def _payload_for_job_locked(
+        self,
+        job: PostCommitCompletionJob,
+        *,
+        now: float,
+        cache_hit: bool,
+        started: bool = False,
+    ) -> tuple[list[ModelPrediction], dict[str, object]]:
+        elapsed_ms = int((now - job.created_at) * 1000)
+        if job.state == "pending" and elapsed_ms > job.hard_timeout_ms:
+            job.state = "timeout"
+            job.completed_at = now
+            job.predictions = ()
+        predictions, presentation_pending, presentation_stage, presentation_stage_count = (
+            _post_commit_presentation_stream_predictions(job)
+        )
+        state = "hit" if cache_hit and predictions and not presentation_pending else ("started" if started else job.state)
+        if presentation_pending:
+            state = "streaming"
+        lane = _model_lane_status(
+            called=True,
+            timed_out=job.state == "timeout",
+            skipped_reason="" if predictions else f"post-commit completion {state}",
+            budget_ms=post_commit_model_hard_timeout_ms(),
+            elapsed_ms=elapsed_ms,
+            prediction_count=len(predictions),
+            request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+            rime_candidate_count=0,
+            requested_max_candidates=len(predictions),
+        )
+        lane.update(
+            {
+                "asyncMode": True,
+                "completionJobId": job.job_id,
+                "completionKeyHash": _short_stable_id(
+                    job.key.project,
+                    job.key.app,
+                    job.key.hard_context_anchor,
+                    job.key.context_fingerprint,
+                    job.key.commit_text_hash,
+                    str(job.key.commit_text_length),
+                    job.key.input_source_id,
+                    str(job.key.selection_epoch),
+                    job.key.request_type,
+                ),
+                "completionJobState": state,
+                "cacheHit": bool(cache_hit and predictions),
+                "inFlight": job.state == "pending" or presentation_pending,
+                "pending": job.state == "pending" or presentation_pending,
+                "jobElapsedMs": elapsed_ms,
+                "firstResponseMs": post_commit_first_response_budget_ms(),
+                "noPinyinFilter": True,
+                "requestType": PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                "providerCallCount": job.provider_call_count,
+                "completionCacheSize": len(self._jobs),
+                "presentationStreaming": bool(presentation_stage_count > 1),
+                "presentationStage": presentation_stage,
+                "presentationStageCount": presentation_stage_count,
+            }
+        )
+        if job.error:
+            lane["error"] = job.error
+        return predictions, lane
+
+    def _drop_expired_locked(self, now: float) -> None:
+        expired = [
+            key
+            for key, job in self._jobs.items()
+            if int((now - job.created_at) * 1000) > self._ttl_ms
+        ]
+        for key in expired:
+            self._jobs.pop(key, None)
+
+
+def _post_commit_presentation_stream_predictions(
+    job: PostCommitCompletionJob,
+) -> tuple[list[ModelPrediction], bool, int, int]:
+    if job.state != "completed" or not job.predictions:
+        return [], False, 0, 0
+    first = job.predictions[0]
+    steps = _post_commit_presentation_stream_steps(first.text)
+    if not post_commit_presentation_stream_enabled() or len(steps) <= 1:
+        return list(job.predictions), False, len(steps), len(steps)
+    job.presentation_stage = min(job.presentation_stage + 1, len(steps))
+    visible_text = steps[job.presentation_stage - 1]
+    presentation_pending = job.presentation_stage < len(steps)
+    metadata = dict(first.metadata)
+    metadata.update(
+        {
+            "presentationStreaming": True,
+            "presentationStage": job.presentation_stage,
+            "presentationStageCount": len(steps),
+            "presentationPartial": presentation_pending,
+            "presentationFinalTextHash": stable_text_hash(first.text),
+        }
+    )
+    staged_first = replace(
+        first,
+        text=visible_text,
+        metadata=metadata,
+    )
+    if presentation_pending:
+        return [staged_first], True, job.presentation_stage, len(steps)
+    return [staged_first, *list(job.predictions[1:])], False, job.presentation_stage, len(steps)
+
+
+def _post_commit_presentation_stream_steps(text: str) -> list[str]:
+    surface = compact_whitespace(text)
+    if not surface:
+        return []
+    if len(surface) <= 3:
+        return [surface]
+    if re.fullmatch(r"[\u3400-\u9fffA-Za-z0-9 _-]+", surface):
+        if len(surface) <= 5:
+            raw_steps = [surface[:2], surface]
+        else:
+            raw_steps = [surface[:2], surface[:4], surface]
+    else:
+        raw_steps = [surface[: max(2, min(4, len(surface) // 2))], surface]
+    steps: list[str] = []
+    for step in raw_steps:
+        step = compact_whitespace(step)
+        if step and step not in steps:
+            steps.append(step)
+    return steps or [surface]
+
+
+_POST_COMMIT_COMPLETION_CACHE = PostCommitCompletionCache()
+
+
 def build_rime_sidecar_response(
     *,
     payload: dict[str, Any],
@@ -349,8 +632,7 @@ def build_rime_sidecar_response(
             snapshot=snapshot,
             query_basis=query_basis,
         )
-        if raw_model_prediction_count != len(model_predictions):
-            model_lane["filteredPredictionCount"] = raw_model_prediction_count - len(model_predictions)
+        model_lane["filteredPredictionCount"] = raw_model_prediction_count - len(model_predictions)
         model_lane["predictionCount"] = len(model_predictions)
         prediction_context = _string(model_lane.get("historyContext"))
         raw_suggestion_count = len(suggestions)
@@ -368,11 +650,9 @@ def build_rime_sidecar_response(
             semantic_query=semantic_query,
             query_basis=query_basis,
         )
-        if post_commit_filtered_suggestions != len(suggestions):
-            rag_lane["postCommitQualityFilteredCount"] = post_commit_filtered_suggestions - len(suggestions)
+        rag_lane["postCommitQualityFilteredCount"] = post_commit_filtered_suggestions - len(suggestions)
         rag_lane["suggestionCount"] = len(suggestions)
-        if raw_suggestion_count != len(suggestions):
-            rag_lane["filteredSuggestionCount"] = raw_suggestion_count - len(suggestions)
+        rag_lane["filteredSuggestionCount"] = raw_suggestion_count - len(suggestions)
         if _should_suppress_post_commit_rag_only(snapshot, model_predictions, suggestions):
             rag_lane["postCommitRagOnlySuppressed"] = True
             rag_lane["suppressedSuggestionCount"] = len(suggestions)
@@ -389,6 +669,35 @@ def build_rime_sidecar_response(
             latency_budget_ms=snapshot.latency_budget_ms,
         )
         rag_lane["suggestionCount"] = len(suggestions)
+        fallback_predictions = _post_commit_empty_result_fallback_predictions(
+            snapshot=snapshot,
+            semantic_query=semantic_query,
+            model_predictions=model_predictions,
+            suggestions=suggestions,
+            rag_lane=rag_lane,
+            model_lane=model_lane,
+            progressive_state=progressive_state,
+        )
+        if fallback_predictions:
+            fallback_predictions, fallback_lane_update = _stage_post_commit_fallback_presentation_stream(
+                snapshot=snapshot,
+                predictions=fallback_predictions,
+            )
+            model_predictions = fallback_predictions
+            model_lane["predictionCount"] = len(model_predictions)
+            model_lane["fallbackCandidateCount"] = len(model_predictions)
+            model_lane["fallbackReason"] = "demo_safe_empty_post_commit_fallback"
+            model_lane["skippedReason"] = ""
+            model_lane.update(fallback_lane_update)
+            if bool(model_lane.get("pending")):
+                progressive_state = _progressive_state(
+                    enabled=progressive_sidecar_updates_enabled(),
+                    partial=False,
+                    should_follow_up=True,
+                    pending_lanes=_progressive_pending_lanes(rag_lane=rag_lane, model_lane=model_lane),
+                    first_response_budget_ms=post_commit_first_response_budget_ms(),
+                    retry_after_ms=progressive_follow_up_retry_ms(),
+                )
         model_lane.pop("historyContext", None)
         total_elapsed_ms = int((time.perf_counter() - lane_started) * 1000)
         rag_lane.update(
@@ -422,6 +731,8 @@ def build_rime_sidecar_response(
             "timedOut": False,
             "skippedReason": "side candidates disabled by trigger",
             "suggestionCount": 0,
+            "filteredSuggestionCount": 0,
+            "postCommitQualityFilteredCount": 0,
             "latencyBudgetMs": 0,
             "elapsedMs": 0,
             "totalLatencyBudgetMs": snapshot.latency_budget_ms,
@@ -432,6 +743,7 @@ def build_rime_sidecar_response(
             "timedOut": False,
             "skippedReason": "side candidates disabled by trigger",
             "predictionCount": 0,
+            "filteredPredictionCount": 0,
             "latencyBudgetMs": 0,
             "elapsedMs": 0,
             "totalLatencyBudgetMs": snapshot.latency_budget_ms,
@@ -858,6 +1170,9 @@ def run_side_lanes_with_latency_budget(
     rag_budget_ms = _rag_lane_budget_for_request(latency_budget_ms)
     model_budget_ms = _model_lane_budget_for_request(latency_budget_ms, snapshot=snapshot)
     request_type = model_request_type_for_snapshot(snapshot)
+    post_commit_async = _is_post_commit_prediction_snapshot(snapshot) and post_commit_async_completion_enabled()
+    if post_commit_async:
+        request_type = PREDICTION_REQUEST_POST_COMMIT_COMPLETION
     model_candidate_limit = realtime_model_candidate_limit(max_candidates)
     rime_candidate_count = len(
         [
@@ -868,12 +1183,54 @@ def run_side_lanes_with_latency_budget(
     )
     rag_current_input = current_input
     model_current_input = current_input
-    if request_type == "pinyin_constrained_prediction":
+    if request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED:
         prefix = stable_short_pinyin_prefix(snapshot)
         if prefix:
             model_current_input = prefix
     elif _is_post_commit_prediction_snapshot(snapshot):
         model_current_input = ""
+    if post_commit_async and not snapshot.progressive_follow_up:
+        predictions, model_lane = run_post_commit_completion_async(
+            core=core,
+            predictor=predictor,
+            snapshot=snapshot,
+            explicit_recent_context=explicit_recent_context,
+            project=project,
+            max_candidates=model_candidate_limit,
+        )
+        rag_lane = _rag_lane_status(
+            called=True,
+            timed_out=False,
+            skipped_reason="RAG lane deferred to post-commit follow-up",
+            budget_ms=rag_budget_ms,
+        )
+        rag_lane["pending"] = True
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        rag_lane.update(
+            {
+                "totalLatencyBudgetMs": latency_budget_ms,
+                "sideLaneMode": "post_commit_async_first_response",
+                "sideLaneElapsedMs": elapsed_ms,
+                "memoryOptimizer": {"enabled": False, "traceEnabled": False, "maxMs": 0},
+            }
+        )
+        model_lane.update(
+            {
+                "totalLatencyBudgetMs": latency_budget_ms,
+                "elapsedBeforeModelMs": 0,
+                "sideLaneMode": "post_commit_async_first_response",
+                "sideLaneElapsedMs": elapsed_ms,
+            }
+        )
+        pending_lanes = _progressive_pending_lanes(rag_lane=rag_lane, model_lane=model_lane)
+        return [], rag_lane, predictions, model_lane, _progressive_state(
+            enabled=progressive_sidecar_updates_enabled(),
+            partial=True,
+            should_follow_up=bool(pending_lanes),
+            pending_lanes=pending_lanes,
+            first_response_budget_ms=post_commit_first_response_budget_ms(),
+            retry_after_ms=progressive_follow_up_retry_ms(),
+        )
     lane_token = _SIDE_LANE_SCHEDULER.begin(_side_lane_request_token(snapshot, current_input, query_basis))
 
     def run_rag() -> None:
@@ -911,6 +1268,42 @@ def run_side_lanes_with_latency_budget(
                 reason="superseded_before_model",
                 budget_ms=model_budget_ms,
                 token=lane_token,
+                request_type=request_type,
+                rime_candidate_count=rime_candidate_count,
+                requested_max_candidates=model_candidate_limit,
+            )
+            return
+        if post_commit_async:
+            predictions, lane = run_post_commit_completion_async(
+                core=core,
+                predictor=predictor,
+                snapshot=snapshot,
+                explicit_recent_context=explicit_recent_context,
+                project=project,
+                max_candidates=model_candidate_limit,
+            )
+            model_result["predictions"] = predictions
+            model_result["lane"] = lane
+            return
+        if not _is_post_commit_prediction_snapshot(snapshot) and not composing_model_enabled():
+            model_result["predictions"] = []
+            model_result["lane"] = _model_lane_status(
+                called=False,
+                timed_out=False,
+                skipped_reason="model lane disabled before post-commit",
+                budget_ms=model_budget_ms,
+                request_type=request_type,
+                rime_candidate_count=rime_candidate_count,
+                requested_max_candidates=model_candidate_limit,
+            )
+            return
+        if request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED and not pinyin_constrained_model_enabled():
+            model_result["predictions"] = []
+            model_result["lane"] = _model_lane_status(
+                called=False,
+                timed_out=False,
+                skipped_reason="pinyin constrained model disabled",
+                budget_ms=model_budget_ms,
                 request_type=request_type,
                 rime_candidate_count=rime_candidate_count,
                 requested_max_candidates=model_candidate_limit,
@@ -976,7 +1369,11 @@ def run_side_lanes_with_latency_budget(
     deadline = started + max(0, latency_budget_ms) / 1000
     progressive_enabled = progressive_sidecar_updates_enabled()
     allow_progressive_first_response = progressive_enabled and not snapshot.progressive_follow_up
-    first_response_budget_ms = progressive_first_response_budget_ms(latency_budget_ms)
+    first_response_budget_ms = (
+        post_commit_first_response_budget_ms()
+        if post_commit_async
+        else progressive_first_response_budget_ms(latency_budget_ms)
+    )
     progressive_deadline = started + first_response_budget_ms / 1000
     progressive_partial = False
     while True:
@@ -1068,6 +1465,49 @@ def run_side_lanes_with_latency_budget(
     return suggestions, rag_lane, predictions, model_lane, progressive_state
 
 
+def run_post_commit_completion_async(
+    *,
+    core: CoreClient,
+    predictor: PredictionProvider,
+    snapshot: RimeContextSnapshot,
+    explicit_recent_context: str,
+    project: str,
+    max_candidates: int,
+) -> tuple[list[ModelPrediction], dict[str, object]]:
+    key = build_post_commit_completion_key(snapshot=snapshot, project=project)
+    predictions, lane = _POST_COMMIT_COMPLETION_CACHE.poll_or_start(
+        key=key,
+        snapshot=snapshot,
+        core=core,
+        predictor=predictor,
+        project=project,
+        explicit_recent_context=explicit_recent_context,
+        max_candidates=max_candidates,
+        ttl_ms=post_commit_completion_ttl_ms(),
+        hard_timeout_ms=post_commit_model_hard_timeout_ms(),
+    )
+    return predictions, lane
+
+
+def build_post_commit_completion_key(*, snapshot: RimeContextSnapshot, project: str) -> PostCommitCompletionKey:
+    transaction = snapshot.frontend_transaction
+    context_text = compact_whitespace(snapshot.committed_context)
+    commit_preview = compact_whitespace(snapshot.commit_text_preview)
+    app = transaction.front_app_bundle_id or snapshot.app
+    committed_hash = transaction.committed_context_hash or stable_text_hash(context_text)
+    return PostCommitCompletionKey(
+        project=project,
+        app=app,
+        hard_context_anchor=committed_hash,
+        context_fingerprint=_context_fingerprint(context_text),
+        commit_text_hash=stable_text_hash(commit_preview),
+        commit_text_length=len(commit_preview),
+        input_source_id=transaction.input_source_id,
+        selection_epoch=transaction.selection_epoch,
+        request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+    )
+
+
 def _rag_lane_budget_for_request(latency_budget_ms: int) -> int:
     budget = max(0, int(latency_budget_ms))
     return budget
@@ -1079,7 +1519,7 @@ def _model_lane_budget_for_request(latency_budget_ms: int, *, snapshot: RimeCont
         return budget
     configured = _bounded_int(
         os.environ.get("RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"),
-        default=4500,
+        default=900,
         minimum=300,
         maximum=12000,
     )
@@ -1262,7 +1702,62 @@ def progressive_first_response_budget_ms(latency_budget_ms: int, env: Mapping[st
         return configured
     if budget <= configured + 80:
         return budget
-    return min(configured, max(120, budget - 80))
+    return min(configured, max(80, budget - 80))
+
+
+def post_commit_first_response_budget_ms(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    configured = _bounded_int(
+        source.get("RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS"),
+        default=_POST_COMMIT_FIRST_RESPONSE_MS,
+        minimum=80,
+        maximum=1000,
+    )
+    return configured
+
+
+def post_commit_completion_ttl_ms(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_POST_COMMIT_COMPLETION_TTL_MS"),
+        default=_POST_COMMIT_COMPLETION_TTL_MS,
+        minimum=1000,
+        maximum=60000,
+    )
+
+
+def post_commit_model_hard_timeout_ms(env: Mapping[str, str] | None = None) -> int:
+    source = env if env is not None else os.environ
+    return _bounded_int(
+        source.get("RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS"),
+        default=_POST_COMMIT_MODEL_HARD_TIMEOUT_MS,
+        minimum=500,
+        maximum=60000,
+    )
+
+
+def post_commit_async_completion_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION", "1")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def post_commit_presentation_stream_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_POST_COMMIT_PRESENTATION_STREAM", "1")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def composing_model_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_ENABLE_COMPOSING_MODEL", "0")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def pinyin_constrained_model_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL", "0")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
 
 
 def progressive_follow_up_retry_ms(env: Mapping[str, str] | None = None) -> int:
@@ -1296,13 +1791,13 @@ def candidate_diagnostics_enabled(env: Mapping[str, str] | None = None) -> bool:
 def candidate_source_badge(source_type: str, env: Mapping[str, str] | None = None) -> str:
     if not candidate_source_badges_enabled(env):
         return ""
-    return _SOURCE_BADGE_MAP.get(source_type, source_type)
+    return source_badge_for(source_type)
 
 
 def candidate_color_token(source_type: str, env: Mapping[str, str] | None = None) -> str:
     if not candidate_source_colors_enabled(env):
         return ""
-    return _SOURCE_COLOR_TOKEN_MAP.get(source_type, "")
+    return source_color_token_for(source_type)
 
 
 def _strip_candidate_source_suffix(text: str) -> str:
@@ -1587,6 +2082,18 @@ def _filter_rag_suggestions_for_query(
         surface = compact_whitespace(suggestion.surface_text)
         if not surface:
             continue
+        realtime_decision = decide_realtime_memory_candidate(
+            suggestion,
+            context=RealtimeMemoryContext(
+                committed_context=snapshot.committed_context,
+                commit_preview=snapshot.commit_text_preview,
+                semantic_query=semantic_query,
+                query_basis=query_basis,
+            ),
+        )
+        if not realtime_decision.allowed:
+            continue
+        suggestion = annotate_realtime_memory_candidate(suggestion, decision=realtime_decision)
         metadata = dict(suggestion.metadata)
         durable_memory = _suggestion_has_durable_memory_signal(metadata)
         if _rag_suggestion_repeats_context(
@@ -1789,6 +2296,14 @@ def _filter_post_commit_rag_suggestions_for_query(
         return suggestions
     result: list[InputSuggestion] = []
     for suggestion in suggestions:
+        if _post_commit_model_prediction_echoes_context(
+            suggestion.surface_text,
+            snapshot.committed_context,
+        ) or _post_commit_model_prediction_echoes_context(
+            suggestion.surface_text,
+            snapshot.commit_text_preview,
+        ):
+            continue
         if _post_commit_rag_candidate_has_strong_signal(
             suggestion,
             semantic_query=semantic_query,
@@ -1808,12 +2323,222 @@ def _filter_model_predictions_for_snapshot(
         return predictions
     if query_basis not in {"committedContext", "commitTextPreview"}:
         return predictions
+    return filter_post_commit_model_completions(
+        predictions,
+        snapshot=snapshot,
+        existing_texts=(),
+        max_candidates=len(predictions),
+    )
+
+
+def _post_commit_empty_result_fallback_predictions(
+    *,
+    snapshot: RimeContextSnapshot,
+    semantic_query: str,
+    model_predictions: list[ModelPrediction],
+    suggestions: list[InputSuggestion],
+    rag_lane: Mapping[str, object],
+    model_lane: Mapping[str, object],
+    progressive_state: Mapping[str, object],
+) -> list[ModelPrediction]:
+    if model_predictions or suggestions:
+        return []
+    if not _is_post_commit_prediction_snapshot(snapshot):
+        return []
+    if not snapshot.progressive_follow_up:
+        return []
+    pending_lanes = progressive_state.get("pendingLanes")
+    if isinstance(pending_lanes, list) and pending_lanes:
+        return []
+    if bool(rag_lane.get("pending")) or bool(model_lane.get("pending")) or bool(model_lane.get("inFlight")):
+        return []
+    text = _post_commit_empty_result_fallback_text(snapshot=snapshot, semantic_query=semantic_query)
+    if not text:
+        return []
+    return [
+        ModelPrediction(
+            text=text,
+            rank=1,
+            provider_name="demo-safe-fallback",
+            latency_ms=int(model_lane.get("elapsedMs") or 0),
+            confidence=0.35,
+            metadata={
+                "requestType": PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                "noPinyinFilter": True,
+                "fallbackReason": "demo_safe_empty_post_commit_fallback",
+                "fallbackSource": "post_commit_empty_result",
+                "queryHash": stable_text_hash(semantic_query),
+            },
+        )
+    ]
+
+
+def _post_commit_empty_result_fallback_text(*, snapshot: RimeContextSnapshot, semantic_query: str) -> str:
+    context = compact_whitespace(
+        " ".join(
+            item
+            for item in (snapshot.committed_context, semantic_query, snapshot.commit_text_preview)
+            if compact_whitespace(item)
+        )
+    )
+    if not context:
+        return ""
+    if "需求" in context and ("完成" in context or "没" in context or "没有" in context):
+        return "继续补齐需求"
+    if "为什么" in context:
+        return "为什么会这样"
+    if "测试" in context:
+        return "继续测试一下"
+    if "输入法" in context:
+        return "继续调试输入法"
+    if "RAG" in context or "rag" in context:
+        return "继续完善 RAG"
+    if "LLM" in context or "llm" in context or "模型" in context:
+        return "继续检查模型输出"
+    return "继续完善一下"
+
+
+def _stage_post_commit_fallback_presentation_stream(
+    *,
+    snapshot: RimeContextSnapshot,
+    predictions: list[ModelPrediction],
+) -> tuple[list[ModelPrediction], dict[str, object]]:
+    if not predictions or not post_commit_presentation_stream_enabled():
+        return predictions, {}
+    first = predictions[0]
+    steps = _post_commit_presentation_stream_steps(first.text)
+    if len(steps) <= 1:
+        return predictions, {
+            "presentationStreaming": False,
+            "presentationStage": len(steps),
+            "presentationStageCount": len(steps),
+        }
+    key = _post_commit_fallback_presentation_stream_key(snapshot=snapshot, final_text=first.text)
+    now = time.time()
+    with _POST_COMMIT_PRESENTATION_STREAM_LOCK:
+        _drop_expired_post_commit_presentation_stream_keys(now)
+        previous_stage = _POST_COMMIT_PRESENTATION_STREAM_STAGES.get(key, (0, now))[0]
+        stage = min(previous_stage + 1, len(steps))
+        _POST_COMMIT_PRESENTATION_STREAM_STAGES[key] = (stage, now)
+    pending = stage < len(steps)
+    metadata = dict(first.metadata)
+    metadata.update(
+        {
+            "presentationStreaming": True,
+            "presentationStage": stage,
+            "presentationStageCount": len(steps),
+            "presentationPartial": pending,
+            "presentationFinalTextHash": stable_text_hash(first.text),
+        }
+    )
+    staged_first = replace(first, text=steps[stage - 1], metadata=metadata)
+    staged_predictions = [staged_first] if pending else [staged_first, *predictions[1:]]
+    return staged_predictions, {
+        "completionJobState": "streaming" if pending else "completed",
+        "pending": pending,
+        "inFlight": pending,
+        "presentationStreaming": True,
+        "presentationStage": stage,
+        "presentationStageCount": len(steps),
+    }
+
+
+def _post_commit_fallback_presentation_stream_key(*, snapshot: RimeContextSnapshot, final_text: str) -> str:
+    transaction = snapshot.frontend_transaction
+    material = "\x1f".join(
+        (
+            snapshot.session_id,
+            compact_whitespace(snapshot.committed_context),
+            compact_whitespace(snapshot.commit_text_preview),
+            transaction.front_app_bundle_id or snapshot.app,
+            transaction.input_source_id,
+            str(transaction.selection_epoch),
+            stable_text_hash(final_text),
+        )
+    )
+    return hashlib.sha1(material.encode("utf-8")).hexdigest()[:16]
+
+
+def _drop_expired_post_commit_presentation_stream_keys(now: float) -> None:
+    expired = [
+        key
+        for key, (_, updated_at) in _POST_COMMIT_PRESENTATION_STREAM_STAGES.items()
+        if now - updated_at > 60
+    ]
+    for key in expired:
+        _POST_COMMIT_PRESENTATION_STREAM_STAGES.pop(key, None)
+
+
+def filter_post_commit_model_completions(
+    predictions: list[ModelPrediction],
+    *,
+    snapshot: RimeContextSnapshot,
+    existing_texts: tuple[str, ...] = (),
+    max_candidates: int = 5,
+) -> list[ModelPrediction]:
+    committed = compact_whitespace(snapshot.committed_context)
+    commit_preview = compact_whitespace(snapshot.commit_text_preview)
+    duplicate_surfaces = {
+        compact_whitespace(item).lower()
+        for item in (committed, commit_preview, *existing_texts)
+        if compact_whitespace(item)
+    }
     result: list[ModelPrediction] = []
+    seen: set[str] = set()
     for prediction in predictions:
-        if _post_commit_model_prediction_echoes_context(prediction.text, snapshot.committed_context):
+        text = _clean_post_commit_completion_text(prediction.text)
+        normalized = compact_whitespace(text).lower()
+        if not normalized or normalized in seen or normalized in duplicate_surfaces:
             continue
-        result.append(prediction)
+        if _post_commit_model_prediction_echoes_context(text, committed) or _post_commit_model_prediction_echoes_context(
+            text, commit_preview
+        ):
+            continue
+        if (
+            quality_reject_prompt_leak(text)
+            or _looks_like_model_prompt_echo(text)
+            or _looks_like_complaint_or_debug_fragment(text)
+            or _looks_like_truncated_post_commit_completion(text)
+        ):
+            continue
+        if _looks_like_meta_candidate_surface(text):
+            continue
+        seen.add(normalized)
+        metadata = dict(prediction.metadata)
+        metadata["noPinyinFilter"] = True
+        metadata["requestType"] = PREDICTION_REQUEST_POST_COMMIT_COMPLETION
+        result.append(
+            ModelPrediction(
+                text=text,
+                rank=len(result) + 1,
+                provider_name=prediction.provider_name,
+                latency_ms=prediction.latency_ms,
+                confidence=prediction.confidence,
+                metadata=metadata,
+            )
+        )
+        if len(result) >= max(0, int(max_candidates)):
+            break
     return result
+
+
+def _clean_post_commit_completion_text(text: str) -> str:
+    surface = compact_whitespace(text)
+    surface = re.sub(r"^\s*(?:[-*]|\d+[.)、]|[一二三四五六七八九十]+[.)、])\s*", "", surface)
+    surface = re.sub(r"^[\"'“”‘’\[\]【】]+|[\"'“”‘’\[\]【】]+$", "", surface)
+    surface = re.sub(r"^[,，。！？；;、\s]+|[,，。！？；;、\s]+$", "", surface)
+    if len(surface) > 80:
+        surface = surface[:80].rstrip("，。！？；;、 ")
+    return compact_whitespace(surface)
+
+
+def _looks_like_truncated_post_commit_completion(text: str) -> bool:
+    surface = compact_whitespace(text)
+    if not surface:
+        return True
+    if surface in {"您", "你", "我", "已", "您已", "你已", "我已", "您已经", "你已经", "我已经"}:
+        return True
+    return bool(re.fullmatch(r"(?:您已|你已|我已|已){2,}", surface))
 
 
 def _is_post_commit_prediction_snapshot(snapshot: RimeContextSnapshot) -> bool:
@@ -1825,21 +2550,7 @@ def _is_post_commit_prediction_snapshot(snapshot: RimeContextSnapshot) -> bool:
 
 
 def _post_commit_model_prediction_echoes_context(candidate: str, committed_context: str) -> bool:
-    surface = compact_whitespace(candidate)
-    context = compact_whitespace(committed_context)
-    if not surface or not context:
-        return False
-    if len(surface) >= 3 and surface in context:
-        return True
-    if len(context) >= 3 and context in surface:
-        return True
-    compact_surface = "".join(surface.split())
-    compact_context = "".join(context.split())
-    if len(compact_surface) <= 12 and compact_surface and compact_context:
-        overlap = sum(1 for char in compact_surface if char in compact_context)
-        if overlap / max(len(compact_surface), 1) >= 0.7:
-            return True
-    return False
+    return quality_reject_context_echo(candidate, committed_context, "")
 
 
 def _post_commit_rag_candidate_has_strong_signal(
@@ -2118,6 +2829,15 @@ def predict_model_with_latency_budget(
         for item in snapshot.candidates[:10]
         if compact_whitespace(item.text)
     )
+    if not _is_post_commit_prediction_snapshot(snapshot) and not composing_model_enabled():
+        return [], _model_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason="model lane disabled before post-commit",
+            budget_ms=budget_ms,
+            request_type=request_type,
+            rime_candidate_count=len(rime_candidate_texts),
+        )
     if budget_ms <= 0:
         return [], _model_lane_status(
             called=False,
@@ -2406,15 +3126,11 @@ def _filter_model_predictions(
     prediction_context: str = "",
     pinyin_prefix: str = "",
 ) -> list[ModelPrediction]:
+    _ = current_input, explicit_recent_context, prediction_context
     cleaned: list[ModelPrediction] = []
     seen: set[str] = set()
     for prediction in predictions:
-        text = _clean_model_prediction_text(
-            prediction.text,
-            current_input=current_input,
-            explicit_recent_context=explicit_recent_context,
-            prediction_context=prediction_context,
-        )
+        text = compact_whitespace(prediction.text)
         normalized = compact_whitespace(text).lower()
         if not normalized or normalized in seen:
             continue
@@ -2619,6 +3335,9 @@ def clear_model_prediction_holdover_cache() -> None:
     global _MODEL_LANE_ACTIVE_STARTED_AT, _MODEL_LANE_ACTIVE_TOKEN
     with _MODEL_HOLDOVER_LOCK:
         _MODEL_HOLDOVERS.clear()
+    _POST_COMMIT_COMPLETION_CACHE.clear()
+    with _POST_COMMIT_PRESENTATION_STREAM_LOCK:
+        _POST_COMMIT_PRESENTATION_STREAM_STAGES.clear()
     with _MODEL_LANE_LOCK:
         _MODEL_LANE_ACTIVE_TOKEN = None
         _MODEL_LANE_ACTIVE_STARTED_AT = 0.0
@@ -3991,31 +4710,7 @@ def _display_candidate_group_label(group: str) -> str:
 
 
 def key_policy_for_prediction_session(prediction_session_payload: Mapping[str, object]) -> dict[str, object]:
-    phase = _string(prediction_session_payload.get("phase"))
-    input_mode = _string(prediction_session_payload.get("inputMode"))
-    if phase == "post_commit" or input_mode == "post_commit_predicting":
-        return {
-            "numberKeys": "select_visible_candidate",
-            "tab": "accept_top_prediction",
-            "optionNumber": "select_prediction_by_ordinal",
-            "escape": "dismiss_prediction",
-        }
-    if phase in {"prefix_constrained", "anchor_composing"} or input_mode in {
-        "prefix_constrained_composing",
-        "anchor_composing",
-    }:
-        return {
-            "numberKeys": "select_rime_candidate",
-            "tab": "rime_default",
-            "optionNumber": "disabled",
-            "escape": "rime_cancel",
-        }
-    return {
-        "numberKeys": "pass_through",
-        "tab": "pass_through_or_rime",
-        "optionNumber": "pass_through",
-        "escape": "pass_through_or_clear_rime",
-    }
+    return contract_key_policy_for_prediction_session(prediction_session_payload)
 
 
 def refresh_decision_payload(
@@ -4105,6 +4800,14 @@ def prediction_trace_events_payload(
         "reason": reason,
         "ragTimedOut": bool(rag_lane.get("timedOut")),
         "modelTimedOut": bool(model_lane.get("timedOut")),
+        "asyncMode": bool(model_lane.get("asyncMode")),
+        "completionJobId": _string(model_lane.get("completionJobId")),
+        "completionJobState": _string(model_lane.get("completionJobState")),
+        "cacheHit": bool(model_lane.get("cacheHit")),
+        "inFlight": bool(model_lane.get("inFlight")),
+        "jobElapsedMs": _optional_int(model_lane.get("jobElapsedMs")) or 0,
+        "firstResponseMs": _optional_int(model_lane.get("firstResponseMs")) or 0,
+        "noPinyinFilter": bool(model_lane.get("noPinyinFilter")),
         "holdoverHit": bool(model_lane.get("holdoverHit")) or bool(rag_lane.get("holdoverHit")),
         "hardClearReason": _string(show_decision.get("hardClearReason")),
         "previousSnapshotId": _string(stable_panel.get("previousSnapshotId")),
@@ -4171,6 +4874,28 @@ def prediction_trace_events_payload(
         events.append({"event": "prediction_panel_soft_hide", "fields": _non_empty_trace_fields(common)})
     elif action == "hard_clear":
         events.append({"event": "prediction_panel_hard_clear", "fields": _non_empty_trace_fields(common)})
+
+    if bool(model_lane.get("asyncMode")):
+        state = _string(model_lane.get("completionJobState"))
+        if state == "started":
+            events.append({"event": "post_commit_completion_job_started", "fields": _non_empty_trace_fields(common)})
+        if state == "hit":
+            events.append({"event": "post_commit_completion_job_cache_hit", "fields": _non_empty_trace_fields(common)})
+        if bool(model_lane.get("inFlight")):
+            events.append({"event": "post_commit_completion_job_pending", "fields": _non_empty_trace_fields(common)})
+        if state == "hit" and _bounded_int(model_lane.get("predictionCount"), default=0, minimum=0, maximum=999) > 0:
+            events.append({"event": "post_commit_completion_job_completed", "fields": _non_empty_trace_fields(common)})
+        if state == "timeout" or bool(model_lane.get("timedOut")):
+            events.append({"event": "post_commit_completion_job_timeout", "fields": _non_empty_trace_fields(common)})
+        if state == "stale":
+            events.append(
+                {"event": "post_commit_completion_job_stale_dropped", "fields": _non_empty_trace_fields(common)}
+            )
+        if state == "error" or bool(model_lane.get("error")):
+            events.append({"event": "post_commit_completion_job_error", "fields": _non_empty_trace_fields(common)})
+        events.append(
+            {"event": "post_commit_completion_first_response_returned", "fields": _non_empty_trace_fields(common)}
+        )
 
     if bool(show_decision.get("shouldShow")) and _lane_empty_or_timed_out_for_trace(rag_lane, model_lane):
         events.append(

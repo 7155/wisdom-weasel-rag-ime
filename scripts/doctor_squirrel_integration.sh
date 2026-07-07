@@ -418,6 +418,29 @@ else:
         if not errors
         else "drift: " + "; ".join(errors[:6]),
     )
+    v1_defaults = {
+        "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
+        "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
+        "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
+        "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
+        "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
+        "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
+        "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
+        "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
+    }
+    v1_errors = [
+        f"{key}={str(env.get(key) or '')!r}, expected {expected!r}"
+        for key, expected in v1_defaults.items()
+        if str(env.get(key) or "") != expected
+    ]
+    emit(
+        "sidecar LaunchAgent v1 foreground defaults",
+        not v1_errors,
+        require_plist,
+        "match post-commit 150/250ms and model UX budget 900ms"
+        if not v1_errors
+        else "drift: " + "; ".join(v1_errors[:6]),
+    )
 
 mlx_required = require_plist and is_mlx_provider
 mlx_plist = load_plist(mlx_plist_path)

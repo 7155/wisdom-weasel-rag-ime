@@ -87,3 +87,31 @@ class MemoryOptimizerFeedbackTests(unittest.TestCase):
         )
         self.assertIn("stable:连续预测", governance["suppressedMemoryIds"])
         self.assertIn("连续预测", governance["suppressedTexts"])
+
+    def test_backspace_after_active_rag_accept_creates_cooldown(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-backspace-") as tmp:
+            db_path = Path(tmp) / "feedback.sqlite"
+            core = LocalSqliteCoreClient(db_path)
+            core.initialize()
+            created_at = now_ms()
+            core.record_memory_feedback(
+                {
+                    "event": "backspace_after_active_rag_accept",
+                    "candidateId": "active-rag:候选消失排查路径",
+                    "candidateText": "候选消失排查路径",
+                    "sourceType": "rag",
+                    "contextHash": "ctx:active-rag",
+                    "timestampMs": created_at + 1,
+                    "metadata": {"uiMode": "active_rag_assist"},
+                }
+            )
+            governance = core.optimizer_governance_snapshot(
+                memory_ids=["active-rag:候选消失排查路径"],
+                texts=["候选消失排查路径"],
+                source_event_ids=[None],
+                context_hash="ctx:active-rag",
+                project="wisdom-weasel-rag-ime",
+                app="",
+            )
+
+        self.assertIn("active-rag:候选消失排查路径", governance["suppressedMemoryIds"])

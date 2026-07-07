@@ -1,4 +1,6 @@
 .rag-ime-data/
+.venv/
+.venv-mlx*/
 build/
 reports/
 output/

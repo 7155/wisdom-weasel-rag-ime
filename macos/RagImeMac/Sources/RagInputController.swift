@@ -17,6 +17,7 @@ final class RagInputController: IMKInputController {
     private var latestSuggestions: [RagSuggestion] = []
     private var latestDisplayCandidates: [RimeDisplayCandidate] = []
     private var latestPredictionSession: RimePredictionSessionPayload?
+    private var latestKeyPolicy: RimeKeyPolicyPayload?
     private var activePanelSession: ActivePanelSession?
     private var committedContext = ""
     private let bridge = RagBridgeClient()
@@ -191,6 +192,7 @@ final class RagInputController: IMKInputController {
             return false
         }
         if canRouteNumberToVisiblePanel(),
+           latestKeyPolicy?.numberKeys == "select_visible_candidate",
            let candidate = displayCandidate(matchingSelectionNumber: number, selectionKey: string) {
             let query = composition.isEmpty ? candidate.text : composition
             commit(text: candidate.insertText, client: client, selectedDisplayCandidate: candidate, selectedSuggestion: nil, rank: number, queryOverride: query)
@@ -481,6 +483,7 @@ final class RagInputController: IMKInputController {
         }
         lastRenderedRequestSeq = response.requestSeq
         latestPredictionSession = response.predictionSession
+        latestKeyPolicy = response.keyPolicy
         scheduleProgressiveFollowUpIfNeeded(
             response: response,
             originalRequest: originalRequest,
@@ -627,6 +630,7 @@ final class RagInputController: IMKInputController {
         latestModelPredictions = []
         latestSuggestions = []
         latestPredictionSession = nil
+        latestKeyPolicy = nil
         activePanelSession = ActivePanelSession(
             requestSeq: requestSeq,
             sessionFingerprint: "local-rime-\(input)",
@@ -967,6 +971,7 @@ final class RagInputController: IMKInputController {
         latestSuggestions = []
         latestDisplayCandidates = []
         latestPredictionSession = nil
+        latestKeyPolicy = nil
     }
 
     private func clearVisiblePredictionPanel() {

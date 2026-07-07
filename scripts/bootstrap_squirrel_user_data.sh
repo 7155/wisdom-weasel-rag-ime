@@ -73,6 +73,7 @@ reload_log="$(mktemp "${TMPDIR:-/tmp}/rag-ime-squirrel-reload.XXXXXX.log")"
 trap 'rm -f "$build_log" "$reload_log"' EXIT
 
 if ! (cd "$RIME_USER_DIR" && "$SQUIRREL_EXECUTABLE" --build >"$build_log" 2>&1); then
+  fail_build_output "$build_log"
   echo "Squirrel user data build failed:" >&2
   cat "$build_log" >&2
   exit 1
@@ -80,6 +81,7 @@ fi
 fail_build_output "$build_log"
 
 if ! (cd "$RIME_USER_DIR" && "$SQUIRREL_EXECUTABLE" --reload >"$reload_log" 2>&1); then
+  fail_build_output "$reload_log"
   echo "Squirrel user data reload failed:" >&2
   cat "$reload_log" >&2
   exit 1

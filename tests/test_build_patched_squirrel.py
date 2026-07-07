@@ -14,7 +14,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
 
         self.assertIn("fallback: 8, range: 0...10", patch_text)
-        self.assertIn("fallback: 12000, range: 100...30000", patch_text)
+        self.assertIn("fallback: 1200, range: 100...30000", patch_text)
         self.assertIn("let displayLayout: String?", patch_text)
         self.assertIn("let displayLane: String?", patch_text)
         self.assertIn("let badge: String?", patch_text)
@@ -104,8 +104,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("foregroundText: foregroundText", patch_text)
         self.assertIn("foregroundText: request.foregroundText", patch_text)
         self.assertIn('source: (!rawInput.isEmpty || !preedit.isEmpty) ? "rime_composition" : "ime_commit_ledger"', patch_text)
-        self.assertNotIn("NSPasteboard.general", patch_text)
-        self.assertNotIn("kAXFocusedUIElementAttribute", patch_text)
+        self.assertIn("selectedTextHash: \"\"", patch_text)
+        self.assertIn("selectedTextPreview: \"\"", patch_text)
+        self.assertIn("canReplaceSelection: false", patch_text)
         self.assertIn("guard !displayCandidatesToApply.isEmpty else {", patch_text)
         self.assertIn("committedContext: ragImeCommittedContext", patch_text)
         self.assertIn("removeLastRagImeCommittedContextCharacterIfNoComposition()", patch_text)
@@ -182,7 +183,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func traceRagImePredictionEvents(_ events: [RagImePredictionTraceEvent]?)", patch_text)
         self.assertIn("func ragImeJSONValueDictionary(_ dictionary: [String: RagImeJSONValue]) -> [String: Any]", patch_text)
         self.assertIn("func ragImeJSONValueToAny(_ value: RagImeJSONValue) -> Any", patch_text)
-        self.assertIn('ragImeDisplayNumberKeyPolicy == "select_visible_candidate"', patch_text)
+        self.assertNotIn('ragImeDisplayNumberKeyPolicy == "select_visible_candidate"', patch_text)
         self.assertIn('ragImeDisplayNumberKeyPolicy = response.keyPolicy?.numberKeys ?? ""', patch_text)
         self.assertIn('ragImeDisplayTabPolicy = response.keyPolicy?.tab ?? ""', patch_text)
         self.assertIn('ragImeDisplayOptionNumberPolicy = response.keyPolicy?.optionNumber ?? ""', patch_text)
@@ -207,7 +208,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func ragImeStripSourceSuffix(_ text: String) -> String", patch_text)
         self.assertIn("ragImeDisplayCandidates.map { ragImeDisplayText(for: $0) }", patch_text)
         self.assertIn("let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)", patch_text)
-        self.assertIn("return ragImeStripSourceSuffix(text)", patch_text)
+        self.assertIn("let base = ragImeStripSourceSuffix(text.isEmpty ? candidate.insertText : text)", patch_text)
+        self.assertIn('case "model", "rag", "memory", "status":', patch_text)
+        self.assertIn('return "[\\(badge)] \\(base)"', patch_text)
         self.assertIn("let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)", patch_text)
         self.assertIn("if !stripped.isEmpty", patch_text)
         self.assertIn("func ragImeDisplayComment(for candidate: RagImeDisplayCandidate) -> String", patch_text)
@@ -255,7 +258,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         )
         self.assertIn("+    guard let index = ragImeDisplayCandidates.firstIndex(where: { ragImeSelectionKey(for: $0) == key }) else {", patch_text)
         self.assertIn('traceRagImeFrontendEvent("number_key_route"', patch_text)
-        self.assertIn('guard ragImeDisplayCandidates[index].sourceType != "raw_english" else {', patch_text)
+        self.assertIn('guard ragImeDisplayCandidates[index].sourceType == "rime" else {', patch_text)
+        self.assertEqual(patch_text.count("selectRagImeSideCandidate("), 1)
         self.assertIn("func ragImeDisplayCandidateMatchesTransaction(_ candidate: RagImeDisplayCandidate, response: RagImeSidecarResponse) -> Bool", patch_text)
         self.assertIn("let responseSnapshotId = response.predictionSession?.snapshotId ?? response.predictionSession?.stableSnapshotId ?? \"\"", patch_text)
         self.assertIn("candidate.snapshotId != responseSnapshotId", patch_text)
@@ -271,6 +275,46 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("ragImeDisplayTabPolicy = \"\"", patch_text)
         self.assertIn("ragImeDisplayOptionNumberPolicy = \"\"", patch_text)
         self.assertIn("observeRagImePostCommitContinuationIfReady()", patch_text)
+
+    def test_squirrel_patch_contains_active_rag_selected_text_provider(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+
+        self.assertIn("RagImeSelectedTextProvider.swift", patch_text)
+        self.assertIn("struct RagImeActiveRagRequest: Codable", patch_text)
+        self.assertIn("struct RagImeActiveRagResponse: Codable", patch_text)
+        self.assertIn("func captureSelectedTextForActiveRag", patch_text)
+        self.assertIn("allowAccessibility: Bool = true", patch_text)
+        self.assertIn("allowClipboardFallback: Bool = true", patch_text)
+        self.assertIn("captureSelectedTextViaAccessibility", patch_text)
+        self.assertIn("kAXFocusedUIElementAttribute", patch_text)
+        self.assertIn("kAXSelectedTextAttribute", patch_text)
+        self.assertIn("captureSelectedTextViaClipboardFallbackPreservingPasteboard", patch_text)
+        self.assertIn("NSPasteboard.general", patch_text)
+        self.assertIn("restorePasteboardItems", patch_text)
+        self.assertIn("clipboard_fallback_restores_clipboard_contract", patch_text)
+        self.assertIn("ragImeActiveRagAccessibilityCaptureEnabled()", patch_text)
+        self.assertIn("ragImeActiveRagClipboardFallbackEnabled()", patch_text)
+        self.assertIn('RAG_IME_ACTIVE_RAG_CAPTURE_ACCESSIBILITY', patch_text)
+        self.assertIn('RAG_IME_ACTIVE_RAG_CAPTURE_CLIPBOARD_FALLBACK', patch_text)
+
+    def test_squirrel_patch_declares_active_rag_shortcut_and_endpoint(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+
+        self.assertIn("matchesRagImeActiveRagShortcut(keyCode, modifiers: modifiers)", patch_text)
+        self.assertIn('UserDefaults.standard.string(forKey: "RagImeActiveRagShortcut")', patch_text)
+        self.assertIn('ProcessInfo.processInfo.environment["RAG_IME_ACTIVE_RAG_SHORTCUT"]', patch_text)
+        self.assertIn("} else if modifiers.contains(.shift)", patch_text)
+        self.assertIn('return raw.isEmpty ? "ctrl+enter"', patch_text)
+        self.assertIn('case "r": return 15', patch_text)
+        self.assertIn("startRagImeActiveRagAssistFromSelection", patch_text)
+        self.assertIn("postActiveRagStart", patch_text)
+        self.assertIn('endpoint("active-rag/start"', patch_text)
+        self.assertIn("active_rag_thinking_displayed", patch_text)
+        self.assertIn("active_rag_ready_displayed", patch_text)
+        self.assertIn("active_rag_response_dropped_stale", patch_text)
+        self.assertIn("active_rag_candidate_committed", patch_text)
 
     def test_build_script_dry_run_reports_resolved_commands(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -456,7 +500,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             self.assertIn('"rag_ime/enabled": true', config)
             self.assertIn('"rag_ime/sidecar_url": "http://127.0.0.1:19866/api"', config)
             self.assertIn('"rag_ime/frontend_trace": true', config)
-            self.assertTrue((rime_dir / "build" / "luna_pinyin.table.bin").is_file())
+            self.assertIn("skipped Squirrel user-data bootstrap and postinstall", result.stderr)
+            self.assertFalse((rime_dir / "build" / "luna_pinyin.table.bin").exists())
 
     def test_build_script_fails_clearly_when_workdir_is_missing(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -520,9 +565,9 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 8",
-                "  latency_budget_ms: 6500",
+                "  latency_budget_ms: 900",
                 "  debounce_ms: 40",
-                "  timeout_ms: 12000",
+                "  timeout_ms: 1200",
                 "  frontend_trace: true",
             ]
         )

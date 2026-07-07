@@ -3,30 +3,37 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from rag_ime.contracts.key_policy import (
+    ROUTE_NUMBER_KEY,
+    ROUTE_OPTION_NUMBER,
+    ROUTE_TAB_KEY,
+    SELECTION_ACTION_COMMIT_SIDE_CANDIDATE,
+    SELECTION_ACTION_NONE,
+    SELECTION_ACTION_SELECT_RIME_CANDIDATE,
+    SIDE_SELECTION_ROUTE_EVENTS,
+)
+from rag_ime.contracts.source import (
+    REALTIME_SIDE_SOURCE_TYPES,
+    SOURCE_BADGES,
+    SOURCE_COLOR_TOKENS,
+    SOURCE_STATUS,
+)
+
 
 DEFAULT_LOG_PATH = Path.home() / "Library" / "Logs" / "RagIme" / "squirrel-frontend.jsonl"
-SOURCE_BADGES = {
-    "rime": "词",
-    "model": "模",
-    "rag": "查",
-    "memory": "忆",
-    "raw_english": "input",
-    "status": "查忆",
-}
-SOURCE_COLOR_TOKENS = {
-    "rime": "rimeOrange",
-    "model": "modelBlue",
-    "rag": "ragTeal",
-    "memory": "memoryPurple",
-    "raw_english": "rawGray",
-    "status": "statusGray",
-}
-SIDE_SELECTION_ROUTE_EVENTS = {"number_key_route", "tab_key_route", "option_number_route"}
 USER_TEXT_TRACE_KEYS = {
+    "selectedText",
+    "rawSelectedText",
+    "currentSelectedText",
     "rawInput",
     "preedit",
     "requestRawInput",
@@ -61,6 +68,10 @@ def main() -> int:
     parser.add_argument("--require-post-commit-pending-status", action="store_true")
     parser.add_argument("--require-prediction-status-visible", action="store_true")
     parser.add_argument("--require-source-badges", action="store_true")
+    parser.add_argument("--require-active-rag-thinking", action="store_true")
+    parser.add_argument("--require-active-rag-ready", action="store_true")
+    parser.add_argument("--require-active-rag-commit", action="store_true")
+    parser.add_argument("--require-active-rag-stale-drop-check", action="store_true")
     parser.add_argument(
         "--max-renumber-rate",
         type=float,
@@ -97,6 +108,10 @@ def main() -> int:
             require_post_commit_pending_status=args.require_post_commit_pending_status,
             require_prediction_status_visible=args.require_prediction_status_visible,
             require_source_badges=args.require_source_badges,
+            require_active_rag_thinking=args.require_active_rag_thinking,
+            require_active_rag_ready=args.require_active_rag_ready,
+            require_active_rag_commit=args.require_active_rag_commit,
+            require_active_rag_stale_drop_check=args.require_active_rag_stale_drop_check,
             require_balanced_quota=args.require_balanced_quota,
             max_renumber_rate=args.max_renumber_rate,
         ):
@@ -117,6 +132,10 @@ def main() -> int:
         "postCommitPendingStatus": bool(args.require_post_commit_pending_status),
         "predictionStatusVisible": bool(args.require_prediction_status_visible),
         "sourceBadges": bool(args.require_source_badges),
+        "activeRagThinking": bool(args.require_active_rag_thinking),
+        "activeRagReady": bool(args.require_active_rag_ready),
+        "activeRagCommit": bool(args.require_active_rag_commit),
+        "activeRagStaleDropCheck": bool(args.require_active_rag_stale_drop_check),
         "balancedQuota": bool(args.require_balanced_quota),
         "maxRenumberRate": args.max_renumber_rate,
     }
@@ -133,6 +152,10 @@ def main() -> int:
         require_post_commit_pending_status=args.require_post_commit_pending_status,
         require_prediction_status_visible=args.require_prediction_status_visible,
         require_source_badges=args.require_source_badges,
+        require_active_rag_thinking=args.require_active_rag_thinking,
+        require_active_rag_ready=args.require_active_rag_ready,
+        require_active_rag_commit=args.require_active_rag_commit,
+        require_active_rag_stale_drop_check=args.require_active_rag_stale_drop_check,
         require_balanced_quota=args.require_balanced_quota,
         max_renumber_rate=args.max_renumber_rate,
     )
@@ -162,7 +185,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     mixed_text_layout = latest_matching(events, is_mixed_text_layout_event)
     side_commit = latest_matching(events, lambda event: event.get("event") == "side_candidate_commit")
     valid_side_commit = latest_matching(events, is_valid_side_commit_event)
-    number_route = latest_matching(events, lambda event: event.get("event") == "number_key_route")
+    number_route = latest_matching(events, lambda event: event.get("event") == ROUTE_NUMBER_KEY)
     side_selection_route = latest_matching(events, is_side_selection_route_event)
     sidecar_response = latest_matching(events, lambda event: event.get("event") == "sidecar_response_applied")
     balanced_candidate_panel = latest_matching(events, is_balanced_candidate_quota_event)
@@ -170,6 +193,10 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     post_commit_pending_status = latest_matching(events, is_post_commit_pending_status_event)
     prediction_status_visible = latest_matching(events, is_prediction_status_visible_event)
     source_badge_panel = latest_matching(events, is_source_badges_visible_event)
+    active_rag_thinking = latest_matching(events, is_active_rag_thinking_event)
+    active_rag_ready = latest_matching(events, is_active_rag_ready_event)
+    active_rag_commit = latest_matching(events, is_active_rag_commit_event)
+    active_rag_stale_drop = latest_matching(events, is_active_rag_stale_drop_event)
     stale_response_drop = latest_matching(events, is_stale_response_drop_event)
     stale_selection_rejected = latest_matching(events, lambda event: event.get("event") == "stale_candidate_selection_rejected")
     modern_prediction_session = latest_matching(events, is_modern_prediction_session_event)
@@ -201,6 +228,11 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestPostCommitPendingStatus": summarize_event(post_commit_pending_status),
         "latestPredictionStatusVisible": summarize_event(prediction_status_visible),
         "latestSourceBadgePanel": summarize_event(source_badge_panel),
+        "latestActiveRagThinking": summarize_event(active_rag_thinking),
+        "latestActiveRagReady": summarize_event(active_rag_ready),
+        "latestActiveRagCommit": summarize_event(active_rag_commit),
+        "latestActiveRagStaleDrop": summarize_event(active_rag_stale_drop),
+        "activeRagTraceViolations": active_rag_trace_violations(events),
         "candidateQuotaViolations": candidate_quota_violations(events),
         "candidateRenumber": renumber_metrics,
         "candidateRenumberViolations": renumber_metrics["violations"],
@@ -274,7 +306,7 @@ def is_side_panel_event(event: dict[str, Any]) -> bool:
     candidates = event.get("candidates")
     if isinstance(candidates, list):
         return visible_candidates_have_selectable_side(candidates)
-    return True
+    return False
 
 
 def is_mixed_text_layout_event(event: dict[str, Any]) -> bool:
@@ -329,15 +361,15 @@ def visible_candidates_have_selectable_side(candidates: Any) -> bool:
         selection_action = str(candidate.get("selectionAction") or "")
         if source_type == "model":
             side_indices.append(index)
-            if selection_action != "commit_side_candidate":
+            if selection_action != SELECTION_ACTION_COMMIT_SIDE_CANDIDATE:
                 return False
         elif source_type in {"rag", "memory"}:
             side_indices.append(index)
-            if selection_action != "commit_side_candidate":
+            if selection_action != SELECTION_ACTION_COMMIT_SIDE_CANDIDATE:
                 return False
         elif source_type == "rime":
             rime_indices.append(index)
-            if selection_action and selection_action != "select_rime_candidate":
+            if selection_action and selection_action != SELECTION_ACTION_SELECT_RIME_CANDIDATE:
                 return False
         else:
             return False
@@ -379,15 +411,23 @@ def visible_candidates_are_side_first(candidates: Any) -> bool:
         selection_action = str(candidate.get("selectionAction") or "")
         if source_type == "model":
             model_indices.append(index)
-            if display_layout != "inline" or display_lane != "model" or selection_action != "commit_side_candidate":
+            if (
+                display_layout != "inline"
+                or display_lane != "model"
+                or selection_action != SELECTION_ACTION_COMMIT_SIDE_CANDIDATE
+            ):
                 return False
         elif source_type in {"rag", "memory"}:
             rag_indices.append(index)
-            if display_layout != "block" or display_lane != "memory" or selection_action != "commit_side_candidate":
+            if (
+                display_layout != "block"
+                or display_lane != "memory"
+                or selection_action != SELECTION_ACTION_COMMIT_SIDE_CANDIDATE
+            ):
                 return False
         elif source_type == "rime":
             rime_indices.append(index)
-            if selection_action and selection_action != "select_rime_candidate":
+            if selection_action and selection_action != SELECTION_ACTION_SELECT_RIME_CANDIDATE:
                 return False
         else:
             return False
@@ -455,7 +495,7 @@ def visible_candidates_are_rime_only(candidates: Any) -> bool:
         if not candidate_source_visuals_match(candidate):
             return False
         selection_action = str(candidate.get("selectionAction") or "")
-        if selection_action and selection_action != "select_rime_candidate":
+        if selection_action and selection_action != SELECTION_ACTION_SELECT_RIME_CANDIDATE:
             return False
         seen_rime = True
     return seen_rime
@@ -488,7 +528,110 @@ def is_source_badges_visible_event(event: dict[str, Any]) -> bool:
     candidates = event.get("candidates")
     if not isinstance(candidates, list) or not candidates:
         return False
-    return all(isinstance(candidate, dict) and candidate_source_visuals_match(candidate) for candidate in candidates)
+    return all(isinstance(candidate, dict) and candidate_source_visuals_match(candidate) for candidate in candidates) and any(
+        candidate_is_real_side_candidate(candidate) for candidate in candidates
+    )
+
+
+def is_active_rag_thinking_event(event: dict[str, Any]) -> bool:
+    if event.get("event") == "active_rag_thinking_displayed":
+        return active_rag_anchor_fields_present(event)
+    if event.get("event") != "panel_display_candidates":
+        return False
+    if str(event.get("uiMode") or "") != "active_rag_assist":
+        return False
+    candidates = event.get("candidates")
+    return active_rag_anchor_fields_present(event) and panel_has_active_rag_status_row(candidates)
+
+
+def is_active_rag_ready_event(event: dict[str, Any]) -> bool:
+    if event.get("event") == "active_rag_ready_displayed":
+        return active_rag_anchor_fields_present(event)
+    if event.get("event") != "panel_display_candidates":
+        return False
+    if str(event.get("uiMode") or "") != "active_rag_assist":
+        return False
+    candidates = event.get("candidates")
+    return active_rag_anchor_fields_present(event) and active_rag_candidates_are_ready(candidates)
+
+
+def is_active_rag_commit_event(event: dict[str, Any]) -> bool:
+    if event.get("event") != "active_rag_candidate_committed":
+        return False
+    candidate = event.get("candidate")
+    return active_rag_anchor_fields_present(event) and isinstance(candidate, dict) and candidate_source_visuals_match(candidate)
+
+
+def is_active_rag_stale_drop_event(event: dict[str, Any]) -> bool:
+    name = str(event.get("event") or "")
+    if name in {"active_rag_response_dropped_stale", "active_rag_stale_response_dropped"}:
+        return active_rag_anchor_fields_present(event)
+    if name == "active_rag_accept_rejected":
+        reason = str(event.get("reason") or "")
+        return reason in {
+            "selected_text_hash_mismatch",
+            "frontend_revision_mismatch",
+            "selection_epoch_mismatch",
+            "panel_session_id_mismatch",
+            "front_app_bundle_id_mismatch",
+        }
+    return False
+
+
+def panel_has_active_rag_status_row(candidates: Any) -> bool:
+    if not isinstance(candidates, list):
+        return False
+    return any(isinstance(candidate, dict) and status_candidate_is_valid(candidate) for candidate in candidates)
+
+
+def active_rag_candidates_are_ready(candidates: Any) -> bool:
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    selectable = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict)
+        and not is_status_candidate(candidate)
+        and str(candidate.get("sourceType") or "") in {"model", "rag", "memory", "phrase"}
+    ]
+    if not selectable:
+        return False
+    return all(candidate_source_visuals_match(candidate) for candidate in selectable)
+
+
+def active_rag_anchor_fields_present(event: dict[str, Any]) -> bool:
+    return (
+        bool(str(event.get("selectedTextHash") or ""))
+        and event.get("frontendRevision") is not None
+        and event.get("selectionEpoch") is not None
+        and bool(str(event.get("panelSessionId") or ""))
+        and bool(str(event.get("frontAppBundleId") or ""))
+    )
+
+
+def active_rag_trace_violations(events: list[dict[str, Any]]) -> list[dict[str, object]]:
+    violations: list[dict[str, object]] = []
+    for event in events:
+        if not is_active_rag_trace_event(event):
+            continue
+        if str(event.get("event") or "") in {"active_rag_shortcut_triggered", "active_rag_selected_text_capture_failed"}:
+            continue
+        if not active_rag_anchor_fields_present(event):
+            violations.append(
+                {
+                    "event": event.get("event"),
+                    "timestampMs": event.get("timestampMs"),
+                    "reason": "missing_active_rag_anchor_fields",
+                }
+            )
+    return violations
+
+
+def is_active_rag_trace_event(event: dict[str, Any]) -> bool:
+    name = str(event.get("event") or "")
+    if name.startswith("active_rag_"):
+        return True
+    return str(event.get("uiMode") or "") == "active_rag_assist"
 
 
 def panel_is_post_commit(event: dict[str, Any]) -> bool:
@@ -507,7 +650,7 @@ def panel_has_valid_status_row(event: dict[str, Any]) -> bool:
 
 def is_status_candidate(candidate: dict[str, Any]) -> bool:
     return (
-        str(candidate.get("sourceType") or "") == "status"
+        str(candidate.get("sourceType") or "") == SOURCE_STATUS
         or candidate.get("isStatus") is True
         or str(candidate.get("displayLayout") or "") == "status_row"
         or str(candidate.get("displayLane") or "") == "post_commit_status"
@@ -518,7 +661,7 @@ def status_candidate_is_valid(candidate: dict[str, Any]) -> bool:
     selection_key = candidate.get("selectionKey")
     return (
         is_status_candidate(candidate)
-        and str(candidate.get("selectionAction") or "") == "none"
+        and str(candidate.get("selectionAction") or "") == SELECTION_ACTION_NONE
         and (selection_key is None or str(selection_key) == "")
         and candidate_source_visuals_match(candidate)
     )
@@ -574,14 +717,26 @@ def is_valid_side_commit_event(event: dict[str, Any]) -> bool:
     candidate = event.get("candidate")
     if not isinstance(candidate, dict):
         return False
+    if is_status_candidate(candidate):
+        return False
     if not candidate_source_visuals_match(candidate):
         return False
-    if str(candidate.get("selectionAction") or "") != "commit_side_candidate":
+    if str(candidate.get("selectionAction") or "") != SELECTION_ACTION_COMMIT_SIDE_CANDIDATE:
         return False
-    if str(candidate.get("sourceType") or "") not in {"model", "rag", "memory"}:
+    if str(candidate.get("sourceType") or "") not in REALTIME_SIDE_SOURCE_TYPES:
         return False
     selection_key = str(candidate.get("selectionKey") or candidate.get("label") or "")
     return bool(selection_key)
+
+
+def candidate_is_real_side_candidate(candidate: Any) -> bool:
+    return (
+        isinstance(candidate, dict)
+        and not is_status_candidate(candidate)
+        and str(candidate.get("sourceType") or "") in REALTIME_SIDE_SOURCE_TYPES
+        and str(candidate.get("selectionAction") or "") == SELECTION_ACTION_COMMIT_SIDE_CANDIDATE
+        and candidate_source_visuals_match(candidate)
+    )
 
 
 def candidate_source_visuals_match(candidate: dict[str, Any]) -> bool:
@@ -611,7 +766,7 @@ def candidate_renumber_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
         for candidate in candidates:
             if not isinstance(candidate, dict) or is_status_candidate(candidate):
                 continue
-            if str(candidate.get("selectionAction") or "") != "commit_side_candidate":
+            if str(candidate.get("selectionAction") or "") != SELECTION_ACTION_COMMIT_SIDE_CANDIDATE:
                 continue
             snapshot_id = str(candidate.get("snapshotId") or event_snapshot)
             stable_id = str(candidate.get("candidateStableId") or "")
@@ -943,7 +1098,7 @@ def latest_number_key_side_commit(
     *,
     min_timestamp_ms: int = 0,
 ) -> dict[str, Any] | None:
-    return latest_side_selection_commit(events, min_timestamp_ms=min_timestamp_ms, route_events={"number_key_route"})
+    return latest_side_selection_commit(events, min_timestamp_ms=min_timestamp_ms, route_events={ROUTE_NUMBER_KEY})
 
 
 def latest_side_selection_commit(
@@ -1078,7 +1233,7 @@ def candidates_match_selection_route(route_event: dict[str, Any], commit_event: 
         if route_value is not None or commit_value is not None:
             if str(route_value) != str(commit_value):
                 return False
-    if route_name == "tab_key_route":
+    if route_name == ROUTE_TAB_KEY:
         route_ordinal = str(route_event.get("ordinal") or route_candidate.get("candidateOrdinal") or "1")
         commit_ordinal = str(commit_candidate.get("candidateOrdinal") or route_ordinal)
         route_key_matches = route_ordinal == "1" and commit_ordinal == route_ordinal
@@ -1087,8 +1242,8 @@ def candidates_match_selection_route(route_event: dict[str, Any], commit_event: 
     return (
         route_key_matches
         and str(route_candidate.get("sourceType") or "") == str(commit_candidate.get("sourceType") or "")
-        and str(route_candidate.get("selectionAction") or "") == "commit_side_candidate"
-        and str(commit_candidate.get("selectionAction") or "") == "commit_side_candidate"
+        and str(route_candidate.get("selectionAction") or "") == SELECTION_ACTION_COMMIT_SIDE_CANDIDATE
+        and str(commit_candidate.get("selectionAction") or "") == SELECTION_ACTION_COMMIT_SIDE_CANDIDATE
     )
 
 
@@ -1226,6 +1381,10 @@ def report_passes(
     require_post_commit_pending_status: bool = False,
     require_prediction_status_visible: bool = False,
     require_source_badges: bool = False,
+    require_active_rag_thinking: bool = False,
+    require_active_rag_ready: bool = False,
+    require_active_rag_commit: bool = False,
+    require_active_rag_stale_drop_check: bool = False,
     require_balanced_quota: bool = False,
     max_renumber_rate: float | None = None,
 ) -> bool:
@@ -1258,6 +1417,16 @@ def report_passes(
     if require_prediction_status_visible and not report.get("latestPredictionStatusVisible"):
         return False
     if require_source_badges and not report.get("latestSourceBadgePanel"):
+        return False
+    if require_active_rag_thinking and not report.get("latestActiveRagThinking"):
+        return False
+    if require_active_rag_ready and not report.get("latestActiveRagReady"):
+        return False
+    if require_active_rag_commit and not report.get("latestActiveRagCommit"):
+        return False
+    if require_active_rag_stale_drop_check and not report.get("latestActiveRagStaleDrop"):
+        return False
+    if report.get("activeRagTraceViolations"):
         return False
     if require_balanced_quota and not report.get("latestBalancedCandidatePanel"):
         return False

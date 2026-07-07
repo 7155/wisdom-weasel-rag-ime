@@ -1,0 +1,15 @@
+{
+  "seed": 20260707,
+  "count": 20000,
+  "non_empty": 18769,
+  "empty": 1231,
+  "categories": {
+    "direct": 6732,
+    "sentence": 12037,
+    "empty": 1231
+  },
+  "max_prefix_chars": 24,
+  "max_completion_chars": 11,
+  "ascii_content_rows": 0,
+  "duplicate_rows": 0
+}

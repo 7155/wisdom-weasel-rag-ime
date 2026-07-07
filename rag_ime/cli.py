@@ -20,6 +20,8 @@ from typing import Any, Sequence
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .agent_hook import build_first_run_injection
+from .active_rag_eval import run_active_rag_eval
+from .active_rag_service import ActiveRagService, ActiveRagStartRequest
 from .codex_history import (
     CodexEvalCase,
     eval_report,
@@ -90,7 +92,7 @@ from .rime_sidecar import (
     record_rime_side_candidate_selection,
 )
 from .scenarios import SCENARIOS, get_scenario
-from .text_utils import compact_whitespace, now_ms
+from .text_utils import compact_whitespace, now_ms, stable_text_hash
 from .trigger_policy import TypingState, should_refresh_rag
 
 
@@ -465,6 +467,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     suggest_json.add_argument("--project", default="wisdom-weasel-rag-ime")
     suggest_json.add_argument("--top-k", type=int, default=5)
 
+    active_rag_demo = subparsers.add_parser(
+        "active-rag-demo",
+        help="Run one explicit selected-text Active RAG Assist request without touching /rime-suggest",
+    )
+    active_rag_demo.add_argument("--selected-text", required=True)
+    active_rag_demo.add_argument("--surrounding-before", default="")
+    active_rag_demo.add_argument("--surrounding-after", default="")
+    active_rag_demo.add_argument("--intent", choices=("rewrite", "continue", "summarize", "debug"), default="rewrite")
+    active_rag_demo.add_argument("--placement", choices=("replace_selection", "insert_after_selection", "candidate_only"), default="replace_selection")
+    active_rag_demo.add_argument("--project", default="wisdom-weasel-rag-ime")
+    active_rag_demo.add_argument("--app", default="")
+    active_rag_demo.add_argument("--front-app-bundle-id", default="cli.active-rag-demo")
+    active_rag_demo.add_argument("--panel-session-id", default="cli-active-rag-demo")
+    active_rag_demo.add_argument("--frontend-revision", type=int, default=1)
+    active_rag_demo.add_argument("--selection-epoch", type=int, default=1)
+    active_rag_demo.add_argument("--max-candidates", type=int, default=5)
+    active_rag_demo.add_argument("--wait-ms", type=int, default=3000)
+
     rime_suggest_json = subparsers.add_parser(
         "rime-suggest-json",
         help="Return merged Rime + RAG/model side candidates for Squirrel/Rime frontends",
@@ -610,6 +630,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_hybrid_rag_core.add_argument("--top-k", type=int, default=5)
     eval_hybrid_rag_core.add_argument("--latency-budget-ms", type=int, default=25)
     eval_hybrid_rag_core.add_argument("--summary-only", action="store_true", help="Omit per-case details from the JSON report")
+
+    eval_active_rag = subparsers.add_parser(
+        "eval-active-rag",
+        help="Evaluate explicit selected-text Active RAG Assist quality and safety gates",
+    )
+    eval_active_rag.add_argument("--cases-file", required=True, help="JSONL cases for Active RAG Assist")
+    eval_active_rag.add_argument("--project", default="wisdom-weasel-rag-ime")
+    eval_active_rag.add_argument("--repeat", type=int, default=1)
+    eval_active_rag.add_argument("--max-candidates", type=int, default=5)
+    eval_active_rag.add_argument("--ready-budget-ms", type=int, default=3000)
+    eval_active_rag.add_argument(
+        "--use-current-db",
+        action="store_true",
+        help="Evaluate the configured --db-path instead of seeding an isolated temporary eval DB",
+    )
 
     predict_benchmark = subparsers.add_parser("predict-benchmark", help="Measure local model prediction latency")
     predict_benchmark.add_argument("--case", action="append", default=[], help="Input case to predict. Can be repeated.")
@@ -1967,6 +2002,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "active-rag-demo":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("active-rag-demo requires --core-mode local")
+        selected_text = compact_whitespace(args.selected_text)
+        service = ActiveRagService(core=core)
+        request = ActiveRagStartRequest(
+            selected_text=selected_text,
+            selected_text_hash=stable_text_hash(selected_text),
+            frontend_revision=args.frontend_revision,
+            selection_epoch=args.selection_epoch,
+            panel_session_id=args.panel_session_id,
+            front_app_bundle_id=args.front_app_bundle_id,
+            surrounding_before=args.surrounding_before,
+            surrounding_after=args.surrounding_after,
+            intent=args.intent,
+            placement=args.placement,
+            project=args.project,
+            app=args.app,
+            max_candidates=max(1, args.max_candidates),
+        )
+        started = service.start(request)
+        ready = _wait_active_rag_status(service, str(started["sessionId"]), wait_ms=max(1, args.wait_ms))
+        print(
+            json.dumps(
+                {
+                    "started": started,
+                    "final": ready,
+                    "redaction": {
+                        "selectedTextHash": request.selected_text_hash,
+                        "rawSelectedTextInTrace": False,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
     if args.command == "rime-suggest-json":
         payload = _read_json_payload(args.payload_file)
         print(
@@ -2217,6 +2290,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             top_k=max(1, args.top_k),
             latency_budget_ms=max(1, args.latency_budget_ms),
             include_cases=not bool(args.summary_only),
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if bool(report.get("gatePassed")) else 1
+
+    if args.command == "eval-active-rag":
+        report = run_active_rag_eval(
+            db_path=Path(args.db_path) if bool(args.use_current_db) else None,
+            cases_file=Path(args.cases_file),
+            project=args.project,
+            repeat=max(1, args.repeat),
+            max_candidates=max(1, args.max_candidates),
+            ready_budget_ms=max(1, args.ready_budget_ms),
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if bool(report.get("gatePassed")) else 1
@@ -2752,23 +2837,40 @@ def seed_demo_memories(adapter: InputMethodAdapter, memories: list[CoreMemory]) 
     event_ids: list[str] = []
     created_at = now_ms()
     for index, memory in enumerate(memories):
-        event_ids.append(
-            adapter.core.record_event(
-                InputEvent(
-                    event_id=None,
-                    created_at_ms=created_at + index,
-                    source="demo_seed",
-                    committed_text=memory.text,
-                    recent_context=memory.evidence_preview,
-                    preedit="",
-                    schema_id="demo",
-                    app="cli",
-                    project=memory.project or adapter.project,
-                    provider_name="demo-fixture",
-                    tags=memory.tags,
-                )
+        tags = tuple(dict.fromkeys((*memory.tags, "curated")))
+        event_id = adapter.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=created_at + index,
+                source="demo_seed",
+                committed_text=memory.text,
+                recent_context=memory.evidence_preview,
+                preedit="",
+                schema_id="demo",
+                app="cli",
+                project=memory.project or adapter.project,
+                provider_name="demo-fixture",
+                tags=tags,
             )
         )
+        event_ids.append(event_id)
+        recorder = getattr(adapter.core, "record_memory_feedback", None)
+        source_event_id = _event_id_from_memory_id_for_seed(event_id)
+        if callable(recorder) and source_event_id is not None:
+            for accept_index in range(3):
+                recorder(
+                    {
+                        "event": "accepted",
+                        "candidateId": event_id,
+                        "candidateText": memory.text,
+                        "sourceType": "memory",
+                        "contextHash": f"demo-seed:{index}",
+                        "timestampMs": created_at + index + accept_index,
+                        "project": memory.project or adapter.project,
+                        "sourceEventId": source_event_id,
+                        "query": memory.text,
+                    }
+                )
     return event_ids
 
 
@@ -5541,6 +5643,17 @@ def _local_model_runner_status() -> dict[str, object]:
         "available": {name: path for name, path in runners.items() if path},
         "missing": [name for name, path in runners.items() if not path],
     }
+
+
+def _wait_active_rag_status(service: ActiveRagService, session_id: str, *, wait_ms: int) -> dict[str, object]:
+    deadline = time.monotonic() + max(1, int(wait_ms)) / 1000.0
+    last = service.status(session_id)
+    while time.monotonic() < deadline:
+        last = service.status(session_id)
+        if last.get("status") in {"ready", "error", "stale_dropped", "cancelled", "missing"}:
+            return last
+        time.sleep(0.01)
+    return last
 
 
 if __name__ == "__main__":

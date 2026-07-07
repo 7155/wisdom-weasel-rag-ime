@@ -87,7 +87,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
     },
     "activeRag": {
         "enabled": True,
-        "shortcut": "ctrl+option+r",
+        "shortcut": "ctrl+enter",
         "capture": {
             "accessibility": True,
             "clipboardFallback": True,
@@ -182,8 +182,10 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "label": "Active RAG",
             "fields": [
                 {"key": "activeRag.enabled", "type": "boolean", "label": "启用 Active RAG", "default": True},
-                {"key": "activeRag.shortcut", "type": "string", "label": "快捷键", "default": "ctrl+option+r"},
+                {"key": "activeRag.shortcut", "type": "string", "label": "快捷键", "default": "ctrl+enter"},
+                {"key": "activeRag.capture.accessibility", "type": "boolean", "label": "优先读取系统选区", "default": True},
                 {"key": "activeRag.capture.clipboardFallback", "type": "boolean", "label": "显式触发允许剪贴板 fallback", "default": True},
+                {"key": "activeRag.capture.manualClipboardFallback", "type": "boolean", "label": "允许手动剪贴板兜底", "default": True},
                 {"key": "activeRag.defaultPlacement", "type": "enum", "label": "插入方式", "options": ["replace_selection", "insert_after_selection", "show_only"], "default": "replace_selection"},
                 {"key": "activeRag.allowRemoteModel", "type": "boolean", "label": "允许远程模型", "default": False},
             ],

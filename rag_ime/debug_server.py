@@ -359,7 +359,22 @@ class DebugImeService:
 
     def active_rag_settings_update(self, payload: dict[str, Any]) -> dict[str, object]:
         settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else payload
-        return self.settings_update({"activeRag": dict(settings), "confirmText": payload.get("confirmText", "")})
+        update_result = self.settings_store.update_settings(
+            {"activeRag": dict(settings)},
+            updated_by=_string(payload.get("updatedBy")) or "local-console",
+            confirm_text=_string(payload.get("confirmText")),
+        )
+        self._clear_rime_cache()
+        result = {
+            **settings_response(update_result.settings),
+            "auditId": update_result.audit_id,
+            "changedKeys": list(update_result.changed_keys),
+        }
+        result["runtimeSync"] = _active_rag_runtime_sync_payload(
+            active_settings=result.get("settings", {}).get("activeRag", {}) if isinstance(result.get("settings"), dict) else {},
+            changed_keys=tuple(str(item) for item in result.get("changedKeys", []) if item),
+        )
+        return result
 
     def active_rag_management_preview(self, payload: dict[str, Any]) -> dict[str, object]:
         settings = self.settings_store.get_settings()
@@ -1708,7 +1723,8 @@ class DebugImeService:
 
     def rime_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
         cache_key = self._rime_suggest_cache_key(payload)
-        cached = self._get_cached_rime_response(cache_key, payload)
+        bypass_cache = self._rime_suggest_cache_bypass(payload)
+        cached = None if bypass_cache else self._get_cached_rime_response(cache_key, payload)
         if cached is not None:
             self._record_prediction_live_trace(cached, request_payload=payload)
             return cached
@@ -1730,7 +1746,8 @@ class DebugImeService:
             raise
         _attach_rime_ranking_diagnostics(response)
         self._apply_management_settings_to_rime_response(response, request_payload=payload)
-        self._store_rime_response(cache_key, response)
+        if self._rime_response_cacheable(response, request_payload=payload):
+            self._store_rime_response(cache_key, response)
         self._finish_rime_inflight(cache_key, response=response)
         response = copy.deepcopy(response)
         response["cache"] = self._cache_payload(hit=False, cache_key=cache_key)
@@ -2046,6 +2063,22 @@ class DebugImeService:
         }
         raw = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _rime_suggest_cache_bypass(self, payload: dict[str, Any]) -> bool:
+        return _bool(payload.get("progressiveFollowUp") or payload.get("progressive_follow_up"), default=False)
+
+    def _rime_response_cacheable(self, response: dict[str, object], *, request_payload: dict[str, Any]) -> bool:
+        if self._rime_suggest_cache_bypass(request_payload):
+            return False
+        progressive = response.get("progressive") if isinstance(response.get("progressive"), dict) else {}
+        assert isinstance(progressive, dict)
+        if bool(progressive.get("shouldFollowUp")):
+            return False
+        for lane_key in ("modelLane", "ragLane"):
+            lane = response.get(lane_key) if isinstance(response.get(lane_key), dict) else {}
+            if isinstance(lane, dict) and (bool(lane.get("pending")) or bool(lane.get("inFlight"))):
+                return False
+        return True
 
     def _predictor_fingerprint(self) -> str:
         config = getattr(self.predictor, "config", None)
@@ -2656,6 +2689,39 @@ def _stable_debug_hash(text: str) -> str:
     if not compact:
         return ""
     return "sha256:" + hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
+
+
+def _active_rag_runtime_sync_payload(*, active_settings: object, changed_keys: tuple[str, ...]) -> dict[str, object]:
+    settings = dict(active_settings) if isinstance(active_settings, dict) else {}
+    capture = settings.get("capture") if isinstance(settings.get("capture"), dict) else {}
+    shortcut = compact_whitespace(str(settings.get("shortcut") or "ctrl+shift+r")).lower().replace(" ", "")
+    domains = [
+        "im.rime.inputmethod.Squirrel",
+        "im.rag-ime.inputmethod.RagIme",
+    ]
+    defaults = {
+        "RagImeActiveRagShortcut": {"type": "string", "value": shortcut},
+        "RagImeActiveRagCaptureAccessibility": {"type": "bool", "value": bool(capture.get("accessibility", True))},
+        "RagImeActiveRagCaptureClipboardFallback": {"type": "bool", "value": bool(capture.get("clipboardFallback", True))},
+    }
+    commands: list[list[str]] = []
+    for domain in domains:
+        for key, spec in defaults.items():
+            value = spec["value"]
+            if spec["type"] == "bool":
+                commands.append(["defaults", "write", domain, key, "-bool", "true" if value else "false"])
+            else:
+                commands.append(["defaults", "write", domain, key, "-string", str(value)])
+    return {
+        "schemaVersion": "rag-ime.active-rag-runtime-sync.v1",
+        "changed": bool(changed_keys),
+        "changedKeys": list(changed_keys),
+        "shortcut": shortcut,
+        "userDefaultsDomains": domains,
+        "userDefaults": defaults,
+        "commands": commands,
+        "restartHint": "Restart or reload Squirrel/RAG-IME if the running input method keeps an old UserDefaults cache.",
+    }
 
 
 def _debug_lane_breakdown(raw_lanes: object) -> dict[str, object]:

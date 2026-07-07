@@ -21,9 +21,10 @@ DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 detect_python() {
   local candidate
   local candidates=()
-  candidates+=("/usr/local/bin/python3")
-  candidates+=("$(command -v python3 2>/dev/null || true)")
   candidates+=("/opt/homebrew/bin/python3")
+  candidates+=("/opt/homebrew/opt/python@3.14/bin/python3.14")
+  candidates+=("$(command -v python3 2>/dev/null || true)")
+  candidates+=("/usr/local/bin/python3")
 
   for candidate in "${candidates[@]}"; do
     if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
@@ -107,6 +108,16 @@ root = os.environ["ROOT"]
 app_support_dir = os.environ["APP_SUPPORT_DIR"]
 app_code_dir = os.environ["APP_CODE_DIR"]
 label = os.environ["LABEL"]
+existing_env = {}
+try:
+    with open(os.environ["PLIST_PATH"], "rb") as fh:
+        existing_payload = plistlib.load(fh)
+    maybe_env = existing_payload.get("EnvironmentVariables")
+    if isinstance(maybe_env, dict):
+        existing_env = {str(key): str(value) for key, value in maybe_env.items() if value is not None}
+except Exception:
+    existing_env = {}
+
 args = [
     os.environ["PYTHON_EXECUTABLE"],
     os.environ["LAUNCH_WRAPPER"],
@@ -139,10 +150,63 @@ env_vars = {
     "RAG_IME_SOURCE_ROOT": root,
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],
     "RAG_IME_CORE_MODE": os.environ["CORE_MODE"],
+    "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
+    "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
+    "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
+    "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
+    "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
+    "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
+    "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
+    "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
 }
 ssl_cert_file = os.environ.get("SSL_CERT_FILE_DEFAULT", "")
 if ssl_cert_file:
     env_vars["SSL_CERT_FILE"] = ssl_cert_file
+preserve_existing_keys = {
+    "SSL_CERT_FILE",
+    "RAG_IME_MODEL_ENV",
+    "RAG_IME_X1API_ENV",
+    "RAG_IME_VCP_REBUILD_ENV",
+    "RAG_IME_AI_PROVIDER",
+    "RAG_IME_AI_BASE_URL",
+    "RAG_IME_AI_MODEL",
+    "RAG_IME_AI_WIRE_API",
+    "RAG_IME_AI_TIMEOUT_SECONDS",
+    "RAG_IME_AI_REASONING_EFFORT",
+    "RAG_IME_AI_DISABLE_RESPONSE_STORAGE",
+    "RAG_IME_AI_API_KEY",
+    "X1API_BASE_URL",
+    "X1API_MODEL",
+    "X1API_API_KEY",
+    "RAG_IME_PREDICTOR_PROVIDER",
+    "RAG_IME_PREDICTOR_BASE_URL",
+    "RAG_IME_PREDICTOR_MODEL",
+    "RAG_IME_PREDICTOR_PROFILE",
+    "RAG_IME_PREDICTOR_TIMEOUT_MS",
+    "RAG_IME_PREDICTOR_MAX_TOKENS",
+    "RAG_IME_PREDICTOR_TEMPERATURE",
+    "RAG_IME_PREDICTOR_TOP_P",
+    "RAG_IME_PREDICTOR_DISABLE_THINKING",
+    "RAG_IME_PREDICTOR_STREAM_FIRST",
+    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS",
+    "RAG_IME_PREDICTOR_FAILURE_LATENCY_MS",
+    "RAG_IME_PREDICTOR_EXTRA_BODY_JSON",
+    "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON",
+    "RAG_IME_PREDICTOR_API_KEY",
+    "RAG_IME_MLX_MODEL",
+    "RAG_IME_EMBEDDING_PROVIDER",
+    "RAG_IME_EMBEDDING_BASE_URL",
+    "RAG_IME_EMBEDDING_MODEL",
+    "RAG_IME_EMBEDDING_API_KEY",
+    "RAG_IME_EMBEDDING_TIMEOUT_MS",
+    "RAG_IME_EMBEDDING_DIMENSIONS",
+    "RAG_IME_EMBEDDING_CACHE_SIZE",
+    "RAG_IME_EMBEDDING_EXTRA_BODY_JSON",
+    "RAG_IME_EMBEDDING_EXTRA_HEADERS_JSON",
+    "RAG_IME_VECTOR_CANDIDATES",
+    "RAG_IME_VECTOR_WEIGHT",
+    "RAG_IME_VECTOR_AUTO_REBUILD_LIMIT",
+}
 for key in (
     "RAG_IME_RIME_CACHE_TTL_MS",
     "RAG_IME_SUGGESTION_CACHE_SIZE",
@@ -152,6 +216,13 @@ for key in (
     "RAG_IME_MODEL_CONTEXT_CHARS",
     "RAG_IME_MODEL_LANE_MAX_CANDIDATES",
     "RAG_IME_MODEL_LANE_LEASE_TTL_MS",
+    "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION",
+    "RAG_IME_ENABLE_COMPOSING_MODEL",
+    "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL",
+    "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS",
+    "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS",
+    "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS",
+    "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS",
     "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS",
     "SSL_CERT_FILE",
     "RAG_IME_MODEL_ENV",
@@ -198,6 +269,8 @@ for key in (
     "RAG_IME_VECTOR_AUTO_REBUILD_LIMIT",
 ):
     value = os.environ.get(key)
+    if not value and key in preserve_existing_keys:
+        value = existing_env.get(key)
     if value:
         env_vars[key] = value
 enable_local_vector = os.environ.get("RAG_IME_ENABLE_LOCAL_VECTOR", "").strip().lower() in {"1", "true", "yes", "on"}

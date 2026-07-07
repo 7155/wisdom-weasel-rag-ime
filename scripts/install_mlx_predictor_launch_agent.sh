@@ -11,7 +11,8 @@ APP_CODE_DIR="$APP_SUPPORT_DIR/app"
 LAUNCH_WRAPPER="$APP_CODE_DIR/sidecar_launch.py"
 HOST="${RAG_IME_MLX_HOST:-127.0.0.1}"
 PORT="${RAG_IME_MLX_PORT:-8767}"
-MODEL="${RAG_IME_MLX_MODEL:-mlx-community/Qwen3-0.6B-4bit}"
+MODEL="${RAG_IME_MLX_MODEL:-/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local}"
+PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-qwen3_06b_ime_hot}}"
 MAX_TOKENS="${RAG_IME_MLX_MAX_TOKENS:-8}"
 TEMPERATURE="${RAG_IME_MLX_TEMPERATURE:-0.15}"
 TOP_P="${RAG_IME_MLX_TOP_P:-0.85}"
@@ -23,6 +24,7 @@ DRY_RUN="${RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN:-0}"
 detect_python() {
   local candidate
   local candidates=()
+  candidates+=("$ROOT/.venv-mlx313/bin/python")
   candidates+=("$ROOT/.venv-mlx314sys/bin/python")
   candidates+=("$ROOT/.venv-mlx/bin/python")
   candidates+=("$ROOT/.venv/bin/python")
@@ -75,6 +77,7 @@ LAUNCH_WRAPPER="$LAUNCH_WRAPPER" \
 HOST="$HOST" \
 PORT="$PORT" \
 MODEL="$MODEL" \
+PROFILE="$PROFILE" \
 MAX_TOKENS="$MAX_TOKENS" \
 TEMPERATURE="$TEMPERATURE" \
 TOP_P="$TOP_P" \
@@ -100,6 +103,8 @@ args = [
     os.environ["PORT"],
     "--model",
     os.environ["MODEL"],
+    "--profile",
+    os.environ["PROFILE"],
     "--max-tokens",
     os.environ["MAX_TOKENS"],
     "--temperature",
@@ -119,6 +124,7 @@ env_vars = {
     "RAG_IME_ROOT": app_code_dir,
     "RAG_IME_SOURCE_ROOT": root,
     "RAG_IME_MLX_MODEL": os.environ["MODEL"],
+    "RAG_IME_MLX_PROFILE": os.environ["PROFILE"],
     "RAG_IME_MLX_HOST": os.environ["HOST"],
     "RAG_IME_MLX_PORT": os.environ["PORT"],
     "RAG_IME_MLX_MAX_TOKENS": os.environ["MAX_TOKENS"],

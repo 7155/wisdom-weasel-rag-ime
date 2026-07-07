@@ -1,0 +1,9 @@
+{
+  "seed": 20260715,
+  "count": 20000,
+  "attempts": 20212,
+  "min_len": 12,
+  "max_len": 29,
+  "avg_len": 17.95375,
+  "unique_count": 20000
+}

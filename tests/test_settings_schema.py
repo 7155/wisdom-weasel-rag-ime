@@ -23,6 +23,9 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertTrue(defaults["interaction"]["postCommit"]["showPendingStatus"])
         self.assertEqual(defaults["display"]["badges"]["model"], "模")
         self.assertTrue(defaults["rag"]["lanes"]["bm25Raw"])
+        self.assertEqual(defaults["activeRag"]["shortcut"], "ctrl+enter")
+        self.assertTrue(defaults["activeRag"]["capture"]["accessibility"])
+        self.assertTrue(defaults["activeRag"]["capture"]["clipboardFallback"])
         self.assertEqual(defaults["activeRag"]["defaultPlacement"], "replace_selection")
         self.assertFalse(defaults["privacy"]["debugIncludeText"])
 

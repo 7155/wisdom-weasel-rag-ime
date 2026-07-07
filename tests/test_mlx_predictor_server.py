@@ -21,8 +21,10 @@ from rag_ime.mlx_predictor_server import (
     make_mlx_predictor_handler,
 )
 from rag_ime.predictor import (
+    PREDICTION_REQUEST_IME_POST_COMMIT,
     PREDICTION_REQUEST_NO_INPUT,
     PREDICTION_REQUEST_PINYIN_CONSTRAINED,
+    PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
     PREDICTION_REQUEST_RIME_REORDER,
 )
 
@@ -241,7 +243,7 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertIn("候选之间用单个空格分隔", calls["prompts"][-1])
         self.assertNotIn("输出 3 个候选 JSON 数组", calls["prompts"][-1])
 
-    def test_no_input_prediction_uses_seeded_prompt_replay_for_top_logits_seeds(self) -> None:
+    def test_no_input_prediction_uses_seeded_sequence_fork_for_top_logits_seeds(self) -> None:
         modules, calls = _fake_mlx_modules(
             generated_text=[
                 "候选排序",
@@ -261,8 +263,13 @@ class MlxPredictorServerTests(unittest.TestCase):
                 request_type=PREDICTION_REQUEST_NO_INPUT,
             )
 
-        self.assertEqual(payload["candidateMode"], "seeded-prompt-replay")
+        self.assertEqual(payload["candidateMode"], "seeded-sequence-fork")
         self.assertEqual(payload["candidates"], ["优化候选排序", "补齐来源诊断", "重建上下文管理"])
+        self.assertEqual([item["mode"] for item in payload["candidateScores"]], [
+            "seeded-sequence-fork",
+            "seeded-sequence-fork",
+            "seeded-sequence-fork",
+        ])
         self.assertEqual([item["seedText"] for item in payload["candidateScores"]], ["优化", "补齐", "重建"])
         self.assertEqual([item["seedTokenId"] for item in payload["candidateScores"]], [1000, 1001, 1002])
         self.assertEqual([item["branchRank"] for item in payload["candidateScores"]], [1, 2, 3])
@@ -270,17 +277,42 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["seed:优化", "seed:补齐", "seed:重建"])
         self.assertEqual([item["seedTokenId"] for item in payload["timing"]["branches"]], [1000, 1001, 1002])
         self.assertEqual([item["branchRank"] for item in payload["timing"]["branches"]], [1, 2, 3])
+        self.assertTrue(payload["timing"]["kvFork"])
+        self.assertTrue(payload["timing"]["sequenceFork"])
+        self.assertEqual(payload["timing"]["fallbackReason"], "")
+        self.assertEqual(payload["timing"]["seedReplayReason"], "top_logits_seed_sequence_fork")
+        self.assertTrue(all(item["cacheForkSupported"] for item in payload["timing"]["branches"]))
+        self.assertEqual(calls["sampler_calls"], 3)
+        self.assertIn("种子候选", calls["prompts"][1])
+
+    def test_seeded_sequence_fork_falls_back_to_prompt_replay_when_clone_fails(self) -> None:
+        modules, calls = _fake_mlx_modules(
+            generated_text=[
+                "候选排序",
+                "来源诊断",
+                "上下文管理",
+            ],
+            logits_tokens=["优化", "补齐", "重建"],
+        )
+        with patch.dict(sys.modules, modules), patch(
+            "rag_ime.mlx_predictor_server.deepcopy",
+            side_effect=RuntimeError("clone failed"),
+        ):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="我想把输入法候选质量再往上提一点",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_NO_INPUT,
+            )
+
+        self.assertEqual(payload["candidateMode"], "seeded-prompt-replay")
         self.assertFalse(payload["timing"]["kvFork"])
         self.assertFalse(payload["timing"]["sequenceFork"])
         self.assertEqual(payload["timing"]["fallbackReason"], "cache_clone_unsupported")
-        self.assertEqual(payload["timing"]["seedReplayReason"], "top_logits_seed_replay")
-        self.assertEqual([item["fallbackReason"] for item in payload["timing"]["branches"]], [
-            "cache_clone_unsupported",
-            "cache_clone_unsupported",
-            "cache_clone_unsupported",
-        ])
         self.assertEqual(calls["sampler_calls"], 3)
-        self.assertIn("种子候选", calls["prompts"][1])
 
     def test_engine_health_exposes_selected_model_profile(self) -> None:
         modules, _calls = _fake_mlx_modules(generated_text='["质量候选"]')
@@ -292,7 +324,58 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertTrue(health["modelProfile"]["appendOnly"])
         self.assertFalse(health["modelProfile"]["resident"])
 
-    def test_seeded_prompt_replay_explores_top_three_even_when_display_limit_is_one(self) -> None:
+    def test_engine_loads_local_tokenizers_backend_qwen_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp)
+            model_dir.joinpath("tokenizer.json").write_text("{}", encoding="utf-8")
+            model_dir.joinpath("tokenizer_config.json").write_text(
+                json.dumps({"tokenizer_class": "TokenizersBackend", "eos_token": "<|im_end|>"}),
+                encoding="utf-8",
+            )
+            model_dir.joinpath("config.json").write_text(
+                json.dumps({"model_type": "qwen3_5", "text_config": {"model_type": "qwen3_5_text"}}),
+                encoding="utf-8",
+            )
+
+            mlx_lm = types.ModuleType("mlx_lm")
+
+            def load(_model_id):
+                raise ValueError("Tokenizer class TokenizersBackend does not exist")
+
+            mlx_lm.load = load
+            utils = types.ModuleType("mlx_lm.utils")
+            utils.load_model = lambda path, lazy=False: ({"path": str(path), "lazy": lazy}, {"model_type": "qwen3_5"})
+
+            tokenizers = types.ModuleType("tokenizers")
+
+            class _FakeBackendTokenizer:
+                @staticmethod
+                def from_file(_path):
+                    return _FakeBackendTokenizer()
+
+                def encode(self, text):
+                    return types.SimpleNamespace(ids=[ord(char) for char in text])
+
+                def decode(self, ids):
+                    return "".join(chr(int(item)) for item in ids)
+
+                def token_to_id(self, token):
+                    return 248046 if token == "<|im_end|>" else None
+
+            tokenizers.Tokenizer = _FakeBackendTokenizer
+
+            with patch.dict(sys.modules, {
+                "mlx_lm": mlx_lm,
+                "mlx_lm.utils": utils,
+                "tokenizers": tokenizers,
+            }):
+                engine = MlxLmEngine(str(model_dir))
+
+        self.assertEqual(engine.tokenizer.encode("你好"), [20320, 22909])
+        self.assertEqual(engine.tokenizer.decode([20320, 22909]), "你好")
+        self.assertEqual(engine.tokenizer.eos_token_id, 248046)
+
+    def test_seeded_sequence_fork_explores_top_three_even_when_display_limit_is_one(self) -> None:
         modules, calls = _fake_mlx_modules(
             generated_text=[
                 "候选排序",
@@ -312,7 +395,7 @@ class MlxPredictorServerTests(unittest.TestCase):
                 request_type=PREDICTION_REQUEST_NO_INPUT,
             )
 
-        self.assertEqual(payload["candidateMode"], "seeded-prompt-replay")
+        self.assertEqual(payload["candidateMode"], "seeded-sequence-fork")
         self.assertEqual(payload["candidates"], ["优化候选排序"])
         self.assertEqual(payload["timing"]["seedReplayBranchCount"], 3)
         self.assertEqual(payload["timing"]["seedReplayDisplayedCount"], 1)
@@ -320,7 +403,7 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual([item["seedText"] for item in payload["timing"]["branches"]], ["优化", "补齐", "重建"])
         self.assertEqual(calls["sampler_calls"], 3)
 
-    def test_no_input_seeded_prompt_replay_backfills_underfilled_seed_candidates(self) -> None:
+    def test_no_input_seeded_sequence_fork_backfills_underfilled_seed_candidates(self) -> None:
         modules, calls = _fake_mlx_modules(
             generated_text=[
                 "候选排序",
@@ -341,11 +424,11 @@ class MlxPredictorServerTests(unittest.TestCase):
                 request_type=PREDICTION_REQUEST_NO_INPUT,
             )
 
-        self.assertEqual(payload["candidateMode"], "seeded-prompt-replay")
+        self.assertEqual(payload["candidateMode"], "seeded-sequence-fork")
         self.assertEqual(payload["candidates"], ["优化候选排序", "重建来源诊断", "补齐状态追踪"])
         self.assertEqual([item["mode"] for item in payload["candidateScores"]], [
-            "seeded-prompt-replay",
-            "seeded-prompt-replay",
+            "seeded-sequence-fork",
+            "seeded-sequence-fork",
             "continuation-branches",
         ])
         self.assertTrue(payload["timing"]["underfilled"])
@@ -377,6 +460,160 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertFalse(payload["timing"]["fallbackJson"])
         self.assertEqual(payload["timing"]["branches"][0]["label"], "space-list")
 
+    def test_empty_hot_request_uses_continuation_branches_when_json_output_is_empty(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                '["M=HOT"]',
+                "补充排序 稳定显示",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="RAG memory 候选应该先稳定出现，模型候选随后",
+                max_candidates=2,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type="ime_hot",
+            )
+
+        self.assertEqual(payload["requestType"], "ime_hot")
+        self.assertEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(payload["candidates"], ["补充排序", "稳定显示"])
+        self.assertEqual(payload["timing"]["fallbackReason"], "json_generation_empty_for_empty_input")
+
+    def test_empty_hot_request_uses_rime_fallback_when_model_still_empty(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                '["M=HOT"]',
+                "RAG memory",
+                "RAG memory",
+                "RAG memory",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="RAG memory 候选应该先稳定出现，模型候选随后",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type="ime_hot",
+                rime_candidates=("补充", "排序", "状态"),
+            )
+
+        self.assertEqual(payload["candidateMode"], "rime-candidate-fallback")
+        self.assertEqual(payload["candidates"], ["补充", "排序", "状态"])
+        self.assertEqual([item["source"] for item in payload["candidateScores"]], [
+            "rime-fallback",
+            "rime-fallback",
+            "rime-fallback",
+        ])
+        self.assertTrue(payload["timing"]["rimeFallback"])
+
+    def test_empty_hot_request_backfills_underfilled_model_candidates_with_rime(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=[
+                '["M=HOT"]',
+                "稳定显示",
+            ]
+        )
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="这个输入法目前最影响体验的是",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type="ime_hot",
+                rime_candidates=("稳定性", "候选", "显示"),
+            )
+
+        self.assertEqual(payload["candidateMode"], "continuation-branches")
+        self.assertEqual(payload["candidates"], ["稳定显示", "稳定性", "候选"])
+        self.assertTrue(payload["timing"]["rimeBackfill"])
+        self.assertEqual(payload["timing"]["rimeBackfillCount"], 2)
+
+    def test_json_generation_backfills_underfilled_hot_rime_candidates(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text='["稳定性 / 候选 / 显示')
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="这个输入法目前最影响体验的是",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type="ime_hot",
+                rime_candidates=("稳定性", "候选", "显示"),
+            )
+
+        self.assertEqual(payload["candidateMode"], "json-generation")
+        self.assertEqual(payload["candidates"], ["稳定性", "显示", "候选"])
+        self.assertTrue(payload["timing"]["rimeBackfill"])
+
+    def test_post_commit_completion_uses_single_short_fast_path(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text="马上优化。")
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="为什么本机推理加速后还这么慢",
+                max_candidates=3,
+                max_tokens=32,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+            )
+
+        self.assertEqual(payload["candidateMode"], "realtime-post-commit")
+        self.assertEqual(payload["candidates"], ["马上优化"])
+        self.assertEqual(payload["timing"]["branchCount"], 0)
+        self.assertEqual(payload["timing"]["maxTokens"], 12)
+        self.assertEqual(calls["generate_step"], 1)
+        self.assertEqual(calls["sampler_max_tokens"], [12])
+        self.assertNotIn("直接从候选文本开始", calls["prompts"][0])
+
+    def test_ime_post_commit_fast_path_does_not_backfill_rime_candidates(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text="马上处理。")
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="参考这个实现",
+                max_candidates=3,
+                max_tokens=16,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_IME_POST_COMMIT,
+                rime_candidates=("参考", "实现", "优化"),
+            )
+
+        self.assertEqual(payload["candidateMode"], "realtime-post-commit")
+        self.assertEqual(payload["candidates"], ["马上处理"])
+        self.assertEqual(payload["requestType"], PREDICTION_REQUEST_IME_POST_COMMIT)
+        self.assertEqual(calls["sampler_max_tokens"], [12])
+
+    def test_ime_post_commit_fast_path_uses_single_rime_fallback_when_model_empty(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text="接下来")
+        with patch.dict(sys.modules, modules):
+            payload = MlxLmEngine("fake-qwen").predict(
+                current_input="",
+                recent_context="这个输入法目前最影响体验的是",
+                max_candidates=3,
+                max_tokens=32,
+                temperature=0.15,
+                top_p=0.85,
+                request_type=PREDICTION_REQUEST_IME_POST_COMMIT,
+                rime_candidates=("稳定性", "候选", "显示"),
+            )
+
+        self.assertEqual(payload["candidateMode"], "realtime-post-commit")
+        self.assertEqual(payload["candidates"], ["稳定性"])
+        self.assertEqual(payload["timing"]["branchCount"], 0)
+        self.assertEqual(calls["generate_step"], 1)
+
     def test_no_input_prediction_falls_back_to_single_branch_when_space_list_is_empty(self) -> None:
         modules, calls = _fake_mlx_modules(
             generated_text=[
@@ -400,8 +637,7 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in payload["timing"]["branches"]], ["space-list", "lead"])
         self.assertEqual(calls["sampler_calls"], 2)
         self.assertIn("候选之间用单个空格分隔", calls["prompts"][1])
-        self.assertIn("光标后内容:", calls["prompts"][-1])
-        self.assertIn("请求类型: no_input_prediction", calls["prompts"][-1])
+        self.assertIn("补全:", calls["prompts"][-1])
 
     def test_no_input_lead_branch_splits_bad_prefixed_model_sentence(self) -> None:
         candidates = _branch_continuation_candidates(
@@ -789,7 +1025,8 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(info["quantization"]["bits"], 4)
         self.assertTrue(payload["capabilities"]["textOnlyModel"])
         self.assertTrue(payload["capabilities"]["seededPromptReplay"])
-        self.assertFalse(payload["capabilities"]["kvFork"])
+        self.assertTrue(payload["capabilities"]["kvFork"])
+        self.assertTrue(payload["capabilities"]["sequenceFork"])
         self.assertTrue(payload["capabilities"]["continuationBranches"])
 
     def test_engine_health_flags_local_vision_language_model(self) -> None:

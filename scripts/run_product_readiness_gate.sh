@@ -198,6 +198,7 @@ if [[ -n "$REQUIRE_PREDICTOR_CAPABILITY" && -z "${RAG_IME_PREDICTOR_PROVIDER:-}"
   maybe_export_plist_env RAG_IME_PREDICTOR_TEMPERATURE
   maybe_export_plist_env RAG_IME_PREDICTOR_TOP_P
   maybe_export_plist_env RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS
+  maybe_export_plist_env RAG_IME_POST_COMMIT_MODEL_BUDGET_MS
   if [[ -n "${RAG_IME_PREDICTOR_PROVIDER:-}" ]]; then
     PREDICTOR_ENV_SOURCE="launch-agent-plist"
   fi
@@ -205,7 +206,7 @@ fi
 
 if [[ -z "$SIDECAR_LATENCY_BUDGET_MS" ]]; then
   if [[ -n "$REQUIRE_PREDICTOR_CAPABILITY" ]]; then
-    SIDECAR_LATENCY_BUDGET_MS="${RAG_IME_PREDICTOR_TIMEOUT_MS:-6500}"
+    SIDECAR_LATENCY_BUDGET_MS="${RAG_IME_POST_COMMIT_MODEL_BUDGET_MS:-900}"
   else
     SIDECAR_LATENCY_BUDGET_MS=300
   fi
@@ -342,7 +343,9 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     "${FRONTEND_ENV[@]}"
     "$PYTHON_BIN" scripts/check_squirrel_soak_report.py
     --report-path "$SOAK_REPORT" \
-    --max-stale-applied 0 \
+    --max-stale-apply-count 0 \
+    --max-first-visible-ms 500 \
+    --max-context-echo-count 0 \
     --max-flicker-count 0 \
     --max-min-visible-violations 0 \
     --max-rag-empty-cleared-panel 0 \
@@ -356,6 +359,12 @@ if [[ "$REQUIRE_MACOS_FRONTEND" == "1" ]]; then
     --require-commit-observed \
     --require-post-commit-followup \
     --require-delete-resync \
+    --require-rime-composition-ok \
+    --require-post-commit-visible \
+    --require-source-badges \
+    --require-post-commit-key-policy \
+    --require-app-switch-stale-drop \
+    --require-followup-after-select \
     --require-modern-prediction-session \
     --require-balanced-quota \
     --require-snapshot-selection-trace
