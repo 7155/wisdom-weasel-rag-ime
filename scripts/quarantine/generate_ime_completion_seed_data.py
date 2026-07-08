@@ -659,8 +659,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=20260707)
-    parser.add_argument("--output", type=Path, default=Path("dataset/ime_completion_seed_20k.jsonl"))
-    parser.add_argument("--report", type=Path, default=Path("dataset/ime_completion_seed_20k.report.json"))
+    parser.add_argument("--output", type=Path, default=Path("dataset/quarantine/template_20k/ime_completion_seed_20k.jsonl"))
+    parser.add_argument("--report", type=Path, default=Path("dataset/quarantine/template_20k/ime_completion_seed_20k.report.json"))
     args = parser.parse_args()
 
     rows, categories = generate(args.count, args.seed)

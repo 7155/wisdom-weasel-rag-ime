@@ -2892,10 +2892,7 @@ def _active_rag_runtime_sync_payload(*, active_settings: object, changed_keys: t
     settings = dict(active_settings) if isinstance(active_settings, dict) else {}
     capture = settings.get("capture") if isinstance(settings.get("capture"), dict) else {}
     shortcut = compact_whitespace(str(settings.get("shortcut") or "ctrl+shift+r")).lower().replace(" ", "")
-    domains = [
-        "im.rime.inputmethod.Squirrel",
-        "im.rag-ime.inputmethod.RagIme",
-    ]
+    domains = ["im.rime.inputmethod.Squirrel"]
     defaults = {
         "RagImeActiveRagShortcut": {"type": "string", "value": shortcut},
         "RagImeActiveRagCaptureAccessibility": {"type": "bool", "value": bool(capture.get("accessibility", True))},

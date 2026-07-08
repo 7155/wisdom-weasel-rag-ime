@@ -2024,7 +2024,7 @@ def rag_direct_display_enabled(env: Mapping[str, str] | None = None) -> bool:
 
 def post_commit_active_rag_button_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
-    value = str(source.get("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON", "1")).strip().lower()
+    value = str(source.get("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON", "0")).strip().lower()
     return bool(value) and value not in _FALSEY_ENV_VALUES
 
 

@@ -146,7 +146,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             "frontendRevision": request_seq,
             "selectionEpoch": request_seq,
             "frontAppBundleId": "com.apple.TextEdit",
-            "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
+            "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
         }
 
     def _post_commit_payload(
@@ -173,7 +173,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             "frontendRevision": 7,
             "selectionEpoch": 7,
             "frontAppBundleId": "com.apple.TextEdit",
-            "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
+            "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
             "panelSessionId": "panel-v1",
         }
         if foreground:
@@ -506,11 +506,19 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertFalse(response["showDecision"]["hardClear"])
         self.assertTrue(response["progressive"]["shouldFollowUp"])
 
-    def test_v1_post_commit_panel_exposes_active_rag_action_button(self) -> None:
-        response = self._response(
-            self._post_commit_payload(),
-            predictor=RecordingPredictionProvider(sleep_s=0.4),
-        )
+    def test_v1_post_commit_panel_hides_active_rag_action_by_default(self) -> None:
+        response = self._response(self._post_commit_payload(), predictor=RecordingPredictionProvider(sleep_s=0.4))
+        action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
+
+        self.assertEqual(response["uiMode"], "post_commit_pending")
+        self.assertEqual(action_candidates, [])
+
+    def test_v1_post_commit_panel_exposes_active_rag_action_button_when_opted_in(self) -> None:
+        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1"}):
+            response = self._response(
+                self._post_commit_payload(),
+                predictor=RecordingPredictionProvider(sleep_s=0.4),
+            )
         action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
 
         self.assertEqual(response["uiMode"], "post_commit_pending")
@@ -538,7 +546,13 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
     def test_v1_post_commit_auto_model_can_be_action_only(self) -> None:
         predictor = RecordingPredictionProvider(["不应该自动调用"])
-        with patch.dict(os.environ, {"RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "0"}):
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "0",
+                "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
+            },
+        ):
             response = self._response(self._post_commit_payload(), predictor=predictor)
         action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
 
@@ -557,6 +571,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             {
                 "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "0",
                 "RAG_IME_RAG_DIRECT_DISPLAY": "0",
+                "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
             },
         ):
             response = self._response(self._post_commit_payload(), core=core, predictor=predictor)
@@ -592,7 +607,8 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
     def test_v1_post_commit_active_rag_action_reserves_visible_slot(self) -> None:
         payload = self._post_commit_payload()
         payload["maxVisibleCandidates"] = 1
-        response = self._response(payload, predictor=RecordingPredictionProvider(sleep_s=0.4))
+        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1"}):
+            response = self._response(payload, predictor=RecordingPredictionProvider(sleep_s=0.4))
 
         self.assertEqual(len(response["displayCandidates"]), 1)
         self.assertEqual(response["displayCandidates"][0]["sourceType"], "action")

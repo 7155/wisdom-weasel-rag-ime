@@ -226,10 +226,10 @@ def main() -> int:
     parser.add_argument("--count", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=20260720)
     parser.add_argument(
-        "--output", type=Path, default=Path("dataset/ime_raw_sentences_20k_v2.jsonl")
+        "--output", type=Path, default=Path("dataset/quarantine/template_20k/ime_raw_sentences_20k_v2.jsonl")
     )
     parser.add_argument(
-        "--report", type=Path, default=Path("dataset/ime_raw_sentences_20k_v2.report.json")
+        "--report", type=Path, default=Path("dataset/quarantine/template_20k/ime_raw_sentences_20k_v2.report.json")
     )
     args = parser.parse_args()
 

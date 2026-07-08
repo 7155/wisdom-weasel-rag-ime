@@ -60,7 +60,7 @@ Current state:
   deterministic acceptance passed, backend `quality-gate` passed, and
   old-input echo remained `0.0`.
 - Earlier runtime repair verified selected input source
-  `im.rag-ime.inputmethod.RagIme.Hans`, sidecar `127.0.0.1:8766`, MLX predictor
+  `im.rime.inputmethod.Squirrel.Hans`, sidecar `127.0.0.1:8766`, MLX predictor
   `127.0.0.1:8767`, and mixed model/RAG candidates.
 - Remaining core problems are product-quality and foreground UX, not only
   missing backend modules.
@@ -2068,10 +2068,10 @@ Recent project-public cleanup:
 
 Earlier runtime repair evidence:
 
-- Selected input source:
-  `im.rag-ime.inputmethod.RagIme.Hans`.
-- Installed app:
-  `~/Library/Input Methods/RAG-IME.app`.
+- Canonical selected input source:
+  `im.rime.inputmethod.Squirrel.Hans`.
+- Canonical installed app:
+  `~/Library/Input Methods/Squirrel.app`.
 - Sidecar:
   `http://127.0.0.1:8766`.
 - MLX predictor:

@@ -20,7 +20,7 @@ class ContextFrameTests(unittest.TestCase):
                 selection_epoch=4,
                 input_generation=5,
                 panel_session_id="panel-a",
-                input_source_id="im.rag-ime.inputmethod.RagIme.Hans",
+                input_source_id="im.rime.inputmethod.Squirrel.Hans",
             ),
         )
 
@@ -81,4 +81,3 @@ class ContextFrameTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
