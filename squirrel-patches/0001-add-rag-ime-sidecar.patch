@@ -62,9 +62,9 @@ index 0000000..44ee9f8
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 5
-+  latency_budget_ms: 300
++  latency_budget_ms: 900
 +  debounce_ms: 80
-+  timeout_ms: 250
++  timeout_ms: 1200
 +  frontend_trace: true
 diff --git a/sources/InputSource.swift b/sources/InputSource.swift
 index 89c1214..a240173 100644
@@ -242,9 +242,9 @@ index 0000000..e4aaed0
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 5, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 300, range: 30...3000)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 900, range: 30...3000)
 +    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 80, range: 0...500)
-+    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 250, range: 30...3000)) / 1000
++    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 30...3000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
 +    self.frontendTrace = config?.getBool("rag_ime/frontend_trace") == true
 +  }

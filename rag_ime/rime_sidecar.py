@@ -1926,7 +1926,13 @@ def post_commit_presentation_stream_enabled(env: Mapping[str, str] | None = None
 
 def post_commit_pending_preview_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
-    value = str(source.get("RAG_IME_POST_COMMIT_PENDING_PREVIEW", "1")).strip().lower()
+    value = str(source.get("RAG_IME_POST_COMMIT_PENDING_PREVIEW", "0")).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def demo_safe_fallback_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_ENABLE_DEMO_SAFE_FALLBACK", "0")).strip().lower()
     return value not in _FALSEY_ENV_VALUES
 
 
@@ -2603,6 +2609,8 @@ def _post_commit_empty_result_fallback_predictions(
     if not _is_post_commit_prediction_snapshot(snapshot):
         return []
     if not snapshot.progressive_follow_up:
+        return []
+    if not demo_safe_fallback_enabled():
         return []
     pending_lanes = progressive_state.get("pendingLanes")
     if isinstance(pending_lanes, list) and pending_lanes:

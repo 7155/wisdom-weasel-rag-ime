@@ -134,6 +134,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS"], "12000")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "900")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_PENDING_PREVIEW"], "0")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_DEMO_SAFE_FALLBACK"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES"], "32")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES"], "16")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES"], "128")
@@ -158,6 +160,18 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn("RAG_IME_KILL_STALE_SIDECAR_ON_INSTALL", script_source)
         self.assertIn("wait_for_sidecar_port_release", script_source)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
+
+    def test_restart_runtime_script_exposes_safe_dev_and_v1_proof_profiles(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script_text = (root / "scripts" / "restart_rag_ime_runtime.sh").read_text(encoding="utf-8")
+
+        self.assertIn('RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-safe-dev}"', script_text)
+        self.assertIn("v1-proof)", script_text)
+        self.assertIn('RAG_IME_POST_COMMIT_COMPLETION_TTL_MS="${RAG_IME_POST_COMMIT_COMPLETION_TTL_MS:-12000}"', script_text)
+        self.assertIn('RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS="${RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS:-12000}"', script_text)
+        self.assertIn('RAG_IME_POST_COMMIT_MODEL_BUDGET_MS="${RAG_IME_POST_COMMIT_MODEL_BUDGET_MS:-900}"', script_text)
+        self.assertIn('RAG_IME_SQUIRREL_LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-900}"', script_text)
+        self.assertIn('RAG_IME_SQUIRREL_TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-1200}"', script_text)
 
     def test_install_sidecar_launch_agent_can_opt_into_keepalive(self) -> None:
         root = Path(__file__).resolve().parents[1]

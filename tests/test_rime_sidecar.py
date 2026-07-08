@@ -614,13 +614,28 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(response["displayCandidates"][0]["sourceType"], "action")
         self.assertEqual(response["displayCandidates"][0]["selectionAction"], "start_active_rag_from_context")
 
-    def test_v1_empty_post_commit_followup_gets_demo_safe_fallback_candidate(self) -> None:
+    def test_v1_empty_post_commit_followup_does_not_emit_demo_fallback_by_default(self) -> None:
         first, follow_up, _, _ = self._prime_post_commit(
             core=CuratedMemoryCore(),
             predictor=RecordingPredictionProvider(["我的需求你没有完成"]),
             context="我的需求你没有完成",
             commit_preview="完成",
         )
+        fallback_candidates = [item for item in follow_up["displayCandidates"] if item["sourceType"] == "model"]
+
+        self.assertEqual(first["uiMode"], "post_commit_pending")
+        self.assertIn(follow_up["uiMode"], {"post_commit_pending", "post_commit_prediction"})
+        self.assertFalse(fallback_candidates)
+        self.assertNotEqual(follow_up["modelLane"].get("fallbackReason"), "demo_safe_empty_post_commit_fallback")
+
+    def test_v1_empty_post_commit_followup_gets_demo_safe_fallback_candidate_when_opted_in(self) -> None:
+        with patch.dict(os.environ, {"RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "1"}):
+            first, follow_up, _, _ = self._prime_post_commit(
+                core=CuratedMemoryCore(),
+                predictor=RecordingPredictionProvider(["我的需求你没有完成"]),
+                context="我的需求你没有完成",
+                commit_preview="完成",
+            )
         fallback_candidates = [item for item in follow_up["displayCandidates"] if item["sourceType"] == "model"]
 
         self.assertEqual(first["uiMode"], "post_commit_pending")
@@ -633,12 +648,13 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(follow_up["modelPredictions"][0]["metadata"]["fallbackSource"], "post_commit_empty_result")
 
     def test_v1_truncated_post_commit_model_fragment_uses_demo_safe_fallback(self) -> None:
-        _, follow_up, _, _ = self._prime_post_commit(
-            core=CuratedMemoryCore(),
-            predictor=RecordingPredictionProvider(["您已"]),
-            context="我的需求你没有完成",
-            commit_preview="完成",
-        )
+        with patch.dict(os.environ, {"RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "1"}):
+            _, follow_up, _, _ = self._prime_post_commit(
+                core=CuratedMemoryCore(),
+                predictor=RecordingPredictionProvider(["您已"]),
+                context="我的需求你没有完成",
+                commit_preview="完成",
+            )
         model_candidates = [item for item in follow_up["displayCandidates"] if item["sourceType"] == "model"]
 
         self.assertEqual([item["text"] for item in model_candidates], ["继续补齐需求"])
@@ -668,7 +684,13 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertNotIn("欢迎", surfaces)
 
     def test_v1_post_commit_presentation_streams_candidate_prefixes(self) -> None:
-        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1"}):
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1",
+                "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "1",
+            },
+        ):
             core = CuratedMemoryCore()
             predictor = RecordingPredictionProvider(["继续补齐需求"])
             first = self._response(
@@ -706,7 +728,14 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             self.assertEqual(should_follow_up, [True, True, False])
 
     def test_v1_post_commit_fallback_presentation_streams_candidate_prefixes(self) -> None:
-        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1"}):
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_POST_COMMIT_PRESENTATION_STREAM": "1",
+                "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "1",
+                "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "1",
+            },
+        ):
             core = CuratedMemoryCore()
             predictor = RecordingPredictionProvider(["您已"])
             first = self._response(

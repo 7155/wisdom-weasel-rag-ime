@@ -14,7 +14,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
 
         self.assertIn("fallback: 5, range: 0...10", patch_text)
-        self.assertIn("fallback: 250, range: 30...3000", patch_text)
+        self.assertIn("fallback: 1200, range: 30...3000", patch_text)
         self.assertIn("sidecar_url missing; passive input path does not run CLI fallback", patch_text)
         self.assertIn("passive CLI fallback disabled", patch_text)
         self.assertIn("case circuitOpen(Int)", patch_text)
@@ -657,9 +657,9 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 5",
-                "  latency_budget_ms: 300",
+                "  latency_budget_ms: 900",
                 "  debounce_ms: 80",
-                "  timeout_ms: 250",
+                "  timeout_ms: 1200",
                 "  frontend_trace: true",
             ]
         )

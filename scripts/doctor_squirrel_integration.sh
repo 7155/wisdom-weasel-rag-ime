@@ -428,6 +428,11 @@ else:
         "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
         "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
         "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
+        "RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT": "1",
+        "RAG_IME_RAG_DIRECT_DISPLAY": "0",
+        "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "0",
+        "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "0",
+        "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "0",
     }
     v1_errors = [
         f"{key}={str(env.get(key) or '')!r}, expected {expected!r}"
@@ -441,6 +446,16 @@ else:
         "match post-commit 150/250ms and model UX budget 900ms"
         if not v1_errors
         else "drift: " + "; ".join(v1_errors[:6]),
+    )
+    deepseek_post_commit = str(env.get("RAG_IME_DEEPSEEK_POST_COMMIT") or "").strip().lower()
+    deepseek_post_commit_ok = deepseek_post_commit not in ("1", "true", "yes", "on")
+    emit(
+        "sidecar LaunchAgent v1 DeepSeek passive gate",
+        deepseek_post_commit_ok,
+        require_plist,
+        "DeepSeek post-commit is not enabled for ordinary v1 candidates"
+        if deepseek_post_commit_ok
+        else "RAG_IME_DEEPSEEK_POST_COMMIT must not be enabled for ordinary v1 candidate lane",
     )
 
 mlx_required = require_plist and is_mlx_provider

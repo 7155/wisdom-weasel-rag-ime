@@ -133,6 +133,8 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             )
         self.assertIn(f"workdir={workdir}", result.stdout)
         self.assertIn("base_ref=2158538", result.stdout)
+        self.assertIn("latency_budget_ms=900", result.stdout)
+        self.assertIn("timeout_ms=1200", result.stdout)
         self.assertIn("sidecar_url=http://127.0.0.1:18766/api", result.stdout)
         self.assertIn(f"repo_root={root}", result.stdout)
         self.assertIn(
