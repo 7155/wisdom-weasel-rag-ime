@@ -113,7 +113,7 @@ Options:
   --auto-type           Try to type the test query and side-candidate key with AppleScript
   --auto-query TEXT     Text used by --auto-type (default: er qi)
   --auto-key KEY        Number key used by --auto-type (default: 6)
-                       For Active RAG proof, use ctrl-enter by default.
+                       For Active RAG proof, use ctrl-period by default.
   --auto-char-delay SEC Delay between simulated characters (default: 0.04)
   --active-rag-proof   Require the final DeepSeek action button -> thinking -> ready lifecycle
   --dry-run             Print resolved commands without changing local state
@@ -289,7 +289,7 @@ while [[ $# -gt 0 ]]; do
       REQUIRE_ACTIVE_RAG_THINKING=1
       REQUIRE_ACTIVE_RAG_READY=1
       if [[ "$AUTO_KEY_WAS_SET" == "0" ]]; then
-        AUTO_KEY="${RAG_IME_FOREGROUND_TRACE_ACTIVE_RAG_AUTO_KEY:-ctrl-enter}"
+        AUTO_KEY="${RAG_IME_FOREGROUND_TRACE_ACTIVE_RAG_AUTO_KEY:-ctrl-period}"
       fi
       ;;
     --dry-run)
@@ -509,7 +509,7 @@ path.write_text(
     f"2. Type: {query}.\n"
     "3. Wait for LLM/model, RAG, and memory candidates in the panel.\n"
     "4. Press a visible candidate number to accept a side candidate and wait for the next prediction.\n\n"
-    "5. If a DeepSeek 生成 action is visible, press Ctrl+Enter and wait for the animated thinking row, then one ready candidate.\n\n",
+    "5. Press Ctrl+. and wait for the animated thinking row, then one ready candidate.\n\n",
     encoding="utf-8",
 )
 PY
@@ -540,6 +540,8 @@ on run argv
     delay waitSeconds
     if actionKey is "tab" then
       key code 48
+    else if actionKey is "ctrl-period" or actionKey is "control-period" or actionKey is "ctrl-." or actionKey is "control-." then
+      keystroke "." using control down
     else if actionKey is "ctrl-enter" or actionKey is "control-enter" then
       key code 36 using control down
     else if actionKey is "ctrl-return" or actionKey is "control-return" then
@@ -589,7 +591,7 @@ Manual action now:
   2. Type: $AUTO_QUERY
   3. Wait for LLM/model, RAG, and memory candidates in the panel.
   4. Press a visible candidate number to commit a side candidate.
-  5. If a DeepSeek 生成 action is visible, press Ctrl+Enter and wait for thinking animation plus one ready candidate.
+  5. Press Ctrl+. and wait for thinking animation plus one ready candidate.
 
 Trace log:
   $TRACE_LOG

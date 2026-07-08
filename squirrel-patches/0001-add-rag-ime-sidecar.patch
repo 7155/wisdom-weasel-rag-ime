@@ -3415,7 +3415,7 @@ index c2adf74..3cfc0e5 100644
 +    guard let keyName = parts.first(where: { !["cmd", "command", "ctrl", "control", "option", "alt", "shift"].contains($0) }) else {
 +      return false
 +    }
-+    guard ragImeShortcutKeyCode(keyName) == keyCode else { return false }
++    guard ragImeShortcutKeyMatches(keyName, keyCode: keyCode) else { return false }
 +    if parts.contains("ctrl") || parts.contains("control") {
 +      guard modifiers.contains(.control) else { return false }
 +    } else if modifiers.contains(.control) {
@@ -3443,7 +3443,7 @@ index c2adf74..3cfc0e5 100644
 +    let defaultsValue = UserDefaults.standard.string(forKey: "RagImeActiveRagShortcut") ?? ""
 +    let envValue = ProcessInfo.processInfo.environment["RAG_IME_ACTIVE_RAG_SHORTCUT"] ?? ""
 +    let raw = defaultsValue.isEmpty ? envValue : defaultsValue
-+    return raw.isEmpty ? "ctrl+enter" : raw.lowercased().replacingOccurrences(of: " ", with: "")
++    return raw.isEmpty ? "ctrl+." : raw.lowercased().replacingOccurrences(of: " ", with: "")
 +  }
 +
 +  func ragImeActiveRagAccessibilityCaptureEnabled() -> Bool {
@@ -3472,12 +3472,18 @@ index c2adf74..3cfc0e5 100644
 +    return defaultValue
 +  }
 +
-+  func ragImeShortcutKeyCode(_ keyName: String) -> UInt16? {
++  func ragImeShortcutKeyMatches(_ keyName: String, keyCode: UInt16) -> Bool {
++    return ragImeShortcutKeyCodes(keyName).contains(keyCode)
++  }
++
++  func ragImeShortcutKeyCodes(_ keyName: String) -> [UInt16] {
 +    switch keyName.lowercased() {
-+    case "r": return 15
-+    case "space": return 49
-+    case "return", "enter": return 36
-+    default: return nil
++    case "r": return [15]
++    case ".", "period", "dot": return [47]
++    case "space": return [49]
++    case "return": return [36]
++    case "enter": return [36, 76]
++    default: return []
 +    }
 +  }
 +
@@ -3682,18 +3688,20 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func ragImeDisplayPanelPayload(fallbackLabels: [String]) -> (candidates: [String], comments: [String], labels: [String]) {
-+    let candidates = ragImeDisplayCandidates.map { ragImeDisplayText(for: $0) }
-+    let comments = ragImeDisplayCandidates.map { ragImeDisplayComment(for: $0) }
-+    let labels = ragImeDisplayCandidates.enumerated().map { index, candidate in
++    let visibleCandidates = ragImeDisplayCandidates.filter { !ragImeDisplayCandidateIsShortcutOnlyAction($0) }
++    let candidates = visibleCandidates.map { ragImeDisplayText(for: $0) }
++    let comments = visibleCandidates.map { ragImeDisplayComment(for: $0) }
++    let labels = visibleCandidates.enumerated().map { index, candidate in
 +      if candidate.sourceType == "status" || candidate.isStatus == true || candidate.selectionAction == "none" {
-+        return ""
-+      }
-+      if candidate.selectionAction == "start_active_rag_from_context" || candidate.sourceType == "action" {
 +        return ""
 +      }
 +      return candidate.label.isEmpty ? ragImeFallbackLabel(index: index, fallbackLabels: fallbackLabels) : candidate.label
 +    }
 +    return (candidates, comments, labels)
++  }
++
++  func ragImeDisplayCandidateIsShortcutOnlyAction(_ candidate: RagImeDisplayCandidate) -> Bool {
++    return candidate.selectionAction == "start_active_rag_from_context" || candidate.sourceType == "action"
 +  }
 +
 +  func ragImeDisplayText(for candidate: RagImeDisplayCandidate) -> String {

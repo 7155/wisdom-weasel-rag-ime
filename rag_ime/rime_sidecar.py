@@ -4930,7 +4930,7 @@ def append_post_commit_active_rag_action(
                 "activeRagTrigger": True,
                 "buttonRole": "active_rag_generate",
                 "buttonLabel": "DeepSeek 生成",
-                "shortcutHint": "ctrl+enter",
+                "shortcutHint": "ctrl+.",
                 "numericSelectionDisabled": True,
                 "triggerPolicy": "manual_only",
                 "requiresExplicitSelection": True,

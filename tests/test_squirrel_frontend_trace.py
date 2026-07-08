@@ -352,7 +352,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("require_side_commit=0", result.stdout)
         self.assertIn("require_post_commit_followup=0", result.stdout)
         self.assertIn("require_modern_prediction_session=0", result.stdout)
-        self.assertIn("auto_key=ctrl-enter", result.stdout)
+        self.assertIn("auto_key=ctrl-period", result.stdout)
         self.assertIn("--require-active-rag-action-button", result.stdout)
         self.assertIn("--require-post-commit-pending-status", result.stdout)
         self.assertIn("--require-prediction-status-visible", result.stdout)

@@ -507,7 +507,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(action_candidates[0]["selectionAction"], "start_active_rag_from_context")
         self.assertEqual(action_candidates[0]["metadata"]["maxCandidates"], 1)
         self.assertEqual(action_candidates[0]["metadata"]["buttonRole"], "active_rag_generate")
-        self.assertEqual(action_candidates[0]["metadata"]["shortcutHint"], "ctrl+enter")
+        self.assertEqual(action_candidates[0]["metadata"]["shortcutHint"], "ctrl+.")
         self.assertTrue(action_candidates[0]["metadata"]["numericSelectionDisabled"])
         self.assertEqual(action_candidates[0]["metadata"]["triggerPolicy"], "manual_only")
         self.assertTrue(action_candidates[0]["metadata"]["requiresExplicitSelection"])

@@ -26,7 +26,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["display"]["badges"]["action"], "生成")
         self.assertEqual(defaults["display"]["colors"]["action"], "blue")
         self.assertTrue(defaults["rag"]["lanes"]["bm25Raw"])
-        self.assertEqual(defaults["activeRag"]["shortcut"], "ctrl+enter")
+        self.assertEqual(defaults["activeRag"]["shortcut"], "ctrl+.")
         self.assertTrue(defaults["activeRag"]["capture"]["accessibility"])
         self.assertTrue(defaults["activeRag"]["capture"]["clipboardFallback"])
         self.assertEqual(defaults["activeRag"]["defaultPlacement"], "replace_selection")
