@@ -22,6 +22,7 @@ from .timeline_context import timeline_evidence_pack_from_core
 
 ACTIVE_RAG_SERVICE_SCHEMA_VERSION = "rag-ime.active-rag-service.v1"
 ACTIVE_RAG_VISIBLE_READY_TIMEOUT_MS = 15_000
+ACTIVE_RAG_DEFAULT_MAX_CHARS = 120
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ class ActiveRagStartRequest:
     project: str = "wisdom-weasel-rag-ime"
     app: str = ""
     max_candidates: int = 1
-    max_chars: int = 18
+    max_chars: int = ACTIVE_RAG_DEFAULT_MAX_CHARS
     latency_budget_ms: int = 15000
 
 

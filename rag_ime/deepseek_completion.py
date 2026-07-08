@@ -219,6 +219,7 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
     evidence = _redacted_evidence_pack(request.evidence_pack)
     context_packet = _redacted_context_packet(request.context_packet)
     max_chars = max(4, int(request.max_chars))
+    min_chars = 40 if max_chars >= 80 else 4
     hints: list[str] = []
     for item in evidence[:6]:
         hints.extend(str(value) for value in item.get("surfaceHints", []) if compact_whitespace(str(value)))
@@ -233,12 +234,12 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
             "role": "system",
             "content": (
                 "你是 macOS 输入法的主动 RAG 预测器。你拿到光标上下文、最近输入、RAG 证据和 Notebook 记忆。"
-                "任务是预测用户光标处最可能继续输入的一小段，只生成 1 个候选。"
-                "如果 placement 是 insert_after_selection/append_at_cursor，就输出能接在 currentContext 后面的续写短语；"
+                "任务是预测用户光标处最可能继续输入的一段自然中文正文，只生成 1 个候选。"
+                "如果 placement 是 insert_after_selection/append_at_cursor，就输出能接在 currentContext 后面的续写段落；"
                 "如果 placement 是 replace_selection，才输出对 selectedText 的改写。"
                 "第一句必须以“候选=”开头，等号后直接写候选内容。"
                 "不要解释，不要总结，不要 Markdown，不要输出任务标题。"
-                "候选必须具体、可直接插入；不要复述 selectedText/currentContext/Notebook 原句。"
+                "候选必须是一段完整的话，具体、可直接插入；不要复述 selectedText/currentContext/Notebook 原句。"
                 "优先使用 currentInput，其次用 oneRing/timeline/notebook/RAG evidence 补全语义。"
                 "等号后的正文禁止出现“候选”“短语”“格式”“真实候选”“Notebook”“evidence”“oneRing”等提示词或字段名。"
             ),
@@ -256,11 +257,11 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                     "contextPacket": context_packet,
                     "evidenceHints": _unique_candidates([truncate_text(item, 80) for item in hints])[:12],
                     "task": (
-                        f"写出光标处下一段 4 到 {max_chars} 个中文字正文。"
-                        "正文要能直接接在当前输入后；"
+                        f"写出光标处下一段 {min_chars} 到 {max_chars} 个中文字正文。"
+                        "正文要像用户正在继续输入的一段话，能直接接在当前输入后；"
                         "禁止写“下一步/接下来/可以继续/根据上述/候选/短语/格式/Notebook/evidence/oneRing”。"
                         "不要把 RAG 证据或 Notebook 标题原样显示。"
-                        "只输出一行；行首固定为“候选=”，等号后直接写正文。"
+                        "只输出一行，不换行；行首固定为“候选=”，等号后直接写一段正文。"
                     ),
                 },
                 ensure_ascii=False,
@@ -552,41 +553,84 @@ def _request_fallback_candidate_texts(request: DeepSeekCompletionRequest) -> lis
     evidence_text = compact_whitespace(" ".join(_evidence_hint_texts(request.evidence_pack)))
     haystack = compact_whitespace(" ".join([request_text, evidence_text]))
     candidates: list[str] = []
-    if "DeepSeek" in request_text and ("无输出" in request_text or "没输出" in request_text or "输出" in request_text):
-        candidates.append("修复DeepSeek输出")
-    if ("LLM" in request_text or "模型" in request_text) and (
-        "无输出" in request_text or "没输出" in request_text or "输出" in request_text
-    ):
-        candidates.append("修复LLM输出")
-    if ("LLM" in request_text or "模型" in request_text) and (
-        "不显示" in request_text or "没显示" in request_text or "消失" in request_text
-    ):
-        candidates.append("修复LLM显示")
-    if "RAG" in request_text and ("命中" in request_text or "检索" in request_text) and (
-        "DeepSeek" in request_text or "DS" in request_text
-    ):
-        candidates.append("接入RAG上下文")
-    if ("笔记本" in request_text or "Notebook" in request_text) and ("DeepSeek" in request_text or "DS" in request_text):
-        candidates.append("接入记忆笔记本")
-    if ("只有一个框" in request_text or "单框" in request_text) and ("候选" in request_text or "输出" in request_text):
-        candidates.append("修复候选显示")
-    if "记忆" in request_text and "笔记本" in request_text and ("初始化" in request_text or "整理" in request_text):
-        candidates.append("初始化记忆笔记本")
-    if "按钮" in request_text and "生成" in request_text and ("稳定" in request_text or "显示" in request_text):
-        candidates.append("稳定生成按钮")
-    if "DeepSeek" in request_text and "生成" in request_text and ("稳定" in request_text or "显示" in request_text):
-        candidates.append("稳定DeepSeek生成")
-    if "RAG" in request_text and "输入法" in request_text and ("面试" in request_text or "展示" in request_text):
-        candidates.append("RAG 输入法面试展示主线")
-    if "RAG" in request_text and "输入法" in request_text:
-        candidates.append("RAG输入法优化")
-    if selected:
-        if selected.endswith("优化") and len(selected) > 2:
-            candidates.append(f"{selected[:-2]}稳定化")
-        for suffix in ("方案", "处理", "优化"):
-            if not selected.endswith(suffix):
-                candidates.append(f"{selected}{suffix}")
+    if _active_rag_paragraph_output(request):
+        paragraph = _request_fallback_paragraph(request_text=request_text, evidence_text=evidence_text, selected=selected, max_chars=max_chars)
+        if paragraph:
+            candidates.append(paragraph)
+    else:
+        if "DeepSeek" in request_text and ("无输出" in request_text or "没输出" in request_text or "输出" in request_text):
+            candidates.append("修复DeepSeek输出")
+        if ("LLM" in request_text or "模型" in request_text) and (
+            "无输出" in request_text or "没输出" in request_text or "输出" in request_text
+        ):
+            candidates.append("修复LLM输出")
+        if ("LLM" in request_text or "模型" in request_text) and (
+            "不显示" in request_text or "没显示" in request_text or "消失" in request_text
+        ):
+            candidates.append("修复LLM显示")
+        if "RAG" in request_text and ("命中" in request_text or "检索" in request_text) and (
+            "DeepSeek" in request_text or "DS" in request_text
+        ):
+            candidates.append("接入RAG上下文")
+        if ("笔记本" in request_text or "Notebook" in request_text) and ("DeepSeek" in request_text or "DS" in request_text):
+            candidates.append("接入记忆笔记本")
+        if ("只有一个框" in request_text or "单框" in request_text) and ("候选" in request_text or "输出" in request_text):
+            candidates.append("修复候选显示")
+        if "记忆" in request_text and "笔记本" in request_text and ("初始化" in request_text or "整理" in request_text):
+            candidates.append("初始化记忆笔记本")
+        if "按钮" in request_text and "生成" in request_text and ("稳定" in request_text or "显示" in request_text):
+            candidates.append("稳定生成按钮")
+        if "DeepSeek" in request_text and "生成" in request_text and ("稳定" in request_text or "显示" in request_text):
+            candidates.append("稳定DeepSeek生成")
+        if "RAG" in request_text and "输入法" in request_text and ("面试" in request_text or "展示" in request_text):
+            candidates.append("RAG 输入法面试展示主线")
+        if "RAG" in request_text and "输入法" in request_text:
+            candidates.append("RAG输入法优化")
+        if selected:
+            if selected.endswith("优化") and len(selected) > 2:
+                candidates.append(f"{selected[:-2]}稳定化")
+            for suffix in ("方案", "处理", "优化"):
+                if not selected.endswith(suffix):
+                    candidates.append(f"{selected}{suffix}")
     return [item for item in _unique_candidates(candidates) if 2 <= len(item) <= max_chars]
+
+
+def _active_rag_paragraph_output(request: DeepSeekCompletionRequest) -> bool:
+    return request.scene == "active_rag" and int(request.max_chars or 0) >= 80
+
+
+def _request_fallback_paragraph(*, request_text: str, evidence_text: str, selected: str, max_chars: int) -> str:
+    if "RAG" in request_text and "输入法" in request_text and ("面试" in request_text or "展示" in request_text):
+        text = (
+            "RAG 输入法面试展示主线可以讲成本地优先、多路召回和记忆笔记本补上下文，"
+            "再由 DeepSeek 主动生成一段需要用户确认的正文。"
+        )
+    elif ("DeepSeek" in request_text or "DS" in request_text) and ("LLM" in request_text or "模型" in request_text):
+        text = (
+            "我会把 DeepSeek 主动生成和 LLM 预测显示拆成两条稳定链路，数字候选只保留模型预测，"
+            "主动生成通过快捷键触发，并根据当前输入、RAG 命中和记忆笔记本输出一段完整正文。"
+        )
+    elif "RAG" in request_text and ("记忆" in request_text or "笔记本" in request_text or "Notebook" in request_text):
+        text = (
+            "我会先用当前输入构造检索上下文，再把 RAG 证据、最近输入时间线和记忆笔记本合并给 DeepSeek，"
+            "让它生成一段能直接接在光标后的自然表达。"
+        )
+    elif "输入法" in request_text and ("展示" in request_text or "面试" in request_text):
+        text = "这个输入法项目可以重点展示本地预测、RAG 检索、记忆笔记本和显式生成四条链路，交互上保持数字候选稳定。"
+    elif selected:
+        text = f"我会围绕“{truncate_text(selected, 24)}”继续补全当前表达，把上下文里的真实意图整理成一段可放到光标后的中文正文。"
+    elif evidence_text:
+        text = f"我会结合当前输入和已命中的记忆线索，把“{truncate_text(evidence_text, 28)}”整理成一段自然、可直接续写的正文。"
+    else:
+        text = "我会根据当前输入、RAG 证据和记忆笔记本生成一段更完整的中文正文，避免只给短标题或泛化词。"
+    return _fit_request_fallback_paragraph(text, max_chars=max_chars)
+
+
+def _fit_request_fallback_paragraph(text: str, *, max_chars: int) -> str:
+    value = compact_whitespace(text)
+    if len(value) <= max_chars:
+        return value
+    return truncate_text(value, max_chars).rstrip("，；：、,.!?！？;:")
 
 
 def _evidence_hint_texts(evidence_pack: tuple[dict[str, object], ...]) -> list[str]:
@@ -781,6 +825,7 @@ def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, se
     text = compact_whitespace(candidate)
     if not text or text in seen:
         return False
+    paragraph_mode = _active_rag_paragraph_output(request)
     if len(text) < 2 or len(text) > max(4, int(request.max_chars)):
         return False
     if _placeholder_candidate(text):
@@ -791,7 +836,10 @@ def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, se
         return False
     if text.isascii() and any(char.isalpha() for char in text):
         return False
-    if _bad_reasoning_fragment(text):
+    if paragraph_mode:
+        if _bad_active_rag_paragraph_candidate(text):
+            return False
+    elif _bad_reasoning_fragment(text):
         return False
     if candidate_has_self_repetition(text):
         return False
@@ -869,6 +917,34 @@ def _bad_reasoning_fragment(text: str) -> bool:
         "也可以",
         "可以是",
     }
+
+
+def _bad_active_rag_paragraph_candidate(text: str) -> bool:
+    value = compact_whitespace(text)
+    if not value:
+        return True
+    lowered = value.lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "contextpacket",
+            "currentinput",
+            "selectedtext",
+            "outputcontract",
+            "surfacehint",
+        )
+    ):
+        return True
+    if any(marker in lowered for marker in ("json", "markdown")):
+        return True
+    if any(marker in value for marker in ("{", "}", "[", "]", "```")):
+        return True
+    if value.startswith(("-", "•", "*")):
+        return True
+    if value[0] in "，。；：、,.!?！？;:)]}）】":
+        return True
+    normalized = repeat_norm(value)
+    return len(normalized) < 8
 
 
 def _has_unapproved_ascii_word(text: str) -> bool:

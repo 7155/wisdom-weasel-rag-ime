@@ -25,7 +25,7 @@ def build_active_rag_context_packet(
     intent: str = "complete",
     placement: str = "insert_after_selection",
     max_candidates: int = 1,
-    max_chars: int = 24,
+    max_chars: int = 120,
     latency_budget_ms: int = 2500,
     remote_model_allowed: bool = True,
 ) -> dict[str, object]:
@@ -84,7 +84,7 @@ def build_active_rag_context_packet(
         },
         "outputContract": {
             "maxCandidates": max(1, int(max_candidates)),
-            "minCandidateChars": 2,
+            "minCandidateChars": 40 if int(max_chars) >= 80 else 2,
             "maxCandidateChars": max(4, int(max_chars)),
             "outputFormat": "candidate_json",
             "intent": compact_whitespace(intent),

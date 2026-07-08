@@ -157,7 +157,7 @@ def _candidate_texts_from_evidence(evidence: ActiveRagEvidence) -> tuple[str, ..
 
 
 def _candidate_char_limit(max_chars: int) -> int:
-    return max(4, min(48, int(max_chars or 24)))
+    return max(4, min(180, int(max_chars or 24)))
 
 
 def _context_only_evidence(evidence: ActiveRagEvidence) -> bool:
@@ -180,11 +180,37 @@ def _fit_active_rag_candidate_text(text: str, *, max_chars: int) -> str:
     limit = _candidate_char_limit(max_chars)
     if len(value) <= limit:
         return value
+    if limit > 48:
+        paragraph = _fit_active_rag_paragraph_text(value, max_chars=limit)
+        if paragraph:
+            return paragraph
     for segment in _candidate_segments(value):
         if 2 <= len(segment) <= limit:
             return segment
     truncated = value[:limit].rstrip("，。；：、,.!?！？;:")
     return compact_whitespace(truncated)
+
+
+def _fit_active_rag_paragraph_text(text: str, *, max_chars: int) -> str:
+    limit = _candidate_char_limit(max_chars)
+    value = compact_whitespace(text)
+    if len(value) <= limit:
+        return value
+    for paragraph in re.split(r"[\r\n]+", value):
+        normalized = compact_whitespace(paragraph)
+        if 24 <= len(normalized) <= limit:
+            return normalized
+    parts = [compact_whitespace(part) for part in re.split(r"(?<=[。！？!?；;])", value)]
+    assembled = ""
+    for part in parts:
+        if not part:
+            continue
+        if len(assembled + part) > limit:
+            break
+        assembled += part
+    if len(assembled) >= 24:
+        return assembled.rstrip("，；：、,.!?！？;:")
+    return value[:limit].rstrip("，。；：、,.!?！？;:")
 
 
 def _candidate_segments(text: str) -> list[str]:

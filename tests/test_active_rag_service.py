@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime.active_rag_service import ActiveRagService, ActiveRagStartRequest
+from rag_ime.active_rag_service import ACTIVE_RAG_DEFAULT_MAX_CHARS, ActiveRagService, ActiveRagStartRequest
 from rag_ime.deepseek_completion import CompletionCandidateDelta
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputEvent
@@ -78,6 +78,27 @@ class ActiveRagServiceTests(unittest.TestCase):
         )
         self.assertTrue(accepted["ok"])
         self.assertEqual(accepted["insertText"], "DeepSeek主动候选")
+
+    def test_active_rag_default_deepseek_budget_is_paragraph_length(self) -> None:
+        paragraph = "我会把 DeepSeek 主动生成和 LLM 预测显示拆成两条稳定链路，让显式触发时输出一段完整正文。"
+        provider = FakeActiveRagProvider((paragraph,))
+        service = ActiveRagService(completion_provider=provider)
+        request = ActiveRagStartRequest(
+            selected_text="DeepSeek 输出我希望是一段话",
+            selected_text_hash=stable_text_hash("DeepSeek 输出我希望是一段话"),
+            frontend_revision=7,
+            selection_epoch=3,
+            context="Ctrl+Enter不行，DeepSeek没输出，LLM不显示",
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(provider.calls[0].max_chars, ACTIVE_RAG_DEFAULT_MAX_CHARS)
+        self.assertEqual(ready["status"], "ready")
+        self.assertGreaterEqual(len(ready["candidates"][0]["text"]), 40)
+        self.assertLessEqual(len(ready["candidates"][0]["text"]), ACTIVE_RAG_DEFAULT_MAX_CHARS)
 
     def test_active_rag_governs_remote_candidate_length(self) -> None:
         provider = FakeActiveRagProvider(("这是一个过长候选，需要缩短，保留关键动作",))

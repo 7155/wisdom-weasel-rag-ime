@@ -17,7 +17,7 @@ from threading import Event, RLock
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .active_rag_service import ActiveRagService, ActiveRagStartRequest
+from .active_rag_service import ACTIVE_RAG_DEFAULT_MAX_CHARS, ActiveRagService, ActiveRagStartRequest
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .cli import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
@@ -499,7 +499,12 @@ class DebugImeService:
             project=_string(payload.get("project")) or self.config.project,
             app=_string(payload.get("app")),
             max_candidates=_bounded_int(payload.get("maxCandidates"), default=1, minimum=1, maximum=10),
-            max_chars=_bounded_int(payload.get("maxChars"), default=18, minimum=4, maximum=80),
+            max_chars=_bounded_int(
+                payload.get("maxChars"),
+                default=ACTIVE_RAG_DEFAULT_MAX_CHARS,
+                minimum=4,
+                maximum=180,
+            ),
             latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=15000, minimum=100, maximum=30000),
         )
 
@@ -858,6 +863,12 @@ class DebugImeService:
             selected_text=selected_text,
             evidence_pack=evidence_pack,
             max_candidates=_bounded_int(payload.get("maxCandidates"), default=1, minimum=1, maximum=8),
+            max_chars=_bounded_int(
+                payload.get("maxChars"),
+                default=ACTIVE_RAG_DEFAULT_MAX_CHARS,
+                minimum=4,
+                maximum=180,
+            ),
             latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=2500, minimum=100, maximum=15000),
         )
         messages = build_deepseek_completion_messages(request)

@@ -484,7 +484,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     active_rag_demo.add_argument("--frontend-revision", type=int, default=1)
     active_rag_demo.add_argument("--selection-epoch", type=int, default=1)
     active_rag_demo.add_argument("--max-candidates", type=int, default=5)
-    active_rag_demo.add_argument("--max-chars", type=int, default=24)
+    active_rag_demo.add_argument("--max-chars", type=int, default=120)
     active_rag_demo.add_argument("--wait-ms", type=int, default=3000)
 
     rime_suggest_json = subparsers.add_parser(

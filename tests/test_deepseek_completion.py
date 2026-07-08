@@ -124,6 +124,25 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual([item.text for item in deltas], ["修复LLM输出"])
         self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
 
+    def test_active_rag_request_fallback_can_return_paragraph(self) -> None:
+        provider = _provider([_sse_reasoning("候选=XXX。"), "data: [DONE]\n"])
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="Ctrl+Enter不行，DeepSeek没输出，LLM不显示",
+                    selected_text="DeepSeek 输出我希望是一段话",
+                    max_chars=120,
+                )
+            )
+        )
+
+        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
+        self.assertGreaterEqual(len(deltas[0].text), 40)
+        self.assertLessEqual(len(deltas[0].text), 120)
+        self.assertIn("一段完整正文", deltas[0].text)
+
     def test_deepseek_completion_rejects_chinese_placeholder_assignment(self) -> None:
         provider = _provider([_sse_reasoning("候选=你的候选。"), "data: [DONE]\n"])
 
