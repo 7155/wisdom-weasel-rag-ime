@@ -9,6 +9,7 @@ index 813deae..1bec8e3 100644
 +		B3A777022F330001009D156B /* RagImeSidecarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A777012F330001009D156B /* RagImeSidecarModels.swift */; };
 +		B3A777042F330001009D156B /* RagImeSidecarClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A777032F330001009D156B /* RagImeSidecarClient.swift */; };
 +		B3A777062F330001009D156B /* RagImeSelectedTextProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A777052F330001009D156B /* RagImeSelectedTextProvider.swift */; };
++		B3A777082F330001009D156B /* RagImeAssistantPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A777072F330001009D156B /* RagImeAssistantPanelController.swift */; };
  		B38E9B912BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38E9B902BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift */; };
  		B38E9B952BEAFEFD0036ABEF /* SquirrelInputController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38E9B942BEAFEFD0036ABEF /* SquirrelInputController.swift */; };
  		B39771232BECEA150093A49B /* MacOSKeyCodes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39771222BECEA150093A49B /* MacOSKeyCodes.swift */; };
@@ -19,6 +20,7 @@ index 813deae..1bec8e3 100644
 +		B3A777012F330001009D156B /* RagImeSidecarModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeSidecarModels.swift; path = sources/RagImeSidecarModels.swift; sourceTree = "<group>"; };
 +		B3A777032F330001009D156B /* RagImeSidecarClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeSidecarClient.swift; path = sources/RagImeSidecarClient.swift; sourceTree = "<group>"; };
 +		B3A777052F330001009D156B /* RagImeSelectedTextProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeSelectedTextProvider.swift; path = sources/RagImeSelectedTextProvider.swift; sourceTree = "<group>"; };
++		B3A777072F330001009D156B /* RagImeAssistantPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeAssistantPanelController.swift; path = sources/RagImeAssistantPanelController.swift; sourceTree = "<group>"; };
  		B38E9B8F2BE9AE1E0036ABEF /* Squirrel-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "Squirrel-Bridging-Header.h"; path = "sources/Squirrel-Bridging-Header.h"; sourceTree = "<group>"; };
  		B38E9B902BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SquirrelApplicationDelegate.swift; path = sources/SquirrelApplicationDelegate.swift; sourceTree = "<group>"; };
  		B38E9B942BEAFEFD0036ABEF /* SquirrelInputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SquirrelInputController.swift; path = sources/SquirrelInputController.swift; sourceTree = "<group>"; };
@@ -29,6 +31,7 @@ index 813deae..1bec8e3 100644
 +				B3A777012F330001009D156B /* RagImeSidecarModels.swift */,
 +				B3A777032F330001009D156B /* RagImeSidecarClient.swift */,
 +				B3A777052F330001009D156B /* RagImeSelectedTextProvider.swift */,
++				B3A777072F330001009D156B /* RagImeAssistantPanelController.swift */,
  				B35D2FE72BF00839009D156B /* BridgingFunctions.swift */,
  				B3A001012F260100009D156B /* ReservedProperty.swift */,
  				B38E9B8F2BE9AE1E0036ABEF /* Squirrel-Bridging-Header.h */,
@@ -39,6 +42,7 @@ index 813deae..1bec8e3 100644
 +				B3A777022F330001009D156B /* RagImeSidecarModels.swift in Sources */,
 +				B3A777042F330001009D156B /* RagImeSidecarClient.swift in Sources */,
 +				B3A777062F330001009D156B /* RagImeSelectedTextProvider.swift in Sources */,
++				B3A777082F330001009D156B /* RagImeAssistantPanelController.swift in Sources */,
  				B35D2FE82BF00839009D156B /* BridgingFunctions.swift in Sources */,
  				B3A001022F260100009D156B /* ReservedProperty.swift in Sources */,
  			);
@@ -598,6 +602,171 @@ index 0000000..e4aaed0
 +    environment["RAG_IME_CORE_MODE"] = environment["RAG_IME_CORE_MODE"] ?? "local"
 +    environment["RAG_IME_DB_PATH"] = dbPath
 +    return environment
++  }
++}
+diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
+new file mode 100644
+index 0000000..3d49a0f
+--- /dev/null
++++ b/sources/RagImeAssistantPanelController.swift
+@@ -0,0 +1,199 @@
++//
++//  RagImeAssistantPanelController.swift
++//  Squirrel
++//
++
++import AppKit
++
++final class RagImeAssistantPanelController {
++  private let panel: NSPanel
++  private let stackView: NSStackView
++  private var currentPayload: RagImeAssistantOverlayPayload?
++  private var onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
++
++  init() {
++    panel = NSPanel(
++      contentRect: NSRect(x: 0, y: 0, width: 420, height: 138),
++      styleMask: [.borderless, .nonactivatingPanel],
++      backing: .buffered,
++      defer: false
++    )
++    panel.isReleasedWhenClosed = false
++    panel.isFloatingPanel = true
++    panel.level = .floating
++    panel.backgroundColor = .clear
++    panel.isOpaque = false
++    panel.hasShadow = true
++    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
++
++    stackView = NSStackView(frame: NSRect(x: 0, y: 0, width: 420, height: 138))
++    stackView.orientation = .vertical
++    stackView.alignment = .leading
++    stackView.spacing = 7
++    stackView.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 10, right: 12)
++    stackView.wantsLayer = true
++    stackView.layer?.cornerRadius = 14
++    stackView.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.94).cgColor
++    stackView.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
++    stackView.layer?.borderWidth = 1
++    panel.contentView = stackView
++  }
++
++  var isVisible: Bool {
++    panel.isVisible
++  }
++
++  func showPending(_ payload: RagImeAssistantOverlayPayload, anchor: NSPoint?) {
++    update(payload, anchor: anchor, onSelect: onSelect)
++  }
++
++  func update(
++    _ payload: RagImeAssistantOverlayPayload?,
++    anchor: NSPoint?,
++    onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
++  ) {
++    guard let payload, payload.visible else {
++      dismiss(reason: payload?.dismissReason ?? "hidden")
++      return
++    }
++    currentPayload = payload
++    self.onSelect = onSelect
++    rebuild(payload)
++    position(anchor: anchor)
++    panel.orderFrontRegardless()
++  }
++
++  func dismiss(reason _: String) {
++    currentPayload = nil
++    panel.orderOut(nil)
++  }
++
++  private func rebuild(_ payload: RagImeAssistantOverlayPayload) {
++    stackView.arrangedSubviews.forEach {
++      stackView.removeArrangedSubview($0)
++      $0.removeFromSuperview()
++    }
++    stackView.addArrangedSubview(headerView(payload))
++    if !payload.statusText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || payload.animation.kind == "thinking_dots" {
++      stackView.addArrangedSubview(label(payload.statusText.isEmpty ? "AI 正在想..." : payload.statusText, size: 12, color: .secondaryLabelColor))
++    }
++    for (index, candidate) in payload.candidates.prefix(3).enumerated() {
++      stackView.addArrangedSubview(candidateButton(candidate, index: index))
++    }
++    if !payload.sourceCards.isEmpty {
++      for card in payload.sourceCards.prefix(2) {
++        stackView.addArrangedSubview(label("\(card.sourceBadge) \(card.title)", size: 11, color: .tertiaryLabelColor))
++      }
++    }
++    stackView.addArrangedSubview(label("Tab 插入  ·  ⌥数字选择  ·  Esc 关闭", size: 10, color: .tertiaryLabelColor))
++    let fitting = stackView.fittingSize
++    panel.setContentSize(NSSize(width: max(360, fitting.width), height: max(104, fitting.height)))
++  }
++
++  private func headerView(_ payload: RagImeAssistantOverlayPayload) -> NSView {
++    let row = NSStackView()
++    row.orientation = .horizontal
++    row.alignment = .centerY
++    row.spacing = 8
++
++    let badge = label("AI", size: 11, color: .white)
++    badge.font = .systemFont(ofSize: 11, weight: .bold)
++    badge.wantsLayer = true
++    badge.layer?.cornerRadius = 8
++    badge.layer?.backgroundColor = NSColor.systemBlue.cgColor
++    badge.layer?.masksToBounds = true
++    badge.alignment = .center
++    badge.widthAnchor.constraint(equalToConstant: 28).isActive = true
++    badge.heightAnchor.constraint(equalToConstant: 18).isActive = true
++    row.addArrangedSubview(badge)
++
++    let title = payload.uiMode.contains("active_rag") ? "DeepSeek / RAG" : (payload.animation.kind == "thinking_dots" ? "正在生成" : "AI 建议")
++    row.addArrangedSubview(label(title, size: 13, color: .labelColor, weight: .semibold))
++    if payload.animation.kind == "thinking_dots" {
++      let dotCount = max(1, min(3, payload.animation.frame + 1))
++      row.addArrangedSubview(label(String(repeating: "·", count: dotCount), size: 18, color: .secondaryLabelColor, weight: .bold))
++    }
++    return row
++  }
++
++  private func candidateButton(_ candidate: RagImeDisplayCandidate, index: Int) -> NSButton {
++    let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? candidate.insertText : candidate.text
++    let shortcut = index == 0 ? "Tab" : "⌥\(index + 1)"
++    let button = NSButton(title: "\(shortcut)  \(text)", target: self, action: #selector(candidateButtonClicked(_:)))
++    button.bezelStyle = .rounded
++    button.alignment = .left
++    button.tag = index
++    button.setButtonType(.momentaryPushIn)
++    button.font = .systemFont(ofSize: 13, weight: .medium)
++    return button
++  }
++
++  @objc private func candidateButtonClicked(_ sender: NSButton) {
++    guard let payload = currentPayload else { return }
++    let index = sender.tag
++    guard index >= 0 && index < payload.candidates.count else { return }
++    onSelect?(payload.candidates[index], index)
++  }
++
++  private func label(_ text: String, size: CGFloat, color: NSColor, weight: NSFont.Weight = .regular) -> NSTextField {
++    let field = NSTextField(labelWithString: text)
++    field.font = .systemFont(ofSize: size, weight: weight)
++    field.textColor = color
++    field.maximumNumberOfLines = 2
++    field.lineBreakMode = .byTruncatingTail
++    return field
++  }
++
++  private func position(anchor: NSPoint?) {
++    let base = anchor ?? fallbackAnchor()
++    let size = panel.frame.size
++    panel.setFrameOrigin(NSPoint(x: base.x, y: base.y - size.height - 12))
++  }
++
++  private func fallbackAnchor() -> NSPoint {
++    guard let screen = NSScreen.main?.visibleFrame else {
++      return NSPoint(x: 240, y: 560)
++    }
++    return NSPoint(x: screen.midX - 200, y: screen.midY + 120)
 +  }
 +}
 diff --git a/sources/RagImeSelectedTextProvider.swift b/sources/RagImeSelectedTextProvider.swift
@@ -1166,6 +1335,8 @@ index 0000000..784162d
 +  let modelPredictions: [RagImeModelPrediction]
 +  let ragCandidates: [RagImeSuggestion]
 +  let displayCandidates: [RagImeDisplayCandidate]
++  let candidatePanel: RagImeCandidatePanelPayload?
++  let assistantOverlay: RagImeAssistantOverlayPayload?
 +  let predictionSession: RagImePredictionSessionPayload?
 +  let progressive: RagImeProgressivePayload?
 +  let keyPolicy: RagImeKeyPolicyPayload?
@@ -1216,6 +1387,47 @@ index 0000000..784162d
 +  let tab: String
 +  let optionNumber: String
 +  let escape: String
++}
++
++struct RagImeCandidatePanelPayload: Codable {
++  let schemaVersion: String
++  let mode: String
++  let inputMode: String
++  let candidates: [RagImeDisplayCandidate]
++  let candidateCount: Int
++}
++
++struct RagImeAssistantOverlayAnimation: Codable {
++  let kind: String
++  let frame: Int
++}
++
++struct RagImeAssistantSourceCard: Codable {
++  let sourceType: String
++  let sourceBadge: String
++  let title: String
++  let subtitle: String
++  let preview: String
++  let weight: Double
++}
++
++struct RagImeAssistantOverlayPayload: Codable {
++  let schemaVersion: String
++  let visible: Bool
++  let uiMode: String
++  let phase: String
++  let inputMode: String
++  let statusText: String
++  let animation: RagImeAssistantOverlayAnimation
++  let candidates: [RagImeDisplayCandidate]
++  let sourceCards: [RagImeAssistantSourceCard]
++  let snapshotId: String
++  let sessionFingerprint: String
++  let expiresAfterMs: Int
++  let keyPolicy: RagImeKeyPolicyPayload?
++  let progressive: RagImeProgressivePayload?
++  let frontendTransaction: [String: RagImeJSONValue]?
++  let dismissReason: String
 +}
 +
 +struct RagImePredictionTraceEvent: Codable {
@@ -1434,6 +1646,19 @@ index c2adf74..3cfc0e5 100644
 +  private let ragImeSelectedTextProvider = RagImeSelectedTextProvider()
 +  private var ragImeRequestSeq: Int = 0
 +  private var ragImeDisplayCandidates: [RagImeDisplayCandidate] = []
++  private let ragImeAssistantOverlayController = RagImeAssistantPanelController()
++  private var ragImeOverlayCandidates: [RagImeDisplayCandidate] = []
++  private var ragImeOverlayPanelSessionId: String = ""
++  private var ragImeOverlaySnapshotId: String = ""
++  private var ragImeOverlaySessionFingerprint: String = ""
++  private var ragImeOverlayNumberKeyPolicy: String = ""
++  private var ragImeOverlayTabPolicy: String = ""
++  private var ragImeOverlayOptionNumberPolicy: String = ""
++  private var ragImeOverlayCompositionHash: String = ""
++  private var ragImeOverlayCommittedContextHash: String = ""
++  private var ragImeOverlaySemanticQuery: String = ""
++  private var ragImeOverlayPreedit: String = ""
++  private var ragImeOverlayExpiresAt: Date?
 +  private var ragImePanelUsesDisplayCandidates: Bool = false
 +  private var ragImeDisplayRawInput: String = ""
 +  private var ragImeDisplayPreedit: String = ""
@@ -1484,6 +1709,10 @@ index c2adf74..3cfc0e5 100644
        }
  
        let keyCode = event.keyCode
++      if keyCode == 53 && ragImeAssistantOverlayController.isVisible {
++        dismissRagImeAssistantOverlay(reason: "escape")
++        return true
++      }
 +      if matchesRagImeActiveRagShortcut(keyCode, modifiers: modifiers)
 +        && startRagImeActiveRagAssistFromShortcut() {
 +        let shortcut = ragImeActiveRagShortcutSetting()
@@ -1500,9 +1729,9 @@ index c2adf74..3cfc0e5 100644
 +        && !modifiers.contains(.command)
 +        && !modifiers.contains(.control)
 +        && !modifiers.contains(.option)
-+        && ragImeDisplayIsPostCommitPrediction()
-+        && ragImeDisplayTabPolicy == "accept_top_prediction"
-+        && selectRagImePredictionCandidate(atOrdinal: 1, route: "tab", key: "tab") {
++        && ragImeAssistantOverlayController.isVisible
++        && ragImeOverlayTabPolicy == "accept_top_prediction"
++        && selectRagImeOverlayCandidate(atOrdinal: 1, route: "tab", key: "tab") {
 +        return true
 +      }
        var keyChars = event.charactersIgnoringModifiers
@@ -1515,8 +1744,9 @@ index c2adf74..3cfc0e5 100644
 +        if modifiers.contains(.option)
 +          && !modifiers.contains(.command)
 +          && !modifiers.contains(.control)
-+          && ragImeDisplayOptionNumberPolicy == "select_prediction_by_ordinal"
-+          && selectRagImePredictionCandidate(forKey: String(char), route: "option_number") {
++          && ragImeAssistantOverlayController.isVisible
++          && ragImeOverlayOptionNumberPolicy == "select_prediction_by_ordinal"
++          && selectRagImeOverlayCandidate(forKey: String(char), route: "option_number") {
 +          return true
 +        }
          let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
@@ -1854,106 +2084,241 @@ index c2adf74..3cfc0e5 100644
 +    return selectCandidate(index)
 +  }
 +
-+  func showRagImePostCommitActionPlaceholder(request: RagImeSidecarRequest) {
++  func selectRagImeOverlayCandidate(forKey key: String, route: String) -> Bool {
++    let ordinal: Int
++    if key == "0" {
++      ordinal = 10
++    } else if let parsed = Int(key), parsed > 0 {
++      ordinal = parsed
++    } else {
++      return false
++    }
++    return selectRagImeOverlayCandidate(atOrdinal: ordinal, route: route, key: key)
++  }
++
++  func selectRagImeOverlayCandidate(atOrdinal ordinal: Int, route: String, key: String) -> Bool {
++    guard ragImeAssistantOverlayController.isVisible else { return false }
++    guard ordinal > 0 else { return false }
++    guard let index = ragImeOverlayCandidates.firstIndex(where: { candidate in
++      candidate.candidateOrdinal == ordinal && (candidate.isSelectable ?? true)
++    }) ?? (ordinal == 1 ? ragImeOverlayCandidates.firstIndex(where: { ($0.isSelectable ?? true) && $0.sourceType != "status" }) : nil) else {
++      return false
++    }
++    let candidate = ragImeOverlayCandidates[index]
++    guard candidate.sourceType != "raw_english" && candidate.sourceType != "rime" && candidate.sourceType != "status" else {
++      return false
++    }
++    guard canSelectRagImeOverlayCandidate(candidate) else {
++      traceRagImeFrontendEvent("assistant_overlay_candidate_rejected_stale", fields: [
++        "key": key,
++        "route": route,
++        "reason": "overlay_candidate_transaction_mismatch",
++        "index": index,
++        "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeOverlayPanelSessionId,
++        "snapshotId": ragImeOverlaySnapshotId,
++      ])
++      dismissRagImeAssistantOverlay(reason: "stale_overlay_candidate")
++      return false
++    }
++    let eventName = route == "tab" ? "tab_key_route" : "option_number_route"
++    traceRagImeFrontendEvent(eventName, fields: [
++      "key": key,
++      "route": route,
++      "ordinal": ordinal,
++      "index": index,
++      "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++      "overlay": true,
++    ])
++    return commitRagImeAssistantCandidate(candidate, route: route, index: index)
++  }
++
++  func canSelectRagImeOverlayCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
++    guard candidate.selectionAction != "none", candidate.sourceType != "status", candidate.isStatus != true else { return false }
++    if let expiresAt = ragImeOverlayExpiresAt {
++      guard Date() <= expiresAt else { return false }
++    }
++    if !ragImeOverlaySessionFingerprint.isEmpty {
++      guard ragImeDisplayCandidateSessionFingerprint(candidate) == ragImeOverlaySessionFingerprint else { return false }
++    }
++    if !ragImeOverlaySnapshotId.isEmpty && !(candidate.snapshotId ?? "").isEmpty {
++      guard candidate.snapshotId == ragImeOverlaySnapshotId else { return false }
++    }
++    guard ragImeDisplayCandidateIntMetadata(candidate, "frontendRevision") == ragImeFrontendRevision else { return false }
++    guard ragImeDisplayCandidateIntMetadata(candidate, "selectionEpoch") == ragImeSelectionEpoch else { return false }
++    guard ragImeDisplayCandidateStringMetadata(candidate, "panelSessionId") == ragImeOverlayPanelSessionId else { return false }
++    let compositionHash = ragImeDisplayCandidateStringMetadata(candidate, "compositionHash")
++    if !compositionHash.isEmpty {
++      guard compositionHash == ragImeOverlayCompositionHash else { return false }
++    }
++    let committedContextHash = ragImeDisplayCandidateStringMetadata(candidate, "committedContextHash")
++    if !committedContextHash.isEmpty {
++      guard committedContextHash == ragImeOverlayCommittedContextHash else { return false }
++    }
++    return true
++  }
++
++  func commitRagImeAssistantCandidate(_ candidate: RagImeDisplayCandidate, route: String, index: Int) -> Bool {
++    if candidate.selectionAction == "start_active_rag_from_context" {
++      return startRagImeActiveRagAssistFromContext(actionCandidate: candidate)
++    }
++    guard candidate.selectionAction == "commit_side_candidate" else { return false }
++    let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
++    guard !insertText.isEmpty else { return false }
++    let recentContext = syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeOverlayPreedit)
++    traceRagImeFrontendEvent("assistant_overlay_candidate_accepted", fields: [
++      "route": route,
++      "index": index,
++      "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++      "selectionEpoch": ragImeSelectionEpoch,
++      "panelSessionId": ragImeOverlayPanelSessionId,
++      "snapshotId": ragImeOverlaySnapshotId,
++    ])
++    traceRagImeFrontendEvent("side_candidate_commit", fields: [
++      "index": index,
++      "candidate": ragImeTraceCandidateSummary(candidate, index: index),
++      "query": ragImeOverlaySemanticQuery,
++      "preedit": ragImeOverlayPreedit,
++      "recentContextChars": recentContext.count,
++      "overlay": true,
++    ])
++    commit(string: insertText)
++    rimeAPI.clear_composition(session)
++    recordRagImeSideCandidateCommit(
++      candidate,
++      shownCandidates: ragImeOverlayCandidates,
++      query: ragImeOverlaySemanticQuery,
++      recentContext: recentContext,
++      preedit: ragImeOverlayPreedit
++    )
++    ragImeFrontendRevision += 1
++    ragImeSelectionEpoch += 1
++    dismissRagImeAssistantOverlay(reason: "candidate_accepted")
++    rimeUpdate(clearReservedComments: false, requestSidecar: false)
++    scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)
++    return true
++  }
++
++  func showRagImeAssistantOverlayPending(request: RagImeSidecarRequest) {
 +    guard request.rawInput.isEmpty && request.preedit.isEmpty else { return }
 +    let context = ragImeCompactWhitespace(request.committedContext.isEmpty ? request.commitTextPreview : request.committedContext)
 +    guard !context.isEmpty else { return }
-+    guard ragImeBoolEnvEnabled("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON", default: true) else { return }
-+    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-+    let metadata: [String: RagImeJSONValue] = [
-+      "candidate_mode": .string("post-commit-active-rag-button-local"),
-+      "activeRagTrigger": .bool(true),
-+      "buttonRole": .string("active_rag_generate"),
-+      "buttonLabel": .string("DeepSeek 生成"),
-+      "shortcutHint": .string(ragImeActiveRagShortcutSetting()),
-+      "numericSelectionDisabled": .bool(true),
-+      "triggerPolicy": .string("manual_only"),
-+      "requiresExplicitSelection": .bool(true),
-+      "intent": .string("complete"),
-+      "placement": .string("insert_after_selection"),
-+      "maxCandidates": .number(1),
-+      "requestSeq": .number(Double(request.requestSeq)),
-+      "sessionId": .string(request.sessionId),
-+      "predictionSessionPhase": .string("post_commit"),
-+      "selectionScope": .string("prediction"),
-+      "frontendRevision": .number(Double(request.frontendRevision)),
-+      "selectionEpoch": .number(Double(request.selectionEpoch)),
-+      "frontAppBundleId": .string(request.frontAppBundleId),
-+      "inputSourceId": .string(request.inputSourceId),
-+      "compositionHash": .string(request.compositionHash),
-+      "committedContextHash": .string(request.committedContextHash),
-+      "panelSessionId": .string(request.panelSessionId),
-+      "keyPolicy": .object([
-+        "numberKeys": .string("pass_through"),
-+        "tab": .string("accept_top_prediction"),
-+        "optionNumber": .string("select_prediction_by_ordinal"),
-+        "escape": .string("dismiss_prediction"),
-+      ]),
-+      "localPlaceholder": .bool(true),
-+    ]
-+    var localCandidates: [RagImeDisplayCandidate] = []
-+    if ragImeBoolEnvEnabled("RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL", default: true)
-+      && ragImeBoolEnvEnabled("RAG_IME_PREDICTION_STATUS_ROW", default: true) {
-+      localCandidates.append(
-+        RagImeDisplayCandidate(
-+          label: "",
-+          visibleLabel: "",
-+          selectionKey: nil,
-+          selectionRank: 0,
-+          candidateOrdinal: 0,
-+          candidateStableId: "status:llm:local:\(request.panelSessionId)",
-+          snapshotId: "",
-+          snapshotGeneration: 0,
-+          text: "LLM 生成中…",
-+          insertText: "",
-+          sourceType: "status",
-+          selectionAction: "none",
-+          sourceIndex: 0,
-+          comment: "post_commit",
-+          badge: "LLM",
-+          sourceBadge: "LLM",
-+          colorToken: "statusGray",
-+          sourceStability: "local_placeholder",
-+          hardContextAnchor: "",
-+          queryAnchor: "",
-+          displayAnchor: "",
-+          expiresAtMs: nowMs + Int(ragImePostCommitDisplayHoldoverDuration * 1000),
-+          minVisibleUntilMs: nowMs + 250,
-+          evidencePreview: "",
-+          suggestionId: "",
-+          memoryId: "",
-+          sourceEventId: nil,
-+          rimeIndex: nil,
-+          displayLayout: "status_row",
-+          displayLane: "model_status",
-+          group: "status",
-+          groupLabel: "状态",
-+          isSelectable: false,
-+          isStatus: true,
-+          metadata: [
-+            "candidate_mode": .string("post-commit-llm-local-status"),
-+            "predictionSessionPhase": .string("post_commit"),
-+            "frontendRevision": .number(Double(request.frontendRevision)),
-+            "selectionEpoch": .number(Double(request.selectionEpoch)),
-+            "panelSessionId": .string(request.panelSessionId),
-+            "compositionHash": .string(request.compositionHash),
-+            "committedContextHash": .string(request.committedContextHash),
-+            "animated": .bool(true),
-+            "animationFrame": .number(0),
-+            "waitingMs": .number(0),
-+            "localPlaceholder": .bool(true),
-+          ]
-+        )
-+      )
++    let payload = RagImeAssistantOverlayPayload(
++      schemaVersion: "rag-ime.assistant-overlay.v1",
++      visible: true,
++      uiMode: "post_commit_pending",
++      phase: "post_commit",
++      inputMode: "post_commit_predicting",
++      statusText: ragImeBoolEnvEnabled("RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL", default: true) ? "AI 正在想..." : "按快捷键触发 DeepSeek / RAG",
++      animation: RagImeAssistantOverlayAnimation(kind: ragImeBoolEnvEnabled("RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL", default: true) ? "thinking_dots" : "none", frame: 0),
++      candidates: [ragImeLocalDeepSeekActionCandidate(request: request, context: context)],
++      sourceCards: [],
++      snapshotId: request.panelSessionId,
++      sessionFingerprint: "",
++      expiresAfterMs: Int(ragImePostCommitDisplayHoldoverDuration * 1000),
++      keyPolicy: RagImeKeyPolicyPayload(
++        numberKeys: "pass_through",
++        tab: "accept_top_prediction",
++        optionNumber: "select_prediction_by_ordinal",
++        escape: "dismiss_prediction"
++      ),
++      progressive: nil,
++      frontendTransaction: nil,
++      dismissReason: ""
++    )
++    applyRagImeAssistantOverlay(payload, semanticQuery: context, preedit: "", traceEvent: "assistant_overlay_post_commit_pending")
++  }
++
++  func applyRagImeAssistantOverlay(
++    _ payload: RagImeAssistantOverlayPayload?,
++    semanticQuery: String,
++    preedit: String,
++    traceEvent: String = "assistant_overlay_updated"
++  ) {
++    guard let payload, payload.visible else {
++      dismissRagImeAssistantOverlay(reason: payload?.dismissReason ?? "hidden")
++      return
 +    }
-+    let candidate = RagImeDisplayCandidate(
++    ragImeOverlayCandidates = payload.candidates
++    ragImeOverlayPanelSessionId = payload.candidates.first.map { ragImeDisplayCandidateStringMetadata($0, "panelSessionId") } ?? ""
++    if ragImeOverlayPanelSessionId.isEmpty {
++      ragImeOverlayPanelSessionId = payload.frontendTransaction?["panelSessionId"].flatMap { ragImeJSONValueString($0) } ?? ""
++    }
++    if ragImeOverlayPanelSessionId.isEmpty {
++      ragImeOverlayPanelSessionId = payload.snapshotId
++    }
++    ragImeOverlaySnapshotId = payload.snapshotId
++    ragImeOverlaySessionFingerprint = payload.sessionFingerprint
++    ragImeOverlayNumberKeyPolicy = payload.keyPolicy?.numberKeys ?? "pass_through"
++    ragImeOverlayTabPolicy = payload.keyPolicy?.tab ?? "accept_top_prediction"
++    ragImeOverlayOptionNumberPolicy = payload.keyPolicy?.optionNumber ?? "select_prediction_by_ordinal"
++    ragImeOverlayCompositionHash = payload.candidates.first.map { ragImeDisplayCandidateStringMetadata($0, "compositionHash") } ?? ""
++    if ragImeOverlayCompositionHash.isEmpty {
++      ragImeOverlayCompositionHash = ragImeDisplayCompositionHash
++    }
++    ragImeOverlayCommittedContextHash = payload.candidates.first.map { ragImeDisplayCandidateStringMetadata($0, "committedContextHash") } ?? ""
++    if ragImeOverlayCommittedContextHash.isEmpty {
++      ragImeOverlayCommittedContextHash = ragImeDisplayCommittedContextHash
++    }
++    ragImeOverlaySemanticQuery = semanticQuery
++    ragImeOverlayPreedit = preedit
++    ragImeOverlayExpiresAt = payload.expiresAfterMs > 0 ? Date().addingTimeInterval(TimeInterval(payload.expiresAfterMs) / 1000) : nil
++    ragImeAssistantOverlayController.update(payload, anchor: nil) { [weak self] candidate, index in
++      _ = self?.commitRagImeAssistantCandidate(candidate, route: "click", index: index)
++    }
++    traceRagImeFrontendEvent(traceEvent, fields: [
++      "uiMode": payload.uiMode,
++      "phase": payload.phase,
++      "candidateCount": payload.candidates.count,
++      "sourceCardCount": payload.sourceCards.count,
++      "statusText": payload.statusText,
++      "snapshotId": payload.snapshotId,
++      "panelSessionId": ragImeOverlayPanelSessionId,
++    ])
++    if !payload.sourceCards.isEmpty {
++      traceRagImeFrontendEvent("assistant_overlay_source_cards_visible", fields: [
++        "sourceCardCount": payload.sourceCards.count,
++        "uiMode": payload.uiMode,
++      ])
++    }
++    if !payload.candidates.isEmpty {
++      traceRagImeFrontendEvent("assistant_overlay_candidate_visible", fields: [
++        "candidateCount": payload.candidates.count,
++        "uiMode": payload.uiMode,
++      ])
++    }
++  }
++
++  func dismissRagImeAssistantOverlay(reason: String) {
++    ragImeAssistantOverlayController.dismiss(reason: reason)
++    ragImeOverlayCandidates = []
++    ragImeOverlayPanelSessionId = ""
++    ragImeOverlaySnapshotId = ""
++    ragImeOverlaySessionFingerprint = ""
++    ragImeOverlayNumberKeyPolicy = ""
++    ragImeOverlayTabPolicy = ""
++    ragImeOverlayOptionNumberPolicy = ""
++    ragImeOverlayCompositionHash = ""
++    ragImeOverlayCommittedContextHash = ""
++    ragImeOverlaySemanticQuery = ""
++    ragImeOverlayPreedit = ""
++    ragImeOverlayExpiresAt = nil
++    traceRagImeFrontendEvent("assistant_overlay_dismissed", fields: [
++      "reason": reason,
++    ])
++  }
++
++  func ragImeLocalDeepSeekActionCandidate(request: RagImeSidecarRequest, context: String) -> RagImeDisplayCandidate {
++    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
++    return RagImeDisplayCandidate(
 +      label: "",
 +      visibleLabel: "",
 +      selectionKey: nil,
-+      selectionRank: 0,
-+      candidateOrdinal: 0,
-+      candidateStableId: "action:local:\(request.panelSessionId)",
-+      snapshotId: "",
++      selectionRank: 1,
++      candidateOrdinal: 1,
++      candidateStableId: "action:overlay:\(request.panelSessionId)",
++      snapshotId: request.panelSessionId,
 +      snapshotGeneration: 0,
 +      text: "DeepSeek 生成",
 +      insertText: "",
@@ -1964,10 +2329,10 @@ index c2adf74..3cfc0e5 100644
 +      badge: "生成",
 +      sourceBadge: "生成",
 +      colorToken: "blue",
-+      sourceStability: "local_placeholder",
++      sourceStability: "local_overlay_placeholder",
 +      hardContextAnchor: "",
-+      queryAnchor: "",
-+      displayAnchor: "",
++      queryAnchor: context,
++      displayAnchor: context,
 +      expiresAtMs: nowMs + Int(ragImePostCommitDisplayHoldoverDuration * 1000),
 +      minVisibleUntilMs: nowMs + 500,
 +      evidencePreview: "",
@@ -1975,44 +2340,69 @@ index c2adf74..3cfc0e5 100644
 +      memoryId: "",
 +      sourceEventId: nil,
 +      rimeIndex: nil,
-+      displayLayout: "block",
-+      displayLane: "active_rag",
++      displayLayout: "overlay_action",
++      displayLane: "assistant_overlay",
 +      group: "action",
 +      groupLabel: "操作",
 +      isSelectable: true,
 +      isStatus: false,
-+      metadata: metadata
++      metadata: [
++        "candidate_mode": .string("post-commit-active-rag-button-overlay"),
++        "activeRagTrigger": .bool(true),
++        "buttonRole": .string("active_rag_generate"),
++        "buttonLabel": .string("DeepSeek 生成"),
++        "shortcutHint": .string(ragImeActiveRagShortcutSetting()),
++        "triggerPolicy": .string("manual_only"),
++        "requiresExplicitSelection": .bool(true),
++        "intent": .string("complete"),
++        "placement": .string("insert_after_selection"),
++        "maxCandidates": .number(1),
++        "requestSeq": .number(Double(request.requestSeq)),
++        "sessionId": .string(request.sessionId),
++        "predictionSessionPhase": .string("post_commit"),
++        "selectionScope": .string("prediction"),
++        "frontendRevision": .number(Double(request.frontendRevision)),
++        "selectionEpoch": .number(Double(request.selectionEpoch)),
++        "frontAppBundleId": .string(request.frontAppBundleId),
++        "inputSourceId": .string(request.inputSourceId),
++        "compositionHash": .string(request.compositionHash),
++        "committedContextHash": .string(request.committedContextHash),
++        "panelSessionId": .string(request.panelSessionId),
++        "localPlaceholder": .bool(true),
++      ]
 +    )
-+    localCandidates.append(candidate)
-+    ragImeDisplayCandidates = localCandidates
-+    ragImePanelUsesDisplayCandidates = true
-+    ragImeDisplayRawInput = ""
-+    ragImeDisplayPreedit = ""
-+    ragImeDisplaySemanticQuery = context
-+    ragImeDisplayQueryBasis = "post_commit_local_action"
-+    ragImeDisplayUpdatedAt = Date()
-+    ragImeDisplayExpiresAt = Date().addingTimeInterval(ragImePostCommitDisplayHoldoverDuration)
-+    ragImeDisplaySessionFingerprint = ""
-+    ragImeDisplaySnapshotId = ""
-+    ragImeDisplayNumberKeyPolicy = "pass_through"
-+    ragImeDisplayTabPolicy = "accept_top_prediction"
-+    ragImeDisplayOptionNumberPolicy = "select_prediction_by_ordinal"
-+    ragImeDisplayPanelSessionId = request.panelSessionId
-+    ragImeDisplayCompositionHash = request.compositionHash
-+    ragImeDisplayCommittedContextHash = request.committedContextHash
-+    scheduleRagImeDisplayExpiry()
-+    traceRagImeFrontendEvent("post_commit_local_action_placeholder_displayed", fields: [
-+      "requestSeq": request.requestSeq,
-+      "frontendRevision": request.frontendRevision,
-+      "selectionEpoch": request.selectionEpoch,
-+      "panelSessionId": request.panelSessionId,
-+      "committedContextChars": context.count,
-+      "localStatusDisplayed": localCandidates.count > 1,
-+    ])
-+    rimeUpdate(clearReservedComments: false, requestSidecar: false)
++  }
++
++  func showRagImePostCommitActionPlaceholder(request: RagImeSidecarRequest) {
++    showRagImeAssistantOverlayPending(request: request)
 +  }
 +
 +  func startRagImeActiveRagAssistFromShortcut() -> Bool {
++    if ragImeAssistantOverlayController.isVisible,
++      let actionIndex = ragImeOverlayCandidates.firstIndex(where: { candidate in
++        candidate.selectionAction == "start_active_rag_from_context"
++          || (candidate.sourceType == "action" && candidate.displayLane == "assistant_overlay")
++      }) {
++      let actionCandidate = ragImeOverlayCandidates[actionIndex]
++      guard canSelectRagImeOverlayCandidate(actionCandidate) else {
++        traceRagImeFrontendEvent("active_rag_shortcut_rejected", fields: [
++          "reason": "overlay_transaction_mismatch",
++          "candidate": ragImeTraceCandidateSummary(actionCandidate, index: actionIndex),
++          "selectionEpoch": ragImeSelectionEpoch,
++          "panelSessionId": ragImeOverlayPanelSessionId,
++        ])
++        dismissRagImeAssistantOverlay(reason: "stale_overlay_action")
++        return false
++      }
++      traceRagImeFrontendEvent("active_rag_shortcut_action_button_route", fields: [
++        "candidate": ragImeTraceCandidateSummary(actionCandidate, index: actionIndex),
++        "shortcut": ragImeActiveRagShortcutSetting(),
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeOverlayPanelSessionId,
++        "overlay": true,
++      ])
++      return startRagImeActiveRagAssistFromContext(actionCandidate: actionCandidate)
++    }
 +    if ragImePanelUsesDisplayCandidates,
 +      let actionIndex = ragImeDisplayCandidates.firstIndex(where: { candidate in
 +        candidate.selectionAction == "start_active_rag_from_context"
@@ -2197,86 +2587,35 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func showRagImeActiveRagThinkingPlaceholder(request: RagImeActiveRagRequest) {
-+    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-+    let candidate = RagImeDisplayCandidate(
-+      label: "",
-+      visibleLabel: "",
-+      selectionKey: nil,
-+      selectionRank: 0,
-+      candidateOrdinal: 0,
-+      candidateStableId: "\(request.sessionId):thinking:local",
++    let payload = RagImeAssistantOverlayPayload(
++      schemaVersion: "rag-ime.assistant-overlay.v1",
++      visible: true,
++      uiMode: "active_rag_thinking",
++      phase: "active_rag",
++      inputMode: "active_rag_assist",
++      statusText: "DeepSeek 思考中...",
++      animation: RagImeAssistantOverlayAnimation(kind: "thinking_dots", frame: 0),
++      candidates: [],
++      sourceCards: [],
 +      snapshotId: request.sessionId,
-+      snapshotGeneration: 0,
-+      text: "DeepSeek 思考中…",
-+      insertText: "",
-+      sourceType: "status",
-+      selectionAction: "none",
-+      sourceIndex: 0,
-+      comment: "active_rag",
-+      badge: "查忆",
-+      sourceBadge: "查忆",
-+      colorToken: "statusGray",
-+      sourceStability: "local_placeholder",
-+      hardContextAnchor: "",
-+      queryAnchor: "",
-+      displayAnchor: "",
-+      expiresAtMs: nowMs + max(15000, request.latencyBudgetMs + 3000),
-+      minVisibleUntilMs: nowMs + 500,
-+      evidencePreview: "",
-+      suggestionId: "",
-+      memoryId: "",
-+      sourceEventId: nil,
-+      rimeIndex: nil,
-+      displayLayout: "status_row",
-+      displayLane: "active_rag_status",
-+      group: "status",
-+      groupLabel: "状态",
-+      isSelectable: false,
-+      isStatus: true,
-+      metadata: [
-+        "activeRag": .bool(true),
-+        "activeRagSessionId": .string(request.sessionId),
-+        "selectedTextHash": .string(request.selectedTextHash),
-+        "frontendRevision": .number(Double(request.frontendRevision)),
-+        "selectionEpoch": .number(Double(request.selectionEpoch)),
-+        "panelSessionId": .string(request.panelSessionId),
-+        "frontAppBundleId": .string(request.frontAppBundleId),
-+        "candidateOrdinal": .number(0),
-+        "visibleLabel": .string(""),
-+        "animated": .bool(true),
-+        "animationFrame": .number(0),
-+        "waitingMs": .number(0),
-+        "localPlaceholder": .bool(true),
-+      ]
++      sessionFingerprint: "",
++      expiresAfterMs: max(15000, request.latencyBudgetMs + 3000),
++      keyPolicy: RagImeKeyPolicyPayload(
++        numberKeys: "pass_through",
++        tab: "accept_top_when_ready",
++        optionNumber: "select_candidate_by_ordinal",
++        escape: "dismiss_prediction"
++      ),
++      progressive: nil,
++      frontendTransaction: nil,
++      dismissReason: ""
 +    )
-+    ragImeDisplayCandidates = [candidate]
-+    ragImePanelUsesDisplayCandidates = true
-+    ragImeDisplayNumberKeyPolicy = "select_candidate_when_ready_else_noop"
-+    ragImeDisplayTabPolicy = "accept_top_when_ready"
-+    ragImeDisplayOptionNumberPolicy = "select_candidate_by_ordinal"
-+    ragImeDisplayPanelSessionId = request.panelSessionId
-+    ragImeDisplayRawInput = ""
-+    ragImeDisplayPreedit = ""
-+    ragImeDisplaySemanticQuery = request.context
-+    ragImeDisplayQueryBasis = "activeRag"
-+    ragImeDisplayUpdatedAt = Date()
-+    ragImeDisplayExpiresAt = Date().addingTimeInterval(TimeInterval(max(15000, request.latencyBudgetMs + 3000)) / 1000)
-+    ragImeDisplaySessionFingerprint = ""
-+    ragImeDisplaySnapshotId = request.sessionId
-+    ragImeDisplayCompositionHash = ""
-+    ragImeDisplayCommittedContextHash = ""
-+    scheduleRagImeDisplayExpiry()
-+    traceRagImeFrontendEvent("active_rag_local_thinking_placeholder_displayed", fields: [
-+      "selectedTextHash": request.selectedTextHash,
-+      "selectedTextChars": request.selectedTextChars,
-+      "frontendRevision": request.frontendRevision,
-+      "selectionEpoch": request.selectionEpoch,
-+      "panelSessionId": request.panelSessionId,
-+      "frontAppBundleId": request.frontAppBundleId,
-+      "latencyBudgetMs": request.latencyBudgetMs,
-+      "traceIncludesText": false,
-+    ])
-+    rimeUpdate(clearReservedComments: false, requestSidecar: false)
++    applyRagImeAssistantOverlay(
++      payload,
++      semanticQuery: request.context,
++      preedit: "",
++      traceEvent: "assistant_overlay_active_rag_thinking"
++    )
 +  }
 +
 +  func sendRagImeActiveRagStartRequest(_ request: RagImeActiveRagRequest, sidecarClient: RagImeSidecarClient) {
@@ -2314,26 +2653,38 @@ index c2adf74..3cfc0e5 100644
 +      ])
 +      return
 +    }
-+    ragImeDisplayCandidates = response.candidates
-+    ragImePanelUsesDisplayCandidates = !response.candidates.isEmpty || response.thinkingRow
-+    ragImeDisplayNumberKeyPolicy = response.keyPolicy?.numberKeys ?? "select_candidate_when_ready_else_noop"
-+    ragImeDisplayTabPolicy = response.keyPolicy?.tab ?? "accept_top_when_ready"
-+    ragImeDisplayOptionNumberPolicy = response.keyPolicy?.optionNumber ?? "select_candidate_by_ordinal"
-+    ragImeDisplayPanelSessionId = response.panelSessionId
-+    ragImeDisplayRawInput = ""
-+    ragImeDisplayPreedit = ""
-+    ragImeDisplaySemanticQuery = request.context
-+    ragImeDisplayQueryBasis = "activeRag"
-+    ragImeDisplayUpdatedAt = Date()
-+    ragImeDisplayExpiresAt = Date().addingTimeInterval(ragImePostCommitDisplayHoldoverDuration)
-+    ragImeDisplaySessionFingerprint = ""
-+    ragImeDisplaySnapshotId = response.sessionId
-+    ragImeDisplayCompositionHash = ""
-+    ragImeDisplayCommittedContextHash = ""
++    let activeStatusText = response.candidates.first(where: { $0.sourceType == "status" || $0.isStatus == true })?.text
++    let activeOverlayCandidates = response.candidates.filter { candidate in
++      candidate.sourceType != "status" && candidate.isStatus != true
++    }
++    let activeOverlayPayload = RagImeAssistantOverlayPayload(
++      schemaVersion: "rag-ime.assistant-overlay.v1",
++      visible: response.thinkingRow || !activeOverlayCandidates.isEmpty,
++      uiMode: response.uiMode,
++      phase: "active_rag",
++      inputMode: "active_rag_assist",
++      statusText: activeStatusText ?? (response.thinkingRow ? "DeepSeek 思考中..." : "DeepSeek 已生成"),
++      animation: RagImeAssistantOverlayAnimation(kind: response.thinkingRow ? "thinking_dots" : "none", frame: max(0, response.elapsedMs ?? 0) / 250 % 3),
++      candidates: activeOverlayCandidates,
++      sourceCards: [],
++      snapshotId: response.sessionId,
++      sessionFingerprint: "",
++      expiresAfterMs: Int(ragImePostCommitDisplayHoldoverDuration * 1000),
++      keyPolicy: response.keyPolicy,
++      progressive: nil,
++      frontendTransaction: nil,
++      dismissReason: ""
++    )
 +    ragImeActiveRagSelectedTextHash = response.selectedTextHash
 +    ragImeActiveRagFrontAppBundleId = response.frontAppBundleId
 +    ragImeActiveRagFrontendRevision = response.frontendRevision
 +    ragImeActiveRagSelectionEpoch = response.selectionEpoch
++    applyRagImeAssistantOverlay(
++      activeOverlayPayload,
++      semanticQuery: request.context,
++      preedit: "",
++      traceEvent: response.thinkingRow ? "assistant_overlay_active_rag_thinking" : "assistant_overlay_active_rag_ready"
++    )
 +    traceRagImeFrontendEvent(response.thinkingRow ? "active_rag_thinking_displayed" : "active_rag_ready_displayed", fields: [
 +      "selectedTextHash": response.selectedTextHash,
 +      "selectedTextChars": request.selectedTextChars,
@@ -2344,10 +2695,9 @@ index c2adf74..3cfc0e5 100644
 +      "frontAppBundleId": response.frontAppBundleId,
 +      "candidateCount": response.candidateCount,
 +      "uiMode": response.uiMode,
++      "overlay": true,
 +      "traceIncludesText": false,
 +    ])
-+    scheduleRagImeDisplayExpiry()
-+    rimeUpdate(clearReservedComments: false, requestSidecar: false)
 +  }
 +
 +  func scheduleRagImeActiveRagStatusPoll(
@@ -2928,7 +3278,20 @@ index c2adf74..3cfc0e5 100644
 +      dropRagImeSidecarResponse("rime_page_changed", response: response, request: request, fingerprint: fingerprint, currentRawInput: currentRawInput)
 +      return
 +    }
-+    var displayCandidatesToApply = response.displayCandidates
++    var displayCandidatesToApply = response.candidatePanel?.candidates ?? response.displayCandidates.filter { candidate in
++      candidate.sourceType == "rime"
++    }
++    let overlayVisible = response.assistantOverlay?.visible == true
++    if let assistantOverlay = response.assistantOverlay, assistantOverlay.visible {
++      applyRagImeAssistantOverlay(
++        assistantOverlay,
++        semanticQuery: response.semanticQuery,
++        preedit: response.preedit,
++        traceEvent: "assistant_overlay_updated"
++      )
++    } else if response.rawInput.isEmpty && response.preedit.isEmpty {
++      dismissRagImeAssistantOverlay(reason: response.assistantOverlay?.dismissReason ?? "post_commit_overlay_hidden")
++    }
 +    if ragImeCandidateFingerprint(response.rimeContext.candidates) != ragImeCandidateFingerprint(request.rimeContext.candidates) {
 +      if responseContainsRimeFallback {
 +        let sideOnlyCandidates = displayCandidatesToApply.filter { candidate in
@@ -2974,6 +3337,14 @@ index c2adf74..3cfc0e5 100644
 +        "keptExistingPanel": !shouldClearEmptyResponse,
 +      ])
 +      completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: false)
++      if overlayVisible {
++        scheduleRagImeProgressiveFollowUpIfNeeded(
++          response: response,
++          request: request,
++          fingerprint: fingerprint,
++          inputGeneration: inputGeneration
++        )
++      }
 +      return
 +    }
 +    if response.predictionSession?.shouldClearPredictionPanel == true {
@@ -4010,6 +4381,7 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func clearRagImeDisplayCandidates() {
++    dismissRagImeAssistantOverlay(reason: "clear_display_candidates")
 +    ragImeDisplayCandidates = []
 +    ragImePanelUsesDisplayCandidates = false
 +    ragImeDisplayRawInput = ""

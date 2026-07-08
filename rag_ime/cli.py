@@ -85,6 +85,12 @@ from .predictor_benchmark import (
 from .predictor_latency import latency_log_path_from_env, latency_report
 from .renderer import render_agent_injection, render_terminal_panel
 from .retrieval_docs import rebuild_retrieval_docs
+from .rime_rank_export import (
+    apply_rime_rank_export,
+    preview_rime_rank_export,
+    record_rime_rank_feedback,
+    rollback_rime_rank_export,
+)
 from .reranker import rerank_candidate_dicts
 from .rime_sidecar import (
     build_rime_sidecar_response,
@@ -181,6 +187,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init-db", help="Initialize the local SQLite/FTS5 database")
+
+    rime_rank_preview = subparsers.add_parser("rime-rank-export-preview", help="Preview a Rime custom dictionary from rank feedback")
+    rime_rank_preview.add_argument("--project", default="wisdom-weasel-rag-ime")
+    rime_rank_preview.add_argument("--limit", type=int, default=200)
+    rime_rank_preview.add_argument("--dict-name", default="rag_ime_user")
+
+    rime_rank_apply = subparsers.add_parser("rime-rank-export-apply", help="Apply a reviewed Rime rank export YAML")
+    rime_rank_apply.add_argument("--target-file", required=True)
+    rime_rank_apply.add_argument("--project", default="wisdom-weasel-rag-ime")
+    rime_rank_apply.add_argument("--limit", type=int, default=200)
+    rime_rank_apply.add_argument("--dict-name", default="rag_ime_user")
+    rime_rank_apply.add_argument("--confirm-text", default="")
+
+    rime_rank_rollback = subparsers.add_parser("rime-rank-export-rollback", help="Rollback a Rime rank export from a backup file")
+    rime_rank_rollback.add_argument("--target-file", required=True)
+    rime_rank_rollback.add_argument("--backup-file", required=True)
+
+    rime_rank_record = subparsers.add_parser("rime-rank-feedback", help="Record one Rime ranking feedback event")
+    rime_rank_record.add_argument("--preedit", required=True)
+    rime_rank_record.add_argument("--accepted-text", default="")
+    rime_rank_record.add_argument("--rejected-text", default="")
+    rime_rank_record.add_argument(
+        "--action",
+        choices=("accepted", "backspace_downrank", "correction_pair", "boost", "downrank"),
+        default="accepted",
+    )
+    rime_rank_record.add_argument("--app", default="")
+    rime_rank_record.add_argument("--project", default="wisdom-weasel-rag-ime")
+    rime_rank_record.add_argument("--candidate-rank", type=int)
+    rime_rank_record.add_argument("--context-hash", default="")
+    rime_rank_record.add_argument("--metadata-json", default="{}")
 
     memory_inspect = subparsers.add_parser("memory-inspect", help="Inspect v2 memory items")
     memory_inspect.add_argument("--project", default="")
@@ -1115,6 +1152,73 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit("init-db requires --core-mode local")
         core.initialize()
         print(json.dumps({"db_path": str(core.db_path), "initialized": True}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "rime-rank-export-preview":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("rime-rank-export-preview requires --core-mode local")
+        core.initialize()
+        print(
+            json.dumps(
+                preview_rime_rank_export(
+                    core.db_path,
+                    project=args.project,
+                    limit=max(1, int(args.limit)),
+                    dict_name=args.dict_name,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "rime-rank-export-apply":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("rime-rank-export-apply requires --core-mode local")
+        core.initialize()
+        print(
+            json.dumps(
+                apply_rime_rank_export(
+                    core.db_path,
+                    target_file=args.target_file,
+                    project=args.project,
+                    limit=max(1, int(args.limit)),
+                    dict_name=args.dict_name,
+                    confirm_text=args.confirm_text,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "rime-rank-export-rollback":
+        print(
+            json.dumps(
+                rollback_rime_rank_export(target_file=args.target_file, backup_file=args.backup_file),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "rime-rank-feedback":
+        if not isinstance(core, LocalSqliteCoreClient):
+            raise SystemExit("rime-rank-feedback requires --core-mode local")
+        core.initialize()
+        event_id = record_rime_rank_feedback(
+            core.db_path,
+            preedit=args.preedit,
+            accepted_text=args.accepted_text,
+            rejected_text=args.rejected_text,
+            action=args.action,
+            app=args.app,
+            project=args.project,
+            candidate_rank=args.candidate_rank,
+            context_hash=args.context_hash,
+            metadata=_json_object_arg(args.metadata_json, flag="--metadata-json"),
+        )
+        print(json.dumps({"schemaVersion": "rag-ime.rime-rank-feedback.v1", "id": event_id}, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "memory-inspect":

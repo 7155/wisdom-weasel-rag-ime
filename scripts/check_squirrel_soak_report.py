@@ -72,6 +72,21 @@ def main() -> int:
         help="Require proof that composition-time Rime candidates remained owned by Rime, not the post-commit predictor.",
     )
     parser.add_argument(
+        "--require-no-ai-during-composition",
+        action="store_true",
+        help="Require that composition panels contain no AI/model/RAG/memory/action candidates.",
+    )
+    parser.add_argument(
+        "--require-assistant-overlay-post-commit",
+        action="store_true",
+        help="Require post-commit AI output to be shown through assistant overlay trace events.",
+    )
+    parser.add_argument(
+        "--require-assistant-overlay-key-policy",
+        action="store_true",
+        help="Require overlay Tab/Option-number acceptance or accepted overlay candidate trace evidence.",
+    )
+    parser.add_argument(
         "--require-post-commit-visible",
         action="store_true",
         help="Require at least one real non-status post-commit prediction panel in the foreground trace.",
@@ -187,6 +202,9 @@ def main() -> int:
             require_modern_prediction_session=args.require_modern_prediction_session,
             require_balanced_quota=args.require_balanced_quota,
             require_rime_composition_ok=args.require_rime_composition_ok,
+            require_no_ai_during_composition=args.require_no_ai_during_composition,
+            require_assistant_overlay_post_commit=args.require_assistant_overlay_post_commit,
+            require_assistant_overlay_key_policy=args.require_assistant_overlay_key_policy,
             require_post_commit_visible=args.require_post_commit_visible,
             require_source_badges=args.require_source_badges,
             require_post_commit_key_policy=args.require_post_commit_key_policy,
@@ -238,6 +256,9 @@ def build_soak_report(
     require_modern_prediction_session: bool,
     require_balanced_quota: bool,
     require_rime_composition_ok: bool,
+    require_no_ai_during_composition: bool,
+    require_assistant_overlay_post_commit: bool,
+    require_assistant_overlay_key_policy: bool,
     require_post_commit_visible: bool,
     require_source_badges: bool,
     require_post_commit_key_policy: bool,
@@ -268,6 +289,9 @@ def build_soak_report(
     post_commit_followups = collect_post_commit_followups(events)
     chain = summarize_chaining(events)
     stale_applied = collect_stale_applied_responses(events)
+    composition_ai_violations = collect_composition_ai_candidate_violations(events)
+    assistant_overlay_post_commit_ok = has_assistant_overlay_post_commit(events)
+    assistant_overlay_key_policy_ok = has_assistant_overlay_key_policy(events)
     prediction_stability = summarize_prediction_stability(events, stale_applied_count=len(stale_applied))
     lane_stability = summarize_lane_stability(events)
     display_quality = summarize_display_quality(
@@ -328,6 +352,9 @@ def build_soak_report(
         "maxFirstVisibleMs": max_first_visible_ms,
         "maxContextEchoCount": max_context_echo_count,
         "requireRimeCompositionOk": require_rime_composition_ok,
+        "requireNoAiDuringComposition": require_no_ai_during_composition,
+        "requireAssistantOverlayPostCommit": require_assistant_overlay_post_commit,
+        "requireAssistantOverlayKeyPolicy": require_assistant_overlay_key_policy,
         "requirePostCommitVisible": require_post_commit_visible,
         "requireSourceBadges": require_source_badges,
         "requirePostCommitKeyPolicy": require_post_commit_key_policy,
@@ -358,6 +385,9 @@ def build_soak_report(
         "flickerCount": int(prediction_stability["flickerCount"]) <= max_flicker_count,
         "minVisibleViolations": int(prediction_stability["minVisibleViolationCount"]) <= max_min_visible_violations,
         "ragEmptyClearedPanel": int(lane_stability["ragEmptyClearedPanelCount"]) <= max_rag_empty_cleared_panel,
+        "noAiDuringComposition": not require_no_ai_during_composition or not composition_ai_violations,
+        "assistantOverlayPostCommit": not require_assistant_overlay_post_commit or assistant_overlay_post_commit_ok,
+        "assistantOverlayKeyPolicy": not require_assistant_overlay_key_policy or assistant_overlay_key_policy_ok,
         "snapshotSelectionTrace": (
             not require_snapshot_selection_trace
             or int(selection_quality["sideCommitWithoutAcceptedSnapshotSelectionCount"]) == 0
@@ -561,6 +591,15 @@ def build_soak_report(
         )
     v1_violation_checks = [
         (require_rime_composition_ok and not v1_foreground["rimeCompositionOk"], "rime_composition_not_proven"),
+        (require_no_ai_during_composition and composition_ai_violations, "ai_candidate_during_composition"),
+        (
+            require_assistant_overlay_post_commit and not assistant_overlay_post_commit_ok,
+            "assistant_overlay_post_commit_not_proven",
+        ),
+        (
+            require_assistant_overlay_key_policy and not assistant_overlay_key_policy_ok,
+            "assistant_overlay_key_policy_not_proven",
+        ),
         (require_post_commit_visible and not v1_foreground["postCommitVisible"], "post_commit_visible_not_proven"),
         (require_post_commit_key_policy and not v1_foreground["postCommitKeyPolicyOk"], "post_commit_key_policy_not_proven"),
         (require_app_switch_stale_drop and not v1_foreground["appSwitchStaleDropOk"], "app_switch_stale_drop_not_proven"),
@@ -625,6 +664,9 @@ def build_soak_report(
             "modernPredictionSession": require_modern_prediction_session,
             "balancedQuota": require_balanced_quota,
             "rimeCompositionOk": require_rime_composition_ok,
+            "noAiDuringComposition": require_no_ai_during_composition,
+            "assistantOverlayPostCommit": require_assistant_overlay_post_commit,
+            "assistantOverlayKeyPolicy": require_assistant_overlay_key_policy,
             "postCommitVisible": require_post_commit_visible,
             "sourceBadges": require_source_badges,
             "postCommitKeyPolicy": require_post_commit_key_policy,
@@ -649,6 +691,9 @@ def build_soak_report(
             "deleteResyncObserved": bool(frontend_report.get("latestDeleteResync")),
             "postDeleteContextUseObserved": bool(frontend_report.get("latestPostDeleteContextUse")),
             "postCommitBarrierViolationCount": len(post_commit_barrier_violations),
+            "compositionAiViolationCount": len(composition_ai_violations),
+            "assistantOverlayPostCommit": assistant_overlay_post_commit_ok,
+            "assistantOverlayKeyPolicy": assistant_overlay_key_policy_ok,
             "staleAppliedResponseCount": len(stale_applied),
             "staleResponseDropCount": int(event_counts.get("sidecar_response_dropped_stale", 0))
             + int(event_counts.get("sidecar_response_dropped", 0)),
@@ -764,6 +809,60 @@ def has_post_commit_visible_panel(events: list[dict[str, Any]]) -> bool:
     return any(event_is_visible_post_commit_panel(event) for event in events)
 
 
+def has_assistant_overlay_post_commit(events: list[dict[str, Any]]) -> bool:
+    overlay_events = {
+        "assistant_overlay_displayed",
+        "assistant_overlay_updated",
+        "assistant_overlay_candidate_visible",
+        "assistant_overlay_active_rag_thinking",
+        "assistant_overlay_active_rag_ready",
+        "post_commit_local_action_placeholder_displayed",
+    }
+    for event in events:
+        if str(event.get("event") or "") not in overlay_events:
+            continue
+        phase = str(event.get("phase") or "")
+        ui_mode = str(event.get("uiMode") or "")
+        if phase in {"post_commit", "active_rag"} or ui_mode.startswith(("post_commit", "active_rag")):
+            return True
+        if str(event.get("event") or "") == "post_commit_local_action_placeholder_displayed":
+            return True
+    return False
+
+
+def has_assistant_overlay_key_policy(events: list[dict[str, Any]]) -> bool:
+    for event in events:
+        name = str(event.get("event") or "")
+        if name == "assistant_overlay_candidate_accepted":
+            return True
+        if name in {"tab_key_route", "option_number_route"} and bool(event.get("overlay")):
+            return True
+    return False
+
+
+def collect_composition_ai_candidate_violations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "panel_display_candidates":
+            continue
+        if not panel_is_composition_event(event):
+            continue
+        for candidate in event_candidates(event):
+            if not isinstance(candidate, dict):
+                continue
+            source_type = str(candidate.get("sourceType") or "")
+            if source_type and source_type != SOURCE_RIME:
+                violations.append(
+                    {
+                        "event": event.get("event"),
+                        "sourceType": source_type,
+                        "text": candidate_display_text(candidate),
+                        "snapshotId": candidate.get("snapshotId"),
+                    }
+                )
+    return violations
+
+
 def event_is_visible_post_commit_panel(event: dict[str, Any]) -> bool:
     if event.get("event") != "panel_display_candidates":
         return False
@@ -781,6 +880,18 @@ def panel_is_post_commit_event(event: dict[str, Any]) -> bool:
         phase = str(session.get("phase") or "")
         selection_scope = str(session.get("selectionScope") or "")
         return phase == "post_commit" or selection_scope == "prediction"
+    return False
+
+
+def panel_is_composition_event(event: dict[str, Any]) -> bool:
+    ui_mode = str(event.get("uiMode") or "")
+    if ui_mode == "composition_rime":
+        return True
+    prediction_session = event.get("predictionSession")
+    if isinstance(prediction_session, dict):
+        phase = str(prediction_session.get("phase") or "")
+        owned = bool(prediction_session.get("rimeCompositionOwnedByRime"))
+        return phase == "composition" or owned
     return False
 
 

@@ -193,6 +193,23 @@ class LocalSqliteCoreClient:
                     created_at_ms INTEGER NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS rime_rank_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at_ms INTEGER NOT NULL,
+                    preedit TEXT NOT NULL,
+                    rejected_text TEXT NOT NULL DEFAULT '',
+                    accepted_text TEXT NOT NULL DEFAULT '',
+                    action TEXT NOT NULL,
+                    app TEXT NOT NULL DEFAULT '',
+                    project TEXT NOT NULL DEFAULT '',
+                    candidate_rank INTEGER,
+                    context_hash TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_rime_rank_feedback_lookup
+                ON rime_rank_feedback(project, preedit, accepted_text, rejected_text, action);
+
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
                     content_text,
                     committed_text,
