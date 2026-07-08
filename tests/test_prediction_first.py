@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from rag_ime.models import InputSuggestion, ModelPrediction, RimeCandidate, RimeContextSnapshot
 from rag_ime.prediction_first import (
@@ -119,6 +120,7 @@ class PredictionFirstTests(unittest.TestCase):
                     metadata={"initials": "bbdjy zr agent scyx sxw"},
                 ),
             ],
+            mode=InputMode.PREFIX_CONSTRAINED_COMPOSING,
         )
 
         self.assertEqual(result.mode, InputMode.PREFIX_CONSTRAINED_COMPOSING)
@@ -219,6 +221,7 @@ class PredictionFirstTests(unittest.TestCase):
                     metadata={"source_type": "rag", "initials": "sjyg hxzsfs"},
                 )
             ],
+            mode=InputMode.PREFIX_CONSTRAINED_COMPOSING,
         )
 
         self.assertEqual(result.mode, InputMode.PREFIX_CONSTRAINED_COMPOSING)
@@ -405,6 +408,7 @@ class PredictionFirstTests(unittest.TestCase):
                     metadata={"source_type": "memory", "initials": "sjwd hxtc ywd"},
                 ),
             ],
+            mode=InputMode.PREFIX_CONSTRAINED_COMPOSING,
         )
 
         self.assertEqual(
@@ -502,6 +506,7 @@ class PredictionFirstTests(unittest.TestCase):
                 )
             ],
             suggestions=[],
+            mode=InputMode.PREFIX_CONSTRAINED_COMPOSING,
         )
 
         model_item = result.display_candidates[0]
@@ -625,8 +630,15 @@ class PredictionFirstTests(unittest.TestCase):
             infer_input_mode(
                 RimeContextSnapshot(session_id="s", request_seq=2, preedit="sj", committed_context="我想")
             ),
-            InputMode.PREFIX_CONSTRAINED_COMPOSING,
+            InputMode.ANCHOR_COMPOSING,
         )
+        with patch.dict("os.environ", {"RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "1"}):
+            self.assertEqual(
+                infer_input_mode(
+                    RimeContextSnapshot(session_id="s", request_seq=22, preedit="sj", committed_context="我想")
+                ),
+                InputMode.PREFIX_CONSTRAINED_COMPOSING,
+            )
         self.assertEqual(
             infer_input_mode(RimeContextSnapshot(session_id="s", request_seq=3, committed_context="我想")),
             InputMode.POST_COMMIT_PREDICTING,

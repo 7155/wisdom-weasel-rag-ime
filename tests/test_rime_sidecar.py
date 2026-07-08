@@ -244,13 +244,19 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
         self.assertEqual(predictor.calls, 0)
         self.assertFalse(response["modelLane"]["called"])
-        self.assertEqual(response["modelLane"]["skippedReason"], "model lane disabled before post-commit")
+        self.assertFalse(response["ragLane"]["called"])
+        self.assertEqual(response["modelLane"]["skippedReason"], "skip: composition owned by rime; ai after commit only")
+        self.assertEqual(response["ragLane"]["skippedReason"], "skip: composition owned by rime; ai after commit only")
         self.assertTrue(response["predictionSession"]["rimeCompositionOwnedByRime"])
         self.assertEqual(response["predictionSession"]["selectionScope"], "rime")
         self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime", "rime"])
+        self.assertEqual([item["sourceType"] for item in response["candidatePanel"]["candidates"]], ["rime", "rime"])
+        self.assertFalse(response["assistantOverlay"]["visible"])
+        self.assertEqual(response["assistantOverlay"]["dismissReason"], "composition_owned_by_rime")
+        self.assertEqual(response["assistantOverlay"]["candidates"], [])
         self.assertEqual(response["keyPolicy"]["numberKeys"], "select_rime_candidate")
 
-    def test_v1_accessibility_foreground_context_feeds_side_lanes(self) -> None:
+    def test_v1_accessibility_foreground_context_does_not_feed_side_lanes_during_composition(self) -> None:
         core = CuratedMemoryCore([_memory("fg:1", "真实前台文本相关候选", accepted_count=2)])
         payload = self._composition_payload(request_seq=11)
         payload["committedContext"] = "旧的输入法 ledger 不应该优先进入 side lane"
@@ -278,9 +284,16 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertTrue(foreground_context["applied"])
         self.assertEqual(foreground_context["source"], "accessibility")
         self.assertEqual(foreground_context["wholeValueHash"], "sha256:foreground-whole-value")
-        self.assertIn("真实前台文本", core.last_current_input)
-        self.assertIn("真实前台文本", core.last_recent_context)
-        self.assertNotIn("旧的输入法 ledger", core.last_recent_context)
+        self.assertEqual(core.calls, 0)
+        self.assertEqual(core.last_current_input, "")
+        self.assertEqual(core.last_recent_context, "")
+        self.assertFalse(response["ragLane"]["called"])
+        self.assertFalse(response["modelLane"]["called"])
+        self.assertEqual(response["triggerDecision"]["reason"], "skip: composition owned by rime; ai after commit only")
+        self.assertEqual([item["sourceType"] for item in response["displayCandidates"]], ["rime", "rime"])
+        self.assertEqual([item["sourceType"] for item in response["candidatePanel"]["candidates"]], ["rime", "rime"])
+        self.assertFalse(response["assistantOverlay"]["visible"])
+        self.assertEqual(response["assistantOverlay"]["dismissReason"], "composition_owned_by_rime")
 
     def test_v1_accessibility_foreground_context_can_drive_query_without_rime(self) -> None:
         core = CuratedMemoryCore([_memory("fg:2", "前台正文续写候选", accepted_count=2)])
@@ -388,6 +401,11 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(response["modelLane"]["firstResponseMs"], 150)
         self.assertTrue(response["progressive"]["shouldFollowUp"])
         self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
+        self.assertEqual(response["candidatePanel"]["candidates"], [])
+        self.assertTrue(response["assistantOverlay"]["visible"])
+        self.assertEqual(response["assistantOverlay"]["phase"], "post_commit")
+        self.assertEqual(response["assistantOverlay"]["animation"]["kind"], "thinking_dots")
+        self.assertTrue(response["assistantOverlay"]["statusText"])
 
     def test_v1_post_commit_followup_does_not_restart_provider(self) -> None:
         predictor = RecordingPredictionProvider(sleep_s=0.4)
@@ -453,6 +471,8 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertTrue(follow_up["ragLane"]["directDisplaySuppressed"])
         self.assertEqual(follow_up["ragLane"]["displaySuggestionCount"], 0)
         self.assertGreaterEqual(follow_up["ragLane"]["filteredSuggestionCount"], 1)
+        source_cards = follow_up["assistantOverlay"]["sourceCards"]
+        self.assertTrue(any(card["title"] == "真实输入链路跑通" for card in source_cards))
 
     def test_v1_rag_prompt_leaks_filtered(self) -> None:
         core = CuratedMemoryCore(
@@ -511,6 +531,10 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertTrue(action_candidates[0]["metadata"]["numericSelectionDisabled"])
         self.assertEqual(action_candidates[0]["metadata"]["triggerPolicy"], "manual_only")
         self.assertTrue(action_candidates[0]["metadata"]["requiresExplicitSelection"])
+        overlay_candidates = response["assistantOverlay"]["candidates"]
+        self.assertEqual(response["candidatePanel"]["candidates"], [])
+        self.assertTrue(any(item["sourceType"] == "action" for item in overlay_candidates))
+        self.assertTrue(all(item["sourceType"] != "status" for item in overlay_candidates))
 
     def test_v1_post_commit_auto_model_can_be_action_only(self) -> None:
         predictor = RecordingPredictionProvider(["不应该自动调用"])

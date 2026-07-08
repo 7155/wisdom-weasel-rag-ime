@@ -90,12 +90,56 @@ struct RimeSidecarResponse: Codable {
     let modelPredictions: [ModelPrediction]
     let ragCandidates: [RagSuggestion]
     let displayCandidates: [RimeDisplayCandidate]
+    let candidatePanel: RimeCandidatePanelPayload?
+    let assistantOverlay: RagImeAssistantOverlayPayload?
     let predictionFirst: RimePredictionFirstPayload?
     let predictionSession: RimePredictionSessionPayload?
     let keyPolicy: RimeKeyPolicyPayload?
     let progressive: RimeProgressivePayload?
     let selectionActions: RimeSelectionActions
     let mergePolicy: RimeMergePolicy
+}
+
+struct RimeCandidatePanelPayload: Codable {
+    let schemaVersion: String
+    let mode: String
+    let inputMode: String
+    let candidates: [RimeDisplayCandidate]
+    let candidateCount: Int
+}
+
+struct RagImeAssistantOverlayPayload: Codable {
+    let schemaVersion: String
+    let visible: Bool
+    let uiMode: String
+    let phase: String
+    let inputMode: String
+    let statusText: String
+    let animation: RagImeAssistantOverlayAnimation
+    let candidates: [RimeDisplayCandidate]
+    let sourceCards: [RagImeAssistantSourceCard]
+    let snapshotId: String
+    let sessionFingerprint: String
+    let expiresAfterMs: Int
+    let keyPolicy: RimeKeyPolicyPayload?
+    let progressive: RimeProgressivePayload?
+    let frontendTransaction: [String: JSONValue]?
+    let dismissReason: String
+}
+
+struct RagImeAssistantOverlayAnimation: Codable, Hashable {
+    let kind: String
+    let frame: Int
+}
+
+struct RagImeAssistantSourceCard: Codable, Hashable {
+    let sourceType: String
+    let sourceBadge: String
+    let title: String
+    let evidencePreview: String
+    let confidence: Double?
+    let suggestionId: String
+    let memoryId: String
 }
 
 struct RimeTriggerDecision: Codable {

@@ -16,6 +16,7 @@ final class RagInputController: IMKInputController {
     private var latestModelPredictions: [ModelPrediction] = []
     private var latestSuggestions: [RagSuggestion] = []
     private var latestDisplayCandidates: [RimeDisplayCandidate] = []
+    private var latestAssistantOverlay: RagImeAssistantOverlayPayload?
     private var latestPredictionSession: RimePredictionSessionPayload?
     private var latestKeyPolicy: RimeKeyPolicyPayload?
     private var activePanelSession: ActivePanelSession?
@@ -45,6 +46,24 @@ final class RagInputController: IMKInputController {
 
         if event.keyCode == 51 && !hasCommandLikeModifier {
             return handleBackspace(client: client)
+        }
+
+        if event.keyCode == 53 && RagImeAssistantPanelController.shared.isVisible {
+            clearCandidateState()
+            clearVisiblePredictionPanel()
+            return true
+        }
+
+        if event.keyCode == 48 && !modifiers.contains(.command) && !modifiers.contains(.control) {
+            if selectFirstOverlayCandidateIfNeeded(client: client) {
+                return true
+            }
+        }
+
+        if modifiers.contains(.option),
+           let key = event.charactersIgnoringModifiers,
+           selectOverlayCandidateIfNeeded(key, client: client) {
+            return true
         }
 
         if let key = event.charactersIgnoringModifiers,
@@ -116,6 +135,44 @@ final class RagInputController: IMKInputController {
         }
 
         return false
+    }
+
+    private func selectOverlayCandidateIfNeeded(_ string: String, client: IMKTextInput) -> Bool {
+        guard latestKeyPolicy?.optionNumber == "select_prediction_by_ordinal",
+              let number = selectionNumber(forKey: string),
+              canRouteNumberToVisiblePanel(),
+              let candidate = displayCandidate(matchingSelectionNumber: number, selectionKey: string) else {
+            return false
+        }
+        let query = composition.isEmpty ? candidate.text : composition
+        commit(
+            text: candidate.insertText,
+            client: client,
+            selectedDisplayCandidate: candidate,
+            selectedSuggestion: nil,
+            rank: candidate.selectionRank ?? number,
+            queryOverride: query
+        )
+        return true
+    }
+
+    private func selectFirstOverlayCandidateIfNeeded(client: IMKTextInput) -> Bool {
+        guard latestKeyPolicy?.tab == "accept_top_prediction",
+              canRouteNumberToVisiblePanel(),
+              let candidate = firstVisibleDisplayCandidate(),
+              candidate.sourceType != "rime" else {
+            return false
+        }
+        let query = composition.isEmpty ? candidate.text : composition
+        commit(
+            text: candidate.insertText,
+            client: client,
+            selectedDisplayCandidate: candidate,
+            selectedSuggestion: nil,
+            rank: candidate.selectionRank ?? 1,
+            queryOverride: query
+        )
+        return true
     }
 
     override func commitComposition(_ sender: Any!) {
@@ -491,24 +548,36 @@ final class RagInputController: IMKInputController {
             client: providedClient,
             postCommit: postCommit
         )
-        if response.displayCandidates.isEmpty {
+        let anchor = panelAnchor(client: providedClient ?? client())
+        let overlayCandidates = response.assistantOverlay?.candidates ?? []
+        renderAssistantOverlay(response: response, anchor: anchor)
+
+        let panelDisplayCandidates = response.candidatePanel?.candidates ?? response.displayCandidates.filter { $0.sourceType == "rime" }
+        if panelDisplayCandidates.isEmpty {
+            latestDisplayCandidates = overlayCandidates
+            latestModelPredictions = response.modelPredictions
+            latestSuggestions = response.ragCandidates
             if response.predictionSession?.shouldClearPredictionPanel == true {
                 clearCandidateState()
                 clearVisiblePredictionPanel()
             }
+            if response.assistantOverlay?.visible == true {
+                activatePanelSession(response: response, postCommit: postCommit)
+            } else {
+                RagCandidatePanel.shared.hide()
+            }
             return
         }
-        if !shouldShowCandidatePanel(response) {
+        if !shouldShowCandidatePanel(response, panelDisplayCandidates: panelDisplayCandidates) {
             clearCandidateState()
-            clearVisiblePredictionPanel()
+            RagCandidatePanel.shared.hide()
             return
         }
-        latestDisplayCandidates = response.displayCandidates
+        latestDisplayCandidates = overlayCandidates.isEmpty ? panelDisplayCandidates : overlayCandidates
         latestModelPredictions = response.modelPredictions
         latestSuggestions = response.ragCandidates
-        let anchor = panelAnchor(client: providedClient ?? client())
         RagCandidatePanel.shared.show(
-            displayCandidates: response.displayCandidates,
+            displayCandidates: panelDisplayCandidates,
             currentInput: currentInput.isEmpty ? response.semanticQuery : currentInput,
             anchor: anchor,
             onSelect: { [weak self] candidate, index in
@@ -523,6 +592,27 @@ final class RagInputController: IMKInputController {
             }
         )
         activatePanelSession(response: response, postCommit: postCommit)
+    }
+
+    private func renderAssistantOverlay(response: RimeSidecarResponse, anchor: NSPoint?) {
+        latestAssistantOverlay = response.assistantOverlay
+        RagImeAssistantPanelController.shared.update(payload: response.assistantOverlay, anchor: anchor) { [weak self] candidate, index in
+            guard let self, let client = self.client() else {
+                return
+            }
+            guard self.canSelectPanelCandidate(candidate, response: response) else {
+                return
+            }
+            let query = self.composition.isEmpty ? response.semanticQuery : self.composition
+            self.commit(
+                text: candidate.insertText,
+                client: client,
+                selectedDisplayCandidate: candidate,
+                selectedSuggestion: nil,
+                rank: candidate.selectionRank ?? index + 1,
+                queryOverride: query
+            )
+        }
     }
 
     private func scheduleProgressiveFollowUpIfNeeded(
@@ -716,8 +806,9 @@ final class RagInputController: IMKInputController {
         return nil
     }
 
-    private func shouldShowCandidatePanel(_ response: RimeSidecarResponse) -> Bool {
-        guard !response.displayCandidates.isEmpty else {
+    private func shouldShowCandidatePanel(_ response: RimeSidecarResponse, panelDisplayCandidates: [RimeDisplayCandidate]? = nil) -> Bool {
+        let candidates = panelDisplayCandidates ?? response.displayCandidates
+        guard !candidates.isEmpty else {
             return false
         }
         guard let session = response.predictionSession else {
@@ -970,6 +1061,7 @@ final class RagInputController: IMKInputController {
         latestModelPredictions = []
         latestSuggestions = []
         latestDisplayCandidates = []
+        latestAssistantOverlay = nil
         latestPredictionSession = nil
         latestKeyPolicy = nil
     }
@@ -981,6 +1073,7 @@ final class RagInputController: IMKInputController {
         panelExpiration = nil
         activePanelSession = nil
         RagCandidatePanel.shared.hide()
+        RagImeAssistantPanelController.shared.dismiss(reason: "clear_visible_prediction_panel")
     }
 
     private func cancelPendingRefresh(invalidateResponses: Bool) {

@@ -90,7 +90,11 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             "RAG_IME_MEMORY_OPTIMIZER",
             "RAG_IME_MEMORY_OPTIMIZER_TRACE",
             "RAG_IME_MEMORY_OPTIMIZER_MAX_MS",
+            "RAG_IME_AI_AFTER_COMMIT_ONLY",
+            "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL",
         )}
+        os.environ["RAG_IME_AI_AFTER_COMMIT_ONLY"] = "0"
+        os.environ["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"] = "1"
 
     def tearDown(self) -> None:
         for key, value in self.original.items():

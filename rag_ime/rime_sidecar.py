@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
+from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .context_frame import build_current_input_frame, context_frame_trace_payload, foreground_text_from_payload
 from .context_views import (
     build_display_view,
@@ -792,6 +793,7 @@ def build_rime_sidecar_response(
             }
         )
     else:
+        skipped_by_trigger_reason = trigger_decision.reason or "side candidates disabled by trigger"
         prediction_context = ""
         model_predictions = []
         suggestions = []
@@ -806,7 +808,7 @@ def build_rime_sidecar_response(
         rag_lane = {
             "called": False,
             "timedOut": False,
-            "skippedReason": "side candidates disabled by trigger",
+            "skippedReason": skipped_by_trigger_reason,
             "suggestionCount": 0,
             "filteredSuggestionCount": 0,
             "postCommitQualityFilteredCount": 0,
@@ -822,7 +824,7 @@ def build_rime_sidecar_response(
         model_lane = {
             "called": False,
             "timedOut": False,
-            "skippedReason": "side candidates disabled by trigger",
+            "skippedReason": skipped_by_trigger_reason,
             "predictionCount": 0,
             "filteredPredictionCount": 0,
             "latencyBudgetMs": 0,
@@ -1056,12 +1058,29 @@ def build_rime_sidecar_response(
         key_policy={str(key): str(value) for key, value in key_policy.items()},
     )
     include_context_text = os.environ.get("RAG_IME_TRACE_INCLUDE_TEXT") == "1"
+    display_candidate_payloads = [display_item_to_payload(item) for item in display_candidates]
+    rag_candidate_payloads = [suggestion_to_payload(item) for item in retrieved_suggestions]
+    frontend_transaction_payload = frontend_transaction_to_payload(snapshot.frontend_transaction)
+    candidate_panel_payload = build_candidate_panel_payload(
+        input_mode=response_input_mode.value,
+        display_candidates=display_candidate_payloads,
+    )
+    assistant_overlay_payload = build_assistant_overlay_payload(
+        ui_mode=ui_mode,
+        input_mode=response_input_mode.value,
+        display_candidates=display_candidate_payloads,
+        rag_candidates=rag_candidate_payloads,
+        prediction_session=prediction_session_payload,
+        key_policy=key_policy,
+        progressive=progressive_state,
+        frontend_transaction=frontend_transaction_payload,
+    )
     return {
         "schemaVersion": RIME_SIDECAR_SCHEMA_VERSION,
         "sessionId": snapshot.session_id,
         "requestSeq": snapshot.request_seq,
-        **frontend_transaction_to_payload(snapshot.frontend_transaction),
-        "frontendTransaction": frontend_transaction_to_payload(snapshot.frontend_transaction),
+        **frontend_transaction_payload,
+        "frontendTransaction": frontend_transaction_payload,
         "project": snapshot.project or default_project,
         "rawInput": snapshot.raw_input,
         "preedit": snapshot.preedit,
@@ -1107,8 +1126,10 @@ def build_rime_sidecar_response(
         "modelLane": model_lane,
         "rimeContext": rime_context_to_payload(snapshot),
         "modelPredictions": [model_prediction_to_payload(item) for item in model_predictions],
-        "ragCandidates": [suggestion_to_payload(item) for item in retrieved_suggestions],
-        "displayCandidates": [display_item_to_payload(item) for item in display_candidates],
+        "ragCandidates": rag_candidate_payloads,
+        "displayCandidates": display_candidate_payloads,
+        "candidatePanel": candidate_panel_payload,
+        "assistantOverlay": assistant_overlay_payload,
         "predictionFirst": prediction_first_payload,
         "predictionSession": prediction_session_payload,
         "keyPolicy": key_policy,
@@ -1888,6 +1909,12 @@ def post_commit_auto_model_enabled(env: Mapping[str, str] | None = None) -> bool
             source.get("RAG_IME_POST_COMMIT_AUTO_LLM", "1"),
         )
     ).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
+def ai_after_commit_only_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_AI_AFTER_COMMIT_ONLY", "1")).strip().lower()
     return value not in _FALSEY_ENV_VALUES
 
 
@@ -3749,6 +3776,7 @@ def _should_clear_prediction_pool(
         "skip: raw pinyin fallback",
         "skip: empty semantic signal",
         "skip: low-information Rime candidates",
+        "skip: composition owned by rime; ai after commit only",
     }:
         return True
     return False
@@ -4450,6 +4478,14 @@ def decide_side_candidate_refresh(
     Rime candidates should always render, but local model and RAG work should
     wait until there is a stable semantic signal instead of raw pinyin noise.
     """
+
+    if ai_after_commit_only_enabled() and (
+        compact_whitespace(snapshot.raw_input) or compact_whitespace(snapshot.preedit)
+    ):
+        return RimeSideCandidateTriggerDecision(
+            False,
+            "skip: composition owned by rime; ai after commit only",
+        )
 
     if snapshot.max_side_candidates <= 0:
         return RimeSideCandidateTriggerDecision(False, "skip: side candidates disabled")

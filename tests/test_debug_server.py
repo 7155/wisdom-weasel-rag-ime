@@ -209,6 +209,7 @@ class DebugImeServiceTests(unittest.TestCase):
         self._optimizer_env = {
             "RAG_IME_MEMORY_OPTIMIZER": os.environ.get("RAG_IME_MEMORY_OPTIMIZER"),
             "RAG_IME_MEMORY_OPTIMIZER_TRACE": os.environ.get("RAG_IME_MEMORY_OPTIMIZER_TRACE"),
+            "RAG_IME_AI_AFTER_COMMIT_ONLY": os.environ.get("RAG_IME_AI_AFTER_COMMIT_ONLY"),
             "RAG_IME_ENABLE_COMPOSING_MODEL": os.environ.get("RAG_IME_ENABLE_COMPOSING_MODEL"),
             "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": os.environ.get("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"),
             "RAG_IME_PINYIN_FUZZY_ENABLED": os.environ.get("RAG_IME_PINYIN_FUZZY_ENABLED"),
@@ -216,6 +217,7 @@ class DebugImeServiceTests(unittest.TestCase):
             "RAG_IME_PINYIN_FUZZY_S_SH": os.environ.get("RAG_IME_PINYIN_FUZZY_S_SH"),
             "RAG_IME_PINYIN_FUZZY_N_L": os.environ.get("RAG_IME_PINYIN_FUZZY_N_L"),
         }
+        os.environ["RAG_IME_AI_AFTER_COMMIT_ONLY"] = "0"
         os.environ["RAG_IME_ENABLE_COMPOSING_MODEL"] = "1"
         os.environ["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"] = "1"
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-debug-test-")

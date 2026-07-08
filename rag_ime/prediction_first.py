@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
@@ -185,18 +187,25 @@ def _allow_semantic_side_candidates_for_prefix(prefix: str) -> bool:
     return len(normalized) >= 6
 
 
+def prefix_constrained_composing_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL", "0")).strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def infer_input_mode(snapshot: RimeContextSnapshot) -> InputMode:
     """Infer the prediction-first state from an adapter snapshot.
 
     This is intentionally conservative. Any active composition is still owned by
-    Rime/wanxiang; Prediction-first logic only changes candidate ordering.
+    Rime/wanxiang. Prefix-constrained AI remains an explicit experiment behind
+    RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL.
     """
 
     prefix = active_pinyin_prefix(snapshot)
     if _looks_like_raw_ascii_commit_input(prefix):
         return InputMode.RAW_INPUT
     has_context = bool(compact_whitespace(snapshot.committed_context))
-    if prefix and has_context:
+    if prefix and has_context and prefix_constrained_composing_enabled():
         return InputMode.PREFIX_CONSTRAINED_COMPOSING
     if prefix:
         return InputMode.ANCHOR_COMPOSING

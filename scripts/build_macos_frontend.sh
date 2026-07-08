@@ -112,11 +112,14 @@ swiftc \
   -target arm64-apple-macosx13.0 \
   -framework AppKit \
   -framework InputMethodKit \
+  -framework SwiftUI \
   "$SRC_DIR/RagModels.swift" \
   "$SRC_DIR/RimeSidecarModels.swift" \
   "$SRC_DIR/RimeDictionaryCandidateProvider.swift" \
   "$SRC_DIR/RagBridgeClient.swift" \
   "$SRC_DIR/RagCandidatePanel.swift" \
+  "$SRC_DIR/RagImeAssistantOverlayView.swift" \
+  "$SRC_DIR/RagImeAssistantPanelController.swift" \
   "$SRC_DIR/RagInputController.swift" \
   "$SRC_DIR/RagImeMacApp.swift" \
   -o "$MACOS_DIR/RagImeMac"

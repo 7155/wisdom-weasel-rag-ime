@@ -218,8 +218,8 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         render_start = source.index("private func renderSidecarResponse")
         render_end = source.index("private func showLocalRimeFallbackCandidates")
         render_body = source[render_start:render_end]
-        empty_index = render_body.index("if response.displayCandidates.isEmpty")
-        should_show_index = render_body.index("if !shouldShowCandidatePanel(response)")
+        empty_index = render_body.index("if panelDisplayCandidates.isEmpty")
+        should_show_index = render_body.index("if !shouldShowCandidatePanel(response, panelDisplayCandidates: panelDisplayCandidates)")
         self.assertLess(empty_index, should_show_index)
         empty_body = render_body[empty_index:should_show_index]
         self.assertIn("response.predictionSession?.shouldClearPredictionPanel == true", empty_body)
@@ -267,7 +267,7 @@ class NativeInputControllerSourceTests(unittest.TestCase):
         self.assertIn("scheduleProgressiveFollowUpIfNeeded(", render_body)
         self.assertLess(
             render_body.index("scheduleProgressiveFollowUpIfNeeded("),
-            render_body.index("if response.displayCandidates.isEmpty"),
+            render_body.index("if panelDisplayCandidates.isEmpty"),
         )
 
         follow_start = source.index("private func scheduleProgressiveFollowUpIfNeeded")

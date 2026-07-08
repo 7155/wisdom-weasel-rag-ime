@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.adapter import InputMethodAdapter, SuggestionRequest
 from rag_ime.codex_history import load_codex_history_records
@@ -279,29 +280,30 @@ class RagImeDemoQualityTests(unittest.TestCase):
         self.assertIn("pinyin:", str(suggestions[0].metadata.get("reason", "")))
 
     def test_sidecar_distribution_keeps_model_rag_and_rime_sources_selectable(self) -> None:
-        response = build_rime_sidecar_response(
-            payload={
-                "sessionId": "source-distribution",
-                "requestSeq": 11,
-                "rawInput": "ragshurufa",
-                "preedit": "ragshurufa",
-                "committedContext": "RAG 输入法 候选可选性 LLM 来源 本地记忆",
-                "forceSideCandidates": True,
-                "maxVisibleCandidates": 6,
-                "maxSideCandidates": 4,
-                "rimeContext": {
-                    "candidates": [
-                        {"label": "1", "text": "RAG 输入法", "comment": "rime"},
-                        {"label": "2", "text": "候选", "comment": "rime"},
-                    ],
-                    "page": 0,
-                    "isLastPage": True,
+        with patch.dict(os.environ, {"RAG_IME_AI_AFTER_COMMIT_ONLY": "0", "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "1"}):
+            response = build_rime_sidecar_response(
+                payload={
+                    "sessionId": "source-distribution",
+                    "requestSeq": 11,
+                    "rawInput": "ragshurufa",
+                    "preedit": "ragshurufa",
+                    "committedContext": "RAG 输入法 候选可选性 LLM 来源 本地记忆",
+                    "forceSideCandidates": True,
+                    "maxVisibleCandidates": 6,
+                    "maxSideCandidates": 4,
+                    "rimeContext": {
+                        "candidates": [
+                            {"label": "1", "text": "RAG 输入法", "comment": "rime"},
+                            {"label": "2", "text": "候选", "comment": "rime"},
+                        ],
+                        "page": 0,
+                        "isLastPage": True,
+                    },
                 },
-            },
-            adapter=self.adapter,
-            core=self.core,
-            predictor=DemoPredictionProvider(),
-        )
+                adapter=self.adapter,
+                core=self.core,
+                predictor=DemoPredictionProvider(),
+            )
         self._assert_no_bad_display_candidates(response)
         display = response["displayCandidates"]
         source_types = {item["sourceType"] for item in display}
