@@ -474,8 +474,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     active_rag_demo.add_argument("--selected-text", required=True)
     active_rag_demo.add_argument("--surrounding-before", default="")
     active_rag_demo.add_argument("--surrounding-after", default="")
-    active_rag_demo.add_argument("--intent", choices=("rewrite", "continue", "summarize", "debug"), default="rewrite")
-    active_rag_demo.add_argument("--placement", choices=("replace_selection", "insert_after_selection", "candidate_only"), default="replace_selection")
+    active_rag_demo.add_argument("--intent", choices=("rewrite", "continue", "summarize", "debug", "complete", "auto"), default="rewrite")
+    active_rag_demo.add_argument("--placement", choices=("replace_selection", "insert_after_selection", "candidate_only", "show_only"), default="replace_selection")
+    active_rag_demo.add_argument("--context", default="")
     active_rag_demo.add_argument("--project", default="wisdom-weasel-rag-ime")
     active_rag_demo.add_argument("--app", default="")
     active_rag_demo.add_argument("--front-app-bundle-id", default="cli.active-rag-demo")
@@ -483,6 +484,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     active_rag_demo.add_argument("--frontend-revision", type=int, default=1)
     active_rag_demo.add_argument("--selection-epoch", type=int, default=1)
     active_rag_demo.add_argument("--max-candidates", type=int, default=5)
+    active_rag_demo.add_argument("--max-chars", type=int, default=24)
     active_rag_demo.add_argument("--wait-ms", type=int, default=3000)
 
     rime_suggest_json = subparsers.add_parser(
@@ -2019,9 +2021,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             surrounding_after=args.surrounding_after,
             intent=args.intent,
             placement=args.placement,
+            context=args.context,
             project=args.project,
             app=args.app,
             max_candidates=max(1, args.max_candidates),
+            max_chars=max(4, args.max_chars),
         )
         started = service.start(request)
         ready = _wait_active_rag_status(service, str(started["sessionId"]), wait_ms=max(1, args.wait_ms))
@@ -3001,6 +3005,7 @@ def run_rime_sidecar_eval(
     results = []
     elapsed_ms_by_case: dict[str, int] = {}
     side_counts: list[int] = []
+    visible_side_counts: list[int] = []
     model_counts: list[int] = []
     rag_counts: list[int] = []
     trigger_refresh_count = 0
@@ -3025,13 +3030,17 @@ def run_rime_sidecar_eval(
             elapsed_ms_by_case[eval_case.case_id] = int((time.perf_counter() - started) * 1000)
             display_candidates = response.get("displayCandidates") if isinstance(response, dict) else []
             side_suggestions = _rime_display_side_candidates_as_eval_suggestions(display_candidates)
+            rag_suggestions = _rime_rag_candidates_as_eval_suggestions(
+                response.get("ragCandidates") if isinstance(response, dict) else None
+            )
             eval_suggestions = (
-                _rime_rag_candidates_as_eval_suggestions(response.get("ragCandidates") if isinstance(response, dict) else None)
+                rag_suggestions
                 or side_suggestions
             )
-            side_counts.append(len(side_suggestions))
+            visible_side_counts.append(len(side_suggestions))
+            side_counts.append(len(side_suggestions) + len(rag_suggestions))
             model_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "model_prediction"))
-            rag_counts.append(sum(1 for item in side_suggestions if item.suggestion_type == "rag_candidate"))
+            rag_counts.append(len(rag_suggestions))
             trigger = response.get("triggerDecision") if isinstance(response, dict) else {}
             if isinstance(trigger, dict) and trigger.get("shouldRefresh"):
                 trigger_refresh_count += 1
@@ -3067,6 +3076,7 @@ def run_rime_sidecar_eval(
         "forceSideCandidates": force_side_candidates,
         "triggerRefreshCount": trigger_refresh_count,
         "totalSideCandidates": sum(side_counts),
+        "totalVisibleSideCandidates": sum(visible_side_counts),
         "totalModelCandidates": sum(model_counts),
         "totalRagCandidates": sum(rag_counts),
         "hasSideCandidates": any(count > 0 for count in side_counts),

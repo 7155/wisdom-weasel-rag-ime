@@ -68,6 +68,7 @@ def main() -> int:
     parser.add_argument("--require-post-commit-pending-status", action="store_true")
     parser.add_argument("--require-prediction-status-visible", action="store_true")
     parser.add_argument("--require-source-badges", action="store_true")
+    parser.add_argument("--require-active-rag-action-button", action="store_true")
     parser.add_argument("--require-active-rag-thinking", action="store_true")
     parser.add_argument("--require-active-rag-ready", action="store_true")
     parser.add_argument("--require-active-rag-commit", action="store_true")
@@ -108,6 +109,7 @@ def main() -> int:
             require_post_commit_pending_status=args.require_post_commit_pending_status,
             require_prediction_status_visible=args.require_prediction_status_visible,
             require_source_badges=args.require_source_badges,
+            require_active_rag_action_button=args.require_active_rag_action_button,
             require_active_rag_thinking=args.require_active_rag_thinking,
             require_active_rag_ready=args.require_active_rag_ready,
             require_active_rag_commit=args.require_active_rag_commit,
@@ -132,6 +134,7 @@ def main() -> int:
         "postCommitPendingStatus": bool(args.require_post_commit_pending_status),
         "predictionStatusVisible": bool(args.require_prediction_status_visible),
         "sourceBadges": bool(args.require_source_badges),
+        "activeRagActionButton": bool(args.require_active_rag_action_button),
         "activeRagThinking": bool(args.require_active_rag_thinking),
         "activeRagReady": bool(args.require_active_rag_ready),
         "activeRagCommit": bool(args.require_active_rag_commit),
@@ -152,6 +155,7 @@ def main() -> int:
         require_post_commit_pending_status=args.require_post_commit_pending_status,
         require_prediction_status_visible=args.require_prediction_status_visible,
         require_source_badges=args.require_source_badges,
+        require_active_rag_action_button=args.require_active_rag_action_button,
         require_active_rag_thinking=args.require_active_rag_thinking,
         require_active_rag_ready=args.require_active_rag_ready,
         require_active_rag_commit=args.require_active_rag_commit,
@@ -193,6 +197,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     post_commit_pending_status = latest_matching(events, is_post_commit_pending_status_event)
     prediction_status_visible = latest_matching(events, is_prediction_status_visible_event)
     source_badge_panel = latest_matching(events, is_source_badges_visible_event)
+    active_rag_action_button = latest_matching(events, is_active_rag_action_button_event)
     active_rag_thinking = latest_matching(events, is_active_rag_thinking_event)
     active_rag_ready = latest_matching(events, is_active_rag_ready_event)
     active_rag_commit = latest_matching(events, is_active_rag_commit_event)
@@ -228,6 +233,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestPostCommitPendingStatus": summarize_event(post_commit_pending_status),
         "latestPredictionStatusVisible": summarize_event(prediction_status_visible),
         "latestSourceBadgePanel": summarize_event(source_badge_panel),
+        "latestActiveRagActionButton": summarize_event(active_rag_action_button),
         "latestActiveRagThinking": summarize_event(active_rag_thinking),
         "latestActiveRagReady": summarize_event(active_rag_ready),
         "latestActiveRagCommit": summarize_event(active_rag_commit),
@@ -511,6 +517,11 @@ def is_post_commit_pending_status_event(event: dict[str, Any]) -> bool:
     ui_mode = str(event.get("uiMode") or "")
     if ui_mode and ui_mode != "post_commit_pending":
         return False
+    candidates = event.get("candidates")
+    if isinstance(candidates, list) and any(
+        isinstance(candidate, dict) and candidate_is_post_commit_active_rag_action(candidate) for candidate in candidates
+    ):
+        return True
     if not panel_is_post_commit(event):
         return False
     return panel_has_valid_status_row(event)
@@ -530,6 +541,41 @@ def is_source_badges_visible_event(event: dict[str, Any]) -> bool:
         return False
     return all(isinstance(candidate, dict) and candidate_source_visuals_match(candidate) for candidate in candidates) and any(
         candidate_is_real_side_candidate(candidate) for candidate in candidates
+    )
+
+
+def is_active_rag_action_button_event(event: dict[str, Any]) -> bool:
+    if event.get("event") not in {"panel_display_candidates", "sidecar_response_applied"}:
+        return False
+    candidates = event.get("candidates")
+    if not isinstance(candidates, list):
+        return False
+    has_action = any(isinstance(candidate, dict) and candidate_is_active_rag_action_button(candidate) for candidate in candidates)
+    if not has_action:
+        return False
+    return panel_is_post_commit(event) or any(
+        isinstance(candidate, dict) and candidate_is_post_commit_active_rag_action(candidate) for candidate in candidates
+    )
+
+
+def candidate_is_active_rag_action_button(candidate: dict[str, Any]) -> bool:
+    metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+    return (
+        str(candidate.get("selectionAction") or "") == "start_active_rag_from_context"
+        or str(candidate.get("displayLane") or "") == "active_rag"
+        or str(metadata.get("buttonRole") or "") == "active_rag_generate"
+        or str(candidate.get("text") or "") == "DeepSeek 生成"
+    )
+
+
+def candidate_is_post_commit_active_rag_action(candidate: dict[str, Any]) -> bool:
+    return (
+        candidate_is_active_rag_action_button(candidate)
+        and str(candidate.get("selectionAction") or "") == "start_active_rag_from_context"
+        and (
+            str(candidate.get("committedContextHash") or "").startswith("sha256:")
+            or str(candidate.get("compositionHash") or "") == "sha256:e3b0c44298fc1c14"
+        )
     )
 
 
@@ -1381,6 +1427,7 @@ def report_passes(
     require_post_commit_pending_status: bool = False,
     require_prediction_status_visible: bool = False,
     require_source_badges: bool = False,
+    require_active_rag_action_button: bool = False,
     require_active_rag_thinking: bool = False,
     require_active_rag_ready: bool = False,
     require_active_rag_commit: bool = False,
@@ -1417,6 +1464,8 @@ def report_passes(
     if require_prediction_status_visible and not report.get("latestPredictionStatusVisible"):
         return False
     if require_source_badges and not report.get("latestSourceBadgePanel"):
+        return False
+    if require_active_rag_action_button and not report.get("latestActiveRagActionButton"):
         return False
     if require_active_rag_thinking and not report.get("latestActiveRagThinking"):
         return False

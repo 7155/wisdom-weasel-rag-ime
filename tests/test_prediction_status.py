@@ -19,7 +19,18 @@ class PredictionStatusTests(unittest.TestCase):
         self.assertIsNone(row.metadata["selectionKey"])
         self.assertFalse(row.metadata["isSelectable"])
         self.assertTrue(row.metadata["isStatus"])
+        self.assertTrue(row.metadata["animated"])
+        self.assertIn(row.metadata["animationFrame"], {0, 1, 2, 3})
         self.assertEqual(row.display_lane, "post_commit_status")
+
+    def test_status_row_text_animates_with_waiting_time(self) -> None:
+        first = prediction_status_row(rag_pending=True, model_pending=True, waiting_ms=0, latest_generation=17)
+        second = prediction_status_row(rag_pending=True, model_pending=True, waiting_ms=300, latest_generation=17)
+
+        assert first is not None
+        assert second is not None
+        self.assertNotEqual(first.text, second.text)
+        self.assertNotEqual(first.metadata["animationFrame"], second.metadata["animationFrame"])
 
     def test_status_row_is_visible_immediately_after_commit(self) -> None:
         row = prediction_status_row(rag_pending=True, model_pending=False, waiting_ms=0, latest_generation=1)

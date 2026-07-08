@@ -104,6 +104,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             os.environ,
             {
                 "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
+                "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
                 "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
                 "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
                 "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
@@ -484,6 +485,94 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
         self.assertFalse(response["showDecision"]["hardClear"])
         self.assertTrue(response["progressive"]["shouldFollowUp"])
+
+    def test_v1_post_commit_panel_exposes_active_rag_action_button(self) -> None:
+        response = self._response(
+            self._post_commit_payload(),
+            predictor=RecordingPredictionProvider(sleep_s=0.4),
+        )
+        action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
+
+        self.assertEqual(response["uiMode"], "post_commit_pending")
+        self.assertTrue(action_candidates)
+        self.assertEqual(action_candidates[0]["label"], "")
+        self.assertEqual(action_candidates[0]["visibleLabel"], "")
+        self.assertIsNone(action_candidates[0]["selectionKey"])
+        self.assertEqual(action_candidates[0]["selectionRank"], 0)
+        self.assertEqual(action_candidates[0]["candidateOrdinal"], 0)
+        self.assertTrue(action_candidates[0]["isSelectable"])
+        self.assertEqual(action_candidates[0]["text"], "DeepSeek 生成")
+        self.assertEqual(action_candidates[0]["sourceBadge"], "生成")
+        self.assertEqual(action_candidates[0]["colorToken"], "modelBlue")
+        self.assertEqual(action_candidates[0]["selectionAction"], "start_active_rag_from_context")
+        self.assertEqual(action_candidates[0]["metadata"]["maxCandidates"], 1)
+        self.assertEqual(action_candidates[0]["metadata"]["buttonRole"], "active_rag_generate")
+        self.assertEqual(action_candidates[0]["metadata"]["shortcutHint"], "ctrl+enter")
+        self.assertTrue(action_candidates[0]["metadata"]["numericSelectionDisabled"])
+        self.assertEqual(action_candidates[0]["metadata"]["triggerPolicy"], "manual_only")
+        self.assertTrue(action_candidates[0]["metadata"]["requiresExplicitSelection"])
+
+    def test_v1_post_commit_auto_model_can_be_action_only(self) -> None:
+        predictor = RecordingPredictionProvider(["不应该自动调用"])
+        with patch.dict(os.environ, {"RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "0"}):
+            response = self._response(self._post_commit_payload(), predictor=predictor)
+        action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
+
+        self.assertEqual(predictor.calls, 0)
+        self.assertTrue(action_candidates)
+        self.assertFalse([item for item in response["displayCandidates"] if item["sourceType"] == "model"])
+        self.assertEqual(response["predictionSession"]["phase"], "post_commit")
+        self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
+        self.assertIn("action-only fast path", response["modelLane"]["skippedReason"])
+
+    def test_v1_post_commit_action_button_fast_path_skips_rag_and_model(self) -> None:
+        predictor = RecordingPredictionProvider(["不应该自动调用"], sleep_s=0.2)
+        core = CuratedMemoryCore([_memory("m-fast", "不应该进入普通候选")])
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "0",
+                "RAG_IME_RAG_DIRECT_DISPLAY": "0",
+            },
+        ):
+            response = self._response(self._post_commit_payload(), core=core, predictor=predictor)
+        action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
+
+        self.assertEqual(core.calls, 0)
+        self.assertEqual(predictor.calls, 0)
+        self.assertEqual([item["text"] for item in action_candidates], ["DeepSeek 生成"])
+        self.assertEqual(action_candidates[0]["label"], "")
+        self.assertIsNone(action_candidates[0]["selectionKey"])
+        self.assertEqual(action_candidates[0]["candidateOrdinal"], 0)
+        self.assertTrue(action_candidates[0]["isSelectable"])
+        self.assertIn("action-only fast path", response["ragLane"]["skippedReason"])
+        self.assertIn("action-only fast path", response["modelLane"]["skippedReason"])
+        self.assertFalse(response["predictionFirst"]["enabled"])
+
+    def test_v1_post_commit_auto_model_defaults_to_visible_llm_lane(self) -> None:
+        predictor = RecordingPredictionProvider(["自动LLM候选"])
+        with patch.dict(os.environ, {}, clear=True):
+            first = self._response(self._post_commit_payload(), predictor=predictor)
+            self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=2.0))
+            follow_up = self._response(
+                self._post_commit_payload(request_seq=2, progressive_follow_up=True),
+                predictor=predictor,
+            )
+        model_candidates = [item for item in follow_up["displayCandidates"] if item["sourceType"] == "model"]
+
+        self.assertTrue(first["progressive"]["shouldFollowUp"])
+        self.assertTrue(model_candidates)
+        self.assertTrue("自动LLM候选".startswith(model_candidates[0]["text"]))
+        self.assertEqual(follow_up["uiMode"], "post_commit_prediction")
+
+    def test_v1_post_commit_active_rag_action_reserves_visible_slot(self) -> None:
+        payload = self._post_commit_payload()
+        payload["maxVisibleCandidates"] = 1
+        response = self._response(payload, predictor=RecordingPredictionProvider(sleep_s=0.4))
+
+        self.assertEqual(len(response["displayCandidates"]), 1)
+        self.assertEqual(response["displayCandidates"][0]["sourceType"], "action")
+        self.assertEqual(response["displayCandidates"][0]["selectionAction"], "start_active_rag_from_context")
 
     def test_v1_empty_post_commit_followup_gets_demo_safe_fallback_candidate(self) -> None:
         first, follow_up, _, _ = self._prime_post_commit(

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from .anti_echo import candidate_has_keyword_echo, candidate_has_self_repetition, repeat_norm
 from .deepseek_completion import CompletionCandidateDelta
 from .active_rag_models import ActiveRagEvidence, ActiveRagFrame
 from .text_utils import compact_whitespace
@@ -24,23 +26,31 @@ def compile_active_rag_candidates(
     *,
     selected_text: str = "",
     max_candidates: int = 5,
+    max_chars: int = 24,
 ) -> tuple[ActiveRagCandidate, ...]:
     selected = compact_whitespace(selected_text)
+    char_limit = _candidate_char_limit(max_chars)
     seen: set[str] = set()
     result: list[ActiveRagCandidate] = []
     for delta in deltas:
-        text = compact_whitespace(delta.text)
-        if not _active_rag_candidate_allowed(text, selected_text=selected, seen=seen):
+        raw_text = compact_whitespace(delta.text)
+        text = _fit_active_rag_candidate_text(raw_text, max_chars=char_limit)
+        if not _active_rag_candidate_allowed(text, selected_text=selected, seen=seen, max_chars=char_limit):
             continue
         seen.add(text.lower())
+        metadata = dict(delta.metadata)
+        if text != raw_text:
+            metadata["lengthGoverned"] = True
+            metadata["rawTextChars"] = len(raw_text)
+            metadata["maxChars"] = char_limit
         result.append(
             ActiveRagCandidate(
                 candidate_id=f"active-rag:{_short_id(text)}",
                 text=text,
-                insert_text=compact_whitespace(delta.insert_text or text),
+                insert_text=_fit_active_rag_candidate_text(delta.insert_text or text, max_chars=char_limit),
                 source_type=delta.source_type,
                 source_lane=delta.source_lane,
-                metadata={**dict(delta.metadata), "activeRag": True},
+                metadata={**metadata, "activeRag": True},
             )
         )
         if len(result) >= max(1, int(max_candidates)):
@@ -53,16 +63,22 @@ def compile_active_rag_candidates_from_evidence(
     *,
     frame: ActiveRagFrame,
     max_candidates: int = 5,
+    max_chars: int = 24,
 ) -> tuple[ActiveRagCandidate, ...]:
     selected = compact_whitespace(frame.selected_text)
+    char_limit = _candidate_char_limit(max_chars)
     seen: set[str] = set()
     result: list[ActiveRagCandidate] = []
     for evidence in evidence_items:
+        if _context_only_evidence(evidence):
+            continue
         for text in _candidate_texts_from_evidence(evidence):
-            normalized = compact_whitespace(text)
-            if not _active_rag_candidate_allowed(normalized, selected_text=selected, seen=seen):
+            raw_text = compact_whitespace(text)
+            normalized = _fit_active_rag_candidate_text(raw_text, max_chars=char_limit)
+            if not _active_rag_candidate_allowed(normalized, selected_text=selected, seen=seen, max_chars=char_limit):
                 continue
             seen.add(normalized.lower())
+            length_governed = normalized != raw_text
             result.append(
                 ActiveRagCandidate(
                     candidate_id=f"active-rag:{_short_id(f'{evidence.evidence_id}:{normalized}')}",
@@ -83,6 +99,9 @@ def compile_active_rag_candidates_from_evidence(
                         "memoryIds": list(evidence.memory_ids[:4]),
                         "atomIds": list(evidence.atom_ids[:4]),
                         "bookIds": list(evidence.book_ids[:4]),
+                        "lengthGoverned": length_governed,
+                        "rawTextChars": len(raw_text),
+                        "maxChars": char_limit,
                     },
                 )
             )
@@ -91,17 +110,26 @@ def compile_active_rag_candidates_from_evidence(
     return tuple(result)
 
 
-def _active_rag_candidate_allowed(text: str, *, selected_text: str, seen: set[str]) -> bool:
+def _active_rag_candidate_allowed(text: str, *, selected_text: str, seen: set[str], max_chars: int = 24) -> bool:
     if not text:
         return False
     if text.lower() in seen:
         return False
-    if len(text) > 24:
+    if len(text) > _candidate_char_limit(max_chars):
         return False
     if text.isascii() and any(char.isalpha() for char in text) and len(text) <= 12:
         return False
-    if len(text) > 6 and selected_text and text in selected_text:
+    if not _contains_cjk(text):
         return False
+    if candidate_has_self_repetition(text):
+        return False
+    if candidate_has_keyword_echo(text):
+        return False
+    if selected_text:
+        if repeat_norm(text) == repeat_norm(selected_text):
+            return False
+        if len(text) >= 8 and text in selected_text:
+            return False
     if any(marker in text for marker in ("下一步", "接下来", "根据上述", "可以进行", "可以继续")):
         return False
     if _looks_sensitive(text):
@@ -111,15 +139,65 @@ def _active_rag_candidate_allowed(text: str, *, selected_text: str, seen: set[st
 
 def _candidate_texts_from_evidence(evidence: ActiveRagEvidence) -> tuple[str, ...]:
     texts: list[str] = []
+    metadata = dict(evidence.metadata or {})
+    surface_hints = metadata.get("surfaceHints") or metadata.get("surface_hints")
+    if isinstance(surface_hints, (list, tuple)):
+        for value in reversed(surface_hints[:4]):
+            hint = compact_whitespace(str(value))
+            if hint:
+                texts.insert(0, hint)
+    for key in ("bookTitle", "surfaceHint", "candidateText", "title"):
+        value = compact_whitespace(str(metadata.get(key) or ""))
+        if value and not _generic_evidence_title(value):
+            texts.insert(0, value)
     text = compact_whitespace(evidence.text)
     if text:
         texts.append(text)
-    metadata = dict(evidence.metadata or {})
-    for key in ("bookTitle", "surfaceHint", "candidateText"):
-        value = compact_whitespace(str(metadata.get(key) or ""))
-        if value:
-            texts.insert(0, value)
     return tuple(_unique_texts(texts))
+
+
+def _candidate_char_limit(max_chars: int) -> int:
+    return max(4, min(48, int(max_chars or 24)))
+
+
+def _context_only_evidence(evidence: ActiveRagEvidence) -> bool:
+    return evidence.source_type == "recent_input_context" or evidence.source_lane == "timeline_recent_input"
+
+
+def _generic_evidence_title(text: str) -> bool:
+    value = compact_whitespace(text)
+    return value in {"最近输入上下文", "记忆笔记本", "Memory Book", "Daily Book"}
+
+
+def _contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u3400-\u9fff]", text))
+
+
+def _fit_active_rag_candidate_text(text: str, *, max_chars: int) -> str:
+    value = compact_whitespace(text)
+    if not value:
+        return ""
+    limit = _candidate_char_limit(max_chars)
+    if len(value) <= limit:
+        return value
+    for segment in _candidate_segments(value):
+        if 2 <= len(segment) <= limit:
+            return segment
+    truncated = value[:limit].rstrip("，。；：、,.!?！？;:")
+    return compact_whitespace(truncated)
+
+
+def _candidate_segments(text: str) -> list[str]:
+    raw_segments = []
+    for part in re_split_candidate_segments(text):
+        segment = compact_whitespace(part).strip("，。；：、,.!?！？;: ")
+        if segment:
+            raw_segments.append(segment)
+    return sorted(_unique_texts(raw_segments), key=lambda item: (abs(len(item) - 10), len(item)))
+
+
+def re_split_candidate_segments(text: str) -> list[str]:
+    return re.split(r"[，。；、,.!?！？;:\n]+", text)
 
 
 def _display_lane(evidence: ActiveRagEvidence) -> str:

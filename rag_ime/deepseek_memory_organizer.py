@@ -4,9 +4,10 @@ import json
 import time
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 
 from .deepseek_config import DeepSeekConfig
+from .deepseek_completion import _direct_deepseek_urlopen
 from .memory_generator import _extract_json_object
 from .text_utils import compact_whitespace
 
@@ -19,8 +20,9 @@ class DeepSeekMemoryOrganizerError(RuntimeError):
 
 
 class DeepSeekMemoryOrganizer:
-    def __init__(self, config: DeepSeekConfig):
+    def __init__(self, config: DeepSeekConfig, *, urlopen: Callable[..., Any] | None = None):
         self.config = config
+        self.urlopen = urlopen or _direct_deepseek_urlopen
 
     @property
     def provider_name(self) -> str:
@@ -64,11 +66,15 @@ class DeepSeekMemoryOrganizer:
             "model": self.config.model,
             "messages": messages,
             "temperature": 0.1,
-            "max_tokens": 8192,
+            "max_tokens": max(512, min(4096, int(self.config.memory_book_max_tokens))),
             "stream": False,
         }
         if self.config.json_mode:
             body["response_format"] = {"type": "json_object"}
+        if self.config.thinking:
+            body["thinking"] = {"type": self.config.thinking}
+        if self.config.reasoning_effort and self.config.thinking != "disabled":
+            body["reasoning_effort"] = self.config.reasoning_effort
         request = urllib.request.Request(
             f"{self.config.api_base_url.rstrip('/')}/chat/completions",
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -80,7 +86,7 @@ class DeepSeekMemoryOrganizer:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.request_timeout_seconds) as response:
+            with self.urlopen(request, timeout=self.config.request_timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             raise DeepSeekMemoryOrganizerError(f"DeepSeek memory book request failed: {exc}") from exc

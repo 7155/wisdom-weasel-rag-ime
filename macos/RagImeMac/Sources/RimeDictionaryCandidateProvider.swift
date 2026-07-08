@@ -15,6 +15,8 @@ final class RimeDictionaryCandidateProvider {
     private let candidateIndexPath: String?
     private let essayPath: String?
     private let dictionaryLabel: String
+    private let fuzzyPinyinEnabled: Bool
+    private let fuzzyPinyinPairs: [String: Bool]
     private let cacheLock = NSLock()
     private var cachedPrebuiltIndex: [String: [RimeCandidatePayload]]?
     private var cachedEntries: [Entry]?
@@ -42,6 +44,8 @@ final class RimeDictionaryCandidateProvider {
         self.dictionaryPaths = resolvedPaths
         self.dictionaryPath = resolvedPaths.first
         self.candidateIndexPath = Self.resolveCandidateIndexPath(configuredIndex)
+        self.fuzzyPinyinEnabled = Self.fuzzyPinyinEnabled(environment: environment)
+        self.fuzzyPinyinPairs = Self.fuzzyPinyinPairs(environment: environment)
         let essayCandidates = [
             configuredEssay,
             "\(home)/Library/Rime/essay.txt",
@@ -129,7 +133,13 @@ final class RimeDictionaryCandidateProvider {
         guard let index = loadedIndex else {
             return nil
         }
-        guard let candidates = index[query] else {
+        var lookupKeys = [query]
+        if fuzzyPinyinEnabled {
+            for variant in fuzzyPinyinVariants(query) where !lookupKeys.contains(variant) {
+                lookupKeys.append(variant)
+            }
+        }
+        guard let candidates = lookupKeys.compactMap({ index[$0] }).first else {
             return []
         }
         return candidates.prefix(max(1, maxCount)).enumerated().map { offset, candidate in
@@ -345,6 +355,14 @@ final class RimeDictionaryCandidateProvider {
         for entry in entries {
             insert(entry, into: &buckets, key: bucketKey(entry.code))
             insert(entry, into: &buckets, key: bucketKey(entry.initials))
+            if fuzzyPinyinEnabled {
+                for variant in fuzzyPinyinVariants(entry.code) {
+                    insert(entry, into: &buckets, key: bucketKey(variant))
+                }
+                for variant in fuzzyPinyinVariants(entry.initials) {
+                    insert(entry, into: &buckets, key: bucketKey(variant))
+                }
+            }
         }
         return buckets
     }
@@ -388,6 +406,22 @@ final class RimeDictionaryCandidateProvider {
         if entry.initials.hasPrefix(query) {
             return 3
         }
+        if fuzzyPinyinEnabled {
+            let codeVariants = fuzzyPinyinVariants(entry.code)
+            if codeVariants.contains(query) {
+                return 4
+            }
+            if codeVariants.contains(where: { $0.hasPrefix(query) }) {
+                return 5
+            }
+            let initialVariants = fuzzyPinyinVariants(entry.initials)
+            if initialVariants.contains(query) {
+                return 6
+            }
+            if initialVariants.contains(where: { $0.hasPrefix(query) }) {
+                return 7
+            }
+        }
         return nil
     }
 
@@ -426,6 +460,145 @@ final class RimeDictionaryCandidateProvider {
 
     private func bucketKey(_ value: String) -> String {
         String(value.prefix(2))
+    }
+
+    private static func fuzzyPinyinEnabled(environment: [String: String]) -> Bool {
+        let disabled = ["0", "false", "no", "off", "none", "disabled"]
+        if let enabled = environment["RAG_IME_PINYIN_FUZZY_ENABLED"]?.lowercased(),
+           disabled.contains(enabled) {
+            return false
+        }
+        if let profile = environment["RAG_IME_PINYIN_FUZZY_PROFILE"]?.lowercased(),
+           disabled.contains(profile) {
+            return false
+        }
+        return true
+    }
+
+    private static func fuzzyPinyinPairs(environment: [String: String]) -> [String: Bool] {
+        let defaults = [
+            "z_zh": true,
+            "c_ch": true,
+            "s_sh": true,
+            "en_eng": true,
+            "in_ing": true,
+            "n_l": false,
+            "f_h": false,
+        ]
+        let envNames = [
+            "z_zh": ["RAG_IME_PINYIN_FUZZY_Z_ZH", "RAG_IME_PINYIN_FUZZY_PAIR_Z_ZH"],
+            "c_ch": ["RAG_IME_PINYIN_FUZZY_C_CH", "RAG_IME_PINYIN_FUZZY_PAIR_C_CH"],
+            "s_sh": ["RAG_IME_PINYIN_FUZZY_S_SH", "RAG_IME_PINYIN_FUZZY_PAIR_S_SH"],
+            "en_eng": ["RAG_IME_PINYIN_FUZZY_EN_ENG", "RAG_IME_PINYIN_FUZZY_PAIR_EN_ENG"],
+            "in_ing": ["RAG_IME_PINYIN_FUZZY_IN_ING", "RAG_IME_PINYIN_FUZZY_PAIR_IN_ING"],
+            "n_l": ["RAG_IME_PINYIN_FUZZY_N_L", "RAG_IME_PINYIN_FUZZY_PAIR_N_L"],
+            "f_h": ["RAG_IME_PINYIN_FUZZY_F_H", "RAG_IME_PINYIN_FUZZY_PAIR_F_H"],
+        ]
+        var result = defaults
+        for (pair, names) in envNames {
+            for name in names {
+                guard let raw = environment[name]?.lowercased(), !raw.isEmpty else {
+                    continue
+                }
+                if ["1", "true", "yes", "on"].contains(raw) {
+                    result[pair] = true
+                    break
+                }
+                if ["0", "false", "no", "off", "none", "disabled"].contains(raw) {
+                    result[pair] = false
+                    break
+                }
+            }
+        }
+        return result
+    }
+
+    private func fuzzyPinyinVariants(_ value: String) -> [String] {
+        guard fuzzyPinyinEnabled else {
+            return []
+        }
+        let key = normalizePinyinCode(value)
+        guard !key.isEmpty else {
+            return []
+        }
+        var variants: [String] = []
+        var seen = Set([key])
+        var queue = [key]
+        while !queue.isEmpty && variants.count < 24 {
+            let current = queue.removeFirst()
+            for candidate in fuzzyPinyinOneStep(current) {
+                if candidate.isEmpty || seen.contains(candidate) {
+                    continue
+                }
+                seen.insert(candidate)
+                variants.append(candidate)
+                if variants.count >= 24 {
+                    break
+                }
+                queue.append(candidate)
+            }
+        }
+        return variants
+    }
+
+    private func fuzzyPinyinOneStep(_ value: String) -> [String] {
+        var variants: [String] = []
+
+        func add(_ candidate: String) {
+            if !candidate.isEmpty && candidate != value && !variants.contains(candidate) {
+                variants.append(candidate)
+            }
+        }
+
+        for (pair, source, target) in [("z_zh", "zh", "z"), ("c_ch", "ch", "c"), ("s_sh", "sh", "s")] {
+            guard fuzzyPairEnabled(pair) else {
+                continue
+            }
+            var searchStart = value.startIndex
+            while searchStart < value.endIndex,
+                  let range = value.range(of: source, range: searchStart..<value.endIndex) {
+                add(value.replacingCharacters(in: range, with: target))
+                searchStart = value.index(after: range.lowerBound)
+            }
+        }
+
+        let characters = Array(value)
+        for (pair, source, target) in [("z_zh", "z", "zh"), ("c_ch", "c", "ch"), ("s_sh", "s", "sh")] {
+            guard fuzzyPairEnabled(pair) else {
+                continue
+            }
+            for index in characters.indices where String(characters[index]) == source {
+                if index + 1 < characters.count && characters[index + 1] == "h" {
+                    continue
+                }
+                let prefix = String(characters.prefix(index))
+                let suffix = String(characters.dropFirst(index + 1))
+                add(prefix + target + suffix)
+            }
+        }
+
+        for (pair, source, target) in [("en_eng", "eng", "en"), ("en_eng", "en", "eng"), ("in_ing", "ing", "in"), ("in_ing", "in", "ing")] {
+            if fuzzyPairEnabled(pair) && value.hasSuffix(source) {
+                add(String(value.dropLast(source.count)) + target)
+            }
+        }
+
+        for (pair, source, target) in [("n_l", "n", "l"), ("n_l", "l", "n"), ("f_h", "h", "f"), ("f_h", "f", "h")] {
+            guard fuzzyPairEnabled(pair) else {
+                continue
+            }
+            for index in characters.indices where String(characters[index]) == source {
+                let prefix = String(characters.prefix(index))
+                let suffix = String(characters.dropFirst(index + 1))
+                add(prefix + target + suffix)
+            }
+        }
+
+        return variants
+    }
+
+    private func fuzzyPairEnabled(_ pair: String) -> Bool {
+        return fuzzyPinyinPairs[pair] ?? false
     }
 
     private func commonnessPenalty(_ text: String) -> Int {

@@ -80,6 +80,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_DEEPSEEK_API_KEY": "test-deepseek-key",
                 "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
                 "RAG_IME_DEEPSEEK_ACTIVE_RAG": "1",
+                "RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS": "1536",
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
@@ -121,7 +122,9 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_API_KEY"], "test-deepseek-key")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_MODEL"], "deepseek-v4-flash")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_ACTIVE_RAG"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS"], "1536")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_COMPOSING_MODEL"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS"], "150")
@@ -136,10 +139,24 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES"], "128")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES"], "32")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_SUGGESTION_CACHE_SIZE"], "32")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_RAG_DIRECT_DISPLAY"], "0")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_THINKING"], "disabled")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_REASONING_EFFORT"], "low")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_MAX_TOKENS"], "96")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_ENABLED"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_PROFILE"], "sichuan-mild")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_S_SH"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_N_L"], "0")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_F_H"], "0")
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
         self.assertIn("sidecar-server", payload["ProgramArguments"])
         self.assertIn("18766", payload["ProgramArguments"])
         self.assertIn("sidecar_launch.py", " ".join(payload["ProgramArguments"]))
+        script_source = (root / "scripts" / "install_sidecar_launch_agent.sh").read_text(encoding="utf-8")
+        self.assertIn("kill_stale_sidecar_processes", script_source)
+        self.assertIn("RAG_IME_KILL_STALE_SIDECAR_ON_INSTALL", script_source)
+        self.assertIn("wait_for_sidecar_port_release", script_source)
+        self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
 
     def test_install_sidecar_launch_agent_can_opt_into_keepalive(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -233,6 +250,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
                             "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "4500",
                             "RAG_IME_DEEPSEEK_BASE_URL": "https://api.kukuit.com",
                             "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
+                            "RAG_IME_DEEPSEEK_ENV": "/tmp/deepseek.env",
+                            "RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS": "1536",
                         },
                     },
                     fh,
@@ -270,7 +289,12 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_VECTOR_CANDIDATES"], "80")
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_BASE_URL"], "https://api.kukuit.com")
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_MODEL"], "deepseek-v4-flash")
+        self.assertEqual(env_vars["RAG_IME_DEEPSEEK_ENV"], "/tmp/deepseek.env")
+        self.assertEqual(env_vars["RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS"], "1536")
+        self.assertEqual(env_vars["RAG_IME_DEEPSEEK_THINKING"], "disabled")
         self.assertEqual(env_vars["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "900")
+        self.assertEqual(env_vars["RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL"], "1")
+        self.assertEqual(env_vars["RAG_IME_RAG_DIRECT_DISPLAY"], "0")
 
     def test_install_sidecar_launch_agent_can_enable_local_vector_baseline(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -366,6 +390,10 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["ALL_PROXY"], "")
         self.assertEqual(env_vars["HF_HOME"], str(Path(tmp) / "hf-cache"))
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
+        script_source = (root / "scripts" / "install_mlx_predictor_launch_agent.sh").read_text(encoding="utf-8")
+        self.assertIn("kill_stale_mlx_predictor_processes", script_source)
+        self.assertIn("wait_for_mlx_port_release", script_source)
+        self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
 
     def test_install_mlx_predictor_launch_agent_rejects_broken_python(self) -> None:
         root = Path(__file__).resolve().parents[1]

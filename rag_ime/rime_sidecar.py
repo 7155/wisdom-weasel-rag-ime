@@ -63,6 +63,7 @@ from .predictor import (
 from .runtime_flags import assert_deepseek_not_called, assert_deepseek_scene_allowed
 from .side_lane_scheduler import LaneRequestToken, LatestWinsLaneScheduler
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms
+from .timeline_context import timeline_evidence_pack_from_core
 
 
 RIME_SIDECAR_SCHEMA_VERSION = "rag-ime.rime-sidecar.v1"
@@ -649,6 +650,12 @@ def build_rime_sidecar_response(
         query_basis=query_basis,
         default_project=default_project,
     )
+    post_commit_action_only_fast_path = post_commit_action_only_fast_path_enabled(effective_snapshot)
+    if trigger_decision.should_refresh and post_commit_action_only_fast_path:
+        trigger_decision = RimeSideCandidateTriggerDecision(
+            False,
+            "post-commit action-only fast path; Active RAG runs after explicit selection",
+        )
     if trigger_decision.should_refresh:
         lane_started = time.perf_counter()
         suggestions, rag_lane, model_predictions, model_lane, progressive_state = run_side_lanes_with_latency_budget(
@@ -824,7 +831,11 @@ def build_rime_sidecar_response(
             "elapsedBeforeModelMs": 0,
             "foregroundContext": foreground_context_meta,
         }
-    prediction_first_enabled = prediction_first_merge_enabled(payload)
+        if post_commit_action_only_fast_path:
+            skipped_reason = "post-commit action-only fast path; Active RAG runs after explicit selection"
+            rag_lane["skippedReason"] = skipped_reason
+            model_lane["skippedReason"] = skipped_reason
+    prediction_first_enabled = prediction_first_merge_enabled(payload) and not post_commit_action_only_fast_path
     if prediction_first_enabled:
         prediction_manager = _prediction_manager_for_snapshot(snapshot, default_project=default_project)
         raw_commit_text = raw_english_candidate_text(snapshot)
@@ -967,6 +978,26 @@ def build_rime_sidecar_response(
                 }
             )
             key_policy = key_policy_for_prediction_session(prediction_session_payload)
+    action_added = append_post_commit_active_rag_action(
+        display_candidates=display_candidates,
+        snapshot=snapshot,
+        input_mode=response_input_mode,
+    )
+    if action_added and response_input_mode == InputMode.POST_COMMIT_PREDICTING:
+        prediction_session_payload.update(
+            {
+                "phase": "post_commit",
+                "inputMode": response_input_mode.value,
+                "candidatePanelVisible": True,
+                "predictionPanelVisible": True,
+                "shouldClearPredictionPanel": False,
+                "clearReason": "",
+                "selectionScope": "prediction",
+                "rimeCompositionOwnedByRime": False,
+                "expiresAfterMs": _POST_COMMIT_PANEL_TTL_MS,
+            }
+        )
+        key_policy = key_policy_for_prediction_session(prediction_session_payload)
     ui_mode = ui_mode_for_response(
         input_mode=response_input_mode.value,
         display_candidates=display_candidates,
@@ -1247,7 +1278,9 @@ def run_side_lanes_with_latency_budget(
     rag_budget_ms = _rag_lane_budget_for_request(latency_budget_ms)
     model_budget_ms = _model_lane_budget_for_request(latency_budget_ms, snapshot=snapshot)
     request_type = model_request_type_for_snapshot(snapshot)
-    post_commit_async = _is_post_commit_prediction_snapshot(snapshot) and post_commit_async_completion_enabled()
+    post_commit_prediction = _is_post_commit_prediction_snapshot(snapshot)
+    post_commit_auto_model = (not post_commit_prediction) or post_commit_auto_model_enabled()
+    post_commit_async = post_commit_prediction and post_commit_auto_model and post_commit_async_completion_enabled()
     if post_commit_async:
         request_type = PREDICTION_REQUEST_POST_COMMIT_COMPLETION
     model_candidate_limit = realtime_model_candidate_limit(max_candidates)
@@ -1264,7 +1297,7 @@ def run_side_lanes_with_latency_budget(
         prefix = stable_short_pinyin_prefix(snapshot)
         if prefix:
             model_current_input = prefix
-    elif _is_post_commit_prediction_snapshot(snapshot):
+    elif post_commit_prediction:
         model_current_input = ""
     if post_commit_async and not snapshot.progressive_follow_up:
         predictions, model_lane = run_post_commit_completion_async(
@@ -1362,7 +1395,19 @@ def run_side_lanes_with_latency_budget(
             model_result["predictions"] = predictions
             model_result["lane"] = lane
             return
-        if not _is_post_commit_prediction_snapshot(snapshot) and not composing_model_enabled():
+        if post_commit_prediction and not post_commit_auto_model:
+            model_result["predictions"] = []
+            model_result["lane"] = _model_lane_status(
+                called=False,
+                timed_out=False,
+                skipped_reason="post-commit auto model disabled; use Active RAG action candidate",
+                budget_ms=model_budget_ms,
+                request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                rime_candidate_count=rime_candidate_count,
+                requested_max_candidates=model_candidate_limit,
+            )
+            return
+        if not post_commit_prediction and not composing_model_enabled():
             model_result["predictions"] = []
             model_result["lane"] = _model_lane_status(
                 called=False,
@@ -1386,7 +1431,7 @@ def run_side_lanes_with_latency_budget(
                 requested_max_candidates=model_candidate_limit,
             )
             return
-        if _is_post_commit_prediction_snapshot(snapshot):
+        if post_commit_prediction:
             if _looks_like_deepseek_provider(predictor) or deepseek_completion_provider is not None:
                 try:
                     assert_deepseek_scene_allowed("post_commit")
@@ -1479,7 +1524,6 @@ def run_side_lanes_with_latency_budget(
         suggestions = []
     rag_lane = rag_result.get("lane")
     rag_pending = rag_thread.is_alive()
-    post_commit_prediction = _is_post_commit_prediction_snapshot(snapshot)
     if not isinstance(rag_lane, dict):
         rag_lane = _rag_lane_status(
             called=True,
@@ -1836,6 +1880,17 @@ def post_commit_async_completion_enabled(env: Mapping[str, str] | None = None) -
     return value not in _FALSEY_ENV_VALUES
 
 
+def post_commit_auto_model_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(
+        source.get(
+            "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL",
+            source.get("RAG_IME_POST_COMMIT_AUTO_LLM", "1"),
+        )
+    ).strip().lower()
+    return value not in _FALSEY_ENV_VALUES
+
+
 def post_commit_presentation_stream_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
     value = str(source.get("RAG_IME_POST_COMMIT_PRESENTATION_STREAM", "1")).strip().lower()
@@ -1938,6 +1993,27 @@ def rag_direct_display_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
     value = str(source.get("RAG_IME_RAG_DIRECT_DISPLAY", "0")).strip().lower()
     return bool(value) and value not in _FALSEY_ENV_VALUES
+
+
+def post_commit_active_rag_button_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON", "1")).strip().lower()
+    return bool(value) and value not in _FALSEY_ENV_VALUES
+
+
+def post_commit_action_only_fast_path_enabled(
+    snapshot: RimeContextSnapshot,
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    if not _is_post_commit_prediction_snapshot(snapshot):
+        return False
+    if snapshot.progressive_follow_up:
+        return False
+    if not post_commit_active_rag_button_enabled(env):
+        return False
+    if post_commit_auto_model_enabled(env):
+        return False
+    return not rag_direct_display_enabled(env)
 
 
 def candidate_source_badge(source_type: str, env: Mapping[str, str] | None = None) -> str:
@@ -3080,6 +3156,15 @@ def predict_model_with_latency_budget(
         for item in snapshot.candidates[:10]
         if compact_whitespace(item.text)
     )
+    if _is_post_commit_prediction_snapshot(snapshot) and not post_commit_auto_model_enabled():
+        return [], _model_lane_status(
+            called=False,
+            timed_out=False,
+            skipped_reason="post-commit auto model disabled; use Active RAG action candidate",
+            budget_ms=budget_ms,
+            request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+            rime_candidate_count=len(rime_candidate_texts),
+        )
     if not _is_post_commit_prediction_snapshot(snapshot) and not composing_model_enabled():
         return [], _model_lane_status(
             called=False,
@@ -3194,9 +3279,11 @@ def predict_model_with_latency_budget(
             if deepseek_completion_provider is not None:
                 deepseek_predictions, deepseek_lane = _predict_deepseek_post_commit_candidates(
                     provider=deepseek_completion_provider,
+                    core=core,
                     snapshot=snapshot,
                     current_context=recent_context,
                     existing_predictions=predictions,
+                    project=project,
                     max_candidates=max_candidates,
                     started=started,
                     budget_ms=budget_ms,
@@ -3262,9 +3349,11 @@ def predict_model_with_latency_budget(
 def _predict_deepseek_post_commit_candidates(
     *,
     provider: Any,
+    core: CoreClient,
     snapshot: RimeContextSnapshot,
     current_context: str,
     existing_predictions: list[ModelPrediction],
+    project: str,
     max_candidates: int,
     started: float,
     budget_ms: int,
@@ -3296,10 +3385,19 @@ def _predict_deepseek_post_commit_candidates(
     request = DeepSeekCompletionRequest(
         scene="post_commit",
         current_context=current_context,
-        evidence_pack=_deepseek_post_commit_evidence_pack(
-            snapshot=snapshot,
-            current_context=current_context,
-            rime_candidates=rime_candidates,
+        evidence_pack=(
+            *_deepseek_post_commit_evidence_pack(
+                snapshot=snapshot,
+                current_context=current_context,
+                rime_candidates=rime_candidates,
+            ),
+            *timeline_evidence_pack_from_core(
+                core,
+                project=project,
+                app=snapshot.app or snapshot.frontend_transaction.front_app_bundle_id,
+                current_context=current_context,
+                max_items=4,
+            ),
         ),
         max_candidates=remaining,
         latency_budget_ms=remaining_budget_ms,
@@ -4798,6 +4896,60 @@ def rime_only_display_candidates(snapshot: RimeContextSnapshot) -> list[SideCand
     return display
 
 
+def append_post_commit_active_rag_action(
+    *,
+    display_candidates: list[SideCandidateDisplayItem],
+    snapshot: RimeContextSnapshot,
+    input_mode: InputMode,
+) -> bool:
+    if input_mode != InputMode.POST_COMMIT_PREDICTING:
+        return False
+    if not post_commit_active_rag_button_enabled():
+        return False
+    if any(item.selection_action == "start_active_rag_from_context" for item in display_candidates):
+        return True
+    max_visible = max(1, int(snapshot.max_visible_candidates))
+    if len(display_candidates) >= max_visible:
+        removable_index = _post_commit_active_rag_action_slot_index(display_candidates)
+        if removable_index < 0:
+            return False
+        display_candidates.pop(removable_index)
+    display_candidates.append(
+        SideCandidateDisplayItem(
+            label="",
+            text="DeepSeek 生成",
+            insert_text="",
+            source_type="action",
+            selection_action="start_active_rag_from_context",
+            source_index=len(display_candidates),
+            comment="active_rag",
+            display_layout="block",
+            display_lane="active_rag",
+            metadata={
+                "candidate_mode": "post-commit-active-rag-button",
+                "activeRagTrigger": True,
+                "buttonRole": "active_rag_generate",
+                "buttonLabel": "DeepSeek 生成",
+                "shortcutHint": "ctrl+enter",
+                "numericSelectionDisabled": True,
+                "triggerPolicy": "manual_only",
+                "requiresExplicitSelection": True,
+                "intent": "complete",
+                "placement": "insert_after_selection",
+                "maxCandidates": 1,
+            },
+        )
+    )
+    return True
+
+
+def _post_commit_active_rag_action_slot_index(display_candidates: list[SideCandidateDisplayItem]) -> int:
+    for index in range(len(display_candidates) - 1, -1, -1):
+        if display_candidates[index].source_type != "status":
+            return index
+    return len(display_candidates) - 1
+
+
 def ui_mode_for_response(
     *,
     input_mode: str,
@@ -5007,8 +5159,9 @@ def _record_memory_feedback_event(*, core: CoreClient, event: dict[str, object])
 
 def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]:
     metadata = dict(item.metadata)
+    numeric_selection_disabled = bool(metadata.get("numericSelectionDisabled"))
     selectable = _display_item_is_selectable(item)
-    selection_key = item.label if selectable else None
+    selection_key = None if numeric_selection_disabled else (item.label if selectable else None)
     source_badge = candidate_source_badge(item.source_type)
     color_token = candidate_color_token(item.source_type)
     text = _strip_candidate_source_suffix(item.text)
@@ -5018,10 +5171,10 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
         "label": item.label,
         "visibleLabel": metadata.get("visibleLabel") or item.label,
         "selectionKey": selection_key,
-        "selectionRank": _candidate_rank(selection_key or ""),
+        "selectionRank": 0 if numeric_selection_disabled else _candidate_rank(selection_key or ""),
         "candidateOrdinal": _bounded_int(
             metadata.get("candidateOrdinal"),
-            default=_candidate_rank(selection_key or "") or 0,
+            default=0 if numeric_selection_disabled else (_candidate_rank(selection_key or "") or 0),
             minimum=0,
             maximum=99,
         ),
@@ -5072,6 +5225,8 @@ def display_item_to_payload(item: SideCandidateDisplayItem) -> dict[str, object]
 def _display_candidate_group(item: SideCandidateDisplayItem) -> str:
     if item.source_type == "status" or item.display_layout == "status_row":
         return "status"
+    if item.source_type == "action":
+        return "action"
     if item.source_type == "rime":
         return "rime"
     return "prediction"
@@ -5082,6 +5237,7 @@ def _display_candidate_group_label(group: str) -> str:
         "rime": "词库",
         "prediction": "预测",
         "status": "状态",
+        "action": "操作",
     }.get(group, group)
 
 
@@ -5371,12 +5527,14 @@ def _bind_display_candidates_to_session(
     bound: list[SideCandidateDisplayItem] = []
     ordinal = 0
     for item in display_candidates:
-        selectable = _display_item_is_selectable(item)
-        if selectable:
-            ordinal += 1
-        candidate_ordinal = ordinal if selectable else 0
-        display_label = _display_label("", candidate_ordinal - 1) if selectable else ""
         metadata = dict(item.metadata)
+        selectable = _display_item_is_selectable(item)
+        numeric_selection_disabled = bool(metadata.get("numericSelectionDisabled"))
+        numbered_selectable = selectable and not numeric_selection_disabled
+        if numbered_selectable:
+            ordinal += 1
+        candidate_ordinal = ordinal if numbered_selectable else 0
+        display_label = _display_label("", candidate_ordinal - 1) if numbered_selectable else ""
         metadata.update(
             {
                 "sessionFingerprint": session_fingerprint,
@@ -5414,7 +5572,11 @@ def _bind_display_candidates_to_session(
 
 
 def _display_item_is_selectable(item: SideCandidateDisplayItem) -> bool:
-    return bool(compact_whitespace(item.label)) and item.selection_action not in {"", "none"} and item.source_type != "status"
+    if item.selection_action in {"", "none"} or item.source_type == "status":
+        return False
+    if item.source_type == "action":
+        return True
+    return bool(compact_whitespace(item.label))
 
 
 def _nested_prediction_session_value(prediction_session_payload: Mapping[str, object], key: str) -> object:

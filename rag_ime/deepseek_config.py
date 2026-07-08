@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -14,16 +15,25 @@ class DeepSeekConfig:
     stream: bool = False
     json_mode: bool = True
     request_timeout_seconds: float = 60.0
+    thinking: str = ""
+    reasoning_effort: str = "low"
+    max_tokens: int = 96
+    active_rag_max_tokens: int = 1024
+    memory_book_max_tokens: int = 2048
     env_path: Path | None = None
 
 
 def load_deepseek_config(env_path: str | Path | None = None, env: Mapping[str, str] | None = None) -> DeepSeekConfig:
+    source_values = dict(os.environ if env is None else env)
+    default_env_path = (
+        str(env_path or "").strip()
+        or _first_value(source_values, "RAG_IME_DEEPSEEK_ENV", "RAG_IME_MODEL_ENV", "RAG_IME_X1API_ENV")
+    )
     values: dict[str, str] = {}
-    resolved = Path(env_path).expanduser() if env_path else None
+    resolved = Path(default_env_path).expanduser() if default_env_path else None
     if resolved is not None and resolved.exists():
         values.update(_read_env_file(resolved))
-    if env:
-        values.update(dict(env))
+    values.update(source_values)
     return DeepSeekConfig(
         api_base_url=_canonical_deepseek_base_url(
             _first_value(values, "RAG_IME_DEEPSEEK_BASE_URL", "DEEPSEEK_BASE_URL", "X1API_BASE_URL", default="https://api.deepseek.com")
@@ -36,6 +46,34 @@ def load_deepseek_config(env_path: str | Path | None = None, env: Mapping[str, s
         request_timeout_seconds=_float_value(
             _first_value(values, "RAG_IME_DEEPSEEK_TIMEOUT_SECONDS", "DEEPSEEK_TIMEOUT_SECONDS"),
             default=60.0,
+        ),
+        thinking=_first_value(
+            values,
+            "RAG_IME_DEEPSEEK_THINKING",
+            "DEEPSEEK_THINKING",
+            default="disabled",
+        ),
+        reasoning_effort=_first_value(
+            values,
+            "RAG_IME_DEEPSEEK_REASONING_EFFORT",
+            "DEEPSEEK_REASONING_EFFORT",
+            default="low",
+        ),
+        max_tokens=_int_value(
+            _first_value(values, "RAG_IME_DEEPSEEK_MAX_TOKENS", "DEEPSEEK_MAX_TOKENS"),
+            default=96,
+        ),
+        active_rag_max_tokens=_int_value(
+            _first_value(
+                values,
+                "RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS",
+                "DEEPSEEK_ACTIVE_RAG_MAX_TOKENS",
+            ),
+            default=1024,
+        ),
+        memory_book_max_tokens=_int_value(
+            _first_value(values, "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS", "DEEPSEEK_MEMORY_BOOK_MAX_TOKENS"),
+            default=2048,
         ),
         env_path=resolved,
     )
@@ -83,3 +121,11 @@ def _float_value(value: str, *, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _int_value(value: str, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default

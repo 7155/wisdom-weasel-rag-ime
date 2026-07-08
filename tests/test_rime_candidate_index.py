@@ -101,6 +101,8 @@ class RimeCandidateIndexTests(unittest.TestCase):
         self.assertIn("ni\t你\twanxiang\t0", rows)
         self.assertIn("sj\t世界\twanxiang\t1", rows)
         self.assertIn("sj\t设计\twanxiang\t2", rows)
+        self.assertNotIn("sijie\t世界\twanxiang\t1", rows)
+        self.assertNotIn("seji\t设计\twanxiang\t2", rows)
         self.assertIn("hello\thello\twanxiang_english\t3", rows)
         self.assertIn("python\tpython\twanxiang_english\t4", rows)
         self.assertTrue(any(row.startswith("rag\trag\twanxiang_english\t") for row in rows))

@@ -21,6 +21,9 @@ DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 detect_python() {
   local candidate
   local candidates=()
+  candidates+=("$ROOT/.venv/bin/python")
+  candidates+=("$ROOT/.venv-mlx313/bin/python")
+  candidates+=("$ROOT/.venv-mlx314sys/bin/python")
   candidates+=("/opt/homebrew/bin/python3")
   candidates+=("/opt/homebrew/opt/python@3.14/bin/python3.14")
   candidates+=("$(command -v python3 2>/dev/null || true)")
@@ -173,6 +176,7 @@ env_vars = {
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],
     "RAG_IME_CORE_MODE": os.environ["CORE_MODE"],
     "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
+    "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
     "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
     "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
     "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
@@ -187,6 +191,20 @@ env_vars = {
     "RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES": "128",
     "RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES": "32",
     "RAG_IME_SUGGESTION_CACHE_SIZE": "32",
+    "RAG_IME_RAG_DIRECT_DISPLAY": "0",
+    "RAG_IME_DEEPSEEK_THINKING": "disabled",
+    "RAG_IME_DEEPSEEK_REASONING_EFFORT": "low",
+    "RAG_IME_DEEPSEEK_MAX_TOKENS": "96",
+    "RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS": "1024",
+    "RAG_IME_PINYIN_FUZZY_ENABLED": "1",
+    "RAG_IME_PINYIN_FUZZY_PROFILE": "sichuan-mild",
+    "RAG_IME_PINYIN_FUZZY_Z_ZH": "1",
+    "RAG_IME_PINYIN_FUZZY_C_CH": "1",
+    "RAG_IME_PINYIN_FUZZY_S_SH": "1",
+    "RAG_IME_PINYIN_FUZZY_EN_ENG": "1",
+    "RAG_IME_PINYIN_FUZZY_IN_ING": "1",
+    "RAG_IME_PINYIN_FUZZY_N_L": "0",
+    "RAG_IME_PINYIN_FUZZY_F_H": "0",
 }
 ssl_cert_file = os.environ.get("SSL_CERT_FILE_DEFAULT", "")
 if ssl_cert_file:
@@ -207,6 +225,7 @@ preserve_existing_keys = {
     "X1API_BASE_URL",
     "X1API_MODEL",
     "X1API_API_KEY",
+    "RAG_IME_DEEPSEEK_ENV",
     "DEEPSEEK_API_KEY",
     "DEEPSEEK_BASE_URL",
     "DEEPSEEK_MODEL",
@@ -220,6 +239,10 @@ preserve_existing_keys = {
     "RAG_IME_DEEPSEEK_STREAM",
     "RAG_IME_DEEPSEEK_JSON",
     "RAG_IME_DEEPSEEK_TIMEOUT_SECONDS",
+    "RAG_IME_DEEPSEEK_THINKING",
+    "RAG_IME_DEEPSEEK_REASONING_EFFORT",
+    "RAG_IME_DEEPSEEK_MAX_TOKENS",
+    "RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS",
     "RAG_IME_DEEPSEEK_ACTIVE_RAG",
     "RAG_IME_DEEPSEEK_POST_COMMIT",
     "RAG_IME_DEEPSEEK_PREVIEW_TOKEN",
@@ -239,6 +262,15 @@ preserve_existing_keys = {
     "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON",
     "RAG_IME_PREDICTOR_API_KEY",
     "RAG_IME_MLX_MODEL",
+    "RAG_IME_PINYIN_FUZZY_ENABLED",
+    "RAG_IME_PINYIN_FUZZY_PROFILE",
+    "RAG_IME_PINYIN_FUZZY_Z_ZH",
+    "RAG_IME_PINYIN_FUZZY_C_CH",
+    "RAG_IME_PINYIN_FUZZY_S_SH",
+    "RAG_IME_PINYIN_FUZZY_EN_ENG",
+    "RAG_IME_PINYIN_FUZZY_IN_ING",
+    "RAG_IME_PINYIN_FUZZY_N_L",
+    "RAG_IME_PINYIN_FUZZY_F_H",
     "RAG_IME_RIME_CACHE_TTL_MS",
     "RAG_IME_SUGGESTION_CACHE_SIZE",
     "RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES",
@@ -269,6 +301,7 @@ for key in (
     "RAG_IME_MODEL_LANE_MAX_CANDIDATES",
     "RAG_IME_MODEL_LANE_LEASE_TTL_MS",
     "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION",
+    "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL",
     "RAG_IME_ENABLE_COMPOSING_MODEL",
     "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL",
     "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS",
@@ -282,6 +315,7 @@ for key in (
     "RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES",
     "RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES",
     "RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES",
+    "RAG_IME_RAG_DIRECT_DISPLAY",
     "SSL_CERT_FILE",
     "RAG_IME_MODEL_ENV",
     "RAG_IME_X1API_ENV",
@@ -297,6 +331,7 @@ for key in (
     "X1API_BASE_URL",
     "X1API_MODEL",
     "X1API_API_KEY",
+    "RAG_IME_DEEPSEEK_ENV",
     "DEEPSEEK_API_KEY",
     "DEEPSEEK_BASE_URL",
     "DEEPSEEK_MODEL",
@@ -310,6 +345,10 @@ for key in (
     "RAG_IME_DEEPSEEK_STREAM",
     "RAG_IME_DEEPSEEK_JSON",
     "RAG_IME_DEEPSEEK_TIMEOUT_SECONDS",
+    "RAG_IME_DEEPSEEK_THINKING",
+    "RAG_IME_DEEPSEEK_REASONING_EFFORT",
+    "RAG_IME_DEEPSEEK_MAX_TOKENS",
+    "RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS",
     "RAG_IME_DEEPSEEK_ACTIVE_RAG",
     "RAG_IME_DEEPSEEK_POST_COMMIT",
     "RAG_IME_DEEPSEEK_PREVIEW_TOKEN",
@@ -329,6 +368,16 @@ for key in (
     "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON",
     "RAG_IME_PREDICTOR_API_KEY",
     "RAG_IME_MLX_MODEL",
+    "RAG_IME_PINYIN_FUZZY_ENABLED",
+    "RAG_IME_PINYIN_FUZZY_PROFILE",
+    "RAG_IME_PINYIN_FUZZY_Z_ZH",
+    "RAG_IME_PINYIN_FUZZY_C_CH",
+    "RAG_IME_PINYIN_FUZZY_S_SH",
+    "RAG_IME_PINYIN_FUZZY_EN_ENG",
+    "RAG_IME_PINYIN_FUZZY_IN_ING",
+    "RAG_IME_PINYIN_FUZZY_N_L",
+    "RAG_IME_PINYIN_FUZZY_F_H",
+    "RAG_IME_RAG_DIRECT_DISPLAY",
     "RAG_IME_EMBEDDING_PROVIDER",
     "RAG_IME_EMBEDDING_BASE_URL",
     "RAG_IME_EMBEDDING_MODEL",
@@ -386,6 +435,38 @@ fi
 
 DOMAIN="gui/$(id -u)"
 
+kill_stale_sidecar_processes() {
+  if [[ "${RAG_IME_KILL_STALE_SIDECAR_ON_INSTALL:-1}" == "0" ]]; then
+    return 0
+  fi
+  pkill -f 'sidecar_launch.py.*sidecar-server' >/dev/null 2>&1 || true
+  pkill -f 'rag_ime.cli.*sidecar-server' >/dev/null 2>&1 || true
+  if command -v lsof >/dev/null 2>&1; then
+    local pid
+    while read -r pid; do
+      [[ -n "$pid" ]] || continue
+      ps -p "$pid" -o command= | grep -E 'sidecar_launch.py|rag_ime.cli' >/dev/null 2>&1 || continue
+      kill "$pid" >/dev/null 2>&1 || true
+    done < <(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)
+  fi
+}
+
+wait_for_sidecar_port_release() {
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  local attempt
+  for attempt in {1..25}; do
+    if ! lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "sidecar port $PORT is still occupied after stale-process cleanup" >&2
+  lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >&2 || true
+  return 1
+}
+
 bootstrap_launch_agent() {
   local attempt
   local delay
@@ -411,9 +492,11 @@ bootstrap_launch_agent() {
 }
 
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+kill_stale_sidecar_processes
+wait_for_sidecar_port_release
+launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 sleep 0.2
 bootstrap_launch_agent
-launchctl kickstart -k "$DOMAIN/$LABEL"
 
 echo "$PLIST_PATH"
 echo "http://$HOST:$PORT/"

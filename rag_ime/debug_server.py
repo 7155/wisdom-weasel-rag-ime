@@ -114,6 +114,13 @@ class _RimeSuggestInflightEntry:
     waiters: int = 0
 
 
+@dataclass
+class _PredictorStatusCacheEntry:
+    fingerprint: str
+    expires_at: float
+    status: dict[str, object]
+
+
 class DebugImeService:
     """Small local HTTP facade for browser-based IME debugging."""
 
@@ -122,7 +129,14 @@ class DebugImeService:
         self.core = config.core or LocalSqliteCoreClient(config.db_path)
         self.predictor = config.predictor or prediction_provider_from_env()
         self.adapter = InputMethodAdapter(self.core, project=config.project)
-        self.active_rag = ActiveRagService(core=self.core if isinstance(self.core, LocalSqliteCoreClient) else None)
+        self.deepseek_completion_provider = DeepSeekV4FlashCompletionProvider(
+            load_deepseek_config(),
+            enforce_runtime_flags=True,
+        )
+        self.active_rag = ActiveRagService(
+            core=self.core if isinstance(self.core, LocalSqliteCoreClient) else None,
+            completion_provider=self.deepseek_completion_provider,
+        )
         self.settings_store = ManagementSettingsStore(config.db_path)
         self._rime_cache: dict[str, _RimeSuggestCacheEntry] = {}
         self._rime_inflight: dict[str, _RimeSuggestInflightEntry] = {}
@@ -132,14 +146,18 @@ class DebugImeService:
         self._rime_inflight_hits = 0
         self._rime_inflight_errors = 0
         self._prediction_live_trace: list[dict[str, object]] = []
+        self._predictor_status_cache: dict[bool, _PredictorStatusCacheEntry] = {}
+        self._predictor_status_lock = RLock()
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
         self.settings_store.initialize()
+        _apply_pinyin_settings_to_process_env(self.settings_store.get_settings(include_sensitive=True))
         if config.seed_if_empty and self._event_count() == 0:
             seed_demo_memories(self.adapter, default_fixture_memories())
         self._vector_auto_rebuild_report = self._maybe_auto_rebuild_vector_index()
 
     def health(self) -> dict[str, object]:
+        settings = self.settings_store.get_settings()
         return {
             "ok": True,
             "project": self.config.project,
@@ -149,8 +167,9 @@ class DebugImeService:
                 "schemaVersion": "rag-ime.debug-management.v1",
                 "localhostOnly": _host_is_loopback(self.config.host),
                 "rawTextVisible": self._include_raw_text(),
-                "settings": self.settings_store.get_settings(),
+                "settings": settings,
             },
+            "pinyinRuntime": _pinyin_runtime_status(settings),
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
             "rimeSuggestCache": {
@@ -162,7 +181,7 @@ class DebugImeService:
                 "inFlightHits": self._rime_inflight_hits,
                 "inFlightErrors": self._rime_inflight_errors,
             },
-            "predictor": prediction_provider_status(self.predictor, probe_capabilities=True),
+            "predictor": self._predictor_status(probe_capabilities=False),
             "suggestionCache": self._suggestion_cache_stats(),
             "vectorStats": self._vector_index_stats(),
             "vectorAutoRebuild": self._vector_auto_rebuild_status(),
@@ -172,7 +191,7 @@ class DebugImeService:
         return {
             "schemaVersion": "rag-ime.predictor-status.v1",
             "ok": True,
-            "predictor": prediction_provider_status(self.predictor, probe_capabilities=True),
+            "predictor": self._predictor_status(probe_capabilities=True),
         }
 
     def settings(self) -> dict[str, object]:
@@ -192,6 +211,7 @@ class DebugImeService:
             updated_by=_string(payload.get("updatedBy")) or "local-console",
             confirm_text=_string(payload.get("confirmText")),
         )
+        _apply_pinyin_settings_to_process_env(result.settings)
         self._clear_rime_cache()
         return {
             **settings_response(result.settings),
@@ -202,6 +222,7 @@ class DebugImeService:
     def settings_reset_section(self, payload: dict[str, Any]) -> dict[str, object]:
         section = _string(payload.get("section"))
         result = self.settings_store.reset_section(section, updated_by=_string(payload.get("updatedBy")) or "local-console")
+        _apply_pinyin_settings_to_process_env(result.settings)
         self._clear_rime_cache()
         return {
             **settings_response(result.settings),
@@ -295,7 +316,7 @@ class DebugImeService:
             "schemaVersion": "rag-ime.models-status.v3",
             "ok": True,
             "settings": settings.get("models", {}),
-            "predictor": prediction_provider_status(self.predictor, probe_capabilities=True),
+            "predictor": self._predictor_status(probe_capabilities=True),
         }
 
     def model_profiles(self) -> dict[str, object]:
@@ -329,7 +350,7 @@ class DebugImeService:
             "schemaVersion": "rag-ime.model-probe.v3",
             "ok": True,
             "dryRun": True,
-            "predictor": prediction_provider_status(self.predictor, probe_capabilities=True),
+            "predictor": self._predictor_status(probe_capabilities=True, force_refresh=True),
         }
 
     def model_benchmark_job(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -383,7 +404,7 @@ class DebugImeService:
             return {"schemaVersion": "rag-ime.active-rag-preview.v3", "ok": False, "error": "Active RAG disabled"}
         max_candidates = _bounded_int(
             payload.get("maxCandidates"),
-            default=_bounded_int(active_settings.get("maxCandidates"), default=5, minimum=1, maximum=10),
+            default=_bounded_int(active_settings.get("maxCandidates"), default=1, minimum=1, maximum=10),
             minimum=1,
             maximum=10,
         )
@@ -400,9 +421,9 @@ class DebugImeService:
                 "localOnly": local_only,
                 "latencyBudgetMs": _bounded_int(
                     payload.get("latencyBudgetMs"),
-                    default=_bounded_int(active_settings.get("latencyBudgetMs"), default=2500, minimum=100, maximum=15000),
+                    default=_bounded_int(active_settings.get("latencyBudgetMs"), default=15000, minimum=100, maximum=30000),
                     minimum=100,
-                    maximum=15000,
+                    maximum=30000,
                 ),
                 **preview,
             },
@@ -417,7 +438,7 @@ class DebugImeService:
         }
 
     def predictor_cache_stats(self) -> dict[str, object]:
-        status = prediction_provider_status(self.predictor, probe_capabilities=True)
+        status = self._predictor_status(probe_capabilities=True)
         probe = status.get("capabilityProbe") if isinstance(status.get("capabilityProbe"), dict) else {}
         prompt_cache = probe.get("promptCache") if isinstance(probe.get("promptCache"), dict) else {}
         capabilities = status.get("capabilities") if isinstance(status.get("capabilities"), dict) else {}
@@ -477,7 +498,9 @@ class DebugImeService:
             evidence_pack=evidence_pack,
             project=_string(payload.get("project")) or self.config.project,
             app=_string(payload.get("app")),
-            max_candidates=_bounded_int(payload.get("maxCandidates"), default=5, minimum=1, maximum=10),
+            max_candidates=_bounded_int(payload.get("maxCandidates"), default=1, minimum=1, maximum=10),
+            max_chars=_bounded_int(payload.get("maxChars"), default=18, minimum=4, maximum=80),
+            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=15000, minimum=100, maximum=30000),
         )
 
     def _active_rag_error_payload(self, error: str) -> dict[str, object]:
@@ -816,12 +839,25 @@ class DebugImeService:
                     "error": str(exc),
                     "requires": "RAG_IME_DEEPSEEK_ACTIVE_RAG=1 or previewToken",
                 }
+        current_context = _string(payload.get("currentContext") or payload.get("context"))
+        selected_text = _string(payload.get("selectedText"))
+        evidence_pack = (
+            tuple(item for item in payload.get("evidencePack", []) if isinstance(item, dict))
+            if isinstance(payload.get("evidencePack"), list)
+            else ()
+        )
+        if not evidence_pack:
+            evidence_pack = self._deepseek_preview_evidence_pack(
+                current_context=current_context,
+                selected_text=selected_text,
+                payload=payload,
+            )
         request = DeepSeekCompletionRequest(
             scene="active_rag",
-            current_context=_string(payload.get("currentContext") or payload.get("context")),
-            selected_text=_string(payload.get("selectedText")),
-            evidence_pack=tuple(item for item in payload.get("evidencePack", []) if isinstance(item, dict)) if isinstance(payload.get("evidencePack"), list) else (),
-            max_candidates=_bounded_int(payload.get("maxCandidates"), default=5, minimum=1, maximum=8),
+            current_context=current_context,
+            selected_text=selected_text,
+            evidence_pack=evidence_pack,
+            max_candidates=_bounded_int(payload.get("maxCandidates"), default=1, minimum=1, maximum=8),
             latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=2500, minimum=100, maximum=15000),
         )
         messages = build_deepseek_completion_messages(request)
@@ -831,18 +867,60 @@ class DebugImeService:
                 "ok": True,
                 "dryRun": True,
                 "messages": _redact_mapping({"messages": messages}, include_text=self._include_raw_text())["messages"],
+                "evidencePack": _redact_mapping({"items": list(evidence_pack)}, include_text=self._include_raw_text())["items"],
                 "candidates": [],
             }
         config = load_deepseek_config(_string(payload.get("modelEnvPath")) or None)
         provider = DeepSeekV4FlashCompletionProvider(config, enforce_runtime_flags=False)
-        candidates = [item.__dict__ for item in provider.stream_candidates(request)]
+        candidates: list[dict[str, object]] = []
+        stream_events: list[dict[str, object]] = []
+        for item in provider.stream_candidates(request):
+            payload_item = item.__dict__
+            candidates.append(payload_item)
+            stream_events.append(
+                {
+                    "text": item.text,
+                    "insertText": item.insert_text,
+                    "sourceLane": item.source_lane,
+                    "done": item.done,
+                    "elapsedMs": item.metadata.get("elapsedMs"),
+                    "metadata": dict(item.metadata),
+                }
+            )
         return {
             "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
             "ok": True,
             "dryRun": False,
             "messages": _redact_mapping({"messages": messages}, include_text=self._include_raw_text())["messages"],
+            "evidencePack": _redact_mapping({"items": list(evidence_pack)}, include_text=self._include_raw_text())["items"],
+            "streamEvents": _redact_mapping({"items": stream_events}, include_text=self._include_raw_text())["items"],
             "candidates": _redact_mapping({"items": candidates}, include_text=self._include_raw_text())["items"],
         }
+
+    def _deepseek_preview_evidence_pack(
+        self,
+        *,
+        current_context: str,
+        selected_text: str,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, object], ...]:
+        query = compact_whitespace(_string(payload.get("query")) or current_context or selected_text)
+        if not query:
+            return ()
+        top_k = _bounded_int(payload.get("evidenceTopK"), default=8, minimum=1, maximum=20)
+        try:
+            suggestions = self.adapter.suggest(
+                SuggestionRequest(
+                    current_input=query,
+                    recent_context=compact_whitespace(selected_text or current_context),
+                    project=_string(payload.get("project")) or self.config.project,
+                    app=_string(payload.get("app")),
+                    top_k=top_k,
+                )
+            )
+        except Exception:
+            return ()
+        return tuple(_deepseek_evidence_from_suggestion(item) for item in suggestions[:top_k])
 
     def memory_tombstone(self, payload: dict[str, Any]) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
@@ -1722,7 +1800,9 @@ class DebugImeService:
         )
 
     def rime_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
-        cache_key = self._rime_suggest_cache_key(payload)
+        settings = self.settings_store.get_settings(include_sensitive=True)
+        _apply_pinyin_settings_to_process_env(settings)
+        cache_key = self._rime_suggest_cache_key(payload, settings=settings)
         bypass_cache = self._rime_suggest_cache_bypass(payload)
         cached = None if bypass_cache else self._get_cached_rime_response(cache_key, payload)
         if cached is not None:
@@ -1745,7 +1825,7 @@ class DebugImeService:
             self._finish_rime_inflight(cache_key, error=exc)
             raise
         _attach_rime_ranking_diagnostics(response)
-        self._apply_management_settings_to_rime_response(response, request_payload=payload)
+        self._apply_management_settings_to_rime_response(response, request_payload=payload, settings=settings)
         if self._rime_response_cacheable(response, request_payload=payload):
             self._store_rime_response(cache_key, response)
         self._finish_rime_inflight(cache_key, response=response)
@@ -1754,8 +1834,15 @@ class DebugImeService:
         self._record_prediction_live_trace(response, request_payload=payload)
         return response
 
-    def _apply_management_settings_to_rime_response(self, response: dict[str, object], *, request_payload: dict[str, Any]) -> None:
-        settings = self.settings_store.get_settings(include_sensitive=True)
+    def _apply_management_settings_to_rime_response(
+        self,
+        response: dict[str, object],
+        *,
+        request_payload: dict[str, Any],
+        settings: dict[str, object] | None = None,
+    ) -> None:
+        if settings is None:
+            settings = self.settings_store.get_settings(include_sensitive=True)
         interaction = settings.get("interaction") if isinstance(settings.get("interaction"), dict) else {}
         composition = interaction.get("composition") if isinstance(interaction.get("composition"), dict) else {}
         post_commit = interaction.get("postCommit") if isinstance(interaction.get("postCommit"), dict) else {}
@@ -1795,7 +1882,7 @@ class DebugImeService:
                 item["colorToken"] = custom_color
         response["displayCandidates"] = items
         response["managementSettings"] = {
-            "settingsHash": _stable_debug_hash(json.dumps(settings, ensure_ascii=False, sort_keys=True)),
+            "settingsHash": _settings_hash(settings),
             "interactionApplied": True,
             "displayApplied": True,
         }
@@ -2021,7 +2108,7 @@ class DebugImeService:
         with self._rime_cache_lock:
             return len(self._rime_inflight)
 
-    def _rime_suggest_cache_key(self, payload: dict[str, Any]) -> str:
+    def _rime_suggest_cache_key(self, payload: dict[str, Any], *, settings: dict[str, object] | None = None) -> str:
         snapshot = parse_rime_context_payload(payload, default_project=self.config.project)
         semantic_query, query_basis = choose_semantic_query(snapshot)
         trigger_decision = decide_side_candidate_refresh(
@@ -2056,6 +2143,7 @@ class DebugImeService:
         material = {
             "snapshot": normalized_snapshot,
             "project": self.config.project,
+            "managementSettingsHash": _settings_hash(settings or self.settings_store.get_settings(include_sensitive=True)),
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
             "vectorStats": self._vector_index_stats(),
@@ -2085,6 +2173,36 @@ class DebugImeService:
         if config is None:
             return self.predictor.__class__.__name__
         return f"{self.predictor.__class__.__name__}:{config!r}"
+
+    def _predictor_status(
+        self,
+        *,
+        probe_capabilities: bool = False,
+        force_refresh: bool = False,
+        ttl_ms: int = 5_000,
+    ) -> dict[str, object]:
+        if not probe_capabilities:
+            return prediction_provider_status(self.predictor, probe_capabilities=False)
+        ttl_ms = max(0, int(ttl_ms))
+        fingerprint = self._predictor_fingerprint()
+        now = time.monotonic()
+        with self._predictor_status_lock:
+            entry = self._predictor_status_cache.get(True)
+            if not force_refresh and entry is not None and entry.fingerprint == fingerprint and entry.expires_at > now:
+                status = copy.deepcopy(entry.status)
+                status["statusCache"] = {"hit": True, "ttlMs": ttl_ms}
+                return status
+
+        status = prediction_provider_status(self.predictor, probe_capabilities=True)
+        with self._predictor_status_lock:
+            self._predictor_status_cache[True] = _PredictorStatusCacheEntry(
+                fingerprint=fingerprint,
+                expires_at=time.monotonic() + ttl_ms / 1000,
+                status=copy.deepcopy(status),
+            )
+        status = copy.deepcopy(status)
+        status["statusCache"] = {"hit": False, "ttlMs": ttl_ms}
+        return status
 
     def _get_cached_rime_response(self, cache_key: str, payload: dict[str, Any]) -> dict[str, object] | None:
         ttl_ms = self._cache_ttl_ms()
@@ -2325,6 +2443,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.OK,
                 self.service.active_rag_status({"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}),
             )
+            return
+        if parsed.path.startswith("/api/active-rag/session/"):
+            session_id = unquote(parsed.path.rsplit("/", 1)[-1])
+            self._write_json(HTTPStatus.OK, self.service.active_rag_status({"sessionId": session_id}))
             return
         if parsed.path in ("/api/prediction/live-trace", "/prediction/live-trace"):
             self._write_json(
@@ -2605,6 +2727,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
 
     def log_message(self, fmt: str, *args: object) -> None:
+        if self.path.startswith(("/api/active-rag/status", "/api/active-rag/session")):
+            return
         print(f"[rag-ime-debug] {self.address_string()} - {fmt % args}")
 
     def _management_post_security_error(self, path: str) -> dict[str, object] | None:
@@ -2689,6 +2813,68 @@ def _stable_debug_hash(text: str) -> str:
     if not compact:
         return ""
     return "sha256:" + hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
+
+
+def _settings_hash(settings: dict[str, object]) -> str:
+    return _stable_debug_hash(json.dumps(settings, ensure_ascii=False, sort_keys=True))
+
+
+_PINYIN_PAIR_ENV_NAMES = {
+    "zZh": "RAG_IME_PINYIN_FUZZY_Z_ZH",
+    "cCh": "RAG_IME_PINYIN_FUZZY_C_CH",
+    "sSh": "RAG_IME_PINYIN_FUZZY_S_SH",
+    "enEng": "RAG_IME_PINYIN_FUZZY_EN_ENG",
+    "inIng": "RAG_IME_PINYIN_FUZZY_IN_ING",
+    "nL": "RAG_IME_PINYIN_FUZZY_N_L",
+    "fH": "RAG_IME_PINYIN_FUZZY_F_H",
+}
+_PINYIN_PAIR_DEFAULTS = {
+    "zZh": True,
+    "cCh": True,
+    "sSh": True,
+    "enEng": True,
+    "inIng": True,
+    "nL": False,
+    "fH": False,
+}
+
+
+def _apply_pinyin_settings_to_process_env(settings: dict[str, object]) -> None:
+    pinyin = settings.get("pinyin") if isinstance(settings.get("pinyin"), dict) else {}
+    assert isinstance(pinyin, dict)
+    profile = compact_whitespace(str(pinyin.get("fuzzyProfile") or "sichuan-mild")).lower() or "sichuan-mild"
+    rerank_uses_fuzzy = pinyin.get("rerankUsesFuzzy") is not False
+    if profile in {"none", "off", "disabled"} or not rerank_uses_fuzzy:
+        os.environ["RAG_IME_PINYIN_FUZZY_ENABLED"] = "0"
+        os.environ["RAG_IME_PINYIN_FUZZY_PROFILE"] = "none"
+    else:
+        os.environ["RAG_IME_PINYIN_FUZZY_ENABLED"] = "1"
+        os.environ["RAG_IME_PINYIN_FUZZY_PROFILE"] = profile
+    pairs = pinyin.get("pairs") if isinstance(pinyin.get("pairs"), dict) else {}
+    assert isinstance(pairs, dict)
+    for key, env_name in _PINYIN_PAIR_ENV_NAMES.items():
+        if key in pairs:
+            os.environ[env_name] = "1" if pairs.get(key) is not False else "0"
+
+
+def _pinyin_runtime_status(settings: dict[str, object]) -> dict[str, object]:
+    pinyin = settings.get("pinyin") if isinstance(settings.get("pinyin"), dict) else {}
+    assert isinstance(pinyin, dict)
+    profile = compact_whitespace(str(pinyin.get("fuzzyProfile") or "sichuan-mild")).lower() or "sichuan-mild"
+    rerank_uses_fuzzy = pinyin.get("rerankUsesFuzzy") is not False
+    fuzzy_enabled = profile not in {"none", "off", "disabled"} and rerank_uses_fuzzy
+    pairs = pinyin.get("pairs") if isinstance(pinyin.get("pairs"), dict) else {}
+    assert isinstance(pairs, dict)
+    return {
+        "schemaVersion": "rag-ime.pinyin-runtime.v1",
+        "fuzzyEnabled": fuzzy_enabled,
+        "profile": profile if fuzzy_enabled else "none",
+        "rerankUsesFuzzy": rerank_uses_fuzzy,
+        "pairs": {
+            key: bool(pairs.get(key, _PINYIN_PAIR_DEFAULTS.get(key, False)))
+            for key in _PINYIN_PAIR_ENV_NAMES
+        },
+    }
 
 
 def _active_rag_runtime_sync_payload(*, active_settings: object, changed_keys: tuple[str, ...]) -> dict[str, object]:
@@ -3196,8 +3382,13 @@ def _rime_ranking_diagnostics(response: dict[str, object]) -> dict[str, object]:
     display_candidates = response.get("displayCandidates")
     if not isinstance(display_candidates, list):
         display_candidates = []
+    rag_candidates = response.get("ragCandidates")
+    if not isinstance(rag_candidates, list):
+        rag_candidates = []
     items: list[dict[str, object]] = []
+    evidence_items: list[dict[str, object]] = []
     source_counts: dict[str, int] = {}
+    evidence_source_counts: dict[str, int] = {}
     has_rag_breakdown = False
     has_model_candidate_scores = False
     for index, candidate in enumerate(display_candidates, start=1):
@@ -3212,19 +3403,41 @@ def _rime_ranking_diagnostics(response: dict[str, object]) -> dict[str, object]:
         if int(diagnostics.get("candidateScoreCount") or 0) > 0:
             has_model_candidate_scores = True
         items.append(diagnostics)
+    for index, candidate in enumerate(rag_candidates, start=1):
+        if not isinstance(candidate, dict):
+            continue
+        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        source_type = _string(metadata.get("source_type") or candidate.get("sourceType") or "rag")
+        evidence_source_counts[source_type] = evidence_source_counts.get(source_type, 0) + 1
+        diagnostics = _rag_evidence_candidate_diagnostics(candidate, default_rank=index)
+        if isinstance(diagnostics.get("scoreBreakdown"), dict):
+            has_rag_breakdown = True
+        evidence_items.append(diagnostics)
     side_count = sum(count for source, count in source_counts.items() if source != "rime")
     rime_count = source_counts.get("rime", 0)
     return {
         "schemaVersion": "rag-ime.ranking-diagnostics.v1",
         "candidateCount": len(items),
+        "ragEvidenceCount": len(evidence_items),
         "sideCandidateCount": side_count,
         "rimeCandidateCount": rime_count,
         "sourceCounts": source_counts,
+        "evidenceSourceCounts": evidence_source_counts,
         "hasRagScoreBreakdown": has_rag_breakdown,
         "hasModelCandidateScores": has_model_candidate_scores,
         "topCandidate": items[0] if items else None,
         "items": items,
+        "evidenceItems": evidence_items,
     }
+
+
+def _rag_evidence_candidate_diagnostics(candidate: dict[str, object], *, default_rank: int) -> dict[str, object]:
+    metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+    normalized = dict(candidate)
+    normalized.setdefault("text", candidate.get("surfaceText") or candidate.get("insertText"))
+    normalized.setdefault("sourceType", metadata.get("source_type") or "rag")
+    normalized.setdefault("displayLane", metadata.get("source_type") or "rag_evidence")
+    return _display_candidate_diagnostics(normalized, default_rank=default_rank)
 
 
 def _display_candidate_diagnostics(candidate: dict[str, object], *, default_rank: int) -> dict[str, object]:
@@ -3628,6 +3841,21 @@ def _input_source_product_name(display_name: str) -> str:
         if display_name.endswith(suffix):
             return display_name[: -len(suffix)]
     return display_name
+
+
+def _deepseek_evidence_from_suggestion(suggestion: InputSuggestion) -> dict[str, object]:
+    metadata = dict(suggestion.metadata)
+    tags = metadata.get("tags")
+    return {
+        "sourceType": _string(metadata.get("source_type") or "rag"),
+        "title": _string(metadata.get("title") or metadata.get("bookTitle")),
+        "surfaceHints": [compact_whitespace(suggestion.surface_text)],
+        "evidencePreview": compact_whitespace(suggestion.evidence_preview or suggestion.expanded_evidence),
+        "confidence": suggestion.confidence,
+        "memoryId": _string(metadata.get("memory_id") or suggestion.suggestion_id),
+        "sourceEventId": suggestion.source_event_id,
+        "tags": [str(tag) for tag in tags[:8]] if isinstance(tags, (list, tuple)) else [],
+    }
 
 
 def _cache_stats_delta(before: object, after: object) -> dict[str, object]:

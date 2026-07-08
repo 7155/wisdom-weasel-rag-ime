@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import threading
@@ -11,7 +12,8 @@ from unittest.mock import patch
 from rag_ime.active_rag_service import ActiveRagService, ActiveRagStartRequest
 from rag_ime.deepseek_completion import CompletionCandidateDelta
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.text_utils import stable_text_hash
+from rag_ime.models import InputEvent
+from rag_ime.text_utils import now_ms, stable_text_hash
 
 
 class ActiveRagServiceTests(unittest.TestCase):
@@ -22,35 +24,213 @@ class ActiveRagServiceTests(unittest.TestCase):
 
         with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": ""}):
             started = service.start(request)
+            self.assertGreaterEqual(started["elapsedMs"], 0)
             ready = _wait_ready(service, str(started["sessionId"]))
 
         self.assertEqual(provider.calls, [])
         self.assertEqual(ready["status"], "ready")
+        self.assertGreaterEqual(ready["elapsedMs"], 0)
+        self.assertEqual(ready["pollAfterMs"], 0)
         self.assertEqual(ready["uiMode"], "active_rag_assist")
         self.assertFalse(ready["keyPolicy"]["thinkingRowSelectable"])
         self.assertEqual([item["text"] for item in ready["candidates"]], ["主动候选"])
 
+    def test_active_rag_pending_status_reports_poll_backoff(self) -> None:
+        gate = threading.Event()
+        provider = BlockingActiveRagProvider(gate)
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="选区")
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            pending = service.status(str(started["sessionId"]))
+            gate.set()
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(pending["status"], "pending")
+        self.assertGreaterEqual(pending["elapsedMs"], 0)
+        self.assertGreater(pending["pollAfterMs"], 0)
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["pollAfterMs"], 0)
+
     def test_active_rag_uses_deepseek_when_enabled(self) -> None:
         provider = FakeActiveRagProvider(("这是原始选区长句", "DeepSeek主动候选"))
         service = ActiveRagService(completion_provider=provider)
-        request = _request(selected_text="这是原始选区长句，需要被避免复读")
+        request = _request(selected_text="这是原始选区长句，需要被避免复读", max_candidates=2)
 
         with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
             started = service.start(request)
             ready = _wait_ready(service, str(started["sessionId"]))
 
         self.assertEqual(provider.calls[0].scene, "active_rag")
+        self.assertEqual(provider.calls[0].max_chars, 24)
         self.assertEqual(ready["status"], "ready")
-        self.assertEqual([item["text"] for item in ready["candidates"]], ["主动候选", "DeepSeek主动候选"])
+        self.assertEqual([item["text"] for item in ready["candidates"]], ["DeepSeek主动候选"])
+        self.assertEqual(ready["candidates"][0]["selectionAction"], "commit_side_candidate")
+        self.assertEqual(ready["candidates"][0]["candidateOrdinal"], 1)
+        self.assertEqual(ready["candidates"][0]["metadata"]["frontendRevision"], request.frontend_revision)
         accepted = service.accept(
             session_id=str(ready["sessionId"]),
-            candidate_id=str(ready["candidates"][1]["candidateId"]),
+            candidate_id=str(ready["candidates"][0]["candidateId"]),
             selected_text_hash=request.selected_text_hash,
             frontend_revision=request.frontend_revision,
             selection_epoch=request.selection_epoch,
         )
         self.assertTrue(accepted["ok"])
         self.assertEqual(accepted["insertText"], "DeepSeek主动候选")
+
+    def test_active_rag_governs_remote_candidate_length(self) -> None:
+        provider = FakeActiveRagProvider(("这是一个过长候选，需要缩短，保留关键动作",))
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="候选长度治理", max_chars=6)
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertLessEqual(len(ready["candidates"][0]["text"]), 6)
+        self.assertTrue(ready["candidates"][0]["metadata"]["lengthGoverned"])
+        self.assertEqual(ready["candidates"][0]["metadata"]["maxChars"], 6)
+
+    def test_active_rag_governs_local_evidence_length_with_surface_hints(self) -> None:
+        service = ActiveRagService()
+        request = _request(
+            selected_text="本地证据长度治理",
+            max_chars=8,
+            evidence_pack=(
+                {
+                    "surfaceHints": ["时间线笔记本", "这是一整段很长的原始 RAG 证据，不应该直接显示给输入法候选框"],
+                    "tags": ["RAG"],
+                },
+            ),
+        )
+
+        started = service.start(request)
+        ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["candidates"][0]["text"], "时间线笔记本")
+        self.assertLessEqual(len(ready["candidates"][0]["text"]), 8)
+        self.assertFalse(ready["candidates"][0]["metadata"]["lengthGoverned"])
+
+    def test_active_rag_allows_short_keyword_reuse_but_rejects_exact_selection_echo(self) -> None:
+        provider = FakeActiveRagProvider(("DeepSeek 生成按钮和 RAG 记忆上下文", "生成按钮优化"))
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="DeepSeek 生成按钮和 RAG 记忆上下文", max_candidates=2)
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual([item["text"] for item in ready["candidates"]], ["生成按钮优化"])
+
+    def test_active_rag_deepseek_empty_result_returns_visible_fallback_candidate(self) -> None:
+        provider = FakeActiveRagProvider(())
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="选区", max_candidates=2)
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertGreaterEqual(ready["candidateCount"], 1)
+        self.assertEqual(ready["candidates"][0]["sourceType"], "model")
+        self.assertEqual(ready["candidates"][0]["metadata"]["parseMode"], "request_fallback")
+        self.assertNotIn("主动候选", [item["text"] for item in ready["candidates"]])
+
+    def test_active_rag_pending_timeout_returns_visible_fallback_candidate(self) -> None:
+        gate = threading.Event()
+        provider = BlockingActiveRagProvider(gate)
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="LLM没有输出，现在只要一个框")
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            session_id = str(started["sessionId"])
+            with service._lock:
+                service._sessions[session_id].created_at_ms -= 16_000
+            ready = service.status(session_id)
+            gate.set()
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["pollAfterMs"], 0)
+        self.assertEqual(ready["candidates"][0]["sourceType"], "model")
+        self.assertEqual(ready["candidates"][0]["text"], "修复LLM输出")
+        self.assertEqual(ready["candidates"][0]["metadata"]["fallbackReason"], "visible_timeout")
+
+    def test_active_rag_deepseek_prompt_gets_timeline_context_pack(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-timeline-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "active-rag-timeline.sqlite")
+            event_id = _record_timeline_event(core, "主动 DeepSeek 生成按钮进入候选框")
+            _insert_timeline_book(core, event_id=event_id)
+            provider = FakeActiveRagProvider(("DeepSeek主动候选",))
+            service = ActiveRagService(core=core, completion_provider=provider)
+            request = _request(selected_text="候选框")
+
+            with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+                started = service.start(request)
+                ready = _wait_ready(service, str(started["sessionId"]))
+
+        evidence_pack = provider.calls[0].evidence_pack
+        context_packet = provider.calls[0].context_packet
+        source_types = [item.get("sourceType") for item in evidence_pack]
+        self.assertEqual(ready["status"], "ready")
+        self.assertIn("recent_input_context", source_types)
+        self.assertIn("daily_book", source_types)
+        self.assertTrue(any("DeepSeek 生成" in item.get("surfaceHints", []) for item in evidence_pack))
+        self.assertEqual(context_packet["schemaVersion"], "rag-ime.smart-context-packet.v1")
+        self.assertEqual(context_packet["currentInput"]["mode"], "active_rag")
+        self.assertTrue(context_packet["notebook"]["items"])
+
+    def test_active_rag_local_timeline_candidate_does_not_show_generic_recent_title(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-local-timeline-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "active-rag-local-timeline.sqlite")
+            event_id = _record_timeline_event(core, "LLM 候选需要明确显示模型预测来源")
+            _insert_timeline_book(core, event_id=event_id)
+            service = ActiveRagService(core=core)
+            request = ActiveRagStartRequest(
+                selected_text="LLM不显示",
+                selected_text_hash=stable_text_hash("LLM不显示"),
+                frontend_revision=7,
+                selection_epoch=3,
+                context="LLM不显示，RAG能命中，并且DeepSeek需要根据笔记本预测",
+                project="wisdom-weasel-rag-ime",
+                max_candidates=1,
+                max_chars=18,
+            )
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertGreaterEqual(ready["evidenceCount"], 1)
+        self.assertNotEqual(ready["candidates"][0]["text"], "最近输入上下文")
+
+    def test_active_rag_local_issue_request_prefers_model_fallback_over_raw_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-local-fallback-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "active-rag-local-fallback.sqlite")
+            event_id = _record_timeline_event(core, "LLM消失LLM")
+            _insert_timeline_book(core, event_id=event_id)
+            service = ActiveRagService(core=core)
+            request = ActiveRagStartRequest(
+                selected_text="LLM不显示",
+                selected_text_hash=stable_text_hash("LLM不显示"),
+                frontend_revision=7,
+                selection_epoch=3,
+                context="LLM不显示，RAG能命中，并且DeepSeek需要根据笔记本预测",
+                project="wisdom-weasel-rag-ime",
+                max_candidates=1,
+                max_chars=18,
+            )
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["candidates"][0]["sourceType"], "model")
+        self.assertEqual(ready["candidates"][0]["text"], "修复LLM显示")
+        self.assertNotEqual(ready["candidates"][0]["text"], "LLM消失LLM")
 
     def test_active_rag_accept_validates_selection_anchor(self) -> None:
         provider = FakeActiveRagProvider(("DeepSeek主动候选",))
@@ -154,6 +334,7 @@ class ActiveRagServiceTests(unittest.TestCase):
                 started = service.start(request)
                 cancelled = service.cancel(str(started["sessionId"]))
                 gate.set()
+                provider.released.wait(timeout=0.2)
             with core._connect() as conn:
                 rows = conn.execute(
                     """
@@ -201,12 +382,59 @@ class FakeActiveRagProvider:
 class BlockingActiveRagProvider:
     def __init__(self, gate: threading.Event):
         self.gate = gate
+        self.released = threading.Event()
         self.calls: list[object] = []
 
     def stream_candidates(self, request):
         self.calls.append(request)
         self.gate.wait(timeout=2)
+        self.released.set()
         yield CompletionCandidateDelta(text="第二个主动候选", insert_text="第二个主动候选")
+
+
+def _record_timeline_event(core: LocalSqliteCoreClient, text: str) -> int:
+    memory_id = core.record_event(
+        InputEvent(
+            event_id=None,
+            created_at_ms=now_ms(),
+            source="manual",
+            committed_text=text,
+            recent_context="Active RAG 前台验收",
+            project="wisdom-weasel-rag-ime",
+            tags=("RAG", "DeepSeek"),
+        )
+    )
+    return int(str(memory_id).split(":", 1)[1])
+
+
+def _insert_timeline_book(core: LocalSqliteCoreClient, *, event_id: int) -> None:
+    core.initialize()
+    timestamp = now_ms()
+    with core._connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO memory_books(
+                book_id, book_type, book_key, title, summary, normalized_text,
+                project, app, tags_json, surface_hints_json, query_expansions_json,
+                source_event_ids_json, memory_atom_ids_json, status, confidence,
+                quality_score, created_at_ms, updated_at_ms, metadata_json
+            )
+            VALUES (?, 'daily', '2026-07-07', ?, ?, ?, ?, '', ?, ?, ?, ?, '[]', 'active', 0.8, 0.8, ?, ?, '{}')
+            """,
+            (
+                "book:daily:active-rag",
+                "Active RAG 时间线",
+                "用户希望 RAG 先做 evidence，再由 DeepSeek 生成一条可确认候选。",
+                "active rag timeline deepseek",
+                "wisdom-weasel-rag-ime",
+                json.dumps(["RAG", "DeepSeek"], ensure_ascii=False),
+                json.dumps(["DeepSeek 生成", "主动候选"], ensure_ascii=False),
+                json.dumps(["Active RAG", "候选框"], ensure_ascii=False),
+                json.dumps([event_id], ensure_ascii=False),
+                timestamp,
+                timestamp,
+            ),
+        )
 
 
 def _request(
@@ -216,6 +444,9 @@ def _request(
     selection_epoch: int = 3,
     panel_session_id: str = "",
     front_app_bundle_id: str = "",
+    max_candidates: int = 1,
+    max_chars: int = 24,
+    evidence_pack: tuple[dict[str, object], ...] | None = None,
 ) -> ActiveRagStartRequest:
     return ActiveRagStartRequest(
         selected_text=selected_text,
@@ -225,7 +456,9 @@ def _request(
         panel_session_id=panel_session_id,
         front_app_bundle_id=front_app_bundle_id,
         context="RAG 输入法主动改写",
-        evidence_pack=({"surfaceHints": ["主动候选"], "tags": ["RAG"]},),
+        evidence_pack=evidence_pack or ({"surfaceHints": ["主动候选"], "tags": ["RAG"]},),
+        max_candidates=max_candidates,
+        max_chars=max_chars,
     )
 
 

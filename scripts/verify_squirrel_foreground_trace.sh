@@ -29,7 +29,14 @@ REQUIRE_MODERN_PREDICTION_SESSION=1
 REQUIRE_BALANCED_QUOTA=1
 REQUIRE_RIME_COMPOSITION_OK=0
 REQUIRE_POST_COMMIT_VISIBLE=0
+REQUIRE_POST_COMMIT_PENDING_STATUS=0
+REQUIRE_PREDICTION_STATUS_VISIBLE=0
 REQUIRE_SOURCE_BADGES=0
+REQUIRE_ACTIVE_RAG_ACTION_BUTTON=0
+REQUIRE_ACTIVE_RAG_THINKING=0
+REQUIRE_ACTIVE_RAG_READY=0
+REQUIRE_ACTIVE_RAG_COMMIT=0
+REQUIRE_ACTIVE_RAG_STALE_DROP=0
 REQUIRE_POST_COMMIT_KEY_POLICY=0
 REQUIRE_APP_SWITCH_STALE_DROP=0
 REQUIRE_FOLLOWUP_AFTER_SELECT=0
@@ -41,6 +48,7 @@ DRY_RUN=0
 AUTO_TYPE=0
 AUTO_QUERY="${RAG_IME_FOREGROUND_TRACE_AUTO_QUERY:-er qi}"
 AUTO_KEY="${RAG_IME_FOREGROUND_TRACE_AUTO_KEY:-6}"
+AUTO_KEY_WAS_SET=0
 AUTO_TYPE_DELAY="${RAG_IME_FOREGROUND_TRACE_AUTO_DELAY_SECONDS:-2.5}"
 AUTO_CHAR_DELAY="${RAG_IME_FOREGROUND_TRACE_AUTO_CHAR_DELAY_SECONDS:-0.04}"
 
@@ -74,8 +82,22 @@ Options:
                        Require composition-time Rime ownership evidence
   --require-post-commit-visible
                        Require a real non-status post-commit prediction panel
+  --require-post-commit-pending-status
+                       Require the post-commit status/action row before model output
+  --require-prediction-status-visible
+                       Require a non-selectable status/thinking row in a visible panel
   --require-source-badges
                        Require source badge/color coverage
+  --require-active-rag-action-button
+                       Require the explicit DeepSeek/Active RAG action button in a post-commit panel
+  --require-active-rag-thinking
+                       Require Active RAG thinking/status animation evidence
+  --require-active-rag-ready
+                       Require Active RAG ready candidate evidence
+  --require-active-rag-commit
+                       Require Active RAG candidate commit evidence
+  --require-active-rag-stale-drop-check
+                       Require stale/rejected Active RAG transaction evidence
   --require-post-commit-key-policy
                        Require post-commit number-key pass-through policy evidence
   --require-app-switch-stale-drop
@@ -91,7 +113,9 @@ Options:
   --auto-type           Try to type the test query and side-candidate key with AppleScript
   --auto-query TEXT     Text used by --auto-type (default: er qi)
   --auto-key KEY        Number key used by --auto-type (default: 6)
+                       For Active RAG proof, use ctrl-enter by default.
   --auto-char-delay SEC Delay between simulated characters (default: 0.04)
+  --active-rag-proof   Require the final DeepSeek action button -> thinking -> ready lifecycle
   --dry-run             Print resolved commands without changing local state
   -h, --help            Show this help
 USAGE
@@ -159,9 +183,30 @@ while [[ $# -gt 0 ]]; do
       REQUIRE_POST_COMMIT_VISIBLE=1
       USE_V1_SOAK_GATE=1
       ;;
+    --require-post-commit-pending-status)
+      REQUIRE_POST_COMMIT_PENDING_STATUS=1
+      ;;
+    --require-prediction-status-visible)
+      REQUIRE_PREDICTION_STATUS_VISIBLE=1
+      ;;
     --require-source-badges)
       REQUIRE_SOURCE_BADGES=1
       USE_V1_SOAK_GATE=1
+      ;;
+    --require-active-rag-action-button)
+      REQUIRE_ACTIVE_RAG_ACTION_BUTTON=1
+      ;;
+    --require-active-rag-thinking)
+      REQUIRE_ACTIVE_RAG_THINKING=1
+      ;;
+    --require-active-rag-ready)
+      REQUIRE_ACTIVE_RAG_READY=1
+      ;;
+    --require-active-rag-commit)
+      REQUIRE_ACTIVE_RAG_COMMIT=1
+      ;;
+    --require-active-rag-stale-drop-check)
+      REQUIRE_ACTIVE_RAG_STALE_DROP=1
       ;;
     --require-post-commit-key-policy)
       REQUIRE_POST_COMMIT_KEY_POLICY=1
@@ -219,6 +264,7 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       AUTO_KEY="$2"
+      AUTO_KEY_WAS_SET=1
       shift
       ;;
     --auto-char-delay)
@@ -228,6 +274,23 @@ while [[ $# -gt 0 ]]; do
       fi
       AUTO_CHAR_DELAY="$2"
       shift
+      ;;
+    --active-rag-proof)
+      REQUIRE_MIXED_PANEL=0
+      REQUIRE_SIDE_PANEL=0
+      REQUIRE_SIDE_COMMIT=0
+      REQUIRE_COMMIT_OBSERVED=0
+      REQUIRE_POST_COMMIT_FOLLOWUP=0
+      REQUIRE_BALANCED_QUOTA=0
+      REQUIRE_MODERN_PREDICTION_SESSION=0
+      REQUIRE_POST_COMMIT_PENDING_STATUS=1
+      REQUIRE_PREDICTION_STATUS_VISIBLE=1
+      REQUIRE_ACTIVE_RAG_ACTION_BUTTON=1
+      REQUIRE_ACTIVE_RAG_THINKING=1
+      REQUIRE_ACTIVE_RAG_READY=1
+      if [[ "$AUTO_KEY_WAS_SET" == "0" ]]; then
+        AUTO_KEY="${RAG_IME_FOREGROUND_TRACE_ACTIVE_RAG_AUTO_KEY:-ctrl-enter}"
+      fi
       ;;
     --dry-run)
       DRY_RUN=1
@@ -274,6 +337,27 @@ if [[ "$REQUIRE_MODERN_PREDICTION_SESSION" == "1" ]]; then
 fi
 if [[ "$REQUIRE_BALANCED_QUOTA" == "1" ]]; then
   trace_args+=(--require-balanced-quota)
+fi
+if [[ "$REQUIRE_POST_COMMIT_PENDING_STATUS" == "1" ]]; then
+  trace_args+=(--require-post-commit-pending-status)
+fi
+if [[ "$REQUIRE_PREDICTION_STATUS_VISIBLE" == "1" ]]; then
+  trace_args+=(--require-prediction-status-visible)
+fi
+if [[ "$REQUIRE_ACTIVE_RAG_ACTION_BUTTON" == "1" ]]; then
+  trace_args+=(--require-active-rag-action-button)
+fi
+if [[ "$REQUIRE_ACTIVE_RAG_THINKING" == "1" ]]; then
+  trace_args+=(--require-active-rag-thinking)
+fi
+if [[ "$REQUIRE_ACTIVE_RAG_READY" == "1" ]]; then
+  trace_args+=(--require-active-rag-ready)
+fi
+if [[ "$REQUIRE_ACTIVE_RAG_COMMIT" == "1" ]]; then
+  trace_args+=(--require-active-rag-commit)
+fi
+if [[ "$REQUIRE_ACTIVE_RAG_STALE_DROP" == "1" ]]; then
+  trace_args+=(--require-active-rag-stale-drop-check)
 fi
 
 soak_args=(
@@ -365,7 +449,14 @@ require_modern_prediction_session=$REQUIRE_MODERN_PREDICTION_SESSION
 require_balanced_quota=$REQUIRE_BALANCED_QUOTA
 require_rime_composition_ok=$REQUIRE_RIME_COMPOSITION_OK
 require_post_commit_visible=$REQUIRE_POST_COMMIT_VISIBLE
+require_post_commit_pending_status=$REQUIRE_POST_COMMIT_PENDING_STATUS
+require_prediction_status_visible=$REQUIRE_PREDICTION_STATUS_VISIBLE
 require_source_badges=$REQUIRE_SOURCE_BADGES
+require_active_rag_action_button=$REQUIRE_ACTIVE_RAG_ACTION_BUTTON
+require_active_rag_thinking=$REQUIRE_ACTIVE_RAG_THINKING
+require_active_rag_ready=$REQUIRE_ACTIVE_RAG_READY
+require_active_rag_commit=$REQUIRE_ACTIVE_RAG_COMMIT
+require_active_rag_stale_drop=$REQUIRE_ACTIVE_RAG_STALE_DROP
 require_post_commit_key_policy=$REQUIRE_POST_COMMIT_KEY_POLICY
 require_app_switch_stale_drop=$REQUIRE_APP_SWITCH_STALE_DROP
 require_followup_after_select=$REQUIRE_FOLLOWUP_AFTER_SELECT
@@ -417,7 +508,8 @@ path.write_text(
     f"1. Make sure the active input source is {input_source}.\n"
     f"2. Type: {query}.\n"
     "3. Wait for LLM/model, RAG, and memory candidates in the panel.\n"
-    "4. Press a visible candidate number to accept a side candidate and wait for the next prediction.\n\n",
+    "4. Press a visible candidate number to accept a side candidate and wait for the next prediction.\n\n"
+    "5. If a DeepSeek 生成 action is visible, press Ctrl+Enter and wait for the animated thinking row, then one ready candidate.\n\n",
     encoding="utf-8",
 )
 PY
@@ -433,7 +525,7 @@ if [[ "$AUTO_TYPE" == "1" ]]; then
 on run argv
   set appName to item 1 of argv
   set queryText to item 2 of argv
-  set sideKey to item 3 of argv
+  set actionKey to item 3 of argv
   set waitSeconds to (item 4 of argv) as number
   set charDelaySeconds to (item 5 of argv) as number
   tell application appName to activate
@@ -446,7 +538,29 @@ on run argv
       delay charDelaySeconds
     end repeat
     delay waitSeconds
-    keystroke sideKey
+    if actionKey is "tab" then
+      key code 48
+    else if actionKey is "ctrl-enter" or actionKey is "control-enter" then
+      key code 36 using control down
+    else if actionKey is "ctrl-return" or actionKey is "control-return" then
+      key code 36 using control down
+    else if actionKey is "return" then
+      key code 36
+    else if actionKey is "enter" then
+      key code 76
+    else if actionKey begins with "option-" then
+      set digitText to text 8 thru -1 of actionKey
+      set digitKeyCodes to {{"1", 18}, {"2", 19}, {"3", 20}, {"4", 21}, {"5", 23}, {"6", 22}, {"7", 26}, {"8", 28}, {"9", 25}, {"0", 29}}
+      repeat with digitKeyPair in digitKeyCodes
+        if item 1 of digitKeyPair is digitText then
+          key code (item 2 of digitKeyPair) using option down
+          return
+        end if
+      end repeat
+      keystroke actionKey
+    else
+      keystroke actionKey
+    end if
   end tell
 end run
 APPLESCRIPT
@@ -475,6 +589,7 @@ Manual action now:
   2. Type: $AUTO_QUERY
   3. Wait for LLM/model, RAG, and memory candidates in the panel.
   4. Press a visible candidate number to commit a side candidate.
+  5. If a DeepSeek 生成 action is visible, press Ctrl+Enter and wait for thinking animation plus one ready candidate.
 
 Trace log:
   $TRACE_LOG

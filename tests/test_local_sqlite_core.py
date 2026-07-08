@@ -472,6 +472,35 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(suggestions[0].surface_text, "设计一个候选展示方式")
         self.assertIn("pinyin:", suggestions[0].metadata["reason"])
 
+    def test_runtime_fuzzy_pinyin_setting_gates_recall_and_rerank(self) -> None:
+        self.core.reset()
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_PINYIN_FUZZY_ENABLED": "1",
+                "RAG_IME_PINYIN_FUZZY_PROFILE": "sichuan-mild",
+                "RAG_IME_PINYIN_FUZZY_S_SH": "1",
+            },
+            clear=False,
+        ):
+            self.adapter.commit_text("世界设计", recent_context="输入法模糊音候选重排", tags=("pinyin",))
+            enabled = self.adapter.suggest(SuggestionRequest(current_input="sijie", top_k=3))
+
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_PINYIN_FUZZY_ENABLED": "0",
+                "RAG_IME_PINYIN_FUZZY_PROFILE": "none",
+                "RAG_IME_PINYIN_FUZZY_S_SH": "0",
+            },
+            clear=False,
+        ):
+            disabled = self.adapter.suggest(SuggestionRequest(current_input="sijie", top_k=3))
+
+        self.assertEqual(enabled[0].surface_text, "世界设计")
+        self.assertIn("pinyin:", enabled[0].metadata["reason"])
+        self.assertNotIn("世界设计", [item.surface_text for item in disabled])
+
     def test_accepted_count_boosts_frequently_selected_memory(self) -> None:
         self.core.reset()
         frequent_id = self.adapter.commit_text("高频候选方案", recent_context="输入法 频率 候选方案")

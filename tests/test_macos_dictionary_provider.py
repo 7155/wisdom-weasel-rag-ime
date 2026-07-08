@@ -58,13 +58,22 @@ class MacOSDictionaryProviderTests(unittest.TestCase):
                     let provider = RimeDictionaryCandidateProvider(environment: [
                         "RAG_IME_RIME_DICT_DIR": dictDir
                     ])
-                    let payload = provider.diagnosticPayload(for: [
+                    let tunedProvider = RimeDictionaryCandidateProvider(environment: [
+                        "RAG_IME_RIME_DICT_DIR": dictDir,
+                        "RAG_IME_PINYIN_FUZZY_S_SH": "0",
+                        "RAG_IME_PINYIN_FUZZY_N_L": "1"
+                    ])
+                    var payload: [String: Any] = provider.diagnosticPayload(for: [
                         "ni",
                         "shijie",
+                        "sijie",
+                        "seji",
                         "sj",
                         "git status",
                         "/Volumes/undo"
                     ])
+                    payload["tuned_sijie"] = tunedProvider.diagnosticPayload(for: ["sijie"])["sijie"] ?? []
+                    payload["tuned_li"] = tunedProvider.diagnosticPayload(for: ["li"])["li"] ?? []
                     let data = try JSONSerialization.data(
                         withJSONObject: payload,
                         options: [.sortedKeys]
@@ -103,6 +112,10 @@ class MacOSDictionaryProviderTests(unittest.TestCase):
         self.assertEqual(payload["ni"][0]["text"], "你")
         self.assertEqual(payload["ni"][0]["comment"], "wanxiang")
         self.assertEqual(payload["shijie"][0]["text"], "世界")
+        self.assertEqual(payload["sijie"][0]["text"], "世界")
+        self.assertEqual(payload["seji"][0]["text"], "设计")
+        self.assertEqual(payload["tuned_sijie"], [])
+        self.assertEqual(payload["tuned_li"][0]["text"], "你")
         self.assertIn("世界", [candidate["text"] for candidate in payload["sj"]])
         self.assertIn("设计", [candidate["text"] for candidate in payload["sj"]])
         self.assertEqual(payload["git status"], [])
@@ -124,6 +137,7 @@ class MacOSDictionaryProviderTests(unittest.TestCase):
                     ni\t你\twanxiang\t10
                     ni\t呢\twanxiang\t11
                     wx\t我想\twanxiang\t12
+                    shijie\t世界\twanxiang\t15
                     hello\thello\twanxiang_english\t13
                     py\tpython\twanxiang_english\t14
                     """
@@ -141,11 +155,18 @@ class MacOSDictionaryProviderTests(unittest.TestCase):
                         "RAG_IME_RIME_INDEX_PATH": indexPath,
                         "RAG_IME_RIME_DICT_DIR": "/tmp/rag-ime-missing-rime-dir"
                     ])
+                    let strictProvider = RimeDictionaryCandidateProvider(environment: [
+                        "RAG_IME_RIME_INDEX_PATH": indexPath,
+                        "RAG_IME_RIME_DICT_DIR": "/tmp/rag-ime-missing-rime-dir",
+                        "RAG_IME_PINYIN_FUZZY_ENABLED": "0"
+                    ])
                     _ = provider.candidates(for: "ni", maxCount: 2, allowColdLoad: true)
                     let payload: [String: Any] = [
                         "readyAfterColdLoad": provider.isReady,
                         "ni": provider.candidates(for: "ni", maxCount: 2, allowColdLoad: false).map { $0.text },
                         "wx": provider.candidates(for: "wx", maxCount: 1, allowColdLoad: false).map { $0.text },
+                        "sijie": provider.candidates(for: "sijie", maxCount: 1, allowColdLoad: false).map { $0.text },
+                        "strict_sijie": strictProvider.candidates(for: "sijie", maxCount: 1, allowColdLoad: true).map { $0.text },
                         "hello": provider.candidates(for: "hello", maxCount: 1, allowColdLoad: false).map { $0.text },
                         "py": provider.candidates(for: "py", maxCount: 1, allowColdLoad: false).map { $0.text },
                         "missing": provider.candidates(for: "zzzz", maxCount: 1, allowColdLoad: false).map { $0.text }
@@ -188,6 +209,8 @@ class MacOSDictionaryProviderTests(unittest.TestCase):
         self.assertTrue(payload["readyAfterColdLoad"])
         self.assertEqual(payload["ni"], ["你", "呢"])
         self.assertEqual(payload["wx"], ["我想"])
+        self.assertEqual(payload["sijie"], ["世界"])
+        self.assertEqual(payload["strict_sijie"], [])
         self.assertEqual(payload["hello"], ["hello"])
         self.assertEqual(payload["py"], ["python"])
         self.assertEqual(payload["missing"], [])

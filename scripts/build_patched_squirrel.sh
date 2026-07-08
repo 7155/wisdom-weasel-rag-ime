@@ -221,6 +221,31 @@ require_text() {
   fi
 }
 
+require_trace_event_field() {
+  local path="$1"
+  local event_name="$2"
+  local field_text="$3"
+  local description="$4"
+  "$PYTHON_BIN" - "$path" "$event_name" "$field_text" "$description" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+event_name = sys.argv[2]
+field_text = sys.argv[3]
+description = sys.argv[4]
+text = path.read_text(encoding="utf-8")
+needle = f'traceRagImeFrontendEvent("{event_name}"'
+start = text.find(needle)
+if start < 0:
+    raise SystemExit(f"patched Squirrel workdir is missing {event_name} trace event in {path}")
+end = text.find("])", start)
+block = text[start : end + 2 if end >= 0 else start + 2400]
+if field_text not in block:
+    raise SystemExit(f"patched Squirrel workdir is missing {description} in {event_name} trace block: {path}")
+PY
+}
+
 if [[ ! -d "$SQUIRREL_WORKDIR/.git" ]]; then
   echo "Squirrel workdir not prepared: $SQUIRREL_WORKDIR" >&2
   echo "Run scripts/prepare_squirrel_workspace.sh first." >&2
@@ -235,6 +260,7 @@ fi
 
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" "patched Squirrel workdir is missing RAG-IME model file"
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" "patched Squirrel workdir is missing RAG-IME client file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "patched Squirrel workdir is missing RAG-IME selected text provider file"
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "patched Squirrel workdir is missing patched SquirrelInputController"
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "patched Squirrel workdir is missing patched SquirrelPanel"
 require_file "$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" "patched Squirrel workdir is missing generated config snippet"
@@ -246,6 +272,16 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "sidecar_
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rag-ime.foreground-trace.v2" "foreground trace v2 marker"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty" "foreground post-commit-only LLM/RAG candidate request"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "forceSideCandidates: forceSideCandidates" "foreground dynamic LLM/RAG candidate request"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImeSelectedTextProvider.captureForegroundTextForSidecar" "focused text accessibility foreground snapshot request"
+require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_local_thinking_placeholder_displayed" '"selectedTextChars": request.selectedTextChars' "Active RAG selected-text count trace anchor"
+require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_local_thinking_placeholder_displayed" '"frontAppBundleId": request.frontAppBundleId' "Active RAG front-app trace anchor"
+require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_local_thinking_placeholder_displayed" '"traceIncludesText": false' "Active RAG privacy trace marker"
+require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_status_poll_scheduled" '"selectedTextChars": request.selectedTextChars' "Active RAG poll selected-text count trace anchor"
+require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_status_poll_scheduled" '"frontAppBundleId": request.frontAppBundleId' "Active RAG poll front-app trace anchor"
+require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_status_poll_scheduled" '"traceIncludesText": false' "Active RAG poll privacy trace marker"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "kAXSelectedTextRangeAttribute" "focused text selected range accessibility capture"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "kAXStringForRangeParameterizedAttribute" "focused text surrounding range accessibility capture"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "kAXValueAttribute" "focused text whole-value fallback"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
 require_text "$SQUIRREL_WORKDIR/sources/Main.swift" "traceRagImeProcessEvent" "foreground process trace hook"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate separator"

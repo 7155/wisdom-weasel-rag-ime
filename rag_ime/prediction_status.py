@@ -56,15 +56,15 @@ def prediction_status_row(
         else:
             text = "当前输入已变化，旧响应已丢弃"
     elif rag_pending and model_pending:
-        text = "查忆处理中…"
+        text = f"查忆处理中{thinking_animation_suffix(waiting_ms)}"
     elif resolved_rag_state == "ready" and model_pending:
-        text = "RAG 已返回，LLM 生成中…"
+        text = f"RAG 已返回，LLM 生成中{thinking_animation_suffix(waiting_ms)}"
     elif resolved_model_state == "ready" and rag_pending:
-        text = "RAG 检索中…"
+        text = f"RAG 检索中{thinking_animation_suffix(waiting_ms)}"
     elif model_pending:
-        text = "LLM 生成中…"
+        text = f"LLM 生成中{thinking_animation_suffix(waiting_ms)}"
     elif rag_pending:
-        text = "RAG 检索中…"
+        text = f"RAG 检索中{thinking_animation_suffix(waiting_ms)}"
     elif resolved_model_state == "timeout" and resolved_rag_state in {"ready", "empty"}:
         text = "LLM 超时，保留 RAG 候选"
     elif resolved_rag_state == "empty" and resolved_model_state == "pending":
@@ -84,6 +84,8 @@ def prediction_status_row(
             "ragState": resolved_rag_state,
             "modelState": resolved_model_state,
             "waitingMs": max(0, int(waiting_ms)),
+            "animated": bool(rag_pending or model_pending),
+            "animationFrame": thinking_animation_frame(waiting_ms),
             "trigger": compact_whitespace(trigger),
             "staleDropReason": compact_whitespace(stale_drop_reason),
             "latestGeneration": max(0, int(latest_generation)),
@@ -95,3 +97,11 @@ def prediction_status_row(
             "isStatus": True,
         },
     )
+
+
+def thinking_animation_frame(waiting_ms: int) -> int:
+    return (max(0, int(waiting_ms)) // 250) % 4
+
+
+def thinking_animation_suffix(waiting_ms: int) -> str:
+    return ("…", "·", "··", "···")[thinking_animation_frame(waiting_ms)]

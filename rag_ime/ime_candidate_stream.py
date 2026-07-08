@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
 from .text_utils import compact_whitespace
 
 
@@ -62,9 +63,11 @@ class ImeCandidateStreamParser:
             return False
         if "<" in candidate or ">" in candidate:
             return False
-        if self.current_input and candidate == self.current_input:
+        if candidate_has_self_repetition(candidate):
             return False
-        if self.recent_context and (candidate == self.recent_context or candidate in self.recent_context[-120:]):
+        if self.current_input and candidate_echoes_text(candidate, self.current_input, reject_single_occurrence=True):
+            return False
+        if self.recent_context and candidate_echoes_text(candidate, self.recent_context[-120:], reject_single_occurrence=True):
             return False
         if re.fullmatch(r"[A-Za-z0-9_./:\-\s]+", candidate):
             return False

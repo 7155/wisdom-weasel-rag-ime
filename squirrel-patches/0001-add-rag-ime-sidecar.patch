@@ -57,10 +57,10 @@ index 0000000..44ee9f8
 +  db_path: /Users/undo/Library/Application Support/RagIme/rag-ime.sqlite
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
-+  max_side_candidates: 8
-+  latency_budget_ms: 900
-+  debounce_ms: 40
-+  timeout_ms: 1200
++  max_side_candidates: 5
++  latency_budget_ms: 300
++  debounce_ms: 80
++  timeout_ms: 250
 +  frontend_trace: true
 diff --git a/sources/InputSource.swift b/sources/InputSource.swift
 index 89c1214..a240173 100644
@@ -204,6 +204,10 @@ index 0000000..e4aaed0
 +import Foundation
 +
 +struct RagImeSidecarClient {
++  private static let healthLock = NSLock()
++  private static var disabledUntil = Date.distantPast
++  private static var consecutiveFailures = 0
++
 +  let pythonExecutable: String
 +  let repoRoot: String
 +  let dbPath: String
@@ -233,36 +237,30 @@ index 0000000..e4aaed0
 +    self.dbPath = configuredDbPath.isEmpty ? "\(repoRoot)/.rag-ime-data/rag-ime.sqlite" : configuredDbPath
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
-+    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 8, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 900, range: 30...20000)
-+    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 40, range: 0...500)
-+    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 100...30000)) / 1000
++    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 5, range: 0...10)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 300, range: 30...3000)
++    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 80, range: 0...500)
++    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 250, range: 30...3000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
 +    self.frontendTrace = config?.getBool("rag_ime/frontend_trace") == true
 +  }
 +
 +  func request(_ request: RagImeSidecarRequest) throws -> RagImeSidecarResponse {
-+    if let sidecarURL {
-+      do {
-+        let outputData = try postJSON(request, to: endpoint("rime-suggest", base: sidecarURL))
-+        return try JSONDecoder().decode(RagImeSidecarResponse.self, from: outputData)
-+      } catch {
-+        print("RAG IME sidecar HTTP request failed, falling back to CLI: \(error)")
-+      }
++    if let remainingMs = Self.sidecarCooldownRemainingMs(), remainingMs > 0 {
++      throw RagImeSidecarError.circuitOpen(remainingMs)
 +    }
-+
-+    let requestFile = FileManager.default.temporaryDirectory
-+      .appendingPathComponent("rag-ime-\(request.sessionId)-\(request.requestSeq).json")
-+    let requestData = try JSONEncoder().encode(request)
-+    try requestData.write(to: requestFile, options: .atomic)
-+    defer { try? FileManager.default.removeItem(at: requestFile) }
-+
-+    let outputData = try runCli([
-+      "rime-suggest-json",
-+      "--payload-file",
-+      requestFile.path,
-+    ])
-+    return try JSONDecoder().decode(RagImeSidecarResponse.self, from: outputData)
++    guard let sidecarURL else {
++      throw RagImeSidecarError.transport("sidecar_url missing; passive input path does not run CLI fallback")
++    }
++    do {
++      let outputData = try postJSON(request, to: endpoint("rime-suggest", base: sidecarURL))
++      Self.recordSidecarSuccess()
++      return try JSONDecoder().decode(RagImeSidecarResponse.self, from: outputData)
++    } catch {
++      let cooldownMs = Self.recordSidecarFailure()
++      print("RAG IME sidecar HTTP request failed; passive CLI fallback disabled; cooldownMs=\(cooldownMs): \(error)")
++      throw error
++    }
 +  }
 +
 +  func postActiveRagStart(_ request: RagImeActiveRagRequest, completion: @escaping (RagImeActiveRagResponse) -> Void) {
@@ -279,6 +277,7 @@ index 0000000..e4aaed0
 +            "--surrounding-after", request.surroundingAfter,
 +            "--intent", request.intent,
 +            "--placement", request.placement,
++            "--context", request.context,
 +            "--project", request.project,
 +            "--max-candidates", String(request.maxCandidates),
 +          ])
@@ -287,6 +286,26 @@ index 0000000..e4aaed0
 +        DispatchQueue.main.async { completion(response) }
 +      } catch {
 +        print("RAG IME Active RAG start failed: \(error)")
++        let response = RagImeActiveRagResponse.fallbackReady(sessionId: request.sessionId, request: request, reason: "start_transport_error")
++        DispatchQueue.main.async { completion(response) }
++      }
++    }
++  }
++
++  func postActiveRagStatus(sessionId: String, request: RagImeActiveRagRequest, completion: @escaping (RagImeActiveRagResponse) -> Void) {
++    guard let sidecarURL else {
++      completion(RagImeActiveRagResponse.fallbackReady(sessionId: sessionId, request: request, reason: "sidecar_url_missing"))
++      return
++    }
++    DispatchQueue.global(qos: .userInitiated).async {
++      do {
++        let outputData = try postJSON(["sessionId": sessionId], to: endpoint("active-rag/status", base: sidecarURL))
++        let response = try JSONDecoder().decode(RagImeActiveRagResponse.self, from: outputData)
++        DispatchQueue.main.async { completion(response) }
++      } catch {
++        print("RAG IME Active RAG status failed: \(error)")
++        let response = RagImeActiveRagResponse.fallbackReady(sessionId: sessionId, request: request, reason: "status_transport_error")
++        DispatchQueue.main.async { completion(response) }
 +      }
 +    }
 +  }
@@ -447,6 +466,7 @@ index 0000000..e4aaed0
 +
 +enum RagImeSidecarError: Error, CustomStringConvertible {
 +  case timeout
++  case circuitOpen(Int)
 +  case failedExit(Int, String)
 +  case badResponse(Int)
 +  case transport(String)
@@ -455,6 +475,8 @@ index 0000000..e4aaed0
 +    switch self {
 +    case .timeout:
 +      return "sidecar timed out"
++    case .circuitOpen(let remainingMs):
++      return "sidecar circuit open for \(remainingMs)ms"
 +    case .failedExit(let status, let stderr):
 +      return "sidecar exited with \(status): \(stderr)"
 +    case .badResponse(let status):
@@ -473,6 +495,31 @@ index 0000000..e4aaed0
 +  static func intConfig(_ config: SquirrelConfig?, _ key: String, fallback: Int, range: ClosedRange<Int>) -> Int {
 +    guard let configuredValue = config?.getDouble(key) else { return fallback }
 +    return min(max(Int(configuredValue), range.lowerBound), range.upperBound)
++  }
++
++  static func sidecarCooldownRemainingMs(now: Date = Date()) -> Int? {
++    healthLock.lock()
++    defer { healthLock.unlock() }
++    let remaining = disabledUntil.timeIntervalSince(now)
++    guard remaining > 0 else { return nil }
++    return max(1, Int(remaining * 1000))
++  }
++
++  @discardableResult
++  static func recordSidecarFailure(now: Date = Date()) -> Int {
++    healthLock.lock()
++    defer { healthLock.unlock() }
++    consecutiveFailures = min(consecutiveFailures + 1, 6)
++    let cooldown = min(8.0, 0.75 * Double(1 << max(0, consecutiveFailures - 1)))
++    disabledUntil = now.addingTimeInterval(cooldown)
++    return Int(cooldown * 1000)
++  }
++
++  static func recordSidecarSuccess() {
++    healthLock.lock()
++    consecutiveFailures = 0
++    disabledUntil = Date.distantPast
++    healthLock.unlock()
 +  }
 +
 +  func runCli(_ cliArguments: [String]) throws -> Data {
@@ -939,8 +986,10 @@ index 0000000..784162d
 +  let captureEpoch: Int
 +  let placement: String
 +  let intent: String
++  let context: String
 +  let project: String
 +  let maxCandidates: Int
++  let latencyBudgetMs: Int
 +}
 +
 +struct RagImeActiveRagResponse: Codable {
@@ -958,7 +1007,122 @@ index 0000000..784162d
 +  let intent: String
 +  let candidateCount: Int
 +  let candidates: [RagImeDisplayCandidate]
++  let elapsedMs: Int?
++  let pollAfterMs: Int?
 +  let keyPolicy: RagImeKeyPolicyPayload?
++}
++
++extension RagImeActiveRagResponse {
++  static func fallbackReady(sessionId: String, request: RagImeActiveRagRequest, reason: String) -> RagImeActiveRagResponse {
++    let candidateText = fallbackCandidateText(for: request)
++    return RagImeActiveRagResponse(
++      schemaVersion: "rag-ime.active-rag-service.v1",
++      sessionId: sessionId,
++      status: "ready",
++      thinkingRow: false,
++      uiMode: "active_rag_assist",
++      selectedTextHash: request.selectedTextHash,
++      frontendRevision: request.frontendRevision,
++      selectionEpoch: request.selectionEpoch,
++      panelSessionId: request.panelSessionId,
++      frontAppBundleId: request.frontAppBundleId,
++      placement: request.placement,
++      intent: request.intent,
++      candidateCount: 1,
++      candidates: [fallbackCandidate(sessionId: sessionId, request: request, text: candidateText, reason: reason)],
++      elapsedMs: nil,
++      pollAfterMs: 0,
++      keyPolicy: RagImeKeyPolicyPayload(
++        numberKeys: "select_candidate_when_ready_else_noop",
++        tab: "accept_top_when_ready",
++        optionNumber: "select_candidate_by_ordinal",
++        escape: "dismiss_prediction"
++      )
++    )
++  }
++
++  private static func fallbackCandidateText(for request: RagImeActiveRagRequest) -> String {
++    let haystack = "\(request.context) \(request.selectedText)"
++    if haystack.contains("DeepSeek") && haystack.contains("输出") {
++      return "修复DeepSeek输出"
++    }
++    if (haystack.contains("LLM") || haystack.contains("模型")) && haystack.contains("输出") {
++      return "修复LLM输出"
++    }
++    if haystack.contains("记忆") && haystack.contains("笔记本") {
++      return "初始化记忆笔记本"
++    }
++    if haystack.contains("RAG") && haystack.contains("输入法") {
++      return "RAG输入法优化"
++    }
++    let trimmed = request.selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
++    if !trimmed.isEmpty {
++      let prefix = String(trimmed.prefix(14))
++      return prefix.hasSuffix("优化") ? prefix : "\(prefix)优化"
++    }
++    return "重试DeepSeek生成"
++  }
++
++  private static func fallbackCandidate(
++    sessionId: String,
++    request: RagImeActiveRagRequest,
++    text: String,
++    reason: String
++  ) -> RagImeDisplayCandidate {
++    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
++    return RagImeDisplayCandidate(
++      label: "1",
++      visibleLabel: "1",
++      selectionKey: "1",
++      selectionRank: 1,
++      candidateOrdinal: 1,
++      candidateStableId: "active-rag:fallback:\(request.selectedTextHash)",
++      snapshotId: sessionId,
++      snapshotGeneration: 1,
++      text: text,
++      insertText: text,
++      sourceType: "model",
++      selectionAction: "commit_side_candidate",
++      sourceIndex: 0,
++      comment: "deepseek_fallback",
++      badge: "生成",
++      sourceBadge: "生成",
++      colorToken: "modelBlue",
++      sourceStability: "fresh",
++      hardContextAnchor: "",
++      queryAnchor: "",
++      displayAnchor: "",
++      expiresAtMs: nowMs + max(8000, request.latencyBudgetMs),
++      minVisibleUntilMs: nowMs + 1200,
++      evidencePreview: "",
++      suggestionId: "active-rag:fallback:\(request.selectedTextHash)",
++      memoryId: "active-rag:fallback:\(request.selectedTextHash)",
++      sourceEventId: nil,
++      rimeIndex: nil,
++      displayLayout: "block",
++      displayLane: "deepseek_v4_flash",
++      group: "prediction",
++      groupLabel: "预测",
++      isSelectable: true,
++      isStatus: false,
++      metadata: [
++        "activeRag": .bool(true),
++        "activeRagSessionId": .string(sessionId),
++        "selectedTextHash": .string(request.selectedTextHash),
++        "frontendRevision": .number(Double(request.frontendRevision)),
++        "selectionEpoch": .number(Double(request.selectionEpoch)),
++        "panelSessionId": .string(request.panelSessionId),
++        "frontAppBundleId": .string(request.frontAppBundleId),
++        "fallbackReason": .string(reason),
++        "parseMode": .string("frontend_fallback"),
++        "candidateOrdinal": .number(1),
++        "visibleLabel": .string("1"),
++        "sourceBadge": .string("生成"),
++        "placement": .string(request.placement),
++        "intent": .string(request.intent),
++      ]
++    )
++  }
 +}
 +
 +struct RagImeRimeContextPayload: Codable {
@@ -1321,7 +1485,7 @@ index c2adf74..3cfc0e5 100644
  
        let keyCode = event.keyCode
 +      if matchesRagImeActiveRagShortcut(keyCode, modifiers: modifiers)
-+        && startRagImeActiveRagAssistFromSelection() {
++        && startRagImeActiveRagAssistFromShortcut() {
 +        let shortcut = ragImeActiveRagShortcutSetting()
 +        traceRagImeFrontendEvent("active_rag_shortcut_triggered", fields: [
 +          "shortcut": shortcut,
@@ -1399,6 +1563,9 @@ index c2adf74..3cfc0e5 100644
 +        ])
 +        clearRagImeDisplayCandidates()
 +        return false
++      }
++      if candidate.selectionAction == "start_active_rag_from_context" {
++        return startRagImeActiveRagAssistFromContext(actionCandidate: candidate)
 +      }
 +      if candidate.selectionAction == "commit_side_candidate" {
 +        let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
@@ -1687,6 +1854,201 @@ index c2adf74..3cfc0e5 100644
 +    return selectCandidate(index)
 +  }
 +
++  func showRagImePostCommitActionPlaceholder(request: RagImeSidecarRequest) {
++    guard request.rawInput.isEmpty && request.preedit.isEmpty else { return }
++    let context = ragImeCompactWhitespace(request.committedContext.isEmpty ? request.commitTextPreview : request.committedContext)
++    guard !context.isEmpty else { return }
++    guard ragImeBoolEnvEnabled("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON", default: true) else { return }
++    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
++    let metadata: [String: RagImeJSONValue] = [
++      "candidate_mode": .string("post-commit-active-rag-button-local"),
++      "activeRagTrigger": .bool(true),
++      "buttonRole": .string("active_rag_generate"),
++      "buttonLabel": .string("DeepSeek 生成"),
++      "shortcutHint": .string(ragImeActiveRagShortcutSetting()),
++      "numericSelectionDisabled": .bool(true),
++      "triggerPolicy": .string("manual_only"),
++      "requiresExplicitSelection": .bool(true),
++      "intent": .string("complete"),
++      "placement": .string("insert_after_selection"),
++      "maxCandidates": .number(1),
++      "requestSeq": .number(Double(request.requestSeq)),
++      "sessionId": .string(request.sessionId),
++      "predictionSessionPhase": .string("post_commit"),
++      "selectionScope": .string("prediction"),
++      "frontendRevision": .number(Double(request.frontendRevision)),
++      "selectionEpoch": .number(Double(request.selectionEpoch)),
++      "frontAppBundleId": .string(request.frontAppBundleId),
++      "inputSourceId": .string(request.inputSourceId),
++      "compositionHash": .string(request.compositionHash),
++      "committedContextHash": .string(request.committedContextHash),
++      "panelSessionId": .string(request.panelSessionId),
++      "keyPolicy": .object([
++        "numberKeys": .string("pass_through"),
++        "tab": .string("accept_top_prediction"),
++        "optionNumber": .string("select_prediction_by_ordinal"),
++        "escape": .string("dismiss_prediction"),
++      ]),
++      "localPlaceholder": .bool(true),
++    ]
++    var localCandidates: [RagImeDisplayCandidate] = []
++    if ragImeBoolEnvEnabled("RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL", default: true)
++      && ragImeBoolEnvEnabled("RAG_IME_PREDICTION_STATUS_ROW", default: true) {
++      localCandidates.append(
++        RagImeDisplayCandidate(
++          label: "",
++          visibleLabel: "",
++          selectionKey: nil,
++          selectionRank: 0,
++          candidateOrdinal: 0,
++          candidateStableId: "status:llm:local:\(request.panelSessionId)",
++          snapshotId: "",
++          snapshotGeneration: 0,
++          text: "LLM 生成中…",
++          insertText: "",
++          sourceType: "status",
++          selectionAction: "none",
++          sourceIndex: 0,
++          comment: "post_commit",
++          badge: "LLM",
++          sourceBadge: "LLM",
++          colorToken: "statusGray",
++          sourceStability: "local_placeholder",
++          hardContextAnchor: "",
++          queryAnchor: "",
++          displayAnchor: "",
++          expiresAtMs: nowMs + Int(ragImePostCommitDisplayHoldoverDuration * 1000),
++          minVisibleUntilMs: nowMs + 250,
++          evidencePreview: "",
++          suggestionId: "",
++          memoryId: "",
++          sourceEventId: nil,
++          rimeIndex: nil,
++          displayLayout: "status_row",
++          displayLane: "model_status",
++          group: "status",
++          groupLabel: "状态",
++          isSelectable: false,
++          isStatus: true,
++          metadata: [
++            "candidate_mode": .string("post-commit-llm-local-status"),
++            "predictionSessionPhase": .string("post_commit"),
++            "frontendRevision": .number(Double(request.frontendRevision)),
++            "selectionEpoch": .number(Double(request.selectionEpoch)),
++            "panelSessionId": .string(request.panelSessionId),
++            "compositionHash": .string(request.compositionHash),
++            "committedContextHash": .string(request.committedContextHash),
++            "animated": .bool(true),
++            "animationFrame": .number(0),
++            "waitingMs": .number(0),
++            "localPlaceholder": .bool(true),
++          ]
++        )
++      )
++    }
++    let candidate = RagImeDisplayCandidate(
++      label: "",
++      visibleLabel: "",
++      selectionKey: nil,
++      selectionRank: 0,
++      candidateOrdinal: 0,
++      candidateStableId: "action:local:\(request.panelSessionId)",
++      snapshotId: "",
++      snapshotGeneration: 0,
++      text: "DeepSeek 生成",
++      insertText: "",
++      sourceType: "action",
++      selectionAction: "start_active_rag_from_context",
++      sourceIndex: 0,
++      comment: "",
++      badge: "生成",
++      sourceBadge: "生成",
++      colorToken: "blue",
++      sourceStability: "local_placeholder",
++      hardContextAnchor: "",
++      queryAnchor: "",
++      displayAnchor: "",
++      expiresAtMs: nowMs + Int(ragImePostCommitDisplayHoldoverDuration * 1000),
++      minVisibleUntilMs: nowMs + 500,
++      evidencePreview: "",
++      suggestionId: "",
++      memoryId: "",
++      sourceEventId: nil,
++      rimeIndex: nil,
++      displayLayout: "block",
++      displayLane: "active_rag",
++      group: "action",
++      groupLabel: "操作",
++      isSelectable: true,
++      isStatus: false,
++      metadata: metadata
++    )
++    localCandidates.append(candidate)
++    ragImeDisplayCandidates = localCandidates
++    ragImePanelUsesDisplayCandidates = true
++    ragImeDisplayRawInput = ""
++    ragImeDisplayPreedit = ""
++    ragImeDisplaySemanticQuery = context
++    ragImeDisplayQueryBasis = "post_commit_local_action"
++    ragImeDisplayUpdatedAt = Date()
++    ragImeDisplayExpiresAt = Date().addingTimeInterval(ragImePostCommitDisplayHoldoverDuration)
++    ragImeDisplaySessionFingerprint = ""
++    ragImeDisplaySnapshotId = ""
++    ragImeDisplayNumberKeyPolicy = "pass_through"
++    ragImeDisplayTabPolicy = "accept_top_prediction"
++    ragImeDisplayOptionNumberPolicy = "select_prediction_by_ordinal"
++    ragImeDisplayPanelSessionId = request.panelSessionId
++    ragImeDisplayCompositionHash = request.compositionHash
++    ragImeDisplayCommittedContextHash = request.committedContextHash
++    scheduleRagImeDisplayExpiry()
++    traceRagImeFrontendEvent("post_commit_local_action_placeholder_displayed", fields: [
++      "requestSeq": request.requestSeq,
++      "frontendRevision": request.frontendRevision,
++      "selectionEpoch": request.selectionEpoch,
++      "panelSessionId": request.panelSessionId,
++      "committedContextChars": context.count,
++      "localStatusDisplayed": localCandidates.count > 1,
++    ])
++    rimeUpdate(clearReservedComments: false, requestSidecar: false)
++  }
++
++  func startRagImeActiveRagAssistFromShortcut() -> Bool {
++    if ragImePanelUsesDisplayCandidates,
++      let actionIndex = ragImeDisplayCandidates.firstIndex(where: { candidate in
++        candidate.selectionAction == "start_active_rag_from_context"
++          || (candidate.sourceType == "action" && candidate.displayLane == "active_rag")
++      }) {
++      guard canSelectCurrentRagImeDisplayCandidates() else {
++        traceRagImeFrontendEvent("active_rag_shortcut_rejected", fields: [
++          "reason": "display_session_not_live",
++          "selectionEpoch": ragImeSelectionEpoch,
++          "panelSessionId": ragImeDisplayPanelSessionId,
++        ])
++        clearRagImeDisplayCandidates()
++        return false
++      }
++      let actionCandidate = ragImeDisplayCandidates[actionIndex]
++      guard canSelectRagImeDisplayCandidate(actionCandidate) else {
++        traceRagImeFrontendEvent("active_rag_shortcut_rejected", fields: [
++          "reason": "transaction_mismatch",
++          "candidate": ragImeTraceCandidateSummary(actionCandidate, index: actionIndex),
++          "selectionEpoch": ragImeSelectionEpoch,
++          "panelSessionId": ragImeDisplayPanelSessionId,
++        ])
++        clearRagImeDisplayCandidates()
++        return false
++      }
++      traceRagImeFrontendEvent("active_rag_shortcut_action_button_route", fields: [
++        "candidate": ragImeTraceCandidateSummary(actionCandidate, index: actionIndex),
++        "shortcut": ragImeActiveRagShortcutSetting(),
++        "selectionEpoch": ragImeSelectionEpoch,
++        "panelSessionId": ragImeDisplayPanelSessionId,
++      ])
++      return startRagImeActiveRagAssistFromContext(actionCandidate: actionCandidate)
++    }
++    return startRagImeActiveRagAssistFromSelection()
++  }
++
 +  func startRagImeActiveRagAssistFromSelection() -> Bool {
 +    guard let sidecarClient = ragImeSidecarClient else { return false }
 +    let provider = ragImeSelectedTextProvider
@@ -1729,8 +2091,10 @@ index c2adf74..3cfc0e5 100644
 +      captureEpoch: capture.captureEpoch,
 +      placement: capture.canReplaceSelection ? "replace_selection" : "show_only",
 +      intent: "rewrite",
++      context: ragImeCompactWhitespace([capture.surroundingBefore, capture.selectedText, capture.surroundingAfter].joined(separator: " ")),
 +      project: sidecarClient.project,
-+      maxCandidates: sidecarClient.maxSideCandidates
++      maxCandidates: 1,
++      latencyBudgetMs: 15000
 +    )
 +    traceRagImeFrontendEvent("active_rag_thinking_displayed", fields: [
 +      "selectedTextHash": request.selectedTextHash,
@@ -1749,8 +2113,170 @@ index c2adf74..3cfc0e5 100644
 +    ragImeActiveRagFrontAppBundleId = request.frontAppBundleId
 +    ragImeActiveRagFrontendRevision = request.frontendRevision
 +    ragImeActiveRagSelectionEpoch = request.selectionEpoch
++    showRagImeActiveRagThinkingPlaceholder(request: request)
 +    sendRagImeActiveRagStartRequest(request, sidecarClient: sidecarClient)
 +    return true
++  }
++
++  func startRagImeActiveRagAssistFromContext(actionCandidate: RagImeDisplayCandidate) -> Bool {
++    guard let sidecarClient = ragImeSidecarClient else { return false }
++    ragImeFrontendRevision += 1
++    ragImeSelectionEpoch += 1
++    let frontendRevision = ragImeFrontendRevision
++    let selectionEpoch = ragImeSelectionEpoch
++    let panelSessionId = UUID().uuidString
++    let freshForeground = ragImeSelectedTextProvider.captureForegroundTextForSidecar(
++      captureEpoch: selectionEpoch,
++      beforeLimit: 300,
++      afterLimit: 80,
++      allowAccessibility: ragImeActiveRagAccessibilityCaptureEnabled()
++    )
++    let clientContext = syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
++    let surroundingBefore = ragImeCompactWhitespace(freshForeground?.surroundingBefore ?? clientContext)
++    let surroundingAfter = ragImeCompactWhitespace(freshForeground?.surroundingAfter ?? "")
++    let semanticQuery = ragImeCompactWhitespace(ragImeDisplaySemanticQuery)
++    let context = ragImeCompactWhitespace([surroundingBefore, surroundingAfter].joined(separator: " "))
++    let anchorText = ragImeActiveRagContextAnchor(semanticQuery.isEmpty ? context : semanticQuery)
++    guard !anchorText.isEmpty else {
++      traceRagImeFrontendEvent("active_rag_context_button_rejected", fields: [
++        "reason": "empty_context_anchor",
++        "frontendRevision": frontendRevision,
++        "selectionEpoch": selectionEpoch,
++        "panelSessionId": panelSessionId,
++      ])
++      return false
++    }
++    let request = RagImeActiveRagRequest(
++      schemaVersion: "rag-ime.active-rag-request.v1",
++      sessionId: String(session),
++      selectedText: anchorText,
++      selectedTextHash: ragImeStableTextHash(anchorText),
++      selectedTextChars: anchorText.count,
++      selectedTextPreview: String(anchorText.prefix(80)),
++      frontendRevision: frontendRevision,
++      selectionEpoch: selectionEpoch,
++      panelSessionId: panelSessionId,
++      frontAppBundleId: currentApp,
++      surroundingBefore: surroundingBefore,
++      surroundingAfter: surroundingAfter,
++      canReplaceSelection: false,
++      captureEpoch: selectionEpoch,
++      placement: "insert_after_selection",
++      intent: "complete",
++      context: context.isEmpty ? anchorText : context,
++      project: sidecarClient.project,
++      maxCandidates: 1,
++      latencyBudgetMs: 15000
++    )
++    traceRagImeFrontendEvent("active_rag_context_button_triggered", fields: [
++      "selectedTextHash": request.selectedTextHash,
++      "selectedTextChars": request.selectedTextChars,
++      "frontendRevision": frontendRevision,
++      "selectionEpoch": selectionEpoch,
++      "panelSessionId": panelSessionId,
++      "frontAppBundleId": currentApp,
++      "sourceCandidate": ragImeTraceCandidateSummary(actionCandidate, index: 0),
++      "foregroundSource": freshForeground?.source ?? "text_input_client",
++      "contextChars": request.context.count,
++      "maxCandidates": request.maxCandidates,
++      "traceIncludesText": false,
++    ])
++    ragImeActiveRagSelectedTextHash = request.selectedTextHash
++    ragImeActiveRagFrontAppBundleId = request.frontAppBundleId
++    ragImeActiveRagFrontendRevision = request.frontendRevision
++    ragImeActiveRagSelectionEpoch = request.selectionEpoch
++    showRagImeActiveRagThinkingPlaceholder(request: request)
++    sendRagImeActiveRagStartRequest(request, sidecarClient: sidecarClient)
++    return true
++  }
++
++  func ragImeActiveRagContextAnchor(_ text: String) -> String {
++    let normalized = ragImeCompactWhitespace(text)
++    guard normalized.count > 120 else { return normalized }
++    return String(normalized.suffix(120))
++  }
++
++  func showRagImeActiveRagThinkingPlaceholder(request: RagImeActiveRagRequest) {
++    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
++    let candidate = RagImeDisplayCandidate(
++      label: "",
++      visibleLabel: "",
++      selectionKey: nil,
++      selectionRank: 0,
++      candidateOrdinal: 0,
++      candidateStableId: "\(request.sessionId):thinking:local",
++      snapshotId: request.sessionId,
++      snapshotGeneration: 0,
++      text: "DeepSeek 思考中…",
++      insertText: "",
++      sourceType: "status",
++      selectionAction: "none",
++      sourceIndex: 0,
++      comment: "active_rag",
++      badge: "查忆",
++      sourceBadge: "查忆",
++      colorToken: "statusGray",
++      sourceStability: "local_placeholder",
++      hardContextAnchor: "",
++      queryAnchor: "",
++      displayAnchor: "",
++      expiresAtMs: nowMs + max(15000, request.latencyBudgetMs + 3000),
++      minVisibleUntilMs: nowMs + 500,
++      evidencePreview: "",
++      suggestionId: "",
++      memoryId: "",
++      sourceEventId: nil,
++      rimeIndex: nil,
++      displayLayout: "status_row",
++      displayLane: "active_rag_status",
++      group: "status",
++      groupLabel: "状态",
++      isSelectable: false,
++      isStatus: true,
++      metadata: [
++        "activeRag": .bool(true),
++        "activeRagSessionId": .string(request.sessionId),
++        "selectedTextHash": .string(request.selectedTextHash),
++        "frontendRevision": .number(Double(request.frontendRevision)),
++        "selectionEpoch": .number(Double(request.selectionEpoch)),
++        "panelSessionId": .string(request.panelSessionId),
++        "frontAppBundleId": .string(request.frontAppBundleId),
++        "candidateOrdinal": .number(0),
++        "visibleLabel": .string(""),
++        "animated": .bool(true),
++        "animationFrame": .number(0),
++        "waitingMs": .number(0),
++        "localPlaceholder": .bool(true),
++      ]
++    )
++    ragImeDisplayCandidates = [candidate]
++    ragImePanelUsesDisplayCandidates = true
++    ragImeDisplayNumberKeyPolicy = "select_candidate_when_ready_else_noop"
++    ragImeDisplayTabPolicy = "accept_top_when_ready"
++    ragImeDisplayOptionNumberPolicy = "select_candidate_by_ordinal"
++    ragImeDisplayPanelSessionId = request.panelSessionId
++    ragImeDisplayRawInput = ""
++    ragImeDisplayPreedit = ""
++    ragImeDisplaySemanticQuery = request.context
++    ragImeDisplayQueryBasis = "activeRag"
++    ragImeDisplayUpdatedAt = Date()
++    ragImeDisplayExpiresAt = Date().addingTimeInterval(TimeInterval(max(15000, request.latencyBudgetMs + 3000)) / 1000)
++    ragImeDisplaySessionFingerprint = ""
++    ragImeDisplaySnapshotId = request.sessionId
++    ragImeDisplayCompositionHash = ""
++    ragImeDisplayCommittedContextHash = ""
++    scheduleRagImeDisplayExpiry()
++    traceRagImeFrontendEvent("active_rag_local_thinking_placeholder_displayed", fields: [
++      "selectedTextHash": request.selectedTextHash,
++      "selectedTextChars": request.selectedTextChars,
++      "frontendRevision": request.frontendRevision,
++      "selectionEpoch": request.selectionEpoch,
++      "panelSessionId": request.panelSessionId,
++      "frontAppBundleId": request.frontAppBundleId,
++      "latencyBudgetMs": request.latencyBudgetMs,
++      "traceIncludesText": false,
++    ])
++    rimeUpdate(clearReservedComments: false, requestSidecar: false)
 +  }
 +
 +  func sendRagImeActiveRagStartRequest(_ request: RagImeActiveRagRequest, sidecarClient: RagImeSidecarClient) {
@@ -1764,7 +2290,11 @@ index c2adf74..3cfc0e5 100644
 +      "endpoint": "/api/active-rag/start",
 +    ])
 +    sidecarClient.postActiveRagStart(request) { [weak self] response in
-+      self?.applyRagImeActiveRagResponse(response, request: request)
++      guard let self else { return }
++      self.applyRagImeActiveRagResponse(response, request: request)
++      if response.status == "pending" || response.thinkingRow {
++        self.scheduleRagImeActiveRagStatusPoll(request: request, response: response, attempt: 1)
++      }
 +    }
 +  }
 +
@@ -1790,6 +2320,16 @@ index c2adf74..3cfc0e5 100644
 +    ragImeDisplayTabPolicy = response.keyPolicy?.tab ?? "accept_top_when_ready"
 +    ragImeDisplayOptionNumberPolicy = response.keyPolicy?.optionNumber ?? "select_candidate_by_ordinal"
 +    ragImeDisplayPanelSessionId = response.panelSessionId
++    ragImeDisplayRawInput = ""
++    ragImeDisplayPreedit = ""
++    ragImeDisplaySemanticQuery = request.context
++    ragImeDisplayQueryBasis = "activeRag"
++    ragImeDisplayUpdatedAt = Date()
++    ragImeDisplayExpiresAt = Date().addingTimeInterval(ragImePostCommitDisplayHoldoverDuration)
++    ragImeDisplaySessionFingerprint = ""
++    ragImeDisplaySnapshotId = response.sessionId
++    ragImeDisplayCompositionHash = ""
++    ragImeDisplayCommittedContextHash = ""
 +    ragImeActiveRagSelectedTextHash = response.selectedTextHash
 +    ragImeActiveRagFrontAppBundleId = response.frontAppBundleId
 +    ragImeActiveRagFrontendRevision = response.frontendRevision
@@ -1806,7 +2346,58 @@ index c2adf74..3cfc0e5 100644
 +      "uiMode": response.uiMode,
 +      "traceIncludesText": false,
 +    ])
++    scheduleRagImeDisplayExpiry()
 +    rimeUpdate(clearReservedComments: false, requestSidecar: false)
++  }
++
++  func scheduleRagImeActiveRagStatusPoll(
++    request: RagImeActiveRagRequest,
++    response: RagImeActiveRagResponse,
++    attempt: Int
++  ) {
++    guard attempt <= 80 else { return }
++    guard response.status == "pending" || response.thinkingRow else { return }
++    guard let sidecarClient = ragImeSidecarClient else { return }
++    let serverDelayMs = response.pollAfterMs ?? 0
++    let delayMs = serverDelayMs > 0 ? min(max(serverDelayMs, 120), 1200) : (attempt <= 3 ? 160 : 300)
++    traceRagImeFrontendEvent("active_rag_status_poll_scheduled", fields: [
++      "sessionId": response.sessionId,
++      "attempt": attempt,
++      "delayMs": delayMs,
++      "selectedTextHash": request.selectedTextHash,
++      "selectedTextChars": request.selectedTextChars,
++      "frontendRevision": request.frontendRevision,
++      "selectionEpoch": request.selectionEpoch,
++      "panelSessionId": request.panelSessionId,
++      "frontAppBundleId": request.frontAppBundleId,
++      "traceIncludesText": false,
++    ])
++    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) { [weak self] in
++      guard let self else { return }
++      guard self.ragImeActiveRagSelectedTextHash == request.selectedTextHash
++        && self.ragImeActiveRagFrontendRevision == request.frontendRevision
++        && self.ragImeActiveRagSelectionEpoch == request.selectionEpoch else {
++        self.traceRagImeFrontendEvent("active_rag_status_poll_cancelled", fields: [
++          "reason": "active_rag_anchor_changed",
++          "attempt": attempt,
++          "selectedTextHash": request.selectedTextHash,
++          "selectedTextChars": request.selectedTextChars,
++          "frontendRevision": request.frontendRevision,
++          "selectionEpoch": request.selectionEpoch,
++          "panelSessionId": request.panelSessionId,
++          "frontAppBundleId": request.frontAppBundleId,
++          "traceIncludesText": false,
++        ])
++        return
++      }
++      sidecarClient.postActiveRagStatus(sessionId: response.sessionId, request: request) { [weak self] nextResponse in
++        guard let self else { return }
++        self.applyRagImeActiveRagResponse(nextResponse, request: request)
++        if nextResponse.status == "pending" || nextResponse.thinkingRow {
++          self.scheduleRagImeActiveRagStatusPoll(request: request, response: nextResponse, attempt: attempt + 1)
++        }
++      }
++    }
 +  }
 +
 +  func refreshRagImeSidecar(
@@ -1875,7 +2466,7 @@ index c2adf74..3cfc0e5 100644
 +      captureEpoch: ragImeInputGeneration,
 +      beforeLimit: 300,
 +      afterLimit: 80,
-+      allowAccessibility: true
++      allowAccessibility: false
 +    ) ?? fallbackForegroundText
 +    let fingerprint = ragImeRequestFingerprint(
 +      rawInput: rawInput,
@@ -1930,6 +2521,7 @@ index c2adf74..3cfc0e5 100644
 +    )
 +    ragImeInputGeneration += 1
 +    let inputGeneration = ragImeInputGeneration
++    showRagImePostCommitActionPlaceholder(request: request)
 +    traceRagImeFrontendEvent("frontend_transaction_created", fields: [
 +      "requestSeq": requestSeq,
 +      "frontendRevision": frontendRevision,
@@ -2153,7 +2745,7 @@ index c2adf74..3cfc0e5 100644
 +      ])
 +      return
 +    }
-+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++    DispatchQueue.global(qos: .utility).async { [weak self] in
 +      do {
 +        let response = try sidecarClient.request(request)
 +        DispatchQueue.main.async {
@@ -3096,6 +3688,9 @@ index c2adf74..3cfc0e5 100644
 +      if candidate.sourceType == "status" || candidate.isStatus == true || candidate.selectionAction == "none" {
 +        return ""
 +      }
++      if candidate.selectionAction == "start_active_rag_from_context" || candidate.sourceType == "action" {
++        return ""
++      }
 +      return candidate.label.isEmpty ? ragImeFallbackLabel(index: index, fallbackLabels: fallbackLabels) : candidate.label
 +    }
 +    return (candidates, comments, labels)
@@ -3105,7 +3700,7 @@ index c2adf74..3cfc0e5 100644
 +    let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
 +    let base = ragImeStripSourceSuffix(text.isEmpty ? candidate.insertText : text)
 +    switch candidate.sourceType {
-+    case "model", "rag", "memory", "status":
++    case "model", "rag", "memory", "status", "action":
 +      let badge = ragImeDisplayBadge(for: candidate)
 +      guard !badge.isEmpty else { return base }
 +      return "[\(badge)] \(base)"
@@ -3166,6 +3761,8 @@ index c2adf74..3cfc0e5 100644
 +      return "词"
 +    case "raw_english":
 +      return "input"
++    case "action":
++      return "生成"
 +    default:
 +      return candidate.sourceType
 +    }
@@ -3774,6 +4371,8 @@ index a9e2dae..c4aa52a 100644
 +      return .systemPurple
 +    case "rime":
 +      return .systemOrange
++    case "action":
++      return .systemBlue
 +    case "raw_english":
 +      return .systemGray
 +    default:

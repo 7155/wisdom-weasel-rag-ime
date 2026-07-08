@@ -25,6 +25,15 @@ class ImeCandidateStreamParserTests(unittest.TestCase):
 
         self.assertEqual(parser.candidates, ["显示状态机"])
 
+    def test_stream_parser_filters_repeated_tail_echo(self) -> None:
+        parser = ImeCandidateStreamParser(
+            max_candidates=3,
+            current_input="继续继续下一步继续完善一下继续完善一下",
+        )
+        parser.feed("<CAND>\n继续完善一下\t继续完善一下继续完善一下\t换一个方向")
+
+        self.assertEqual(parser.candidates, ["换一个方向"])
+
     def test_stream_parser_stops_on_prompt_echo(self) -> None:
         parser = ImeCandidateStreamParser(max_candidates=3)
         parser.feed("<IMEV1>\n<CAND>\n候选稳定性")

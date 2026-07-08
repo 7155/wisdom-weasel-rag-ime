@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 import json
+import os
 import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +17,7 @@ from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trac
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_ingest import normalize_text, upsert_memory_item
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
+from rag_ime.predictor import OpenAICompatiblePredictionConfig
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 
 
@@ -34,8 +36,41 @@ class _ManagementPredictionProvider:
         ][:max_candidates]
 
 
+class _CapabilityProbePredictionProvider(_ManagementPredictionProvider):
+    config = OpenAICompatiblePredictionConfig(
+        base_url="http://127.0.0.1:8767",
+        model="probe-model",
+        provider_name="local-mlx",
+        profile="qwen3_06b_ime_hot",
+    )
+
+    def __init__(self) -> None:
+        self.probe_calls = 0
+
+    def capability_probe(self) -> dict[str, object]:
+        self.probe_calls += 1
+        return {
+            "ok": True,
+            "providerName": "local-mlx",
+            "capabilities": {"streaming": True, "serverTiming": True},
+            "promptCache": {"enabled": False},
+        }
+
+
 class DebugManagementApiTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._pinyin_env_keys = (
+            "RAG_IME_PINYIN_FUZZY_ENABLED",
+            "RAG_IME_PINYIN_FUZZY_PROFILE",
+            "RAG_IME_PINYIN_FUZZY_Z_ZH",
+            "RAG_IME_PINYIN_FUZZY_C_CH",
+            "RAG_IME_PINYIN_FUZZY_S_SH",
+            "RAG_IME_PINYIN_FUZZY_EN_ENG",
+            "RAG_IME_PINYIN_FUZZY_IN_ING",
+            "RAG_IME_PINYIN_FUZZY_N_L",
+            "RAG_IME_PINYIN_FUZZY_F_H",
+        )
+        self._pinyin_env = {key: os.environ.get(key) for key in self._pinyin_env_keys}
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-debug-management-")
         self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"
         self.core = LocalSqliteCoreClient(self.db_path)
@@ -49,6 +84,11 @@ class DebugManagementApiTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        for key, value in self._pinyin_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self.tmp.cleanup()
 
     def test_candidate_explain_returns_ranking_reasons(self) -> None:
@@ -76,11 +116,38 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("reason", first)
 
     def test_predictor_status_reports_cache_capabilities(self) -> None:
+        provider = _CapabilityProbePredictionProvider()
+        self.service.predictor = provider
+
         status = self.service.predictor_status()
+        cached = self.service.predictor_status()
+        forced = self.service.model_probe({})
 
         self.assertTrue(status["ok"])
         self.assertIn("predictor", status)
         self.assertIn("capabilities", status["predictor"])
+        self.assertEqual(provider.probe_calls, 2)
+        self.assertFalse(status["predictor"]["statusCache"]["hit"])
+        self.assertTrue(cached["predictor"]["statusCache"]["hit"])
+        self.assertFalse(forced["predictor"]["statusCache"]["hit"])
+
+    def test_pinyin_settings_apply_to_runtime_env_immediately(self) -> None:
+        result = self.service.settings_update(
+            {
+                "pinyin.fuzzyProfile": "none",
+                "pinyin.rerankUsesFuzzy": False,
+                "pinyin.pairs.sSh": False,
+                "pinyin.pairs.nL": True,
+            }
+        )
+        health = self.service.health()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(os.environ["RAG_IME_PINYIN_FUZZY_ENABLED"], "0")
+        self.assertEqual(os.environ["RAG_IME_PINYIN_FUZZY_PROFILE"], "none")
+        self.assertEqual(os.environ["RAG_IME_PINYIN_FUZZY_S_SH"], "0")
+        self.assertEqual(os.environ["RAG_IME_PINYIN_FUZZY_N_L"], "1")
+        self.assertFalse(health["pinyinRuntime"]["fuzzyEnabled"])
 
     def test_predictor_latency_api_redacts_prompt_text(self) -> None:
         trace_path = Path(self.tmp.name) / "predictor-latency.jsonl"
@@ -322,19 +389,27 @@ class DebugManagementApiTests(unittest.TestCase):
             "rawInput": "",
             "preedit": "",
             "committedContext": "我想设计一个候选栏",
+            "commitTextPreview": "候选栏",
             "predictionFirstMerge": True,
             "maxSideCandidates": 8,
             "latencyBudgetMs": 1000,
             "rimeContext": {"candidates": []},
+            "foregroundText": {
+                "surroundingBefore": "我想设计一个候选栏",
+                "surroundingAfter": "",
+                "source": "accessibility",
+                "captureAgeMs": 0,
+            },
         }
-        response = self.service.rime_suggest(payload)
-        model_items = [item for item in response["displayCandidates"] if item["sourceType"] == "model"]
-        for request_seq in range(2, 6):
-            if model_items:
-                break
-            time.sleep(0.2)
-            response = self.service.rime_suggest({**payload, "requestSeq": request_seq})
+        with patch.dict("os.environ", {"RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1"}, clear=False):
+            response = self.service.rime_suggest(payload)
             model_items = [item for item in response["displayCandidates"] if item["sourceType"] == "model"]
+            for request_seq in range(2, 6):
+                if model_items:
+                    break
+                time.sleep(0.2)
+                response = self.service.rime_suggest({**payload, "requestSeq": request_seq})
+                model_items = [item for item in response["displayCandidates"] if item["sourceType"] == "model"]
 
         self.assertLessEqual(len([item for item in response["displayCandidates"] if item["selectionAction"] != "none"]), 2)
         self.assertTrue(model_items)
@@ -501,6 +576,31 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertFalse(preview["ok"])
         self.assertIn("RAG_IME_DEEPSEEK_ACTIVE_RAG=1", preview["requires"])
 
+    def test_deepseek_preview_dry_run_builds_single_candidate_rag_evidence(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_034,
+                source="manual",
+                committed_text="BM25 加向量召回用于输入法候选",
+                recent_context="RAG 输入法核心改造",
+                project="wisdom-weasel-rag-ime",
+                tags=("RAG",),
+            )
+        )
+
+        with patch.dict("os.environ", {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}, clear=False):
+            preview = self.service.deepseek_completion_preview(
+                {"currentContext": "RAG 输入法核心改造", "dryRun": True}
+            )
+
+        self.assertTrue(preview["ok"])
+        self.assertTrue(preview["dryRun"])
+        self.assertGreaterEqual(len(preview["evidencePack"]), 1)
+        user_payload = json.loads(preview["messages"][1]["content"])
+        self.assertEqual(user_payload["maxCandidates"], 1)
+        self.assertGreaterEqual(len(user_payload["evidenceHints"]), 1)
+
     def test_debug_ui_can_render_rag_core_v3_view(self) -> None:
         root = Path(__file__).resolve().parents[1]
         index = (root / "debug" / "index.html").read_text(encoding="utf-8")
@@ -652,6 +752,17 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("/api/predictor/benchmark", app_js)
         self.assertIn('state.managementView !== "predictor"', app_js)
         self.assertIn("state.managementView !== \"lexicon\"", app_js)
+
+    def test_management_console_does_not_start_hot_path_on_page_load(self) -> None:
+        app_js = Path(__file__).resolve().parents[1].joinpath("debug", "app.js").read_text(encoding="utf-8")
+        boot_tail = app_js.split("render();\nrefreshHealth().then(render);", 1)[-1]
+
+        self.assertNotIn("suggestNow();", boot_tail)
+        self.assertNotIn("refreshMemoryHistory();", boot_tail)
+        self.assertNotIn("refreshManagementConsole();", boot_tail)
+        self.assertNotIn("refreshInputSource({ silent: true });", boot_tail)
+        self.assertNotIn("startInputSourcePolling();", boot_tail)
+        self.assertIn("startInputSourcePolling();", app_js)
 
     def _upsert_item(self, *, memory_id: str, kind: str, text: str, status: str = "pending") -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]

@@ -33,7 +33,12 @@ class ActiveRagDebugServerTests(unittest.TestCase):
             cancelled = service.active_rag_cancel({"sessionId": str(started["sessionId"])})
 
             self.assertEqual(started["status"], "pending")
+            self.assertGreater(started["pollAfterMs"], 0)
+            self.assertEqual(started["candidates"][0]["sourceType"], "status")
+            self.assertIn("DeepSeek 思考中", started["candidates"][0]["text"])
+            self.assertTrue(started["candidates"][0]["metadata"]["animated"])
             self.assertEqual(ready["status"], "ready")
+            self.assertEqual(ready["pollAfterMs"], 0)
             self.assertEqual(ready["uiMode"], "active_rag_assist")
             self.assertFalse(ready["keyPolicy"]["thinkingRowSelectable"])
             self.assertEqual(cancelled["status"], "ready")

@@ -34,7 +34,7 @@ from .memory_optimizer_models import ContextFrame, OptimizerResult, RawRetrieval
 from .memory_schema_v2 import ensure_memory_v2_schema, memory_v2_table_names
 from .memory_tag_graph import propagate_tag_energy, recompute_tag_graph, score_memory_items_from_tag_energy
 from .models import AgentContextInjection, InputEvent, InputSuggestion, MemoryAction
-from .pinyin_index import pinyin_search_document
+from .pinyin_index import pinyin_search_document, pinyin_search_terms
 from .rag_core_v3 import (
     memory_candidates_v2_to_input_suggestions,
     retrieve_candidates_v3 as retrieve_rag_core_v3_candidates,
@@ -104,7 +104,7 @@ class LocalSqliteCoreClient:
         self.legacy_governance_filter_enabled = bool(legacy_governance_filter_enabled)
         self.v2_governance_filter_enabled = bool(v2_governance_filter_enabled)
         self.memory_v2_enabled = True
-        self._suggestion_cache: OrderedDict[tuple[str, str, str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
+        self._suggestion_cache: OrderedDict[tuple[str, str, str, str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
         self._suggestion_cache_lock = RLock()
         self._suggestion_cache_hits = 0
         self._suggestion_cache_misses = 0
@@ -2060,17 +2060,18 @@ class LocalSqliteCoreClient:
         app: str,
         mode: str,
         top_k: int,
-    ) -> tuple[str, str, str, str, str, int]:
+    ) -> tuple[str, str, str, str, str, str, int]:
         return (
             compact_whitespace(current_input),
             compact_whitespace(recent_context),
             compact_whitespace(project),
             compact_whitespace(app),
             compact_whitespace(mode),
+            _pinyin_runtime_cache_fingerprint(),
             int(top_k),
         )
 
-    def _get_cached_suggestions(self, key: tuple[str, str, str, str, str, int]) -> list[InputSuggestion] | None:
+    def _get_cached_suggestions(self, key: tuple[str, str, str, str, str, str, int]) -> list[InputSuggestion] | None:
         if self.suggestion_cache_size <= 0:
             return None
         with self._suggestion_cache_lock:
@@ -2082,7 +2083,7 @@ class LocalSqliteCoreClient:
             self._suggestion_cache_hits += 1
             return _copy_suggestions(cached)
 
-    def _store_cached_suggestions(self, key: tuple[str, str, str, str, str, int], suggestions: list[InputSuggestion]) -> None:
+    def _store_cached_suggestions(self, key: tuple[str, str, str, str, str, str, int], suggestions: list[InputSuggestion]) -> None:
         if self.suggestion_cache_size <= 0:
             return
         with self._suggestion_cache_lock:
@@ -3949,6 +3950,21 @@ def _recent_fill_enabled() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _pinyin_runtime_cache_fingerprint() -> str:
+    keys = (
+        "RAG_IME_PINYIN_FUZZY_ENABLED",
+        "RAG_IME_PINYIN_FUZZY_PROFILE",
+        "RAG_IME_PINYIN_FUZZY_Z_ZH",
+        "RAG_IME_PINYIN_FUZZY_C_CH",
+        "RAG_IME_PINYIN_FUZZY_S_SH",
+        "RAG_IME_PINYIN_FUZZY_EN_ENG",
+        "RAG_IME_PINYIN_FUZZY_IN_ING",
+        "RAG_IME_PINYIN_FUZZY_N_L",
+        "RAG_IME_PINYIN_FUZZY_F_H",
+    )
+    return "|".join(f"{key}={os.environ.get(key, '').strip().lower()}" for key in keys)
+
+
 def _vector_only_match_allowed(*, raw_query: str, vector_score: float) -> bool:
     if vector_score <= 0:
         return False
@@ -4355,11 +4371,22 @@ def _pinyin_rerank_boost(raw_query: str, committed_text: str, recent_context: st
     query = re.sub(r"[^A-Za-z0-9]", "", raw_query or "").lower()
     if len(query) < 2:
         return 0.0
-    terms = set(pinyin_search_document(committed_text, recent_context).split())
+    terms = pinyin_search_terms(committed_text, recent_context)
     if query in terms:
-        return 1.15
-    if any(term.startswith(query) for term in terms):
+        return 1.15 if terms[query] == "exact" else 0.82
+    exact_prefix = False
+    fuzzy_prefix = False
+    for term, source in terms.items():
+        if not term.startswith(query):
+            continue
+        if source == "exact":
+            exact_prefix = True
+        else:
+            fuzzy_prefix = True
+    if exact_prefix:
         return 0.75
+    if fuzzy_prefix:
+        return 0.45
     return 0.0
 
 

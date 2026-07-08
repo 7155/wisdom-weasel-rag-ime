@@ -13,8 +13,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
 
-        self.assertIn("fallback: 8, range: 0...10", patch_text)
-        self.assertIn("fallback: 1200, range: 100...30000", patch_text)
+        self.assertIn("fallback: 5, range: 0...10", patch_text)
+        self.assertIn("fallback: 250, range: 30...3000", patch_text)
+        self.assertIn("sidecar_url missing; passive input path does not run CLI fallback", patch_text)
+        self.assertIn("passive CLI fallback disabled", patch_text)
+        self.assertIn("case circuitOpen(Int)", patch_text)
+        self.assertNotIn("RAG IME sidecar HTTP request failed, falling back to CLI", patch_text)
         self.assertIn("let displayLayout: String?", patch_text)
         self.assertIn("let displayLane: String?", patch_text)
         self.assertIn("let badge: String?", patch_text)
@@ -58,6 +62,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('return "忆"', patch_text)
         self.assertIn('return "词"', patch_text)
         self.assertIn('return "input"', patch_text)
+        self.assertIn('case "action":', patch_text)
+        self.assertIn('return "生成"', patch_text)
+        self.assertIn('case "model", "rag", "memory", "status", "action":', patch_text)
+        self.assertIn("return .systemBlue", patch_text)
         self.assertIn("let maxTextHeight = ragImePanelVertical", patch_text)
         self.assertIn("let maxWidth = if ragImePanelVertical", patch_text)
         self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 2.6", patch_text)
@@ -117,6 +125,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('"text_input_client"', patch_text)
         self.assertIn('"ime_commit_ledger"', patch_text)
         self.assertIn('"text_input_client_context"', patch_text)
+        self.assertIn("allowAccessibility: false", patch_text)
         self.assertIn('"foregroundTextSource": foregroundText.source', patch_text)
         self.assertIn('"foregroundTextSource": request.foregroundText.source', patch_text)
         self.assertIn("selectedTextHash: \"\"", patch_text)
@@ -177,6 +186,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func observeRagImePostCommitContinuationIfReady()", patch_text)
         self.assertIn('traceRagImeFrontendEvent("side_candidate_commit_pending"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("side_candidate_continuation_scheduled"', patch_text)
+        self.assertIn('text: "LLM 生成中…"', patch_text)
+        self.assertIn('"post-commit-llm-local-status"', patch_text)
+        self.assertIn('"localStatusDisplayed": localCandidates.count > 1', patch_text)
         self.assertIn("ragImePendingContinuationCandidate = sourceCandidate", patch_text)
         self.assertIn("guard committedContextHash != ragImePendingContinuationPreviousContextHash || committedContext.contains(committedText) else {", patch_text)
         self.assertIn("scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)", patch_text)
@@ -224,7 +236,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("ragImeDisplayCandidates.map { ragImeDisplayText(for: $0) }", patch_text)
         self.assertIn("let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)", patch_text)
         self.assertIn("let base = ragImeStripSourceSuffix(text.isEmpty ? candidate.insertText : text)", patch_text)
-        self.assertIn('case "model", "rag", "memory", "status":', patch_text)
+        self.assertIn('case "model", "rag", "memory", "status", "action":', patch_text)
         self.assertIn('return "[\\(badge)] \\(base)"', patch_text)
         self.assertIn("let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)", patch_text)
         self.assertIn("if !stripped.isEmpty", patch_text)
@@ -294,6 +306,15 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("ragImeDisplayTabPolicy = \"\"", patch_text)
         self.assertIn("ragImeDisplayOptionNumberPolicy = \"\"", patch_text)
         self.assertIn("observeRagImePostCommitContinuationIfReady()", patch_text)
+        self.assertIn("showRagImePostCommitActionPlaceholder(request: request)", patch_text)
+        self.assertIn("post_commit_local_action_placeholder_displayed", patch_text)
+        self.assertIn('"numberKeys": .string("pass_through")', patch_text)
+        self.assertIn("require_trace_event_field()", build_script)
+        self.assertIn("active_rag_local_thinking_placeholder_displayed", build_script)
+        self.assertIn("active_rag_status_poll_scheduled", build_script)
+        self.assertIn('"frontAppBundleId": request.frontAppBundleId', build_script)
+        self.assertIn('"selectedTextChars": request.selectedTextChars', build_script)
+        self.assertIn('"traceIncludesText": false', build_script)
 
     def test_squirrel_patch_contains_active_rag_selected_text_provider(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -328,10 +349,27 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("} else if modifiers.contains(.shift)", patch_text)
         self.assertIn('return raw.isEmpty ? "ctrl+enter"', patch_text)
         self.assertIn('case "r": return 15', patch_text)
+        self.assertIn("startRagImeActiveRagAssistFromShortcut", patch_text)
         self.assertIn("startRagImeActiveRagAssistFromSelection", patch_text)
+        self.assertIn("startRagImeActiveRagAssistFromContext", patch_text)
+        self.assertIn('candidate.selectionAction == "start_active_rag_from_context"', patch_text)
+        self.assertIn('candidate.selectionAction == "start_active_rag_from_context" || candidate.sourceType == "action"', patch_text)
+        self.assertIn('"numericSelectionDisabled": .bool(true)', patch_text)
+        self.assertIn('selectionKey: nil', patch_text)
+        self.assertIn('candidateOrdinal: 0', patch_text)
+        self.assertIn('"active_rag_shortcut_action_button_route"', patch_text)
+        self.assertIn("active_rag_context_button_triggered", patch_text)
+        self.assertIn("postActiveRagStatus", patch_text)
+        self.assertIn("active_rag_status_poll_scheduled", patch_text)
+        self.assertIn("response.pollAfterMs", patch_text)
         self.assertIn("postActiveRagStart", patch_text)
         self.assertIn('endpoint("active-rag/start"', patch_text)
         self.assertIn("active_rag_thinking_displayed", patch_text)
+        self.assertIn("showRagImeActiveRagThinkingPlaceholder(request: request)", patch_text)
+        self.assertIn("active_rag_local_thinking_placeholder_displayed", patch_text)
+        self.assertIn('"selectedTextChars": request.selectedTextChars', patch_text)
+        self.assertIn('"frontAppBundleId": request.frontAppBundleId', patch_text)
+        self.assertIn('"traceIncludesText": false', patch_text)
         self.assertIn("active_rag_ready_displayed", patch_text)
         self.assertIn("active_rag_response_dropped_stale", patch_text)
         self.assertIn("active_rag_candidate_committed", patch_text)
@@ -569,6 +607,8 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func traceV2() { _ = "rag-ime.foreground-trace.v2" }; '
             'func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = "forceSideCandidates: forceSideCandidates" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
+            'func activeRagLocalThinkingTrace(request: Request) { traceRagImeFrontendEvent("active_rag_local_thinking_placeholder_displayed", fields: ["selectedTextHash": request.selectedTextHash, "selectedTextChars": request.selectedTextChars, "frontAppBundleId": request.frontAppBundleId, "traceIncludesText": false]) }; '
+            'func activeRagPollTrace(request: Request) { traceRagImeFrontendEvent("active_rag_status_poll_scheduled", fields: ["selectedTextHash": request.selectedTextHash, "selectedTextChars": request.selectedTextChars, "frontAppBundleId": request.frontAppBundleId, "traceIncludesText": false]) }; '
             'func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" } }\n'
         ),
         encoding="utf-8",
@@ -596,10 +636,10 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 f"  db_path: {tmp_path / 'rag-ime.sqlite'}",
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
-                "  max_side_candidates: 8",
-                "  latency_budget_ms: 450",
-                "  debounce_ms: 40",
-                "  timeout_ms: 600",
+                "  max_side_candidates: 5",
+                "  latency_budget_ms: 300",
+                "  debounce_ms: 80",
+                "  timeout_ms: 250",
                 "  frontend_trace: true",
             ]
         )

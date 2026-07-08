@@ -86,6 +86,29 @@ class _MockOpenAIHandler(BaseHTTPRequestHandler):
         return
 
 
+class ImePredictionAntiEchoTests(unittest.TestCase):
+    def test_parse_ime_rejects_candidate_already_repeated_in_current_input(self) -> None:
+        candidates = parse_ime_prediction_candidates(
+            "继续完善一下",
+            current_input="继续继续下一步继续完善一下继续完善一下继续完善一下",
+            recent_context="",
+            max_candidates=3,
+        )
+
+        self.assertNotIn("继续完善一下", candidates)
+        self.assertEqual(candidates, [])
+
+    def test_parse_ime_rejects_self_repeated_candidate_surface(self) -> None:
+        candidates = parse_ime_prediction_candidates(
+            "继续完善一下继续完善一下",
+            current_input="继续",
+            recent_context="",
+            max_candidates=3,
+        )
+
+        self.assertEqual(candidates, [])
+
+
 class _MockOllamaHandler(BaseHTTPRequestHandler):
     captured_path = ""
     captured_payload: dict[str, object] = {}

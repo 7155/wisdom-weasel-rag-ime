@@ -13,6 +13,7 @@ from rag_ime.contracts.key_policy import (
     ROUTE_TAB_KEY,
     SELECTION_ACTION_COMMIT_SIDE_CANDIDATE,
     SELECTION_ACTION_SELECT_RIME_CANDIDATE,
+    SELECTION_ACTION_START_ACTIVE_RAG_FROM_CONTEXT,
     SIDE_SELECTION_ROUTE_EVENTS,
     TAB_ACCEPT_TOP_PREDICTION,
     key_policy_for_prediction_session,
@@ -43,6 +44,7 @@ class KeyPolicyContractTests(unittest.TestCase):
     def test_selection_actions_and_route_events_are_stable_contract_names(self) -> None:
         self.assertEqual(SELECTION_ACTION_COMMIT_SIDE_CANDIDATE, "commit_side_candidate")
         self.assertEqual(SELECTION_ACTION_SELECT_RIME_CANDIDATE, "select_rime_candidate")
+        self.assertEqual(SELECTION_ACTION_START_ACTIVE_RAG_FROM_CONTEXT, "start_active_rag_from_context")
         self.assertEqual(SIDE_SELECTION_ROUTE_EVENTS, {ROUTE_NUMBER_KEY, ROUTE_TAB_KEY, ROUTE_OPTION_NUMBER})
 
 

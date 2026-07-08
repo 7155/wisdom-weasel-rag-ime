@@ -306,8 +306,10 @@ class RagImeDemoQualityTests(unittest.TestCase):
         display = response["displayCandidates"]
         source_types = {item["sourceType"] for item in display}
         self.assertIn("model", source_types)
-        self.assertTrue(source_types.intersection({"rag", "memory"}), source_types)
+        self.assertFalse(source_types.intersection({"rag", "memory"}), source_types)
         self.assertIn("rime", source_types)
+        self.assertGreaterEqual(len(response["ragCandidates"]), 1)
+        self.assertTrue(response["ragLane"]["directDisplaySuppressed"])
         self.assertTrue(
             all(
                 item["selectionAction"] == "commit_side_candidate"
@@ -354,11 +356,19 @@ class RagImeDemoQualityTests(unittest.TestCase):
         display = response["displayCandidates"]
         source_types = [item["sourceType"] for item in display]
         self.assertIn("model", source_types)
-        self.assertTrue(set(source_types).intersection({"rag", "memory"}), source_types)
+        self.assertFalse(set(source_types).intersection({"rag", "memory"}), source_types)
+        self.assertGreaterEqual(len(response["ragCandidates"]), 1)
+        self.assertTrue(response["ragLane"]["directDisplaySuppressed"])
         self.assertNotIn("rime", source_types)
         self.assertEqual(response["predictionFirst"]["policy"]["wanxiangFallbackCount"], 0)
+        generated = [item for item in display if item["sourceType"] != "action"]
+        actions = [item for item in display if item["sourceType"] == "action"]
         self.assertTrue(
-            all(item["selectionAction"] == "commit_side_candidate" for item in display),
+            all(item["selectionAction"] == "commit_side_candidate" for item in generated),
+            display,
+        )
+        self.assertTrue(
+            all(item["selectionAction"] == "start_active_rag_from_context" for item in actions),
             display,
         )
         self.assertGreaterEqual(response["modelLane"]["predictionCount"], 1)

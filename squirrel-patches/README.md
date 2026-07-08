@@ -98,9 +98,9 @@ rag_ime:
   db_path: /Volumes/undo 4t/git/learnA/wisdom-weasel-rag-ime/.rag-ime-data/rag-ime.sqlite
   project: wisdom-weasel-rag-ime
   max_visible_candidates: 8
-  max_side_candidates: 8
-  latency_budget_ms: 900
-  timeout_ms: 1200
+  max_side_candidates: 5
+  latency_budget_ms: 300
+  timeout_ms: 250
 ```
 
 `rag_ime/enabled` defaults to false. If it is false, Squirrel falls back to the original Rime candidate list. If `sidecar_url` fails, the patch falls back to `python -m rag_ime.cli`; if that also fails, Squirrel keeps the original Rime list.

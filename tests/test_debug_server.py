@@ -13,6 +13,7 @@ from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
+from unittest.mock import patch
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -210,6 +211,10 @@ class DebugImeServiceTests(unittest.TestCase):
             "RAG_IME_MEMORY_OPTIMIZER_TRACE": os.environ.get("RAG_IME_MEMORY_OPTIMIZER_TRACE"),
             "RAG_IME_ENABLE_COMPOSING_MODEL": os.environ.get("RAG_IME_ENABLE_COMPOSING_MODEL"),
             "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": os.environ.get("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"),
+            "RAG_IME_PINYIN_FUZZY_ENABLED": os.environ.get("RAG_IME_PINYIN_FUZZY_ENABLED"),
+            "RAG_IME_PINYIN_FUZZY_PROFILE": os.environ.get("RAG_IME_PINYIN_FUZZY_PROFILE"),
+            "RAG_IME_PINYIN_FUZZY_S_SH": os.environ.get("RAG_IME_PINYIN_FUZZY_S_SH"),
+            "RAG_IME_PINYIN_FUZZY_N_L": os.environ.get("RAG_IME_PINYIN_FUZZY_N_L"),
         }
         os.environ["RAG_IME_ENABLE_COMPOSING_MODEL"] = "1"
         os.environ["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"] = "1"
@@ -599,8 +604,8 @@ class DebugImeServiceTests(unittest.TestCase):
 
         diagnostics = response["rankingDiagnostics"]
         self.assertTrue(diagnostics["hasRagScoreBreakdown"])
-        self.assertEqual(diagnostics["sourceCounts"]["rag"], 1)
-        rag_diag = next(item for item in diagnostics["items"] if item["sourceType"] == "rag")
+        self.assertEqual(diagnostics["evidenceSourceCounts"]["rag"], 1)
+        rag_diag = next(item for item in diagnostics["evidenceItems"] if item["sourceType"] == "rag")
         self.assertEqual(rag_diag["scoreBreakdown"]["schemaVersion"], "rag-ime.score-breakdown.v1")
         self.assertEqual(rag_diag["scoreBreakdown"]["components"]["accepted"], 0.6)
         self.assertEqual(rag_diag["rawSignalsSummary"]["acceptedCount"], 1)
@@ -612,7 +617,7 @@ class DebugImeServiceTests(unittest.TestCase):
         cached = service.rime_suggest(cached_payload)
         self.assertTrue(cached["cache"]["hit"])
         self.assertTrue(cached["rankingDiagnostics"]["hasRagScoreBreakdown"])
-        self.assertEqual(cached["rankingDiagnostics"]["sourceCounts"]["rag"], 1)
+        self.assertEqual(cached["rankingDiagnostics"]["evidenceSourceCounts"]["rag"], 1)
 
     def test_rime_suggest_prediction_first_merge_is_debuggable_and_cache_separated(self) -> None:
         service = DebugImeService(
@@ -868,6 +873,35 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertFalse(third["cache"]["hit"])
         self.assertEqual(predictor.calls, 2)
 
+    def test_rime_suggest_cache_key_and_env_follow_pinyin_settings(self) -> None:
+        payload = {
+            "sessionId": "cache-pinyin-a",
+            "requestSeq": 1,
+            "rawInput": "shijie",
+            "preedit": "shijie",
+            "rimeContext": {"candidates": [{"text": "世界", "label": "1"}]},
+        }
+
+        first = self.service.rime_suggest(payload)
+        self.service.settings_update(
+            {
+                "pinyin.fuzzyProfile": "none",
+                "pinyin.rerankUsesFuzzy": False,
+                "pinyin.pairs.sSh": False,
+                "pinyin.pairs.nL": True,
+            }
+        )
+        second_payload = dict(payload)
+        second_payload.update({"sessionId": "cache-pinyin-b", "requestSeq": 2})
+        second = self.service.rime_suggest(second_payload)
+
+        self.assertFalse(first["cache"]["hit"])
+        self.assertFalse(second["cache"]["hit"])
+        self.assertEqual(os.environ["RAG_IME_PINYIN_FUZZY_ENABLED"], "0")
+        self.assertEqual(os.environ["RAG_IME_PINYIN_FUZZY_PROFILE"], "none")
+        self.assertEqual(os.environ["RAG_IME_PINYIN_FUZZY_S_SH"], "0")
+        self.assertEqual(os.environ["RAG_IME_PINYIN_FUZZY_N_L"], "1")
+
     def test_rime_suggest_cache_bypasses_progressive_followup(self) -> None:
         predictor = FakePredictionProvider()
         self.service.predictor = predictor
@@ -1044,19 +1078,20 @@ class DebugImeServiceTests(unittest.TestCase):
 
     def test_rime_select_records_commit_and_rag_action(self) -> None:
         before_actions = self.service.core.action_count()
-        response = self.service.rime_suggest(
-            {
-                "sessionId": "select-rag",
-                "requestSeq": 31,
-                "rawInput": "ragshurufa",
-                "preedit": "ragshurufa",
-                "committedContext": "用户正在写 RAG 输入法",
-                "forceSideCandidates": True,
-                "maxVisibleCandidates": 6,
-                "maxSideCandidates": 4,
-                "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
-            }
-        )
+        with patch.dict(os.environ, {"RAG_IME_RAG_DIRECT_DISPLAY": "1"}):
+            response = self.service.rime_suggest(
+                {
+                    "sessionId": "select-rag",
+                    "requestSeq": 31,
+                    "rawInput": "ragshurufa",
+                    "preedit": "ragshurufa",
+                    "committedContext": "用户正在写 RAG 输入法",
+                    "forceSideCandidates": True,
+                    "maxVisibleCandidates": 6,
+                    "maxSideCandidates": 4,
+                    "rimeContext": {"candidates": [{"label": "1", "text": "RAG 输入法", "comment": "rime"}]},
+                }
+            )
         rag_candidate = next(item for item in response["displayCandidates"] if item["sourceType"] in {"rag", "memory"})
         selection = self.service.rime_select(
             {

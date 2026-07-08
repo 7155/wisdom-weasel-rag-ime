@@ -79,10 +79,10 @@ def _write_snippet(path: Path, *, sidecar_url: str) -> None:
                 "  db_path: /tmp/rag-ime.sqlite",
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
-                "  max_side_candidates: 8",
-                "  latency_budget_ms: 450",
-                "  debounce_ms: 40",
-                "  timeout_ms: 600",
+                "  max_side_candidates: 5",
+                "  latency_budget_ms: 300",
+                "  debounce_ms: 80",
+                "  timeout_ms: 250",
             ]
         )
         + "\n",

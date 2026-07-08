@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -16,6 +17,7 @@ from rag_ime.mlx_predictor_server import (
     _PromptCacheState,
     _branch_continuation_candidates,
     _build_mlx_dynamic_prompt,
+    _is_base_completion_model,
     QWEN_NON_THINKING_ASSISTANT_PREFIX,
     _normalize_prediction_request,
     make_mlx_predictor_handler,
@@ -67,6 +69,11 @@ class _FakeMlxEngine:
         yield ',"输入法候选"]'
 
 
+class _RaisingMlxEngine(_FakeMlxEngine):
+    def predict(self, **kwargs):
+        raise ValueError("Either input_embeddings or prompt (or both) must be provided.")
+
+
 class _BrokenPipeWriter:
     def write(self, _data: bytes) -> int:
         raise BrokenPipeError("client closed")
@@ -96,6 +103,54 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(request["request_metadata"]["contextFingerprint"], "ctx123")
         self.assertEqual(request["request_metadata"]["rimeCandidateCount"], 2)
         self.assertEqual(request["request_metadata"]["rimeCandidatesFingerprint"], "rime123")
+
+    def test_normalized_request_collapses_repeated_tail_context(self) -> None:
+        request = _normalize_prediction_request(
+            {
+                "model": "fake-mlx-qwen",
+                "currentInput": "继续继续下一步继续完善一下继续完善一下继续完善一下",
+                "recentContext": "我们继续完善一下继续完善一下继续完善一下",
+            },
+            default_model="fake-mlx-qwen",
+        )
+
+        self.assertEqual(request["current_input"], "继续继续下一步继续完善一下")
+        self.assertEqual(request["recent_context"], "我们继续完善一下")
+
+    def test_normalized_request_accepts_snake_case_probe_payloads(self) -> None:
+        request = _normalize_prediction_request(
+            {
+                "model": "fake-mlx-qwen",
+                "current_input": "我们继续",
+                "recent_context": "今天测试输入法连续预测",
+                "max_candidates": 1,
+                "max_tokens": 8,
+                "top_p": 0.85,
+                "request_type": "post_commit_completion",
+                "rime_candidates": ["继续完善"],
+            },
+            default_model="fake-mlx-qwen",
+        )
+
+        self.assertEqual(request["current_input"], "我们继续")
+        self.assertEqual(request["recent_context"], "今天测试输入法连续预测")
+        self.assertEqual(request["max_candidates"], 1)
+        self.assertEqual(request["max_tokens"], 8)
+        self.assertEqual(request["request_type"], "post_commit_completion")
+        self.assertEqual(request["rime_candidates"], ("继续完善",))
+
+    def test_prompt_mode_env_can_force_base_completion(self) -> None:
+        model_info = {
+            "architecture": "Qwen3_5ForConditionalGeneration",
+            "modelType": "qwen3_5",
+            "hasChatTemplate": False,
+        }
+
+        with patch.dict(os.environ, {"RAG_IME_MLX_PROMPT_MODE": "base-completion"}):
+            self.assertTrue(_is_base_completion_model("fake-qwen35-ime", model_info))
+
+        with patch.dict(os.environ, {"RAG_IME_MLX_PROMPT_MODE": "chat-json"}):
+            self.assertFalse(_is_base_completion_model("fake-qwen35-ime-base", model_info))
 
     def test_dynamic_prompt_includes_request_type_and_rime_candidates(self) -> None:
         prompt = _build_mlx_dynamic_prompt(
@@ -1111,9 +1166,40 @@ class MlxPredictorServerTests(unittest.TestCase):
 
         self.assertFalse(handler._write_json_line({"delta": "本地"}))
 
+    def test_predict_returns_stable_error_json_instead_of_empty_reply(self) -> None:
+        server, thread = _start_fake_server(_RaisingMlxEngine())
+        try:
+            body = json.dumps(
+                {
+                    "model": "fake-mlx-qwen",
+                    "current_input": "我们继续",
+                    "recent_context": "今天测试输入法连续预测",
+                    "max_candidates": 1,
+                    "request_type": "post_commit_completion",
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/predict",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=1.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            _stop_server(server, thread)
 
-def _start_fake_server():
-    handler = make_mlx_predictor_handler(_FakeMlxEngine())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["candidates"], [])
+        self.assertEqual(payload["candidateMode"], "error")
+        self.assertEqual(payload["requestType"], "post_commit_completion")
+        self.assertEqual(payload["error"], "ValueError")
+        self.assertIn("latencyTrace", payload)
+
+
+def _start_fake_server(engine=None):
+    handler = make_mlx_predictor_handler(engine or _FakeMlxEngine())
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

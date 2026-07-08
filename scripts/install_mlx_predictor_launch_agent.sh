@@ -212,10 +212,68 @@ fi
 
 DOMAIN="gui/$(id -u)"
 
+kill_stale_mlx_predictor_processes() {
+  if [[ "${RAG_IME_KILL_STALE_MLX_ON_INSTALL:-1}" == "0" ]]; then
+    return 0
+  fi
+  pkill -f 'sidecar_launch.py.*mlx-predictor-server' >/dev/null 2>&1 || true
+  pkill -f 'rag_ime.cli.*mlx-predictor-server' >/dev/null 2>&1 || true
+  if command -v lsof >/dev/null 2>&1; then
+    local pid
+    while read -r pid; do
+      [[ -n "$pid" ]] || continue
+      ps -p "$pid" -o command= | grep -E 'sidecar_launch.py|rag_ime.cli' >/dev/null 2>&1 || continue
+      kill "$pid" >/dev/null 2>&1 || true
+    done < <(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)
+  fi
+}
+
+wait_for_mlx_port_release() {
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  local attempt
+  for attempt in {1..25}; do
+    if ! lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "MLX predictor port $PORT is still occupied after stale-process cleanup" >&2
+  lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >&2 || true
+  return 1
+}
+
+bootstrap_launch_agent() {
+  local attempt
+  local delay
+  local error_log
+
+  error_log="$(mktemp "${TMPDIR:-/tmp}/rag-ime-mlx-launchctl-bootstrap.XXXXXX")"
+  trap 'rm -f "$error_log"' RETURN
+
+  for attempt in 1 2 3 4 5; do
+    if launchctl bootstrap "$DOMAIN" "$PLIST_PATH" 2>"$error_log"; then
+      return 0
+    fi
+    if [[ "$attempt" == "5" ]]; then
+      break
+    fi
+    delay="$(awk "BEGIN { printf \"%.1f\", $attempt * 0.4 }")"
+    sleep "$delay"
+  done
+
+  echo "launchctl bootstrap failed for $DOMAIN/$LABEL" >&2
+  cat "$error_log" >&2
+  return 1
+}
+
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+kill_stale_mlx_predictor_processes
+wait_for_mlx_port_release
+launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 sleep 0.2
-launchctl bootstrap "$DOMAIN" "$PLIST_PATH"
-launchctl kickstart -k "$DOMAIN/$LABEL"
+bootstrap_launch_agent
 
 echo "$PLIST_PATH"
 echo "http://$HOST:$PORT/"

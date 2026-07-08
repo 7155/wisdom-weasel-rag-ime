@@ -1143,6 +1143,7 @@ def _write_sidecar_launch_agent_plist(
             "RAG_IME_PREDICTOR_PROFILE": "instant",
             "RAG_IME_PREDICTOR_STREAM_FIRST": "0",
             "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
+            "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
             "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
             "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
             "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",

@@ -714,7 +714,7 @@ function renderMemoryConsole() {
 }
 
 function renderManagementConsole() {
-  const result = state.managementResult || {};
+  const result = state.managementResult || (state.managementView === "dashboard" && state.health ? state.health : {});
   const rows = managementRows(result);
   ensureManagementSelection(rows);
   for (const button of elements.managementTabs.querySelectorAll("button")) {
@@ -789,7 +789,7 @@ function managementRows(result) {
       },
     ];
   }
-  if (["interaction", "display", "settings", "privacy"].includes(state.managementView)) {
+  if (["interaction", "display", "settings", "pinyin", "privacy"].includes(state.managementView)) {
     const settings = result.settings || {};
     const schema = result.schema || {};
     const section = state.managementView === "settings" ? "" : state.managementView;
@@ -1058,7 +1058,7 @@ function managementActionLabel(rows) {
     const target = managementActionTarget(rows);
     return target?.settingsKey ? "update" : "preview";
   }
-  if (["interaction", "display", "settings", "privacy"].includes(state.managementView)) return "update";
+  if (["interaction", "display", "settings", "pinyin", "privacy"].includes(state.managementView)) return "update";
   if (state.managementView === "vocabulary") return "add";
   if (state.managementView === "models" || state.managementView === "predictor") return "benchmark";
   if (state.managementView === "training") return "dry-run";
@@ -1116,7 +1116,7 @@ async function refreshManagementConsole() {
     else if (state.managementView === "predictor") url = "/api/predictor/status";
     else if (state.managementView === "models") url = "/api/models/status";
     else if (state.managementView === "activeRag") url = "/api/active-rag/settings";
-    else if (["interaction", "display", "settings", "privacy"].includes(state.managementView)) url = "/api/settings";
+    else if (["interaction", "display", "settings", "pinyin", "privacy"].includes(state.managementView)) url = "/api/settings";
     else if (state.managementView === "trace") url = "/api/prediction/live-trace";
     else if (state.managementView === "audit") url = "/api/audit";
     const params = new URLSearchParams({
@@ -1138,14 +1138,14 @@ async function refreshManagementConsole() {
               topK: 5,
             }),
           })
-        : ["interaction", "display", "settings", "privacy"].includes(state.managementView)
+        : ["interaction", "display", "settings", "pinyin", "privacy"].includes(state.managementView)
           ? await fetch("/api/settings")
         : state.managementView === "predictor" || state.managementView === "models" || state.managementView === "activeRag" || state.managementView === "dashboard"
           ? await fetch(url)
         : await fetch(`${url}?${params.toString()}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.managementResult = await response.json();
-    if (["interaction", "display", "settings", "privacy"].includes(state.managementView)) {
+    if (["interaction", "display", "settings", "pinyin", "privacy"].includes(state.managementView)) {
       const schemaResponse = await fetch("/api/settings/schema");
       state.managementResult.schema = await schemaResponse.json();
     }
@@ -1172,7 +1172,7 @@ async function runManagementAction() {
     if (state.managementView === "history") {
       endpoint = "/api/history/tombstone";
       body = { eventId: target.eventId, reason: "debug-management" };
-    } else if (["interaction", "display", "settings", "privacy", "activeRag"].includes(state.managementView)) {
+    } else if (["interaction", "display", "settings", "pinyin", "privacy", "activeRag"].includes(state.managementView)) {
       if (state.managementView === "activeRag" && !target.settingsKey) {
         endpoint = "/api/active-rag/preview";
         const selectedText = elements.managementQuery.value.trim() || state.committed.slice(-80);
@@ -1557,12 +1557,10 @@ elements.predictionFirstToggle.addEventListener("change", () => {
   suggestNow();
   elements.hiddenInput.focus();
 });
-elements.inputSourceButton.addEventListener("click", refreshInputSource);
+elements.inputSourceButton.addEventListener("click", async () => {
+  await refreshInputSource();
+  startInputSourcePolling();
+});
 
 render();
 refreshHealth().then(render);
-refreshMemoryHistory();
-refreshManagementConsole();
-refreshInputSource({ silent: true });
-startInputSourcePolling();
-suggestNow();

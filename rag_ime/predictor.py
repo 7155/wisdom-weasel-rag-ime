@@ -17,6 +17,7 @@ from typing import Any, Protocol
 from .models import ModelPrediction
 from .model_profiles import profile_by_id
 from .pinyin_index import build_pinyin_metadata
+from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
 from .text_utils import compact_whitespace
 
 
@@ -1831,23 +1832,28 @@ def _parse_prediction_candidate_texts(texts: list[str], *, max_candidates: int =
 
 
 def _filter_repeated_input_candidates(candidates: list[str], current_input: str) -> list[str]:
-    if _looks_like_candidate_list_input(current_input):
-        return candidates
     input_norm = _candidate_repeat_norm(current_input)
     if not input_norm:
         return candidates
+    candidate_list_input = _looks_like_candidate_list_input(current_input)
     result: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
+        surface = compact_whitespace(candidate)
         candidate_norm = _candidate_repeat_norm(candidate)
         if not candidate_norm:
             continue
-        if candidate_norm == input_norm or candidate_norm in input_norm:
+        if candidate_has_self_repetition(surface):
             continue
-        if candidate in seen:
+        if candidate_list_input:
+            if candidate_echoes_text(surface, current_input, reject_tail=False):
+                continue
+        elif candidate_echoes_text(surface, current_input, reject_single_occurrence=True):
             continue
-        seen.add(candidate)
-        result.append(candidate)
+        if surface in seen:
+            continue
+        seen.add(surface)
+        result.append(surface)
     return result
 
 
@@ -1866,7 +1872,9 @@ def _filter_repeated_context_candidates(candidates: list[str], recent_context: s
         candidate_norm = _candidate_repeat_norm(surface)
         if not candidate_norm:
             continue
-        if len(candidate_norm) >= 2 and candidate_norm in context_norm:
+        if candidate_has_self_repetition(surface):
+            continue
+        if candidate_echoes_text(surface, recent_context, reject_single_occurrence=True):
             continue
         if _candidate_is_context_reorder(surface, context_chars):
             continue
@@ -1929,6 +1937,8 @@ def _filter_low_value_ime_candidates(
         if cjk_count < 2 and not is_allowed_ascii:
             continue
         if normalized in _LOW_VALUE_IME_CANDIDATES:
+            continue
+        if candidate_has_self_repetition(normalized):
             continue
         if _looks_like_meta_ime_candidate(normalized):
             continue
@@ -2141,7 +2151,12 @@ def _continuation_prediction_candidates_from_texts(
     candidates: list[str] = []
     seen: set[str] = set()
     for text in texts:
-        cleaned = _remove_prediction_prompt_echo(_clean_prediction_output(text), current_input=current_input, recent_context=recent_context)
+        raw_cleaned = _clean_prediction_output(text)
+        if candidate_has_self_repetition(raw_cleaned):
+            continue
+        cleaned = _remove_prediction_prompt_echo(raw_cleaned, current_input=current_input, recent_context=recent_context)
+        if candidate_has_self_repetition(cleaned):
+            continue
         spans = _continuation_candidate_spans(cleaned)
         if max_items == 1 and spans:
             spans = [max(spans, key=len)]
@@ -2173,6 +2188,8 @@ def _continuation_candidate_spans(text: str) -> list[str]:
     if not cleaned:
         return []
     first_clause = _first_useful_continuation_clause(cleaned)
+    if candidate_has_self_repetition(first_clause):
+        return []
     if _cjk_char_count(first_clause) < 2:
         return []
     compacted = re.sub(r"\s+", "", first_clause)

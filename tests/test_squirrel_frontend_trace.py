@@ -329,6 +329,36 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("--max-stale-apply-count 0", result.stdout)
         self.assertIn("--max-context-echo-count 0", result.stdout)
 
+    def test_foreground_trace_wrapper_can_require_active_rag_lifecycle(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "verify_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--active-rag-proof",
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        self.assertIn("require_active_rag_action_button=1", result.stdout)
+        self.assertIn("require_post_commit_pending_status=1", result.stdout)
+        self.assertIn("require_prediction_status_visible=1", result.stdout)
+        self.assertIn("require_active_rag_thinking=1", result.stdout)
+        self.assertIn("require_active_rag_ready=1", result.stdout)
+        self.assertIn("require_side_commit=0", result.stdout)
+        self.assertIn("require_post_commit_followup=0", result.stdout)
+        self.assertIn("require_modern_prediction_session=0", result.stdout)
+        self.assertIn("auto_key=ctrl-enter", result.stdout)
+        self.assertIn("--require-active-rag-action-button", result.stdout)
+        self.assertIn("--require-post-commit-pending-status", result.stdout)
+        self.assertIn("--require-prediction-status-visible", result.stdout)
+        self.assertIn("--require-active-rag-thinking", result.stdout)
+        self.assertIn("--require-active-rag-ready", result.stdout)
+
     def test_trace_check_can_require_delete_resync(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-delete-") as tmp:
@@ -613,6 +643,31 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
             log_path.write_text(
                 json.dumps(
                     {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 5,
+                        "committedContextHash": "sha256:committed",
+                        "compositionHash": "sha256:e3b0c44298fc1c14",
+                        "candidates": [
+                            {
+                                "label": "",
+                                "selectionKey": "",
+                                "selectionRank": 0,
+                                "candidateOrdinal": 0,
+                                "sourceType": "action",
+                                "selectionAction": "start_active_rag_from_context",
+                                "displayLane": "active_rag",
+                                "committedContextHash": "sha256:committed",
+                                "compositionHash": "sha256:e3b0c44298fc1c14",
+                                "text": "DeepSeek 生成",
+                                "metadata": {"buttonRole": "active_rag_generate"},
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+                + json.dumps(
+                    {
                         **anchor,
                         "event": "active_rag_thinking_displayed",
                         "timestampMs": 10,
@@ -661,6 +716,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     str(root / "scripts" / "check_squirrel_frontend_trace.py"),
                     "--log-path",
                     str(log_path),
+                    "--require-active-rag-action-button",
+                    "--require-post-commit-pending-status",
                     "--require-active-rag-thinking",
                     "--require-active-rag-ready",
                     "--require-active-rag-commit",
@@ -676,6 +733,10 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
 
         report = json.loads(result.stdout)
         self.assertTrue(report["passed"])
+        self.assertEqual(report["required"]["activeRagActionButton"], True)
+        self.assertEqual(report["required"]["postCommitPendingStatus"], True)
+        self.assertEqual(report["latestActiveRagActionButton"]["committedContextHash"], "sha256:committed")
+        self.assertEqual(report["latestPostCommitPendingStatus"]["committedContextHash"], "sha256:committed")
         self.assertEqual(report["required"]["activeRagThinking"], True)
         self.assertEqual(report["latestActiveRagReady"]["uiMode"], "active_rag_assist")
         self.assertEqual(report["latestActiveRagCommit"]["event"], "active_rag_candidate_committed")
