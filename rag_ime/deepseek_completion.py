@@ -237,11 +237,14 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                 "任务是预测用户光标处最可能继续输入的一段自然中文正文，只生成 1 个候选。"
                 "如果 placement 是 insert_after_selection/append_at_cursor，就输出能接在 currentContext 后面的续写段落；"
                 "如果 placement 是 replace_selection，才输出对 selectedText 的改写。"
+                "selectedText 在 insert_after_selection/append_at_cursor 场景只是光标前文本锚点，不是示例，不要引用它来讲解。"
                 "第一句必须以“候选=”开头，等号后直接写候选内容。"
-                "不要解释，不要总结，不要 Markdown，不要输出任务标题。"
+                "不要解释，不要总结，不要 Markdown，不要输出任务标题，不要举例。"
                 "候选必须是一段完整的话，具体、可直接插入；不要复述 selectedText/currentContext/Notebook 原句。"
                 "优先使用 currentInput，其次用 oneRing/timeline/notebook/RAG evidence 补全语义。"
-                "等号后的正文禁止出现“候选”“短语”“格式”“真实候选”“Notebook”“evidence”“oneRing”等提示词或字段名。"
+                "等号后的正文不要把“候选=”或输出格式当正文；如果用户正在讨论输入法候选质量，可以自然使用“候选”一词。"
+                "正文仍禁止出现“短语”“格式”“真实候选”“Notebook”“evidence”“oneRing”等提示词或字段名。"
+                "等号后的正文禁止以“例如”“比如”“可以描述”“当用户输入”“如果用户输入”“系统会”开头。"
             ),
         },
         {
@@ -259,7 +262,9 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                     "task": (
                         f"写出光标处下一段 {min_chars} 到 {max_chars} 个中文字正文。"
                         "正文要像用户正在继续输入的一段话，能直接接在当前输入后；"
-                        "禁止写“下一步/接下来/可以继续/根据上述/候选/短语/格式/Notebook/evidence/oneRing”。"
+                        "禁止写“下一步/接下来/可以继续/根据上述/短语/格式/Notebook/evidence/oneRing”。"
+                        "如果当前语境就是输入法候选质量，可以自然写“候选”；"
+                        "禁止写教学示例或产品说明，尤其不要以“例如/比如/可以描述/当用户输入/系统会”开头；"
                         "不要把 RAG 证据或 Notebook 标题原样显示。"
                         "只输出一行，不换行；行首固定为“候选=”，等号后直接写一段正文。"
                     ),
@@ -436,6 +441,7 @@ def _candidates_from_text(
     started: float,
 ) -> Iterator[CompletionCandidateDelta]:
     for candidate in _parse_candidate_texts(text):
+        candidate = _normalize_candidate_for_request(candidate, request=request)
         if not _candidate_allowed(candidate, request=request, seen=seen):
             continue
         seen.add(candidate)
@@ -500,6 +506,7 @@ def _candidates_from_reasoning(
     started: float,
 ) -> Iterator[CompletionCandidateDelta]:
     for candidate in _candidate_texts_from_reasoning(reasoning):
+        candidate = _normalize_candidate_for_request(candidate, request=request)
         if not _candidate_allowed(candidate, request=request, seen=seen):
             continue
         seen.add(candidate)
@@ -525,6 +532,7 @@ def _candidates_from_request_fallback(
     limit = max(1, int(request.max_candidates))
     yielded = 0
     for candidate in _request_fallback_candidate_texts(request):
+        candidate = _normalize_candidate_for_request(candidate, request=request)
         if repeat_norm(candidate) == repeat_norm(request.selected_text):
             continue
         if not _candidate_allowed(candidate, request=request, seen=seen):
@@ -544,6 +552,13 @@ def _candidates_from_request_fallback(
         )
         if yielded >= limit:
             break
+
+
+def _normalize_candidate_for_request(candidate: str, *, request: DeepSeekCompletionRequest) -> str:
+    text = compact_whitespace(candidate)
+    if _active_rag_paragraph_output(request):
+        text = re.sub(r"^(?:例如|比如)[，,、\s]*", "", text)
+    return compact_whitespace(text)
 
 
 def _request_fallback_candidate_texts(request: DeepSeekCompletionRequest) -> list[str]:
@@ -700,11 +715,11 @@ def _placeholder_candidate(text: str) -> bool:
     }
 
 
-def _generic_prompt_candidate(text: str) -> bool:
+def _generic_prompt_candidate(text: str, *, paragraph_mode: bool = False) -> bool:
     value = compact_whitespace(text)
     if any(marker in value for marker in ("候选短语", "候选内容", "候选文本", "直接插入")):
         return True
-    if value.count("候选") >= 2 or "候选的" in value:
+    if not paragraph_mode and (value.count("候选") >= 2 or "候选的" in value):
         return True
     return value.startswith("的") and any(marker in value for marker in ("候选", "短语", "内容", "文本"))
 
@@ -830,7 +845,7 @@ def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, se
         return False
     if _placeholder_candidate(text):
         return False
-    if _generic_prompt_candidate(text):
+    if _generic_prompt_candidate(text, paragraph_mode=paragraph_mode):
         return False
     if _has_unapproved_ascii_word(text):
         return False
@@ -923,6 +938,21 @@ def _bad_active_rag_paragraph_candidate(text: str) -> bool:
     value = compact_whitespace(text)
     if not value:
         return True
+    explanation_prefixes = (
+        "例如",
+        "比如",
+        "可以描述",
+        "可以说明",
+        "当用户输入",
+        "如果用户输入",
+        "系统会",
+        "用户可以",
+        "这个功能",
+        "该功能",
+        "这段内容",
+    )
+    if value.startswith(explanation_prefixes):
+        return True
     lowered = value.lower()
     if any(
         marker in lowered
@@ -948,7 +978,22 @@ def _bad_active_rag_paragraph_candidate(text: str) -> bool:
 
 
 def _has_unapproved_ascii_word(text: str) -> bool:
-    allowed = {"llm", "rag", "deepseek", "ds", "bm25", "kv", "api", "mlx", "tagmemo", "daily", "book"}
+    allowed = {
+        "llm",
+        "rag",
+        "deepseek",
+        "ds",
+        "bm25",
+        "kv",
+        "api",
+        "mlx",
+        "tagmemo",
+        "daily",
+        "book",
+        "squirrel",
+        "rime",
+        "macos",
+    }
     for word in re.findall(r"[A-Za-z][A-Za-z0-9_-]*", text):
         if word.lower() not in allowed:
             return True

@@ -281,6 +281,7 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "sidecar_
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rag-ime.foreground-trace.v2" "foreground trace v2 marker"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty" "foreground post-commit-only LLM/RAG candidate request"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "forceSideCandidates: forceSideCandidates" "foreground dynamic LLM/RAG candidate request"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "composition_ai_suppressed" "composition-phase AI overlay suppression"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImeSelectedTextProvider.captureForegroundTextForSidecar" "focused text accessibility foreground snapshot request"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "assistant_overlay_active_rag_thinking" "Active RAG assistant overlay thinking event"
 require_trace_event_field "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "active_rag_thinking_displayed" '"selectedTextChars": request.selectedTextChars' "Active RAG selected-text count trace anchor"
@@ -498,6 +499,33 @@ install_squirrel_app() {
     echo "built Squirrel.app not found: $PRODUCT_APP" >&2
     exit 1
   fi
+
+  sign_target_app() {
+    local phase="$1"
+    if bool_true "$SKIP_CODESIGN"; then
+      printf '[WARN] skipped Squirrel %s codesign; input source registration may fail\n' "$phase" >&2
+      return 0
+    fi
+    if command -v codesign >/dev/null 2>&1; then
+      codesign --force --deep --sign "$CODESIGN_IDENTITY" "$TARGET_APP"
+      printf '[OK] %s signed patched Squirrel.app with identity: %s\n' "$phase" "$CODESIGN_IDENTITY"
+    else
+      printf '[WARN] codesign not found during %s; input source registration may fail\n' "$phase" >&2
+    fi
+  }
+
+  final_registration_check() {
+    if should_brand_app; then
+      RAG_IME_SQUIRREL_APP="$TARGET_APP" \
+        RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+        RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+        RAG_IME_SQUIRREL_AUTO_SELECT=0 \
+        "$ROOT/scripts/refresh_squirrel_input_source_registration.sh" >/dev/null 2>&1 || true
+    else
+      ensure_squirrel_input_source_enabled "$TARGET_APP"
+    fi
+  }
+
   mkdir -p "$INSTALL_DIR"
   canonicalize_input_method_bundles
   rm -rf "$TARGET_APP"
@@ -519,14 +547,7 @@ install_squirrel_app() {
 
   write_rag_ime_build_marker "$TARGET_APP"
 
-  if bool_true "$SKIP_CODESIGN"; then
-    printf '[WARN] skipped Squirrel codesign; input source registration may fail\n' >&2
-  elif command -v codesign >/dev/null 2>&1; then
-    codesign --force --deep --sign "$CODESIGN_IDENTITY" "$TARGET_APP"
-    printf '[OK] signed patched Squirrel.app with identity: %s\n' "$CODESIGN_IDENTITY"
-  else
-    printf '[WARN] codesign not found; input source registration may fail\n' >&2
-  fi
+  sign_target_app "initial"
 
   RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_WORKDIR" \
     RAG_IME_SQUIRREL_CONFIG_SNIPPET="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" \
@@ -537,6 +558,7 @@ install_squirrel_app() {
 
   if bool_true "$SKIP_POSTINSTALL"; then
     printf '[WARN] skipped Squirrel user-data bootstrap and postinstall; input source may need manual registration\n' >&2
+    sign_target_app "final"
     return 0
   fi
 
@@ -553,6 +575,12 @@ install_squirrel_app() {
   else
     printf '[WARN] Squirrel postinstall script not found; input source may need manual registration\n' >&2
   fi
+
+  # Squirrel postinstall can generate bundled SharedSupport/build files inside
+  # the app after the first signature. Seal the final bundle state and refresh
+  # registration again so System Settings does not hide an invalid app bundle.
+  sign_target_app "final"
+  final_registration_check
 }
 
 if [[ -z "$XCODEBUILD" || ! -x "$XCODEBUILD" ]]; then

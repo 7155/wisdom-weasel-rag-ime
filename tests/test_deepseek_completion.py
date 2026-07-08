@@ -275,7 +275,124 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertNotIn("候选是“短候选”", messages[0]["content"])
         self.assertIn("以“候选=”开头", messages[0]["content"])
         self.assertIn("currentInput", messages[0]["content"])
+        self.assertIn("selectedText 在 insert_after_selection/append_at_cursor 场景只是光标前文本锚点", messages[0]["content"])
+        self.assertIn("禁止以“例如”“比如”“可以描述”", messages[0]["content"])
+        self.assertIn("不要以“例如/比如/可以描述/当用户输入/系统会”开头", user_payload["task"])
         self.assertEqual(user_payload["placement"], "insert_after_selection")
+
+    def test_active_rag_rejects_explanatory_example_paragraph(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "候选=例如，可以描述如何将离线整理的 DeepSeek 结果通过流式候选机制实时展示在 Squirrel 输入法候选栏中。",
+                    }
+                }
+            ]
+        }
+        provider = _provider([json.dumps(payload, ensure_ascii=False)])
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
+                    selected_text="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
+                    evidence_pack=({"surfaceHints": ["RAG 输入法真实历史整理摘要"], "tags": ["RAG", "输入法"]},),
+                    max_candidates=1,
+                    max_chars=120,
+                )
+            )
+        )
+
+        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
+        self.assertFalse(deltas[0].text.startswith("例如"))
+        self.assertNotIn("可以描述", deltas[0].text)
+
+    def test_active_rag_strips_example_prefix_from_real_paragraph(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "候选=例如在测试中，我注意到 RAG 记忆能有效补全上下文，让 DeepSeek 生成更贴合当前场景的说明。",
+                    }
+                }
+            ]
+        }
+        provider = _provider([json.dumps(payload, ensure_ascii=False)])
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
+                    selected_text="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
+                    max_candidates=1,
+                    max_chars=120,
+                )
+            )
+        )
+
+        self.assertEqual(deltas[0].metadata["parseMode"], "content")
+        self.assertEqual(deltas[0].text, "在测试中，我注意到 RAG 记忆能有效补全上下文，让 DeepSeek 生成更贴合当前场景的说明")
+
+    def test_active_rag_allows_product_terms_in_real_paragraph(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "候选=例如在测试中，DeepSeek 会结合近期整理的流式候选和真实 Squirrel/Rime 链路，生成一段连贯的说明文字。",
+                    }
+                }
+            ]
+        }
+        provider = _provider([json.dumps(payload, ensure_ascii=False)])
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
+                    selected_text="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
+                    max_candidates=1,
+                    max_chars=120,
+                )
+            )
+        )
+
+        self.assertEqual(deltas[0].metadata["parseMode"], "content")
+        self.assertIn("Squirrel/Rime 链路", deltas[0].text)
+
+    def test_active_rag_paragraph_allows_candidate_quality_terms(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "候选=可以结合近期整理的 DeepSeek 离线数据和流式候选机制，在真实 Squirrel/Rime 链路上验证候选质量，并用于面试展示。",
+                    }
+                }
+            ]
+        }
+        provider = _provider([json.dumps(payload, ensure_ascii=False)])
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
+                    selected_text="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
+                    max_candidates=1,
+                    max_chars=120,
+                )
+            )
+        )
+
+        self.assertEqual(deltas[0].metadata["parseMode"], "content")
+        self.assertIn("流式候选机制", deltas[0].text)
 
     def test_active_rag_fallback_handles_llm_display_and_rag_context(self) -> None:
         provider = _provider([_sse_reasoning("候选=XXX。"), "data: [DONE]\n"])

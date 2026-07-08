@@ -2764,6 +2764,24 @@ index c2adf74..3cfc0e5 100644
 +    immediate: Bool = false
 +  ) {
 +    guard requestSidecar else { return }
++    if !rawInput.isEmpty || !preedit.isEmpty {
++      let hadAIUI = ragImeAssistantOverlayController.isVisible
++        || ragImePanelUsesDisplayCandidates
++        || !ragImeDisplayCandidates.isEmpty
++      if hadAIUI {
++        clearRagImeDisplayCandidates()
++      } else {
++        ragImePendingRequestWorkItem?.cancel()
++        ragImePendingRequestWorkItem = nil
++        ragImePendingRequestFingerprint = ""
++      }
++      traceRagImeFrontendEvent("composition_ai_suppressed", fields: [
++        "rawInput": rawInput,
++        "preedit": preedit,
++        "reason": "rime_composition_phase",
++      ])
++      return
++    }
 +    guard let sidecarClient = ragImeSidecarClient else {
 +      clearRagImeDisplayCandidates()
 +      return
@@ -2871,7 +2889,9 @@ index c2adf74..3cfc0e5 100644
 +    )
 +    ragImeInputGeneration += 1
 +    let inputGeneration = ragImeInputGeneration
-+    showRagImePostCommitActionPlaceholder(request: request)
++    if forceSideCandidates {
++      showRagImePostCommitActionPlaceholder(request: request)
++    }
 +    traceRagImeFrontendEvent("frontend_transaction_created", fields: [
 +      "requestSeq": requestSeq,
 +      "frontendRevision": frontendRevision,

@@ -314,6 +314,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("ragImeDisplayOptionNumberPolicy = \"\"", patch_text)
         self.assertIn("observeRagImePostCommitContinuationIfReady()", patch_text)
         self.assertIn("showRagImePostCommitActionPlaceholder(request: request)", patch_text)
+        self.assertIn("composition_ai_suppressed", patch_text)
+        self.assertIn("reason\": \"rime_composition_phase", patch_text)
+        self.assertIn("if forceSideCandidates {", patch_text)
         self.assertIn("assistant_overlay_post_commit_pending", patch_text)
         self.assertIn('numberKeys: "pass_through"', patch_text)
         self.assertIn("require_trace_event_field()", build_script)
@@ -626,6 +629,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func traceSidecarEmptyResponseCleared() { _ = "sidecar_empty_response_cleared" }; '
             'func traceV2() { _ = "rag-ime.foreground-trace.v2" }; '
             'func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = "forceSideCandidates: forceSideCandidates" }; '
+            'func compositionAISuppressed() { _ = "composition_ai_suppressed" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
             'func activeRagLocalThinkingTrace(request: Request) { _ = "assistant_overlay_active_rag_thinking"; traceRagImeFrontendEvent("active_rag_thinking_displayed", fields: ["selectedTextHash": request.selectedTextHash, "selectedTextChars": request.selectedTextChars, "frontAppBundleId": currentApp, "traceIncludesText": false]) }; '
             'func activeRagPollTrace(request: Request) { traceRagImeFrontendEvent("active_rag_status_poll_scheduled", fields: ["selectedTextHash": request.selectedTextHash, "selectedTextChars": request.selectedTextChars, "frontAppBundleId": request.frontAppBundleId, "traceIncludesText": false]) }; '

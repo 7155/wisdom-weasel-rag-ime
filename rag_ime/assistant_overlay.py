@@ -71,7 +71,12 @@ def build_assistant_overlay_payload(
         for candidate in overlay_candidates
         if str(candidate.get("sourceType") or "") != "status"
     ]
-    pending = _overlay_is_pending(ui_mode=ui_mode, progressive=progressive, status_rows=status_rows)
+    pending = _overlay_is_pending(
+        ui_mode=ui_mode,
+        progressive=progressive,
+        status_rows=status_rows,
+        actual_candidates=actual_candidates,
+    )
     source_cards = _source_cards_from_candidates(display_candidates=display_candidates, rag_candidates=rag_candidates)
     visible = bool(
         actual_candidates
@@ -143,7 +148,13 @@ def _overlay_is_pending(
     ui_mode: str,
     progressive: Mapping[str, object] | None,
     status_rows: Sequence[Mapping[str, object]],
+    actual_candidates: Sequence[Mapping[str, object]],
 ) -> bool:
+    if actual_candidates:
+        return any(
+            bool(dict(candidate.get("metadata") if isinstance(candidate.get("metadata"), Mapping) else {}).get("presentationPartial"))
+            for candidate in actual_candidates
+        )
     if "pending" in ui_mode:
         return True
     state = dict(progressive or {})
