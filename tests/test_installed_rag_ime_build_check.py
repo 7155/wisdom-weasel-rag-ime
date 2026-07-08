@@ -15,7 +15,7 @@ class InstalledRagImeBuildCheckTests(unittest.TestCase):
         patch_sha = _sha256(root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch")
         with tempfile.TemporaryDirectory(prefix="rag-ime-installed-build-") as tmp:
             tmp_path = Path(tmp)
-            app = tmp_path / "RAG-IME.app"
+            app = tmp_path / "Squirrel.app"
             marker_path = app / "Contents" / "Resources" / "rag-ime-build-marker.json"
             marker_path.parent.mkdir(parents=True)
             marker_path.write_text(
@@ -23,8 +23,8 @@ class InstalledRagImeBuildCheckTests(unittest.TestCase):
                     {
                         "schemaVersion": "rag-ime.squirrel-build-marker.v1",
                         "patchSha256": patch_sha,
-                        "bundleId": "im.rag-ime.inputmethod.RagIme",
-                        "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
+                        "bundleId": "im.rime.inputmethod.Squirrel",
+                        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
                     }
                 )
                 + "\n",
@@ -61,7 +61,7 @@ class InstalledRagImeBuildCheckTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-installed-build-") as tmp:
             tmp_path = Path(tmp)
-            app = tmp_path / "RAG-IME.app"
+            app = tmp_path / "Squirrel.app"
             marker_path = app / "Contents" / "Resources" / "rag-ime-build-marker.json"
             marker_path.parent.mkdir(parents=True)
             marker_path.write_text(
@@ -69,8 +69,8 @@ class InstalledRagImeBuildCheckTests(unittest.TestCase):
                     {
                         "schemaVersion": "rag-ime.squirrel-build-marker.v1",
                         "patchSha256": "old",
-                        "bundleId": "im.rag-ime.inputmethod.RagIme",
-                        "inputSourceId": "im.rag-ime.inputmethod.RagIme.Hans",
+                        "bundleId": "im.rime.inputmethod.Squirrel",
+                        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
                     }
                 )
                 + "\n",
@@ -118,7 +118,7 @@ def _write_fake_check_script(tmp_path: Path) -> Path:
                 "    *) shift ;;",
                 "  esac",
                 "done",
-                "target=\"${1:-im.rag-ime.inputmethod.RagIme.Hans}\"",
+                "target=\"${1:-im.rime.inputmethod.Squirrel.Hans}\"",
                 "cat > \"$report\" <<JSON",
                 "{\"ok\":true,\"source\":{\"selected\":true,\"hitoolboxEnabled\":true,\"thirdPartyEnabled\":true},\"inputSourceId\":\"$target\"}",
                 "JSON",

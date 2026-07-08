@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_APP = Path.home() / "Library" / "Input Methods" / "RAG-IME.app"
-DEFAULT_INPUT_SOURCE_ID = "im.rag-ime.inputmethod.RagIme.Hans"
-DEFAULT_BUNDLE_ID = "im.rag-ime.inputmethod.RagIme"
+DEFAULT_APP = Path.home() / "Library" / "Input Methods" / "Squirrel.app"
+DEFAULT_INPUT_SOURCE_ID = "im.rime.inputmethod.Squirrel.Hans"
+DEFAULT_BUNDLE_ID = "im.rime.inputmethod.Squirrel"
 
 
 def sha256_file(path: Path) -> str | None:
@@ -132,14 +132,14 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "notes": [
             "installedLatest proves the installed app marker matches the current Squirrel patch file.",
             "A running process can still be old until macOS restarts or reselects the input method.",
-            "If installedLatest=true but candidates look old, quit/reselect RAG-IME and run this checker again.",
+            "If installedLatest=true but candidates look old, quit/reselect Squirrel and run this checker again.",
         ],
     }
 
 
 def main() -> int:
     root_default = Path(__file__).resolve().parents[1]
-    parser = argparse.ArgumentParser(description="Check whether the installed RAG-IME app matches this checkout.")
+    parser = argparse.ArgumentParser(description="Check whether the installed patched Squirrel app matches this checkout.")
     parser.add_argument("--repo-root", type=Path, default=root_default)
     parser.add_argument("--app", type=Path, default=Path(os.environ.get("RAG_IME_SQUIRREL_APP", DEFAULT_APP)))
     parser.add_argument("--input-source-id", default=os.environ.get("RAG_IME_SQUIRREL_INPUT_SOURCE_ID", DEFAULT_INPUT_SOURCE_ID))

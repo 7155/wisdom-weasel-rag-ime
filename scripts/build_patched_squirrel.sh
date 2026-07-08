@@ -20,6 +20,10 @@ SKIP_CODESIGN="${RAG_IME_SQUIRREL_SKIP_CODESIGN:-0}"
 CODESIGN_IDENTITY="${RAG_IME_SQUIRREL_CODESIGN_IDENTITY:--}"
 ENABLE_PREF_REPAIR="${RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR:-0}"
 AUTO_SELECT="${RAG_IME_SQUIRREL_AUTO_SELECT:-0}"
+CANONICALIZE_INPUT_METHODS="${RAG_IME_SQUIRREL_CANONICALIZE_INPUT_METHODS:-1}"
+CANONICAL_INPUT_METHOD_ALIASES="${RAG_IME_SQUIRREL_CANONICAL_INPUT_METHOD_ALIASES:-RAG-IME.app:RagIme.app:Squirrel.app}"
+CANONICAL_QUARANTINE_DIR="${RAG_IME_SQUIRREL_CANONICAL_QUARANTINE_DIR:-$HOME/Library/Application Support/RagIme/disabled-input-method-backups}"
+LSREGISTER="${RAG_IME_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
 DEFAULT_BUNDLE_ID="im.rime.inputmethod.Squirrel"
 BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
@@ -69,6 +73,8 @@ Environment:
   RAG_IME_SQUIRREL_SKIP_POSTINSTALL skip user-data bootstrap and Squirrel scripts/postinstall after install
   RAG_IME_SQUIRREL_ENABLE_PREF_REPAIR allow direct HIToolbox/inputsource plist repair after branded install
   RAG_IME_SQUIRREL_AUTO_SELECT select the branded input source after install
+  RAG_IME_SQUIRREL_CANONICALIZE_INPUT_METHODS quarantine old RAG-IME/RagIme/Squirrel aliases before install
+  RAG_IME_SQUIRREL_CANONICAL_INPUT_METHOD_ALIASES colon-separated app names to keep unique in install dir
   RAG_IME_SQUIRREL_INPUT_SOURCE_ID input source checked after install
   RAG_IME_XCODEBUILD             xcodebuild executable override
   RAG_IME_SQUIRREL_BUILD_DRY_RUN print resolved commands without requiring Xcode/workdir
@@ -118,6 +124,9 @@ codesign_identity=$CODESIGN_IDENTITY
 skip_codesign=$SKIP_CODESIGN
 enable_pref_repair=$ENABLE_PREF_REPAIR
 auto_select=$AUTO_SELECT
+canonicalize_input_methods=$CANONICALIZE_INPUT_METHODS
+canonical_input_method_aliases=$CANONICAL_INPUT_METHOD_ALIASES
+canonical_quarantine_dir=$CANONICAL_QUARANTINE_DIR
 bundle_id=$BUNDLE_ID
 input_source_id=$INPUT_SOURCE_ID
 hant_input_source_id=$HANT_INPUT_SOURCE_ID
@@ -402,6 +411,49 @@ should_brand_app() {
     "$CONNECTION_NAME" != "Squirrel_Connection" ]]
 }
 
+canonicalize_input_method_bundles() {
+  bool_true "$CANONICALIZE_INPUT_METHODS" || return 0
+
+  local target_base
+  local timestamp
+  local quarantine_dir
+  local moved_count=0
+  target_base="$(basename "$TARGET_APP")"
+  timestamp="$(date +%Y%m%d-%H%M%S)"
+  quarantine_dir="$CANONICAL_QUARANTINE_DIR/$timestamp"
+
+  local aliases=()
+  IFS=':' read -r -a aliases <<< "$CANONICAL_INPUT_METHOD_ALIASES"
+  for alias in "${aliases[@]}"; do
+    [[ -n "$alias" ]] || continue
+    [[ "$alias" == *.app ]] || alias="$alias.app"
+    [[ "$alias" != "$target_base" ]] || continue
+
+    local candidate="$INSTALL_DIR/$alias"
+    [[ -d "$candidate" ]] || continue
+
+    mkdir -p "$quarantine_dir"
+    local destination="$quarantine_dir/$alias"
+    if [[ -e "$destination" ]]; then
+      destination="$quarantine_dir/${alias%.app}.$$.app"
+    fi
+    pkill -f "$candidate/Contents/MacOS/Squirrel" >/dev/null 2>&1 || true
+    mv "$candidate" "$destination"
+    moved_count=$((moved_count + 1))
+    printf '[OK] quarantined noncanonical input method app: %s -> %s\n' "$candidate" "$destination"
+
+    if [[ -x "$LSREGISTER" ]]; then
+      "$LSREGISTER" -u "$candidate" >/dev/null 2>&1 || true
+      "$LSREGISTER" -u "$destination" >/dev/null 2>&1 || true
+    fi
+  done
+
+  if [[ "$moved_count" -gt 0 ]]; then
+    killall TextInputMenuAgent TextInputSwitcher imklaunchagent cfprefsd >/dev/null 2>&1 || true
+    printf '[OK] canonical input method bundle enforced: %s\n' "$TARGET_APP"
+  fi
+}
+
 run_branded_postinstall() {
   local app="$1"
   local output
@@ -447,6 +499,7 @@ install_squirrel_app() {
     exit 1
   fi
   mkdir -p "$INSTALL_DIR"
+  canonicalize_input_method_bundles
   rm -rf "$TARGET_APP"
   cp -R "$PRODUCT_APP" "$TARGET_APP"
   printf '[OK] installed patched Squirrel.app: %s\n' "$TARGET_APP"

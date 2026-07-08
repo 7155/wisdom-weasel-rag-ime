@@ -543,6 +543,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             )
             fake_xcodebuild.chmod(0o755)
             install_dir = tmp_path / "Input Methods"
+            quarantine_root = tmp_path / "disabled-input-method-backups"
+            (install_dir / "RAG-IME.app" / "Contents" / "MacOS").mkdir(parents=True)
+            (install_dir / "RagIme.app" / "Contents" / "MacOS").mkdir(parents=True)
             rime_dir = tmp_path / "Rime"
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "build_patched_squirrel.sh"), "install"],
@@ -553,6 +556,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
                     "RAG_IME_SQUIRREL_WORKDIR": str(workdir),
                     "RAG_IME_SQUIRREL_DERIVED_DATA": str(tmp_path / "derived-data"),
                     "RAG_IME_SQUIRREL_INSTALL_DIR": str(install_dir),
+                    "RAG_IME_SQUIRREL_CANONICAL_QUARANTINE_DIR": str(quarantine_root),
                     "RAG_IME_RIME_USER_DIR": str(rime_dir),
                     "RAG_IME_SQUIRREL_SKIP_CODESIGN": "1",
                     "RAG_IME_SQUIRREL_SKIP_POSTINSTALL": "1",
@@ -563,7 +567,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             )
 
             self.assertIn("[OK] installed patched Squirrel.app", result.stdout)
+            self.assertIn("quarantined noncanonical input method app", result.stdout)
+            self.assertIn("canonical input method bundle enforced", result.stdout)
             self.assertTrue((install_dir / "Squirrel.app" / "Contents" / "MacOS" / "Squirrel").is_file())
+            self.assertFalse((install_dir / "RAG-IME.app").exists())
+            self.assertFalse((install_dir / "RagIme.app").exists())
+            self.assertIn(str(quarantine_root), result.stdout)
             self.assertTrue((workdir / "librime" / "include" / "rime_api_stdbool.h").is_file())
             config = (rime_dir / "squirrel.custom.yaml").read_text(encoding="utf-8")
             self.assertIn('"rag_ime/enabled": true', config)

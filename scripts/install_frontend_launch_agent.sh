@@ -2,7 +2,7 @@
 set -euo pipefail
 
 LABEL="${RAG_IME_FRONTEND_LAUNCH_AGENT_LABEL:-com.rag-ime.frontend}"
-APP_PATH="${RAG_IME_FRONTEND_APP:-$HOME/Library/Input Methods/RAG-IME.app}"
+APP_PATH="${RAG_IME_FRONTEND_APP:-${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}}"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/RagIme"

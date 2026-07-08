@@ -150,8 +150,8 @@ export RAG_IME_VECTOR_AUTO_REBUILD_LIMIT="${RAG_IME_VECTOR_AUTO_REBUILD_LIMIT:-1
 
 export RAG_IME_SQUIRREL_LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-450}"
 export RAG_IME_SQUIRREL_TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-600}"
-export RAG_IME_SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rag-ime.inputmethod.RagIme.Hans}"
-export RAG_IME_INPUT_SOURCE_BUNDLE_ID="${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-im.rag-ime.inputmethod.RagIme}"
+export RAG_IME_SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
+export RAG_IME_INPUT_SOURCE_BUNDLE_ID="${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-im.rime.inputmethod.Squirrel}"
 
 "$ROOT/scripts/install_mlx_predictor_launch_agent.sh"
 "$ROOT/scripts/install_sidecar_launch_agent.sh"

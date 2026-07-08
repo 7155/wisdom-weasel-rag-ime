@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LSREGISTER="${RAG_IME_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
-RAG_IME_APP="${RAG_IME_FRONTEND_APP:-$HOME/Library/Input Methods/RAG-IME.app}"
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
+LEGACY_APP_NAMES="${RAG_IME_LEGACY_INPUT_METHOD_APP_NAMES:-RAG-IME.app:RagIme.app}"
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-clean-input-source-ls.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -14,24 +14,21 @@ if [[ ! -x "$LSREGISTER" ]]; then
   exit 3
 fi
 
-canonical_rag_ime=""
 canonical_squirrel=""
-if [[ -d "$RAG_IME_APP" ]]; then
-  canonical_rag_ime="$(cd "$(dirname "$RAG_IME_APP")" && pwd -P)/$(basename "$RAG_IME_APP")"
-fi
 if [[ -d "$SQUIRREL_APP" ]]; then
   canonical_squirrel="$(cd "$(dirname "$SQUIRREL_APP")" && pwd -P)/$(basename "$SQUIRREL_APP")"
 fi
 
 "$LSREGISTER" -dump >"$tmpdir/lsregister-before.txt" 2>/dev/null || true
-/usr/bin/python3 - "$tmpdir/lsregister-before.txt" "$canonical_rag_ime" "$canonical_squirrel" >"$tmpdir/stale-paths.txt" <<'PY'
+/usr/bin/python3 - "$tmpdir/lsregister-before.txt" "$canonical_squirrel" "$LEGACY_APP_NAMES" >"$tmpdir/stale-paths.txt" <<'PY'
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 dump_path = Path(sys.argv[1])
-canonical_paths = {item for item in sys.argv[2:4] if item}
+canonical_paths = {sys.argv[2]} if sys.argv[2] else set()
+legacy_app_names = {item for item in sys.argv[3].split(":") if item}
 records: list[dict[str, str]] = []
 current: dict[str, str] = {}
 
@@ -74,6 +71,8 @@ def is_relevant(record: dict[str, str]) -> bool:
 def is_stale_path(path: str) -> bool:
     if not path or path in canonical_paths:
         return False
+    if any(path.endswith("/" + legacy_name) or f"/{legacy_name}/" in path for legacy_name in legacy_app_names):
+        return True
     if path.endswith("/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"):
         return True
     stale_markers = (
@@ -110,13 +109,9 @@ while IFS= read -r stale_path; do
   echo "unregistered stale input-source LS path: $stale_path"
 done <"$tmpdir/stale-paths.txt"
 
-if [[ -n "$canonical_rag_ime" ]]; then
-  "$LSREGISTER" -f -R "$canonical_rag_ime" >/dev/null 2>&1 || true
-  echo "registered current RAG-IME app: $canonical_rag_ime"
-fi
 if [[ -n "$canonical_squirrel" ]]; then
   "$LSREGISTER" -f -R -trusted "$canonical_squirrel" >/dev/null 2>&1 || true
-  echo "registered current Squirrel app: $canonical_squirrel"
+  echo "registered canonical Squirrel app: $canonical_squirrel"
 fi
 "$LSREGISTER" -gc >/dev/null 2>&1 || true
 killall cfprefsd >/dev/null 2>&1 || true
@@ -124,5 +119,4 @@ killall TextInputMenuAgent >/dev/null 2>&1 || true
 killall SystemUIServer >/dev/null 2>&1 || true
 
 echo "stale_registration_count=$count"
-"$ROOT/scripts/check_macos_input_source.sh" im.rag-ime.inputmethod.RagIme.Hans || true
 "$ROOT/scripts/check_macos_input_source.sh" im.rime.inputmethod.Squirrel.Hans || true

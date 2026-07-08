@@ -14,11 +14,11 @@ class LaunchAgentScriptTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-launchd-test-") as tmp:
             home = Path(tmp)
-            app = home / "Library" / "Input Methods" / "RAG-IME.app"
+            app = home / "Library" / "Input Methods" / "Squirrel.app"
             executable = app / "Contents" / "MacOS" / "Squirrel"
             executable.parent.mkdir(parents=True)
             (app / "Contents" / "Info.plist").write_text(
-                "<plist><dict><key>CFBundleIdentifier</key><string>im.rag-ime.inputmethod.RagIme</string></dict></plist>",
+                "<plist><dict><key>CFBundleIdentifier</key><string>im.rime.inputmethod.Squirrel</string></dict></plist>",
                 encoding="utf-8",
             )
             executable.write_text("#!/usr/bin/env bash\nsleep 60\n", encoding="utf-8")
@@ -47,7 +47,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertTrue(payload["KeepAlive"])
         self.assertEqual(payload["LimitLoadToSessionType"], "Aqua")
         self.assertEqual(payload["ProgramArguments"], [str(executable)])
-        self.assertTrue(payload["WorkingDirectory"].endswith("RAG-IME.app/Contents/MacOS"))
+        self.assertTrue(payload["WorkingDirectory"].endswith("Squirrel.app/Contents/MacOS"))
         self.assertTrue(payload["StandardOutPath"].endswith("Logs/RagIme/frontend.out.log"))
         self.assertTrue(payload["StandardErrorPath"].endswith("Logs/RagIme/frontend.err.log"))
 

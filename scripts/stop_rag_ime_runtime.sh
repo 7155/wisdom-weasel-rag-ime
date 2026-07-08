@@ -15,6 +15,7 @@ pkill -f 'sidecar_launch.py.*mlx-predictor-server' >/dev/null 2>&1 || true
 pkill -f 'sidecar_launch.py.*sidecar-server' >/dev/null 2>&1 || true
 pkill -f 'rag_ime.cli mlx-predictor-server' >/dev/null 2>&1 || true
 pkill -f '/Library/Input Methods/RAG-IME.app|RAG-IME.app|im.rag-ime.inputmethod.RagIme' >/dev/null 2>&1 || true
+pkill -f "$HOME/Library/Input Methods/Squirrel.app/Contents/MacOS/Squirrel" >/dev/null 2>&1 || true
 
 if [[ "${RAG_IME_DISABLE_FRONTEND_ON_STOP:-1}" != "0" ]]; then
   "$ROOT/scripts/set_rag_ime_frontend_enabled.py" false >/dev/null 2>&1 || true
