@@ -1920,7 +1920,7 @@ def ai_after_commit_only_enabled(env: Mapping[str, str] | None = None) -> bool:
 
 def post_commit_presentation_stream_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
-    value = str(source.get("RAG_IME_POST_COMMIT_PRESENTATION_STREAM", "1")).strip().lower()
+    value = str(source.get("RAG_IME_POST_COMMIT_PRESENTATION_STREAM", "0")).strip().lower()
     return value not in _FALSEY_ENV_VALUES
 
 
@@ -4274,7 +4274,7 @@ def _hash_from_payload(value: object, *, fallback_text: str) -> str:
 
 def choose_semantic_query(snapshot: RimeContextSnapshot, *, foreground_context: str = "") -> tuple[str, str]:
     commit_preview = compact_whitespace(snapshot.commit_text_preview)
-    if commit_preview:
+    if commit_preview and semantic_signal_length(commit_preview) >= 2:
         return commit_preview, "commitTextPreview"
     raw_semantic_input = semantic_ascii_input_text(snapshot)
     if raw_semantic_input:

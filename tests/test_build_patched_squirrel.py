@@ -14,7 +14,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
 
         self.assertIn("fallback: 5, range: 0...10", patch_text)
-        self.assertIn("fallback: 1200, range: 30...3000", patch_text)
+        self.assertIn("fallback: 300, range: 30...3000", patch_text)
+        self.assertIn("fallback: 250, range: 30...3000", patch_text)
         self.assertIn("sidecar_url missing; passive input path does not run CLI fallback", patch_text)
         self.assertIn("passive CLI fallback disabled", patch_text)
         self.assertIn("case circuitOpen(Int)", patch_text)
@@ -47,6 +48,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("private var ragImeDisplayOptionNumberPolicy: String = \"\"", patch_text)
         self.assertIn("private var ragImeDisplayExpiresAt: Date?", patch_text)
         self.assertIn("func ragImePanelForcesHorizontalLayout() -> Bool", patch_text)
+        self.assertIn("func ragImePanelUsesSideDisplay() -> Bool", patch_text)
         self.assertIn("func ragImeDisplaySourceType(at index: Int) -> String?", patch_text)
         self.assertIn("private var ragImeInputGeneration: Int = 0", patch_text)
         self.assertIn("private let ragImeActiveResponseApplyWindowMs: Int = 9000", patch_text)
@@ -68,6 +70,16 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("return .systemBlue", patch_text)
         self.assertIn("let maxTextHeight = ragImePanelVertical", patch_text)
         self.assertIn("let maxWidth = if ragImePanelVertical", patch_text)
+        self.assertIn("var ragImePanelUsesSideDisplay: Bool", patch_text)
+        self.assertIn("let readableCap: CGFloat = min(screenRect.width - 48, 560)", patch_text)
+        self.assertIn("if theme.translucency && !ragImePanelUsesSideDisplay", patch_text)
+        self.assertIn("alphaValue = ragImePanelUsesSideDisplay ? 1 : theme.alpha", patch_text)
+        self.assertIn("return NSView()", patch_text)
+        self.assertIn("RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING", patch_text)
+        self.assertIn("post_commit_pending_overlay_disabled", patch_text)
+        self.assertIn("assistant_overlay_local_placeholder_suppressed", patch_text)
+        self.assertIn("panel.appearance = NSAppearance(named: .aqua)", patch_text)
+        self.assertIn("NSColor(calibratedWhite: 1.0, alpha: 0.98)", patch_text)
         self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 2.6", patch_text)
         self.assertIn("private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 8.0", patch_text)
         self.assertIn("func canUseRagImeDisplayHoldover(", patch_text)
@@ -624,12 +636,14 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
     (workdir / "sources" / "SquirrelInputController.swift").write_text(
         (
             'final class SquirrelInputController { func ragImePanelForcesHorizontalLayout() -> Bool { false }; '
+            'func ragImePanelUsesSideDisplay() -> Bool { false }; '
             'func traceRagImeFrontendEvent() {}; func traceRagImePanelTextLayout() { _ = "panel_text_layout" }; '
             'func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }; '
             'func traceSidecarEmptyResponseCleared() { _ = "sidecar_empty_response_cleared" }; '
             'func traceV2() { _ = "rag-ime.foreground-trace.v2" }; '
             'func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = "forceSideCandidates: forceSideCandidates" }; '
             'func compositionAISuppressed() { _ = "composition_ai_suppressed" }; '
+            'func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
             'func activeRagLocalThinkingTrace(request: Request) { _ = "assistant_overlay_active_rag_thinking"; traceRagImeFrontendEvent("active_rag_thinking_displayed", fields: ["selectedTextHash": request.selectedTextHash, "selectedTextChars": request.selectedTextChars, "frontAppBundleId": currentApp, "traceIncludesText": false]) }; '
             'func activeRagPollTrace(request: Request) { traceRagImeFrontendEvent("active_rag_status_poll_scheduled", fields: ["selectedTextHash": request.selectedTextHash, "selectedTextChars": request.selectedTextChars, "frontAppBundleId": request.frontAppBundleId, "traceIncludesText": false]) }; '
@@ -638,7 +652,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (workdir / "sources" / "SquirrelPanel.swift").write_text(
-        "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \" \" }; func traceRagImePanelTextLayout() {} }\n",
+        "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; var ragImePanelUsesSideDisplay: Bool { false }; func nonGlassBackground() { _ = \"return NSView()\" }; func candidateSeparator(before index: Int) -> String { \" \" }; func traceRagImePanelTextLayout() {} }\n",
         encoding="utf-8",
     )
     (workdir / "sources" / "Main.swift").write_text(
@@ -661,9 +675,9 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 5",
-                "  latency_budget_ms: 900",
+                "  latency_budget_ms: 300",
                 "  debounce_ms: 80",
-                "  timeout_ms: 1200",
+                "  timeout_ms: 250",
                 "  frontend_trace: true",
             ]
         )

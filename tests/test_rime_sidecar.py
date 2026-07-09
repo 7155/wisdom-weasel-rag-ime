@@ -353,6 +353,40 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(core.last_current_input, "真实输入框上下文来自 IMKTextInput")
         self.assertEqual(core.last_recent_context, "真实输入框上下文来自 IMKTextInput")
 
+    def test_v1_short_commit_preview_falls_back_to_foreground_context(self) -> None:
+        predictor = RecordingPredictionProvider(["继续把候选栏稳定下来"])
+        core = CuratedMemoryCore()
+        first = self._response(
+            self._post_commit_payload(
+                request_seq=15,
+                context="这个输入法目前最影响体验的是",
+                commit_preview="是",
+            ),
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(first["queryBasis"], "foregroundText")
+        self.assertTrue(first["triggerDecision"]["shouldRefresh"])
+        self.assertTrue(first["modelLane"]["called"])
+        self.assertTrue(first["progressive"]["shouldFollowUp"])
+        self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=2.0))
+
+        follow_up = self._response(
+            self._post_commit_payload(
+                request_seq=16,
+                context="这个输入法目前最影响体验的是",
+                commit_preview="是",
+                progressive_follow_up=True,
+            ),
+            core=core,
+            predictor=predictor,
+        )
+
+        self.assertEqual(follow_up["queryBasis"], "foregroundText")
+        self.assertEqual([item["text"] for item in follow_up["modelPredictions"]], ["继续把候选栏稳定下来"])
+        self.assertIn("继续把候选栏稳定下来", [item["text"] for item in follow_up["displayCandidates"]])
+
     def test_v1_post_commit_without_reliable_foreground_context_skips_side_lanes(self) -> None:
         predictor = RecordingPredictionProvider()
         core = CuratedMemoryCore([_memory("stale:1", "旧上下文候选", accepted_count=3)])
@@ -402,10 +436,10 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertTrue(response["progressive"]["shouldFollowUp"])
         self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
         self.assertEqual(response["candidatePanel"]["candidates"], [])
-        self.assertTrue(response["assistantOverlay"]["visible"])
+        self.assertFalse(response["assistantOverlay"]["visible"])
         self.assertEqual(response["assistantOverlay"]["phase"], "post_commit")
-        self.assertEqual(response["assistantOverlay"]["animation"]["kind"], "thinking_dots")
-        self.assertTrue(response["assistantOverlay"]["statusText"])
+        self.assertEqual(response["assistantOverlay"]["animation"]["kind"], "none")
+        self.assertEqual(response["assistantOverlay"]["dismissReason"], "pending_overlay_disabled")
 
     def test_v1_post_commit_followup_does_not_restart_provider(self) -> None:
         predictor = RecordingPredictionProvider(sleep_s=0.4)
@@ -514,7 +548,13 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(action_candidates, [])
 
     def test_v1_post_commit_panel_exposes_active_rag_action_button_when_opted_in(self) -> None:
-        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1"}):
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
+                "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING": "1",
+            },
+        ):
             response = self._response(
                 self._post_commit_payload(),
                 predictor=RecordingPredictionProvider(sleep_s=0.4),

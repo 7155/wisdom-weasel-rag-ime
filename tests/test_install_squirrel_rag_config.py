@@ -80,9 +80,9 @@ def _write_snippet(path: Path, *, sidecar_url: str) -> None:
                 "  project: offline-test",
                 "  max_visible_candidates: 8",
                 "  max_side_candidates: 5",
-                "  latency_budget_ms: 900",
+                "  latency_budget_ms: 300",
                 "  debounce_ms: 80",
-                "  timeout_ms: 1200",
+                "  timeout_ms: 250",
             ]
         )
         + "\n",

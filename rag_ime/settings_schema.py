@@ -14,7 +14,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
         },
         "postCommit": {
             "enabled": True,
-            "showPendingStatus": True,
+            "showPendingStatus": False,
             "pendingStatusDelayMs": 150,
             "numberKeys": "pass_through",
             "tabAction": "accept_top_prediction",
@@ -151,7 +151,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "fields": [
                 {"key": "interaction.composition.showPrediction", "type": "boolean", "label": "输入拼音时显示 AI 候选", "default": True},
                 {"key": "interaction.composition.showOnlyRime", "type": "boolean", "label": "输入拼音时只显示 Rime 候选", "default": False},
-                {"key": "interaction.postCommit.showPendingStatus", "type": "boolean", "label": "Rime 选词后显示查忆状态行", "default": True},
+                {"key": "interaction.postCommit.showPendingStatus", "type": "boolean", "label": "Rime 选词后显示查忆状态行", "default": False},
                 {"key": "interaction.postCommit.pendingStatusDelayMs", "type": "integer", "label": "状态行延迟", "default": 150},
                 {"key": "interaction.postCommit.panelTtlMs", "type": "integer", "label": "预测面板 TTL", "default": 4200},
                 {"key": "interaction.postCommit.numberKeys", "type": "enum", "label": "Post-commit 数字键", "options": ["pass_through", "select_prediction"], "default": "pass_through"},

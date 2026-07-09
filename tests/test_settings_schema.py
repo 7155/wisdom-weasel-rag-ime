@@ -21,7 +21,7 @@ class SettingsSchemaTests(unittest.TestCase):
     def test_defaults_include_user_customization_controls(self) -> None:
         defaults = default_settings()
 
-        self.assertTrue(defaults["interaction"]["postCommit"]["showPendingStatus"])
+        self.assertFalse(defaults["interaction"]["postCommit"]["showPendingStatus"])
         self.assertEqual(defaults["display"]["badges"]["model"], "模")
         self.assertEqual(defaults["display"]["badges"]["action"], "生成")
         self.assertEqual(defaults["display"]["colors"]["action"], "blue")

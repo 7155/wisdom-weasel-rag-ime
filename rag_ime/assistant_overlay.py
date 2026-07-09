@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 
 
@@ -7,7 +8,7 @@ CANDIDATE_PANEL_SCHEMA_VERSION = "rag-ime.candidate-panel.v1"
 ASSISTANT_OVERLAY_SCHEMA_VERSION = "rag-ime.assistant-overlay.v1"
 
 _COMPOSITION_INPUT_MODES = {"anchor_composing", "prefix_constrained_composing"}
-_OVERLAY_CANDIDATE_SOURCE_TYPES = {"model", "rag", "memory", "action"}
+_OVERLAY_CANDIDATE_SOURCE_TYPES = {"model", "rag", "memory"}
 
 
 def build_candidate_panel_payload(
@@ -65,6 +66,7 @@ def build_assistant_overlay_payload(
         dict(candidate)
         for candidate in display_candidates
         if str(candidate.get("sourceType") or "") in _OVERLAY_CANDIDATE_SOURCE_TYPES
+        or (str(candidate.get("sourceType") or "") == "action" and _pending_overlay_auto_enabled())
     ]
     actual_candidates = [
         candidate
@@ -78,12 +80,9 @@ def build_assistant_overlay_payload(
         actual_candidates=actual_candidates,
     )
     source_cards = _source_cards_from_candidates(display_candidates=display_candidates, rag_candidates=rag_candidates)
-    visible = bool(
-        actual_candidates
-        or status_rows
-        or pending
-        or ui_mode.startswith("post_commit")
-    )
+    pending_visible = pending and (ui_mode.startswith("active_rag") or _pending_overlay_auto_enabled())
+    status_visible = bool(status_rows) and (ui_mode.startswith("active_rag") or _pending_overlay_auto_enabled())
+    visible = bool(actual_candidates or status_visible or pending_visible)
     status_text = _status_text(
         ui_mode=ui_mode,
         pending=pending,
@@ -97,9 +96,9 @@ def build_assistant_overlay_payload(
         "uiMode": ui_mode,
         "phase": _overlay_phase(input_mode=input_mode, session=session),
         "inputMode": input_mode,
-        "statusText": status_text,
+        "statusText": status_text if visible else "",
         "animation": {
-            "kind": "thinking_dots" if pending else "none",
+            "kind": "thinking_dots" if pending and visible else "none",
             "frame": int(session.get("requestSeq") or 0) % 3,
         },
         "candidates": actual_candidates,
@@ -110,8 +109,13 @@ def build_assistant_overlay_payload(
         "keyPolicy": dict(key_policy or {}),
         "progressive": dict(progressive or {}),
         "frontendTransaction": dict(frontend_transaction or {}),
-        "dismissReason": "" if visible else "empty_overlay",
+        "dismissReason": "" if visible else ("pending_overlay_disabled" if pending or status_rows else "empty_overlay"),
     }
+
+
+def _pending_overlay_auto_enabled() -> bool:
+    value = os.environ.get("RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING", "0").strip().lower()
+    return value not in {"0", "false", "no", "off", ""}
 
 
 def _hidden_overlay_payload(

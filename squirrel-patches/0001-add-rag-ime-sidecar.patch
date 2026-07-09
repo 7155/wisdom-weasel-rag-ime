@@ -1,8 +1,8 @@
 diff --git a/Squirrel.xcodeproj/project.pbxproj b/Squirrel.xcodeproj/project.pbxproj
-index 813deae..1bec8e3 100644
+index 813deae..9688570 100644
 --- a/Squirrel.xcodeproj/project.pbxproj
 +++ b/Squirrel.xcodeproj/project.pbxproj
-@@ -86,6 +86,8 @@
+@@ -86,6 +86,10 @@
  		B3216E5C2BF438F800E292D2 /* rime.pdf in Resources */ = {isa = PBXBuildFile; fileRef = B3216E5B2BF438F800E292D2 /* rime.pdf */; };
  		B35D2FE82BF00839009D156B /* BridgingFunctions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B35D2FE72BF00839009D156B /* BridgingFunctions.swift */; };
  		B3A001022F260100009D156B /* ReservedProperty.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A001012F260100009D156B /* ReservedProperty.swift */; };
@@ -13,7 +13,7 @@ index 813deae..1bec8e3 100644
  		B38E9B912BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38E9B902BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift */; };
  		B38E9B952BEAFEFD0036ABEF /* SquirrelInputController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38E9B942BEAFEFD0036ABEF /* SquirrelInputController.swift */; };
  		B39771232BECEA150093A49B /* MacOSKeyCodes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39771222BECEA150093A49B /* MacOSKeyCodes.swift */; };
-@@ -307,6 +309,8 @@
+@@ -307,6 +311,10 @@
  		B32B80772BE7FAA200FCF3BC /* Squirrel.entitlements */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.entitlements; name = Squirrel.entitlements; path = resources/Squirrel.entitlements; sourceTree = "<group>"; };
  		B35D2FE72BF00839009D156B /* BridgingFunctions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BridgingFunctions.swift; path = sources/BridgingFunctions.swift; sourceTree = "<group>"; };
  		B3A001012F260100009D156B /* ReservedProperty.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReservedProperty.swift; path = sources/ReservedProperty.swift; sourceTree = "<group>"; };
@@ -24,7 +24,7 @@ index 813deae..1bec8e3 100644
  		B38E9B8F2BE9AE1E0036ABEF /* Squirrel-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "Squirrel-Bridging-Header.h"; path = "sources/Squirrel-Bridging-Header.h"; sourceTree = "<group>"; };
  		B38E9B902BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SquirrelApplicationDelegate.swift; path = sources/SquirrelApplicationDelegate.swift; sourceTree = "<group>"; };
  		B38E9B942BEAFEFD0036ABEF /* SquirrelInputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SquirrelInputController.swift; path = sources/SquirrelInputController.swift; sourceTree = "<group>"; };
-@@ -352,6 +356,8 @@
+@@ -352,6 +360,10 @@
  				B397712A2BEE4C160093A49B /* SquirrelPanel.swift */,
  				B39771282BEDAF4A0093A49B /* SquirrelView.swift */,
  				B39771242BED899F0093A49B /* SquirrelConfig.swift */,
@@ -35,7 +35,7 @@ index 813deae..1bec8e3 100644
  				B35D2FE72BF00839009D156B /* BridgingFunctions.swift */,
  				B3A001012F260100009D156B /* ReservedProperty.swift */,
  				B38E9B8F2BE9AE1E0036ABEF /* Squirrel-Bridging-Header.h */,
-@@ -625,6 +631,8 @@
+@@ -625,6 +637,10 @@
  				B397712B2BEE4C160093A49B /* SquirrelPanel.swift in Sources */,
  				B38E9B912BE9AE1E0036ABEF /* SquirrelApplicationDelegate.swift in Sources */,
  				B39771272BED9B250093A49B /* SquirrelTheme.swift in Sources */,
@@ -48,7 +48,7 @@ index 813deae..1bec8e3 100644
  			);
 diff --git a/rag-ime.squirrel.custom.yaml b/rag-ime.squirrel.custom.yaml
 new file mode 100644
-index 0000000..44ee9f8
+index 0000000..4c2ae38
 --- /dev/null
 +++ b/rag-ime.squirrel.custom.yaml
 @@ -0,0 +1,14 @@
@@ -62,9 +62,9 @@ index 0000000..44ee9f8
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 5
-+  latency_budget_ms: 900
++  latency_budget_ms: 300
 +  debounce_ms: 80
-+  timeout_ms: 1200
++  timeout_ms: 250
 +  frontend_trace: true
 diff --git a/sources/InputSource.swift b/sources/InputSource.swift
 index 89c1214..a240173 100644
@@ -193,12 +193,507 @@ index f998248..a56500e 100644
        rimeAPI.finalize()
      }
      return
+diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
+new file mode 100644
+index 0000000..9d683e7
+--- /dev/null
++++ b/sources/RagImeAssistantPanelController.swift
+@@ -0,0 +1,178 @@
++//
++//  RagImeAssistantPanelController.swift
++//  Squirrel
++//
++
++import AppKit
++
++final class RagImeAssistantPanelController {
++  private let panel: NSPanel
++  private let stackView: NSStackView
++  private var currentPayload: RagImeAssistantOverlayPayload?
++  private var onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
++
++  init() {
++    panel = NSPanel(
++      contentRect: NSRect(x: 0, y: 0, width: 360, height: 112),
++      styleMask: [.borderless, .nonactivatingPanel],
++      backing: .buffered,
++      defer: false
++    )
++    panel.isReleasedWhenClosed = false
++    panel.isFloatingPanel = true
++    panel.level = .floating
++    panel.backgroundColor = .clear
++    panel.isOpaque = false
++    panel.hasShadow = true
++    panel.appearance = NSAppearance(named: .aqua)
++    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
++
++    stackView = NSStackView(frame: NSRect(x: 0, y: 0, width: 360, height: 112))
++    stackView.orientation = .vertical
++    stackView.alignment = .leading
++    stackView.spacing = 6
++    stackView.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 8, right: 10)
++    stackView.wantsLayer = true
++    stackView.layer?.cornerRadius = 8
++    stackView.layer?.backgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.98).cgColor
++    stackView.layer?.borderColor = NSColor(calibratedWhite: 0.78, alpha: 1).cgColor
++    stackView.layer?.borderWidth = 1
++    panel.contentView = stackView
++  }
++
++  var isVisible: Bool {
++    panel.isVisible
++  }
++
++  func showPending(_ payload: RagImeAssistantOverlayPayload, anchor: NSPoint?) {
++    update(payload, anchor: anchor, onSelect: onSelect)
++  }
++
++  func update(
++    _ payload: RagImeAssistantOverlayPayload?,
++    anchor: NSPoint?,
++    onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
++  ) {
++    guard let payload, payload.visible else {
++      dismiss(reason: payload?.dismissReason ?? "hidden")
++      return
++    }
++    currentPayload = payload
++    self.onSelect = onSelect
++    rebuild(payload)
++    position(anchor: anchor)
++    panel.orderFront(nil)
++  }
++
++  func dismiss(reason _: String) {
++    currentPayload = nil
++    panel.orderOut(nil)
++  }
++
++  private func rebuild(_ payload: RagImeAssistantOverlayPayload) {
++    stackView.arrangedSubviews.forEach {
++      stackView.removeArrangedSubview($0)
++      $0.removeFromSuperview()
++    }
++    stackView.addArrangedSubview(headerView(payload))
++    if !payload.statusText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || payload.animation.kind == "thinking_dots" {
++      stackView.addArrangedSubview(label(payload.statusText.isEmpty ? "AI 正在想..." : payload.statusText, size: 12, color: NSColor(calibratedWhite: 0.28, alpha: 1)))
++    }
++    for (index, candidate) in payload.candidates.prefix(3).enumerated() {
++      stackView.addArrangedSubview(candidateButton(candidate, index: index))
++    }
++    if !payload.sourceCards.isEmpty {
++      for card in payload.sourceCards.prefix(2) {
++        stackView.addArrangedSubview(label("\(card.sourceBadge) \(card.title)", size: 11, color: NSColor(calibratedWhite: 0.42, alpha: 1)))
++      }
++    }
++    stackView.addArrangedSubview(label("Tab 插入  ·  ⌥数字选择  ·  Esc 关闭", size: 10, color: NSColor(calibratedWhite: 0.46, alpha: 1)))
++    let fitting = stackView.fittingSize
++    panel.setContentSize(NSSize(width: min(420, max(320, fitting.width)), height: min(190, max(92, fitting.height))))
++  }
++
++  private func headerView(_ payload: RagImeAssistantOverlayPayload) -> NSView {
++    let row = NSStackView()
++    row.orientation = .horizontal
++    row.alignment = .centerY
++    row.spacing = 8
++
++    let badge = label("AI", size: 11, color: .white)
++    badge.font = .systemFont(ofSize: 11, weight: .bold)
++    badge.wantsLayer = true
++    badge.layer?.cornerRadius = 8
++    badge.layer?.backgroundColor = NSColor.systemBlue.cgColor
++    badge.layer?.masksToBounds = true
++    badge.alignment = .center
++    badge.widthAnchor.constraint(equalToConstant: 28).isActive = true
++    badge.heightAnchor.constraint(equalToConstant: 18).isActive = true
++    row.addArrangedSubview(badge)
++
++    let title = payload.uiMode.contains("active_rag") ? "DeepSeek / RAG" : (payload.animation.kind == "thinking_dots" ? "正在生成" : "AI 建议")
++    row.addArrangedSubview(label(title, size: 13, color: NSColor(calibratedWhite: 0.08, alpha: 1), weight: .semibold))
++    if payload.animation.kind == "thinking_dots" {
++      let dotCount = max(1, min(3, payload.animation.frame + 1))
++      row.addArrangedSubview(label(String(repeating: "·", count: dotCount), size: 18, color: NSColor(calibratedWhite: 0.35, alpha: 1), weight: .bold))
++    }
++    return row
++  }
++
++  private func candidateButton(_ candidate: RagImeDisplayCandidate, index: Int) -> NSButton {
++    let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? candidate.insertText : candidate.text
++    let shortcut = index == 0 ? "Tab" : "⌥\(index + 1)"
++    let button = NSButton(title: "\(shortcut)  \(text)", target: self, action: #selector(candidateButtonClicked(_:)))
++    button.bezelStyle = .rounded
++    button.alignment = .left
++    button.tag = index
++    button.setButtonType(.momentaryPushIn)
++    button.font = .systemFont(ofSize: 13, weight: .medium)
++    button.contentTintColor = NSColor(calibratedWhite: 0.08, alpha: 1)
++    return button
++  }
++
++  @objc private func candidateButtonClicked(_ sender: NSButton) {
++    guard let payload = currentPayload else { return }
++    let index = sender.tag
++    guard index >= 0 && index < payload.candidates.count else { return }
++    onSelect?(payload.candidates[index], index)
++  }
++
++  private func label(_ text: String, size: CGFloat, color: NSColor, weight: NSFont.Weight = .regular) -> NSTextField {
++    let field = NSTextField(labelWithString: text)
++    field.font = .systemFont(ofSize: size, weight: weight)
++    field.textColor = color
++    field.maximumNumberOfLines = 2
++    field.lineBreakMode = .byTruncatingTail
++    return field
++  }
++
++  private func position(anchor: NSPoint?) {
++    let base = anchor ?? fallbackAnchor()
++    let size = panel.frame.size
++    guard let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(base) })?.visibleFrame ?? NSScreen.main?.visibleFrame else {
++      panel.setFrameOrigin(NSPoint(x: base.x, y: base.y - size.height - 8))
++      return
++    }
++    var origin = NSPoint(x: base.x, y: base.y - size.height - 8)
++    if origin.y < screen.minY + 8 {
++      origin.y = base.y + 22
++    }
++    if origin.x + size.width > screen.maxX - 8 {
++      origin.x = screen.maxX - size.width - 8
++    }
++    if origin.x < screen.minX + 8 {
++      origin.x = screen.minX + 8
++    }
++    if origin.y + size.height > screen.maxY - 8 {
++      origin.y = screen.maxY - size.height - 8
++    }
++    panel.setFrameOrigin(origin)
++  }
++
++  private func fallbackAnchor() -> NSPoint {
++    guard let screen = NSScreen.main?.visibleFrame else {
++      return NSPoint(x: 240, y: 560)
++    }
++    return NSPoint(x: screen.midX - 200, y: screen.midY + 120)
++  }
++}
+diff --git a/sources/RagImeSelectedTextProvider.swift b/sources/RagImeSelectedTextProvider.swift
+new file mode 100644
+index 0000000..343671d
+--- /dev/null
++++ b/sources/RagImeSelectedTextProvider.swift
+@@ -0,0 +1,305 @@
++//
++//  RagImeSelectedTextProvider.swift
++//  Squirrel
++//
++
++import AppKit
++import ApplicationServices
++import CryptoKit
++import Foundation
++
++struct RagImeSelectedTextCapture {
++  let selectedText: String
++  let selectedTextHash: String
++  let selectedTextChars: Int
++  let selectedTextPreview: String
++  let surroundingBefore: String
++  let surroundingAfter: String
++  let canReplaceSelection: Bool
++  let captureEpoch: Int
++  let captureSource: String
++}
++
++final class RagImeSelectedTextProvider {
++  func captureForegroundTextForSidecar(
++    captureEpoch: Int,
++    beforeLimit: Int = 300,
++    afterLimit: Int = 80,
++    allowAccessibility: Bool = true
++  ) -> RagImeForegroundTextSnapshot? {
++    guard allowAccessibility, let focused = focusedTextElement() else {
++      return nil
++    }
++    let selectedRange = selectedTextRange(in: focused)
++    if let range = selectedRange,
++       let snapshot = foregroundSnapshotFromStringForRange(
++        focused,
++        selectedRange: range,
++        captureEpoch: captureEpoch,
++        beforeLimit: beforeLimit,
++        afterLimit: afterLimit
++       ) {
++      return snapshot
++    }
++    return foregroundSnapshotFromWholeValue(
++      focused,
++      selectedRange: selectedRange,
++      captureEpoch: captureEpoch,
++      beforeLimit: beforeLimit,
++      afterLimit: afterLimit
++    )
++  }
++
++  func captureSelectedTextForActiveRag(
++    captureEpoch: Int,
++    allowAccessibility: Bool = true,
++    allowClipboardFallback: Bool = true
++  ) -> RagImeSelectedTextCapture? {
++    if allowAccessibility, let axCapture = captureSelectedTextViaAccessibility(captureEpoch: captureEpoch) {
++      return axCapture
++    }
++    guard allowClipboardFallback else { return nil }
++    return captureSelectedTextViaClipboardFallbackPreservingPasteboard(captureEpoch: captureEpoch)
++  }
++
++  private func captureSelectedTextViaAccessibility(captureEpoch: Int) -> RagImeSelectedTextCapture? {
++    guard let focused = focusedTextElement() else { return nil }
++    var selectedObject: AnyObject?
++    let selectedResult = AXUIElementCopyAttributeValue(
++      focused,
++      kAXSelectedTextAttribute as CFString,
++      &selectedObject
++    )
++    guard selectedResult == .success, let selectedText = selectedObject as? String else {
++      return nil
++    }
++    return makeCapture(
++      selectedText: selectedText,
++      surroundingBefore: "",
++      surroundingAfter: "",
++      canReplaceSelection: true,
++      captureEpoch: captureEpoch,
++      captureSource: "accessibility_selected_text"
++    )
++  }
++
++  private func focusedTextElement() -> AXUIElement? {
++    let systemWide = AXUIElementCreateSystemWide()
++    var focusedObject: AnyObject?
++    let focusedResult = AXUIElementCopyAttributeValue(
++      systemWide,
++      kAXFocusedUIElementAttribute as CFString,
++      &focusedObject
++    )
++    guard focusedResult == .success, let focused = focusedObject else {
++      return nil
++    }
++    return (focused as! AXUIElement)
++  }
++
++  private func selectedTextRange(in focused: AXUIElement) -> CFRange? {
++    var rangeObject: AnyObject?
++    let rangeResult = AXUIElementCopyAttributeValue(
++      focused,
++      kAXSelectedTextRangeAttribute as CFString,
++      &rangeObject
++    )
++    guard rangeResult == .success, let rangeObject = rangeObject else {
++      return nil
++    }
++    let rangeValue = rangeObject as! AXValue
++    var range = CFRange(location: 0, length: 0)
++    guard AXValueGetValue(rangeValue, .cfRange, &range), range.location != kCFNotFound else {
++      return nil
++    }
++    return range
++  }
++
++  private func foregroundSnapshotFromStringForRange(
++    _ focused: AXUIElement,
++    selectedRange: CFRange,
++    captureEpoch: Int,
++    beforeLimit: Int,
++    afterLimit: Int
++  ) -> RagImeForegroundTextSnapshot? {
++    let cursorStart = max(0, selectedRange.location)
++    let selectedLength = max(0, selectedRange.length)
++    let beforeStart = max(0, cursorStart - max(0, beforeLimit))
++    let beforeLength = max(0, cursorStart - beforeStart)
++    let afterStart = max(0, cursorStart + selectedLength)
++    guard let before = accessibilityString(for: CFRange(location: beforeStart, length: beforeLength), in: focused) else {
++      return nil
++    }
++    let selectedText = selectedLength > 0
++      ? (accessibilityString(for: CFRange(location: cursorStart, length: selectedLength), in: focused) ?? "")
++      : ""
++    let after = accessibilityString(for: CFRange(location: afterStart, length: max(0, afterLimit)), in: focused) ?? ""
++    return makeForegroundSnapshot(
++      surroundingBefore: before,
++      surroundingAfter: after,
++      selectedText: selectedText,
++      wholeValue: "",
++      confidence: 0.86,
++      captureEpoch: captureEpoch,
++      warnings: ["string_for_range"]
++    )
++  }
++
++  private func foregroundSnapshotFromWholeValue(
++    _ focused: AXUIElement,
++    selectedRange: CFRange?,
++    captureEpoch: Int,
++    beforeLimit: Int,
++    afterLimit: Int
++  ) -> RagImeForegroundTextSnapshot? {
++    guard let value = accessibilityValueString(in: focused), !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
++      return nil
++    }
++    let whole = value as NSString
++    let location = min(max(0, selectedRange?.location ?? whole.length), whole.length)
++    let selectedLength = min(max(0, selectedRange?.length ?? 0), max(0, whole.length - location))
++    let beforeStart = max(0, location - max(0, beforeLimit))
++    let before = whole.substring(with: NSRange(location: beforeStart, length: location - beforeStart))
++    let selectedText = selectedLength > 0
++      ? whole.substring(with: NSRange(location: location, length: selectedLength))
++      : ""
++    let afterStart = min(whole.length, location + selectedLength)
++    let afterLength = min(max(0, afterLimit), max(0, whole.length - afterStart))
++    let after = whole.substring(with: NSRange(location: afterStart, length: afterLength))
++    var warnings = ["ax_value_fallback"]
++    if selectedRange == nil {
++      warnings.append("selected_range_unavailable")
++    }
++    return makeForegroundSnapshot(
++      surroundingBefore: before,
++      surroundingAfter: after,
++      selectedText: selectedText,
++      wholeValue: value,
++      confidence: selectedRange == nil ? 0.62 : 0.72,
++      captureEpoch: captureEpoch,
++      warnings: warnings
++    )
++  }
++
++  private func accessibilityString(for range: CFRange, in focused: AXUIElement) -> String? {
++    guard range.location >= 0, range.length > 0 else { return "" }
++    var mutableRange = range
++    guard let rangeValue = AXValueCreate(.cfRange, &mutableRange) else { return nil }
++    var textObject: AnyObject?
++    let textResult = AXUIElementCopyParameterizedAttributeValue(
++      focused,
++      kAXStringForRangeParameterizedAttribute as CFString,
++      rangeValue,
++      &textObject
++    )
++    guard textResult == .success else { return nil }
++    return textObject as? String
++  }
++
++  private func accessibilityValueString(in focused: AXUIElement) -> String? {
++    var valueObject: AnyObject?
++    let valueResult = AXUIElementCopyAttributeValue(
++      focused,
++      kAXValueAttribute as CFString,
++      &valueObject
++    )
++    guard valueResult == .success else { return nil }
++    return valueObject as? String
++  }
++
++  private func makeForegroundSnapshot(
++    surroundingBefore: String,
++    surroundingAfter: String,
++    selectedText: String,
++    wholeValue: String,
++    confidence: Double,
++    captureEpoch: Int,
++    warnings: [String]
++  ) -> RagImeForegroundTextSnapshot? {
++    let compactBefore = surroundingBefore.trimmingCharacters(in: .whitespacesAndNewlines)
++    let compactAfter = surroundingAfter.trimmingCharacters(in: .whitespacesAndNewlines)
++    let compactSelected = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
++    guard !compactBefore.isEmpty || !compactAfter.isEmpty || !compactSelected.isEmpty else { return nil }
++    return RagImeForegroundTextSnapshot(
++      available: true,
++      source: "accessibility",
++      confidence: confidence,
++      freshnessMs: 0,
++      selectedTextHash: compactSelected.isEmpty ? "" : ragImeStableTextHash(compactSelected),
++      selectedTextChars: compactSelected.count,
++      selectedTextPreview: String(compactSelected.prefix(48)),
++      surroundingBefore: compactBefore,
++      surroundingAfter: compactAfter,
++      wholeValueHash: wholeValue.isEmpty ? "" : ragImeStableTextHash(wholeValue),
++      wholeValueChars: wholeValue.count,
++      canReplaceSelection: !compactSelected.isEmpty,
++      captureEpoch: captureEpoch,
++      warnings: warnings
++    )
++  }
++
++  private func captureSelectedTextViaClipboardFallbackPreservingPasteboard(captureEpoch: Int) -> RagImeSelectedTextCapture? {
++    let pasteboard = NSPasteboard.general
++    let previousChangeCount = pasteboard.changeCount
++    let previousItems = pasteboard.pasteboardItems ?? []
++    sendCopyShortcutForActiveRagSelection()
++    Thread.sleep(forTimeInterval: 0.08)
++    let selectedText = pasteboard.string(forType: .string) ?? ""
++    restorePasteboardItems(previousItems, previousChangeCount: previousChangeCount)
++    return makeCapture(
++      selectedText: selectedText,
++      surroundingBefore: "",
++      surroundingAfter: "",
++      canReplaceSelection: !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
++      captureEpoch: captureEpoch,
++      captureSource: "clipboard_fallback_restored"
++    )
++  }
++
++  private func sendCopyShortcutForActiveRagSelection() {
++    let source = CGEventSource(stateID: .combinedSessionState)
++    let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: true)
++    let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: false)
++    keyDown?.flags = .maskCommand
++    keyUp?.flags = .maskCommand
++    keyDown?.post(tap: .cghidEventTap)
++    keyUp?.post(tap: .cghidEventTap)
++  }
++
++  private func restorePasteboardItems(_ items: [NSPasteboardItem], previousChangeCount: Int) {
++    let pasteboard = NSPasteboard.general
++    pasteboard.clearContents()
++    if !items.isEmpty {
++      pasteboard.writeObjects(items)
++    }
++    traceRagImeSelectedTextProviderContract("clipboard_fallback_restores_clipboard_contract", previousChangeCount: previousChangeCount)
++  }
++
++  private func makeCapture(
++    selectedText: String,
++    surroundingBefore: String,
++    surroundingAfter: String,
++    canReplaceSelection: Bool,
++    captureEpoch: Int,
++    captureSource: String
++  ) -> RagImeSelectedTextCapture? {
++    let compact = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
++    guard !compact.isEmpty else { return nil }
++    return RagImeSelectedTextCapture(
++      selectedText: compact,
++      selectedTextHash: ragImeStableTextHash(compact),
++      selectedTextChars: compact.count,
++      selectedTextPreview: String(compact.prefix(48)),
++      surroundingBefore: surroundingBefore,
++      surroundingAfter: surroundingAfter,
++      canReplaceSelection: canReplaceSelection,
++      captureEpoch: captureEpoch,
++      captureSource: captureSource
++    )
++  }
++}
++
++func traceRagImeSelectedTextProviderContract(_ event: String, previousChangeCount: Int) {
++  _ = event
++  _ = previousChangeCount
++}
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000..e4aaed0
+index 0000000..8e12f4e
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,405 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -242,9 +737,9 @@ index 0000000..e4aaed0
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 5, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 900, range: 30...3000)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 300, range: 30...3000)
 +    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 80, range: 0...500)
-+    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 30...3000)) / 1000
++    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 250, range: 30...3000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
 +    self.frontendTrace = config?.getBool("rag_ime/frontend_trace") == true
 +  }
@@ -604,488 +1099,12 @@ index 0000000..e4aaed0
 +    return environment
 +  }
 +}
-diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
-new file mode 100644
-index 0000000..3d49a0f
---- /dev/null
-+++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,199 @@
-+//
-+//  RagImeAssistantPanelController.swift
-+//  Squirrel
-+//
-+
-+import AppKit
-+
-+final class RagImeAssistantPanelController {
-+  private let panel: NSPanel
-+  private let stackView: NSStackView
-+  private var currentPayload: RagImeAssistantOverlayPayload?
-+  private var onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
-+
-+  init() {
-+    panel = NSPanel(
-+      contentRect: NSRect(x: 0, y: 0, width: 420, height: 138),
-+      styleMask: [.borderless, .nonactivatingPanel],
-+      backing: .buffered,
-+      defer: false
-+    )
-+    panel.isReleasedWhenClosed = false
-+    panel.isFloatingPanel = true
-+    panel.level = .floating
-+    panel.backgroundColor = .clear
-+    panel.isOpaque = false
-+    panel.hasShadow = true
-+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
-+
-+    stackView = NSStackView(frame: NSRect(x: 0, y: 0, width: 420, height: 138))
-+    stackView.orientation = .vertical
-+    stackView.alignment = .leading
-+    stackView.spacing = 7
-+    stackView.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 10, right: 12)
-+    stackView.wantsLayer = true
-+    stackView.layer?.cornerRadius = 14
-+    stackView.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.94).cgColor
-+    stackView.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
-+    stackView.layer?.borderWidth = 1
-+    panel.contentView = stackView
-+  }
-+
-+  var isVisible: Bool {
-+    panel.isVisible
-+  }
-+
-+  func showPending(_ payload: RagImeAssistantOverlayPayload, anchor: NSPoint?) {
-+    update(payload, anchor: anchor, onSelect: onSelect)
-+  }
-+
-+  func update(
-+    _ payload: RagImeAssistantOverlayPayload?,
-+    anchor: NSPoint?,
-+    onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
-+  ) {
-+    guard let payload, payload.visible else {
-+      dismiss(reason: payload?.dismissReason ?? "hidden")
-+      return
-+    }
-+    currentPayload = payload
-+    self.onSelect = onSelect
-+    rebuild(payload)
-+    position(anchor: anchor)
-+    panel.orderFrontRegardless()
-+  }
-+
-+  func dismiss(reason _: String) {
-+    currentPayload = nil
-+    panel.orderOut(nil)
-+  }
-+
-+  private func rebuild(_ payload: RagImeAssistantOverlayPayload) {
-+    stackView.arrangedSubviews.forEach {
-+      stackView.removeArrangedSubview($0)
-+      $0.removeFromSuperview()
-+    }
-+    stackView.addArrangedSubview(headerView(payload))
-+    if !payload.statusText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || payload.animation.kind == "thinking_dots" {
-+      stackView.addArrangedSubview(label(payload.statusText.isEmpty ? "AI 正在想..." : payload.statusText, size: 12, color: .secondaryLabelColor))
-+    }
-+    for (index, candidate) in payload.candidates.prefix(3).enumerated() {
-+      stackView.addArrangedSubview(candidateButton(candidate, index: index))
-+    }
-+    if !payload.sourceCards.isEmpty {
-+      for card in payload.sourceCards.prefix(2) {
-+        stackView.addArrangedSubview(label("\(card.sourceBadge) \(card.title)", size: 11, color: .tertiaryLabelColor))
-+      }
-+    }
-+    stackView.addArrangedSubview(label("Tab 插入  ·  ⌥数字选择  ·  Esc 关闭", size: 10, color: .tertiaryLabelColor))
-+    let fitting = stackView.fittingSize
-+    panel.setContentSize(NSSize(width: max(360, fitting.width), height: max(104, fitting.height)))
-+  }
-+
-+  private func headerView(_ payload: RagImeAssistantOverlayPayload) -> NSView {
-+    let row = NSStackView()
-+    row.orientation = .horizontal
-+    row.alignment = .centerY
-+    row.spacing = 8
-+
-+    let badge = label("AI", size: 11, color: .white)
-+    badge.font = .systemFont(ofSize: 11, weight: .bold)
-+    badge.wantsLayer = true
-+    badge.layer?.cornerRadius = 8
-+    badge.layer?.backgroundColor = NSColor.systemBlue.cgColor
-+    badge.layer?.masksToBounds = true
-+    badge.alignment = .center
-+    badge.widthAnchor.constraint(equalToConstant: 28).isActive = true
-+    badge.heightAnchor.constraint(equalToConstant: 18).isActive = true
-+    row.addArrangedSubview(badge)
-+
-+    let title = payload.uiMode.contains("active_rag") ? "DeepSeek / RAG" : (payload.animation.kind == "thinking_dots" ? "正在生成" : "AI 建议")
-+    row.addArrangedSubview(label(title, size: 13, color: .labelColor, weight: .semibold))
-+    if payload.animation.kind == "thinking_dots" {
-+      let dotCount = max(1, min(3, payload.animation.frame + 1))
-+      row.addArrangedSubview(label(String(repeating: "·", count: dotCount), size: 18, color: .secondaryLabelColor, weight: .bold))
-+    }
-+    return row
-+  }
-+
-+  private func candidateButton(_ candidate: RagImeDisplayCandidate, index: Int) -> NSButton {
-+    let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? candidate.insertText : candidate.text
-+    let shortcut = index == 0 ? "Tab" : "⌥\(index + 1)"
-+    let button = NSButton(title: "\(shortcut)  \(text)", target: self, action: #selector(candidateButtonClicked(_:)))
-+    button.bezelStyle = .rounded
-+    button.alignment = .left
-+    button.tag = index
-+    button.setButtonType(.momentaryPushIn)
-+    button.font = .systemFont(ofSize: 13, weight: .medium)
-+    return button
-+  }
-+
-+  @objc private func candidateButtonClicked(_ sender: NSButton) {
-+    guard let payload = currentPayload else { return }
-+    let index = sender.tag
-+    guard index >= 0 && index < payload.candidates.count else { return }
-+    onSelect?(payload.candidates[index], index)
-+  }
-+
-+  private func label(_ text: String, size: CGFloat, color: NSColor, weight: NSFont.Weight = .regular) -> NSTextField {
-+    let field = NSTextField(labelWithString: text)
-+    field.font = .systemFont(ofSize: size, weight: weight)
-+    field.textColor = color
-+    field.maximumNumberOfLines = 2
-+    field.lineBreakMode = .byTruncatingTail
-+    return field
-+  }
-+
-+  private func position(anchor: NSPoint?) {
-+    let base = anchor ?? fallbackAnchor()
-+    let size = panel.frame.size
-+    panel.setFrameOrigin(NSPoint(x: base.x, y: base.y - size.height - 12))
-+  }
-+
-+  private func fallbackAnchor() -> NSPoint {
-+    guard let screen = NSScreen.main?.visibleFrame else {
-+      return NSPoint(x: 240, y: 560)
-+    }
-+    return NSPoint(x: screen.midX - 200, y: screen.midY + 120)
-+  }
-+}
-diff --git a/sources/RagImeSelectedTextProvider.swift b/sources/RagImeSelectedTextProvider.swift
-new file mode 100644
-index 0000000..9a7f4c2
---- /dev/null
-+++ b/sources/RagImeSelectedTextProvider.swift
-@@ -0,0 +1,119 @@
-+//
-+//  RagImeSelectedTextProvider.swift
-+//  Squirrel
-+//
-+
-+import AppKit
-+import ApplicationServices
-+import CryptoKit
-+import Foundation
-+
-+struct RagImeSelectedTextCapture {
-+  let selectedText: String
-+  let selectedTextHash: String
-+  let selectedTextChars: Int
-+  let selectedTextPreview: String
-+  let surroundingBefore: String
-+  let surroundingAfter: String
-+  let canReplaceSelection: Bool
-+  let captureEpoch: Int
-+  let captureSource: String
-+}
-+
-+final class RagImeSelectedTextProvider {
-+  func captureForegroundTextForSidecar(
-+    captureEpoch: Int,
-+    beforeLimit: Int = 300,
-+    afterLimit: Int = 80,
-+    allowAccessibility: Bool = true
-+  ) -> RagImeForegroundTextSnapshot? {
-+    guard allowAccessibility, let focused = focusedTextElement() else {
-+      return nil
-+    }
-+    let selectedRange = selectedTextRange(in: focused)
-+    if let range = selectedRange,
-+       let snapshot = foregroundSnapshotFromStringForRange(
-+        focused,
-+        selectedRange: range,
-+        captureEpoch: captureEpoch,
-+        beforeLimit: beforeLimit,
-+        afterLimit: afterLimit
-+       ) {
-+      return snapshot
-+    }
-+    return foregroundSnapshotFromWholeValue(
-+      focused,
-+      selectedRange: selectedRange,
-+      captureEpoch: captureEpoch,
-+      beforeLimit: beforeLimit,
-+      afterLimit: afterLimit
-+    )
-+  }
-+
-+  func captureSelectedTextForActiveRag(
-+    captureEpoch: Int,
-+    allowAccessibility: Bool = true,
-+    allowClipboardFallback: Bool = true
-+  ) -> RagImeSelectedTextCapture? {
-+    if allowAccessibility, let axCapture = captureSelectedTextViaAccessibility(captureEpoch: captureEpoch) {
-+      return axCapture
-+    }
-+    guard allowClipboardFallback else { return nil }
-+    return captureSelectedTextViaClipboardFallbackPreservingPasteboard(captureEpoch: captureEpoch)
-+  }
-+
-+  private func captureSelectedTextViaAccessibility(captureEpoch: Int) -> RagImeSelectedTextCapture? {
-+    guard let focused = focusedTextElement() else { return nil }
-+    var selectedObject: AnyObject?
-+    let selectedResult = AXUIElementCopyAttributeValue(
-+      focused,
-+      kAXSelectedTextAttribute as CFString,
-+      &selectedObject
-+    )
-+    guard selectedResult == .success, let selectedText = selectedObject as? String else {
-+      return nil
-+    }
-+    return makeCapture(
-+      selectedText: selectedText,
-+      surroundingBefore: "",
-+      surroundingAfter: "",
-+      canReplaceSelection: true,
-+      captureEpoch: captureEpoch,
-+      captureSource: "accessibility_selected_text"
-+    )
-+  }
-+
-+  private func focusedTextElement() -> AXUIElement? {
-+    let systemWide = AXUIElementCreateSystemWide()
-+    var focusedObject: AnyObject?
-+    let focusedResult = AXUIElementCopyAttributeValue(
-+      systemWide,
-+      kAXFocusedUIElementAttribute as CFString,
-+      &focusedObject
-+    )
-+    guard focusedResult == .success, let focused = focusedObject else {
-+      return nil
-+    }
-+    return (focused as! AXUIElement)
-+  }
-+
-+  private func selectedTextRange(in focused: AXUIElement) -> CFRange? {
-+    var rangeObject: AnyObject?
-+    let rangeResult = AXUIElementCopyAttributeValue(
-+      focused,
-+      kAXSelectedTextRangeAttribute as CFString,
-+      &rangeObject
-+    )
-+    guard rangeResult == .success, let rangeObject = rangeObject else {
-+      return nil
-+    }
-+    let rangeValue = rangeObject as! AXValue
-+    var range = CFRange(location: 0, length: 0)
-+    guard AXValueGetValue(rangeValue, .cfRange, &range), range.location != kCFNotFound else {
-+      return nil
-+    }
-+    return range
-+  }
-+
-+  private func foregroundSnapshotFromStringForRange(
-+    _ focused: AXUIElement,
-+    selectedRange: CFRange,
-+    captureEpoch: Int,
-+    beforeLimit: Int,
-+    afterLimit: Int
-+  ) -> RagImeForegroundTextSnapshot? {
-+    let cursorStart = max(0, selectedRange.location)
-+    let selectedLength = max(0, selectedRange.length)
-+    let beforeStart = max(0, cursorStart - max(0, beforeLimit))
-+    let beforeLength = max(0, cursorStart - beforeStart)
-+    let afterStart = max(0, cursorStart + selectedLength)
-+    guard let before = accessibilityString(for: CFRange(location: beforeStart, length: beforeLength), in: focused) else {
-+      return nil
-+    }
-+    let selectedText = selectedLength > 0
-+      ? (accessibilityString(for: CFRange(location: cursorStart, length: selectedLength), in: focused) ?? "")
-+      : ""
-+    let after = accessibilityString(for: CFRange(location: afterStart, length: max(0, afterLimit)), in: focused) ?? ""
-+    return makeForegroundSnapshot(
-+      surroundingBefore: before,
-+      surroundingAfter: after,
-+      selectedText: selectedText,
-+      wholeValue: "",
-+      confidence: 0.86,
-+      captureEpoch: captureEpoch,
-+      warnings: ["string_for_range"]
-+    )
-+  }
-+
-+  private func foregroundSnapshotFromWholeValue(
-+    _ focused: AXUIElement,
-+    selectedRange: CFRange?,
-+    captureEpoch: Int,
-+    beforeLimit: Int,
-+    afterLimit: Int
-+  ) -> RagImeForegroundTextSnapshot? {
-+    guard let value = accessibilityValueString(in: focused), !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-+      return nil
-+    }
-+    let whole = value as NSString
-+    let location = min(max(0, selectedRange?.location ?? whole.length), whole.length)
-+    let selectedLength = min(max(0, selectedRange?.length ?? 0), max(0, whole.length - location))
-+    let beforeStart = max(0, location - max(0, beforeLimit))
-+    let before = whole.substring(with: NSRange(location: beforeStart, length: location - beforeStart))
-+    let selectedText = selectedLength > 0
-+      ? whole.substring(with: NSRange(location: location, length: selectedLength))
-+      : ""
-+    let afterStart = min(whole.length, location + selectedLength)
-+    let afterLength = min(max(0, afterLimit), max(0, whole.length - afterStart))
-+    let after = whole.substring(with: NSRange(location: afterStart, length: afterLength))
-+    var warnings = ["ax_value_fallback"]
-+    if selectedRange == nil {
-+      warnings.append("selected_range_unavailable")
-+    }
-+    return makeForegroundSnapshot(
-+      surroundingBefore: before,
-+      surroundingAfter: after,
-+      selectedText: selectedText,
-+      wholeValue: value,
-+      confidence: selectedRange == nil ? 0.62 : 0.72,
-+      captureEpoch: captureEpoch,
-+      warnings: warnings
-+    )
-+  }
-+
-+  private func accessibilityString(for range: CFRange, in focused: AXUIElement) -> String? {
-+    guard range.location >= 0, range.length > 0 else { return "" }
-+    var mutableRange = range
-+    guard let rangeValue = AXValueCreate(.cfRange, &mutableRange) else { return nil }
-+    var textObject: AnyObject?
-+    let textResult = AXUIElementCopyParameterizedAttributeValue(
-+      focused,
-+      kAXStringForRangeParameterizedAttribute as CFString,
-+      rangeValue,
-+      &textObject
-+    )
-+    guard textResult == .success else { return nil }
-+    return textObject as? String
-+  }
-+
-+  private func accessibilityValueString(in focused: AXUIElement) -> String? {
-+    var valueObject: AnyObject?
-+    let valueResult = AXUIElementCopyAttributeValue(
-+      focused,
-+      kAXValueAttribute as CFString,
-+      &valueObject
-+    )
-+    guard valueResult == .success else { return nil }
-+    return valueObject as? String
-+  }
-+
-+  private func makeForegroundSnapshot(
-+    surroundingBefore: String,
-+    surroundingAfter: String,
-+    selectedText: String,
-+    wholeValue: String,
-+    confidence: Double,
-+    captureEpoch: Int,
-+    warnings: [String]
-+  ) -> RagImeForegroundTextSnapshot? {
-+    let compactBefore = surroundingBefore.trimmingCharacters(in: .whitespacesAndNewlines)
-+    let compactAfter = surroundingAfter.trimmingCharacters(in: .whitespacesAndNewlines)
-+    let compactSelected = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
-+    guard !compactBefore.isEmpty || !compactAfter.isEmpty || !compactSelected.isEmpty else { return nil }
-+    return RagImeForegroundTextSnapshot(
-+      available: true,
-+      source: "accessibility",
-+      confidence: confidence,
-+      freshnessMs: 0,
-+      selectedTextHash: compactSelected.isEmpty ? "" : ragImeStableTextHash(compactSelected),
-+      selectedTextChars: compactSelected.count,
-+      selectedTextPreview: String(compactSelected.prefix(48)),
-+      surroundingBefore: compactBefore,
-+      surroundingAfter: compactAfter,
-+      wholeValueHash: wholeValue.isEmpty ? "" : ragImeStableTextHash(wholeValue),
-+      wholeValueChars: wholeValue.count,
-+      canReplaceSelection: !compactSelected.isEmpty,
-+      captureEpoch: captureEpoch,
-+      warnings: warnings
-+    )
-+  }
-+
-+  private func captureSelectedTextViaClipboardFallbackPreservingPasteboard(captureEpoch: Int) -> RagImeSelectedTextCapture? {
-+    let pasteboard = NSPasteboard.general
-+    let previousChangeCount = pasteboard.changeCount
-+    let previousItems = pasteboard.pasteboardItems ?? []
-+    sendCopyShortcutForActiveRagSelection()
-+    Thread.sleep(forTimeInterval: 0.08)
-+    let selectedText = pasteboard.string(forType: .string) ?? ""
-+    restorePasteboardItems(previousItems, previousChangeCount: previousChangeCount)
-+    return makeCapture(
-+      selectedText: selectedText,
-+      surroundingBefore: "",
-+      surroundingAfter: "",
-+      canReplaceSelection: !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-+      captureEpoch: captureEpoch,
-+      captureSource: "clipboard_fallback_restored"
-+    )
-+  }
-+
-+  private func sendCopyShortcutForActiveRagSelection() {
-+    let source = CGEventSource(stateID: .combinedSessionState)
-+    let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: true)
-+    let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: false)
-+    keyDown?.flags = .maskCommand
-+    keyUp?.flags = .maskCommand
-+    keyDown?.post(tap: .cghidEventTap)
-+    keyUp?.post(tap: .cghidEventTap)
-+  }
-+
-+  private func restorePasteboardItems(_ items: [NSPasteboardItem], previousChangeCount: Int) {
-+    let pasteboard = NSPasteboard.general
-+    pasteboard.clearContents()
-+    if !items.isEmpty {
-+      pasteboard.writeObjects(items)
-+    }
-+    traceRagImeSelectedTextProviderContract("clipboard_fallback_restores_clipboard_contract", previousChangeCount: previousChangeCount)
-+  }
-+
-+  private func makeCapture(
-+    selectedText: String,
-+    surroundingBefore: String,
-+    surroundingAfter: String,
-+    canReplaceSelection: Bool,
-+    captureEpoch: Int,
-+    captureSource: String
-+  ) -> RagImeSelectedTextCapture? {
-+    let compact = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
-+    guard !compact.isEmpty else { return nil }
-+    return RagImeSelectedTextCapture(
-+      selectedText: compact,
-+      selectedTextHash: ragImeStableTextHash(compact),
-+      selectedTextChars: compact.count,
-+      selectedTextPreview: String(compact.prefix(48)),
-+      surroundingBefore: surroundingBefore,
-+      surroundingAfter: surroundingAfter,
-+      canReplaceSelection: canReplaceSelection,
-+      captureEpoch: captureEpoch,
-+      captureSource: captureSource
-+    )
-+  }
-+}
-+
-+func traceRagImeSelectedTextProviderContract(_ event: String, previousChangeCount: Int) {
-+  _ = event
-+  _ = previousChangeCount
-+}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
-index 0000000..784162d
+index 0000000..5a8a1a1
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,526 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
@@ -1635,10 +1654,10 @@ index 124ef7b..52c6983 100644
        inputController.deactivateServer(inputController.client())
      }
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..3cfc0e5 100644
+index c2adf74..cd82e0e 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
-@@ -27,6 +27,29 @@ final class SquirrelInputController: IMKInputController {
+@@ -27,6 +27,62 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
@@ -1701,11 +1720,7 @@ index c2adf74..3cfc0e5 100644
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -123,6 +123,24 @@ final class SquirrelInputController: IMKInputController {
-     case .keyDown:
-       // Let client apps handle Command shortcuts.
-       if modifiers.contains(.command) {
-         break
+@@ -99,6 +155,31 @@ final class SquirrelInputController: IMKInputController {
        }
  
        let keyCode = event.keyCode
@@ -1737,7 +1752,7 @@ index c2adf74..3cfc0e5 100644
        var keyChars = event.charactersIgnoringModifiers
        let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
        if let code = keyChars?.first,
-@@ -131,6 +149,15 @@ final class SquirrelInputController: IMKInputController {
+@@ -106,6 +187,14 @@ final class SquirrelInputController: IMKInputController {
          keyChars = event.characters
        }
        if let char = keyChars?.first {
@@ -1752,7 +1767,7 @@ index c2adf74..3cfc0e5 100644
          let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
                                                             shift: modifiers.contains(.shift),
                                                             caps: modifiers.contains(.capsLock))
-@@ -124,6 +153,49 @@ final class SquirrelInputController: IMKInputController {
+@@ -124,6 +213,99 @@ final class SquirrelInputController: IMKInputController {
    }
  
    func selectCandidate(_ index: Int) -> Bool {
@@ -1852,7 +1867,7 @@ index c2adf74..3cfc0e5 100644
      let success = rimeAPI.select_candidate_on_current_page(session, index)
      if success {
        rimeUpdate()
-@@ -131,6 +203,57 @@ final class SquirrelInputController: IMKInputController {
+@@ -131,6 +313,75 @@ final class SquirrelInputController: IMKInputController {
      return success
    }
  
@@ -1891,6 +1906,10 @@ index c2adf74..3cfc0e5 100644
 +    }
 +  }
 +
++  func ragImePanelUsesSideDisplay() -> Bool {
++    ragImePanelUsesDisplayCandidates
++  }
++
 +  func ragImeDisplaySourceType(at index: Int) -> String? {
 +    guard ragImePanelUsesDisplayCandidates else {
 +      return nil
@@ -1924,7 +1943,7 @@ index c2adf74..3cfc0e5 100644
    // swiftlint:disable:next identifier_name
    func page(up: Bool) -> Bool {
      var handled = false
-@@ -301,6 +424,1001 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,6 +552,2652 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
@@ -2240,6 +2259,18 @@ index c2adf74..3cfc0e5 100644
 +      dismissRagImeAssistantOverlay(reason: payload?.dismissReason ?? "hidden")
 +      return
 +    }
++    if !ragImePostCommitPendingOverlayEnabled(),
++      payload.phase == "post_commit",
++      !ragImeAssistantOverlayContainsResult(payload) {
++      dismissRagImeAssistantOverlay(reason: "post_commit_pending_overlay_disabled")
++      traceRagImeFrontendEvent("assistant_overlay_suppressed", fields: [
++        "reason": "post_commit_pending_overlay_disabled",
++        "uiMode": payload.uiMode,
++        "phase": payload.phase,
++        "candidateCount": payload.candidates.count,
++      ])
++      return
++    }
 +    ragImeOverlayCandidates = payload.candidates
 +    ragImeOverlayPanelSessionId = payload.candidates.first.map { ragImeDisplayCandidateStringMetadata($0, "panelSessionId") } ?? ""
 +    if ragImeOverlayPanelSessionId.isEmpty {
@@ -2264,7 +2295,7 @@ index c2adf74..3cfc0e5 100644
 +    ragImeOverlaySemanticQuery = semanticQuery
 +    ragImeOverlayPreedit = preedit
 +    ragImeOverlayExpiresAt = payload.expiresAfterMs > 0 ? Date().addingTimeInterval(TimeInterval(payload.expiresAfterMs) / 1000) : nil
-+    ragImeAssistantOverlayController.update(payload, anchor: nil) { [weak self] candidate, index in
++    ragImeAssistantOverlayController.update(payload, anchor: currentRagImeInputAnchor()) { [weak self] candidate, index in
 +      _ = self?.commitRagImeAssistantCandidate(candidate, route: "click", index: index)
 +    }
 +    traceRagImeFrontendEvent(traceEvent, fields: [
@@ -2374,6 +2405,14 @@ index c2adf74..3cfc0e5 100644
 +  }
 +
 +  func showRagImePostCommitActionPlaceholder(request: RagImeSidecarRequest) {
++    guard ragImePostCommitPendingOverlayEnabled() else {
++      dismissRagImeAssistantOverlay(reason: "post_commit_pending_overlay_disabled")
++      traceRagImeFrontendEvent("assistant_overlay_local_placeholder_suppressed", fields: [
++        "reason": "post_commit_pending_overlay_disabled",
++        "requestSeq": request.requestSeq,
++      ])
++      return
++    }
 +    showRagImeAssistantOverlayPending(request: request)
 +  }
 +
@@ -4130,6 +4169,30 @@ index c2adf74..3cfc0e5 100644
 +    return !["0", "false", "no", "off"].contains(rawValue)
 +  }
 +
++  func ragImePostCommitPendingOverlayEnabled() -> Bool {
++    ragImeBoolEnvEnabled("RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING", default: false)
++  }
++
++  func ragImeAssistantOverlayContainsResult(_ payload: RagImeAssistantOverlayPayload) -> Bool {
++    payload.candidates.contains { candidate in
++      ["model", "rag", "memory"].contains(candidate.sourceType)
++        && !ragImeCompactWhitespace(candidate.insertText.isEmpty ? candidate.text : candidate.insertText).isEmpty
++    }
++  }
++
++  func currentRagImeInputAnchor() -> NSPoint? {
++    guard let client else { return nil }
++    var inputPos = NSRect()
++    client.attributes(forCharacterIndex: 0, lineHeightRectangle: &inputPos)
++    guard inputPos.width.isFinite, inputPos.height.isFinite, inputPos.origin.x.isFinite, inputPos.origin.y.isFinite else {
++      return nil
++    }
++    guard inputPos.width > 0 || inputPos.height > 0 else {
++      return nil
++    }
++    return NSPoint(x: inputPos.minX, y: inputPos.minY)
++  }
++
 +  func ragImeCandidateSourceBadgesEnabled() -> Bool {
 +    ragImeBoolEnvEnabled("RAG_IME_CANDIDATE_SOURCE_BADGES", default: true)
 +  }
@@ -4533,7 +4596,8 @@ index c2adf74..3cfc0e5 100644
    func onChordTimer(_: Timer) {
      var processedKeys = false
      if chordKeyCount > 0 && session != 0 {
-@@ -360,6 +1478,7 @@ private extension SquirrelInputController {
+@@ -359,7 +3256,12 @@ private extension SquirrelInputController {
+     schemaId = ""
  
      if session != 0 {
 +      let previousApp = currentApp
@@ -4545,7 +4609,7 @@ index c2adf74..3cfc0e5 100644
      }
    }
  
-@@ -434,7 +1553,7 @@ private extension SquirrelInputController {
+@@ -434,7 +3336,7 @@ private extension SquirrelInputController {
    }
  
    // Preserve reserved comment marks when librime requests a UI-only refresh.
@@ -4554,7 +4618,7 @@ index c2adf74..3cfc0e5 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +1565,7 @@ private extension SquirrelInputController {
+@@ -446,6 +3348,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -4562,7 +4626,7 @@ index c2adf74..3cfc0e5 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +1578,14 @@ private extension SquirrelInputController {
+@@ -458,13 +3361,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -4578,7 +4642,7 @@ index c2adf74..3cfc0e5 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -537,20 +1658,45 @@ private extension SquirrelInputController {
+@@ -537,20 +3441,46 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -4627,10 +4691,10 @@ index c2adf74..3cfc0e5 100644
      hidePalettes()
    }
 diff --git a/sources/SquirrelPanel.swift b/sources/SquirrelPanel.swift
-index a9e2dae..c4aa52a 100644
+index a9e2dae..5c3a32c 100644
 --- a/sources/SquirrelPanel.swift
 +++ b/sources/SquirrelPanel.swift
-@@ -57,6 +57,12 @@ final class SquirrelPanel: NSPanel {
+@@ -57,6 +57,21 @@ final class SquirrelPanel: NSPanel {
    var vertical: Bool {
      view.currentTheme.vertical
    }
@@ -4646,10 +4710,13 @@ index a9e2dae..c4aa52a 100644
 +    }
 +    return inputController?.ragImePanelForcesHorizontalLayout() == true ? false : vertical
 +  }
++  var ragImePanelUsesSideDisplay: Bool {
++    inputController?.ragImePanelUsesSideDisplay() == true
++  }
    var inlinePreedit: Bool {
      view.currentTheme.inlinePreedit
    }
-@@ -113,7 +119,7 @@ final class SquirrelPanel: NSPanel {
+@@ -113,7 +128,7 @@ final class SquirrelPanel: NSPanel {
          scrollDirection = .zero
        } else if event.phase == .ended || (event.phase == .init(rawValue: 0) && event.momentumPhase != .init(rawValue: 0)) {
          if abs(scrollDirection.dx) > abs(scrollDirection.dy) && abs(scrollDirection.dx) > 10 {
@@ -4658,7 +4725,7 @@ index a9e2dae..c4aa52a 100644
          } else if abs(scrollDirection.dx) < abs(scrollDirection.dy) && abs(scrollDirection.dy) > 10 {
            _ = inputController?.page(up: scrollDirection.dy > 0)
          }
-@@ -204,6 +210,7 @@ final class SquirrelPanel: NSPanel {
+@@ -204,6 +219,7 @@ final class SquirrelPanel: NSPanel {
      }
  
      var candidateRanges = [NSRange]()
@@ -4666,7 +4733,7 @@ index a9e2dae..c4aa52a 100644
      for i in 0..<candidates.count {
        let attrs = i == index ? theme.highlightedAttrs : theme.attrs
        let labelAttrs = i == index ? theme.labelHighlightedAttrs : theme.labelAttrs
-@@ -251,43 +258,47 @@ final class SquirrelPanel: NSPanel {
+@@ -251,43 +267,47 @@ final class SquirrelPanel: NSPanel {
        let labeledLine = line.copy() as! NSAttributedString
        line.mutableString.replaceOccurrences(of: "[candidate]", with: candidate, range: NSRange(location: 0, length: line.length))
        line.mutableString.replaceOccurrences(of: "[comment]", with: comment, range: NSRange(location: 0, length: line.length))
@@ -4728,7 +4795,7 @@ index a9e2dae..c4aa52a 100644
      view.textContainer.size = NSSize(width: textWidth, height: maxTextHeight)
      view.textLayoutManager.ensureLayout(for: view.textLayoutManager.documentRange)
  
-@@ -295,6 +306,13 @@ final class SquirrelPanel: NSPanel {
+@@ -295,6 +315,13 @@ final class SquirrelPanel: NSPanel {
      view.textView.scrollToBeginningOfDocument(nil)
  
      view.drawView(candidateRanges: candidateRanges, hilightedIndex: index, preeditRange: preeditRange, highlightedPreeditRange: highlightedPreeditRange, canPageUp: page > 0, canPageDown: !lastPage)
@@ -4742,7 +4809,7 @@ index a9e2dae..c4aa52a 100644
      show()
    }
  
-@@ -348,8 +366,8 @@ private extension SquirrelPanel {
+@@ -348,13 +375,40 @@ private extension SquirrelPanel {
      let theme = view.currentTheme
      let font: NSFont = theme.font
      let fontScale = font.pointSize / 12
@@ -4753,10 +4820,15 @@ index a9e2dae..c4aa52a 100644
        screenRect.height * textWidthRatio - theme.edgeInset.height * 2
      } else {
        screenRect.width * textWidthRatio - theme.edgeInset.width * 2
-@@ -357,6 +375,19 @@ private extension SquirrelPanel {
-     return maxWidth
-   }
- 
+     }
+-    return maxWidth
++    guard ragImePanelUsesSideDisplay, !ragImePanelVertical else {
++      return maxWidth
++    }
++    let readableCap: CGFloat = min(screenRect.width - 48, 560)
++    return min(maxWidth, max(320, readableCap))
++  }
++
 +  func ragImeSourceColor(_ sourceType: String) -> NSColor? {
 +    let colorFlag = ProcessInfo.processInfo.environment["RAG_IME_CANDIDATE_SOURCE_COLORS"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 +    guard !["0", "false", "no", "off"].contains(colorFlag ?? "") else {
@@ -4778,12 +4850,10 @@ index a9e2dae..c4aa52a 100644
 +    default:
 +      return nil
 +    }
-+  }
-+
+   }
+ 
    // swiftlint:disable:next cyclomatic_complexity
-   func show() {
-     currentScreen()
-@@ -385,7 +416,7 @@ private extension SquirrelPanel {
+@@ -385,7 +439,7 @@ private extension SquirrelPanel {
  
      // Compute the largest size possible for a giant panel
      var naturalPanelSize = NSSize.zero
@@ -4792,7 +4862,7 @@ index a9e2dae..c4aa52a 100644
        naturalPanelSize.width = contentRect.height + theme.edgeInset.height * 2
        naturalPanelSize.height = contentRect.width + theme.edgeInset.width * 2 + theme.pagingOffset
      } else {
-@@ -404,7 +435,7 @@ private extension SquirrelPanel {
+@@ -404,7 +458,7 @@ private extension SquirrelPanel {
        let screenRatio = maxAllowedWidth / maxAllowedHeight
  
        let optimalTextWidth: CGFloat
@@ -4801,7 +4871,7 @@ index a9e2dae..c4aa52a 100644
          // Width = screen height in vertical mode
          optimalTextWidth = sqrt(area / screenRatio)
        } else {
-@@ -419,7 +450,7 @@ private extension SquirrelPanel {
+@@ -419,7 +473,7 @@ private extension SquirrelPanel {
  
          contentRect = view.contentRect
  
@@ -4810,7 +4880,7 @@ index a9e2dae..c4aa52a 100644
            naturalPanelSize.width = contentRect.height + theme.edgeInset.height * 2
            naturalPanelSize.height = contentRect.width + theme.edgeInset.width * 2 + theme.pagingOffset
          } else {
-@@ -445,13 +476,13 @@ private extension SquirrelPanel {
+@@ -445,13 +499,13 @@ private extension SquirrelPanel {
  
        maxHeight = 0
      } else {
@@ -4827,7 +4897,7 @@ index a9e2dae..c4aa52a 100644
              naturalPanelSize.height = contentRect.width + theme.edgeInset.width * 2 + theme.pagingOffset
            } else {
              naturalPanelSize.width = contentRect.width + theme.edgeInset.width * 2 + theme.pagingOffset
-@@ -461,7 +492,7 @@ private extension SquirrelPanel {
+@@ -461,7 +515,7 @@ private extension SquirrelPanel {
  
        panelRect.size = naturalPanelSize
  
@@ -4836,16 +4906,35 @@ index a9e2dae..c4aa52a 100644
          // Anchor vertical panels on one side of the cursor to avoid jumping while typing.
          if position.midY / screenRect.height >= 0.5 {
            panelRect.origin.y = position.minY - SquirrelTheme.offsetHeight - panelRect.height + theme.pagingOffset
-@@ -480,7 +511,7 @@ private extension SquirrelPanel {
-       if panelRect.maxX > screenRect.maxX { panelRect.origin.x = screenRect.maxX - panelRect.width }
-       if panelRect.minX < screenRect.minX { panelRect.origin.x = screenRect.minX }
-       if panelRect.minY < screenRect.minY {
--        if vertical { panelRect.origin.y = screenRect.minY } else { panelRect.origin.y = position.maxY + SquirrelTheme.offsetHeight }
-+        if ragImePanelVertical { panelRect.origin.y = screenRect.minY } else { panelRect.origin.y = position.maxY + SquirrelTheme.offsetHeight }
+@@ -477,13 +531,21 @@ private extension SquirrelPanel {
+         panelRect.origin = NSPoint(x: position.minX - theme.pagingOffset, y: position.minY - SquirrelTheme.offsetHeight - panelRect.height)
        }
-       if panelRect.maxY > screenRect.maxY { panelRect.origin.y = screenRect.maxY - panelRect.height }
-       if panelRect.minY < screenRect.minY { panelRect.origin.y = screenRect.minY }
-@@ -492,7 +523,7 @@ private extension SquirrelPanel {
+ 
+-      if panelRect.maxX > screenRect.maxX { panelRect.origin.x = screenRect.maxX - panelRect.width }
+-      if panelRect.minX < screenRect.minX { panelRect.origin.x = screenRect.minX }
+-      if panelRect.minY < screenRect.minY {
+-        if vertical { panelRect.origin.y = screenRect.minY } else { panelRect.origin.y = position.maxY + SquirrelTheme.offsetHeight }
++      let margin: CGFloat = ragImePanelUsesSideDisplay ? 8 : 0
++      if ragImePanelUsesSideDisplay && !ragImePanelVertical {
++        panelRect.origin.x = position.minX
++        panelRect.origin.y = position.minY - SquirrelTheme.offsetHeight - panelRect.height
++        if panelRect.minY < screenRect.minY + margin {
++          panelRect.origin.y = position.maxY + SquirrelTheme.offsetHeight
++        }
+       }
+-      if panelRect.maxY > screenRect.maxY { panelRect.origin.y = screenRect.maxY - panelRect.height }
+-      if panelRect.minY < screenRect.minY { panelRect.origin.y = screenRect.minY }
++      if panelRect.maxX > screenRect.maxX - margin { panelRect.origin.x = screenRect.maxX - margin - panelRect.width }
++      if panelRect.minX < screenRect.minX + margin { panelRect.origin.x = screenRect.minX + margin }
++      if panelRect.minY < screenRect.minY + margin {
++        if ragImePanelVertical { panelRect.origin.y = screenRect.minY + margin } else { panelRect.origin.y = position.maxY + SquirrelTheme.offsetHeight }
++      }
++      if panelRect.maxY > screenRect.maxY - margin { panelRect.origin.y = screenRect.maxY - margin - panelRect.height }
++      if panelRect.minY < screenRect.minY + margin { panelRect.origin.y = screenRect.minY + margin }
+     }
+ 
+     self.setFrame(panelRect, display: true)
+@@ -492,7 +554,7 @@ private extension SquirrelPanel {
      contentView!.frame = NSRect(origin: .zero, size: panelRect.size)
      contentView!.bounds = NSRect(origin: .zero, size: naturalPanelSize)
  
@@ -4854,7 +4943,25 @@ index a9e2dae..c4aa52a 100644
        contentView!.boundsRotation = -90
        contentView!.setBoundsOrigin(NSPoint(x: 0, y: naturalPanelSize.width))
      } else {
-@@ -533,7 +564,7 @@ private extension SquirrelPanel {
+@@ -512,7 +574,7 @@ private extension SquirrelPanel {
+     textFrame.origin.x += theme.pagingOffset
+     view.textView.frame = textFrame
+ 
+-    if theme.translucency {
++    if theme.translucency && !ragImePanelUsesSideDisplay {
+       var backFrame = subviewFrame
+       backFrame.size.width += theme.pagingOffset
+       back.frame = backFrame
+@@ -522,7 +584,7 @@ private extension SquirrelPanel {
+       back.isHidden = true
+     }
+ 
+-    alphaValue = theme.alpha
++    alphaValue = ragImePanelUsesSideDisplay ? 1 : theme.alpha
+     invalidateShadow()
+     orderFront(nil)
+     // voila!
+@@ -533,7 +595,7 @@ private extension SquirrelPanel {
      let text = NSMutableAttributedString(string: message, attributes: theme.attrs)
      text.addAttribute(.paragraphStyle, value: theme.paragraphStyle, range: NSRange(location: 0, length: text.length))
      view.textContentStorage.attributedString = text
@@ -4863,7 +4970,7 @@ index a9e2dae..c4aa52a 100644
      view.drawView(candidateRanges: [NSRange(location: 0, length: text.length)], hilightedIndex: -1,
                    preeditRange: .empty, highlightedPreeditRange: .empty, canPageUp: false, canPageDown: false)
      show()
-@@ -550,6 +581,18 @@ private extension SquirrelPanel {
+@@ -550,11 +612,21 @@ private extension SquirrelPanel {
      return NSRange(location: startPos, length: endPos - startPos)
    }
  
@@ -4881,4 +4988,10 @@ index a9e2dae..c4aa52a 100644
 +
    static func makeBackgroundView() -> NSView {
      if #available(macOS 26.0, *) {
-       let glassView = NSGlassEffectView()
+-      let glassView = NSGlassEffectView()
+-      glassView.style = .clear
+-      return glassView
++      return NSView()
+     } else {
+       let visualEffectView = NSVisualEffectView()
+       visualEffectView.blendingMode = .behindWindow

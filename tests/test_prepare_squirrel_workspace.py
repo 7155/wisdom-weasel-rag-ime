@@ -48,6 +48,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     "  func ragImeRequestFingerprint() {}",
                     "  func mergedRagImePanelCandidates() {}",
                     "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
+                    "  func ragImePanelUsesSideDisplay() -> Bool { false }",
                     "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
                     "  func traceRagImeFrontendEvent() {}",
                     "  func traceRagImePanelTextLayout() { _ = \"panel_text_layout\" }",
@@ -55,6 +56,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     "  func traceSidecarEmptyResponseCleared() { _ = \"sidecar_empty_response_cleared\" }",
                     "  func traceV2() { _ = \"rag-ime.foreground-trace.v2\" }",
                     "  func suppressCompositionAi() { _ = \"composition_ai_suppressed\" }",
+                    "  func suppressPostCommitOverlay() { _ = \"RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING\"; _ = \"assistant_overlay_local_placeholder_suppressed\" }",
                     "  func foregroundSnapshot() { _ = \"ragImeSelectedTextProvider.captureForegroundTextForSidecar\" }",
                     "  func ragImeDisplayComment() { _ = \"candidate.sourceType == \\\"model\\\"\" }",
                     "}",
@@ -65,6 +67,8 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
         )
         (upstream / "sources" / "SquirrelPanel.swift").write_text(
             "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; "
+            "var ragImePanelUsesSideDisplay: Bool { false }; "
+            "func nonGlassBackground() { _ = \"return NSView()\" }; "
             "func candidateSeparator(before index: Int) -> String { \"\\n\" }; "
             "func traceRagImePanelTextLayout() {} }\n",
             encoding="utf-8",
@@ -134,8 +138,8 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             )
         self.assertIn(f"workdir={workdir}", result.stdout)
         self.assertIn("base_ref=2158538", result.stdout)
-        self.assertIn("latency_budget_ms=900", result.stdout)
-        self.assertIn("timeout_ms=1200", result.stdout)
+        self.assertIn("latency_budget_ms=300", result.stdout)
+        self.assertIn("timeout_ms=250", result.stdout)
         self.assertIn("sidecar_url=http://127.0.0.1:18766/api", result.stdout)
         self.assertIn(f"repo_root={root}", result.stdout)
         self.assertIn(
@@ -242,6 +246,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func ragImeRequestFingerprint() {}",
                         "  func mergedRagImePanelCandidates() {}",
                         "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
+                        "  func ragImePanelUsesSideDisplay() -> Bool { false }",
                         "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
                         "  func traceRagImeFrontendEvent() {}",
                         '  func traceRagImePanelTextLayout() { _ = "panel_text_layout" }',
@@ -249,6 +254,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         '  func traceSidecarEmptyResponseCleared() { _ = "sidecar_empty_response_cleared" }',
                         '  func traceV2() { _ = "rag-ime.foreground-trace.v2" }',
                         '  func suppressCompositionAi() { _ = "composition_ai_suppressed" }',
+                        '  func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }',
                         '  func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }',
                         '  func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" }',
                         "}",
@@ -273,7 +279,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (upstream / "sources" / "SquirrelPanel.swift").write_text(
-                "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; func candidateSeparator(before index: Int) -> String { \"\\n\" }; func traceRagImePanelTextLayout() {} }\n",
+                "final class SquirrelPanel { var ragImePanelLinear: Bool { true }; var ragImePanelUsesSideDisplay: Bool { false }; func nonGlassBackground() { _ = \"return NSView()\" }; func candidateSeparator(before index: Int) -> String { \"\\n\" }; func traceRagImePanelTextLayout() {} }\n",
                 encoding="utf-8",
             )
             (upstream / "sources" / "InputSource.swift").write_text(
