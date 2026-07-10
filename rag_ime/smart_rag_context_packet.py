@@ -1,13 +1,103 @@
 from __future__ import annotations
 
 import uuid
-from typing import Iterable
+from typing import Iterable, Mapping, Sequence
 
 from .active_rag_models import ActiveRagEvidence
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
 
 
 SMART_RAG_CONTEXT_PACKET_SCHEMA_VERSION = "rag-ime.smart-context-packet.v1"
+
+
+def build_post_commit_context_packet(
+    *,
+    current_input: str,
+    context_group_id: str,
+    app: str,
+    project: str,
+    group_events: Sequence[Mapping[str, object]] = (),
+    memory_books: Sequence[Mapping[str, object]] = (),
+    tag_hints: Sequence[str] = (),
+    surface_hints: Sequence[str] = (),
+    negative_signals: Sequence[str] = (),
+) -> dict[str, object]:
+    """Build the only automatic online task: short post-commit suffix completion."""
+
+    group_id = compact_whitespace(context_group_id)
+    safe_group_events: list[dict[str, object]] = []
+    for event in reversed(tuple(group_events)):
+        event_group = compact_whitespace(str(event.get("contextGroupId") or group_id))
+        if group_id and event_group and event_group != group_id:
+            continue
+        if bool(event.get("deleted")):
+            continue
+        text = truncate_text(compact_whitespace(str(event.get("text") or "")), 80)
+        if not text:
+            continue
+        safe_group_events.append(
+            {
+                "text": text,
+                "ageMs": max(0, int(event.get("ageMs") or 0)),
+                "accepted": bool(event.get("accepted")),
+            }
+        )
+        if len(safe_group_events) >= 2:
+            break
+    safe_books: list[dict[str, object]] = []
+    for book in memory_books:
+        safe_books.append(
+            {
+                "bookId": compact_whitespace(str(book.get("bookId") or book.get("id") or "")),
+                "title": truncate_text(compact_whitespace(str(book.get("title") or "")), 60),
+                "summary": truncate_text(compact_whitespace(str(book.get("summary") or "")), 140),
+                "surfaceHints": _bounded_strings(book.get("surfaceHints"), limit=4, max_chars=18),
+                "tags": _bounded_strings(book.get("tags"), limit=8, max_chars=24),
+                "sourceEventIds": [
+                    int(value)
+                    for value in book.get("sourceEventIds", [])
+                    if isinstance(value, int) and value > 0
+                ][:8],
+                "directCandidateAllowed": False,
+            }
+        )
+        if len(safe_books) >= 2:
+            break
+    return {
+        "schemaVersion": "rag-ime.post-commit-context-packet.v1",
+        "currentInput": {
+            "contextGroupId": group_id,
+            "committedTail": truncate_text(compact_whitespace(current_input), 500),
+            "app": compact_whitespace(app),
+            "project": compact_whitespace(project),
+        },
+        "groupBuffer": list(reversed(safe_group_events)),
+        "memoryBook": safe_books,
+        "tagHints": _bounded_strings(tag_hints, limit=8, max_chars=24),
+        "surfaceHints": _bounded_strings(surface_hints, limit=4, max_chars=18),
+        "negativeSignals": _bounded_strings(negative_signals, limit=8, max_chars=24),
+        "outputContract": {
+            "task": "post_commit_suffix",
+            "suffixOnly": True,
+            "maxChars": 18,
+            "candidateCount": 3,
+            "noExplanation": True,
+            "noContextEcho": True,
+        },
+    }
+
+
+def _bounded_strings(values: object, *, limit: int, max_chars: int) -> list[str]:
+    if not isinstance(values, (list, tuple)):
+        return []
+    result: list[str] = []
+    for value in values:
+        text = truncate_text(compact_whitespace(str(value)), max_chars)
+        if text and text not in result:
+            result.append(text)
+        if len(result) >= limit:
+            break
+    return result
 
 
 def build_active_rag_context_packet(

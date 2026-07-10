@@ -165,31 +165,17 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
                     "committedContext": committed_context,
                     "queryBasis": "committedContext",
                     "triggerDecision": {
-                        "shouldRefresh": True,
-                        "reason": "refresh: recent committed context fallback",
+                        "shouldRefresh": False,
+                        "reason": "skip: composition owned by rime; ai after commit only",
                     },
                     "mergePolicy": {
-                        "sideCandidatesEnabled": True,
+                        "sideCandidatesEnabled": False,
                         "rawPinyinFallback": False,
                         "sideFirst": True,
                         "rimeFirst": False,
                         "fallbackOrder": ["model", "rag", "rime"],
                     },
-                    "displayCandidates": [
-                        {
-                            "label": "1",
-                            "selectionKey": "1",
-                            "selectionRank": 1,
-                            "text": "继续预测",
-                            "insertText": "继续预测",
-                            "sourceType": "model",
-                            "selectionAction": "commit_side_candidate",
-                            "sourceIndex": 0,
-                            "displayLayout": "inline",
-                            "displayLane": "model",
-                            "metadata": dict(self.__class__.model_metadata),
-                        }
-                    ],
+                    "displayCandidates": [],
                 }
             )
             return
@@ -552,7 +538,6 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
                     cwd="/tmp",
                     env=env,
-                    check=True,
                     text=True,
                     capture_output=True,
                 )
@@ -561,6 +546,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("tryout_readiness: 1", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.select_payloads)
         self.assertTrue(_DoctorSidecarHandler.select_payloads[-1].get("dryRun"))
@@ -854,9 +840,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
                     "# rag-ime.foreground-trace.v2\n"
-                    "# panel_text_layout\n"
-                    "# sidecar_request_scheduled\n"
-                    "# sidecar_empty_response_cleared\n"
+                    "# composition_ai_suppressed\n"
+                    "# foreground_context_capture_resolved\n"
+                    "# assistant_overlay_candidate_visible\n"
+                    "# side_candidate_feedback_recorded\n"
                     "exit 0\n"
                 ),
             )
@@ -901,9 +888,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
                     "# rag-ime.foreground-trace.v2\n"
-                    "# panel_text_layout\n"
-                    "# sidecar_request_scheduled\n"
-                    "# sidecar_empty_response_cleared\n"
+                    "# composition_ai_suppressed\n"
+                    "# foreground_context_capture_resolved\n"
+                    "# assistant_overlay_candidate_visible\n"
+                    "# side_candidate_feedback_recorded\n"
                     "exit 0\n"
                 ),
             )
@@ -948,9 +936,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     "#!/usr/bin/env bash\n"
                     "# rag-ime.squirrel-frontend-trace.v1\n"
                     "# rag-ime.foreground-trace.v2\n"
-                    "# panel_text_layout\n"
-                    "# sidecar_request_scheduled\n"
-                    "# sidecar_empty_response_cleared\n"
+                    "# composition_ai_suppressed\n"
+                    "# foreground_context_capture_resolved\n"
+                    "# assistant_overlay_candidate_visible\n"
+                    "# side_candidate_feedback_recorded\n"
                     "exit 0\n"
                 ),
                 bundle_id="im.rag-ime.inputmethod.RagIme",
@@ -1194,6 +1183,7 @@ def _write_sidecar_launch_agent_plist(
             "RAG_IME_ROOT": "/tmp/RagIme/app",
             "RAG_IME_DB_PATH": "/tmp/rag-ime.sqlite",
             "RAG_IME_CORE_MODE": "local",
+            "RAG_IME_RUNTIME_PROFILE": "v1-proof",
             "RAG_IME_PREDICTOR_PROVIDER": "mlx",
             "RAG_IME_PREDICTOR_BASE_URL": base_url,
             "RAG_IME_PREDICTOR_MODEL": model,
@@ -1209,6 +1199,8 @@ def _write_sidecar_launch_agent_plist(
             "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
             "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
             "RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT": "1",
+            "RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS": "700",
+            "RAG_IME_HYBRID_RAG_CORE": "1",
             "RAG_IME_RAG_DIRECT_DISPLAY": "0",
             "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "0",
             "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "0",

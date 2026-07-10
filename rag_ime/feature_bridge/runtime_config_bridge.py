@@ -10,7 +10,7 @@ RUNTIME_CONFIG_ARTIFACTS = (
 )
 
 REQUIRED_FOREGROUND_PROOF_EVENTS = (
-    "panel_display_candidates",
+    "assistant_overlay_candidate_visible",
     "source_badge_setting_applied",
     "key_policy_setting_applied",
 )

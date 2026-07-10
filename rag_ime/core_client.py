@@ -45,6 +45,9 @@ class CoreClient(Protocol):
         project: str = "",
         app: str = "",
         top_k: int = 5,
+        context_group_id: str = "",
+        context_group_level: str = "app",
+        context_group_parent_ids: tuple[str, ...] = (),
     ) -> list[InputSuggestion]:
         ...
 
@@ -101,6 +104,9 @@ class JsonCommandCoreClient:
         project: str = "",
         app: str = "",
         top_k: int = 5,
+        context_group_id: str = "",
+        context_group_level: str = "app",
+        context_group_parent_ids: tuple[str, ...] = (),
     ) -> list[InputSuggestion]:
         payload = self._request(
             "suggest_for_input",
@@ -110,6 +116,9 @@ class JsonCommandCoreClient:
                 "project": project,
                 "app": app,
                 "top_k": top_k,
+                "context_group_id": context_group_id,
+                "context_group_level": context_group_level,
+                "context_group_parent_ids": list(context_group_parent_ids),
             },
         )
         return [_suggestion_from_json(item) for item in payload.get("suggestions", [])]
@@ -257,6 +266,8 @@ class FixtureCoreClient:
             candidate_rank=event.candidate_rank,
             provider_name=event.provider_name,
             tags=event.tags,
+            context_group_id=event.context_group_id,
+            context_group_level=event.context_group_level,
         )
         self.events.append(stored)
         return f"event:{event_id}"

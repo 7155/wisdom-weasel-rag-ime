@@ -14,8 +14,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
 
         self.assertIn("fallback: 5, range: 0...10", patch_text)
-        self.assertIn("fallback: 300, range: 30...3000", patch_text)
-        self.assertIn("fallback: 250, range: 30...3000", patch_text)
+        self.assertIn("fallback: 900, range: 30...3000", patch_text)
+        self.assertIn("fallback: 1200, range: 30...3000", patch_text)
         self.assertIn("sidecar_url missing; passive input path does not run CLI fallback", patch_text)
         self.assertIn("passive CLI fallback disabled", patch_text)
         self.assertIn("case circuitOpen(Int)", patch_text)
@@ -104,6 +104,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("guard !ragImeDisplayCandidates.isEmpty else { return false }", patch_text)
         self.assertNotIn('ragImeDisplayQueryBasis == "committedContext"', patch_text)
         self.assertIn("let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty", patch_text)
+        self.assertIn("let hasPostCommitCaptureSeed = commitBurstReady", patch_text)
+        self.assertIn("guard commitBurstReady || acceptedCandidateContinuation", patch_text)
+        self.assertIn('"reason": "empty_commit"', patch_text)
         self.assertIn("forceSideCandidates: forceSideCandidates", patch_text)
         self.assertIn("let frontendBuild: String", patch_text)
         self.assertIn("let schemaVersion: String", patch_text)
@@ -137,9 +140,17 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('"text_input_client"', patch_text)
         self.assertIn('"ime_commit_ledger"', patch_text)
         self.assertIn('"text_input_client_context"', patch_text)
-        self.assertIn("allowAccessibility: false", patch_text)
+        self.assertNotIn("allowAccessibility: false", patch_text)
+        self.assertIn("RagImeForegroundContextResolver", patch_text)
+        self.assertIn("foreground_context_capture_scheduled", patch_text)
+        self.assertIn("foreground_context_capture_resolved", patch_text)
+        self.assertIn("foreground_context_capture_failed", patch_text)
+        self.assertIn("capturedAtMs", patch_text)
+        self.assertIn("captureFailureReason", patch_text)
+        self.assertIn("assistant_overlay_candidate_visible", patch_text)
+        self.assertIn("side_candidate_feedback_recorded", patch_text)
         self.assertIn('"foregroundTextSource": foregroundText.source', patch_text)
-        self.assertIn('"foregroundTextSource": request.foregroundText.source', patch_text)
+        self.assertIn('"foregroundTextSource": foregroundText.source', patch_text)
         self.assertIn("selectedTextHash: \"\"", patch_text)
         self.assertIn("selectedTextPreview: \"\"", patch_text)
         self.assertIn("canReplaceSelection: false", patch_text)
@@ -207,7 +218,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)", patch_text)
         self.assertIn('commitTextPreview: committedText', patch_text)
         self.assertIn("immediate: Bool = false", patch_text)
-        self.assertIn("let delay = immediate ? 0 : TimeInterval(sidecarClient.debounceMs) / 1000", patch_text)
+        self.assertIn("let delay = TimeInterval(immediate ? 40 : sidecarClient.debounceMs) / 1000", patch_text)
         self.assertIn("immediate: true", patch_text)
         self.assertIn("let frontendTrace: Bool", patch_text)
         self.assertIn("rag_ime/frontend_trace", patch_text)
@@ -625,6 +636,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
     (workdir / "sources" / "RagImeSelectedTextProvider.swift").write_text(
         (
             "import ApplicationServices\n"
+            "final class RagImeForegroundContextResolver {}\n"
             "final class RagImeSelectedTextProvider { "
             "func captureForegroundTextForSidecar() { "
             "_ = kAXSelectedTextRangeAttribute; "
@@ -645,6 +657,10 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func compositionAISuppressed() { _ = "composition_ai_suppressed" }; '
             'func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
+            'func foregroundCaptureResolved() { _ = "foreground_context_capture_resolved" }; '
+            'func foregroundCaptureFailed() { _ = "foreground_context_capture_failed" }; '
+            'func sideCandidateFeedbackRecorded() { _ = "side_candidate_feedback_recorded" }; '
+            'func assistantOverlayCandidateVisible() { _ = "assistant_overlay_candidate_visible" }; '
             'func activeRagLocalThinkingTrace(request: Request) { _ = "assistant_overlay_active_rag_thinking"; traceRagImeFrontendEvent("active_rag_thinking_displayed", fields: ["selectedTextHash": request.selectedTextHash, "selectedTextChars": request.selectedTextChars, "frontAppBundleId": currentApp, "traceIncludesText": false]) }; '
             'func activeRagPollTrace(request: Request) { traceRagImeFrontendEvent("active_rag_status_poll_scheduled", fields: ["selectedTextHash": request.selectedTextHash, "selectedTextChars": request.selectedTextChars, "frontAppBundleId": request.frontAppBundleId, "traceIncludesText": false]) }; '
             'func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" } }\n'

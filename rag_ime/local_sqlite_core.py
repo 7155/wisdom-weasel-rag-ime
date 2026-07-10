@@ -76,6 +76,18 @@ _PHRASE_FEEDBACK_JOIN = """
 """
 
 
+def _ensure_column(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 class LocalSqliteCoreClient:
     """Mac-local SQLite/FTS5 implementation of the CoreClient protocol.
 
@@ -104,7 +116,7 @@ class LocalSqliteCoreClient:
         self.legacy_governance_filter_enabled = bool(legacy_governance_filter_enabled)
         self.v2_governance_filter_enabled = bool(v2_governance_filter_enabled)
         self.memory_v2_enabled = True
-        self._suggestion_cache: OrderedDict[tuple[str, str, str, str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
+        self._suggestion_cache: OrderedDict[tuple[str, str, str, str, str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
         self._suggestion_cache_lock = RLock()
         self._suggestion_cache_hits = 0
         self._suggestion_cache_misses = 0
@@ -127,7 +139,9 @@ class LocalSqliteCoreClient:
                     project TEXT NOT NULL DEFAULT '',
                     candidate_rank INTEGER,
                     provider_name TEXT NOT NULL DEFAULT 'local',
-                    tags_json TEXT NOT NULL DEFAULT '[]'
+                    tags_json TEXT NOT NULL DEFAULT '[]',
+                    context_group_id TEXT NOT NULL DEFAULT '',
+                    context_group_level TEXT NOT NULL DEFAULT 'app'
                 );
 
                 CREATE TABLE IF NOT EXISTS memory_state (
@@ -231,6 +245,22 @@ class LocalSqliteCoreClient:
                 ON memory_vectors(provider_fingerprint);
                 """
             )
+            _ensure_column(
+                conn,
+                table="input_events",
+                column="context_group_id",
+                definition="TEXT NOT NULL DEFAULT ''",
+            )
+            _ensure_column(
+                conn,
+                table="input_events",
+                column="context_group_level",
+                definition="TEXT NOT NULL DEFAULT 'app'",
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_input_events_context_group "
+                "ON input_events(context_group_id, created_at_ms DESC)"
+            )
             ensure_memory_v2_schema(conn)
             conn.executescript(
                 """
@@ -325,9 +355,10 @@ class LocalSqliteCoreClient:
                 """
                 INSERT INTO input_events (
                     created_at_ms, source, committed_text, recent_context, preedit,
-                    schema_id, app, project, candidate_rank, provider_name, tags_json
+                    schema_id, app, project, candidate_rank, provider_name, tags_json,
+                    context_group_id, context_group_level
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     created_at,
@@ -341,6 +372,8 @@ class LocalSqliteCoreClient:
                     event.candidate_rank,
                     event.provider_name,
                     tags_json,
+                    compact_whitespace(event.context_group_id),
+                    compact_whitespace(event.context_group_level) or "app",
                 ),
             )
             event_id = int(cur.lastrowid)
@@ -408,6 +441,8 @@ class LocalSqliteCoreClient:
                     app=event.app,
                     provider_name=event.provider_name,
                     tags=tuple(event.tags),
+                    context_group_id=event.context_group_id,
+                    context_group_level=event.context_group_level,
                     embedding_provider=self.embedding_provider,
                 )
         self._clear_suggestion_cache()
@@ -421,6 +456,9 @@ class LocalSqliteCoreClient:
         project: str = "",
         app: str = "",
         top_k: int = 5,
+        context_group_id: str = "",
+        context_group_level: str = "app",
+        context_group_parent_ids: tuple[str, ...] = (),
     ) -> list[InputSuggestion]:
         flags = load_hybrid_rag_runtime_flags()
         cache_key = self._suggestion_cache_key(
@@ -429,6 +467,7 @@ class LocalSqliteCoreClient:
             project=project,
             app=app,
             mode="v3" if flags.hybrid_rag_core else "legacy",
+            context_group_id=context_group_id,
             top_k=top_k,
         )
         cached = self._get_cached_suggestions(cache_key)
@@ -444,6 +483,9 @@ class LocalSqliteCoreClient:
                     app=app,
                     top_k=top_k,
                     source_budget_ms=flags.rag_core_v3_budget_ms,
+                    context_group_id=context_group_id,
+                    context_group_level=context_group_level,
+                    context_group_parent_ids=context_group_parent_ids,
                 )
                 suggestions = memory_candidates_v2_to_input_suggestions(candidates)[:top_k]
                 self._store_cached_suggestions(cache_key, suggestions)
@@ -501,6 +543,9 @@ class LocalSqliteCoreClient:
         app: str = "",
         top_k: int = 5,
         source_budget_ms: int = 25,
+        context_group_id: str = "",
+        context_group_level: str = "app",
+        context_group_parent_ids: tuple[str, ...] = (),
     ) -> list[MemoryCandidateV2]:
         self.initialize()
         with self._connect() as conn:
@@ -515,6 +560,9 @@ class LocalSqliteCoreClient:
                 app=app,
                 top_k=top_k,
                 source_budget_ms=source_budget_ms,
+                context_group_id=context_group_id,
+                context_group_level=context_group_level,
+                context_group_parent_ids=context_group_parent_ids,
             )
 
     def _legacy_suggest_for_input(
@@ -2076,19 +2124,21 @@ class LocalSqliteCoreClient:
         project: str,
         app: str,
         mode: str,
+        context_group_id: str,
         top_k: int,
-    ) -> tuple[str, str, str, str, str, str, int]:
+    ) -> tuple[str, str, str, str, str, str, str, int]:
         return (
             compact_whitespace(current_input),
             compact_whitespace(recent_context),
             compact_whitespace(project),
             compact_whitespace(app),
             compact_whitespace(mode),
+            compact_whitespace(context_group_id),
             _pinyin_runtime_cache_fingerprint(),
             int(top_k),
         )
 
-    def _get_cached_suggestions(self, key: tuple[str, str, str, str, str, str, int]) -> list[InputSuggestion] | None:
+    def _get_cached_suggestions(self, key: tuple[str, str, str, str, str, str, str, int]) -> list[InputSuggestion] | None:
         if self.suggestion_cache_size <= 0:
             return None
         with self._suggestion_cache_lock:
@@ -2100,7 +2150,7 @@ class LocalSqliteCoreClient:
             self._suggestion_cache_hits += 1
             return _copy_suggestions(cached)
 
-    def _store_cached_suggestions(self, key: tuple[str, str, str, str, str, str, int], suggestions: list[InputSuggestion]) -> None:
+    def _store_cached_suggestions(self, key: tuple[str, str, str, str, str, str, str, int], suggestions: list[InputSuggestion]) -> None:
         if self.suggestion_cache_size <= 0:
             return
         with self._suggestion_cache_lock:

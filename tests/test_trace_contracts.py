@@ -20,9 +20,12 @@ ROOT = Path(__file__).resolve().parents[1]
 class TraceContractTests(unittest.TestCase):
     def test_v1_trace_contract_names_cover_foreground_acceptance_path(self) -> None:
         self.assertIn("panel_display_candidates", REQUIRED_TRACE_EVENT_NAMES)
+        self.assertIn("assistant_overlay_candidate_visible", REQUIRED_TRACE_EVENT_NAMES)
+        self.assertIn("foreground_context_capture_resolved", REQUIRED_TRACE_EVENT_NAMES)
         self.assertIn("post_commit_prediction_applied", REQUIRED_TRACE_EVENT_NAMES)
         self.assertIn("sidecar_response_dropped_stale", REQUIRED_TRACE_EVENT_NAMES)
         self.assertIn("candidate_snapshot_selection_accepted", REQUIRED_TRACE_EVENT_NAMES)
+        self.assertIn("side_candidate_feedback_recorded", REQUIRED_TRACE_EVENT_NAMES)
         self.assertIn("delete_context_resynced", REQUIRED_TRACE_EVENT_NAMES)
         self.assertIn("app_switch_context_invalidated", REQUIRED_TRACE_EVENT_NAMES)
         self.assertIn("focus_context_invalidated", REQUIRED_TRACE_EVENT_NAMES)

@@ -145,6 +145,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             "predictionFirstMerge": True,
             "frontendRevision": request_seq,
             "selectionEpoch": request_seq,
+            "inputGeneration": request_seq,
             "frontAppBundleId": "com.apple.TextEdit",
             "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
         }
@@ -172,6 +173,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             "progressiveFollowUp": progressive_follow_up,
             "frontendRevision": 7,
             "selectionEpoch": 7,
+            "inputGeneration": request_seq,
             "frontAppBundleId": "com.apple.TextEdit",
             "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
             "panelSessionId": "panel-v1",
@@ -418,6 +420,20 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertFalse(response["triggerDecision"]["shouldRefresh"])
         self.assertFalse(response["triggerDecision"]["foregroundContextGate"]["allowed"])
         self.assertIn("reliable foreground context required", response["triggerDecision"]["reason"])
+
+    def test_v1_foreground_capture_epoch_mismatch_fails_closed(self) -> None:
+        predictor = RecordingPredictionProvider()
+        payload = self._post_commit_payload(request_seq=21)
+        foreground = payload["foregroundText"]
+        self.assertIsInstance(foreground, dict)
+        foreground["captureEpoch"] = 20
+
+        response = self._response(payload, predictor=predictor)
+
+        self.assertEqual(predictor.calls, 0)
+        gate = response["triggerDecision"]["foregroundContextGate"]
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["foregroundReason"], "capture epoch mismatch")
         self.assertFalse(response["modelLane"]["called"])
         self.assertFalse(response["ragLane"]["called"])
 
@@ -441,9 +457,85 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(response["assistantOverlay"]["animation"]["kind"], "none")
         self.assertEqual(response["assistantOverlay"]["dismissReason"], "pending_overlay_disabled")
 
+    def test_v1_strong_phrase_memory_skips_local_predictor(self) -> None:
+        predictor = RecordingPredictionProvider(["不应调用模型"])
+        core = CuratedMemoryCore([_memory("phrase:front", "完成前台闭环", accepted_count=3)])
+        payload = self._post_commit_payload(
+            context="这个方案正在验证真实前台上下文",
+            commit_preview="前台上下文",
+        )
+        payload.update({"commitBurstReady": True, "commitBurstDeltaChars": 6, "commitBurstTexts": []})
+        payload["foregroundText"].update(
+            {
+                "contextGroupId": "doc:t0",
+                "contextGroupLevel": "document",
+                "contextGroupConfidence": 1.0,
+                "commitTextMatched": True,
+            }
+        )
+
+        response = self._response(payload, core=core, predictor=predictor)
+
+        self.assertEqual(predictor.calls, 0)
+        self.assertTrue(response["ragLane"]["directMemoryHit"])
+        self.assertTrue(response["modelLane"]["directMemoryHit"])
+        self.assertEqual(response["modelPredictions"][0]["providerName"], "memory-t0")
+        self.assertEqual(response["modelPredictions"][0]["text"], "完成前台闭环")
+        self.assertFalse(response["progressive"]["shouldFollowUp"])
+        self.assertTrue(response["predictionTrigger"]["directMemoryHit"])
+        self.assertFalse(response["predictionTrigger"]["providerCallAllowed"])
+        trace_names = [item["event"] for item in response["predictionTraceEvents"]]
+        self.assertIn("prediction_trigger_direct_memory_hit", trace_names)
+        self.assertNotIn("prediction_provider_called", trace_names)
+
+    def test_v1_commit_burst_gate_records_grouped_commits_once(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-burst-sidecar-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
+            core.initialize()
+            adapter = InputMethodAdapter(core, project="wisdom-weasel-rag-ime")
+            predictor = RecordingPredictionProvider()
+            payload = self._post_commit_payload(
+                context="这个方案主要解决前台上下文问题",
+                commit_preview="上下文问题",
+            )
+            payload.update(
+                {
+                    "commitBurstReady": False,
+                    "commitBurstDeltaChars": 10,
+                    "commitBurstTexts": ["这个方案主要", "解决前台上下文问题"],
+                }
+            )
+            payload["foregroundText"].update(
+                {
+                    "contextGroupId": "doc:test",
+                    "contextGroupLevel": "document",
+                    "contextGroupConfidence": 1.0,
+                    "commitTextMatched": True,
+                }
+            )
+
+            waiting = build_rime_sidecar_response(payload=payload, adapter=adapter, core=core, predictor=predictor)
+            self.assertFalse(waiting["triggerDecision"]["shouldRefresh"])
+            self.assertEqual(waiting["predictionTrigger"]["reason"], "waiting_idle")
+            self.assertEqual(core.event_count(), 0)
+
+            payload["commitBurstReady"] = True
+            fired = build_rime_sidecar_response(payload=payload, adapter=adapter, core=core, predictor=predictor)
+            self.assertTrue(fired["predictionTrigger"]["providerCallAllowed"])
+            self.assertEqual(core.event_count(), 2)
+            with core._connect() as conn:
+                rows = conn.execute(
+                    "SELECT context_group_id, context_group_level FROM input_events ORDER BY id"
+                ).fetchall()
+            self.assertEqual([(row[0], row[1]) for row in rows], [("doc:test", "document"), ("doc:test", "document")])
+
+            duplicate = build_rime_sidecar_response(payload=payload, adapter=adapter, core=core, predictor=predictor)
+            self.assertEqual(duplicate["predictionTrigger"]["reason"], "duplicate_context_hash")
+            self.assertEqual(core.event_count(), 2)
+
     def test_v1_post_commit_followup_does_not_restart_provider(self) -> None:
         predictor = RecordingPredictionProvider(sleep_s=0.4)
-        core = CuratedMemoryCore([_memory("durable:1", "真实输入链路跑通", accepted_count=2)])
+        core = CuratedMemoryCore([])
         first = self._response(self._post_commit_payload(), core=core, predictor=predictor)
         follow_up = self._response(
             self._post_commit_payload(request_seq=2, progressive_follow_up=True),

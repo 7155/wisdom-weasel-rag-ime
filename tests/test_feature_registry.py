@@ -74,7 +74,7 @@ class FeatureRegistryTests(unittest.TestCase):
             command = str(feature["acceptanceCommand"])
             events = " ".join(str(item) for item in feature["foregroundTraceEvents"])
             self.assertRegex(command, r"(verify_squirrel_foreground_trace|check_squirrel_soak_report)")
-            self.assertIn("panel_display_candidates", events)
+            self.assertRegex(events, r"(panel_display_candidates|assistant_overlay_candidate_visible)")
 
     def test_debug_preview_and_offline_tools_are_not_marked_product_complete(self) -> None:
         project_status = PROJECT_STATUS_PATH.read_text(encoding="utf-8")

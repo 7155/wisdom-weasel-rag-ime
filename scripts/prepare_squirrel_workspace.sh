@@ -7,15 +7,17 @@ SQUIRREL_BASE_REF="${RAG_IME_SQUIRREL_BASE_REF:-2158538}"
 SQUIRREL_WORKDIR="${RAG_IME_SQUIRREL_WORKDIR:-/tmp/rag-ime-squirrel}"
 PATCH_FILE="${RAG_IME_SQUIRREL_PATCH:-$ROOT/squirrel-patches/0001-add-rag-ime-sidecar.patch}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
+RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-v1-proof}"
+eval "$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_EXECUTABLE" -m rag_ime.runtime_profile --profile "$RUNTIME_PROFILE" --format shell)"
 DB_PATH="${RAG_IME_DB_PATH:-$HOME/Library/Application Support/RagIme/rag-ime.sqlite}"
 PROJECT="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 SIDECAR_HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
 SIDECAR_PORT="${RAG_IME_SIDECAR_PORT:-8766}"
 MAX_VISIBLE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_VISIBLE_CANDIDATES:-8}"
 MAX_SIDE_CANDIDATES="${RAG_IME_SQUIRREL_MAX_SIDE_CANDIDATES:-5}"
-LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-300}"
+LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-$RAG_IME_PROFILE_SQUIRREL_LATENCY_BUDGET_MS}"
 DEBOUNCE_MS="${RAG_IME_SQUIRREL_DEBOUNCE_MS:-80}"
-TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-250}"
+TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-$RAG_IME_PROFILE_SQUIRREL_TIMEOUT_MS}"
 FRONTEND_TRACE="${RAG_IME_SQUIRREL_FRONTEND_TRACE:-true}"
 RESET="${RAG_IME_SQUIRREL_RESET:-0}"
 DRY_RUN="${RAG_IME_SQUIRREL_DRY_RUN:-0}"
@@ -29,6 +31,7 @@ if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "TRUE" ]]; then
   cat <<EOF
 repo_url=$SQUIRREL_REPO_URL
 base_ref=$SQUIRREL_BASE_REF
+runtime_profile=$RUNTIME_PROFILE
 workdir=$SQUIRREL_WORKDIR
 patch=$PATCH_FILE
 sidecar_url=http://$SIDECAR_HOST:$SIDECAR_PORT/api
@@ -312,6 +315,11 @@ require_patch_text "sources/SquirrelInputController.swift" "assistant_overlay_lo
 require_patch_text "sources/SquirrelInputController.swift" "ragImeSelectedTextProvider.captureForegroundTextForSidecar" "focused text accessibility foreground snapshot request"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXSelectedTextRangeAttribute" "focused text selected range accessibility capture"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXStringForRangeParameterizedAttribute" "focused text surrounding range accessibility capture"
+require_patch_text "sources/RagImeSelectedTextProvider.swift" "RagImeForegroundContextResolver" "delayed IMK to Accessibility foreground context resolver"
+require_patch_text "sources/SquirrelInputController.swift" "foreground_context_capture_resolved" "foreground context capture success trace"
+require_patch_text "sources/SquirrelInputController.swift" "foreground_context_capture_failed" "foreground context capture failure trace"
+require_patch_text "sources/SquirrelInputController.swift" "side_candidate_feedback_recorded" "selection feedback receipt trace"
+require_patch_text "sources/SquirrelInputController.swift" "assistant_overlay_candidate_visible" "assistant overlay candidate trace"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXValueAttribute" "focused text whole-value fallback"
 require_patch_text "sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
 require_patch_text "sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate layout"

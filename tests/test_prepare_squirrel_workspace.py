@@ -31,7 +31,8 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             encoding="utf-8",
         )
         (upstream / "sources" / "RagImeSelectedTextProvider.swift").write_text(
-            "import ApplicationServices\nfinal class RagImeSelectedTextProvider {\n"
+            "import ApplicationServices\nfinal class RagImeForegroundContextResolver {}\n"
+            "final class RagImeSelectedTextProvider {\n"
             "  func captureForegroundTextForSidecar() {\n"
             "    _ = kAXSelectedTextRangeAttribute\n"
             "    _ = kAXStringForRangeParameterizedAttribute\n"
@@ -58,6 +59,10 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     "  func suppressCompositionAi() { _ = \"composition_ai_suppressed\" }",
                     "  func suppressPostCommitOverlay() { _ = \"RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING\"; _ = \"assistant_overlay_local_placeholder_suppressed\" }",
                     "  func foregroundSnapshot() { _ = \"ragImeSelectedTextProvider.captureForegroundTextForSidecar\" }",
+                    "  func foregroundCaptureResolved() { _ = \"foreground_context_capture_resolved\" }",
+                    "  func foregroundCaptureFailed() { _ = \"foreground_context_capture_failed\" }",
+                    "  func sideCandidateFeedbackRecorded() { _ = \"side_candidate_feedback_recorded\" }",
+                    "  func assistantOverlayCandidateVisible() { _ = \"assistant_overlay_candidate_visible\" }",
                     "  func ragImeDisplayComment() { _ = \"candidate.sourceType == \\\"model\\\"\" }",
                     "}",
                 ]
@@ -138,8 +143,9 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             )
         self.assertIn(f"workdir={workdir}", result.stdout)
         self.assertIn("base_ref=2158538", result.stdout)
-        self.assertIn("latency_budget_ms=300", result.stdout)
-        self.assertIn("timeout_ms=250", result.stdout)
+        self.assertIn("runtime_profile=v1-proof", result.stdout)
+        self.assertIn("latency_budget_ms=900", result.stdout)
+        self.assertIn("timeout_ms=1200", result.stdout)
         self.assertIn("sidecar_url=http://127.0.0.1:18766/api", result.stdout)
         self.assertIn(f"repo_root={root}", result.stdout)
         self.assertIn(
@@ -226,6 +232,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                 "\n".join(
                     [
                         "import ApplicationServices",
+                        "final class RagImeForegroundContextResolver {}",
                         "final class RagImeSelectedTextProvider {",
                         "  func captureForegroundTextForSidecar() {",
                         "    _ = kAXSelectedTextRangeAttribute",
@@ -256,6 +263,10 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         '  func suppressCompositionAi() { _ = "composition_ai_suppressed" }',
                         '  func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }',
                         '  func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }',
+                        '  func foregroundCaptureResolved() { _ = "foreground_context_capture_resolved" }',
+                        '  func foregroundCaptureFailed() { _ = "foreground_context_capture_failed" }',
+                        '  func sideCandidateFeedbackRecorded() { _ = "side_candidate_feedback_recorded" }',
+                        '  func assistantOverlayCandidateVisible() { _ = "assistant_overlay_candidate_visible" }',
                         '  func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" }',
                         "}",
                     ]

@@ -5,6 +5,7 @@ import sqlite3
 import time
 from typing import Iterable
 
+from .context_group import ContextGroup, context_group_compatibility
 from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery
 from .hybrid_rag_ranker import rank_hybrid_hits
 from .memory_ingest import normalize_text
@@ -27,7 +28,7 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
         project=query.project,
         app=query.app,
     )
-    docs = _active_docs(conn, project=query.project, app=query.app)
+    docs = _active_docs(conn, query=query)
     blocked = _blocked_sets(conn)
     lane_hits: dict[str, list[HybridRagHit]] = {
         "bm25_raw": _rank_docs(
@@ -117,7 +118,7 @@ def retrieve_hybrid_rag_candidate_objects(conn: sqlite3.Connection, query: Hybri
     return candidates
 
 
-def _active_docs(conn: sqlite3.Connection, *, project: str, app: str) -> list[dict[str, object]]:
+def _active_docs(conn: sqlite3.Connection, *, query: HybridRagQuery) -> list[dict[str, object]]:
     rows = conn.execute(
         """
         SELECT doc_id, doc_type, source_id, raw_text, tags_text, aliases_text, surface_hints_text,
@@ -127,10 +128,31 @@ def _active_docs(conn: sqlite3.Connection, *, project: str, app: str) -> list[di
           AND (? = '' OR project = ? OR project = '')
           AND (? = '' OR app = ? OR app = '')
         """,
-        (project, project, app, app),
+        (query.project, query.project, query.app, query.app),
     ).fetchall()
-    return [
-        {
+    current_group = ContextGroup(
+        context_group_id=compact_whitespace(query.context_group_id),
+        context_group_level=query.context_group_level if query.context_group_level in {"document", "project", "app", "global"} else "app",
+        confidence=1.0 if query.context_group_id else 0.0,
+        parent_group_ids=tuple(query.context_group_parent_ids),
+        app_bundle_id=compact_whitespace(query.app),
+        project=compact_whitespace(query.project),
+    )
+    docs: list[dict[str, object]] = []
+    for row in rows:
+        metadata = _metadata(row["metadata_json"])
+        short_term = bool(metadata.get("shortTerm") or metadata.get("short_term"))
+        compatibility = context_group_compatibility(
+            current_group,
+            candidate_group_id=str(metadata.get("contextGroupId") or metadata.get("context_group_id") or ""),
+            candidate_project=str(row["project"] or ""),
+            candidate_app=str(row["app"] or ""),
+            short_term=short_term,
+        )
+        if compatibility <= 0.0:
+            continue
+        metadata["groupCompatibility"] = compatibility
+        docs.append({
             "doc_id": str(row["doc_id"]),
             "doc_type": str(row["doc_type"]),
             "source_id": str(row["source_id"]),
@@ -142,10 +164,10 @@ def _active_docs(conn: sqlite3.Connection, *, project: str, app: str) -> list[di
             "time_key": str(row["time_key"] or ""),
             "project": str(row["project"] or ""),
             "app": str(row["app"] or ""),
-            "metadata": _metadata(row["metadata_json"]),
-        }
-        for row in rows
-    ]
+            "metadata": metadata,
+        })
+    docs.sort(key=lambda item: float(dict(item.get("metadata") or {}).get("groupCompatibility") or 0.0), reverse=True)
+    return docs
 
 
 def _rank_docs(

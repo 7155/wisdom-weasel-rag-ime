@@ -55,6 +55,8 @@ class DeepSeekMemoryOrganizer:
         payload.setdefault("memoryAtoms", [])
         payload.setdefault("tagEdges", [])
         payload.setdefault("phraseCandidates", [])
+        payload.setdefault("negativePhrases", [])
+        payload.setdefault("supersedes", [])
         payload.setdefault("warnings", [])
         payload["provider"] = self.provider_name
         payload["model"] = self.config.model
@@ -117,8 +119,10 @@ def _memory_book_system_prompt() -> str:
         你是 RAG 输入法的离线记忆整理器。你必须把原始输入历史整理成 Memory Book、Memory Atom、
         Tag Edge 和短 phraseCandidate。只输出 JSON 对象，schemaVersion 必须是
         rag-ime.memory-book-compile.v1。sourceEventIds/evidenceEventIds 必须来自输入 bundle 的 eventId，
-        且不能为空。surfaceHints 和 phraseCandidates 必须是 2 到 16 个中文字符或短术语。
+        且不能为空。Group 只能使用 bundle.legalContextGroupIds 中的值，不能自行分类或编造。
+        surfaceHints 和 phraseCandidates 必须是 2 到 18 个中文字符或短术语。
         canonicalText 只用于检索证据，不能直接作为输入法候选；directCandidateAllowed 默认 false。
-        不要输出 secret、路径、邮箱、API key、长历史原句、解释文字或 Markdown。
+        同时输出 negativePhrases 和 supersedes 数组。不要输出 secret、路径、邮箱、API key、
+        长历史原句、标题式候选、元话语、解释文字或 Markdown。
         """
     )

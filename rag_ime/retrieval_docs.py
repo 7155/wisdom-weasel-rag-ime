@@ -116,6 +116,10 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
             continue
         tags = _memory_item_tags(conn, memory_item_pk=int(row["id"]))
         doc_type = "phrase" if str(row["kind"]) == "phrase" else "item"
+        metadata = _json_object(row["metadata_json"])
+        context_group_id = compact_whitespace(str(metadata.get("contextGroupId") or ""))
+        if not context_group_id and int(row["source_event_id"] or 0) > 0:
+            context_group_id = _event_context_group(conn, int(row["source_event_id"]))
         docs.append(
             {
                 "doc_id": f"{doc_type}:{memory_id}",
@@ -130,10 +134,12 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
                 "metadata": {
+                    **metadata,
                     "kind": str(row["kind"]),
                     "sourceEventId": int(row["source_event_id"] or 0),
                     "memoryId": memory_id,
                     "source": "memory_items",
+                    "contextGroupId": context_group_id,
                 },
             }
         )
@@ -159,6 +165,7 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         if not raw_text or _is_tombstoned(memory_id=atom_id, text=raw_text, normalized_text="", tombstones=tombstones):
             continue
         aliases = _atom_aliases(conn, atom_id=atom_id)
+        source_event_ids = _json_list(row["source_event_ids_json"])
         docs.append(
             {
                 "doc_id": f"atom:{atom_id}",
@@ -175,8 +182,9 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "metadata": {
                     "kind": str(row["kind"]),
                     "atomId": atom_id,
-                    "sourceEventIds": _json_list(row["source_event_ids_json"]),
+                    "sourceEventIds": source_event_ids,
                     "source": "memory_atoms",
+                    "contextGroupId": _first_event_context_group(conn, source_event_ids),
                 },
             }
         )
@@ -188,7 +196,7 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         """
         SELECT book_id, book_type, book_key, title, summary, project, app, tags_json,
                surface_hints_json, query_expansions_json, source_event_ids_json, memory_atom_ids_json,
-               status, confidence, quality_score
+               status, confidence, quality_score, metadata_json
         FROM memory_books
         WHERE status IN ('active', 'approved')
           AND (? = '' OR project = ? OR project = '')
@@ -204,6 +212,8 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
             continue
         book_type = str(row["book_type"] or "")
         book_key = str(row["book_key"] or "")
+        source_event_ids = _json_list(row["source_event_ids_json"])
+        stored_metadata = _json_object(row["metadata_json"])
         docs.append(
             {
                 "doc_id": f"book:{book_id}",
@@ -218,12 +228,15 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
                 "metadata": {
+                    **stored_metadata,
                     "bookType": book_type,
                     "bookKey": book_key,
                     "bookTitle": compact_whitespace(str(row["title"] or "")),
-                    "sourceEventIds": _json_list(row["source_event_ids_json"]),
+                    "sourceEventIds": source_event_ids,
                     "memoryAtomIds": _json_list(row["memory_atom_ids_json"]),
                     "source": "memory_books",
+                    "contextGroupId": compact_whitespace(str(stored_metadata.get("contextGroupId") or ""))
+                    or _first_event_context_group(conn, source_event_ids),
                 },
             }
         )
@@ -280,6 +293,34 @@ def _atom_aliases(conn: sqlite3.Connection, *, atom_id: str) -> dict[str, list[s
         if alias and alias_type in result:
             result[alias_type].append(alias)
     return result
+
+
+def _event_context_group(conn: sqlite3.Connection, event_id: int) -> str:
+    row = conn.execute(
+        "SELECT context_group_id FROM input_events WHERE id = ?",
+        (event_id,),
+    ).fetchone()
+    return "" if row is None else compact_whitespace(str(row["context_group_id"] or ""))
+
+
+def _first_event_context_group(conn: sqlite3.Connection, event_ids: list[object]) -> str:
+    for value in event_ids:
+        try:
+            event_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        group_id = _event_context_group(conn, event_id)
+        if group_id:
+            return group_id
+    return ""
+
+
+def _json_object(raw: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
 
 
 def _active_tombstone_sets(conn: sqlite3.Connection) -> dict[str, set[str]]:

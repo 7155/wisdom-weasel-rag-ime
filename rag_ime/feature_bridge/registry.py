@@ -88,8 +88,10 @@ def validate_feature_registry(payload: object) -> list[dict[str, Any]]:
             events = " ".join(str(event) for event in item.get("foregroundTraceEvents") or [])
             if "verify_squirrel_foreground_trace" not in command and "check_squirrel_soak_report" not in command:
                 raise FeatureRegistryError(f"{feature_id} foreground_verified requires a foreground trace command")
-            if "panel_display_candidates" not in events:
-                raise FeatureRegistryError(f"{feature_id} foreground_verified requires panel_display_candidates")
+            if not {"panel_display_candidates", "assistant_overlay_candidate_visible"} & set(events.split()):
+                raise FeatureRegistryError(
+                    f"{feature_id} foreground_verified requires a visible panel or assistant overlay event"
+                )
         features.append(dict(item))
     return features
 

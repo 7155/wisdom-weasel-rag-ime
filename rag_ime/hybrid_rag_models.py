@@ -15,6 +15,9 @@ class HybridRagQuery:
     input_mode: str = "unknown"
     top_k: int = 5
     latency_budget_ms: int = 25
+    context_group_id: str = ""
+    context_group_level: str = "app"
+    context_group_parent_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

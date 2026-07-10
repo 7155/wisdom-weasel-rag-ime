@@ -88,9 +88,9 @@ class ReplaceSystemSquirrelAppScriptTests(unittest.TestCase):
         self.assertIn("installed patched system Squirrel.app", result.stdout)
         self.assertIn("backing up existing system Squirrel.app", result.stdout)
         self.assertIn("rag-ime.squirrel-frontend-trace.v1", target_text)
-        self.assertIn("panel_text_layout", target_text)
-        self.assertIn("sidecar_request_scheduled", target_text)
-        self.assertIn("sidecar_empty_response_cleared", target_text)
+        self.assertIn("foreground_context_capture_resolved", target_text)
+        self.assertIn("assistant_overlay_candidate_visible", target_text)
+        self.assertIn("side_candidate_feedback_recorded", target_text)
         self.assertIn("select im.rime.inputmethod.Squirrel.Hans", calls)
         self.assertIn("check --require-selected im.rime.inputmethod.Squirrel.Hans", calls)
         self.assertIn("doctor", calls)
@@ -136,9 +136,10 @@ def _write_fake_squirrel_app(path: Path, *, patched: bool) -> Path:
             [
                 "# rag-ime.squirrel-frontend-trace.v1",
                 "# rag-ime.foreground-trace.v2",
-                "# panel_text_layout",
-                "# sidecar_request_scheduled",
-                "# sidecar_empty_response_cleared",
+                "# composition_ai_suppressed",
+                "# foreground_context_capture_resolved",
+                "# assistant_overlay_candidate_visible",
+                "# side_candidate_feedback_recorded",
             ]
         )
     lines.extend(

@@ -56,7 +56,8 @@ class RagCoreV3Tests(unittest.TestCase):
         )
         texts = [item.text for item in candidates]
 
-        self.assertIn("RAG 输入法多路召回方案", texts)
+        self.assertIn("多路召回", texts)
+        self.assertNotIn("RAG 输入法多路召回方案", texts)
         self.assertNotIn("用户希望借鉴 VCP 的 BM25、向量、TagMemo 和 Time。", texts)
         self.assertTrue(all("用户希望借鉴" not in text for text in texts))
 

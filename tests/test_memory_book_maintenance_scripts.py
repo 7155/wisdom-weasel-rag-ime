@@ -30,14 +30,29 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
 
             plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.memory-book-maintenance.plist"
             payload = plistlib.loads(plist_path.read_bytes())
+            app_dir = home / "Library" / "Application Support" / "RagIme" / "app"
+            installed_files = {
+                "wrapper": (app_dir / "memory_book_maintenance_launch.py").is_file(),
+                "runner": (app_dir / "scripts" / "run_memory_book_maintenance_once.sh").is_file(),
+                "package": (app_dir / "rag_ime" / "cli.py").is_file(),
+                "marker": (app_dir / "rag-ime-install-marker.json").is_file(),
+            }
 
         self.assertIn(str(plist_path), result.stdout)
         self.assertEqual(payload["Label"], "com.rag-ime.memory-book-maintenance")
         self.assertEqual(payload["StartInterval"], 900)
         self.assertFalse(payload["RunAtLoad"])
         self.assertFalse(payload["KeepAlive"])
-        self.assertIn("run_memory_book_maintenance_once.sh", payload["ProgramArguments"][-1])
+        self.assertTrue(payload["ProgramArguments"][-1].endswith("memory_book_maintenance_launch.py"))
+        self.assertEqual(payload["WorkingDirectory"], str(app_dir))
+        self.assertTrue(installed_files["wrapper"])
+        self.assertTrue(installed_files["runner"])
+        self.assertTrue(installed_files["package"])
+        self.assertTrue(installed_files["marker"])
         env_vars = payload["EnvironmentVariables"]
+        self.assertEqual(env_vars["RAG_IME_ROOT"], str(app_dir))
+        self.assertEqual(env_vars["RAG_IME_INSTALL_MARKER"], str(app_dir / "rag-ime-install-marker.json"))
+        self.assertEqual(env_vars["RAG_IME_SOURCE_ROOT"], str(root))
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_REASONING_EFFORT"], "low")
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS"], "2048")
         self.assertNotIn("RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY", env_vars)

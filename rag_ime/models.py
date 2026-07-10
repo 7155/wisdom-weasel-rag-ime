@@ -20,6 +20,8 @@ class InputEvent:
     candidate_rank: int | None = None
     provider_name: str = "local"
     tags: tuple[str, ...] = ()
+    context_group_id: str = ""
+    context_group_level: str = "app"
 
 
 @dataclass(frozen=True)

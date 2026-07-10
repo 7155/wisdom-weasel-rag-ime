@@ -14,6 +14,9 @@ class SuggestionRequest:
     project: str = "wisdom-weasel-rag-ime"
     app: str = ""
     top_k: int = 5
+    context_group_id: str = ""
+    context_group_level: str = "app"
+    context_group_parent_ids: tuple[str, ...] = ()
 
 
 class InputMethodAdapter:
@@ -38,6 +41,8 @@ class InputMethodAdapter:
         candidate_rank: int | None = None,
         provider_name: str = "ime-adapter",
         tags: tuple[str, ...] = (),
+        context_group_id: str = "",
+        context_group_level: str = "app",
     ) -> str:
         if not recording_enabled:
             return "skipped:recording_disabled"
@@ -56,17 +61,34 @@ class InputMethodAdapter:
             candidate_rank=candidate_rank,
             provider_name=provider_name,
             tags=tags,
+            context_group_id=context_group_id,
+            context_group_level=context_group_level,
         )
         return self.core.record_event(event)
 
     def suggest(self, request: SuggestionRequest) -> list[InputSuggestion]:
-        suggestions = self.core.suggest_for_input(
+        kwargs = dict(
             current_input=request.current_input,
             recent_context=request.recent_context,
             project=request.project or self.project,
             app=request.app,
             top_k=request.top_k,
         )
+        if request.context_group_id:
+            kwargs.update(
+                context_group_id=request.context_group_id,
+                context_group_level=request.context_group_level,
+                context_group_parent_ids=request.context_group_parent_ids,
+            )
+        try:
+            suggestions = self.core.suggest_for_input(**kwargs)
+        except TypeError as exc:
+            if not request.context_group_id or "context_group" not in str(exc):
+                raise
+            kwargs.pop("context_group_id", None)
+            kwargs.pop("context_group_level", None)
+            kwargs.pop("context_group_parent_ids", None)
+            suggestions = self.core.suggest_for_input(**kwargs)
         return [normalize_suggestion(item) for item in suggestions]
 
     def choose(self, suggestion: InputSuggestion, *, query: str = "") -> MemoryAction:

@@ -11,6 +11,7 @@ SINCE_DAYS="${RAG_IME_MEMORY_BOOK_MAINTENANCE_SINCE_DAYS:-7}"
 RECENT_LIMIT="${RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT:-120}"
 APPLY="${RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY:-0}"
 MODEL_ENV_PATH="${RAG_IME_DEEPSEEK_ENV:-${RAG_IME_MODEL_ENV:-}}"
+TRIGGER="${RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER:-manual}"
 
 detect_python() {
   local candidate
@@ -69,6 +70,65 @@ APPLY_LOG="$OUT_DIR/memory-book-$STAMP.apply.json"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export RAG_IME_DEEPSEEK_REASONING_EFFORT="${RAG_IME_DEEPSEEK_REASONING_EFFORT:-low}"
 export RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS="${RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS:-2048}"
+
+if [[ "$TRIGGER" != "manual" ]]; then
+  set +e
+  DUE_JSON="$($PYTHON_EXECUTABLE - "$DB_PATH" "$PROJECT" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+
+from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.memory_book_compiler import memory_compile_due
+
+db_path, project = sys.argv[1:3]
+core = LocalSqliteCoreClient(db_path)
+core.initialize()
+with sqlite3.connect(db_path) as conn:
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT MAX(created_at_ms) FROM input_events WHERE (? = '' OR project = ? OR project = '')",
+        (project, project),
+    ).fetchone()
+    last_event_ms = int(row[0] or 0)
+    current_ms = int(time.time() * 1000)
+    due, reason, state = memory_compile_due(
+        conn,
+        project=project,
+        idle_ms=max(0, current_ms - last_event_ms) if last_event_ms else 0,
+        current_ms=current_ms,
+    )
+print(json.dumps({"due": due, "reason": reason, "state": state}, ensure_ascii=False))
+raise SystemExit(0 if due else 3)
+PY
+)"
+  DUE_STATUS=$?
+  set -e
+  if [[ "$DUE_STATUS" == "3" ]]; then
+    "$PYTHON_EXECUTABLE" - "$DUE_JSON" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+due = json.loads(sys.argv[1])
+print(json.dumps({
+    "schemaVersion": "rag-ime.memory-book-maintenance.v1",
+    "ok": True,
+    "generatedAt": datetime.now(timezone.utc).isoformat(),
+    "applied": False,
+    "skipped": True,
+    "skipReason": due["reason"],
+    "compileState": due["state"],
+}, ensure_ascii=False, indent=2))
+PY
+    exit 0
+  fi
+  if [[ "$DUE_STATUS" != "0" ]]; then
+    echo "$DUE_JSON" >&2
+    exit "$DUE_STATUS"
+  fi
+fi
 
 preview_cmd=(
   "$PYTHON_EXECUTABLE" -m rag_ime.cli

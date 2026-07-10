@@ -46,6 +46,8 @@ def sync_event_to_memory_v2(
     app: str,
     provider_name: str,
     tags: tuple[str, ...],
+    context_group_id: str = "",
+    context_group_level: str = "app",
     embedding_provider: EmbeddingProvider | None = None,
 ) -> dict[str, object]:
     text = compact_whitespace(committed_text)
@@ -63,6 +65,8 @@ def sync_event_to_memory_v2(
         "provider_name": provider_name,
         "source": source,
         "tag_count": len(extracted_tags),
+        "contextGroupId": compact_whitespace(context_group_id),
+        "contextGroupLevel": compact_whitespace(context_group_level) or "app",
     }
     raw_item_id = upsert_memory_item(
         conn,
@@ -110,6 +114,8 @@ def sync_event_to_memory_v2(
                 "provider_name": provider_name,
                 "source": source,
                 "raw_memory_id": f"raw:event:{event_id}",
+                "contextGroupId": compact_whitespace(context_group_id),
+                "contextGroupLevel": compact_whitespace(context_group_level) or "app",
             },
             tags=extracted_tags,
             embedding_provider=embedding_provider,

@@ -26,6 +26,9 @@ def retrieve_candidates_v3(
     app: str = "",
     top_k: int = 5,
     source_budget_ms: int = 25,
+    context_group_id: str = "",
+    context_group_level: str = "app",
+    context_group_parent_ids: tuple[str, ...] = (),
 ) -> list[MemoryCandidateV2]:
     rebuild_retrieval_docs(conn, project=project)
     query_text = compact_whitespace(current_input or preedit or recent_context or committed_context)
@@ -39,6 +42,9 @@ def retrieve_candidates_v3(
         app=app,
         top_k=max(1, int(top_k)),
         latency_budget_ms=max(1, int(source_budget_ms)),
+        context_group_id=context_group_id,
+        context_group_level=context_group_level,
+        context_group_parent_ids=context_group_parent_ids,
     )
     return [_memory_candidate_from_hybrid(item) for item in retrieve_hybrid_rag_candidate_objects(conn, query)]
 

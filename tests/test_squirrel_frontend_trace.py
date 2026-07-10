@@ -2082,12 +2082,12 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertGreater(report["displayQuality"]["sourceBadgeMissingCount"], 0)
         self.assertEqual(report["displayQuality"]["modelOccupiedAllSlotsViolation"], 1)
         self.assertEqual(report["displayQuality"]["longCandidateViolation"], 1)
-        self.assertEqual(report["displayQuality"]["postCommitNumberKeyViolation"], 0)
+        self.assertEqual(report["displayQuality"]["postCommitNumberKeyViolation"], 1)
         violation_types = {item["type"] for item in report["violations"]}
         self.assertIn("source_badge_missing", violation_types)
         self.assertIn("model_occupied_all_slots", violation_types)
         self.assertIn("long_candidate", violation_types)
-        self.assertNotIn("post_commit_number_key", violation_types)
+        self.assertIn("post_commit_number_key", violation_types)
 
     def test_soak_report_can_require_foreground_multi_model_candidate_panel(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -2349,6 +2349,91 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertTrue(report["requiredTraceEvents"]["app_switch_context_invalidated"]["observed"])
         self.assertTrue(report["thresholdResults"]["firstVisibleMs"])
         self.assertTrue(report["thresholdResults"]["contextEchoCount"])
+
+    def test_soak_report_accepts_overlay_as_the_post_commit_prediction_surface(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        events = _v1_foreground_acceptance_events()
+        post_commit_panel = next(
+            event
+            for event in events
+            if event.get("event") == "panel_display_candidates"
+            and event.get("uiMode") == "post_commit_prediction"
+        )
+        overlay_candidates = []
+        for index, candidate in enumerate(post_commit_panel["candidates"], start=1):
+            overlay_candidates.append(
+                {
+                    "sourceType": candidate["sourceType"],
+                    "sourceBadge": candidate.get("sourceBadge") or candidate.get("badge"),
+                    "colorToken": candidate["colorToken"],
+                    "candidateOrdinal": candidate.get("candidateOrdinal") or candidate.get("selectionRank") or index,
+                    "candidateStableId": candidate.get("candidateStableId") or f"overlay:{index}",
+                    "snapshotId": "snap:v1",
+                    "selectionAction": "commit_side_candidate",
+                    "isStatus": False,
+                    "textHash": f"sha256:{candidate.get('candidateStableId') or index}",
+                    "textChars": len(candidate["text"]),
+                }
+            )
+        events.remove(post_commit_panel)
+        events.append(
+            {
+                "event": "assistant_overlay_candidate_visible",
+                "timestampMs": 240,
+                "phase": "post_commit",
+                "uiMode": "post_commit_prediction",
+                "snapshotId": "snap:v1",
+                "keyPolicy": {
+                    "numberKeys": "pass_through",
+                    "tab": "accept_top_prediction",
+                    "optionNumber": "select_prediction_by_ordinal",
+                },
+                "candidates": overlay_candidates,
+            }
+        )
+        for event in events:
+            if event.get("event") == "tab_key_route":
+                event["overlay"] = True
+        events.sort(key=lambda item: int(item.get("timestampMs") or 0))
+
+        with tempfile.TemporaryDirectory(prefix="rag-ime-overlay-soak-v1-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "soak-report.json"
+            log_path.write_text(
+                "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--require-rime-composition-ok",
+                    "--require-assistant-overlay-post-commit",
+                    "--require-assistant-overlay-key-policy",
+                    "--require-post-commit-visible",
+                    "--require-source-badges",
+                    "--require-followup-after-select",
+                    "--max-first-visible-ms",
+                    "500",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertTrue(report["v1Foreground"]["postCommitVisible"])
+        self.assertEqual(report["v1Foreground"]["modelCandidateCount"], 1)
+        self.assertEqual(report["v1Foreground"]["ragMemoryCandidateCount"], 2)
+        self.assertEqual(report["v1Foreground"]["sourceBadgeCoverage"]["coverageRate"], 1.0)
+        self.assertTrue(report["thresholdResults"]["assistantOverlayPostCommit"])
+        self.assertTrue(report["thresholdResults"]["assistantOverlayKeyPolicy"])
 
     def test_soak_report_fails_v1_gate_when_post_commit_candidate_echoes_context(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -4566,6 +4651,14 @@ def _v1_foreground_acceptance_events() -> list[dict[str, object]]:
             "candidate": commit_candidate,
         },
         {"event": "side_candidate_commit", "timestampMs": 80, "candidate": commit_candidate},
+        {
+            "event": "side_candidate_feedback_recorded",
+            "timestampMs": 82,
+            "ok": True,
+            "eventId": "event:v1",
+            "recordedActionCount": 1,
+            "candidate": commit_candidate,
+        },
         {"event": "side_candidate_commit_observed", "timestampMs": 85, "candidate": commit_candidate},
         {
             "event": "commit_observed",

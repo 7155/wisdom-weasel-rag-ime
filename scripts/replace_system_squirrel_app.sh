@@ -28,12 +28,19 @@ USAGE
 has_current_rag_ime_frontend_patch() {
   local app="$1"
   local executable="$app/Contents/MacOS/Squirrel"
+  local marker
+  local marker_text
   [[ -x "$executable" ]] || return 1
-  strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
-    strings "$executable" 2>/dev/null | grep -Fq "rag-ime.foreground-trace.v2" &&
-    strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_cleared"
+  marker_text="$(strings "$executable" 2>/dev/null || true)"
+  for marker in \
+    "rag-ime.squirrel-frontend-trace.v1" \
+    "rag-ime.foreground-trace.v2" \
+    "composition_ai_suppressed" \
+    "foreground_context_capture_resolved" \
+    "assistant_overlay_candidate_visible" \
+    "side_candidate_feedback_recorded"; do
+    grep -Fq -- "$marker" <<< "$marker_text" || return 1
+  done
 }
 
 bool_true() {

@@ -62,6 +62,9 @@ def rank_hybrid_hits(
                     "docType": doc_type,
                     "lanes": sorted({hit.source_lane for hit in doc_hits}),
                     "rawScores": {hit.source_lane: hit.raw_score for hit in doc_hits},
+                    "groupCompatibility": max(
+                        float(hit.metadata.get("groupCompatibility") or 0.0) for hit in doc_hits
+                    ),
                 },
             )
         )
@@ -86,16 +89,18 @@ def _score_features(hits: list[HybridRagHit]) -> dict[str, float]:
         features["app_scope"] = 0.20
     if bool(best_metadata.get("feedbackAccepted")):
         features["feedback_bonus"] = max(features.get("feedback_bonus", 0.0), 1.20)
+    group_compatibility = float(best_metadata.get("groupCompatibility") or 0.0)
+    if group_compatibility > 0.0:
+        features["group_compatibility"] = group_compatibility * 0.8
     return features
 
 
 def _candidate_text(hit: HybridRagHit) -> str:
-    if hit.doc_type == "book":
-        title = compact_whitespace(str(hit.metadata.get("bookTitle") or ""))
-        return title if title else compact_whitespace(hit.text)[:24]
     surface = next((compact_whitespace(item) for item in hit.surface_hints if compact_whitespace(item)), "")
     if surface:
         return surface
+    if hit.doc_type in {"book", "atom"}:
+        return ""
     if hit.doc_type == "phrase":
         return compact_whitespace(hit.text)
     if hit.doc_type == "item":

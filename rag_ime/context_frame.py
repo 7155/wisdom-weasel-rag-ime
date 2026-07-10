@@ -65,7 +65,16 @@ class ForegroundTextSnapshot:
     whole_value_chars: int = 0
     can_replace_selection: bool = False
     capture_epoch: int = 0
+    captured_at_ms: int = 0
+    source_app_bundle_id: str = ""
+    input_source_id: str = ""
+    capture_failure_reason: str = ""
     warnings: tuple[str, ...] = ()
+    snapshot_id: str = ""
+    context_group_id: str = ""
+    context_group_level: str = "app"
+    context_group_confidence: float = 0.0
+    commit_text_matched: bool = False
 
 
 @dataclass(frozen=True)
@@ -215,11 +224,14 @@ def foreground_text_from_payload(
         selected_hash, selected_chars = selected_text_identity(selected_preview)
     whole_hash = compact_whitespace(_string(payload.get("wholeValueHash")))
     whole_chars = _int(payload.get("wholeValueChars"), default=0)
+    captured_at_ms = max(0, _int(payload.get("capturedAtMs"), default=0))
+    declared_freshness_ms = max(0, _int(payload.get("freshnessMs"), default=0))
+    measured_freshness_ms = max(0, created_at_ms - captured_at_ms) if captured_at_ms else 0
     return ForegroundTextSnapshot(
         available=_bool(payload.get("available"), default=source != "unavailable"),
         source=source,
         confidence=_float(payload.get("confidence"), default=source_confidence(source)),
-        freshness_ms=max(0, _int(payload.get("freshnessMs"), default=0)),
+        freshness_ms=max(declared_freshness_ms, measured_freshness_ms),
         selected_text_hash=selected_hash,
         selected_text_chars=selected_chars,
         selected_text_preview=selected_preview,
@@ -229,6 +241,10 @@ def foreground_text_from_payload(
         whole_value_chars=whole_chars,
         can_replace_selection=_bool(payload.get("canReplaceSelection"), default=False),
         capture_epoch=_int(payload.get("captureEpoch"), default=snapshot.frontend_transaction.input_generation),
+        captured_at_ms=captured_at_ms,
+        source_app_bundle_id=compact_whitespace(_string(payload.get("sourceAppBundleId"))),
+        input_source_id=compact_whitespace(_string(payload.get("inputSourceId"))),
+        capture_failure_reason=compact_whitespace(_string(payload.get("captureFailureReason"))),
         warnings=tuple(
             compact_whitespace(str(item))
             for item in payload.get("warnings", ())
@@ -236,6 +252,11 @@ def foreground_text_from_payload(
         )
         if isinstance(payload.get("warnings"), (list, tuple))
         else (),
+        snapshot_id=compact_whitespace(_string(payload.get("snapshotId"))),
+        context_group_id=compact_whitespace(_string(payload.get("contextGroupId"))),
+        context_group_level=compact_whitespace(_string(payload.get("contextGroupLevel"))) or "app",
+        context_group_confidence=_float(payload.get("contextGroupConfidence"), default=0.0),
+        commit_text_matched=_bool(payload.get("commitTextMatched"), default=False),
     )
 
 
@@ -267,7 +288,16 @@ def context_frame_trace_payload(frame: CurrentInputFrame, *, include_text: bool 
             "wholeValueChars": foreground.whole_value_chars,
             "canReplaceSelection": foreground.can_replace_selection,
             "captureEpoch": foreground.capture_epoch,
+            "capturedAtMs": foreground.captured_at_ms,
+            "sourceAppBundleId": foreground.source_app_bundle_id,
+            "inputSourceId": foreground.input_source_id,
+            "captureFailureReason": foreground.capture_failure_reason,
             "warnings": list(foreground.warnings),
+            "snapshotId": foreground.snapshot_id,
+            "contextGroupId": foreground.context_group_id,
+            "contextGroupLevel": foreground.context_group_level,
+            "contextGroupConfidence": foreground.context_group_confidence,
+            "commitTextMatched": foreground.commit_text_matched,
         },
         "composition": {
             "rawInputHash": stable_text_hash(composition.raw_input),
@@ -369,4 +399,3 @@ def _bool(value: object, *, default: bool) -> bool:
         if normalized in {"0", "false", "no", "off"}:
             return False
     return default
-

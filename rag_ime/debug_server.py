@@ -1929,6 +1929,8 @@ class DebugImeService:
             provider_name=_string(payload.get("providerName")) or "debug-page",
             tags=tuple(_string_list(payload.get("tags"))),
             source=_string(payload.get("source")) or "debug_page_commit",
+            context_group_id=_string(payload.get("contextGroupId")),
+            context_group_level=_string(payload.get("contextGroupLevel")) or "app",
         )
         self._clear_rime_cache()
         return {"ok": True, "eventId": event_id, "eventCount": self._event_count()}

@@ -48,7 +48,7 @@ index 813deae..9688570 100644
  			);
 diff --git a/rag-ime.squirrel.custom.yaml b/rag-ime.squirrel.custom.yaml
 new file mode 100644
-index 0000000..4c2ae38
+index 0000000..b527dbc
 --- /dev/null
 +++ b/rag-ime.squirrel.custom.yaml
 @@ -0,0 +1,14 @@
@@ -62,9 +62,9 @@ index 0000000..4c2ae38
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 5
-+  latency_budget_ms: 300
++  latency_budget_ms: 900
 +  debounce_ms: 80
-+  timeout_ms: 250
++  timeout_ms: 1200
 +  frontend_trace: true
 diff --git a/sources/InputSource.swift b/sources/InputSource.swift
 index 89c1214..a240173 100644
@@ -195,10 +195,10 @@ index f998248..a56500e 100644
      return
 diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
 new file mode 100644
-index 0000000..9d683e7
+index 0000000..a2b4658
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,179 @@
 +//
 +//  RagImeAssistantPanelController.swift
 +//  Squirrel
@@ -321,7 +321,8 @@ index 0000000..9d683e7
 +  private func candidateButton(_ candidate: RagImeDisplayCandidate, index: Int) -> NSButton {
 +    let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? candidate.insertText : candidate.text
 +    let shortcut = index == 0 ? "Tab" : "⌥\(index + 1)"
-+    let button = NSButton(title: "\(shortcut)  \(text)", target: self, action: #selector(candidateButtonClicked(_:)))
++    let sourceBadge = (candidate.sourceBadge ?? candidate.badge ?? "AI").trimmingCharacters(in: .whitespacesAndNewlines)
++    let button = NSButton(title: "\(shortcut)   [\(sourceBadge)]  \(text)", target: self, action: #selector(candidateButtonClicked(_:)))
 +    button.bezelStyle = .rounded
 +    button.alignment = .left
 +    button.tag = index
@@ -379,10 +380,10 @@ index 0000000..9d683e7
 +}
 diff --git a/sources/RagImeSelectedTextProvider.swift b/sources/RagImeSelectedTextProvider.swift
 new file mode 100644
-index 0000000..343671d
+index 0000000..df9eb69
 --- /dev/null
 +++ b/sources/RagImeSelectedTextProvider.swift
-@@ -0,0 +1,305 @@
+@@ -0,0 +1,476 @@
 +//
 +//  RagImeSelectedTextProvider.swift
 +//  Squirrel
@@ -392,6 +393,7 @@ index 0000000..343671d
 +import ApplicationServices
 +import CryptoKit
 +import Foundation
++import InputMethodKit
 +
 +struct RagImeSelectedTextCapture {
 +  let selectedText: String
@@ -405,15 +407,128 @@ index 0000000..343671d
 +  let captureSource: String
 +}
 +
++struct RagImeForegroundTextCaptureResult {
++  let snapshot: RagImeForegroundTextSnapshot?
++  let failureReason: String
++}
++
++final class RagImeForegroundContextResolver {
++  private let accessibilityProvider = RagImeSelectedTextProvider()
++
++  func captureFromTextInputClient(
++    _ client: IMKTextInput?,
++    captureEpoch: Int,
++    sourceAppBundleId: String,
++    inputSourceId: String,
++    beforeLimit: Int = 300,
++    afterLimit: Int = 80
++  ) -> RagImeForegroundTextCaptureResult {
++    guard let client else {
++      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "text_input_client_missing")
++    }
++    let selectedRange = client.selectedRange()
++    guard selectedRange.location != NSNotFound, selectedRange.location >= 0, selectedRange.length >= 0 else {
++      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "selected_range_invalid")
++    }
++    let beforeLength = min(max(0, selectedRange.location), max(0, beforeLimit))
++    let beforeRange = NSRange(location: max(0, selectedRange.location - beforeLength), length: beforeLength)
++    guard let beforeValue = client.attributedSubstring(from: beforeRange)?.string else {
++      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "attributed_substring_unavailable")
++    }
++    let selectedText = selectedRange.length > 0
++      ? (client.attributedSubstring(from: selectedRange)?.string ?? "")
++      : ""
++    let afterRange = NSRange(location: selectedRange.location + selectedRange.length, length: max(0, afterLimit))
++    let afterText = client.attributedSubstring(from: afterRange)?.string ?? ""
++    let before = beforeValue.trimmingCharacters(in: .whitespacesAndNewlines)
++    let selected = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
++    let after = afterText.trimmingCharacters(in: .whitespacesAndNewlines)
++    guard !before.isEmpty || !selected.isEmpty || !after.isEmpty else {
++      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "attributed_substring_empty")
++    }
++    let capturedAtMs = Int(Date().timeIntervalSince1970 * 1000)
++    let group = accessibilityProvider.resolveContextGroupIdentity(sourceAppBundleId: sourceAppBundleId)
++    return RagImeForegroundTextCaptureResult(
++      snapshot: RagImeForegroundTextSnapshot(
++        available: true,
++        source: "text_input_client",
++        confidence: 0.92,
++        freshnessMs: 0,
++        selectedTextHash: selected.isEmpty ? "" : ragImeStableTextHash(selected),
++        selectedTextChars: selected.count,
++        selectedTextPreview: String(selected.prefix(48)),
++        surroundingBefore: before,
++        surroundingAfter: after,
++        wholeValueHash: "",
++        wholeValueChars: 0,
++        canReplaceSelection: !selected.isEmpty,
++        captureEpoch: captureEpoch,
++        capturedAtMs: capturedAtMs,
++        sourceAppBundleId: sourceAppBundleId,
++        inputSourceId: inputSourceId,
++        captureFailureReason: "",
++        warnings: ["text_input_client_ok"],
++        snapshotId: "ctx_\(UUID().uuidString)",
++        contextGroupId: group.id,
++        contextGroupLevel: group.level,
++        contextGroupConfidence: group.confidence,
++        commitTextMatched: false
++      ),
++      failureReason: ""
++    )
++  }
++
++  func captureFromAccessibility(
++    captureEpoch: Int,
++    sourceAppBundleId: String,
++    inputSourceId: String,
++    beforeLimit: Int = 300,
++    afterLimit: Int = 80
++  ) -> RagImeForegroundTextCaptureResult {
++    accessibilityProvider.resolveForegroundTextForSidecar(
++      captureEpoch: captureEpoch,
++      sourceAppBundleId: sourceAppBundleId,
++      inputSourceId: inputSourceId,
++      beforeLimit: beforeLimit,
++      afterLimit: afterLimit,
++      allowAccessibility: true
++    )
++  }
++}
++
 +final class RagImeSelectedTextProvider {
 +  func captureForegroundTextForSidecar(
 +    captureEpoch: Int,
++    sourceAppBundleId: String = "",
++    inputSourceId: String = "",
 +    beforeLimit: Int = 300,
 +    afterLimit: Int = 80,
 +    allowAccessibility: Bool = true
 +  ) -> RagImeForegroundTextSnapshot? {
-+    guard allowAccessibility, let focused = focusedTextElement() else {
-+      return nil
++    resolveForegroundTextForSidecar(
++      captureEpoch: captureEpoch,
++      sourceAppBundleId: sourceAppBundleId,
++      inputSourceId: inputSourceId,
++      beforeLimit: beforeLimit,
++      afterLimit: afterLimit,
++      allowAccessibility: allowAccessibility
++    ).snapshot
++  }
++
++  func resolveForegroundTextForSidecar(
++    captureEpoch: Int,
++    sourceAppBundleId: String,
++    inputSourceId: String,
++    beforeLimit: Int = 300,
++    afterLimit: Int = 80,
++    allowAccessibility: Bool = true
++  ) -> RagImeForegroundTextCaptureResult {
++    guard allowAccessibility else {
++      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: "accessibility_disabled")
++    }
++    guard let focused = focusedTextElement() else {
++      let reason = AXIsProcessTrusted() ? "ax_focused_element_missing" : "ax_not_trusted"
++      return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: reason)
 +    }
 +    let selectedRange = selectedTextRange(in: focused)
 +    if let range = selectedRange,
@@ -421,18 +536,26 @@ index 0000000..343671d
 +        focused,
 +        selectedRange: range,
 +        captureEpoch: captureEpoch,
++        sourceAppBundleId: sourceAppBundleId,
++        inputSourceId: inputSourceId,
 +        beforeLimit: beforeLimit,
 +        afterLimit: afterLimit
 +       ) {
-+      return snapshot
++      return RagImeForegroundTextCaptureResult(snapshot: snapshot, failureReason: "")
 +    }
-+    return foregroundSnapshotFromWholeValue(
++    if let snapshot = foregroundSnapshotFromWholeValue(
 +      focused,
 +      selectedRange: selectedRange,
 +      captureEpoch: captureEpoch,
++      sourceAppBundleId: sourceAppBundleId,
++      inputSourceId: inputSourceId,
 +      beforeLimit: beforeLimit,
 +      afterLimit: afterLimit
-+    )
++    ) {
++      return RagImeForegroundTextCaptureResult(snapshot: snapshot, failureReason: "")
++    }
++    let reason = selectedRange == nil ? "ax_selected_range_unavailable" : "ax_string_for_range_failed"
++    return RagImeForegroundTextCaptureResult(snapshot: nil, failureReason: reason)
 +  }
 +
 +  func captureSelectedTextForActiveRag(
@@ -504,6 +627,8 @@ index 0000000..343671d
 +    _ focused: AXUIElement,
 +    selectedRange: CFRange,
 +    captureEpoch: Int,
++    sourceAppBundleId: String,
++    inputSourceId: String,
 +    beforeLimit: Int,
 +    afterLimit: Int
 +  ) -> RagImeForegroundTextSnapshot? {
@@ -526,6 +651,8 @@ index 0000000..343671d
 +      wholeValue: "",
 +      confidence: 0.86,
 +      captureEpoch: captureEpoch,
++      sourceAppBundleId: sourceAppBundleId,
++      inputSourceId: inputSourceId,
 +      warnings: ["string_for_range"]
 +    )
 +  }
@@ -534,6 +661,8 @@ index 0000000..343671d
 +    _ focused: AXUIElement,
 +    selectedRange: CFRange?,
 +    captureEpoch: Int,
++    sourceAppBundleId: String,
++    inputSourceId: String,
 +    beforeLimit: Int,
 +    afterLimit: Int
 +  ) -> RagImeForegroundTextSnapshot? {
@@ -562,6 +691,8 @@ index 0000000..343671d
 +      wholeValue: value,
 +      confidence: selectedRange == nil ? 0.62 : 0.72,
 +      captureEpoch: captureEpoch,
++      sourceAppBundleId: sourceAppBundleId,
++      inputSourceId: inputSourceId,
 +      warnings: warnings
 +    )
 +  }
@@ -599,12 +730,15 @@ index 0000000..343671d
 +    wholeValue: String,
 +    confidence: Double,
 +    captureEpoch: Int,
++    sourceAppBundleId: String,
++    inputSourceId: String,
 +    warnings: [String]
 +  ) -> RagImeForegroundTextSnapshot? {
 +    let compactBefore = surroundingBefore.trimmingCharacters(in: .whitespacesAndNewlines)
 +    let compactAfter = surroundingAfter.trimmingCharacters(in: .whitespacesAndNewlines)
 +    let compactSelected = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
 +    guard !compactBefore.isEmpty || !compactAfter.isEmpty || !compactSelected.isEmpty else { return nil }
++    let group = resolveContextGroupIdentity(sourceAppBundleId: sourceAppBundleId)
 +    return RagImeForegroundTextSnapshot(
 +      available: true,
 +      source: "accessibility",
@@ -619,8 +753,41 @@ index 0000000..343671d
 +      wholeValueChars: wholeValue.count,
 +      canReplaceSelection: !compactSelected.isEmpty,
 +      captureEpoch: captureEpoch,
-+      warnings: warnings
++      capturedAtMs: Int(Date().timeIntervalSince1970 * 1000),
++      sourceAppBundleId: sourceAppBundleId,
++      inputSourceId: inputSourceId,
++      captureFailureReason: "",
++      warnings: warnings,
++      snapshotId: "ctx_\(UUID().uuidString)",
++      contextGroupId: group.id,
++      contextGroupLevel: group.level,
++      contextGroupConfidence: group.confidence,
++      commitTextMatched: false
 +    )
++  }
++
++  func resolveContextGroupIdentity(sourceAppBundleId: String) -> (id: String, level: String, confidence: Double) {
++    guard let focused = focusedTextElement() else {
++      return (ragImeContextGroupId(prefix: "app", values: [sourceAppBundleId]), "app", 0.5)
++    }
++    if let document = accessibilityStringAttribute(kAXDocumentAttribute as CFString, element: focused), !document.isEmpty {
++      return (ragImeContextGroupId(prefix: "doc", values: [sourceAppBundleId, document]), "document", 1.0)
++    }
++    var windowObject: AnyObject?
++    if AXUIElementCopyAttributeValue(focused, kAXWindowAttribute as CFString, &windowObject) == .success,
++       let windowObject {
++      let window = windowObject as! AXUIElement
++      if let title = accessibilityStringAttribute(kAXTitleAttribute as CFString, element: window), !title.isEmpty {
++        return (ragImeContextGroupId(prefix: "doc", values: [sourceAppBundleId, title]), "document", 0.85)
++      }
++    }
++    return (ragImeContextGroupId(prefix: "app", values: [sourceAppBundleId]), "app", 0.5)
++  }
++
++  private func accessibilityStringAttribute(_ attribute: CFString, element: AXUIElement) -> String? {
++    var value: AnyObject?
++    guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
++    return value as? String
 +  }
 +
 +  private func captureSelectedTextViaClipboardFallbackPreservingPasteboard(captureEpoch: Int) -> RagImeSelectedTextCapture? {
@@ -688,12 +855,17 @@ index 0000000..343671d
 +  _ = event
 +  _ = previousChangeCount
 +}
++
++private func ragImeContextGroupId(prefix: String, values: [String]) -> String {
++  let material = values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.joined(separator: "\u{001f}")
++  return "\(prefix):\(ragImeStableTextHash(material).prefix(16))"
++}
 diff --git a/sources/RagImeSidecarClient.swift b/sources/RagImeSidecarClient.swift
 new file mode 100644
-index 0000000..8e12f4e
+index 0000000..bed7543
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,437 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -737,9 +909,9 @@ index 0000000..8e12f4e
 +    self.project = configuredProject.isEmpty ? "wisdom-weasel-rag-ime" : configuredProject
 +    self.maxVisibleCandidates = Self.intConfig(config, "rag_ime/max_visible_candidates", fallback: 8, range: 1...10)
 +    self.maxSideCandidates = Self.intConfig(config, "rag_ime/max_side_candidates", fallback: 5, range: 0...10)
-+    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 300, range: 30...3000)
++    self.latencyBudgetMs = Self.intConfig(config, "rag_ime/latency_budget_ms", fallback: 900, range: 30...3000)
 +    self.debounceMs = Self.intConfig(config, "rag_ime/debounce_ms", fallback: 80, range: 0...500)
-+    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 250, range: 30...3000)) / 1000
++    self.timeoutSeconds = TimeInterval(Self.intConfig(config, "rag_ime/timeout_ms", fallback: 1200, range: 30...3000)) / 1000
 +    self.sidecarURL = configuredSidecarURL.isEmpty ? nil : URL(string: configuredSidecarURL)
 +    self.frontendTrace = config?.getBool("rag_ime/frontend_trace") == true
 +  }
@@ -814,10 +986,19 @@ index 0000000..8e12f4e
 +    shownCandidates: [RagImeDisplayCandidate],
 +    query: String,
 +    recentContext: String,
-+    preedit: String
-+  ) throws {
++    preedit: String,
++    contextGroupId: String,
++    contextGroupLevel: String
++  ) throws -> RagImeSelectionReceipt {
 +    let insertText = candidate.insertText.isEmpty ? candidate.text : candidate.insertText
-+    guard !Self.trimmed(insertText).isEmpty else { return }
++    guard !Self.trimmed(insertText).isEmpty else {
++      return RagImeSelectionReceipt(
++        schemaVersion: "rag-ime.rime-selection.v1",
++        ok: false,
++        eventId: "",
++        recordedActionCount: 0
++      )
++    }
 +    let selectionPayload = RagImeSelectionPayload(
 +      candidate: candidate,
 +      shownCandidates: shownCandidates,
@@ -827,12 +1008,14 @@ index 0000000..8e12f4e
 +      preedit: preedit,
 +      project: project,
 +      source: "squirrel_rime_sidecar",
-+      app: "squirrel"
++      app: "squirrel",
++      contextGroupId: contextGroupId,
++      contextGroupLevel: contextGroupLevel
 +    )
 +    if let sidecarURL {
 +      do {
-+        _ = try postJSON(selectionPayload, to: endpoint("rime-select", base: sidecarURL))
-+        return
++        let data = try postJSON(selectionPayload, to: endpoint("rime-select", base: sidecarURL))
++        return try JSONDecoder().decode(RagImeSelectionReceipt.self, from: data)
 +      } catch {
 +        print("RAG IME rime-select failed, falling back to legacy commit/action: \(error)")
 +      }
@@ -843,22 +1026,24 @@ index 0000000..8e12f4e
 +        let requestData = try JSONEncoder().encode(selectionPayload)
 +        try requestData.write(to: requestFile, options: .atomic)
 +        defer { try? FileManager.default.removeItem(at: requestFile) }
-+        _ = try runCli([
++        let data = try runCli([
 +          "rime-select-json",
 +          "--payload-file",
 +          requestFile.path,
 +        ])
-+        return
++        return try JSONDecoder().decode(RagImeSelectionReceipt.self, from: data)
 +      } catch {
 +        print("RAG IME rime-select CLI failed, falling back to legacy commit/action: \(error)")
 +      }
 +    }
-+    try recordSideCandidateCommitLegacy(
++    return try recordSideCandidateCommitLegacy(
 +      candidate,
 +      insertText: insertText,
 +      query: query,
 +      recentContext: recentContext,
-+      preedit: preedit
++      preedit: preedit,
++      contextGroupId: contextGroupId,
++      contextGroupLevel: contextGroupLevel
 +    )
 +  }
 +
@@ -867,15 +1052,19 @@ index 0000000..8e12f4e
 +    insertText: String,
 +    query: String,
 +    recentContext: String,
-+    preedit: String
-+  ) throws {
++    preedit: String,
++    contextGroupId: String,
++    contextGroupLevel: String
++  ) throws -> RagImeSelectionReceipt {
 +    let commitPayload = RagImeCommitPayload(
 +      text: insertText,
 +      recentContext: recentContext,
 +      preedit: preedit,
 +      project: project,
 +      source: "squirrel_rime_sidecar",
-+      tags: ["squirrel", "rime-sidecar"]
++      tags: ["squirrel", "rime-sidecar"],
++      contextGroupId: contextGroupId,
++      contextGroupLevel: contextGroupLevel
 +    )
 +    if let sidecarURL {
 +      _ = try postJSON(commitPayload, to: endpoint("commit", base: sidecarURL))
@@ -902,7 +1091,12 @@ index 0000000..8e12f4e
 +          !candidate.memoryId.isEmpty,
 +          !candidate.suggestionId.isEmpty,
 +          let sourceEventId = candidate.sourceEventId else {
-+      return
++      return RagImeSelectionReceipt(
++        schemaVersion: "rag-ime.rime-selection.v1",
++        ok: true,
++        eventId: "",
++        recordedActionCount: 0
++      )
 +    }
 +    let actionPayload = RagImeActionPayload(
 +      actionType: "accepted",
@@ -930,6 +1124,12 @@ index 0000000..8e12f4e
 +        candidate.text,
 +      ])
 +    }
++    return RagImeSelectionReceipt(
++      schemaVersion: "rag-ime.rime-selection.v1",
++      ok: true,
++      eventId: String(sourceEventId),
++      recordedActionCount: 1
++    )
 +  }
 +}
 +
@@ -943,6 +1143,8 @@ index 0000000..8e12f4e
 +  let project: String
 +  let source: String
 +  let app: String
++  let contextGroupId: String
++  let contextGroupLevel: String
 +}
 +
 +struct RagImeCommitPayload: Encodable {
@@ -952,6 +1154,8 @@ index 0000000..8e12f4e
 +  let project: String
 +  let source: String
 +  let tags: [String]
++  let contextGroupId: String
++  let contextGroupLevel: String
 +}
 +
 +struct RagImeActionPayload: Encodable {
@@ -1101,10 +1305,10 @@ index 0000000..8e12f4e
 +}
 diff --git a/sources/RagImeSidecarModels.swift b/sources/RagImeSidecarModels.swift
 new file mode 100644
-index 0000000..5a8a1a1
+index 0000000..b496ad8
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,526 @@
+@@ -0,0 +1,656 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
@@ -1119,6 +1323,8 @@ index 0000000..5a8a1a1
 +  let predictionFirstMerge: Bool
 +  let sessionId: String
 +  let requestSeq: Int
++  let inputGeneration: Int
++  let createdAtMs: Int
 +  let frontendRevision: Int
 +  let selectionEpoch: Int
 +  let frontAppBundleId: String
@@ -1126,6 +1332,10 @@ index 0000000..5a8a1a1
 +  let compositionHash: String
 +  let committedContextHash: String
 +  let panelSessionId: String
++  let capturedAtMs: Int
++  let sourceAppBundleId: String
++  let captureEpoch: Int
++  let captureFailureReason: String
 +  let rawInput: String
 +  let preedit: String
 +  let commitTextPreview: String
@@ -1135,6 +1345,10 @@ index 0000000..5a8a1a1
 +  let maxVisibleCandidates: Int
 +  let maxSideCandidates: Int
 +  let forceSideCandidates: Bool
++  let commitBurstReady: Bool
++  let acceptedCandidateContinuation: Bool
++  let commitBurstDeltaChars: Int
++  let commitBurstTexts: [String]
 +  let progressiveFollowUp: Bool
 +  let foregroundText: RagImeForegroundTextSnapshot
 +  let rimeContext: RagImeRimeContextPayload
@@ -1154,7 +1368,120 @@ index 0000000..5a8a1a1
 +  let wholeValueChars: Int
 +  let canReplaceSelection: Bool
 +  let captureEpoch: Int
++  let capturedAtMs: Int
++  let sourceAppBundleId: String
++  let inputSourceId: String
++  let captureFailureReason: String
 +  let warnings: [String]
++  let snapshotId: String
++  let contextGroupId: String
++  let contextGroupLevel: String
++  let contextGroupConfidence: Double
++  let commitTextMatched: Bool
++}
++
++extension RagImeForegroundTextSnapshot {
++  func withFreshness(_ freshnessMs: Int) -> RagImeForegroundTextSnapshot {
++    RagImeForegroundTextSnapshot(
++      available: available,
++      source: source,
++      confidence: confidence,
++      freshnessMs: max(0, freshnessMs),
++      selectedTextHash: selectedTextHash,
++      selectedTextChars: selectedTextChars,
++      selectedTextPreview: selectedTextPreview,
++      surroundingBefore: surroundingBefore,
++      surroundingAfter: surroundingAfter,
++      wholeValueHash: wholeValueHash,
++      wholeValueChars: wholeValueChars,
++      canReplaceSelection: canReplaceSelection,
++      captureEpoch: captureEpoch,
++      capturedAtMs: capturedAtMs,
++      sourceAppBundleId: sourceAppBundleId,
++      inputSourceId: inputSourceId,
++      captureFailureReason: captureFailureReason,
++      warnings: warnings,
++      snapshotId: snapshotId,
++      contextGroupId: contextGroupId,
++      contextGroupLevel: contextGroupLevel,
++      contextGroupConfidence: contextGroupConfidence,
++      commitTextMatched: commitTextMatched
++    )
++  }
++
++  func withCommitTextMatched(_ matched: Bool) -> RagImeForegroundTextSnapshot {
++    RagImeForegroundTextSnapshot(
++      available: available,
++      source: source,
++      confidence: confidence,
++      freshnessMs: freshnessMs,
++      selectedTextHash: selectedTextHash,
++      selectedTextChars: selectedTextChars,
++      selectedTextPreview: selectedTextPreview,
++      surroundingBefore: surroundingBefore,
++      surroundingAfter: surroundingAfter,
++      wholeValueHash: wholeValueHash,
++      wholeValueChars: wholeValueChars,
++      canReplaceSelection: canReplaceSelection,
++      captureEpoch: captureEpoch,
++      capturedAtMs: capturedAtMs,
++      sourceAppBundleId: sourceAppBundleId,
++      inputSourceId: inputSourceId,
++      captureFailureReason: captureFailureReason,
++      warnings: warnings,
++      snapshotId: snapshotId,
++      contextGroupId: contextGroupId,
++      contextGroupLevel: contextGroupLevel,
++      contextGroupConfidence: contextGroupConfidence,
++      commitTextMatched: matched
++    )
++  }
++}
++
++extension RagImeSidecarRequest {
++  func withForegroundTransaction(
++    foregroundText: RagImeForegroundTextSnapshot,
++    committedContext: String,
++    committedContextHash: String,
++    captureFailureReason: String = ""
++  ) -> RagImeSidecarRequest {
++    RagImeSidecarRequest(
++      frontendBuild: frontendBuild,
++      schemaVersion: schemaVersion,
++      predictionFirstMerge: predictionFirstMerge,
++      sessionId: sessionId,
++      requestSeq: requestSeq,
++      inputGeneration: inputGeneration,
++      createdAtMs: createdAtMs,
++      frontendRevision: frontendRevision,
++      selectionEpoch: selectionEpoch,
++      frontAppBundleId: frontAppBundleId,
++      inputSourceId: inputSourceId,
++      compositionHash: compositionHash,
++      committedContextHash: committedContextHash,
++      panelSessionId: panelSessionId,
++      capturedAtMs: foregroundText.capturedAtMs,
++      sourceAppBundleId: foregroundText.sourceAppBundleId,
++      captureEpoch: foregroundText.captureEpoch,
++      captureFailureReason: captureFailureReason,
++      rawInput: rawInput,
++      preedit: preedit,
++      commitTextPreview: commitTextPreview,
++      committedContext: committedContext,
++      project: project,
++      latencyBudgetMs: latencyBudgetMs,
++      maxVisibleCandidates: maxVisibleCandidates,
++      maxSideCandidates: maxSideCandidates,
++      forceSideCandidates: forceSideCandidates,
++      commitBurstReady: commitBurstReady,
++      acceptedCandidateContinuation: acceptedCandidateContinuation,
++      commitBurstDeltaChars: commitBurstDeltaChars,
++      commitBurstTexts: commitBurstTexts,
++      progressiveFollowUp: progressiveFollowUp,
++      foregroundText: foregroundText,
++      rimeContext: rimeContext
++    )
++  }
 +}
 +
 +struct RagImeActiveRagRequest: Codable {
@@ -1564,6 +1891,13 @@ index 0000000..5a8a1a1
 +  let side: String
 +}
 +
++struct RagImeSelectionReceipt: Codable {
++  let schemaVersion: String
++  let ok: Bool
++  let eventId: String
++  let recordedActionCount: Int
++}
++
 +struct RagImeMergePolicy: Codable {
 +  let rimeFirst: Bool
 +  let maxVisibleCandidates: Int
@@ -1654,15 +1988,19 @@ index 124ef7b..52c6983 100644
        inputController.deactivateServer(inputController.client())
      }
 diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
-index c2adf74..cd82e0e 100644
+index c2adf74..7f4fb39 100644
 --- a/sources/SquirrelInputController.swift
 +++ b/sources/SquirrelInputController.swift
-@@ -27,6 +27,62 @@ final class SquirrelInputController: IMKInputController {
+@@ -27,6 +27,73 @@ final class SquirrelInputController: IMKInputController {
    private var chordTimer: Timer?
    private var chordDuration: TimeInterval = 0
    private var currentApp: String = ""
 +  private var ragImeSidecarClient: RagImeSidecarClient?
 +  private let ragImeSelectedTextProvider = RagImeSelectedTextProvider()
++  private let ragImeForegroundContextResolver = RagImeForegroundContextResolver()
++  private let ragImeForegroundContextQueue = DispatchQueue(label: "im.rime.inputmethod.Squirrel.rag-ime-foreground-context")
++  private var ragImeForegroundCaptureToken: UUID?
++  private let ragImeForegroundCaptureTimeoutMs: Int = 140
 +  private var ragImeRequestSeq: Int = 0
 +  private var ragImeDisplayCandidates: [RagImeDisplayCandidate] = []
 +  private let ragImeAssistantOverlayController = RagImeAssistantPanelController()
@@ -1707,9 +2045,16 @@ index c2adf74..cd82e0e 100644
 +  private var ragImeActiveRagSelectionEpoch: Int = 0
 +  private var ragImeDisplayCompositionHash: String = ""
 +  private var ragImeDisplayCommittedContextHash: String = ""
++  private var ragImeDisplayContextGroupId: String = ""
++  private var ragImeDisplayContextGroupLevel: String = ""
 +  private var ragImeLastRequestFingerprint: String = ""
 +  private var ragImePendingRequestFingerprint: String = ""
 +  private var ragImePendingRequestWorkItem: DispatchWorkItem?
++  private var ragImeCommitBurstWorkItem: DispatchWorkItem?
++  private var ragImeCommitBurstGeneration: Int = 0
++  private var ragImeCommitBurstDeltaChars: Int = 0
++  private var ragImeCommitBurstTexts: [String] = []
++  private var ragImeCommitBurstCooldownUntil: Date = .distantPast
 +  private var ragImeDisplayExpiryWorkItem: DispatchWorkItem?
 +  private var ragImePendingContinuationCandidate: RagImeDisplayCandidate?
 +  private var ragImePendingContinuationCommittedText: String = ""
@@ -1720,7 +2065,7 @@ index c2adf74..cd82e0e 100644
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-@@ -99,6 +155,31 @@ final class SquirrelInputController: IMKInputController {
+@@ -99,6 +166,32 @@ final class SquirrelInputController: IMKInputController {
        }
  
        let keyCode = event.keyCode
@@ -1738,6 +2083,7 @@ index c2adf74..cd82e0e 100644
 +        return true
 +      }
 +      if isRagImeDeleteKey(keyCode, modifiers: modifiers) {
++        cancelRagImeCommitBurstAfterDelete()
 +        invalidateRagImeDisplayForInputChange(reason: "delete_key", keyCode: keyCode)
 +      }
 +      if keyCode == 48
@@ -1752,7 +2098,7 @@ index c2adf74..cd82e0e 100644
        var keyChars = event.charactersIgnoringModifiers
        let capitalModifiers = modifiers.isSubset(of: [.shift, .capsLock])
        if let code = keyChars?.first,
-@@ -106,6 +187,14 @@ final class SquirrelInputController: IMKInputController {
+@@ -106,6 +199,14 @@ final class SquirrelInputController: IMKInputController {
          keyChars = event.characters
        }
        if let char = keyChars?.first {
@@ -1767,7 +2113,7 @@ index c2adf74..cd82e0e 100644
          let rimeKeycode = SquirrelKeycode.osxKeycodeToRime(keycode: keyCode, keychar: char,
                                                             shift: modifiers.contains(.shift),
                                                             caps: modifiers.contains(.capsLock))
-@@ -124,6 +213,99 @@ final class SquirrelInputController: IMKInputController {
+@@ -124,6 +225,102 @@ final class SquirrelInputController: IMKInputController {
    }
  
    func selectCandidate(_ index: Int) -> Bool {
@@ -1848,13 +2194,16 @@ index c2adf74..cd82e0e 100644
 +          shownCandidates: ragImeDisplayCandidates,
 +          query: query,
 +          recentContext: recentContext,
-+          preedit: sourcePreedit
-+        )
++          preedit: sourcePreedit,
++          contextGroupId: ragImeDisplayContextGroupId,
++          contextGroupLevel: ragImeDisplayContextGroupLevel
++        ) { [weak self] _ in
++          self?.scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)
++        }
 +        ragImeFrontendRevision += 1
 +        ragImeSelectionEpoch += 1
 +        clearRagImeDisplayCandidates()
 +        rimeUpdate(clearReservedComments: false, requestSidecar: false)
-+        scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)
 +        return true
 +      }
 +      let rimeIndex = candidate.rimeIndex ?? candidate.sourceIndex
@@ -1867,7 +2216,7 @@ index c2adf74..cd82e0e 100644
      let success = rimeAPI.select_candidate_on_current_page(session, index)
      if success {
        rimeUpdate()
-@@ -131,6 +313,75 @@ final class SquirrelInputController: IMKInputController {
+@@ -131,6 +328,75 @@ final class SquirrelInputController: IMKInputController {
      return success
    }
  
@@ -1943,10 +2292,18 @@ index c2adf74..cd82e0e 100644
    // swiftlint:disable:next identifier_name
    func page(up: Bool) -> Bool {
      var handled = false
-@@ -301,6 +552,2652 @@ final class SquirrelInputController: IMKInputController {
+@@ -301,65 +567,3183 @@ final class SquirrelInputController: IMKInputController {
  
  private extension SquirrelInputController {
  
+-  func onChordTimer(_: Timer) {
+-    var processedKeys = false
+-    if chordKeyCount > 0 && session != 0 {
+-      // Chord typing releases are synthesized after the configured timeout.
+-      for i in 0..<chordKeyCount {
+-        let handled = rimeAPI.process_key(session, Int32(chordKeyCodes[i]), Int32(chordModifiers[i] | kReleaseMask.rawValue))
+-        if handled {
+-          processedKeys = true
 +  func configureRagImeSidecar() {
 +    ragImeSidecarClient = RagImeSidecarClient(config: NSApp.squirrelAppDelegate.config)
 +    clearRagImeDisplayCandidates()
@@ -2209,13 +2566,16 @@ index c2adf74..cd82e0e 100644
 +      shownCandidates: ragImeOverlayCandidates,
 +      query: ragImeOverlaySemanticQuery,
 +      recentContext: recentContext,
-+      preedit: ragImeOverlayPreedit
-+    )
++      preedit: ragImeOverlayPreedit,
++      contextGroupId: ragImeDisplayContextGroupId,
++      contextGroupLevel: ragImeDisplayContextGroupLevel
++    ) { [weak self] _ in
++      self?.scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)
++    }
 +    ragImeFrontendRevision += 1
 +    ragImeSelectionEpoch += 1
 +    dismissRagImeAssistantOverlay(reason: "candidate_accepted")
 +    rimeUpdate(clearReservedComments: false, requestSidecar: false)
-+    scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)
 +    return true
 +  }
 +
@@ -2298,10 +2658,21 @@ index c2adf74..cd82e0e 100644
 +    ragImeAssistantOverlayController.update(payload, anchor: currentRagImeInputAnchor()) { [weak self] candidate, index in
 +      _ = self?.commitRagImeAssistantCandidate(candidate, route: "click", index: index)
 +    }
++    let overlayCandidates = payload.candidates.enumerated().map { index, candidate in
++      ragImeOverlayTraceCandidateSummary(candidate, index: index)
++    }
++    let overlayKeyPolicy: [String: Any] = [
++      "numberKeys": payload.keyPolicy?.numberKeys ?? "pass_through",
++      "tab": payload.keyPolicy?.tab ?? "accept_top_prediction",
++      "optionNumber": payload.keyPolicy?.optionNumber ?? "select_prediction_by_ordinal",
++      "escape": payload.keyPolicy?.escape ?? "dismiss_prediction",
++    ]
 +    traceRagImeFrontendEvent(traceEvent, fields: [
 +      "uiMode": payload.uiMode,
 +      "phase": payload.phase,
 +      "candidateCount": payload.candidates.count,
++      "candidates": overlayCandidates,
++      "keyPolicy": overlayKeyPolicy,
 +      "sourceCardCount": payload.sourceCards.count,
 +      "statusText": payload.statusText,
 +      "snapshotId": payload.snapshotId,
@@ -2317,6 +2688,11 @@ index c2adf74..cd82e0e 100644
 +      traceRagImeFrontendEvent("assistant_overlay_candidate_visible", fields: [
 +        "candidateCount": payload.candidates.count,
 +        "uiMode": payload.uiMode,
++        "phase": payload.phase,
++        "snapshotId": payload.snapshotId,
++        "panelSessionId": ragImeOverlayPanelSessionId,
++        "keyPolicy": overlayKeyPolicy,
++        "candidates": overlayCandidates,
 +      ])
 +    }
 +  }
@@ -2784,9 +3160,12 @@ index c2adf74..cd82e0e 100644
 +        self.applyRagImeActiveRagResponse(nextResponse, request: request)
 +        if nextResponse.status == "pending" || nextResponse.thinkingRow {
 +          self.scheduleRagImeActiveRagStatusPoll(request: request, response: nextResponse, attempt: attempt + 1)
-+        }
-+      }
-+    }
+         }
+       }
+     }
+-    clearChord()
+-    if processedKeys {
+-      rimeUpdate()
 +  }
 +
 +  func refreshRagImeSidecar(
@@ -2800,10 +3179,16 @@ index c2adf74..cd82e0e 100644
 +    page: Int,
 +    lastPage: Bool,
 +    requestSidecar: Bool,
-+    immediate: Bool = false
++    immediate: Bool = false,
++    commitBurstReady: Bool = false,
++    acceptedCandidateContinuation: Bool = false,
++    commitBurstDeltaChars: Int = 0,
++    commitBurstTexts: [String] = []
 +  ) {
 +    guard requestSidecar else { return }
 +    if !rawInput.isEmpty || !preedit.isEmpty {
++      ragImeCommitBurstWorkItem?.cancel()
++      ragImeCommitBurstWorkItem = nil
 +      let hadAIUI = ragImeAssistantOverlayController.isVisible
 +        || ragImePanelUsesDisplayCandidates
 +        || !ragImeDisplayCandidates.isEmpty
@@ -2821,13 +3206,24 @@ index c2adf74..cd82e0e 100644
 +      ])
 +      return
 +    }
++    // Empty Rime updates also arrive for ASCII passthrough and mode switches.
++    // Only an actual commit burst or accepted AI continuation may enter the
++    // post-commit prediction lane.
++    guard commitBurstReady || acceptedCandidateContinuation else {
++      return
++    }
 +    guard let sidecarClient = ragImeSidecarClient else {
 +      clearRagImeDisplayCandidates()
 +      return
 +    }
 +    syncRagImeCommittedContextFromClient(excludingMarkedText: preedit)
 +    pruneRagImeCommittedContext()
-+    guard !rawInput.isEmpty || !preedit.isEmpty || !candidates.isEmpty || !ragImeCommittedContext.isEmpty else {
++    let hasPostCommitCaptureSeed = commitBurstReady && !ragImeCompactWhitespace(commitTextPreview).isEmpty
++    guard !rawInput.isEmpty
++      || !preedit.isEmpty
++      || !candidates.isEmpty
++      || !ragImeCommittedContext.isEmpty
++      || hasPostCommitCaptureSeed else {
 +      clearRagImeDisplayCandidates()
 +      return
 +    }
@@ -2844,6 +3240,9 @@ index c2adf74..cd82e0e 100644
 +    let compositionHash = ragImeStableTextHash(compositionText)
 +    let committedContextHash = ragImeStableTextHash(ragImeCommittedContext)
 +    let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty
++    let scheduledInputGeneration = ragImeInputGeneration + 1
++    let scheduledAtMs = Int(Date().timeIntervalSince1970 * 1000)
++    let inputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
 +    let textInputClientContext = (!rawInput.isEmpty || !preedit.isEmpty)
 +      ? ""
 +      : actualRagImeCommittedContextFromClient(fallback: "", excludingMarkedText: "")
@@ -2866,15 +3265,19 @@ index c2adf74..cd82e0e 100644
 +      wholeValueHash: "",
 +      wholeValueChars: 0,
 +      canReplaceSelection: false,
-+      captureEpoch: ragImeInputGeneration,
-+      warnings: textInputClientContext.isEmpty ? [] : ["text_input_client_context"]
++      captureEpoch: scheduledInputGeneration,
++      capturedAtMs: scheduledAtMs,
++      sourceAppBundleId: currentApp,
++      inputSourceId: inputSourceId,
++      captureFailureReason: textInputClientContext.isEmpty ? "capture_pending" : "",
++      warnings: textInputClientContext.isEmpty ? [] : ["text_input_client_context"],
++      snapshotId: "ctx_\(UUID().uuidString)",
++      contextGroupId: "app:\(ragImeStableTextHash(currentApp).prefix(16))",
++      contextGroupLevel: "app",
++      contextGroupConfidence: 0.5,
++      commitTextMatched: false
 +    )
-+    let foregroundText = ragImeSelectedTextProvider.captureForegroundTextForSidecar(
-+      captureEpoch: ragImeInputGeneration,
-+      beforeLimit: 300,
-+      afterLimit: 80,
-+      allowAccessibility: false
-+    ) ?? fallbackForegroundText
++    let foregroundText = fallbackForegroundText
 +    let fingerprint = ragImeRequestFingerprint(
 +      rawInput: rawInput,
 +      preedit: preedit,
@@ -2901,13 +3304,19 @@ index c2adf74..cd82e0e 100644
 +      predictionFirstMerge: true,
 +      sessionId: String(session),
 +      requestSeq: requestSeq,
++      inputGeneration: scheduledInputGeneration,
++      createdAtMs: scheduledAtMs,
 +      frontendRevision: frontendRevision,
 +      selectionEpoch: selectionEpoch,
 +      frontAppBundleId: currentApp,
-+      inputSourceId: SquirrelInstaller.currentInputSourceID() ?? "",
++      inputSourceId: inputSourceId,
 +      compositionHash: compositionHash,
 +      committedContextHash: committedContextHash,
 +      panelSessionId: panelSessionId,
++      capturedAtMs: foregroundText.capturedAtMs,
++      sourceAppBundleId: currentApp,
++      captureEpoch: foregroundText.captureEpoch,
++      captureFailureReason: foregroundText.captureFailureReason,
 +      rawInput: rawInput,
 +      preedit: preedit,
 +      commitTextPreview: commitTextPreview,
@@ -2917,6 +3326,10 @@ index c2adf74..cd82e0e 100644
 +      maxVisibleCandidates: sidecarClient.maxVisibleCandidates,
 +      maxSideCandidates: sidecarClient.maxSideCandidates,
 +      forceSideCandidates: forceSideCandidates,
++      commitBurstReady: commitBurstReady,
++      acceptedCandidateContinuation: acceptedCandidateContinuation,
++      commitBurstDeltaChars: commitBurstDeltaChars,
++      commitBurstTexts: commitBurstTexts,
 +      progressiveFollowUp: false,
 +      foregroundText: foregroundText,
 +      rimeContext: RagImeRimeContextPayload(
@@ -2926,8 +3339,8 @@ index c2adf74..cd82e0e 100644
 +        isLastPage: lastPage
 +      )
 +    )
-+    ragImeInputGeneration += 1
-+    let inputGeneration = ragImeInputGeneration
++    ragImeInputGeneration = scheduledInputGeneration
++    let inputGeneration = scheduledInputGeneration
 +    if forceSideCandidates {
 +      showRagImePostCommitActionPlaceholder(request: request)
 +    }
@@ -2950,15 +3363,14 @@ index c2adf74..cd82e0e 100644
 +      "panelSessionId": panelSessionId,
 +    ])
 +    let workItem = DispatchWorkItem { [weak self] in
-+      self?.sendRagImeSidecarRequest(
++      self?.resolveRagImeForegroundContextAndSend(
 +        request,
-+        fingerprint: fingerprint,
++        preliminaryFingerprint: fingerprint,
 +        inputGeneration: inputGeneration,
-+        sentAt: Date(),
 +        sidecarClient: sidecarClient
 +      )
 +    }
-+    traceRagImeFrontendEvent("sidecar_request_scheduled", fields: [
++    traceRagImeFrontendEvent("foreground_context_capture_scheduled", fields: [
 +      "requestSeq": requestSeq,
 +      "frontendRevision": frontendRevision,
 +      "selectionEpoch": selectionEpoch,
@@ -2969,12 +3381,12 @@ index c2adf74..cd82e0e 100644
 +      "rawInput": rawInput,
 +      "preedit": preedit,
 +      "committedContextChars": ragImeCommittedContext.count,
-+      "foregroundTextSource": request.foregroundText.source,
-+      "foregroundTextAvailable": request.foregroundText.available,
-+      "foregroundTextConfidence": request.foregroundText.confidence,
-+      "foregroundTextBeforeChars": ragImeCompactWhitespace(request.foregroundText.surroundingBefore).count,
-+      "foregroundTextAfterChars": ragImeCompactWhitespace(request.foregroundText.surroundingAfter).count,
-+      "foregroundTextWarnings": request.foregroundText.warnings,
++      "captureEpoch": inputGeneration,
++      "captureDelayMs": immediate ? 40 : sidecarClient.debounceMs,
++      "commitBurstReady": commitBurstReady,
++      "acceptedCandidateContinuation": acceptedCandidateContinuation,
++      "commitBurstDeltaChars": commitBurstDeltaChars,
++      "commitBurstCount": commitBurstTexts.count,
 +      "latencyBudgetMs": sidecarClient.latencyBudgetMs,
 +      "maxVisibleCandidates": sidecarClient.maxVisibleCandidates,
 +      "maxSideCandidates": sidecarClient.maxSideCandidates,
@@ -2992,16 +3404,96 @@ index c2adf74..cd82e0e 100644
 +    ragImeLastRequestFingerprint = fingerprint
 +    ragImePendingRequestFingerprint = fingerprint
 +    ragImePendingRequestWorkItem = workItem
-+    let delay = immediate ? 0 : TimeInterval(sidecarClient.debounceMs) / 1000
++    let delay = TimeInterval(immediate ? 40 : sidecarClient.debounceMs) / 1000
 +    if delay <= 0 {
 +      DispatchQueue.main.async(execute: workItem)
 +    } else {
 +      DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+     }
+   }
+ 
+-  func updateChord(keycode: UInt32, modifiers: UInt32) {
+-    for i in 0..<chordKeyCount where chordKeyCodes[i] == keycode {
++  func scheduleRagImeCommitBurstPrediction(committedText: String, acceptedCandidate: Bool = false) {
++    guard ragImeSidecarClient != nil else { return }
++    let normalizedCommittedText = ragImeCompactWhitespace(committedText)
++    guard acceptedCandidate || !normalizedCommittedText.isEmpty else {
++      traceRagImeFrontendEvent("prediction_trigger_skipped", fields: [
++        "reason": "empty_commit",
++        "generation": ragImeCommitBurstGeneration,
++      ])
+       return
+     }
+-    if chordKeyCount >= Self.keyRollOver {
++    let wasPending = ragImeCommitBurstWorkItem != nil
++    ragImeCommitBurstWorkItem?.cancel()
++    ragImeCommitBurstDeltaChars += committedText.count
++    ragImeCommitBurstTexts.append(committedText)
++    ragImeCommitBurstGeneration += 1
++    let generation = ragImeCommitBurstGeneration
++    traceRagImeFrontendEvent(wasPending ? "prediction_trigger_coalesced" : "prediction_trigger_dirty", fields: [
++      "generation": generation,
++      "commitTextChars": committedText.count,
++      "idleMs": acceptedCandidate ? 0 : 500,
++      "acceptedCandidate": acceptedCandidate,
++    ])
++    let workItem = DispatchWorkItem { [weak self] in
++      guard let self, generation == self.ragImeCommitBurstGeneration else { return }
++      self.ragImeCommitBurstWorkItem = nil
++      let deltaChars = self.ragImeCommitBurstDeltaChars
++      let burstTexts = self.ragImeCommitBurstTexts
++      self.ragImeCommitBurstDeltaChars = 0
++      self.ragImeCommitBurstTexts = []
++      self.traceRagImeFrontendEvent("prediction_trigger_fired", fields: [
++        "generation": generation,
++        "commitTextChars": committedText.count,
++        "acceptedCandidate": acceptedCandidate,
++        "deltaChars": deltaChars,
++      ])
++      self.refreshRagImeSidecar(
++        rawInput: "",
++        preedit: "",
++        commitTextPreview: committedText,
++        candidates: [],
++        comments: [],
++        labels: [],
++        highlighted: 0,
++        page: 0,
++        lastPage: true,
++        requestSidecar: true,
++        immediate: true,
++        commitBurstReady: true,
++        acceptedCandidateContinuation: acceptedCandidate,
++        commitBurstDeltaChars: deltaChars,
++        commitBurstTexts: burstTexts
++      )
 +    }
++    ragImeCommitBurstWorkItem = workItem
++    let cooldownDelay = max(0, ragImeCommitBurstCooldownUntil.timeIntervalSinceNow)
++    let delay = acceptedCandidate ? 0.0 : max(0.5, cooldownDelay)
++    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
++  }
++
++  func cancelRagImeCommitBurstAfterDelete() {
++    ragImeCommitBurstWorkItem?.cancel()
++    ragImeCommitBurstWorkItem = nil
++    ragImeCommitBurstGeneration += 1
++    ragImeCommitBurstDeltaChars = 0
++    ragImeCommitBurstTexts = []
++    ragImeCommitBurstCooldownUntil = Date().addingTimeInterval(1.5)
++    traceRagImeFrontendEvent("prediction_trigger_skipped", fields: [
++      "reason": "delete_cooldown",
++      "cooldownMs": 1500,
++      "generation": ragImeCommitBurstGeneration,
++    ])
 +  }
 +
 +  func scheduleRagImePostCommitContinuation(committedText: String, sourceCandidate: RagImeDisplayCandidate) {
 +    guard ragImeSidecarClient != nil else { return }
++    ragImeCommitBurstWorkItem?.cancel()
++    ragImeCommitBurstWorkItem = nil
++    ragImeCommitBurstDeltaChars = 0
++    ragImeCommitBurstTexts = []
 +    let previousContext = syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
 +    ragImePendingContinuationCandidate = sourceCandidate
 +    ragImePendingContinuationCommittedText = committedText
@@ -3043,8 +3535,13 @@ index c2adf74..cd82e0e 100644
 +    let committedText = ragImePendingContinuationCommittedText
 +    if ragImePendingContinuationSelectionEpoch != 0 && ragImePendingContinuationSelectionEpoch != ragImeSelectionEpoch {
 +      cancelRagImePendingContinuation(reason: "selection_epoch_changed", keyCode: nil)
-+      return
-+    }
+       return
+     }
+-    chordKeyCodes[chordKeyCount] = keycode
+-    chordModifiers[chordKeyCount] = modifiers
+-    chordKeyCount += 1
+-    if let timer = chordTimer, timer.isValid {
+-      timer.invalidate()
 +    let queuedAgeMs = Int(Date().timeIntervalSince(ragImePendingContinuationQueuedAt ?? Date()) * 1000)
 +    if queuedAgeMs > 1200 {
 +      traceRagImeFrontendEvent("commit_observe_timeout", fields: [
@@ -3056,7 +3553,10 @@ index c2adf74..cd82e0e 100644
 +      ])
 +      cancelRagImePendingContinuation(reason: "commit_observe_timeout", keyCode: nil)
 +      return
-+    }
+     }
+-    chordDuration = 0.1
+-    if let duration = NSApp.squirrelAppDelegate.config?.getDouble("chord_duration"), duration > 0 {
+-      chordDuration = duration
 +    let committedContext = ragImeCommittedContext.isEmpty
 +      ? syncRagImeCommittedContextFromClient(excludingMarkedText: "")
 +      : ragImeCommittedContext
@@ -3064,7 +3564,8 @@ index c2adf74..cd82e0e 100644
 +    guard !committedContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
 +      scheduleRagImePendingContinuationObservation(attempt: attempt + 1)
 +      return
-+    }
+     }
+-    chordTimer = Timer.scheduledTimer(withTimeInterval: chordDuration, repeats: false, block: onChordTimer)
 +    guard committedContextHash != ragImePendingContinuationPreviousContextHash || committedContext.contains(committedText) else {
 +      scheduleRagImePendingContinuationObservation(attempt: attempt + 1)
 +      return
@@ -3107,10 +3608,19 @@ index c2adf74..cd82e0e 100644
 +      page: 0,
 +      lastPage: true,
 +      requestSidecar: true,
-+      immediate: true
++      immediate: true,
++      commitBurstReady: true,
++      acceptedCandidateContinuation: true,
++      commitBurstDeltaChars: max(committedText.count, 1),
++      commitBurstTexts: []
 +    )
-+  }
-+
+   }
+ 
+-  func clearChord() {
+-    chordKeyCount = 0
+-    if let timer = chordTimer {
+-      if timer.isValid {
+-        timer.invalidate()
 +  func cancelRagImePendingContinuation(reason: String, keyCode: UInt16?) {
 +    guard ragImePendingContinuationCandidate != nil else { return }
 +    let queuedAgeMs = Int(Date().timeIntervalSince(ragImePendingContinuationQueuedAt ?? Date()) * 1000)
@@ -3136,6 +3646,294 @@ index c2adf74..cd82e0e 100644
 +    ragImePendingContinuationPreviousContextHash = ""
 +    ragImePendingContinuationQueuedAt = nil
 +    ragImePendingContinuationSelectionEpoch = 0
++  }
++
++  func resolveRagImeForegroundContextAndSend(
++    _ request: RagImeSidecarRequest,
++    preliminaryFingerprint: String,
++    inputGeneration: Int,
++    sidecarClient: RagImeSidecarClient,
++    captureAttempt: Int = 0
++  ) {
++    traceRagImeFrontendEvent("foreground_context_capture_started", fields: [
++      "requestSeq": request.requestSeq,
++      "captureEpoch": inputGeneration,
++      "captureAttempt": captureAttempt,
++      "snapshotId": request.foregroundText.snapshotId,
++    ])
++    guard preliminaryFingerprint == ragImeLastRequestFingerprint else {
++      traceRagImeFrontendEvent("sidecar_response_dropped_stale", fields: [
++        "requestSeq": request.requestSeq,
++        "reason": "stale_before_foreground_capture",
++        "inputGeneration": inputGeneration,
++      ])
++      return
++    }
++    let liveInputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
++    guard currentApp == request.frontAppBundleId, liveInputSourceId == request.inputSourceId else {
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: currentApp == request.frontAppBundleId ? "capture_input_source_mismatch" : "capture_app_mismatch",
++        imkReason: "",
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++    let imkResult = ragImeForegroundContextResolver.captureFromTextInputClient(
++      client,
++      captureEpoch: inputGeneration,
++      sourceAppBundleId: currentApp,
++      inputSourceId: liveInputSourceId
++    )
++    if let snapshot = imkResult.snapshot {
++      finishRagImeForegroundContextCapture(
++        request,
++        preliminaryFingerprint: preliminaryFingerprint,
++        snapshot: snapshot,
++        captureReason: "text_input_client_ok",
++        inputGeneration: inputGeneration,
++        sidecarClient: sidecarClient,
++        captureAttempt: captureAttempt
++      )
++      return
++    }
++
++    let captureToken = UUID()
++    ragImeForegroundCaptureToken = captureToken
++    ragImeForegroundContextQueue.async { [weak self] in
++      guard let self else { return }
++      let axResult = self.ragImeForegroundContextResolver.captureFromAccessibility(
++        captureEpoch: inputGeneration,
++        sourceAppBundleId: request.frontAppBundleId,
++        inputSourceId: request.inputSourceId
++      )
++      DispatchQueue.main.async { [weak self] in
++        guard let self, self.ragImeForegroundCaptureToken == captureToken else { return }
++        self.ragImeForegroundCaptureToken = nil
++        guard request.frontendRevision == self.ragImeFrontendRevision,
++              request.selectionEpoch == self.ragImeSelectionEpoch,
++              request.frontAppBundleId == self.currentApp,
++              request.inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? "") else {
++          self.failRagImeForegroundContextCapture(
++            request,
++            fingerprint: preliminaryFingerprint,
++            reason: "capture_stale",
++            imkReason: imkResult.failureReason,
++            inputGeneration: inputGeneration
++          )
++          return
++        }
++        if let snapshot = axResult.snapshot {
++          self.finishRagImeForegroundContextCapture(
++            request,
++            preliminaryFingerprint: preliminaryFingerprint,
++            snapshot: snapshot,
++            captureReason: "accessibility_fallback_after_\(imkResult.failureReason)",
++            inputGeneration: inputGeneration,
++            sidecarClient: sidecarClient,
++            captureAttempt: captureAttempt
++          )
++        } else {
++          self.failRagImeForegroundContextCapture(
++            request,
++            fingerprint: preliminaryFingerprint,
++            reason: axResult.failureReason,
++            imkReason: imkResult.failureReason,
++            inputGeneration: inputGeneration
++          )
++        }
+       }
+-      chordTimer = nil
++    }
++    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ragImeForegroundCaptureTimeoutMs)) { [weak self] in
++      guard let self, self.ragImeForegroundCaptureToken == captureToken else { return }
++      self.ragImeForegroundCaptureToken = nil
++      self.failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "accessibility_capture_timeout",
++        imkReason: imkResult.failureReason,
++        inputGeneration: inputGeneration
++      )
+     }
+   }
+ 
+-  func createSession() {
+-    let app = client?.bundleIdentifier() ?? {
+-      SquirrelInputController.unknownAppCnt &+= 1
+-      return "UnknownApp\(SquirrelInputController.unknownAppCnt)"
+-    }()
+-    print("createSession: \(app)")
+-    currentApp = app
+-    session = rimeAPI.create_session()
+-    schemaId = ""
++  func finishRagImeForegroundContextCapture(
++    _ request: RagImeSidecarRequest,
++    preliminaryFingerprint: String,
++    snapshot: RagImeForegroundTextSnapshot,
++    captureReason: String,
++    inputGeneration: Int,
++    sidecarClient: RagImeSidecarClient,
++    captureAttempt: Int
++  ) {
++    guard preliminaryFingerprint == ragImeLastRequestFingerprint,
++          request.frontendRevision == ragImeFrontendRevision,
++          request.selectionEpoch == ragImeSelectionEpoch else {
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "capture_stale",
++        imkReason: captureReason,
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
++    let freshnessMs = max(0, nowMs - snapshot.capturedAtMs)
++    let commitPreview = request.commitTextPreview.trimmingCharacters(in: .whitespacesAndNewlines)
++    let commitMatched = commitPreview.isEmpty || snapshot.surroundingBefore.contains(commitPreview)
++    if !commitMatched && captureAttempt == 0 {
++      traceRagImeFrontendEvent("foreground_context_capture_retry", fields: [
++        "requestSeq": request.requestSeq,
++        "captureEpoch": inputGeneration,
++        "retryAtMs": 120,
++        "reason": "commit_text_not_observed",
++      ])
++      DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(80)) { [weak self] in
++        self?.resolveRagImeForegroundContextAndSend(
++          request,
++          preliminaryFingerprint: preliminaryFingerprint,
++          inputGeneration: inputGeneration,
++          sidecarClient: sidecarClient,
++          captureAttempt: 1
++        )
++      }
++      return
++    }
++    guard commitMatched else {
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "commit_text_not_observed",
++        imkReason: captureReason,
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++    let freshSnapshot = snapshot.withCommitTextMatched(commitMatched).withFreshness(freshnessMs)
++    let resolvedContext = boundedRagImeCommittedContext(freshSnapshot.surroundingBefore)
++    guard freshSnapshot.available,
++          ["text_input_client", "accessibility"].contains(freshSnapshot.source),
++          !resolvedContext.isEmpty else {
++      failRagImeForegroundContextCapture(
++        request,
++        fingerprint: preliminaryFingerprint,
++        reason: "foreground_context_empty",
++        imkReason: captureReason,
++        inputGeneration: inputGeneration
++      )
++      return
++    }
++    ragImeCommittedContext = resolvedContext
++    ragImeCommittedContextUpdatedAt = Date()
++    let resolvedRequest = request.withForegroundTransaction(
++      foregroundText: freshSnapshot,
++      committedContext: resolvedContext,
++      committedContextHash: ragImeStableTextHash(resolvedContext)
++    )
++    let resolvedFingerprint = ragImeRequestFingerprint(
++      rawInput: resolvedRequest.rawInput,
++      preedit: resolvedRequest.preedit,
++      commitTextPreview: resolvedRequest.commitTextPreview,
++      committedContext: resolvedRequest.committedContext,
++      foregroundText: resolvedRequest.foregroundText,
++      page: resolvedRequest.rimeContext.page,
++      highlighted: resolvedRequest.rimeContext.highlightedIndex,
++      candidates: resolvedRequest.rimeContext.candidates
++    )
++    ragImeLastRequestFingerprint = resolvedFingerprint
++    ragImePendingRequestFingerprint = resolvedFingerprint
++    traceRagImeFrontendEvent("foreground_context_capture_succeeded", fields: [
++      "requestSeq": resolvedRequest.requestSeq,
++      "inputGeneration": inputGeneration,
++      "captureEpoch": freshSnapshot.captureEpoch,
++      "capturedAtMs": freshSnapshot.capturedAtMs,
++      "freshnessMs": freshSnapshot.freshnessMs,
++      "source": freshSnapshot.source,
++      "reason": captureReason,
++      "sourceAppBundleId": freshSnapshot.sourceAppBundleId,
++      "inputSourceId": freshSnapshot.inputSourceId,
++      "surroundingBeforeChars": ragImeCompactWhitespace(freshSnapshot.surroundingBefore).count,
++      "surroundingAfterChars": ragImeCompactWhitespace(freshSnapshot.surroundingAfter).count,
++      "snapshotId": freshSnapshot.snapshotId,
++      "contextGroupId": freshSnapshot.contextGroupId,
++      "contextGroupLevel": freshSnapshot.contextGroupLevel,
++      "contextGroupConfidence": freshSnapshot.contextGroupConfidence,
++      "commitTextMatched": freshSnapshot.commitTextMatched,
++    ])
++    traceRagImeFrontendEvent("foreground_context_capture_resolved", fields: [
++      "requestSeq": resolvedRequest.requestSeq,
++      "snapshotId": freshSnapshot.snapshotId,
++      "source": freshSnapshot.source,
++      "contextGroupId": freshSnapshot.contextGroupId,
++      "compatibilityAlias": true,
++    ])
++    traceRagImeFrontendEvent("sidecar_request_scheduled", fields: [
++      "requestSeq": resolvedRequest.requestSeq,
++      "frontendRevision": resolvedRequest.frontendRevision,
++      "selectionEpoch": resolvedRequest.selectionEpoch,
++      "compositionHash": resolvedRequest.compositionHash,
++      "committedContextHash": resolvedRequest.committedContextHash,
++      "panelSessionId": resolvedRequest.panelSessionId,
++      "inputGeneration": inputGeneration,
++      "rawInput": resolvedRequest.rawInput,
++      "preedit": resolvedRequest.preedit,
++      "committedContextChars": resolvedRequest.committedContext.count,
++      "foregroundTextSource": freshSnapshot.source,
++      "foregroundTextAvailable": freshSnapshot.available,
++      "foregroundTextConfidence": freshSnapshot.confidence,
++      "foregroundTextFreshnessMs": freshSnapshot.freshnessMs,
++      "foregroundTextBeforeChars": ragImeCompactWhitespace(freshSnapshot.surroundingBefore).count,
++      "foregroundTextAfterChars": ragImeCompactWhitespace(freshSnapshot.surroundingAfter).count,
++      "foregroundTextWarnings": freshSnapshot.warnings,
++      "latencyBudgetMs": sidecarClient.latencyBudgetMs,
++      "maxVisibleCandidates": sidecarClient.maxVisibleCandidates,
++      "maxSideCandidates": sidecarClient.maxSideCandidates,
++      "forceSideCandidates": resolvedRequest.forceSideCandidates,
++      "candidateCount": resolvedRequest.rimeContext.candidates.count,
++    ])
++    sendRagImeSidecarRequest(
++      resolvedRequest,
++      fingerprint: resolvedFingerprint,
++      inputGeneration: inputGeneration,
++      sentAt: Date(),
++      sidecarClient: sidecarClient
++    )
++  }
+ 
+-    if session != 0 {
+-      updateAppOptions()
++  func failRagImeForegroundContextCapture(
++    _ request: RagImeSidecarRequest,
++    fingerprint: String,
++    reason: String,
++    imkReason: String,
++    inputGeneration: Int
++  ) {
++    let traceEvent = reason.contains("stale") ? "foreground_context_rejected_stale" : "foreground_context_capture_failed"
++    traceRagImeFrontendEvent(traceEvent, fields: [
++      "requestSeq": request.requestSeq,
++      "frontendRevision": request.frontendRevision,
++      "selectionEpoch": request.selectionEpoch,
++      "inputGeneration": inputGeneration,
++      "captureEpoch": request.captureEpoch,
++      "frontAppBundleId": request.frontAppBundleId,
++      "inputSourceId": request.inputSourceId,
++      "reason": reason,
++      "imkReason": imkReason,
++    ])
++    completeRagImeSidecarRequest(fingerprint: fingerprint, keepLastFingerprint: true)
 +  }
 +
 +  func sendRagImeSidecarRequest(
@@ -3446,6 +4244,8 @@ index c2adf74..cd82e0e 100644
 +    ragImeDisplayPanelSessionId = response.panelSessionId
 +    ragImeDisplayCompositionHash = response.compositionHash
 +    ragImeDisplayCommittedContextHash = response.committedContextHash
++    ragImeDisplayContextGroupId = request.foregroundText.contextGroupId
++    ragImeDisplayContextGroupLevel = request.foregroundText.contextGroupLevel
 +    if let expiresAfterMs = response.predictionSession?.expiresAfterMs, expiresAfterMs > 0 {
 +      ragImeDisplayExpiresAt = Date().addingTimeInterval(TimeInterval(expiresAfterMs) / 1000)
 +    } else {
@@ -3575,6 +4375,8 @@ index c2adf74..cd82e0e 100644
 +        predictionFirstMerge: request.predictionFirstMerge,
 +        sessionId: request.sessionId,
 +        requestSeq: request.requestSeq,
++        inputGeneration: request.inputGeneration,
++        createdAtMs: request.createdAtMs,
 +        frontendRevision: request.frontendRevision,
 +        selectionEpoch: request.selectionEpoch,
 +        frontAppBundleId: request.frontAppBundleId,
@@ -3582,6 +4384,10 @@ index c2adf74..cd82e0e 100644
 +        compositionHash: request.compositionHash,
 +        committedContextHash: request.committedContextHash,
 +        panelSessionId: request.panelSessionId,
++        capturedAtMs: request.capturedAtMs,
++        sourceAppBundleId: request.sourceAppBundleId,
++        captureEpoch: request.captureEpoch,
++        captureFailureReason: request.captureFailureReason,
 +        rawInput: request.rawInput,
 +        preedit: request.preedit,
 +        commitTextPreview: request.commitTextPreview,
@@ -3591,6 +4397,10 @@ index c2adf74..cd82e0e 100644
 +        maxVisibleCandidates: request.maxVisibleCandidates,
 +        maxSideCandidates: request.maxSideCandidates,
 +        forceSideCandidates: request.forceSideCandidates,
++        commitBurstReady: request.commitBurstReady,
++        acceptedCandidateContinuation: request.acceptedCandidateContinuation,
++        commitBurstDeltaChars: request.commitBurstDeltaChars,
++        commitBurstTexts: request.commitBurstTexts,
 +        progressiveFollowUp: true,
 +        foregroundText: request.foregroundText,
 +        rimeContext: request.rimeContext
@@ -4463,8 +5273,26 @@ index c2adf74..cd82e0e 100644
 +    ]
 +  }
 +
++  func ragImeOverlayTraceCandidateSummary(_ candidate: RagImeDisplayCandidate, index: Int) -> [String: Any] {
++    let insertText = ragImeStripSourceSuffix(candidate.insertText.isEmpty ? candidate.text : candidate.insertText)
++    return [
++      "index": index,
++      "sourceType": candidate.sourceType,
++      "sourceBadge": candidate.sourceBadge ?? candidate.badge ?? ragImeDisplayBadge(for: candidate),
++      "colorToken": candidate.colorToken ?? "",
++      "candidateOrdinal": candidate.candidateOrdinal ?? candidate.selectionRank ?? (index + 1),
++      "candidateStableId": candidate.candidateStableId ?? "",
++      "snapshotId": candidate.snapshotId ?? "",
++      "selectionAction": candidate.selectionAction,
++      "isStatus": candidate.isStatus ?? false,
++      "textHash": insertText.isEmpty ? "" : ragImeStableTextHash(insertText),
++      "textChars": insertText.count,
++    ]
++  }
++
 +  func clearRagImeDisplayCandidates() {
 +    dismissRagImeAssistantOverlay(reason: "clear_display_candidates")
++    ragImeForegroundCaptureToken = nil
 +    ragImeDisplayCandidates = []
 +    ragImePanelUsesDisplayCandidates = false
 +    ragImeDisplayRawInput = ""
@@ -4481,6 +5309,8 @@ index c2adf74..cd82e0e 100644
 +    ragImeDisplayPanelSessionId = ""
 +    ragImeDisplayCompositionHash = ""
 +    ragImeDisplayCommittedContextHash = ""
++    ragImeDisplayContextGroupId = ""
++    ragImeDisplayContextGroupLevel = ""
 +    ragImeLastRequestFingerprint = ""
 +    ragImePendingRequestFingerprint = ""
 +    ragImePendingRequestWorkItem?.cancel()
@@ -4495,20 +5325,46 @@ index c2adf74..cd82e0e 100644
 +    shownCandidates: [RagImeDisplayCandidate],
 +    query: String,
 +    recentContext: String,
-+    preedit: String
++    preedit: String,
++    contextGroupId: String,
++    contextGroupLevel: String,
++    completion: @escaping (Bool) -> Void
 +  ) {
-+    guard let sidecarClient = ragImeSidecarClient else { return }
-+    DispatchQueue.global(qos: .utility).async {
++    guard let sidecarClient = ragImeSidecarClient else {
++      completion(false)
++      return
++    }
++    let index = shownCandidates.firstIndex(of: candidate) ?? 0
++    let candidateSummary = ragImeTraceCandidateSummary(candidate, index: index)
++    DispatchQueue.global(qos: .utility).async { [weak self] in
 +      do {
-+        try sidecarClient.recordSideCandidateCommit(
++        let receipt = try sidecarClient.recordSideCandidateCommit(
 +          candidate,
 +          shownCandidates: shownCandidates,
 +          query: query,
 +          recentContext: recentContext,
-+          preedit: preedit
++          preedit: preedit,
++          contextGroupId: contextGroupId,
++          contextGroupLevel: contextGroupLevel
 +        )
++        DispatchQueue.main.async {
++          self?.traceRagImeFrontendEvent("side_candidate_feedback_recorded", fields: [
++            "ok": receipt.ok,
++            "eventId": receipt.eventId,
++            "recordedActionCount": receipt.recordedActionCount,
++            "candidate": candidateSummary,
++          ])
++          completion(receipt.ok)
++        }
 +      } catch {
 +        print("RAG IME side candidate commit record failed: \(error)")
++        DispatchQueue.main.async {
++          self?.traceRagImeFrontendEvent("side_candidate_feedback_failed", fields: [
++            "error": String(describing: error),
++            "candidate": candidateSummary,
++          ])
++          completion(false)
++        }
 +      }
 +    }
 +  }
@@ -4593,15 +5449,66 @@ index c2adf74..cd82e0e 100644
 +    }
 +  }
 +
-   func onChordTimer(_: Timer) {
-     var processedKeys = false
-     if chordKeyCount > 0 && session != 0 {
-@@ -359,7 +3256,12 @@ private extension SquirrelInputController {
-     schemaId = ""
- 
-     if session != 0 {
++  func onChordTimer(_: Timer) {
++    var processedKeys = false
++    if chordKeyCount > 0 && session != 0 {
++      // Chord typing releases are synthesized after the configured timeout.
++      for i in 0..<chordKeyCount {
++        let handled = rimeAPI.process_key(session, Int32(chordKeyCodes[i]), Int32(chordModifiers[i] | kReleaseMask.rawValue))
++        if handled {
++          processedKeys = true
++        }
++      }
++    }
++    clearChord()
++    if processedKeys {
++      rimeUpdate()
++    }
++  }
++
++  func updateChord(keycode: UInt32, modifiers: UInt32) {
++    for i in 0..<chordKeyCount where chordKeyCodes[i] == keycode {
++      return
++    }
++    if chordKeyCount >= Self.keyRollOver {
++      return
++    }
++    chordKeyCodes[chordKeyCount] = keycode
++    chordModifiers[chordKeyCount] = modifiers
++    chordKeyCount += 1
++    if let timer = chordTimer, timer.isValid {
++      timer.invalidate()
++    }
++    chordDuration = 0.1
++    if let duration = NSApp.squirrelAppDelegate.config?.getDouble("chord_duration"), duration > 0 {
++      chordDuration = duration
++    }
++    chordTimer = Timer.scheduledTimer(withTimeInterval: chordDuration, repeats: false, block: onChordTimer)
++  }
++
++  func clearChord() {
++    chordKeyCount = 0
++    if let timer = chordTimer {
++      if timer.isValid {
++        timer.invalidate()
++      }
++      chordTimer = nil
++    }
++  }
++
++  func createSession() {
++    let app = client?.bundleIdentifier() ?? {
++      SquirrelInputController.unknownAppCnt &+= 1
++      return "UnknownApp\(SquirrelInputController.unknownAppCnt)"
++    }()
++    print("createSession: \(app)")
++    currentApp = app
++    session = rimeAPI.create_session()
++    schemaId = ""
++
++    if session != 0 {
 +      let previousApp = currentApp
-       updateAppOptions()
++      updateAppOptions()
 +      if !previousApp.isEmpty && previousApp != currentApp {
 +        invalidateRagImeForegroundTransaction(reason: "front_app_changed")
 +      }
@@ -4609,7 +5516,7 @@ index c2adf74..cd82e0e 100644
      }
    }
  
-@@ -434,7 +3336,7 @@ private extension SquirrelInputController {
+@@ -434,7 +3818,7 @@ private extension SquirrelInputController {
    }
  
    // Preserve reserved comment marks when librime requests a UI-only refresh.
@@ -4618,7 +5525,7 @@ index c2adf74..cd82e0e 100644
      if clearReservedComments {
        specialCommentIndices = [:]
      }
-@@ -446,6 +3348,7 @@ private extension SquirrelInputController {
+@@ -446,6 +3830,7 @@ private extension SquirrelInputController {
        if let schema_id = status.schema_id, schemaId == "" || schemaId != String(cString: schema_id) {
          schemaId = String(cString: schema_id)
          NSApp.squirrelAppDelegate.loadSettings(for: schemaId)
@@ -4626,7 +5533,7 @@ index c2adf74..cd82e0e 100644
          if let panel = NSApp.squirrelAppDelegate.panel {
            inlinePreedit = (panel.inlinePreedit && !rimeAPI.get_option(session, "no_inline")) || rimeAPI.get_option(session, "inline")
            inlineCandidate = panel.inlineCandidate && !rimeAPI.get_option(session, "no_inline")
-@@ -458,13 +3361,14 @@ private extension SquirrelInputController {
+@@ -458,13 +3843,14 @@ private extension SquirrelInputController {
      var ctx = RimeContext_stdbool.rimeStructInit()
      if rimeAPI.get_context(session, &ctx) {
        let preedit = ctx.composition.preedit.map({ String(cString: $0) }) ?? ""
@@ -4642,7 +5549,7 @@ index c2adf74..cd82e0e 100644
          let endOfCandidatePreview = candidatePreview.endIndex
          if inlinePreedit {
            // 左移光標後的情形：
-@@ -537,20 +3441,46 @@ private extension SquirrelInputController {
+@@ -537,20 +3923,47 @@ private extension SquirrelInputController {
        // swiftlint:enable identifier_name
        let page = Int(ctx.menu.page_no)
        let lastPage = ctx.menu.is_last_page
@@ -4686,6 +5593,7 @@ index c2adf74..cd82e0e 100644
      client.insertText(string, replacementRange: .empty)
 +    ragImeCommittedContext = actualRagImeCommittedContextFromClient(fallback: [previousContext, string].filter { !$0.isEmpty }.joined(separator: " "))
 +    ragImeCommittedContextUpdatedAt = ragImeCommittedContext.isEmpty ? .distantPast : Date()
++    scheduleRagImeCommitBurstPrediction(committedText: string)
 +    observeRagImePostCommitContinuationIfReady()
      preedit = ""
      hidePalettes()

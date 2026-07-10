@@ -103,12 +103,19 @@ same_path() {
 squirrel_app_has_mixed_frontend_trace() {
   local app="$1"
   local executable="$app/Contents/MacOS/Squirrel"
+  local marker
+  local marker_text
   [[ -x "$executable" ]] || return 1
-  strings "$executable" 2>/dev/null | grep -Fq "rag-ime.squirrel-frontend-trace.v1" &&
-    strings "$executable" 2>/dev/null | grep -Fq "rag-ime.foreground-trace.v2" &&
-    strings "$executable" 2>/dev/null | grep -Fq "panel_text_layout" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_request_scheduled" &&
-    strings "$executable" 2>/dev/null | grep -Fq "sidecar_empty_response_cleared"
+  marker_text="$(strings "$executable" 2>/dev/null || true)"
+  for marker in \
+    "rag-ime.squirrel-frontend-trace.v1" \
+    "rag-ime.foreground-trace.v2" \
+    "composition_ai_suppressed" \
+    "foreground_context_capture_resolved" \
+    "assistant_overlay_candidate_visible" \
+    "side_candidate_feedback_recorded"; do
+    grep -Fq -- "$marker" <<< "$marker_text" || return 1
+  done
 }
 
 check_patched_squirrel_app() {
@@ -419,6 +426,7 @@ else:
         else "drift: " + "; ".join(errors[:6]),
     )
     v1_defaults = {
+        "RAG_IME_RUNTIME_PROFILE": "v1-proof",
         "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
         "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
         "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
@@ -429,6 +437,8 @@ else:
         "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
         "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
         "RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT": "1",
+        "RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS": "700",
+        "RAG_IME_HYBRID_RAG_CORE": "1",
         "RAG_IME_RAG_DIRECT_DISPLAY": "0",
         "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "0",
         "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "0",
@@ -479,7 +489,9 @@ elif mlx_plist is not None:
     if sidecar_port and mlx_port != sidecar_port:
         errors.append(f"RAG_IME_MLX_PORT={mlx_port!r}, expected sidecar base URL port {sidecar_port!r}")
     prompt_cache = str(env.get("RAG_IME_MLX_PROMPT_CACHE") or "")
-    if not truthy(prompt_cache) or "--prompt-cache" not in [str(item) for item in args]:
+    memory_profile = str(env.get("RAG_IME_MEMORY_PROFILE") or "").strip().lower()
+    prompt_cache_required = memory_profile not in {"low", "safe", "memory", "memory-safe", "minimal"}
+    if prompt_cache_required and (not truthy(prompt_cache) or "--prompt-cache" not in [str(item) for item in args]):
         errors.append("MLX prompt cache is not enabled in LaunchAgent")
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         if str(env.get(key) or ""):
@@ -489,7 +501,7 @@ elif mlx_plist is not None:
         "MLX predictor LaunchAgent plist",
         not errors,
         mlx_required,
-        "matches text-only MLX model and prompt-cache startup"
+        "matches text-only MLX model and memory-profile cache policy"
         if not errors
         else "drift: " + "; ".join(errors[:6]),
     )
@@ -955,14 +967,16 @@ def validate_raw_pinyin_guard():
     ) if isinstance(fallback_display, list) else 0
     if fallback.get("queryBasis") != "committedContext":
         errors.append(f"context fallback queryBasis={fallback.get('queryBasis')!r}, expected committedContext")
-    if fallback_trigger.get("shouldRefresh") is not True:
-        errors.append("context fallback did not refresh side lanes")
+    if fallback_trigger.get("shouldRefresh") is not False:
+        errors.append("composition with committed context refreshed side lanes")
+    if fallback_side_count != 0:
+        errors.append("composition with committed context returned AI side candidates")
 
     ok = not errors
     return {
         "ok": ok,
         "message": (
-            "raw pinyin guard: dirty raw input skips side lanes, committedContext fallback refreshes safely"
+            "raw pinyin guard: dirty raw input skips side lanes, including committedContext fallback during composition"
             if ok
             else "raw pinyin guard failed: " + "; ".join(errors[:5])
         ),

@@ -29,18 +29,23 @@ def build_memory_book_source_bundle(
     project: str,
     since_days: int = 7,
     limit: int = 80,
+    after_event_id: int | None = None,
 ) -> dict[str, object]:
+    state = memory_compile_state(conn, project=project)
+    cursor = int(state["lastCompiledEventId"]) if after_event_id is None else max(0, int(after_event_id))
     cutoff_ms = now_ms() - max(1, int(since_days)) * 24 * 60 * 60 * 1000
     rows = conn.execute(
         """
-        SELECT id, created_at_ms, source, committed_text, recent_context, app, project, tags_json
+        SELECT id, created_at_ms, source, committed_text, recent_context, app, project, tags_json,
+               context_group_id, context_group_level
         FROM input_events
-        WHERE created_at_ms >= ?
+        WHERE id > ?
+          AND created_at_ms >= ?
           AND (? = '' OR project = ? OR project = '')
-        ORDER BY created_at_ms DESC
+        ORDER BY id ASC
         LIMIT ?
         """,
-        (cutoff_ms, project, project, max(1, int(limit))),
+        (cursor, cutoff_ms, project, project, max(1, int(limit))),
     ).fetchall()
     events: list[dict[str, object]] = []
     redaction_stats = {"secret": 0, "path": 0, "email": 0}
@@ -59,16 +64,85 @@ def build_memory_book_source_bundle(
                 "app": str(row["app"] or ""),
                 "project": str(row["project"] or ""),
                 "tags": _json_list(row["tags_json"]),
+                "contextGroupId": str(row["context_group_id"] or ""),
+                "contextGroupLevel": str(row["context_group_level"] or "app"),
             }
         )
-    return {
+    feedback = _source_feedback(conn, event_ids=[int(item["eventId"]) for item in events])
+    existing_books = _existing_book_summaries(conn, project=project)
+    legal_groups = sorted({str(item.get("contextGroupId") or "") for item in events if item.get("contextGroupId")})
+    max_event_id = max((int(item["eventId"]) for item in events), default=cursor)
+    pending_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
+            (cursor, project, project),
+        ).fetchone()[0]
+    )
+    payload = {
         "schemaVersion": "rag-ime.memory-book-source-bundle.v1",
         "project": project,
         "sinceDays": max(1, int(since_days)),
         "exportedAtMs": now_ms(),
         "redactionStats": redaction_stats,
         "recentEvents": events,
+        "feedback": feedback,
+        "existingMemoryBooks": existing_books,
+        "legalContextGroupIds": legal_groups,
+        "cursor": {
+            "fromEventId": cursor,
+            "toEventId": max_event_id,
+            "pendingEventCount": pending_count,
+        },
     }
+    payload["bundleHash"] = stable_text_hash(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return payload
+
+
+def memory_compile_state(conn: sqlite3.Connection, *, project: str) -> dict[str, object]:
+    _ensure_compile_state_table(conn)
+    row = conn.execute(
+        "SELECT last_compiled_event_id, last_run_ms, pending_event_count, last_bundle_hash "
+        "FROM memory_compile_state WHERE project = ?",
+        (project,),
+    ).fetchone()
+    last_event_id = int(row["last_compiled_event_id"] or 0) if row is not None else 0
+    pending = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
+            (last_event_id, project, project),
+        ).fetchone()[0]
+    )
+    return {
+        "project": project,
+        "lastCompiledEventId": last_event_id,
+        "lastRunMs": int(row["last_run_ms"] or 0) if row is not None else 0,
+        "pendingEventCount": pending,
+        "lastBundleHash": str(row["last_bundle_hash"] or "") if row is not None else "",
+    }
+
+
+def memory_compile_due(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    manual: bool = False,
+    idle_ms: int = 0,
+    current_ms: int | None = None,
+    min_events: int = 50,
+    idle_threshold_ms: int = 20 * 60 * 1000,
+    daily_interval_ms: int = 24 * 60 * 60 * 1000,
+) -> tuple[bool, str, dict[str, object]]:
+    state = memory_compile_state(conn, project=project)
+    if manual:
+        return True, "manual", state
+    if int(state["pendingEventCount"]) >= max(1, int(min_events)):
+        return True, "pending_events", state
+    if int(state["pendingEventCount"]) > 0 and int(idle_ms) >= max(1, int(idle_threshold_ms)):
+        return True, "idle", state
+    current = now_ms() if current_ms is None else max(0, int(current_ms))
+    if int(state["pendingEventCount"]) > 0 and current - int(state["lastRunMs"]) >= max(1, int(daily_interval_ms)):
+        return True, "daily", state
+    return False, "not_due", state
 
 
 def memory_book_plan_from_compile_output(
@@ -109,6 +183,8 @@ def memory_book_plan_from_compile_output(
             "confidence": _bounded_float(item.get("confidence"), default=0.5),
             "qualityScore": _bounded_float(item.get("qualityScore"), default=_bounded_float(item.get("confidence"), default=0.5)),
             "status": compact_whitespace(str(item.get("status") or "active")) or "active",
+            "contextGroupId": compact_whitespace(str(item.get("groupId") or item.get("contextGroupId") or ""))
+            or _group_for_source_ids(source_ids, source_bundle=source_bundle),
         }
         diffs.append({"op": "upsert_memory_book", "targetId": book_id, "payload": payload, "status": "pending"})
     for item in _list_of_dicts(compile_output.get("memoryAtoms")):
@@ -146,6 +222,8 @@ def memory_book_plan_from_compile_output(
             "confidence": _bounded_float(item.get("confidence"), default=0.5),
             "qualityScore": _bounded_float(item.get("qualityScore"), default=0.5),
             "status": compact_whitespace(str(item.get("status") or "active")) or "active",
+            "contextGroupId": compact_whitespace(str(item.get("groupId") or item.get("contextGroupId") or ""))
+            or _group_for_source_ids(source_ids, source_bundle=source_bundle),
         }
         diffs.append({"op": "upsert_memory_atom", "targetId": atom_id, "payload": payload, "status": "pending"})
     for item in _list_of_dicts(compile_output.get("tagEdges")):
@@ -175,7 +253,7 @@ def memory_book_plan_from_compile_output(
         )
     for item in _list_of_dicts(compile_output.get("phraseCandidates")):
         text = compact_whitespace(str(item.get("text") or ""))
-        if len(text) < 2 or len(text) > 16:
+        if len(text) < 2 or len(text) > 18:
             continue
         target = f"phrase:{normalize_text(text)}"
         source_ids = _positive_ints(item.get("sourceEventIds")) or _infer_source_event_ids(
@@ -193,6 +271,52 @@ def memory_book_plan_from_compile_output(
                     "sourceEventIds": source_ids,
                     "weight": _bounded_float(item.get("weight"), default=0.6),
                     "project": compact_whitespace(str(item.get("project") or project)),
+                    "contextGroupId": compact_whitespace(str(item.get("groupId") or item.get("contextGroupId") or ""))
+                    or _group_for_source_ids(source_ids, source_bundle=source_bundle),
+                },
+                "status": "pending",
+            }
+        )
+    for raw_item in compile_output.get("negativePhrases", []) if isinstance(compile_output.get("negativePhrases"), list) else []:
+        item = raw_item if isinstance(raw_item, dict) else {"text": raw_item}
+        text = compact_whitespace(str(item.get("text") or ""))
+        if not 2 <= len(text) <= 18:
+            continue
+        source_ids = _positive_ints(item.get("sourceEventIds")) or _infer_source_event_ids(
+            [text],
+            source_bundle=source_bundle,
+        )
+        target = f"negative:{stable_text_hash(text)[:16]}"
+        diffs.append(
+            {
+                "op": "add_negative_phrase",
+                "targetId": target,
+                "payload": {
+                    "suppressionId": target,
+                    "text": text,
+                    "sourceEventIds": source_ids,
+                    "reason": compact_whitespace(str(item.get("reason") or "memory_compiler_negative_phrase")),
+                },
+                "status": "pending",
+            }
+        )
+    for item in _list_of_dicts(compile_output.get("supersedes")):
+        old_id = compact_whitespace(str(item.get("oldId") or item.get("supersededId") or ""))
+        new_id = compact_whitespace(str(item.get("newId") or item.get("supersedingId") or ""))
+        if not old_id or not new_id or old_id == new_id:
+            continue
+        source_ids = _positive_ints(item.get("sourceEventIds")) or _infer_source_event_ids(
+            [old_id, new_id],
+            source_bundle=source_bundle,
+        )
+        diffs.append(
+            {
+                "op": "supersede_memory",
+                "targetId": old_id,
+                "payload": {
+                    "oldId": old_id,
+                    "newId": new_id,
+                    "sourceEventIds": source_ids,
                 },
                 "status": "pending",
             }
@@ -227,6 +351,10 @@ def memory_book_plan_from_compile_output(
             "compileSchemaVersion": str(compile_output.get("schemaVersion") or MEMORY_BOOK_COMPILE_SCHEMA_VERSION),
             "warnings": warnings,
             "elapsedMs": int(compile_output.get("elapsedMs") or 0),
+            "project": project,
+            "bundleHash": str((source_bundle or {}).get("bundleHash") or ""),
+            "sourceCursor": dict((source_bundle or {}).get("cursor") or {}),
+            "legalContextGroupIds": list((source_bundle or {}).get("legalContextGroupIds") or []),
         },
         "diffs": diffs,
     }
@@ -247,6 +375,8 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
         "memoryAtoms": 0,
         "tagEdges": 0,
         "phraseCandidates": 0,
+        "negativePhrases": 0,
+        "supersedes": 0,
     }
     diffs = _list_of_dicts(plan.get("diffs"))
     if compact_whitespace(str(plan.get("schemaVersion") or "")) != MEMORY_BOOK_RUN_SCHEMA_VERSION:
@@ -281,13 +411,32 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
             _validate_required_text(errors, index, op, payload, "text")
             _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
             text = compact_whitespace(str(payload.get("text") or ""))
-            if len(text) < 2 or len(text) > 16:
+            if len(text) < 2 or len(text) > 18:
                 errors.append(_issue(index, op, "text", "phrase_text_length_out_of_range", value=len(text), preview=truncate_text(text, 80)))
             _validate_secret_free(errors, index, op, payload, ("text", "tags"))
+        elif op == "add_negative_phrase":
+            counts["negativePhrases"] += 1
+            _validate_required_text(errors, index, op, payload, "suppressionId")
+            _validate_required_text(errors, index, op, payload, "text")
+            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
+            _validate_secret_free(errors, index, op, payload, ("text", "reason"))
+        elif op == "supersede_memory":
+            counts["supersedes"] += 1
+            _validate_required_text(errors, index, op, payload, "oldId")
+            _validate_required_text(errors, index, op, payload, "newId")
+            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
         else:
             errors.append(_issue(index, op, "op", "unsupported_op"))
         if op and _looks_like_long_history_sentence(payload):
             warnings.append(_issue(index, op, "payload", "looks_like_long_history_sentence"))
+        legal_groups = {
+            compact_whitespace(str(item))
+            for item in dict(plan.get("metadata") or {}).get("legalContextGroupIds", [])
+            if compact_whitespace(str(item))
+        }
+        group_id = compact_whitespace(str(payload.get("contextGroupId") or ""))
+        if group_id and legal_groups and group_id not in legal_groups and group_id != "global":
+            errors.append(_issue(index, op, "contextGroupId", "context_group_not_in_source_bundle"))
     return {
         "schemaVersion": MEMORY_BOOK_VALIDATE_SCHEMA_VERSION,
         "ok": not errors,
@@ -309,27 +458,29 @@ def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
     run_id = compact_whitespace(str(plan.get("runId") or ""))
     if not run_id:
         raise ValueError("memory book runId is required")
-    _persist_memory_book_run(conn, plan)
-    rows = conn.execute(
-        """
-        SELECT id, op, target_memory_id, payload_json
-        FROM memory_cleanup_diffs
-        WHERE run_id = ? AND status IN ('pending', 'approved')
-        ORDER BY id ASC
-        """,
-        (run_id,),
-    ).fetchall()
-    for row in rows:
-        rollback = _apply_memory_book_diff(conn, row=row)
-        conn.execute(
+    with conn:
+        _persist_memory_book_run(conn, plan)
+        rows = conn.execute(
             """
-            UPDATE memory_cleanup_diffs
-            SET status = 'applied', applied_at_ms = ?, rollback_json = ?
-            WHERE id = ?
+            SELECT id, op, target_memory_id, payload_json
+            FROM memory_cleanup_diffs
+            WHERE run_id = ? AND status IN ('pending', 'approved')
+            ORDER BY id ASC
             """,
-            (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
-        )
-    _sync_run_status(conn, run_id)
+            (run_id,),
+        ).fetchall()
+        for row in rows:
+            rollback = _apply_memory_book_diff(conn, row=row)
+            conn.execute(
+                """
+                UPDATE memory_cleanup_diffs
+                SET status = 'applied', applied_at_ms = ?, rollback_json = ?
+                WHERE id = ?
+                """,
+                (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
+            )
+        _sync_run_status(conn, run_id)
+        _advance_compile_state(conn, plan=plan)
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -436,6 +587,10 @@ def _apply_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) -> di
         return _apply_tag_edge(conn, payload)
     if op == "add_phrase_candidate":
         return _apply_phrase_candidate(conn, payload)
+    if op == "add_negative_phrase":
+        return _apply_negative_phrase(conn, payload)
+    if op == "supersede_memory":
+        return _apply_supersede_memory(conn, payload)
     raise ValueError(f"unsupported memory book op: {op}")
 
 
@@ -459,6 +614,13 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
         _restore_or_delete_row(conn, table="memory_items", pk="memory_id", rollback=rollback)
         conn.execute("DELETE FROM memory_items_fts WHERE rowid NOT IN (SELECT id FROM memory_items)")
         conn.execute("DELETE FROM memory_item_tags WHERE memory_item_id NOT IN (SELECT id FROM memory_items)")
+    elif op == "add_negative_phrase":
+        _restore_or_delete_row(conn, table="memory_candidate_suppressions", pk="id", rollback=rollback)
+    elif op == "supersede_memory":
+        table = compact_whitespace(str(rollback.get("table") or ""))
+        pk = "id" if table == "memory_atoms" else "memory_id"
+        if table in {"memory_atoms", "memory_items"}:
+            _restore_or_delete_row(conn, table=table, pk=pk, rollback=rollback)
 
 
 def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
@@ -616,6 +778,42 @@ def _apply_phrase_candidate(conn: sqlite3.Connection, payload: dict[str, object]
         embedding_provider=None,
     )
     return {"table": "memory_items", "pk": "memory_id", "pkValue": memory_id, "previous": previous}
+
+
+def _apply_negative_phrase(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
+    suppression_id = str(payload["suppressionId"])
+    previous = _row_dict(
+        conn.execute("SELECT * FROM memory_candidate_suppressions WHERE id = ?", (suppression_id,)).fetchone()
+    )
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO memory_candidate_suppressions(
+            id, match_type, match_value, action, reason, strength, expires_at_ms, created_at_ms
+        ) VALUES (?, 'text', ?, 'block', ?, 1.0, NULL, ?)
+        """,
+        (suppression_id, str(payload.get("text") or ""), str(payload.get("reason") or ""), now_ms()),
+    )
+    return {
+        "table": "memory_candidate_suppressions",
+        "pk": "id",
+        "pkValue": suppression_id,
+        "previous": previous,
+    }
+
+
+def _apply_supersede_memory(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
+    old_id = str(payload["oldId"])
+    atom = conn.execute("SELECT * FROM memory_atoms WHERE id = ?", (old_id,)).fetchone()
+    if atom is not None:
+        previous = _row_dict(atom)
+        conn.execute("UPDATE memory_atoms SET status = 'superseded', updated_at_ms = ? WHERE id = ?", (now_ms(), old_id))
+        return {"table": "memory_atoms", "pk": "id", "pkValue": old_id, "previous": previous}
+    item = conn.execute("SELECT * FROM memory_items WHERE memory_id = ?", (old_id,)).fetchone()
+    if item is not None:
+        previous = _row_dict(item)
+        conn.execute("UPDATE memory_items SET status = 'hidden', updated_at_ms = ? WHERE memory_id = ?", (now_ms(), old_id))
+        return {"table": "memory_items", "pk": "memory_id", "pkValue": old_id, "previous": previous}
+    raise ValueError(f"superseded memory does not exist: {old_id}")
 
 
 def _restore_or_delete_row(conn: sqlite3.Connection, *, table: str, pk: str, rollback: dict[str, object]) -> None:
@@ -1088,6 +1286,108 @@ def _row_dict(row: sqlite3.Row | None) -> dict[str, object]:
     if row is None:
         return {}
     return {key: row[key] for key in row.keys()}
+
+
+def _ensure_compile_state_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_compile_state (
+            project TEXT PRIMARY KEY,
+            last_compiled_event_id INTEGER NOT NULL DEFAULT 0,
+            last_run_ms INTEGER NOT NULL DEFAULT 0,
+            pending_event_count INTEGER NOT NULL DEFAULT 0,
+            last_bundle_hash TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+
+
+def _advance_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object]) -> None:
+    metadata = dict(plan.get("metadata") or {})
+    project = compact_whitespace(str(metadata.get("project") or ""))
+    cursor = dict(metadata.get("sourceCursor") or {})
+    to_event_id = max(0, int(cursor.get("toEventId") or 0))
+    if not project or to_event_id <= 0:
+        return
+    _ensure_compile_state_table(conn)
+    pending = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
+            (to_event_id, project, project),
+        ).fetchone()[0]
+    )
+    conn.execute(
+        """
+        INSERT INTO memory_compile_state(project, last_compiled_event_id, last_run_ms, pending_event_count, last_bundle_hash)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(project) DO UPDATE SET
+            last_compiled_event_id = MAX(memory_compile_state.last_compiled_event_id, excluded.last_compiled_event_id),
+            last_run_ms = excluded.last_run_ms,
+            pending_event_count = excluded.pending_event_count,
+            last_bundle_hash = excluded.last_bundle_hash
+        """,
+        (project, to_event_id, now_ms(), pending, compact_whitespace(str(metadata.get("bundleHash") or ""))),
+    )
+
+
+def _source_feedback(conn: sqlite3.Connection, *, event_ids: list[int]) -> list[dict[str, object]]:
+    if not event_ids:
+        return []
+    rows = conn.execute(
+        """
+        SELECT action, candidate_text, candidate_source, created_at_ms, metadata_json
+        FROM memory_feedback_events
+        ORDER BY created_at_ms DESC
+        LIMIT 80
+        """
+    ).fetchall()
+    return [
+        {
+            "action": str(row["action"] or ""),
+            "text": _sanitize_text(str(row["candidate_text"] or ""), max_chars=80)[0],
+            "source": str(row["candidate_source"] or ""),
+            "createdAtMs": int(row["created_at_ms"] or 0),
+        }
+        for row in rows
+    ]
+
+
+def _existing_book_summaries(conn: sqlite3.Connection, *, project: str) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT book_id, title, summary, tags_json, source_event_ids_json, metadata_json
+        FROM memory_books
+        WHERE status IN ('active', 'approved') AND (? = '' OR project = ? OR project = '')
+        ORDER BY updated_at_ms DESC
+        LIMIT 8
+        """,
+        (project, project),
+    ).fetchall()
+    return [
+        {
+            "bookId": str(row["book_id"] or ""),
+            "title": _sanitize_text(str(row["title"] or ""), max_chars=80)[0],
+            "summary": _sanitize_text(str(row["summary"] or ""), max_chars=180)[0],
+            "tags": _json_list(row["tags_json"]),
+            "sourceEventIds": _json_list(row["source_event_ids_json"]),
+        }
+        for row in rows
+    ]
+
+
+def _group_for_source_ids(source_ids: list[int], *, source_bundle: dict[str, object] | None) -> str:
+    if not source_bundle:
+        return ""
+    wanted = set(source_ids)
+    for event in _list_of_dicts(source_bundle.get("recentEvents")):
+        try:
+            event_id = int(event.get("eventId") or 0)
+        except (TypeError, ValueError):
+            continue
+        group_id = compact_whitespace(str(event.get("contextGroupId") or ""))
+        if event_id in wanted and group_id:
+            return group_id
+    return ""
 
 
 def _validate_required_text(errors: list[dict[str, object]], index: int, op: str, payload: dict[str, object], field: str) -> None:

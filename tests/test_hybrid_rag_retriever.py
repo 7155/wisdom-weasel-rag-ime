@@ -74,7 +74,8 @@ class HybridRagRetrieverTests(unittest.TestCase):
             payload = retrieve_hybrid_rag_candidates(conn, HybridRagQuery(query_text="Daily Book", project="wisdom-weasel-rag-ime"))
 
         self.assertGreaterEqual(payload["lanes"]["time"]["count"], 1)
-        self.assertIn("RAG 输入法多路召回方案", [item["text"] for item in payload["candidates"]])
+        self.assertIn("多路召回", [item["text"] for item in payload["candidates"]])
+        self.assertNotIn("RAG 输入法多路召回方案", [item["text"] for item in payload["candidates"]])
 
     def test_feedback_lane_promotes_accepted_phrase(self) -> None:
         self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG",))
@@ -129,6 +130,46 @@ class HybridRagRetrieverTests(unittest.TestCase):
 
         self.assertLessEqual(payload["elapsedMs"], 1000)
         self.assertFalse(payload["overBudget"])
+
+    def test_group_compatibility_prioritizes_exact_and_rejects_other_short_term(self) -> None:
+        with self.connect() as conn:
+            docs = [
+                ("phrase:exact", "phrase:exact", "完成前台闭环", "wisdom-weasel-rag-ime", "com.apple.TextEdit", '{"contextGroupId":"doc:a","shortTerm":true}'),
+                ("phrase:project", "phrase:project", "限制模型调用", "wisdom-weasel-rag-ime", "com.apple.TextEdit", '{"contextGroupId":"doc:b"}'),
+                ("phrase:blocked-short", "phrase:blocked-short", "其他文档短期内容", "wisdom-weasel-rag-ime", "com.apple.TextEdit", '{"contextGroupId":"doc:b","shortTerm":true}'),
+                ("phrase:global", "phrase:global", "保持普通拼音稳定", "", "", '{"contextGroupId":"global"}'),
+            ]
+            for doc_id, source_id, hint, project, app, metadata in docs:
+                conn.execute(
+                    """
+                    INSERT INTO memory_retrieval_docs(
+                        doc_id, doc_type, source_id, raw_text, tags_text, aliases_text,
+                        surface_hints_text, query_expansions_text, time_key, project, app,
+                        status, updated_at_ms, metadata_json
+                    ) VALUES (?, 'phrase', ?, '前台上下文', '前台', '', ?, '', '', ?, ?, 'active', ?, ?)
+                    """,
+                    (doc_id, source_id, hint, project, app, now_ms(), metadata),
+                )
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="前台",
+                    project="wisdom-weasel-rag-ime",
+                    app="com.apple.TextEdit",
+                    context_group_id="doc:a",
+                    context_group_level="document",
+                ),
+            )
+
+        texts = [item["text"] for item in payload["candidates"]]
+        self.assertEqual(texts[0], "完成前台闭环")
+        self.assertIn("限制模型调用", texts)
+        self.assertIn("保持普通拼音稳定", texts)
+        self.assertNotIn("其他文档短期内容", texts)
+        compatibility = {item["text"]: item["metadata"]["groupCompatibility"] for item in payload["candidates"]}
+        self.assertEqual(compatibility["完成前台闭环"], 1.0)
+        self.assertEqual(compatibility["限制模型调用"], 0.75)
+        self.assertEqual(compatibility["保持普通拼音稳定"], 0.2)
 
     def _record_event(self, text: str, *, recent_context: str = "", tags: tuple[str, ...] = ()) -> int:
         memory_id = self.core.record_event(
