@@ -121,6 +121,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     "RAG_IME_OPEN_COMMAND": str(open_script),
                     "RAG_IME_SOAK_CHECK_SCRIPT": str(soak_script),
                     "RAG_IME_FOREGROUND_SOAK_TEST_FILE": str(test_file),
+                    "RAG_IME_SQUIRREL_FRONTEND_TRACE_LOG": str(tmp_path / "squirrel-frontend.jsonl"),
                 }
             )
 

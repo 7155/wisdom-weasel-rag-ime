@@ -119,6 +119,7 @@ swiftc \
   "$SRC_DIR/RagBridgeClient.swift" \
   "$SRC_DIR/RagCandidatePanel.swift" \
   "$SRC_DIR/RagImeAssistantOverlayView.swift" \
+  "$SRC_DIR/RagImeAssistantOverlayPreviewFixtures.swift" \
   "$SRC_DIR/RagImeAssistantPanelController.swift" \
   "$SRC_DIR/RagInputController.swift" \
   "$SRC_DIR/RagImeMacApp.swift" \

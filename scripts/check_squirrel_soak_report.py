@@ -307,6 +307,7 @@ def build_soak_report(
         paired_side_commit_count=len(side_commit_pairs),
     )
     commit_burst = summarize_commit_burst(events)
+    assistant_surface = summarize_assistant_surface(events)
     v1_foreground = summarize_v1_foreground(
         events,
         frontend_report=frontend_report,
@@ -706,7 +707,11 @@ def build_soak_report(
             "predictorCallCount": commit_burst["predictorCallCount"],
             "directMemoryHitCount": commit_burst["directMemoryHitCount"],
             "remoteDeepSeekAutoCallCount": commit_burst["remoteDeepSeekAutoCallCount"],
+            "assistantPanelCreateCount": assistant_surface["panelCreateCount"],
+            "assistantPanelSameSnapshotNoopCount": assistant_surface["sameSnapshotNoopCount"],
+            "assistantPanelPassivePendingVisibleCount": assistant_surface["passivePendingVisibleCount"],
         },
+        "assistantSurface": assistant_surface,
         "commitBurst": commit_burst,
         "predictionStability": prediction_stability,
         "laneStability": lane_stability,
@@ -724,6 +729,49 @@ def build_soak_report(
         "violations": violations,
         "frontendTrace": frontend_report,
         "passed": passed,
+    }
+
+
+def summarize_assistant_surface(events: list[dict[str, Any]]) -> dict[str, Any]:
+    state_events = [event for event in events if event.get("event") == "assistant_surface_state_changed"]
+    update_values = [
+        float(event.get("updateDurationMs") or 0)
+        for event in events
+        if event.get("event") == "assistant_panel_content_updated"
+    ]
+    position_values = [
+        float(event.get("positionDurationMs") or 0)
+        for event in events
+        if event.get("event") == "assistant_panel_positioned"
+    ]
+    visible_by_snapshot = Counter(
+        str(event.get("snapshotId") or "")
+        for event in events
+        if event.get("event") == "assistant_panel_first_visible"
+    )
+    return {
+        "panelCreateCount": sum(
+            int(event.get("createCount") or 1)
+            for event in events
+            if event.get("event") == "assistant_panel_created"
+        ),
+        "panelReuseCount": sum(1 for event in events if event.get("event") == "assistant_panel_reused"),
+        "sameSnapshotNoopCount": sum(
+            1
+            for event in events
+            if event.get("event") == "assistant_panel_reused"
+            and event.get("reason") == "same_snapshot_stable_ids"
+        ),
+        "passivePendingVisibleCount": sum(
+            1
+            for event in state_events
+            if event.get("surfaceState") in {"postCommitPending", "passivePending"}
+        ),
+        "maxVisibleTransitionsPerSnapshot": max(visible_by_snapshot.values(), default=0),
+        "stateChangeCount": len(state_events),
+        "updateDurationMs": summarize_numeric(update_values),
+        "positionDurationMs": summarize_numeric(position_values),
+        "uiApplyP95Within16Ms": percentile(update_values, 0.95) <= 16 if update_values else False,
     }
 
 

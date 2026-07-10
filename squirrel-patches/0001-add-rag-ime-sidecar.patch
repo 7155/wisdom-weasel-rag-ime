@@ -195,188 +195,292 @@ index f998248..a56500e 100644
      return
 diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
 new file mode 100644
-index 0000000..a2b4658
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,179 @@
-+//
-+//  RagImeAssistantPanelController.swift
-+//  Squirrel
-+//
-+
+@@ -0,0 +1,283 @@
 +import AppKit
 +
 +final class RagImeAssistantPanelController {
-+  private let panel: NSPanel
-+  private let stackView: NSStackView
++  typealias TraceHandler = (_ event: String, _ fields: [String: Any]) -> Void
++  private let panel: RagImeNonActivatingPanel
++  private let cardView: RagImeSuggestionCardView
 +  private var currentPayload: RagImeAssistantOverlayPayload?
++  private var currentState: RagImeAssistantSurfaceState = .hidden
++  private var renderedSnapshotId = ""
++  private var renderedStableIds: [String] = []
++  private var expandedSnapshotId = ""
++  private var pendingUpdate: DispatchWorkItem?
++  private var lastReliableCaretAnchor: NSPoint?
++  private var lastPositionedAnchor: NSPoint?
++  private var visibleSince: Date?
++  private var didTraceCreation = false
 +  private var onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
++  private var onAction: ((RagImeAssistantAction) -> Void)?
++  private var onTrace: TraceHandler?
 +
 +  init() {
-+    panel = NSPanel(
-+      contentRect: NSRect(x: 0, y: 0, width: 360, height: 112),
++    panel = RagImeNonActivatingPanel(
++      contentRect: NSRect(x: 0, y: 0, width: 360, height: 40),
 +      styleMask: [.borderless, .nonactivatingPanel],
 +      backing: .buffered,
 +      defer: false
 +    )
++    cardView = RagImeSuggestionCardView(frame: panel.contentView?.bounds ?? .zero)
 +    panel.isReleasedWhenClosed = false
 +    panel.isFloatingPanel = true
 +    panel.level = .floating
 +    panel.backgroundColor = .clear
 +    panel.isOpaque = false
 +    panel.hasShadow = true
-+    panel.appearance = NSAppearance(named: .aqua)
 +    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
-+
-+    stackView = NSStackView(frame: NSRect(x: 0, y: 0, width: 360, height: 112))
-+    stackView.orientation = .vertical
-+    stackView.alignment = .leading
-+    stackView.spacing = 6
-+    stackView.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 8, right: 10)
-+    stackView.wantsLayer = true
-+    stackView.layer?.cornerRadius = 8
-+    stackView.layer?.backgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.98).cgColor
-+    stackView.layer?.borderColor = NSColor(calibratedWhite: 0.78, alpha: 1).cgColor
-+    stackView.layer?.borderWidth = 1
-+    panel.contentView = stackView
++    panel.contentView = cardView
++    cardView.onSelect = { [weak self] candidate, index in self?.onSelect?(candidate, index) }
++    cardView.onAction = { [weak self] action in self?.handle(action) }
 +  }
 +
-+  var isVisible: Bool {
-+    panel.isVisible
-+  }
-+
-+  func showPending(_ payload: RagImeAssistantOverlayPayload, anchor: NSPoint?) {
-+    update(payload, anchor: anchor, onSelect: onSelect)
-+  }
++  var isVisible: Bool { panel.isVisible }
 +
 +  func update(
 +    _ payload: RagImeAssistantOverlayPayload?,
 +    anchor: NSPoint?,
-+    onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
++    onSelect: ((RagImeDisplayCandidate, Int) -> Void)?,
++    onAction: ((RagImeAssistantAction) -> Void)? = nil,
++    onTrace: TraceHandler? = nil
 +  ) {
++    self.onSelect = onSelect
++    self.onAction = onAction
++    self.onTrace = onTrace
++    traceCreationIfNeeded()
++    pendingUpdate?.cancel()
++    let work = DispatchWorkItem { [weak self] in self?.apply(payload, anchor: anchor) }
++    pendingUpdate = work
++    DispatchQueue.main.async(execute: work)
++    trace("assistant_panel_update_coalesced", ["reason": "main_runloop"])
++  }
++
++  func expandPredictions() -> Bool {
++    guard currentState == .compactPrediction, let payload = currentPayload else { return false }
++    guard payload.candidates.filter(RagImeSuggestionCardView.isRealCandidate).count > 1 else { return false }
++    expandedSnapshotId = payload.snapshotId
++    _ = applyVisible(payload, state: .expandedPredictions, anchor: lastReliableCaretAnchor, forceContent: true)
++    return true
++  }
++
++  func showConfirmation(text _: String = "✓ 已插入") {
++    guard let payload = currentPayload else { return }
++    currentState = .transientConfirmation
++    cardView.apply(state: .transientConfirmation, payload: payload)
++    panel.ignoresMouseEvents = true
++    panel.setContentSize(NSSize(width: 280, height: 40))
++    trace("assistant_surface_state_changed", [
++      "surfaceState": RagImeAssistantSurfaceState.transientConfirmation.rawValue,
++      "snapshotId": payload.snapshotId,
++      "reason": "candidate_accepted",
++    ])
++    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(700)) { [weak self] in
++      guard self?.currentState == .transientConfirmation else { return }
++      self?.dismiss(reason: "confirmation_finished")
++    }
++  }
++
++  func dismiss(reason: String) {
++    pendingUpdate?.cancel()
++    pendingUpdate = nil
++    let duration = visibleSince.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
++    currentPayload = nil
++    currentState = .hidden
++    renderedSnapshotId = ""
++    renderedStableIds = []
++    expandedSnapshotId = ""
++    visibleSince = nil
++    if panel.isVisible { panel.orderOut(nil) }
++    trace("assistant_panel_dismissed", ["reason": reason, "visibleDurationMs": duration])
++    trace("assistant_surface_state_changed", ["surfaceState": RagImeAssistantSurfaceState.hidden.rawValue, "reason": reason])
++  }
++
++  private func apply(_ payload: RagImeAssistantOverlayPayload?, anchor: NSPoint?) {
++    let start = CFAbsoluteTimeGetCurrent()
 +    guard let payload, payload.visible else {
 +      dismiss(reason: payload?.dismissReason ?? "hidden")
 +      return
 +    }
-+    currentPayload = payload
-+    self.onSelect = onSelect
-+    rebuild(payload)
-+    position(anchor: anchor)
-+    panel.orderFront(nil)
-+  }
-+
-+  func dismiss(reason _: String) {
-+    currentPayload = nil
-+    panel.orderOut(nil)
-+  }
-+
-+  private func rebuild(_ payload: RagImeAssistantOverlayPayload) {
-+    stackView.arrangedSubviews.forEach {
-+      stackView.removeArrangedSubview($0)
-+      $0.removeFromSuperview()
-+    }
-+    stackView.addArrangedSubview(headerView(payload))
-+    if !payload.statusText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || payload.animation.kind == "thinking_dots" {
-+      stackView.addArrangedSubview(label(payload.statusText.isEmpty ? "AI 正在想..." : payload.statusText, size: 12, color: NSColor(calibratedWhite: 0.28, alpha: 1)))
-+    }
-+    for (index, candidate) in payload.candidates.prefix(3).enumerated() {
-+      stackView.addArrangedSubview(candidateButton(candidate, index: index))
-+    }
-+    if !payload.sourceCards.isEmpty {
-+      for card in payload.sourceCards.prefix(2) {
-+        stackView.addArrangedSubview(label("\(card.sourceBadge) \(card.title)", size: 11, color: NSColor(calibratedWhite: 0.42, alpha: 1)))
-+      }
-+    }
-+    stackView.addArrangedSubview(label("Tab 插入  ·  ⌥数字选择  ·  Esc 关闭", size: 10, color: NSColor(calibratedWhite: 0.46, alpha: 1)))
-+    let fitting = stackView.fittingSize
-+    panel.setContentSize(NSSize(width: min(420, max(320, fitting.width)), height: min(190, max(92, fitting.height))))
-+  }
-+
-+  private func headerView(_ payload: RagImeAssistantOverlayPayload) -> NSView {
-+    let row = NSStackView()
-+    row.orientation = .horizontal
-+    row.alignment = .centerY
-+    row.spacing = 8
-+
-+    let badge = label("AI", size: 11, color: .white)
-+    badge.font = .systemFont(ofSize: 11, weight: .bold)
-+    badge.wantsLayer = true
-+    badge.layer?.cornerRadius = 8
-+    badge.layer?.backgroundColor = NSColor.systemBlue.cgColor
-+    badge.layer?.masksToBounds = true
-+    badge.alignment = .center
-+    badge.widthAnchor.constraint(equalToConstant: 28).isActive = true
-+    badge.heightAnchor.constraint(equalToConstant: 18).isActive = true
-+    row.addArrangedSubview(badge)
-+
-+    let title = payload.uiMode.contains("active_rag") ? "DeepSeek / RAG" : (payload.animation.kind == "thinking_dots" ? "正在生成" : "AI 建议")
-+    row.addArrangedSubview(label(title, size: 13, color: NSColor(calibratedWhite: 0.08, alpha: 1), weight: .semibold))
-+    if payload.animation.kind == "thinking_dots" {
-+      let dotCount = max(1, min(3, payload.animation.frame + 1))
-+      row.addArrangedSubview(label(String(repeating: "·", count: dotCount), size: 18, color: NSColor(calibratedWhite: 0.35, alpha: 1), weight: .bold))
-+    }
-+    return row
-+  }
-+
-+  private func candidateButton(_ candidate: RagImeDisplayCandidate, index: Int) -> NSButton {
-+    let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? candidate.insertText : candidate.text
-+    let shortcut = index == 0 ? "Tab" : "⌥\(index + 1)"
-+    let sourceBadge = (candidate.sourceBadge ?? candidate.badge ?? "AI").trimmingCharacters(in: .whitespacesAndNewlines)
-+    let button = NSButton(title: "\(shortcut)   [\(sourceBadge)]  \(text)", target: self, action: #selector(candidateButtonClicked(_:)))
-+    button.bezelStyle = .rounded
-+    button.alignment = .left
-+    button.tag = index
-+    button.setButtonType(.momentaryPushIn)
-+    button.font = .systemFont(ofSize: 13, weight: .medium)
-+    button.contentTintColor = NSColor(calibratedWhite: 0.08, alpha: 1)
-+    return button
-+  }
-+
-+  @objc private func candidateButtonClicked(_ sender: NSButton) {
-+    guard let payload = currentPayload else { return }
-+    let index = sender.tag
-+    guard index >= 0 && index < payload.candidates.count else { return }
-+    onSelect?(payload.candidates[index], index)
-+  }
-+
-+  private func label(_ text: String, size: CGFloat, color: NSColor, weight: NSFont.Weight = .regular) -> NSTextField {
-+    let field = NSTextField(labelWithString: text)
-+    field.font = .systemFont(ofSize: size, weight: weight)
-+    field.textColor = color
-+    field.maximumNumberOfLines = 2
-+    field.lineBreakMode = .byTruncatingTail
-+    return field
-+  }
-+
-+  private func position(anchor: NSPoint?) {
-+    let base = anchor ?? fallbackAnchor()
-+    let size = panel.frame.size
-+    guard let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(base) })?.visibleFrame ?? NSScreen.main?.visibleFrame else {
-+      panel.setFrameOrigin(NSPoint(x: base.x, y: base.y - size.height - 8))
++    let state = surfaceState(for: payload)
++    guard state != .hidden else {
++      dismiss(reason: payload.phase == "composition" ? "composition" : "passive_pending_or_status_only")
 +      return
 +    }
-+    var origin = NSPoint(x: base.x, y: base.y - size.height - 8)
-+    if origin.y < screen.minY + 8 {
-+      origin.y = base.y + 22
++    if let anchor { lastReliableCaretAnchor = anchor }
++    if !state.isExplicit && anchor == nil {
++      trace("assistant_panel_anchor_missing", ["surfaceState": state.rawValue, "anchorSource": "missing", "reason": "passive_requires_caret"])
++      dismiss(reason: "passive_anchor_missing")
++      return
 +    }
-+    if origin.x + size.width > screen.maxX - 8 {
-+      origin.x = screen.maxX - size.width - 8
-+    }
-+    if origin.x < screen.minX + 8 {
-+      origin.x = screen.minX + 8
-+    }
-+    if origin.y + size.height > screen.maxY - 8 {
-+      origin.y = screen.maxY - size.height - 8
-+    }
-+    panel.setFrameOrigin(origin)
++    guard applyVisible(payload, state: state, anchor: anchor, forceContent: false) else { return }
++    trace("assistant_panel_content_updated", [
++      "surfaceState": state.rawValue,
++      "snapshotId": payload.snapshotId,
++      "candidateCount": payload.candidates.count,
++      "updateDurationMs": (CFAbsoluteTimeGetCurrent() - start) * 1000,
++    ])
 +  }
 +
-+  private func fallbackAnchor() -> NSPoint {
-+    guard let screen = NSScreen.main?.visibleFrame else {
-+      return NSPoint(x: 240, y: 560)
++  @discardableResult
++  private func applyVisible(_ payload: RagImeAssistantOverlayPayload, state: RagImeAssistantSurfaceState, anchor: NSPoint?, forceContent: Bool) -> Bool {
++    let stableIds = payload.candidates.filter(RagImeSuggestionCardView.isRealCandidate).map {
++      $0.candidateStableId ?? "\($0.sourceType):\($0.insertText)"
 +    }
-+    return NSPoint(x: screen.midX - 200, y: screen.midY + 120)
++    if payload.snapshotId == renderedSnapshotId && stableIds == renderedStableIds && state == currentState && !forceContent {
++      trace("assistant_panel_reused", ["snapshotId": payload.snapshotId, "reason": "same_snapshot_stable_ids"])
++      return false
++    }
++    let wasVisible = panel.isVisible
++    currentPayload = payload
++    currentState = state
++    renderedSnapshotId = payload.snapshotId
++    renderedStableIds = stableIds
++    cardView.apply(state: state, payload: payload)
++    panel.ignoresMouseEvents = state == .compactPrediction
++    panel.setContentSize(contentSize(for: state, payload: payload))
++    position(state: state, anchor: anchor)
++    if !wasVisible {
++      visibleSince = Date()
++      panel.alphaValue = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0
++      panel.orderFront(nil)
++      if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
++        NSAnimationContext.runAnimationGroup { context in
++          context.duration = 0.1
++          panel.animator().alphaValue = 1
++        }
++      }
++      trace("assistant_panel_first_visible", ["surfaceState": state.rawValue, "snapshotId": payload.snapshotId])
++    }
++    trace("assistant_surface_state_changed", [
++      "surfaceState": state.rawValue,
++      "snapshotId": payload.snapshotId,
++      "candidateStableIds": stableIds,
++      "candidateCount": stableIds.count,
++      "sourceTypes": payload.candidates.map(\.sourceType),
++      "reason": forceContent ? "user_expand" : "payload",
++    ])
++    return true
 +  }
++
++  private func surfaceState(for payload: RagImeAssistantOverlayPayload) -> RagImeAssistantSurfaceState {
++    if payload.phase == "composition" { return .hidden }
++    let explicit = payload.phase == "active_rag" || payload.uiMode.contains("active_rag")
++    let realCandidates = payload.candidates.filter(RagImeSuggestionCardView.isRealCandidate)
++    if explicit { return realCandidates.isEmpty ? .explicitGenerating : .explicitResult }
++    guard !realCandidates.isEmpty else { return .hidden }
++    if expandedSnapshotId == payload.snapshotId && realCandidates.count > 1 { return .expandedPredictions }
++    return .compactPrediction
++  }
++
++  private func contentSize(for state: RagImeAssistantSurfaceState, payload: RagImeAssistantOverlayPayload) -> NSSize {
++    let realCandidates = payload.candidates.filter(RagImeSuggestionCardView.isRealCandidate)
++    let longest = realCandidates.map { $0.text.isEmpty ? $0.insertText : $0.text }.max(by: { $0.count < $1.count }) ?? ""
++    let measuredWidth = (longest as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13.5)]).width + 108
++    let width = min(520, max(280, min(420, measuredWidth)))
++    switch state {
++    case .compactPrediction: return NSSize(width: width, height: RagImeSuggestionCardView.compactHeight)
++    case .expandedPredictions: return NSSize(width: width, height: RagImeSuggestionCardView.rowHeight * CGFloat(min(3, realCandidates.count)))
++    case .explicitGenerating: return NSSize(width: max(360, width), height: RagImeSuggestionCardView.thinkingHeight)
++    case .explicitResult:
++      let text = realCandidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
++      let rect = (text as NSString).boundingRect(
++        with: NSSize(width: max(336, width - 24), height: 1000),
++        options: [.usesLineFragmentOrigin, .usesFontLeading],
++        attributes: [.font: NSFont.systemFont(ofSize: 13.5)]
++      )
++      return NSSize(width: max(360, width), height: min(220, max(96, ceil(rect.height) + 74)))
++    case .transientConfirmation, .hidden: return NSSize(width: 280, height: 40)
++    }
++  }
++
++  private func position(state: RagImeAssistantSurfaceState, anchor: NSPoint?) {
++    let start = CFAbsoluteTimeGetCurrent()
++    let resolved: (NSPoint, String)?
++    if let anchor {
++      lastReliableCaretAnchor = anchor
++      resolved = (anchor, "caret")
++    } else if state.isExplicit, let lastReliableCaretAnchor {
++      resolved = (lastReliableCaretAnchor, "last_reliable_caret")
++    } else if state.isExplicit {
++      let mouse = NSEvent.mouseLocation
++      if NSScreen.screens.contains(where: { $0.visibleFrame.contains(mouse) }) {
++        resolved = (mouse, "mouse")
++      } else if let screen = NSScreen.main?.visibleFrame {
++        resolved = (NSPoint(x: screen.midX, y: screen.midY), "screen_center")
++      } else { resolved = nil }
++    } else { resolved = nil }
++    guard let (point, source) = resolved else { return }
++    if let lastPositionedAnchor,
++      abs(lastPositionedAnchor.x - point.x) <= 8,
++      abs(lastPositionedAnchor.y - point.y) <= 8,
++      panel.isVisible { return }
++    lastPositionedAnchor = point
++    guard let screen = (NSScreen.screens.first { $0.visibleFrame.contains(point) } ?? NSScreen.main)?.visibleFrame else { return }
++    let size = panel.frame.size
++    var origin = NSPoint(x: point.x, y: point.y - size.height - 6)
++    if origin.y < screen.minY + 8 { origin.y = point.y + 22 }
++    origin.x = min(max(origin.x, screen.minX + 8), screen.maxX - size.width - 8)
++    origin.y = min(max(origin.y, screen.minY + 8), screen.maxY - size.height - 8)
++    panel.setFrameOrigin(origin)
++    trace("assistant_panel_positioned", [
++      "surfaceState": state.rawValue,
++      "anchorSource": source,
++      "positionDurationMs": (CFAbsoluteTimeGetCurrent() - start) * 1000,
++    ])
++  }
++
++  private func handle(_ action: RagImeAssistantAction) {
++    switch action {
++    case .insert, .replace:
++      guard let payload = currentPayload,
++        let index = payload.candidates.firstIndex(where: RagImeSuggestionCardView.isRealCandidate) else { return }
++      onSelect?(payload.candidates[index], index)
++    case .more(let sourceView): showMoreMenu(relativeTo: sourceView)
++    default: onAction?(action)
++    }
++  }
++
++  private func showMoreMenu(relativeTo sourceView: NSView) {
++    let menu = NSMenu()
++    let copy = NSMenuItem(title: "复制", action: #selector(copyResult), keyEquivalent: "")
++    copy.target = self
++    menu.addItem(copy)
++    let evidence = NSMenuItem(title: "查看依据", action: #selector(copyEvidence), keyEquivalent: "")
++    evidence.target = self
++    menu.addItem(evidence)
++    menu.addItem(.separator())
++    for title in ["记住", "不再推荐"] {
++      let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
++      item.isEnabled = false
++      menu.addItem(item)
++    }
++    menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sourceView.bounds.height), in: sourceView)
++  }
++
++  @objc private func copyResult() {
++    guard let candidate = currentPayload?.candidates.first(where: RagImeSuggestionCardView.isRealCandidate) else { return }
++    NSPasteboard.general.clearContents()
++    NSPasteboard.general.setString(candidate.text.isEmpty ? candidate.insertText : candidate.text, forType: .string)
++  }
++
++  @objc private func copyEvidence() {
++    guard let evidence = currentPayload?.candidates.first(where: RagImeSuggestionCardView.isRealCandidate)?.evidencePreview,
++      !evidence.isEmpty else { return }
++    NSPasteboard.general.clearContents()
++    NSPasteboard.general.setString(evidence, forType: .string)
++  }
++
++  private func traceCreationIfNeeded() {
++    guard !didTraceCreation else { return }
++    didTraceCreation = true
++    trace("assistant_panel_created", ["createCount": 1])
++  }
++
++  private func trace(_ event: String, _ fields: [String: Any]) { onTrace?(event, fields) }
 +}
 diff --git a/sources/RagImeSelectedTextProvider.swift b/sources/RagImeSelectedTextProvider.swift
 new file mode 100644
@@ -5903,3 +6007,279 @@ index a9e2dae..5c3a32c 100644
      } else {
        let visualEffectView = NSVisualEffectView()
        visualEffectView.blendingMode = .behindWindow
+diff --git a/sources/RagImeAssistantSurfaceState.swift b/sources/RagImeAssistantSurfaceState.swift
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/sources/RagImeAssistantSurfaceState.swift
+@@ -0,0 +1,17 @@
++import Foundation
++
++enum RagImeAssistantSurfaceState: String {
++  case hidden
++  case compactPrediction
++  case expandedPredictions
++  case explicitGenerating
++  case explicitResult
++  case transientConfirmation
++
++  var isExplicit: Bool {
++    switch self {
++    case .explicitGenerating, .explicitResult, .transientConfirmation: return true
++    default: return false
++    }
++  }
++}
+diff --git a/sources/RagImeSuggestionCardView.swift b/sources/RagImeSuggestionCardView.swift
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/sources/RagImeSuggestionCardView.swift
+@@ -0,0 +1,151 @@
++import AppKit
++
++enum RagImeAssistantAction {
++  case stop
++  case insert
++  case replace
++  case retry
++  case more(NSView)
++}
++
++final class RagImeSuggestionCardView: NSView {
++  static let compactHeight: CGFloat = 40
++  static let thinkingHeight: CGFloat = 44
++  static let rowHeight: CGFloat = 40
++
++  private let rows = (0..<3).map { _ in RagImeSuggestionRowView(frame: .zero) }
++  private let statusIcon = NSTextField(labelWithString: "◌")
++  private let statusLabel = NSTextField(labelWithString: "正在生成...")
++  private let stopButton = NSButton(title: "■", target: nil, action: nil)
++  private let resultHeader = NSTextField(labelWithString: "已生成")
++  private let resultScroll = NSScrollView()
++  private let resultText = NSTextView()
++  private let insertButton = NSButton(title: "插入", target: nil, action: nil)
++  private let replaceButton = NSButton(title: "替换", target: nil, action: nil)
++  private let retryButton = NSButton(title: "重试", target: nil, action: nil)
++  private let moreButton = NSButton(title: "•••", target: nil, action: nil)
++  private let confirmationLabel = NSTextField(labelWithString: "✓ 已插入")
++  private(set) var state: RagImeAssistantSurfaceState = .hidden
++  private var candidates: [RagImeDisplayCandidate] = []
++  var onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
++  var onAction: ((RagImeAssistantAction) -> Void)?
++
++  override init(frame frameRect: NSRect) {
++    super.init(frame: frameRect)
++    wantsLayer = true
++    layer?.cornerRadius = 10
++    layer?.borderWidth = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
++    layer?.borderColor = NSColor.separatorColor.cgColor
++    layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
++    layer?.masksToBounds = true
++    for (index, row) in rows.enumerated() {
++      row.onSelect = { [weak self] candidate in self?.onSelect?(candidate, index) }
++      addSubview(row)
++    }
++    statusIcon.font = .systemFont(ofSize: 15, weight: .medium)
++    statusIcon.textColor = .controlAccentColor
++    statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
++    statusLabel.textColor = .labelColor
++    resultHeader.font = .systemFont(ofSize: 12, weight: .semibold)
++    resultHeader.textColor = .secondaryLabelColor
++    resultText.isEditable = false
++    resultText.isSelectable = true
++    resultText.drawsBackground = false
++    resultText.font = .systemFont(ofSize: 13.5)
++    resultText.textColor = .labelColor
++    resultText.textContainerInset = .zero
++    resultScroll.drawsBackground = false
++    resultScroll.hasVerticalScroller = true
++    resultScroll.autohidesScrollers = true
++    resultScroll.documentView = resultText
++    configureActionButton(stopButton, action: #selector(stop))
++    configureActionButton(insertButton, action: #selector(insert))
++    configureActionButton(replaceButton, action: #selector(replace))
++    configureActionButton(retryButton, action: #selector(retry))
++    configureActionButton(moreButton, action: #selector(more))
++    confirmationLabel.font = .systemFont(ofSize: 13, weight: .medium)
++    confirmationLabel.textColor = .secondaryLabelColor
++    confirmationLabel.alignment = .center
++    [statusIcon, statusLabel, stopButton, resultHeader, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach(addSubview)
++    hideAll()
++  }
++
++  @available(*, unavailable)
++  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
++
++  override func viewDidChangeEffectiveAppearance() {
++    super.viewDidChangeEffectiveAppearance()
++    layer?.borderColor = NSColor.separatorColor.cgColor
++    layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
++  }
++
++  override func layout() {
++    super.layout()
++    switch state {
++    case .compactPrediction, .expandedPredictions:
++      for (index, row) in rows.enumerated() {
++        row.frame = NSRect(x: 0, y: bounds.height - CGFloat(index + 1) * Self.rowHeight, width: bounds.width, height: Self.rowHeight)
++      }
++    case .explicitGenerating:
++      statusIcon.frame = NSRect(x: 13, y: 13, width: 20, height: 18)
++      statusLabel.frame = NSRect(x: 40, y: 11, width: max(60, bounds.width - 88), height: 22)
++      stopButton.frame = NSRect(x: bounds.width - 42, y: 7, width: 32, height: 30)
++    case .explicitResult:
++      resultHeader.frame = NSRect(x: 12, y: bounds.height - 30, width: bounds.width - 24, height: 18)
++      resultScroll.frame = NSRect(x: 12, y: 40, width: bounds.width - 24, height: max(38, bounds.height - 74))
++      insertButton.frame = NSRect(x: 8, y: 6, width: 48, height: 28)
++      replaceButton.frame = NSRect(x: 60, y: 6, width: 48, height: 28)
++      retryButton.frame = NSRect(x: 112, y: 6, width: 48, height: 28)
++      moreButton.frame = NSRect(x: bounds.width - 48, y: 6, width: 40, height: 28)
++    case .transientConfirmation: confirmationLabel.frame = bounds
++    case .hidden: break
++    }
++  }
++
++  func apply(state: RagImeAssistantSurfaceState, payload: RagImeAssistantOverlayPayload) {
++    self.state = state
++    candidates = payload.candidates.filter(Self.isRealCandidate).prefix(3).map { $0 }
++    hideAll()
++    switch state {
++    case .compactPrediction, .expandedPredictions:
++      let visibleCount = state == .compactPrediction ? min(1, candidates.count) : candidates.count
++      for index in rows.indices where index < visibleCount {
++        rows[index].apply(candidate: candidates[index], shortcut: index == 0 ? "Tab" : "⌥\(index + 1)")
++        rows[index].isHidden = false
++      }
++    case .explicitGenerating:
++      [statusIcon, statusLabel, stopButton].forEach { $0.isHidden = false }
++    case .explicitResult:
++      [resultHeader, resultScroll, insertButton, replaceButton, retryButton, moreButton].forEach { $0.isHidden = false }
++      resultText.string = candidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
++    case .transientConfirmation: confirmationLabel.isHidden = false
++    case .hidden: break
++    }
++    needsLayout = true
++  }
++
++  static func isRealCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
++    ["model", "rag", "memory"].contains(candidate.sourceType)
++      && candidate.isStatus != true
++      && !candidate.insertText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
++  }
++
++  private func hideAll() {
++    rows.forEach { $0.isHidden = true }
++    [statusIcon, statusLabel, stopButton, resultHeader, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach { $0.isHidden = true }
++  }
++
++  private func configureActionButton(_ button: NSButton, action: Selector) {
++    button.isBordered = false
++    button.font = .systemFont(ofSize: 12, weight: .medium)
++    button.contentTintColor = .controlAccentColor
++    button.target = self
++    button.action = action
++  }
++
++  @objc private func stop() { onAction?(.stop) }
++  @objc private func insert() { onAction?(.insert) }
++  @objc private func replace() { onAction?(.replace) }
++  @objc private func retry() { onAction?(.retry) }
++  @objc private func more() { onAction?(.more(moreButton)) }
++}
+diff --git a/sources/RagImeSuggestionRowView.swift b/sources/RagImeSuggestionRowView.swift
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/sources/RagImeSuggestionRowView.swift
+@@ -0,0 +1,78 @@
++import AppKit
++
++final class RagImeSuggestionRowView: NSView {
++  private let badgeView = NSTextField(labelWithString: "")
++  private let candidateLabel = NSTextField(labelWithString: "")
++  private let shortcutLabel = NSTextField(labelWithString: "")
++  private let hitButton = NSButton()
++  private var candidate: RagImeDisplayCandidate?
++  var onSelect: ((RagImeDisplayCandidate) -> Void)?
++
++  override init(frame frameRect: NSRect) {
++    super.init(frame: frameRect)
++    wantsLayer = true
++    badgeView.alignment = .center
++    badgeView.font = .systemFont(ofSize: 10, weight: .semibold)
++    badgeView.textColor = .white
++    badgeView.wantsLayer = true
++    badgeView.layer?.cornerRadius = 5
++    badgeView.layer?.masksToBounds = true
++    candidateLabel.font = .systemFont(ofSize: 13.5)
++    candidateLabel.textColor = .labelColor
++    candidateLabel.lineBreakMode = .byTruncatingTail
++    candidateLabel.maximumNumberOfLines = 1
++    shortcutLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
++    shortcutLabel.textColor = .tertiaryLabelColor
++    shortcutLabel.alignment = .right
++    hitButton.isBordered = false
++    hitButton.title = ""
++    hitButton.target = self
++    hitButton.action = #selector(selectCandidate)
++    [badgeView, candidateLabel, shortcutLabel, hitButton].forEach(addSubview)
++  }
++
++  @available(*, unavailable)
++  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
++
++  override func layout() {
++    super.layout()
++    badgeView.frame = NSRect(x: 12, y: 11, width: 18, height: 18)
++    shortcutLabel.frame = NSRect(x: bounds.width - 48, y: 11, width: 36, height: 18)
++    candidateLabel.frame = NSRect(x: 40, y: 9, width: max(40, bounds.width - 94), height: 22)
++    hitButton.frame = bounds
++  }
++
++  func apply(candidate: RagImeDisplayCandidate, shortcut: String) {
++    self.candidate = candidate
++    let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
++    candidateLabel.stringValue = text.isEmpty ? candidate.insertText : text
++    badgeView.stringValue = sourceBadge(for: candidate)
++    badgeView.layer?.backgroundColor = sourceColor(for: candidate).cgColor
++    shortcutLabel.stringValue = shortcut
++    toolTip = candidate.evidencePreview.isEmpty ? nil : candidate.evidencePreview
++  }
++
++  @objc private func selectCandidate() {
++    guard let candidate else { return }
++    onSelect?(candidate)
++  }
++
++  private func sourceBadge(for candidate: RagImeDisplayCandidate) -> String {
++    let configured = (candidate.sourceBadge ?? candidate.badge ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++    if !configured.isEmpty { return String(configured.prefix(1)) }
++    switch candidate.sourceType {
++    case "model": return "模"
++    case "rag": return "查"
++    case "memory": return "忆"
++    default: return "AI"
++    }
++  }
++
++  private func sourceColor(for candidate: RagImeDisplayCandidate) -> NSColor {
++    switch candidate.sourceType {
++    case "rag": return .systemTeal
++    case "memory": return .systemPurple
++    default: return .systemBlue
++    }
++  }
++}
+diff --git a/sources/RagImeNonActivatingPanel.swift b/sources/RagImeNonActivatingPanel.swift
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/sources/RagImeNonActivatingPanel.swift
+@@ -0,0 +1,6 @@
++import AppKit
++
++final class RagImeNonActivatingPanel: NSPanel {
++  override var canBecomeKey: Bool { false }
++  override var canBecomeMain: Bool { false }
++}

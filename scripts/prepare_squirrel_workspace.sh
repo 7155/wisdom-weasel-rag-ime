@@ -95,6 +95,189 @@ git -C "$SQUIRREL_WORKDIR" clean -fd --quiet
 git -C "$SQUIRREL_WORKDIR" apply --recount --check "$PATCH_FILE"
 git -C "$SQUIRREL_WORKDIR" apply --recount "$PATCH_FILE"
 
+install_assistant_overlay_v2_sources() {
+  local source_dir="$ROOT/squirrel-patches/sources"
+  local project_file="$SQUIRREL_WORKDIR/Squirrel.xcodeproj/project.pbxproj"
+  local files=(
+    RagImeAssistantSurfaceState.swift
+    RagImeSuggestionCardView.swift
+    RagImeSuggestionRowView.swift
+    RagImeNonActivatingPanel.swift
+    RagImeAssistantPanelController.swift
+  )
+  for file in "${files[@]}"; do
+    if [[ ! -f "$source_dir/$file" ]]; then
+      echo "assistant overlay v2 source missing: $source_dir/$file" >&2
+      exit 1
+    fi
+    cp "$source_dir/$file" "$SQUIRREL_WORKDIR/sources/$file"
+  done
+
+  if [[ ! -f "$project_file" ]]; then
+    return 0
+  fi
+  "$PYTHON_EXECUTABLE" - "$project_file" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+def insert_after(needle: str, addition: str) -> None:
+    global text
+    if addition.strip() in text:
+        return
+    if needle not in text:
+        raise SystemExit(f"Squirrel project did not contain expected Assistant Overlay marker: {needle.strip()}")
+    text = text.replace(needle, needle + addition, 1)
+
+insert_after(
+    '\t\tB3A777082F330001009D156B /* RagImeAssistantPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A777072F330001009D156B /* RagImeAssistantPanelController.swift */; };\n',
+    '\t\tB3A778022F330001009D156B /* RagImeAssistantSurfaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A778012F330001009D156B /* RagImeAssistantSurfaceState.swift */; };\n'
+    '\t\tB3A778042F330001009D156B /* RagImeSuggestionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A778032F330001009D156B /* RagImeSuggestionCardView.swift */; };\n'
+    '\t\tB3A778062F330001009D156B /* RagImeSuggestionRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A778052F330001009D156B /* RagImeSuggestionRowView.swift */; };\n'
+    '\t\tB3A778082F330001009D156B /* RagImeNonActivatingPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A778072F330001009D156B /* RagImeNonActivatingPanel.swift */; };\n',
+)
+insert_after(
+    '\t\tB3A777072F330001009D156B /* RagImeAssistantPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeAssistantPanelController.swift; path = sources/RagImeAssistantPanelController.swift; sourceTree = "<group>"; };\n',
+    '\t\tB3A778012F330001009D156B /* RagImeAssistantSurfaceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeAssistantSurfaceState.swift; path = sources/RagImeAssistantSurfaceState.swift; sourceTree = "<group>"; };\n'
+    '\t\tB3A778032F330001009D156B /* RagImeSuggestionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeSuggestionCardView.swift; path = sources/RagImeSuggestionCardView.swift; sourceTree = "<group>"; };\n'
+    '\t\tB3A778052F330001009D156B /* RagImeSuggestionRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeSuggestionRowView.swift; path = sources/RagImeSuggestionRowView.swift; sourceTree = "<group>"; };\n'
+    '\t\tB3A778072F330001009D156B /* RagImeNonActivatingPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeNonActivatingPanel.swift; path = sources/RagImeNonActivatingPanel.swift; sourceTree = "<group>"; };\n',
+)
+insert_after(
+    '\t\t\t\tB3A777072F330001009D156B /* RagImeAssistantPanelController.swift */,\n',
+    '\t\t\t\tB3A778012F330001009D156B /* RagImeAssistantSurfaceState.swift */,\n'
+    '\t\t\t\tB3A778032F330001009D156B /* RagImeSuggestionCardView.swift */,\n'
+    '\t\t\t\tB3A778052F330001009D156B /* RagImeSuggestionRowView.swift */,\n'
+    '\t\t\t\tB3A778072F330001009D156B /* RagImeNonActivatingPanel.swift */,\n',
+)
+insert_after(
+    '\t\t\t\tB3A777082F330001009D156B /* RagImeAssistantPanelController.swift in Sources */,\n',
+    '\t\t\t\tB3A778022F330001009D156B /* RagImeAssistantSurfaceState.swift in Sources */,\n'
+    '\t\t\t\tB3A778042F330001009D156B /* RagImeSuggestionCardView.swift in Sources */,\n'
+    '\t\t\t\tB3A778062F330001009D156B /* RagImeSuggestionRowView.swift in Sources */,\n'
+    '\t\t\t\tB3A778082F330001009D156B /* RagImeNonActivatingPanel.swift in Sources */,\n',
+)
+path.write_text(text, encoding="utf-8")
+PY
+}
+
+wire_assistant_overlay_v2_controller() {
+  local controller_file="$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift"
+  if ! grep -Fq "ragImeAssistantOverlayController.update(payload, anchor: currentRagImeInputAnchor())" "$controller_file"; then
+    return 0
+  fi
+  "$PYTHON_EXECUTABLE" - "$controller_file" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+old_key = '''      if isRagImeDeleteKey(keyCode, modifiers: modifiers) {
+'''
+new_key = '''      if keyCode == 125
+        && modifiers.contains(.option)
+        && !modifiers.contains(.command)
+        && !modifiers.contains(.control)
+        && ragImeAssistantOverlayController.expandPredictions() {
+        traceRagImeFrontendEvent("assistant_surface_state_changed", fields: [
+          "surfaceState": "expandedPredictions",
+          "reason": "option_down",
+        ])
+        return true
+      }
+      if isRagImeDeleteKey(keyCode, modifiers: modifiers) {
+'''
+if new_key not in text:
+    if old_key not in text:
+        raise SystemExit("SquirrelInputController.swift missing key route insertion marker")
+    text = text.replace(old_key, new_key, 1)
+
+old_update = '''    ragImeAssistantOverlayController.update(payload, anchor: currentRagImeInputAnchor()) { [weak self] candidate, index in
+      _ = self?.commitRagImeAssistantCandidate(candidate, route: "click", index: index)
+    }
+'''
+new_update = '''    ragImeAssistantOverlayController.update(
+      payload,
+      anchor: currentRagImeInputAnchor(),
+      onSelect: { [weak self] candidate, index in
+        _ = self?.commitRagImeAssistantCandidate(candidate, route: "click", index: index)
+      },
+      onAction: { [weak self] action in
+        guard let self else { return }
+        switch action {
+        case .stop:
+          self.ragImeActiveRagSelectedTextHash = ""
+          self.dismissRagImeAssistantOverlay(reason: "explicit_generation_stopped")
+        case .retry:
+          self.dismissRagImeAssistantOverlay(reason: "explicit_generation_retry")
+          _ = self.startRagImeActiveRagAssistFromShortcut()
+        default:
+          break
+        }
+      },
+      onTrace: { [weak self] event, fields in
+        self?.traceRagImeFrontendEvent(event, fields: fields)
+      }
+    )
+'''
+if new_update not in text:
+    if old_update not in text:
+        raise SystemExit("SquirrelInputController.swift missing Assistant Overlay update marker")
+    text = text.replace(old_update, new_update, 1)
+
+old_accept = '''    dismissRagImeAssistantOverlay(reason: "candidate_accepted")
+    rimeUpdate(clearReservedComments: false, requestSidecar: false)
+'''
+new_accept = '''    ragImeAssistantOverlayController.showConfirmation()
+    clearRagImeAssistantOverlayState()
+    rimeUpdate(clearReservedComments: false, requestSidecar: false)
+'''
+if new_accept not in text:
+    if old_accept not in text:
+        raise SystemExit("SquirrelInputController.swift missing Assistant Overlay acceptance marker")
+    text = text.replace(old_accept, new_accept, 1)
+
+old_dismiss = '''  func dismissRagImeAssistantOverlay(reason: String) {
+    ragImeAssistantOverlayController.dismiss(reason: reason)
+    ragImeOverlayCandidates = []
+'''
+new_dismiss = '''  func dismissRagImeAssistantOverlay(reason: String) {
+    ragImeAssistantOverlayController.dismiss(reason: reason)
+    clearRagImeAssistantOverlayState()
+    traceRagImeFrontendEvent("assistant_overlay_dismissed", fields: [
+      "reason": reason,
+    ])
+  }
+
+  func clearRagImeAssistantOverlayState() {
+    ragImeOverlayCandidates = []
+'''
+if new_dismiss not in text:
+    if old_dismiss not in text:
+        raise SystemExit("SquirrelInputController.swift missing Assistant Overlay dismiss marker")
+    text = text.replace(old_dismiss, new_dismiss, 1)
+    old_tail = '''    ragImeOverlayExpiresAt = nil
+    traceRagImeFrontendEvent("assistant_overlay_dismissed", fields: [
+      "reason": reason,
+    ])
+  }
+
+  func ragImeLocalDeepSeekActionCandidate'''
+    new_tail = '''    ragImeOverlayExpiresAt = nil
+  }
+
+  func ragImeLocalDeepSeekActionCandidate'''
+    if old_tail not in text:
+        raise SystemExit("SquirrelInputController.swift missing Assistant Overlay dismiss tail")
+    text = text.replace(old_tail, new_tail, 1)
+
+path.write_text(text, encoding="utf-8")
+PY
+}
+
 make_input_source_prefix_brandable() {
   local input_source_file="$SQUIRREL_WORKDIR/sources/InputSource.swift"
   local app_delegate_file="$SQUIRREL_WORKDIR/sources/SquirrelApplicationDelegate.swift"
@@ -267,6 +450,8 @@ if controller_path.is_file():
 PY
 }
 
+install_assistant_overlay_v2_sources
+wire_assistant_overlay_v2_controller
 make_input_source_prefix_brandable
 add_process_trace_hooks
 git -C "$SQUIRREL_WORKDIR" diff --check
@@ -292,6 +477,11 @@ require_patch_text() {
 require_patch_file "sources/RagImeSidecarModels.swift"
 require_patch_file "sources/RagImeSidecarClient.swift"
 require_patch_file "sources/RagImeSelectedTextProvider.swift"
+require_patch_file "sources/RagImeAssistantSurfaceState.swift"
+require_patch_file "sources/RagImeSuggestionCardView.swift"
+require_patch_file "sources/RagImeSuggestionRowView.swift"
+require_patch_file "sources/RagImeNonActivatingPanel.swift"
+require_patch_file "sources/RagImeAssistantPanelController.swift"
 require_patch_file "sources/SquirrelInputController.swift"
 require_patch_file "sources/SquirrelPanel.swift"
 require_patch_text "sources/RagImeSidecarClient.swift" "rime-suggest" "sidecar suggestion request hook"
@@ -320,6 +510,9 @@ require_patch_text "sources/SquirrelInputController.swift" "foreground_context_c
 require_patch_text "sources/SquirrelInputController.swift" "foreground_context_capture_failed" "foreground context capture failure trace"
 require_patch_text "sources/SquirrelInputController.swift" "side_candidate_feedback_recorded" "selection feedback receipt trace"
 require_patch_text "sources/SquirrelInputController.swift" "assistant_overlay_candidate_visible" "assistant overlay candidate trace"
+require_patch_text "sources/RagImeAssistantPanelController.swift" "same_snapshot_stable_ids" "assistant overlay snapshot diff"
+require_patch_text "sources/RagImeAssistantPanelController.swift" "passive_anchor_missing" "passive missing-anchor suppression"
+require_patch_text "sources/RagImeAssistantPanelController.swift" "assistant_panel_created" "assistant overlay lifecycle trace"
 require_patch_text "sources/RagImeSelectedTextProvider.swift" "kAXValueAttribute" "focused text whole-value fallback"
 require_patch_text "sources/SquirrelInputController.swift" "candidate.sourceType" "compact model inline candidate comments"
 require_patch_text "sources/SquirrelPanel.swift" "candidateSeparator" "mixed inline/block candidate layout"
@@ -380,6 +573,16 @@ if command -v swiftc >/dev/null 2>&1; then
     "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" \
     "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" \
     "$stubfile"
+  if grep -Fq "struct RagImeAssistantOverlayPayload" "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift"; then
+    swiftc -typecheck \
+      -module-cache-path "$module_cache" \
+      "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeAssistantSurfaceState.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeNonActivatingPanel.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeSuggestionRowView.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeSuggestionCardView.swift" \
+      "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift"
+  fi
   rm -rf "$tmpdir"
 fi
 

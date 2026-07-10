@@ -148,6 +148,21 @@ require_file() {
   fi
 }
 
+ensure_assistant_overlay_v2_sources() {
+  local source_dir="$ROOT/squirrel-patches/sources"
+  local file
+  for file in \
+    RagImeAssistantSurfaceState.swift \
+    RagImeSuggestionCardView.swift \
+    RagImeSuggestionRowView.swift \
+    RagImeNonActivatingPanel.swift \
+    RagImeAssistantPanelController.swift; do
+    if [[ ! -f "$SQUIRREL_WORKDIR/sources/$file" && -f "$source_dir/$file" ]]; then
+      cp "$source_dir/$file" "$SQUIRREL_WORKDIR/sources/$file"
+    fi
+  done
+}
+
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
@@ -267,9 +282,15 @@ if [[ ! -d "$PROJECT_PATH" || ! -f "$PROJECT_PATH/project.pbxproj" ]]; then
   exit 1
 fi
 
+ensure_assistant_overlay_v2_sources
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" "patched Squirrel workdir is missing RAG-IME model file"
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" "patched Squirrel workdir is missing RAG-IME client file"
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "patched Squirrel workdir is missing RAG-IME selected text provider file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeAssistantSurfaceState.swift" "patched Squirrel workdir is missing Assistant Overlay state file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeSuggestionCardView.swift" "patched Squirrel workdir is missing Assistant Overlay card file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeSuggestionRowView.swift" "patched Squirrel workdir is missing Assistant Overlay row file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeNonActivatingPanel.swift" "patched Squirrel workdir is missing non-activating panel file"
+require_file "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "patched Squirrel workdir is missing Assistant Overlay controller file"
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "patched Squirrel workdir is missing patched SquirrelInputController"
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "patched Squirrel workdir is missing patched SquirrelPanel"
 require_file "$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" "patched Squirrel workdir is missing generated config snippet"
@@ -308,6 +329,9 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "ragImePanelLinear"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "ragImePanelUsesSideDisplay" "RAG-IME side-display panel clamp"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "return NSView()" "plain non-glass macOS 26 panel background"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "traceRagImePanelTextLayout" "actual frontend mixed-layout trace"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "same_snapshot_stable_ids" "Assistant Overlay snapshot diff"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "passive_anchor_missing" "passive missing-anchor suppression"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "assistant_panel_created" "Assistant Overlay lifecycle tracing"
 if [[ -f "$SQUIRREL_WORKDIR/sources/InputSource.swift" ]]; then
   require_text "$SQUIRREL_WORKDIR/sources/InputSource.swift" "static var inputSourceIDPrefix: String" "brandable input-source prefix"
 fi
