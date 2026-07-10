@@ -1449,7 +1449,7 @@ new file mode 100644
 index 0000000..b496ad8
 --- /dev/null
 +++ b/sources/RagImeSidecarModels.swift
-@@ -0,0 +1,656 @@
+@@ -0,0 +1,657 @@
 +//
 +//  RagImeSidecarModels.swift
 +//  Squirrel
