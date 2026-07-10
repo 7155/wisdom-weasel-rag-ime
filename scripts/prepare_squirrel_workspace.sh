@@ -502,6 +502,8 @@ require_patch_text "sources/SquirrelInputController.swift" "forceSideCandidates:
 require_patch_text "sources/SquirrelInputController.swift" "composition_ai_suppressed" "composition-phase AI overlay suppression"
 require_patch_text "sources/SquirrelInputController.swift" "rime_composition_started" "composition ownership trace"
 require_patch_text "sources/SquirrelInputController.swift" "rime_composition_candidates_visible" "Rime composition candidate trace"
+require_patch_text "sources/SquirrelInputController.swift" "打开 RAG-IME 控制中心..." "native control center menu entry"
+require_patch_text "sources/SquirrelInputController.swift" "com.rag-ime.control" "native control center bundle launch"
 require_patch_text "sources/SquirrelInputController.swift" "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING" "post-commit assistant overlay opt-in guard"
 require_patch_text "sources/SquirrelInputController.swift" "assistant_overlay_local_placeholder_suppressed" "post-commit local placeholder suppression"
 require_patch_text "sources/SquirrelInputController.swift" "ragImeSelectedTextProvider.captureForegroundTextForSidecar" "focused text accessibility foreground snapshot request"

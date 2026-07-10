@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$ROOT/macos/RagImeControl"
+APP="$ROOT/build/RagImeControl.app"
+CONTENTS="$APP/Contents"
+MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
+ACTION="${1:-build}"
+
+rm -rf "$APP"
+mkdir -p "$MACOS" "$RESOURCES"
+cp "$SRC/Info.plist" "$CONTENTS/Info.plist"
+
+mapfile=()
+while IFS= read -r file; do mapfile+=("$file"); done < <(find "$SRC" -type f -name '*.swift' | sort)
+
+xcrun swiftc \
+  -O \
+  -target arm64-apple-macosx13.0 \
+  -framework AppKit \
+  -framework SwiftUI \
+  "${mapfile[@]}" \
+  -o "$MACOS/RagImeControl"
+
+python3 - "$RESOURCES/rag-ime-control-build-marker.json" "$ROOT" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+target = Path(sys.argv[1])
+root = Path(sys.argv[2])
+commit = subprocess.run(
+    ["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True
+).stdout.strip()
+target.write_text(json.dumps({
+    "bundleId": "com.rag-ime.control",
+    "gitCommit": commit,
+    "managementSchemaVersion": "rag-ime.management.v1",
+    "settingsSchemaVersion": "rag-ime.settings-schema.v3",
+}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+
+if [[ -f "$ROOT/build/RagImeMac.app/Contents/Resources/RagImeIcon.icns" ]]; then
+  cp "$ROOT/build/RagImeMac.app/Contents/Resources/RagImeIcon.icns" "$RESOURCES/RagImeIcon.icns"
+  /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string RagImeIcon' "$CONTENTS/Info.plist" 2>/dev/null || true
+fi
+
+codesign --force --deep --sign - "$APP" >/dev/null
+bundle_id="$(defaults read "$CONTENTS/Info" CFBundleIdentifier)"
+[[ "$bundle_id" == "com.rag-ime.control" ]] || { echo "unexpected bundle id: $bundle_id" >&2; exit 1; }
+
+if otool -L "$MACOS/RagImeControl" | grep -Eq 'WebKit|JavaScriptCore'; then
+  echo "control center must not link WebKit or JavaScriptCore" >&2
+  exit 1
+fi
+
+if [[ "$ACTION" == "install" ]]; then
+  DEST="$HOME/Applications/RagImeControl.app"
+  mkdir -p "$HOME/Applications"
+  rm -rf "$DEST"
+  ditto "$APP" "$DEST"
+  codesign --verify --deep --strict "$DEST"
+  echo "$DEST"
+else
+  echo "$APP"
+fi

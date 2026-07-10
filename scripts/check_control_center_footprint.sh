@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP="${RAG_IME_CONTROL_APP:-$ROOT/build/RagImeControl.app}"
+BINARY="$APP/Contents/MacOS/RagImeControl"
+FOOTPRINT_LIMIT_MB="${RAG_IME_CONTROL_FOOTPRINT_LIMIT_MB:-55}"
+RSS_LIMIT_MB="${RAG_IME_CONTROL_RSS_LIMIT_MB:-150}"
+IDLE_CPU_LIMIT="${RAG_IME_CONTROL_IDLE_CPU_LIMIT:-0.5}"
+
+[[ -x "$BINARY" ]] || "$ROOT/scripts/build_control_center.sh" >/dev/null
+! otool -L "$BINARY" | grep -Eq 'WebKit|JavaScriptCore'
+! strings "$BINARY" | grep -Eq 'WKWebView|Electron|Tauri|node_modules'
+
+if [[ "${RAG_IME_CONTROL_SKIP_LIVE:-0}" == "1" ]]; then
+  echo "control center static footprint gate: PASS"
+  exit 0
+fi
+
+open "$APP"
+for _ in $(seq 1 50); do
+  pid="$(pgrep -f "$BINARY" | head -1 || true)"
+  [[ -n "$pid" ]] && break
+  sleep 0.1
+done
+[[ -n "${pid:-}" ]] || { echo "control center did not launch" >&2; exit 1; }
+sleep 30
+rss_kb="$(ps -o rss= -p "$pid" | tr -d ' ')"
+cpu="$(ps -o %cpu= -p "$pid" | tr -d ' ')"
+physical="$(vmmap -summary "$pid" 2>/dev/null | awk '/^Physical footprint:/ {print $3; exit}')"
+python3 - "$rss_kb" "$RSS_LIMIT_MB" "$physical" "$FOOTPRINT_LIMIT_MB" "$cpu" "$IDLE_CPU_LIMIT" <<'PY'
+import sys
+rss_mb = int(sys.argv[1]) / 1024
+rss_limit = float(sys.argv[2])
+physical_raw = sys.argv[3].strip().upper()
+physical_limit = float(sys.argv[4])
+cpu = float(sys.argv[5])
+cpu_limit = float(sys.argv[6])
+scale = 1024 if physical_raw.endswith("G") else (1 / 1024 if physical_raw.endswith("K") else 1)
+physical_mb = float(physical_raw[:-1]) * scale
+if rss_mb > rss_limit:
+    raise SystemExit(f"RSS {rss_mb:.1f} MB exceeds {rss_limit:.1f} MB")
+if physical_mb > physical_limit:
+    raise SystemExit(f"physical footprint {physical_mb:.1f} MB exceeds {physical_limit:.1f} MB")
+if cpu > cpu_limit:
+    raise SystemExit(f"idle CPU {cpu:.2f}% exceeds {cpu_limit:.2f}%")
+print(f"physicalFootprint={physical_mb:.1f}MB RSS={rss_mb:.1f}MB idleCPU={cpu:.2f}%")
+PY
+osascript -e 'tell application id "com.rag-ime.control" to quit' >/dev/null 2>&1 || kill "$pid"
+sleep 1
+! kill -0 "$pid" 2>/dev/null
+echo "control center live footprint gate: PASS"

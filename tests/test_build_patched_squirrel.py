@@ -78,6 +78,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING", patch_text)
         self.assertIn("post_commit_pending_overlay_disabled", patch_text)
         self.assertIn("assistant_overlay_local_placeholder_suppressed", patch_text)
+        self.assertIn("打开 RAG-IME 控制中心...", patch_text)
+        self.assertIn('urlForApplication(withBundleIdentifier: "com.rag-ime.control")', patch_text)
+        self.assertIn('performRagImeControlAction("stop_ai")', patch_text)
+        self.assertIn('performRagImeControlAction("restart_sidecar")', patch_text)
         overlay_sources = root / "squirrel-patches" / "sources"
         controller_text = (overlay_sources / "RagImeAssistantPanelController.swift").read_text(encoding="utf-8")
         card_text = (overlay_sources / "RagImeSuggestionCardView.swift").read_text(encoding="utf-8")
@@ -377,6 +381,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("showRagImePostCommitActionPlaceholder(request: request)", patch_text)
         self.assertIn("rime_composition_started", patch_text)
         self.assertIn("rime_composition_candidates_visible", patch_text)
+        self.assertIn("let evidencePreview: String\n+  let confidence: Double?\n+  let suggestionId: String\n+  let memoryId: String", patch_text)
         self.assertIn("composition_ai_suppressed", patch_text)
         self.assertIn("reason\": \"rime_composition_phase", patch_text)
         self.assertIn("if forceSideCandidates {", patch_text)
@@ -698,6 +703,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = "forceSideCandidates: forceSideCandidates" }; '
             'func compositionAISuppressed() { _ = "composition_ai_suppressed" }; '
             'func traceRimeComposition() { _ = "rime_composition_started"; _ = "rime_composition_candidates_visible" }; '
+            'func controlCenterMenu() { _ = "打开 RAG-IME 控制中心..."; _ = "com.rag-ime.control" }; '
             'func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
             'func foregroundCaptureResolved() { _ = "foreground_context_capture_resolved" }; '

@@ -1893,9 +1893,10 @@ index 0000000..b496ad8
 +  let sourceType: String
 +  let sourceBadge: String
 +  let title: String
-+  let subtitle: String
-+  let preview: String
-+  let weight: Double
++  let evidencePreview: String
++  let confidence: Double?
++  let suggestionId: String
++  let memoryId: String
 +}
 +
 +struct RagImeAssistantOverlayPayload: Codable {
@@ -5786,10 +5787,10 @@ index c2adf74..7f4fb39 100644
      }
    }
  
- func commit(string: String) {
-    guard let client = client else { return }
+   func commit(string: String) {
+     guard let client = client else { return }
 +    let previousContext = syncRagImeCommittedContextFromClient(excludingMarkedText: preedit)
-    client.insertText(string, replacementRange: .empty)
+     client.insertText(string, replacementRange: .empty)
 +    ragImeCommittedContext = actualRagImeCommittedContextFromClient(fallback: [previousContext, string].filter { !$0.isEmpty }.joined(separator: " "))
 +    ragImeCommittedContextUpdatedAt = ragImeCommittedContext.isEmpty ? .distantPast : Date()
 +    let captureEpoch = ragImeInputGeneration + 1
@@ -6404,3 +6405,76 @@ index 0000000..1111111
 +  override var canBecomeKey: Bool { false }
 +  override var canBecomeMain: Bool { false }
 +}
+diff --git a/sources/SquirrelInputController.swift b/sources/SquirrelInputController.swift
+index 1dfe65d..bd1ba44 100644
+--- a/sources/SquirrelInputController.swift
++++ b/sources/SquirrelInputController.swift
+@@ -240,15 +240,29 @@ final class SquirrelInputController: IMKInputController {
+     let update = NSMenuItem(title: NSLocalizedString("Check for updates...", comment: "Menu item"), action: #selector(checkForUpdates), keyEquivalent: "")
+     update.target = self
+ 
++    let controlCenter = NSMenuItem(title: "打开 RAG-IME 控制中心...", action: #selector(openRagImeControlCenter), keyEquivalent: "")
++    controlCenter.target = self
++    let pauseAI = NSMenuItem(title: "暂停 AI 建议", action: #selector(pauseRagImeAI), keyEquivalent: "")
++    pauseAI.target = self
++    let currentProfile = NSMenuItem(title: "当前配置：由 Sidecar 同步", action: nil, keyEquivalent: "")
++    currentProfile.isEnabled = false
++    let restartSidecar = NSMenuItem(title: "重新启动 RAG-IME Sidecar", action: #selector(restartRagImeSidecar), keyEquivalent: "")
++    restartSidecar.target = self
++    let diagnostics = NSMenuItem(title: "RAG-IME 诊断...", action: #selector(openRagImeDiagnostics), keyEquivalent: "")
++    diagnostics.target = self
++
+     let menu = NSMenu()
++    menu.addItem(controlCenter)
++    menu.addItem(pauseAI)
++    menu.addItem(currentProfile)
++    menu.addItem(restartSidecar)
++    menu.addItem(diagnostics)
++    menu.addItem(.separator())
+     menu.addItem(deploy)
+     menu.addItem(sync)
+     menu.addItem(logDir)
+     menu.addItem(setting)
+     menu.addItem(wiki)
+     menu.addItem(update)
+@@ -267,6 +281,43 @@ final class SquirrelInputController: IMKInputController {
+     NSApp.squirrelAppDelegate.openRimeFolder()
+   }
+ 
++  @objc func openRagImeControlCenter() {
++    let workspace = NSWorkspace.shared
++    if let appURL = workspace.urlForApplication(withBundleIdentifier: "com.rag-ime.control") {
++      workspace.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
++      return
++    }
++    let userApp = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/RagImeControl.app")
++    if FileManager.default.fileExists(atPath: userApp.path) {
++      workspace.openApplication(at: userApp, configuration: NSWorkspace.OpenConfiguration())
++    }
++  }
++
++  @objc func openRagImeDiagnostics() {
++    openRagImeControlCenter()
++  }
++
++  @objc func pauseRagImeAI() {
++    performRagImeControlAction("stop_ai")
++  }
++
++  @objc func restartRagImeSidecar() {
++    performRagImeControlAction("restart_sidecar")
++  }
++
++  private func performRagImeControlAction(_ action: String) {
++    guard let url = URL(string: "http://127.0.0.1:8766/api/runtime/action"),
++          let body = try? JSONSerialization.data(withJSONObject: ["action": action]) else { return }
++    var request = URLRequest(url: url)
++    request.httpMethod = "POST"
++    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
++    request.httpBody = body
++    URLSession.shared.dataTask(with: request).resume()
++  }
++
+   @objc func checkForUpdates() {
+     NSApp.squirrelAppDelegate.checkForUpdates()
+   }

@@ -42,6 +42,17 @@ class SettingsSchemaTests(unittest.TestCase):
 
         self.assertEqual(unflatten_settings(flatten_settings(original)), original)
 
+    def test_every_field_declares_runtime_application_metadata(self) -> None:
+        schema = settings_schema()
+        required = {"description", "applyMode", "risk", "expert", "min", "max", "step", "unit", "validation", "restartComponent"}
+        fields = [field for section in schema["sections"] for field in section["fields"]]
+
+        self.assertTrue(fields)
+        self.assertTrue(all(required.issubset(field) for field in fields))
+        shortcut = next(field for field in fields if field["key"] == "activeRag.shortcut")
+        self.assertEqual(shortcut["type"], "shortcut")
+        self.assertEqual(shortcut["applyMode"], "restart_input_method")
+
 
 if __name__ == "__main__":
     unittest.main()

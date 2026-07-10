@@ -27,6 +27,7 @@ from .history_context import build_prediction_context
 from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from .local_sqlite_core import LocalSqliteCoreClient
+from .management_service import ManagementService, page_request
 from .memory_book_compiler import build_memory_book_source_bundle
 from .memory_generator import (
     MemoryGenerationError,
@@ -151,6 +152,16 @@ class DebugImeService:
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
         self.settings_store.initialize()
+        self.management = ManagementService(
+            db_path=config.db_path,
+            project=config.project,
+            repo_root=Path(__file__).resolve().parents[1],
+            settings_store=self.settings_store,
+            health_provider=self.health,
+            input_source_provider=self.input_source_status,
+            predictor_provider=self.predictor_status,
+            last_prediction_provider=self._last_management_prediction,
+        )
         _apply_pinyin_settings_to_process_env(self.settings_store.get_settings(include_sensitive=True))
         if config.seed_if_empty and self._event_count() == 0:
             seed_demo_memories(self.adapter, default_fixture_memories())
@@ -217,6 +228,7 @@ class DebugImeService:
             **settings_response(result.settings),
             "auditId": result.audit_id,
             "changedKeys": list(result.changed_keys),
+            **self.management.settings_changed(audit_id=result.audit_id, changed_keys=list(result.changed_keys)),
         }
 
     def settings_reset_section(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -229,6 +241,22 @@ class DebugImeService:
             "auditId": result.audit_id,
             "changedKeys": list(result.changed_keys),
             "section": section,
+            **self.management.settings_changed(audit_id=result.audit_id, changed_keys=list(result.changed_keys)),
+        }
+
+    def _last_management_prediction(self) -> dict[str, object]:
+        if not self._prediction_live_trace:
+            return {}
+        item = self._prediction_live_trace[-1]
+        return {
+            "requestId": item.get("requestId", ""),
+            "triggerReason": item.get("triggerReason", item.get("reason", "")),
+            "contextSource": item.get("foregroundContextSource", ""),
+            "sourceTypes": item.get("sourceTypes", []),
+            "visibleCandidate": item.get("visibleCandidate", ""),
+            "totalLatencyMs": item.get("totalLatencyMs", item.get("elapsedMs", 0)),
+            "providerCallCount": item.get("providerCallCount", 0),
+            "createdAtMs": item.get("createdAtMs", 0),
         }
 
     def profiles(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -2387,6 +2415,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib API
         parsed = urlparse(self.path)
+        if parsed.path == "/api/events/stream":
+            self._stream_management_events()
+            return
         if parsed.path in ("/api/health", "/health"):
             self._write_json(HTTPStatus.OK, self.service.health())
             return
@@ -2394,6 +2425,60 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
+        if parsed.path == "/api/overview":
+            self._write_json(HTTPStatus.OK, self.service.management.overview())
+            return
+        if parsed.path == "/api/runtime/status":
+            self._write_json(HTTPStatus.OK, self.service.management.runtime_status())
+            return
+        if parsed.path == "/api/runtime/components":
+            self._write_json(HTTPStatus.OK, self.service.management.runtime_components())
+            return
+        if parsed.path.startswith("/api/runtime/job/"):
+            job_id = unquote(parsed.path.rsplit("/", 1)[-1])
+            self._write_json(HTTPStatus.OK, self.service.management.runtime_job(job_id))
+            return
+        if parsed.path == "/api/memory/summary":
+            self._write_json(HTTPStatus.OK, self.service.management.memory_summary())
+            return
+        if parsed.path in {
+            "/api/memory/books",
+            "/api/memory/atoms",
+            "/api/memory/phrases",
+            "/api/memory/groups",
+            "/api/memory/negative",
+        }:
+            kind = parsed.path.rsplit("/", 1)[-1]
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management.memory_page(
+                    kind,
+                    page_request(
+                        {
+                            "limit": _query_first(query, "limit"),
+                            "cursor": _query_first(query, "cursor"),
+                            "query": _query_first(query, "query"),
+                            "status": _query_first(query, "status"),
+                        }
+                    ),
+                ),
+            )
+            return
+        if parsed.path == "/api/history/page":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management.history_page(
+                    page_request(
+                        {
+                            "limit": _query_first(query, "limit"),
+                            "cursor": _query_first(query, "cursor"),
+                            "query": _query_first(query, "query"),
+                            "status": _query_first(query, "filter"),
+                        }
+                    )
+                ),
+            )
+            return
         if parsed.path in ("/api/predictor/status",):
             self._write_json(HTTPStatus.OK, self.service.predictor_status())
             return
@@ -2627,6 +2712,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             if path in ("/api/suggest", "/suggest"):
                 self._write_json(HTTPStatus.OK, self.service.suggest(payload))
+            elif path == "/api/runtime/action":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.management.start_runtime_action(payload))
+            elif path == "/api/memory/action":
+                self._write_json(HTTPStatus.OK, self.service.management.memory_action(payload))
             elif path in ("/api/settings/update",):
                 self._write_json(HTTPStatus.OK, self.service.settings_update(payload))
             elif path in ("/api/settings/reset-section",):
@@ -2743,6 +2832,19 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith(("/api/active-rag/status", "/api/active-rag/session")):
             return
         print(f"[rag-ime-debug] {self.address_string()} - {fmt % args}")
+
+    def _stream_management_events(self) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        try:
+            for chunk in self.service.management.events.subscribe():
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _management_post_security_error(self, path: str) -> dict[str, object] | None:
         if not path.startswith("/api/"):

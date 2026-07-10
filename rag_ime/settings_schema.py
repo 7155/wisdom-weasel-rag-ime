@@ -14,6 +14,10 @@ DEFAULT_SETTINGS: dict[str, object] = {
         },
         "postCommit": {
             "enabled": True,
+            "idleTriggerMs": 500,
+            "minDeltaChars": 6,
+            "maxCallsPer10s": 2,
+            "cooldownMs": 1500,
             "showPendingStatus": False,
             "pendingStatusDelayMs": 150,
             "numberKeys": "pass_through",
@@ -47,6 +51,10 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "showSourceBadge": True,
         "showDiagnosticsInline": False,
         "statusRowStyle": "compact",
+        "candidateFontSize": 14,
+        "panelStyle": "compact",
+        "fadeAnimation": True,
+        "maxWidth": 520,
     },
     "rag": {
         "hybrid": {"enabled": True, "budgetMs": 25},
@@ -75,9 +83,15 @@ DEFAULT_SETTINGS: dict[str, object] = {
         },
     },
     "memory": {
+        "enabled": True,
         "rawHistoryRedacted": True,
         "directCandidateDefault": False,
         "retentionDays": 30,
+        "shortTermItems": 20,
+        "shortTermTtlMinutes": 30,
+        "allowProjectFallback": True,
+        "allowAppFallback": True,
+        "allowGlobalMemory": True,
     },
     "models": {
         "hot": "qwen3_06b_ime_hot",
@@ -152,6 +166,11 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "interaction.composition.showPrediction", "type": "boolean", "label": "输入拼音时显示 AI 候选", "default": True},
                 {"key": "interaction.composition.showOnlyRime", "type": "boolean", "label": "输入拼音时只显示 Rime 候选", "default": False},
                 {"key": "interaction.postCommit.showPendingStatus", "type": "boolean", "label": "Rime 选词后显示查忆状态行", "default": False},
+                {"key": "interaction.postCommit.enabled", "type": "boolean", "label": "启用提交后预测", "default": True},
+                {"key": "interaction.postCommit.idleTriggerMs", "type": "integer", "label": "停顿触发时间", "default": 500},
+                {"key": "interaction.postCommit.minDeltaChars", "type": "integer", "label": "最少新增字符数", "default": 6},
+                {"key": "interaction.postCommit.maxCallsPer10s", "type": "integer", "label": "10 秒最大模型调用", "default": 2},
+                {"key": "interaction.postCommit.cooldownMs", "type": "integer", "label": "空结果冷却", "default": 1500},
                 {"key": "interaction.postCommit.pendingStatusDelayMs", "type": "integer", "label": "状态行延迟", "default": 150},
                 {"key": "interaction.postCommit.panelTtlMs", "type": "integer", "label": "预测面板 TTL", "default": 4200},
                 {"key": "interaction.postCommit.numberKeys", "type": "enum", "label": "Post-commit 数字键", "options": ["pass_through", "select_prediction"], "default": "pass_through"},
@@ -170,6 +189,10 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "display.badges.memory", "type": "string", "label": "记忆徽标", "default": "忆"},
                 {"key": "display.badges.status", "type": "string", "label": "状态行徽标", "default": "查忆"},
                 {"key": "display.badges.action", "type": "string", "label": "手动生成按钮徽标", "default": "生成"},
+                {"key": "display.panelStyle", "type": "enum", "label": "候选界面", "options": ["compact", "expanded"], "default": "compact"},
+                {"key": "display.candidateFontSize", "type": "integer", "label": "候选字号", "default": 14},
+                {"key": "display.fadeAnimation", "type": "boolean", "label": "淡入动画", "default": True},
+                {"key": "display.maxWidth", "type": "integer", "label": "最大宽度", "default": 520},
             ],
         },
         {
@@ -199,7 +222,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "label": "Active RAG",
             "fields": [
                 {"key": "activeRag.enabled", "type": "boolean", "label": "启用 Active RAG", "default": True},
-                {"key": "activeRag.shortcut", "type": "string", "label": "快捷键", "default": "ctrl+."},
+                {"key": "activeRag.shortcut", "type": "shortcut", "label": "快捷键", "default": "ctrl+."},
                 {"key": "activeRag.capture.accessibility", "type": "boolean", "label": "优先读取系统选区", "default": True},
                 {"key": "activeRag.capture.clipboardFallback", "type": "boolean", "label": "显式触发允许剪贴板 fallback", "default": True},
                 {"key": "activeRag.capture.manualClipboardFallback", "type": "boolean", "label": "允许手动剪贴板兜底", "default": True},
@@ -207,6 +230,18 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "activeRag.maxCandidates", "type": "integer", "label": "生成候选数量", "default": 1},
                 {"key": "activeRag.latencyBudgetMs", "type": "integer", "label": "强模型等待毫秒", "default": 15000},
                 {"key": "activeRag.allowRemoteModel", "type": "boolean", "label": "允许远程模型", "default": False},
+            ],
+        },
+        {
+            "id": "memory",
+            "label": "Memory",
+            "fields": [
+                {"key": "memory.enabled", "type": "boolean", "label": "启用记忆增强", "default": True},
+                {"key": "memory.shortTermItems", "type": "integer", "label": "短期记忆条数", "default": 20},
+                {"key": "memory.shortTermTtlMinutes", "type": "integer", "label": "短期记忆 TTL", "default": 30},
+                {"key": "memory.allowProjectFallback", "type": "boolean", "label": "允许项目级回退", "default": True},
+                {"key": "memory.allowAppFallback", "type": "boolean", "label": "允许 App 级回退", "default": True},
+                {"key": "memory.allowGlobalMemory", "type": "boolean", "label": "允许全局记忆", "default": True},
             ],
         },
         {
@@ -247,7 +282,45 @@ def default_settings() -> dict[str, object]:
 
 
 def settings_schema() -> dict[str, object]:
-    return copy.deepcopy(SETTINGS_SCHEMA)
+    schema = copy.deepcopy(SETTINGS_SCHEMA)
+    for section in schema["sections"]:  # type: ignore[index]
+        for field in section.get("fields", []):
+            key = str(field.get("key") or "")
+            field_type = str(field.get("type") or "string")
+            metadata = _FIELD_METADATA.get(key, {})
+            field.setdefault("description", metadata.get("description", str(field.get("label") or key)))
+            field.setdefault("applyMode", metadata.get("applyMode", "live"))
+            field.setdefault("risk", metadata.get("risk", "safe"))
+            field.setdefault("expert", metadata.get("expert", key.startswith("rag.weights.")))
+            field.setdefault("min", metadata.get("min"))
+            field.setdefault("max", metadata.get("max"))
+            field.setdefault("step", metadata.get("step", 1 if field_type == "integer" else None))
+            field.setdefault("unit", metadata.get("unit", ""))
+            field.setdefault("validation", metadata.get("validation", {}))
+            field.setdefault("restartComponent", metadata.get("restartComponent", ""))
+    return schema
+
+
+_FIELD_METADATA: dict[str, dict[str, object]] = {
+    "interaction.postCommit.idleTriggerMs": {"description": "连续输入合并后等待多久触发预测", "min": 100, "max": 3000, "step": 50, "unit": "ms"},
+    "interaction.postCommit.minDeltaChars": {"description": "相较上次预测至少新增的字符数", "min": 1, "max": 32, "unit": "字符"},
+    "interaction.postCommit.maxCallsPer10s": {"description": "限制连续输入期间的模型调用预算", "min": 0, "max": 10, "unit": "次"},
+    "interaction.postCommit.cooldownMs": {"description": "空结果后再次调用模型前的等待时间", "min": 0, "max": 10000, "step": 100, "unit": "ms"},
+    "interaction.postCommit.panelTtlMs": {"description": "预测候选自动关闭前的保留时间", "min": 500, "max": 15000, "step": 100, "unit": "ms", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "display.maxPostCommitCandidates": {"min": 1, "max": 8, "unit": "项", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "display.candidateFontSize": {"min": 11, "max": 24, "unit": "pt", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "display.maxWidth": {"min": 320, "max": 760, "step": 20, "unit": "pt", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "activeRag.shortcut": {"description": "显式生成快捷键", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
+    "activeRag.allowRemoteModel": {"description": "只允许显式 Active RAG 使用远程模型", "risk": "sensitive", "validation": {"confirmText": "ALLOW REMOTE MODEL"}},
+    "pinyin.rimeManagedPatch": {"description": "写入受管理的 Rime 模糊音 patch", "applyMode": "redeploy_rime", "restartComponent": "rime"},
+    "pinyin.fuzzyProfile": {"applyMode": "redeploy_rime", "restartComponent": "rime"},
+    "models.hot": {"applyMode": "restart_predictor", "restartComponent": "predictor"},
+    "models.activeRag": {"applyMode": "restart_sidecar", "restartComponent": "sidecar"},
+    "models.offlineCleanup": {"applyMode": "restart_sidecar", "restartComponent": "sidecar", "expert": True},
+    "privacy.traceIncludeText": {"risk": "sensitive", "expert": True},
+    "privacy.debugIncludeText": {"risk": "sensitive", "expert": True},
+    "managementSecurity.requireToken": {"applyMode": "restart_sidecar", "restartComponent": "sidecar", "expert": True},
+}
 
 
 def deep_merge_settings(base: Mapping[str, object], updates: Mapping[str, object]) -> dict[str, object]:
