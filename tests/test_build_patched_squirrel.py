@@ -104,6 +104,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("NSColor.separatorColor", card_text)
         self.assertIn("accessibilityDisplayShouldReduceMotion", controller_text)
         self.assertIn("accessibilityDisplayShouldIncreaseContrast", card_text)
+        self.assertIn("Timer(timeInterval: 0.5, repeats: true)", controller_text)
+        self.assertIn("RunLoop.main.add(timer, forMode: .common)", controller_text)
+        self.assertIn("assistant_generating_animation_started", controller_text)
+        self.assertIn("assistant_generating_animation_stopped", controller_text)
+        self.assertIn("func updateGeneratingFrame", card_text)
+        self.assertIn('["◜", "◝", "◞", "◟"]', card_text)
         self.assertIn("RagImeSuggestionRowView", row_text)
         self.assertIn("private let ragImeDisplayHoldoverDuration: TimeInterval = 2.6", patch_text)
         self.assertIn("private let ragImePostCommitDisplayHoldoverDuration: TimeInterval = 8.0", patch_text)
@@ -144,6 +150,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('traceRagImeFrontendEvent("sidecar_clear_response_applied"', patch_text)
         self.assertIn("response.predictionSession?.shouldClearPredictionPanel == true", patch_text)
         self.assertIn("let shouldClearEmptyResponse = response.predictionSession?.shouldClearPredictionPanel == true", patch_text)
+        self.assertNotIn("if overlayVisible {", patch_text)
+        self.assertIn("scheduleRagImeProgressiveFollowUpIfNeeded(\n+        response: response", patch_text)
+        self.assertIn("let shouldKeepFingerprintForFollowUp = response.progressive?.enabled == true", patch_text)
+        self.assertIn("keepLastFingerprint: shouldKeepFingerprintForFollowUp", patch_text)
         self.assertIn('"keptExistingPanel": !shouldClearEmptyResponse', patch_text)
         self.assertIn("displayCandidatesToApply.allSatisfy({ ragImeDisplayCandidateSessionFingerprint($0) == responseSessionFingerprint })", patch_text)
         self.assertIn("clearRagImeDisplayCandidates()", patch_text)
@@ -221,6 +231,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("func scheduleRagImeProgressiveFollowUpIfNeeded(", patch_text)
         self.assertIn("func ragImeTraceProgressive(_ progressive: RagImeProgressivePayload?) -> [String: Any]", patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_progressive_followup_scheduled"', patch_text)
+        self.assertIn("ragImeLastRequestFingerprint = fingerprint\n+    ragImePendingRequestFingerprint = fingerprint", patch_text)
+        self.assertIn("text_input_client_synchronous_fallback_after_", patch_text)
+        self.assertIn('traceRagImeFrontendEvent("foreground_context_captured_after_commit"', patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_progressive_followup_sent"', patch_text)
         self.assertIn("progressiveFollowUp: true", patch_text)
         self.assertIn('"progressive": ragImeTraceProgressive(response.progressive)', patch_text)
@@ -362,6 +375,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("ragImeDisplayOptionNumberPolicy = \"\"", patch_text)
         self.assertIn("observeRagImePostCommitContinuationIfReady()", patch_text)
         self.assertIn("showRagImePostCommitActionPlaceholder(request: request)", patch_text)
+        self.assertIn("rime_composition_started", patch_text)
+        self.assertIn("rime_composition_candidates_visible", patch_text)
         self.assertIn("composition_ai_suppressed", patch_text)
         self.assertIn("reason\": \"rime_composition_phase", patch_text)
         self.assertIn("if forceSideCandidates {", patch_text)
@@ -413,6 +428,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("startRagImeActiveRagAssistFromShortcut", patch_text)
         self.assertIn("startRagImeActiveRagAssistFromSelection", patch_text)
         self.assertIn("startRagImeActiveRagAssistFromContext", patch_text)
+        self.assertIn("active_rag_shortcut_context_fallback", patch_text)
+        self.assertIn("func startRagImeActiveRagAssistFromContext(actionCandidate: RagImeDisplayCandidate? = nil)", patch_text)
         self.assertIn('candidate.selectionAction == "start_active_rag_from_context"', patch_text)
         self.assertIn("ragImeDisplayCandidateIsShortcutOnlyAction", patch_text)
         self.assertIn('numberKeys: "pass_through"', patch_text)
@@ -680,6 +697,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func traceV2() { _ = "rag-ime.foreground-trace.v2" }; '
             'func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = "forceSideCandidates: forceSideCandidates" }; '
             'func compositionAISuppressed() { _ = "composition_ai_suppressed" }; '
+            'func traceRimeComposition() { _ = "rime_composition_started"; _ = "rime_composition_candidates_visible" }; '
             'func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
             'func foregroundCaptureResolved() { _ = "foreground_context_capture_resolved" }; '

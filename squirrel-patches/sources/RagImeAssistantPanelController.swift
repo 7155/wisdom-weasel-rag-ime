@@ -13,6 +13,8 @@ final class RagImeAssistantPanelController {
   private var lastReliableCaretAnchor: NSPoint?
   private var lastPositionedAnchor: NSPoint?
   private var visibleSince: Date?
+  private var generatingTimer: Timer?
+  private var generatingFrame = 0
   private var didTraceCreation = false
   private var onSelect: ((RagImeDisplayCandidate, Int) -> Void)?
   private var onAction: ((RagImeAssistantAction) -> Void)?
@@ -93,6 +95,7 @@ final class RagImeAssistantPanelController {
     renderedStableIds = []
     expandedSnapshotId = ""
     visibleSince = nil
+    stopGeneratingAnimation()
     if panel.isVisible { panel.orderOut(nil) }
     trace("assistant_panel_dismissed", ["reason": reason, "visibleDurationMs": duration])
     trace("assistant_surface_state_changed", ["surfaceState": RagImeAssistantSurfaceState.hidden.rawValue, "reason": reason])
@@ -139,6 +142,7 @@ final class RagImeAssistantPanelController {
     renderedSnapshotId = payload.snapshotId
     renderedStableIds = stableIds
     cardView.apply(state: state, payload: payload)
+    updateGeneratingAnimation(for: state)
     panel.ignoresMouseEvents = state == .compactPrediction
     panel.setContentSize(contentSize(for: state, payload: payload))
     position(state: state, anchor: anchor)
@@ -173,6 +177,39 @@ final class RagImeAssistantPanelController {
     guard !realCandidates.isEmpty else { return .hidden }
     if expandedSnapshotId == payload.snapshotId && realCandidates.count > 1 { return .expandedPredictions }
     return .compactPrediction
+  }
+
+  private func updateGeneratingAnimation(for state: RagImeAssistantSurfaceState) {
+    guard state == .explicitGenerating else {
+      stopGeneratingAnimation()
+      return
+    }
+    generatingFrame = 0
+    let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    cardView.updateGeneratingFrame(generatingFrame, reduceMotion: reduceMotion)
+    trace("assistant_generating_animation_started", [
+      "intervalMs": 500,
+      "reduceMotion": reduceMotion,
+      "surfaceState": state.rawValue,
+    ])
+    guard !reduceMotion, generatingTimer == nil else { return }
+    let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+      guard let self, self.currentState == .explicitGenerating else { return }
+      self.generatingFrame = (self.generatingFrame + 1) % 4
+      self.cardView.updateGeneratingFrame(self.generatingFrame, reduceMotion: false)
+    }
+    generatingTimer = timer
+    RunLoop.main.add(timer, forMode: .common)
+  }
+
+  private func stopGeneratingAnimation() {
+    let wasRunning = generatingTimer != nil
+    generatingTimer?.invalidate()
+    generatingTimer = nil
+    generatingFrame = 0
+    if wasRunning {
+      trace("assistant_generating_animation_stopped", ["reason": "surface_state_changed"])
+    }
   }
 
   private func contentSize(for state: RagImeAssistantSurfaceState, payload: RagImeAssistantOverlayPayload) -> NSSize {

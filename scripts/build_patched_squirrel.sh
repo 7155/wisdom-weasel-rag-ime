@@ -304,6 +304,8 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rag-ime.
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty" "foreground post-commit-only LLM/RAG candidate request"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "forceSideCandidates: forceSideCandidates" "foreground dynamic LLM/RAG candidate request"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "composition_ai_suppressed" "composition-phase AI overlay suppression"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rime_composition_started" "composition ownership trace"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "rime_composition_candidates_visible" "Rime composition candidate trace"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING" "post-commit assistant overlay opt-in guard"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "assistant_overlay_local_placeholder_suppressed" "post-commit local placeholder suppression"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImeSelectedTextProvider.captureForegroundTextForSidecar" "focused text accessibility foreground snapshot request"

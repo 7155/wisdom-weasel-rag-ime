@@ -124,6 +124,12 @@ final class RagImeSuggestionCardView: NSView {
     needsLayout = true
   }
 
+  func updateGeneratingFrame(_ frame: Int, reduceMotion: Bool) {
+    guard state == .explicitGenerating else { return }
+    let frames = reduceMotion ? ["◌"] : ["◜", "◝", "◞", "◟"]
+    statusIcon.stringValue = frames[frame % frames.count]
+  }
+
   static func isRealCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
     ["model", "rag", "memory"].contains(candidate.sourceType)
       && candidate.isStatus != true
