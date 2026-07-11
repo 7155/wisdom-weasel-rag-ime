@@ -243,9 +243,30 @@ Optional request-level hotwords are configured only in the Control Center. The
 agent sends at most 32 validated entries in the provider's `request.context`
 field; disabled or empty configuration omits the field entirely. RAG-IME never
 exports the Rime user dictionary for this purpose.
-Remove only the voice agent with `scripts/uninstall_voice_input.sh`; pass
-`--purge-credentials` to remove its Keychain entries and private hotword file as
-well.
+Every uninstall entry point is dry-run by default. Remove only the voice agent
+with `scripts/uninstall_voice_input.sh --apply`; add `--purge-credentials` to
+remove its Keychain entries and private hotword file as well. The legacy
+sidecar-only entry point now delegates to the same planner and also requires
+`scripts/uninstall_sidecar_launch_agent.sh --apply`.
+
+For a complete user-scoped inventory, run:
+
+```bash
+python3 scripts/uninstall_rag_ime.py
+```
+
+The default apply scope removes only LaunchAgents whose plist `Label` still
+matches a known RAG-IME service and native apps whose bundle identifiers still
+match. It preserves local databases/models/settings, logs, all Rime user data,
+patched Squirrel, Keychain credentials, and macOS privacy-list entries. Inspect
+the JSON plan, then repeat the same options with `--apply`. Optional flags
+separately govern `--remove-patched-squirrel`,
+`--remove-rime-managed-config`, `--purge-local-data`,
+`--purge-credentials`, and `--purge-voice-config`. Squirrel is removable only
+with its RAG-IME build marker; Rime edits require exactly one paired managed
+block and create backups. Apply rechecks ownership, rejects path/symlink escape,
+and accepts only fixed user-scoped targets. System-level paths under
+`/Library/Input Methods` are never removed automatically.
 
 ## Evaluation
 

@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LABEL="com.rag-ime.voice"
-DOMAIN="gui/$(id -u)"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-APP="$HOME/Applications/RagImeVoice.app"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ARGS=(--component voice)
 
-launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-rm -f "$PLIST"
-rm -rf "$APP"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --apply)
+      ARGS+=(--apply)
+      shift
+      ;;
+    --purge-credentials)
+      ARGS+=(--purge-credentials --purge-voice-config)
+      shift
+      ;;
+    -h|--help)
+      echo "usage: $0 [--apply] [--purge-credentials]"
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      echo "usage: $0 [--apply] [--purge-credentials]" >&2
+      exit 2
+      ;;
+  esac
+done
 
-if [[ "${1:-}" == "--purge-credentials" ]]; then
-  SERVICE="com.rag-ime.voice.volcengine"
-  for account in app-id access-token resource-id; do
-    security delete-generic-password -s "$SERVICE" -a "$account" >/dev/null 2>&1 || true
-  done
-  rm -f "$HOME/Library/Application Support/RagIme/voice-hotwords.json"
-fi
-
-echo "RAG-IME voice agent removed. macOS privacy-list entries can be removed manually in System Settings."
+exec python3 "$SCRIPT_DIR/uninstall_rag_ime.py" "${ARGS[@]}"
