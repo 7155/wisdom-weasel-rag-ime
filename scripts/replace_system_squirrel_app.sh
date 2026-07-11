@@ -8,6 +8,7 @@ INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirre
 BACKUP_SUFFIX="${RAG_IME_SQUIRREL_BACKUP_SUFFIX:-rag-ime-backup-$(date +%Y%m%d-%H%M%S)}"
 SELECT_INPUT_SOURCE_SCRIPT="${RAG_IME_SELECT_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/select_macos_input_source.sh}"
 CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/check_macos_input_source.sh}"
+REFRESH_INPUT_SOURCE_SCRIPT="${RAG_IME_REFRESH_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/refresh_squirrel_input_source_registration.sh}"
 DOCTOR_SCRIPT="${RAG_IME_DOCTOR_SCRIPT:-$ROOT/scripts/doctor_squirrel_integration.sh}"
 RUN_DOCTOR="${RAG_IME_SQUIRREL_REPLACE_RUN_DOCTOR:-1}"
 PREFLIGHT=0
@@ -160,7 +161,7 @@ pkill -x Squirrel >/dev/null 2>&1 || true
 RAG_IME_SQUIRREL_APP="$TARGET_APP" \
   RAG_IME_SQUIRREL_BUNDLE_ID="${INPUT_SOURCE_ID%.*}" \
   RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
-  "$ROOT/scripts/refresh_squirrel_input_source_registration.sh"
+  "$REFRESH_INPUT_SOURCE_SCRIPT"
 
 "$SELECT_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
 RAG_IME_SQUIRREL_APP="$TARGET_APP" "$CHECK_INPUT_SOURCE_SCRIPT" --require-selected "$INPUT_SOURCE_ID"
