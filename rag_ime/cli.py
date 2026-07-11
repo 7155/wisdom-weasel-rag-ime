@@ -681,6 +681,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     eval_hybrid_rag_core.add_argument("--repeat", type=int, default=1)
     eval_hybrid_rag_core.add_argument("--top-k", type=int, default=5)
     eval_hybrid_rag_core.add_argument("--latency-budget-ms", type=int, default=25)
+    eval_hybrid_rag_core.add_argument(
+        "--skip-latency-check",
+        action="store_true",
+        help="Run correctness-only evaluation; never use this for a release/performance gate",
+    )
     eval_hybrid_rag_core.add_argument("--summary-only", action="store_true", help="Omit per-case details from the JSON report")
 
     eval_active_rag = subparsers.add_parser(
@@ -2434,6 +2439,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             top_k=max(1, args.top_k),
             latency_budget_ms=max(1, args.latency_budget_ms),
             include_cases=not bool(args.summary_only),
+            enforce_latency=not bool(args.skip_latency_check),
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if bool(report.get("gatePassed")) else 1

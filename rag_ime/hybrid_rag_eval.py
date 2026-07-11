@@ -92,6 +92,7 @@ def run_hybrid_rag_eval(
     top_k: int = 5,
     latency_budget_ms: int = 25,
     include_cases: bool = True,
+    enforce_latency: bool = True,
 ) -> dict[str, object]:
     cases = load_hybrid_rag_eval_cases(cases_file, default_project=project)
     reports: list[dict[str, object]] = []
@@ -104,6 +105,7 @@ def run_hybrid_rag_eval(
                     repeat_count=max(1, repeat),
                     top_k=top_k,
                     latency_budget_ms=latency_budget_ms,
+                    enforce_latency=enforce_latency,
                 )
             )
 
@@ -123,6 +125,7 @@ def run_hybrid_rag_eval(
         },
         "topK": max(1, int(top_k)),
         "latencyBudgetMs": max(1, int(latency_budget_ms)),
+        "latencyGateEnforced": bool(enforce_latency),
         "caseCount": len(reports),
         "passedCases": passed_cases,
         "failedCases": failed_cases,
@@ -140,6 +143,7 @@ def _run_one_case(
     repeat_count: int,
     top_k: int,
     latency_budget_ms: int,
+    enforce_latency: bool,
 ) -> dict[str, object]:
     case_id = case.case_id if repeat_count <= 1 else f"{case.case_id}#r{repeat_index}"
     with tempfile.TemporaryDirectory(prefix="rag-ime-hybrid-rag-eval-") as tmp:
@@ -177,6 +181,7 @@ def _run_one_case(
         lanes=lanes,
         raw_sentences=raw_sentences,
         elapsed_ms=elapsed_ms,
+        enforce_latency=enforce_latency,
     )
     return {
         "caseId": case_id,
@@ -402,6 +407,7 @@ def _case_failures(
     lanes: object,
     raw_sentences: tuple[str, ...],
     elapsed_ms: int,
+    enforce_latency: bool,
 ) -> list[str]:
     failures: list[str] = []
     if case.must_contain_any and not any(_contains_any(text, case.must_contain_any) for text in top3_texts):
@@ -423,7 +429,7 @@ def _case_failures(
             failures.append(f"forbidden_lane:{lane}")
     if case.must_not_contain_raw_sentence and _has_raw_sentence_leak(all_texts, raw_sentences):
         failures.append("raw_sentence_leak")
-    if case.max_latency_ms is not None and elapsed_ms > case.max_latency_ms:
+    if enforce_latency and case.max_latency_ms is not None and elapsed_ms > case.max_latency_ms:
         failures.append(f"latency:{elapsed_ms}>{case.max_latency_ms}")
     if _has_tombstone_leak(all_texts, case=case):
         failures.append("tombstone_leak")

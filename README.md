@@ -262,6 +262,11 @@ python3 -m rag_ime.cli eval-active-rag \
   --cases-file docs/eval/active_rag_cases.jsonl
 ```
 
+Hybrid RAG enforces each fixture's wall-clock latency by default; the public
+gate script never disables it. `--skip-latency-check` exists only for
+correctness/schema tests on uncalibrated hosted runners and must not be used as
+release or performance evidence.
+
 Use `scripts/check_product_status.py --json` for product evidence and
 `scripts/check_public_release.py --allow-blocked` for the tracked-file,
 license, secret-shape, foreground, and artifact-evidence release gate. The

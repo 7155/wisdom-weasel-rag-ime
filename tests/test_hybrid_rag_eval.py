@@ -23,19 +23,40 @@ class HybridRagEvalTests(unittest.TestCase):
         self.assertEqual(cases[0].case_id, "vcp-multilane-rag")
         self.assertIn("bm25_tags", cases[0].must_have_lane)
 
-    def test_run_hybrid_rag_eval_passes_product_gate(self) -> None:
+    def test_run_hybrid_rag_eval_passes_correctness_gate(self) -> None:
         report = run_hybrid_rag_eval(
             cases_file=self.cases_file,
             project="wisdom-weasel-rag-ime",
             repeat=1,
             top_k=5,
             latency_budget_ms=25,
+            enforce_latency=False,
         )
 
         self.assertTrue(report["gatePassed"])
         self.assertEqual(report["failedCases"], 0)
         self.assertEqual(report["metrics"]["rawSentenceLeakRate"], 0.0)
         self.assertEqual(report["metrics"]["tombstoneLeakRate"], 0.0)
+        self.assertFalse(report["latencyGateEnforced"])
+
+    def test_run_hybrid_rag_eval_strict_latency_gate_is_deterministic(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-hybrid-rag-latency-test-") as tmp:
+            path = Path(tmp) / "cases.jsonl"
+            case = json.loads(self.cases_file.read_text(encoding="utf-8").splitlines()[0])
+            case["maxLatencyMs"] = -1
+            path.write_text(json.dumps(case, ensure_ascii=False) + "\n", encoding="utf-8")
+
+            report = run_hybrid_rag_eval(
+                cases_file=path,
+                project="wisdom-weasel-rag-ime",
+                repeat=1,
+                top_k=5,
+                latency_budget_ms=25,
+            )
+
+        self.assertTrue(report["latencyGateEnforced"])
+        self.assertFalse(report["gatePassed"])
+        self.assertTrue(any(str(item).startswith("latency:") for item in report["cases"][0]["failures"]))
 
     def test_run_hybrid_rag_eval_reports_failed_case(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-hybrid-rag-eval-test-") as tmp:
@@ -78,6 +99,7 @@ class HybridRagEvalTests(unittest.TestCase):
                     "wisdom-weasel-rag-ime",
                     "--repeat",
                     "1",
+                    "--skip-latency-check",
                     "--summary-only",
                 ]
             )
@@ -86,6 +108,7 @@ class HybridRagEvalTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(payload["schemaVersion"], "rag-ime.hybrid-rag-eval.v1")
         self.assertTrue(payload["gatePassed"])
+        self.assertFalse(payload["latencyGateEnforced"])
         self.assertEqual(payload["cases"], [])
 
     def test_hybrid_rag_gate_script_runs_hybrid_eval(self) -> None:
@@ -96,6 +119,7 @@ class HybridRagEvalTests(unittest.TestCase):
         self.assertIn("docs/eval/v1_post_commit_memory_cases.jsonl", script)
         self.assertIn("RAG_IME_HYBRID_RAG_CORE=1", script)
         self.assertIn("RAG_IME_AI_AFTER_COMMIT_ONLY=1", script)
+        self.assertNotIn("--skip-latency-check", script)
         self.assertNotIn("docs/eval/memory_optimizer_cases.jsonl", script)
 
         algorithm_script = (self.root / "scripts" / "run_memory_optimizer_algorithm_gate.sh").read_text(
