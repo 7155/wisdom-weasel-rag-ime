@@ -95,14 +95,21 @@ class PublicReleaseAuditTests(unittest.TestCase):
             archived_agent_log = root / "docs" / "archive" / "20260705-doc-cleanup" / "agent" / "notes.md"
             archived_agent_log.parent.mkdir(parents=True)
             archived_agent_log.write_text("old machine log\n", encoding="utf-8")
+            obsolete_plan = root / "docs" / "codex_next_step_stability_ui_plan.md"
+            obsolete_plan.write_text("superseded execution plan\n", encoding="utf-8")
+            obsolete_reset_audit = root / "docs" / "agent" / "requirements-reset-audit-20260707.md"
+            obsolete_reset_audit.parent.mkdir(parents=True, exist_ok=True)
+            obsolete_reset_audit.write_text("superseded product audit\n", encoding="utf-8")
             handoff = root / "docs" / "agent" / "rag-ime-v1-reset-handoff-2026-07-07.txt"
-            handoff.parent.mkdir(parents=True)
+            handoff.parent.mkdir(parents=True, exist_ok=True)
             handoff.write_text("internal handoff\n", encoding="utf-8")
             tracked.extend(
                 (
                     "dataset/quarantine/generated.jsonl",
                     "scripts/quarantine/generate_old_data.py",
                     "docs/archive/20260705-doc-cleanup/agent/notes.md",
+                    "docs/codex_next_step_stability_ui_plan.md",
+                    "docs/agent/requirements-reset-audit-20260707.md",
                     "docs/agent/rag-ime-v1-reset-handoff-2026-07-07.txt",
                 )
             )
@@ -115,6 +122,8 @@ class PublicReleaseAuditTests(unittest.TestCase):
         self.assertIn("forbidden_tracked_artifacts", blocker_ids)
         self.assertIn("scripts/quarantine/generate_old_data.py", report["forbiddenTracked"])
         self.assertIn("docs/archive/20260705-doc-cleanup/agent/notes.md", report["forbiddenTracked"])
+        self.assertIn("docs/codex_next_step_stability_ui_plan.md", report["forbiddenTracked"])
+        self.assertIn("docs/agent/requirements-reset-audit-20260707.md", report["forbiddenTracked"])
         self.assertIn("docs/agent/rag-ime-v1-reset-handoff-2026-07-07.txt", report["forbiddenTracked"])
         self.assertIn("possible_secret_shapes", blocker_ids)
         self.assertIn("working_tree_dirty", blocker_ids)

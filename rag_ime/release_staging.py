@@ -18,6 +18,7 @@ SOURCE_EXCLUDED_PARTS = {".git", "__pycache__", "build", "download", "Frameworks
 PROJECT_EXCLUDED_PREFIXES = (
     "docs/agent/",
     "docs/archive/",
+    "docs/codex_next_step_stability_ui_plan.md",
     ".github/",
     "macos/RagImeMac/",
     "scripts/build_macos_frontend.sh",

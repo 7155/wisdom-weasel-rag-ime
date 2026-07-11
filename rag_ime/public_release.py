@@ -47,6 +47,8 @@ FORBIDDEN_PREFIXES = (
     "dataset/quarantine/",
     "scripts/quarantine/",
     "docs/archive/",
+    "docs/codex_next_step_stability_ui_plan.md",
+    "docs/agent/requirements-reset-audit-20260707.md",
 )
 FORBIDDEN_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}
 FORBIDDEN_NAMES = {".DS_Store", "installation.yaml"}

@@ -78,6 +78,9 @@ class ReleaseStagingTests(unittest.TestCase):
         installer = self.root / "scripts" / "install_macos_frontend.sh"
         installer.parent.mkdir(parents=True)
         installer.write_text("#!/bin/sh\n", encoding="utf-8")
+        obsolete_plan = self.root / "docs" / "codex_next_step_stability_ui_plan.md"
+        obsolete_plan.parent.mkdir(parents=True)
+        obsolete_plan.write_text("superseded implementation plan\n", encoding="utf-8")
 
         report = prepare_release_candidate(
             self.root,
@@ -90,6 +93,7 @@ class ReleaseStagingTests(unittest.TestCase):
                 "module.py",
                 "macos/RagImeMac/Info.plist",
                 "scripts/install_macos_frontend.sh",
+                "docs/codex_next_step_stability_ui_plan.md",
             ),
         )
 
@@ -97,6 +101,7 @@ class ReleaseStagingTests(unittest.TestCase):
             names = archive.getnames()
         self.assertNotIn("rag-ime-project/macos/RagImeMac/Info.plist", names)
         self.assertNotIn("rag-ime-project/scripts/install_macos_frontend.sh", names)
+        self.assertNotIn("rag-ime-project/docs/codex_next_step_stability_ui_plan.md", names)
 
     def test_rejects_unsafe_symlink_in_app_bundle(self) -> None:
         bad = self.apps["voice"] / "Contents" / "escape"
