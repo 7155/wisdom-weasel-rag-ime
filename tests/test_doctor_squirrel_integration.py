@@ -292,6 +292,7 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS Squirrel integration tools")
 class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
     def setUp(self) -> None:
         _DoctorSidecarHandler.reset()

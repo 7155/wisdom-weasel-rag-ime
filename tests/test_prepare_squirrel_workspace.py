@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS Squirrel tooling")
 class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
     def _create_minimal_squirrel_upstream(self, tmp_path: Path) -> tuple[Path, Path]:
         upstream = tmp_path / "upstream-squirrel"

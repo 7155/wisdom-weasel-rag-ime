@@ -3,6 +3,7 @@ from __future__ import annotations
 import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -126,6 +127,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("outboundFrames.removeAll()", asr)
         self.assertIn("pendingAudio.removeAll()", asr)
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS Security framework")
     def test_protocol_and_revision_state_machine_in_swift(self) -> None:
         swiftc = shutil.which("swiftc")
         if swiftc is None:

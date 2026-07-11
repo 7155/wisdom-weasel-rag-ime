@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import plistlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ from rag_ime.cli import run_acceptance
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 
 
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS product-readiness scripts")
 class ProductReadinessGateScriptTests(unittest.TestCase):
     _GATE_ENV_KEYS = (
         "RAG_IME_REQUIRE_MACOS_FRONTEND",

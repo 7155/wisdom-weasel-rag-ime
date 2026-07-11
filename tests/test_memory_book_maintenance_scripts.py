@@ -3,11 +3,13 @@ from __future__ import annotations
 import os
 import plistlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS LaunchAgent tools")
 class MemoryBookMaintenanceScriptTests(unittest.TestCase):
     def test_install_memory_book_maintenance_launch_agent_dry_run(self) -> None:
         root = Path(__file__).resolve().parents[1]

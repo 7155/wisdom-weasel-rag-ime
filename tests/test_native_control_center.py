@@ -3,6 +3,7 @@ from __future__ import annotations
 import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -90,6 +91,7 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertNotIn('arguments = ["-c"', supervisor)
         self.assertNotIn("/bin/sh", supervisor)
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS Swift frameworks")
     def test_external_command_policy_rejects_arbitrary_server_strings(self) -> None:
         swiftc = shutil.which("swiftc")
         if swiftc is None:

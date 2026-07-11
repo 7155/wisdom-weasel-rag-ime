@@ -4,11 +4,13 @@ import json
 import os
 import plistlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
+@unittest.skipUnless(sys.platform == "darwin", "requires macOS input-source tools")
 class CheckMacosInputSourceScriptTests(unittest.TestCase):
     def test_defaults_to_product_squirrel_input_source(self) -> None:
         root = Path(__file__).resolve().parents[1]
