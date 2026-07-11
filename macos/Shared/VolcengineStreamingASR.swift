@@ -145,6 +145,7 @@ final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate,
     static let audioChunkBytes = 6_400
 
     private let credentials: VoiceASRCredentials
+    private let hotwordConfig: VoiceASRHotwordConfig
     private let callback: @Sendable (VoiceASREvent) -> Void
     private let queue = DispatchQueue(label: "com.rag-ime.voice.volcengine")
     private let cancellationLock = NSLock()
@@ -158,8 +159,13 @@ final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate,
     private var lastTranscript = ""
     private var terminated = false
 
-    init(credentials: VoiceASRCredentials, callback: @escaping @Sendable (VoiceASREvent) -> Void) {
+    init(
+        credentials: VoiceASRCredentials,
+        hotwordConfig: VoiceASRHotwordConfig = .disabled,
+        callback: @escaping @Sendable (VoiceASREvent) -> Void
+    ) {
         self.credentials = credentials
+        self.hotwordConfig = hotwordConfig
         self.callback = callback
         super.init()
     }
@@ -224,16 +230,7 @@ final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate,
         task.resume()
         callback(.transport("connecting"))
 
-        let payload: [String: Any] = [
-            "user": ["uid": connectID],
-            "audio": ["format": "pcm", "rate": 16_000, "bits": 16, "channel": 1, "codec": "raw"],
-            "request": [
-                "model_name": "bigmodel",
-                "enable_itn": true,
-                "enable_punc": true,
-                "show_utterances": true,
-            ],
-        ]
+        let payload = Self.initialRequestPayload(connectID: connectID, hotwordConfig: hotwordConfig)
         do {
             let body = try JSONSerialization.data(withJSONObject: payload)
             enqueue(VoiceASRFrame.build(
@@ -247,6 +244,28 @@ final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate,
         } catch {
             fail("ASR 请求编码失败")
         }
+    }
+
+    static func initialRequestPayload(
+        connectID: String,
+        hotwordConfig: VoiceASRHotwordConfig
+    ) -> [String: Any] {
+        var request: [String: Any] = [
+            "model_name": "bigmodel",
+            "enable_itn": true,
+            "enable_punc": true,
+            "show_utterances": true,
+        ]
+        if let context = hotwordConfig.requestContextJSONString() {
+            // Volcengine's request-level hotword contract expects a JSON
+            // string in request.context rather than a nested JSON object.
+            request["context"] = context
+        }
+        return [
+            "user": ["uid": connectID],
+            "audio": ["format": "pcm", "rate": 16_000, "bits": 16, "channel": 1, "codec": "raw"],
+            "request": request,
+        ]
     }
 
     private func appendPCMOnQueue(_ data: Data) {

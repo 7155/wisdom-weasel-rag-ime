@@ -7,6 +7,10 @@ struct VoiceInputPage: View {
     @State private var resourceID = VoiceKeychainStore.defaultResourceID
     @State private var tokenConfigured = false
     @State private var saveMessage = ""
+    @State private var hotwordsEnabled = false
+    @State private var hotwordsText = ""
+    @State private var savedHotwordCount = 0
+    @State private var hotwordMessage = ""
     @State private var agentRunning = false
     @State private var voiceAgentStatus: VoiceAgentStatus?
 
@@ -27,6 +31,8 @@ struct VoiceInputPage: View {
                     }
                     Divider()
                     credentialSection
+                    Divider()
+                    hotwordSection
                     Divider()
                     behaviorSection
                 }
@@ -68,6 +74,12 @@ struct VoiceInputPage: View {
             voiceStatusRow("辅助功能", ok: voiceAgentStatus?.accessibilityTrusted == true, detail: accessibilityStatus)
             voiceStatusRow("麦克风", ok: voiceAgentStatus?.microphoneAuthorization == "authorized", detail: microphoneStatus)
             voiceStatusRow("豆包凭据", ok: tokenConfigured && !appID.isEmpty, detail: tokenConfigured ? "已安全存入 Keychain" : "尚未配置")
+            voiceStatusRow(
+                "请求级热词",
+                ok: voiceAgentStatus?.hotwordsEnabled == true,
+                detail: hotwordStatus,
+                neutral: voiceAgentStatus?.hotwordsEnabled != true && !hotwordsEnabled
+            )
             HStack {
                 Button("打开隐私设置", systemImage: "hand.raised") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
@@ -114,10 +126,52 @@ struct VoiceInputPage: View {
         }
     }
 
-    private func voiceStatusRow(_ title: String, ok: Bool, detail: String) -> some View {
+    private var hotwordSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("请求级热词").font(.headline)
+                Spacer()
+                Toggle("启用", isOn: $hotwordsEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .help("启用请求级语音热词")
+            }
+            LabeledContent("热词") {
+                TextEditor(text: $hotwordsText)
+                    .font(.system(.body, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .frame(width: 420, height: 112)
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                    )
+            }
+            LabeledContent("边界") {
+                Text("最多 32 条 · 每条 2–9 字 · 仅中英文字母")
+                    .foregroundStyle(.secondary)
+            }
+            LabeledContent("数据源") {
+                Text("仅发送此处显式保存的词，不读取 Rime 用户词典")
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("保存热词", systemImage: "text.badge.checkmark") { saveHotwords() }
+                    .buttonStyle(.borderedProminent)
+                Button("清空", systemImage: "trash") { clearHotwords() }
+                    .disabled(hotwordsText.isEmpty && !hotwordsEnabled)
+                if !hotwordMessage.isEmpty {
+                    Text(hotwordMessage).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func voiceStatusRow(_ title: String, ok: Bool, detail: String, neutral: Bool = false) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: ok ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .foregroundStyle(ok ? Color.green : Color.orange)
+            Image(systemName: neutral ? "minus.circle.fill" : (ok ? "checkmark.circle.fill" : "exclamationmark.circle.fill"))
+                .foregroundStyle(neutral ? Color.secondary : (ok ? Color.green : Color.orange))
             Text(title).frame(width: 100, alignment: .leading)
             Text(detail).foregroundStyle(.secondary)
             Spacer()
@@ -139,6 +193,13 @@ struct VoiceInputPage: View {
         guard agentRunning else { return "启动语音代理后检查" }
         guard let voiceAgentStatus else { return "等待语音代理回报" }
         return voiceAgentStatus.accessibilityTrusted ? "语音代理可以写入当前光标" : "语音代理需要在系统设置中授权"
+    }
+
+    private var hotwordStatus: String {
+        if let status = voiceAgentStatus, status.hotwordsEnabled {
+            return "已启用 \(status.hotwordCount) 条"
+        }
+        return hotwordsEnabled ? "等待语音代理重载 \(savedHotwordCount) 条" : "未启用"
     }
 
     private func latencyLabel(_ value: Int?) -> String {
@@ -163,7 +224,43 @@ struct VoiceInputPage: View {
             resourceID = credentials.resourceID
         }
         tokenConfigured = VoiceKeychainStore.hasAccessToken
+        let hotwordConfig = VoiceHotwordConfigStore.read()
+        hotwordsEnabled = hotwordConfig.enabled
+        hotwordsText = hotwordConfig.words.joined(separator: "\n")
+        savedHotwordCount = hotwordConfig.effectiveWords.count
         refreshAgentState()
+    }
+
+    private func saveHotwords() {
+        do {
+            let config = try VoiceASRHotwordConfig.validated(
+                enabled: hotwordsEnabled,
+                rawLines: hotwordsText
+            )
+            try VoiceHotwordConfigStore.write(config)
+            hotwordsText = config.words.joined(separator: "\n")
+            savedHotwordCount = config.effectiveWords.count
+            hotwordMessage = config.enabled ? "已启用 \(config.effectiveWords.count) 条" : "已保存但未启用"
+            notifyConfigurationChanged()
+        } catch {
+            hotwordMessage = error.localizedDescription
+        }
+    }
+
+    private func clearHotwords() {
+        VoiceHotwordConfigStore.remove()
+        hotwordsEnabled = false
+        hotwordsText = ""
+        savedHotwordCount = 0
+        hotwordMessage = "已清空"
+        notifyConfigurationChanged()
+    }
+
+    private func notifyConfigurationChanged() {
+        DistributedNotificationCenter.default().post(
+            name: Notification.Name("com.rag-ime.voice.configuration-changed"),
+            object: nil
+        )
     }
 
     private func save() {

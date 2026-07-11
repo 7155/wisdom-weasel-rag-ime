@@ -16,6 +16,7 @@ final class VoiceInputCoordinator {
     private let recorder = VoiceAudioRecorder()
     private let overlay = VoiceOverlayController()
     private var credentials: VoiceASRCredentials?
+    private var hotwordConfig = VoiceASRHotwordConfig.disabled
     private var asr: VolcengineStreamingASRClient?
     private var insertion: VoiceTextInsertionSession?
     private var reconciler = VoiceTranscriptReconciler()
@@ -29,6 +30,7 @@ final class VoiceInputCoordinator {
 
     init() {
         credentials = VoiceKeychainStore.loadCredentials()
+        hotwordConfig = VoiceHotwordConfigStore.read()
         hotkey.onPress = { [weak self] in self?.press() }
         hotkey.onRelease = { [weak self] in self?.release() }
         hotkey.onCancel = { [weak self] in self?.cancel(reason: "用户取消") }
@@ -58,6 +60,8 @@ final class VoiceInputCoordinator {
             accessibilityTrusted: AXIsProcessTrusted(),
             microphoneAuthorization: VoiceAudioRecorder.authorizationName,
             credentialsConfigured: credentials?.isComplete == true,
+            hotwordsEnabled: hotwordConfig.enabled,
+            hotwordCount: hotwordConfig.effectiveWords.count,
             hotkeyInstalled: hotkeyInstalled,
             state: stateName,
             statusText: statusText,
@@ -81,8 +85,9 @@ final class VoiceInputCoordinator {
         onStateChanged?()
     }
 
-    func reloadCredentials() {
+    func reloadConfiguration() {
         credentials = VoiceKeychainStore.loadCredentials()
+        hotwordConfig = VoiceHotwordConfigStore.read()
         onStateChanged?()
     }
 
@@ -145,7 +150,10 @@ final class VoiceInputCoordinator {
             abortForUnsafeTarget(error)
             return
         }
-        let client = VolcengineStreamingASRClient(credentials: credentials) { [weak self] event in
+        let client = VolcengineStreamingASRClient(
+            credentials: credentials,
+            hotwordConfig: hotwordConfig
+        ) { [weak self] event in
             DispatchQueue.main.async {
                 guard let self, generation == self.sessionGeneration else { return }
                 self.handle(event)

@@ -15,6 +15,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Product provenance verifies that its evidence commit is an
+          # ancestor of HEAD; a depth-1 checkout cannot answer that safely.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -37,10 +41,14 @@ jobs:
 
   macos:
     name: Native control and Squirrel release
-    runs-on: macos-14
+    # The pinned Squirrel source uses typed throws, which requires the Swift 6
+    # compiler shipped with Xcode 16 rather than macOS 14's Xcode 15.4.
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

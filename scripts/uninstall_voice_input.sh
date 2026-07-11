@@ -15,6 +15,7 @@ if [[ "${1:-}" == "--purge-credentials" ]]; then
   for account in app-id access-token resource-id; do
     security delete-generic-password -s "$SERVICE" -a "$account" >/dev/null 2>&1 || true
   done
+  rm -f "$HOME/Library/Application Support/RagIme/voice-hotwords.json"
 fi
 
 echo "RAG-IME voice agent removed. macOS privacy-list entries can be removed manually in System Settings."

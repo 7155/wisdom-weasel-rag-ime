@@ -58,7 +58,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertNotIn("AVCaptureDevice.authorizationStatus", page)
 
         status = (ROOT / "macos/Shared/VoiceAgentStatus.swift").read_text(encoding="utf-8")
-        self.assertIn("rag-ime.voice-agent-status.v2", status)
+        self.assertIn("rag-ime.voice-agent-status.v3", status)
         self.assertIn("voice-agent-status.json", status)
         self.assertIn(".posixPermissions: 0o600", status)
         for marker in (
@@ -72,6 +72,28 @@ class VoiceInputTests(unittest.TestCase):
             self.assertIn(marker, status)
         self.assertIn("仅记录状态、数量与时延，不保存音频或转写文本", page)
         self.assertIn("VoiceAgentStatusStore.write", delegate)
+
+    def test_hotwords_are_explicit_bounded_and_not_derived_from_rime(self) -> None:
+        config = (ROOT / "macos/Shared/VoiceHotwordConfig.swift").read_text(encoding="utf-8")
+        asr = (ROOT / "macos/Shared/VolcengineStreamingASR.swift").read_text(encoding="utf-8")
+        page = (ROOT / "macos/RagImeControl/Pages/VoiceInputPage.swift").read_text(encoding="utf-8")
+        coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
+
+        self.assertIn("maxWordCount = 32", config)
+        self.assertIn("minCharactersPerWord = 2", config)
+        self.assertIn("maxCharactersPerWord = 9", config)
+        self.assertIn("voice-hotwords.json", config)
+        self.assertIn(".posixPermissions: 0o600", config)
+        self.assertIn('request["context"] = context', asr)
+        self.assertIn('"hotwords": effectiveWords.map', config)
+        self.assertIn("VoiceHotwordConfigStore.read()", coordinator)
+        self.assertIn("仅发送此处显式保存的词，不读取 Rime 用户词典", page)
+        self.assertNotIn("rime", config.lower())
+
+        status = (ROOT / "macos/Shared/VoiceAgentStatus.swift").read_text(encoding="utf-8")
+        self.assertIn("let hotwordsEnabled: Bool", status)
+        self.assertIn("let hotwordCount: Int", status)
+        self.assertNotIn("let hotwords:", status)
 
     def test_pcm_privacy_gate_revalidates_and_cancellation_drops_queued_audio(self) -> None:
         coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
@@ -149,6 +171,31 @@ enum Harness {
         let json: [String: Any] = ["result": ["utterances": [["text": "边说"], ["text": "边写"]]]]
         precondition(VolcengineStreamingASRClient.transcript(from: json) == "边说边写")
 
+        let hotwords = try! VoiceASRHotwordConfig.validated(
+            enabled: true,
+            rawLines: "MiniMind\nDeepSeek\nminimind\n火山语音"
+        )
+        precondition(hotwords.words == ["MiniMind", "DeepSeek", "火山语音"])
+        let requestPayload = VolcengineStreamingASRClient.initialRequestPayload(
+            connectID: "test-connect-id",
+            hotwordConfig: hotwords
+        )
+        let request = requestPayload["request"] as! [String: Any]
+        let context = request["context"] as! String
+        let contextData = context.data(using: .utf8)!
+        let contextJSON = try! JSONSerialization.jsonObject(with: contextData) as! [String: Any]
+        let requestHotwords = contextJSON["hotwords"] as! [[String: String]]
+        precondition(requestHotwords.map { $0["word"]! } == hotwords.words)
+
+        let disabledPayload = VolcengineStreamingASRClient.initialRequestPayload(
+            connectID: "test-connect-id",
+            hotwordConfig: .disabled
+        )
+        let disabledRequest = disabledPayload["request"] as! [String: Any]
+        precondition(disabledRequest["context"] == nil)
+        precondition((try? VoiceASRHotwordConfig.validated(enabled: true, rawLines: "RAG-IME")) == nil)
+        precondition((try? VoiceASRHotwordConfig.validated(enabled: true, rawLines: "用")) == nil)
+
         precondition(VoicePrivacyPolicy.denies(
             bundleIdentifier: "com.1Password.1Password",
             applicationName: "1Password",
@@ -202,6 +249,7 @@ enum Harness {
                     "-parse-as-library",
                     str(ROOT / "macos/Shared/VoiceKeychainStore.swift"),
                     str(ROOT / "macos/Shared/VoiceAgentStatus.swift"),
+                    str(ROOT / "macos/Shared/VoiceHotwordConfig.swift"),
                     str(ROOT / "macos/Shared/VolcengineStreamingASR.swift"),
                     str(ROOT / "macos/RagImeVoice/VoicePrivacyPolicy.swift"),
                     str(harness_path),

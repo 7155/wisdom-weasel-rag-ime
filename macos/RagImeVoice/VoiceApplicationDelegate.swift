@@ -35,7 +35,7 @@ final class VoiceApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func configurationChanged() {
-        coordinator?.reloadCredentials()
+        coordinator?.reloadConfiguration()
     }
 
     private func startHotkeyWhenTrusted() {

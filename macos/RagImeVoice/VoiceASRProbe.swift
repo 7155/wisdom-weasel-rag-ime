@@ -35,7 +35,10 @@ enum VoiceASRProbe {
 
         let completed = DispatchSemaphore(value: 0)
         let resultBox = ResultBox()
-        let client = VolcengineStreamingASRClient(credentials: credentials) { event in
+        let client = VolcengineStreamingASRClient(
+            credentials: credentials,
+            hotwordConfig: VoiceHotwordConfigStore.read()
+        ) { event in
             resultBox.apply(event)
             switch event {
             case .final, .failure: completed.signal()

@@ -52,6 +52,7 @@ Explicit knowledge workbench
 Streaming voice input
   -> hold Option+Space in any supported text field
   -> a separate native agent captures 16 kHz mono PCM in memory
+  -> optional bounded hotwords come only from the user's explicit Control Center list
   -> Doubao streaming ASR 2.0 returns cumulative partial transcripts
   -> the volatile transcript is replaced in place at the current cursor
   -> releasing the shortcut sends the final frame and commits Doubao's final text
@@ -68,7 +69,7 @@ Streaming voice input
 | Active RAG | Explicit selected-text workflow with local evidence and an optional remote DeepSeek-compatible route. It is never part of passive per-keystroke prediction. |
 | UI | The patched Squirrel native overlay has a v3 working-tree polish pass with compact material, source tints/icons, shortcut plates, hover/accept/streaming motion, bounded TTL, and Reduce Motion handling. Static/build checks are not a real foreground screenshot, so visual acceptance remains pending. `RagImeControl` is the one settings/diagnostics app; the legacy browser console has been removed and the voice agent is headless. |
 | Knowledge workbench | Explicit local-RAG + DeepSeek knowledge answers, long-form writing, recall, and review-only database organization. Optional Notion submission and polling are separate, observable gates. |
-| Voice input | The headless native agent, Keychain route, and a real Doubao PCM probe work. Its v2 status reports network state, first-partial/final latency, PCM/revision counts, and discarded frames without storing audio or transcript text; all display and settings remain in the one Control Center. Foreground behavior stays `backend_only` until a user-authorized microphone run. |
+| Voice input | The headless native agent, Keychain route, and a real Doubao PCM probe work. Its v3 status reports network state, first-partial/final latency, PCM/revision counts, discarded frames, and only the enabled hotword count without storing audio or transcript text. Request-level hotwords are optional, bounded, explicitly entered in the one Control Center, and never derived from the private Rime user dictionary. Foreground behavior stays `backend_only` until a user-authorized microphone run. |
 | Observability | Redacted runtime status, trigger decisions, candidate score explanations, context provenance, and foreground traces. |
 
 The current MiniMind runtime is fast enough for the backend latency/count gate,
@@ -238,8 +239,13 @@ own microphone/Accessibility permissions. Grant the two permissions to
 `RagImeVoice` explicitly when convenient, then hold
 `Option+Space` to speak and release it to finalize. See
 [`docs/runtime-and-debug.md`](docs/runtime-and-debug.md#streaming-voice-input).
+Optional request-level hotwords are configured only in the Control Center. The
+agent sends at most 32 validated entries in the provider's `request.context`
+field; disabled or empty configuration omits the field entirely. RAG-IME never
+exports the Rime user dictionary for this purpose.
 Remove only the voice agent with `scripts/uninstall_voice_input.sh`; pass
-`--purge-credentials` to remove its Keychain entries as well.
+`--purge-credentials` to remove its Keychain entries and private hotword file as
+well.
 
 ## Evaluation
 
