@@ -5,7 +5,6 @@ INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirre
 BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-im.rime.inputmethod.Squirrel}"
 PREF_DOMAIN="${RAG_IME_HITOOLBOX_DOMAIN:-com.apple.HIToolbox}"
 INPUTSOURCES_DOMAIN="${RAG_IME_INPUTSOURCES_DOMAIN:-com.apple.inputsources}"
-SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$(dirname "${BASH_SOURCE[0]}")/check_macos_input_source.sh}"
 REPORT_PATH="${RAG_IME_ENABLE_SQUIRREL_REPAIR_REPORT:-}"
 DRY_RUN=0
@@ -175,35 +174,19 @@ enabled = payload.setdefault("AppleEnabledInputSources", [])
 if not isinstance(enabled, list):
     raise SystemExit("AppleEnabledInputSources is not an array")
 
-def has_mode(entry):
-    return isinstance(entry, dict) and entry.get("Input Mode") == input_mode
-
-def has_bundle(entry):
-    return (
+# Third-party input methods belong in com.apple.inputsources only. Keeping the
+# same mode in HIToolbox makes recent macOS releases enumerate duplicate TIS
+# records with identical names.
+normalized = [
+    entry
+    for entry in enabled
+    if not (
         isinstance(entry, dict)
-        and entry.get("Bundle ID") == bundle_id
-        and "Input Mode" not in entry
+        and (entry.get("Bundle ID") == bundle_id or entry.get("Input Mode") == input_mode)
     )
-
-changed = False
-if not any(has_mode(entry) for entry in enabled):
-    enabled.append(
-        {
-            "Bundle ID": bundle_id,
-            "Input Mode": input_mode,
-            "InputSourceKind": "Input Mode",
-        }
-    )
-    changed = True
-
-if not any(has_bundle(entry) for entry in enabled):
-    enabled.append(
-        {
-            "Bundle ID": bundle_id,
-            "InputSourceKind": "Keyboard Input Method",
-        }
-    )
-    changed = True
+]
+changed = normalized != enabled
+payload["AppleEnabledInputSources"] = normalized
 
 with open(after_path, "wb") as handle:
     plistlib.dump(payload, handle)
@@ -230,35 +213,28 @@ enabled = payload.setdefault("AppleEnabledThirdPartyInputSources", [])
 if not isinstance(enabled, list):
     raise SystemExit("AppleEnabledThirdPartyInputSources is not an array")
 
-def has_mode(entry):
-    return isinstance(entry, dict) and entry.get("Input Mode") == input_mode
-
-def has_bundle(entry):
-    return (
+canonical_entries = [
+    {
+        "Bundle ID": bundle_id,
+        "Input Mode": input_mode,
+        "InputSourceKind": "Input Mode",
+    },
+    {
+        "Bundle ID": bundle_id,
+        "InputSourceKind": "Keyboard Input Method",
+    },
+]
+unrelated = [
+    entry
+    for entry in enabled
+    if not (
         isinstance(entry, dict)
-        and entry.get("Bundle ID") == bundle_id
-        and "Input Mode" not in entry
+        and (entry.get("Bundle ID") == bundle_id or entry.get("Input Mode") == input_mode)
     )
-
-changed = False
-if not any(has_mode(entry) for entry in enabled):
-    enabled.append(
-        {
-            "Bundle ID": bundle_id,
-            "Input Mode": input_mode,
-            "InputSourceKind": "Input Mode",
-        }
-    )
-    changed = True
-
-if not any(has_bundle(entry) for entry in enabled):
-    enabled.append(
-        {
-            "Bundle ID": bundle_id,
-            "InputSourceKind": "Keyboard Input Method",
-        }
-    )
-    changed = True
+]
+normalized = unrelated + canonical_entries
+changed = normalized != enabled
+payload["AppleEnabledThirdPartyInputSources"] = normalized
 
 with open(after_path, "wb") as handle:
     plistlib.dump(payload, handle)
@@ -286,6 +262,12 @@ if [[ "$DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
+if [[ "$hitoolbox_changed" == "false" && "$third_party_changed" == "false" ]]; then
+  echo "Squirrel preference records are already normalized; no backup or import needed."
+  "$CHECK_INPUT_SOURCE_SCRIPT" --require-hitoolbox-enabled "$INPUT_SOURCE_ID"
+  exit 0
+fi
+
 cp "$before" "$backup"
 hitoolbox_backup="$backup"
 echo "backup: $backup"
@@ -307,8 +289,8 @@ killall cfprefsd >/dev/null 2>&1 || true
 sleep 0.5
 
 if ! plutil -extract AppleEnabledInputSources xml1 -o "$tmpdir/hitoolbox-after-import.plist" "$HOME/Library/Preferences/$PREF_DOMAIN.plist" >/dev/null 2>&1 ||
-  ! grep -Fq "<string>$INPUT_SOURCE_ID</string>" "$tmpdir/hitoolbox-after-import.plist" ||
-  ! grep -Fq "<string>$BUNDLE_ID</string>" "$tmpdir/hitoolbox-after-import.plist"; then
+  grep -Fq "<string>$INPUT_SOURCE_ID</string>" "$tmpdir/hitoolbox-after-import.plist" ||
+  grep -Fq "<string>$BUNDLE_ID</string>" "$tmpdir/hitoolbox-after-import.plist"; then
   echo "warning: defaults import did not persist $PREF_DOMAIN; writing user plist directly" >&2
   direct_err="$tmpdir/hitoolbox-direct-write.err"
   if write_plist_directly "$after" "$HOME/Library/Preferences/$PREF_DOMAIN.plist" 2>"$direct_err"; then
@@ -336,11 +318,6 @@ if ! plutil -extract AppleEnabledThirdPartyInputSources xml1 -o "$tmpdir/third-p
     sed 's/^/warning: direct write detail: /' "$direct_err" >&2
     echo "warning: add $INPUT_SOURCE_ID from System Settings -> Keyboard -> Input Sources -> Add." >&2
   fi
-fi
-
-if [[ -x "$SQUIRREL_APP/Contents/MacOS/Squirrel" ]]; then
-  "$SQUIRREL_APP/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-  sleep 0.5
 fi
 
 echo "If thirdPartyEnabled=false below, use System Settings -> Keyboard -> Input Sources -> Add and choose this input source: $INPUT_SOURCE_ID."

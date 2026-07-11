@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from .embeddings import EmbeddingProvider
 from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidate_objects
 from .memory_ingest import normalize_text
@@ -31,6 +32,7 @@ def retrieve_candidates_v3(
     context_group_parent_ids: tuple[str, ...] = (),
     enabled_lanes: tuple[tuple[str, bool], ...] = (),
     lane_weights: tuple[tuple[str, float], ...] = (),
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> list[MemoryCandidateV2]:
     rebuild_retrieval_docs(conn, project=project)
     query_text = compact_whitespace(current_input or preedit or recent_context or committed_context)
@@ -50,7 +52,10 @@ def retrieve_candidates_v3(
         enabled_lanes=enabled_lanes,
         lane_weights=lane_weights,
     )
-    return [_memory_candidate_from_hybrid(item) for item in retrieve_hybrid_rag_candidate_objects(conn, query)]
+    return [
+        _memory_candidate_from_hybrid(item)
+        for item in retrieve_hybrid_rag_candidate_objects(conn, query, embedding_provider)
+    ]
 
 
 def memory_candidates_v2_to_input_suggestions(candidates: list[MemoryCandidateV2]) -> list[InputSuggestion]:

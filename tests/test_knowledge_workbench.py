@@ -149,6 +149,9 @@ class KnowledgeWorkbenchTests(unittest.TestCase):
         self.assertEqual(payload["localEvidence"][0]["id"], "book:rag")
         self.assertIn("knowledge_answer", answer[1]["content"])
         self.assertIn("不是数字键候选栏", payload["productContract"]["deepSeekWorkbench"])
+        self.assertIn("Tab", payload["productContract"]["candidateSelection"])
+        self.assertIn("Option+1/2/3", payload["productContract"]["candidateSelection"])
+        self.assertIn("普通数字键透传", payload["productContract"]["candidateSelection"])
         self.assertIn("[L:source_id]", answer[0]["content"])
 
     def test_deepseek_provider_preserves_multi_paragraph_answer(self) -> None:
@@ -190,6 +193,53 @@ class KnowledgeWorkbenchTests(unittest.TestCase):
         self.assertGreater(result.first_token_ms, 0)
         self.assertTrue(result.prompt_diagnostics["success"])
         self.assertEqual(result.prompt_diagnostics["localEvidenceCount"], 1)
+
+    def test_deepseek_provider_removes_citations_that_are_not_real_local_sources(self) -> None:
+        def fake_urlopen(_request, timeout):
+            _ = timeout
+            return _Response(
+                [
+                    _sse_delta(
+                        "真实来源 [L:book:rag]；合同不是来源 [L:productContract.miniMind]；"
+                        "伪合同引用 [productContract: hybridRag]；不存在的来源 [L:book:missing]。"
+                    ),
+                    "data: [DONE]\n",
+                ]
+            )
+
+        provider = DeepSeekKnowledgeProvider(
+            DeepSeekConfig(api_key="secret", model="deepseek-v4-flash"),
+            urlopen=fake_urlopen,
+        )
+        result = provider.generate(
+            KnowledgeWorkbenchRequest(question="说明来源", mode="knowledge_answer"),
+            evidence=({"sourceId": "book:rag", "text": "本地优先", "sourceLane": "bm25_raw"},),
+        )
+
+        self.assertIn("[L:book:rag]", result.answer)
+        self.assertNotIn("productContract", result.answer)
+        self.assertNotIn("book:missing", result.answer)
+        self.assertEqual(result.prompt_diagnostics["removedInvalidCitationCount"], 3)
+
+    def test_deepseek_provider_corrects_number_key_claims_that_violate_the_product_contract(self) -> None:
+        def fake_urlopen(_request, timeout):
+            _ = timeout
+            return _Response([_sse_delta("用户可用数字键提交 RAG 结果。"), "data: [DONE]\n"])
+
+        provider = DeepSeekKnowledgeProvider(
+            DeepSeekConfig(api_key="secret", model="deepseek-v4-flash"),
+            urlopen=fake_urlopen,
+        )
+        result = provider.generate(
+            KnowledgeWorkbenchRequest(question="说明按键", mode="knowledge_answer"),
+            evidence=(),
+        )
+
+        self.assertNotIn("数字键提交", result.answer)
+        self.assertIn("Tab", result.answer)
+        self.assertIn("Option+1/2/3", result.answer)
+        self.assertIn("普通数字键透传", result.answer)
+        self.assertEqual(result.prompt_diagnostics["correctedProductContractClaimCount"], 1)
 
     def test_service_returns_local_draft_then_merges_fresh_notion_result(self) -> None:
         generator = _Generator()

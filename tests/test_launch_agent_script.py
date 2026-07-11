@@ -73,6 +73,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_EMBEDDING_PROVIDER": "openai-compatible",
                 "RAG_IME_EMBEDDING_BASE_URL": "http://127.0.0.1:18000",
                 "RAG_IME_EMBEDDING_MODEL": "bge-small-zh",
+                "RAG_IME_EMBEDDING_WARMUP": "0",
                 "RAG_IME_VECTOR_CANDIDATES": "48",
                 "RAG_IME_VECTOR_WEIGHT": "1.7",
                 "RAG_IME_VECTOR_AUTO_REBUILD_LIMIT": "5000",
@@ -115,6 +116,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_PROVIDER"], "openai-compatible")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_BASE_URL"], "http://127.0.0.1:18000")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_MODEL"], "bge-small-zh")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_WARMUP"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_CANDIDATES"], "48")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_WEIGHT"], "1.7")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_AUTO_REBUILD_LIMIT"], "5000")
@@ -128,7 +130,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_COMPOSING_MODEL"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS"], "180")
-        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS"], "250")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS"], "180")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_COMPLETION_TTL_MS"], "12000")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS"], "8")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS"], "12000")
@@ -137,7 +139,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS"], "700")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PROGRESSIVE_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS"], "2500")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_PENDING_PREVIEW"], "0")
-        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_PRESENTATION_STREAM"], "0")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_PRESENTATION_STREAM"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_DEMO_SAFE_FALLBACK"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES"], "32")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES"], "16")
@@ -146,10 +148,10 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_SUGGESTION_CACHE_SIZE"], "32")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_RAG_DIRECT_DISPLAY"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON"], "1")
-        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_IDLE_MS"], "420")
-        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS"], "8")
-        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S"], "2")
-        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS"], "2500")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_IDLE_MS"], "180")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS"], "3")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S"], "6")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS"], "600")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_THINKING"], "disabled")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_REASONING_EFFORT"], "low")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_MAX_TOKENS"], "96")
@@ -180,6 +182,17 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn('RAG_IME_POST_COMMIT_MODEL_BUDGET_MS="${RAG_IME_POST_COMMIT_MODEL_BUDGET_MS:-$RAG_IME_PROFILE_POST_COMMIT_MODEL_BUDGET_MS}"', script_text)
         self.assertIn('RAG_IME_SQUIRREL_LATENCY_BUDGET_MS="${RAG_IME_SQUIRREL_LATENCY_BUDGET_MS:-$RAG_IME_PROFILE_SQUIRREL_LATENCY_BUDGET_MS}"', script_text)
         self.assertIn('RAG_IME_SQUIRREL_TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-$RAG_IME_PROFILE_SQUIRREL_TIMEOUT_MS}"', script_text)
+
+    def test_restart_runtime_prefers_present_mlx_bge_q8_without_overriding_explicit_provider(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script_text = (root / "scripts" / "restart_rag_ime_runtime.sh").read_text(encoding="utf-8")
+
+        self.assertIn('PREFERRED_MLX_BGE_Q8_MODEL=', script_text)
+        self.assertIn('MLX_BGE_MODE="${RAG_IME_ENABLE_MLX_BGE:-auto}"', script_text)
+        self.assertIn('[[ -d "$PREFERRED_MLX_BGE_Q8_MODEL" ]]', script_text)
+        self.assertIn('EMBEDDING_PROVIDER_WAS_EXPLICIT=', script_text)
+        self.assertIn('RAG_IME_ENABLE_MLX_BGE=1 conflicts with explicit', script_text)
+        self.assertIn('MLX BGE model directory does not exist:', script_text)
 
     def test_install_sidecar_launch_agent_can_opt_into_keepalive(self) -> None:
         root = Path(__file__).resolve().parents[1]

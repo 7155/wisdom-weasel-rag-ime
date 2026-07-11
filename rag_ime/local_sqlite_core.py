@@ -14,7 +14,7 @@ from threading import RLock
 from typing import Any, Iterator
 
 from .core_client import CoreMemory
-from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity
+from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity, embed_query
 from .memory_cleanup import (
     apply_cleanup_diff,
     apply_cleanup_run,
@@ -39,6 +39,8 @@ from .rag_core_v3 import (
     memory_candidates_v2_to_input_suggestions,
     retrieve_candidates_v3 as retrieve_rag_core_v3_candidates,
 )
+from .retrieval_docs import rebuild_retrieval_docs
+from .retrieval_vector_index import rebuild_retrieval_doc_vectors, warm_retrieval_doc_vector_cache
 from .runtime_flags import load_hybrid_rag_runtime_flags
 from .suggestion_compiler import RankedMemory, SuggestionCompiler
 from .text_utils import (
@@ -112,6 +114,8 @@ class LocalSqliteCoreClient:
         self._suggestion_cache_misses = 0
         self._suggestion_cache_evictions = 0
         self._suggestion_cache_invalidations = 0
+        self._vector_scan_cache: dict[tuple[object, ...], tuple[list[sqlite3.Row], Any]] = {}
+        self._vector_scan_cache_lock = RLock()
 
     def initialize(self, *, force: bool = False) -> None:
         if self._initialized and not force:
@@ -438,6 +442,7 @@ class LocalSqliteCoreClient:
                 context_group_parent_ids=context_group_parent_ids,
                 enabled_lanes=enabled_lanes,
                 lane_weights=lane_weights,
+                embedding_provider=self.embedding_provider,
             )
 
     def _legacy_suggest_for_input(
@@ -1443,14 +1448,34 @@ class LocalSqliteCoreClient:
                     (fingerprint,),
                 ).fetchone()["count"]
             )
+            retrieval_total = int(
+                conn.execute("SELECT COUNT(*) AS count FROM memory_retrieval_doc_vectors").fetchone()["count"]
+            )
+            retrieval_active = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS count FROM memory_retrieval_doc_vectors WHERE provider_fingerprint = ?",
+                    (fingerprint,),
+                ).fetchone()["count"]
+            )
         return {
             "enabled": self._embedding_enabled(),
             "providerFingerprint": fingerprint,
             "totalVectors": total,
             "activeProviderVectors": active,
+            "retrievalDocVectors": retrieval_total,
+            "activeProviderRetrievalDocVectors": retrieval_active,
             "candidateLimit": self.vector_candidate_limit,
             "weight": self.vector_weight,
         }
+
+    def warm_retrieval_vector_cache(self, *, project: str = "") -> dict[str, object]:
+        self.initialize()
+        with self._connect() as conn:
+            return warm_retrieval_doc_vector_cache(
+                conn,
+                self.embedding_provider.fingerprint,
+                project=project,
+            )
 
     def rebuild_vector_index(self, *, project: str = "", limit: int = 0) -> dict[str, object]:
         self.initialize()
@@ -1478,7 +1503,9 @@ class LocalSqliteCoreClient:
             params.append(limit)
         scanned = 0
         indexed = 0
+        retrieval_report: dict[str, object] = {}
         with self._connect() as conn:
+            rebuild_retrieval_docs(conn, project=project)
             rows = list(conn.execute(sql, params).fetchall())
             for row in rows:
                 scanned += 1
@@ -1496,12 +1523,19 @@ class LocalSqliteCoreClient:
                     updated_at_ms=now_ms(),
                 ):
                     indexed += 1
+            retrieval_report = rebuild_retrieval_doc_vectors(
+                conn,
+                self.embedding_provider,
+                project=project,
+                limit=limit,
+            )
         self._clear_suggestion_cache()
         return {
             "enabled": True,
             "providerFingerprint": self.embedding_provider.fingerprint,
             "scanned": scanned,
             "indexed": indexed,
+            "retrievalDocs": retrieval_report,
         }
 
     def has_event_tag(self, tag: str) -> bool:
@@ -2325,7 +2359,7 @@ class LocalSqliteCoreClient:
     ) -> dict[int, float]:
         if not self._embedding_enabled():
             return {}
-        query_vector = self.embedding_provider.embed(query)
+        query_vector = embed_query(self.embedding_provider, query)
         if not query_vector:
             return {}
         params: list[Any] = [self.embedding_provider.fingerprint]
@@ -2702,7 +2736,7 @@ class LocalSqliteCoreClient:
     def _vector_rows(self, *, query: str, project: str, app: str, limit: int) -> tuple[list[sqlite3.Row], dict[int, float]]:
         if not self._embedding_enabled() or self.vector_candidate_limit <= 0 or self.vector_weight <= 0:
             return [], {}
-        query_vector = self.embedding_provider.embed(query)
+        query_vector = embed_query(self.embedding_provider, query)
         if not query_vector:
             return [], {}
         where_params: list[Any] = [self.embedding_provider.fingerprint]
@@ -2734,9 +2768,45 @@ class LocalSqliteCoreClient:
             WHERE {' AND '.join(where)}
         """
         params = [project, app, *where_params]
-        candidates: list[tuple[float, sqlite3.Row]] = []
         with self._connect() as conn:
-            rows = list(conn.execute(sql, params).fetchall())
+            revision = conn.execute(
+                f"""
+                SELECT COUNT(*) AS vector_count, COALESCE(MAX(v.updated_at_ms), 0) AS latest_vector,
+                       COALESCE(SUM(s.deleted), 0) AS deleted_count
+                FROM memory_vectors v
+                JOIN input_events e ON e.id = v.event_id
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE {' AND '.join(where)}
+                """,
+                where_params,
+            ).fetchone()
+            cache_key = (
+                self.embedding_provider.fingerprint,
+                project,
+                app,
+                int(revision["vector_count"]),
+                int(revision["latest_vector"]),
+                int(revision["deleted_count"]),
+            )
+            with self._vector_scan_cache_lock:
+                cached_scan = self._vector_scan_cache.get(cache_key)
+            if cached_scan is None:
+                rows = list(conn.execute(sql, params).fetchall())
+                cached_scan = self._build_vector_scan_cache(rows)
+                with self._vector_scan_cache_lock:
+                    self._vector_scan_cache = {cache_key: cached_scan}
+        rows, matrix = cached_scan
+        if matrix is not None:
+            try:
+                import numpy as np
+
+                scores = matrix @ np.asarray(query_vector, dtype=np.float32)
+                order = np.argsort(-scores)[: max(1, limit)]
+                selected = [(float(scores[index]), rows[int(index)]) for index in order if float(scores[index]) > 0]
+                return [row for _, row in selected], {int(row["id"]): score for score, row in selected}
+            except (ImportError, ValueError):
+                pass
+        candidates: list[tuple[float, sqlite3.Row]] = []
         for row in rows:
             try:
                 vector = json.loads(row["vector_json"] or "[]")
@@ -2751,6 +2821,28 @@ class LocalSqliteCoreClient:
         candidates.sort(key=lambda item: item[0], reverse=True)
         selected = candidates[: max(1, limit)]
         return [row for _, row in selected], {int(row["id"]): score for score, row in selected}
+
+    @staticmethod
+    def _build_vector_scan_cache(rows: list[sqlite3.Row]) -> tuple[list[sqlite3.Row], Any]:
+        parsed_rows: list[sqlite3.Row] = []
+        vectors: list[list[float]] = []
+        dimensions = 0
+        for row in rows:
+            try:
+                vector = [float(value) for value in json.loads(row["vector_json"] or "[]")]
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if not vector or (dimensions and len(vector) != dimensions):
+                continue
+            dimensions = dimensions or len(vector)
+            parsed_rows.append(row)
+            vectors.append(vector)
+        try:
+            import numpy as np
+
+            return parsed_rows, np.asarray(vectors, dtype=np.float32) if vectors else None
+        except ImportError:
+            return parsed_rows, None
 
     def _recent_rows(self, *, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = []

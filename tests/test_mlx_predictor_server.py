@@ -368,6 +368,58 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(payload["timing"]["skippedReason"], "empty_prompt")
         self.assertEqual(calls["generate_step"], 0)
 
+    def test_base_completion_empty_stream_never_calls_mlx_generate_step(self) -> None:
+        modules, calls = _fake_mlx_modules(generated_text="不应生成")
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_PROMPT_MODE": "base-completion"},
+        ):
+            text = "".join(
+                MlxLmEngine("fake-minimind").stream_text(
+                    current_input="",
+                    recent_context="",
+                    max_candidates=3,
+                    max_tokens=8,
+                    temperature=0.15,
+                    top_p=0.85,
+                    request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                )
+            )
+
+        self.assertEqual(text, "")
+        self.assertEqual(calls["generate_step"], 0)
+
+    def test_startup_warmup_compiles_prediction_path_and_is_visible_in_health(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=["候选排序", "来源诊断", "上下文管理", "补齐结果"]
+        )
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_PROMPT_MODE": "base-completion", "RAG_IME_MLX_WARMUP": "1"},
+        ):
+            engine = MlxLmEngine("fake-minimind", profile_id="minimind_ime_v2")
+            status = engine.warmup(max_tokens=8, temperature=0.15, top_p=0.85)
+
+        self.assertTrue(status["completed"])
+        self.assertTrue(status["ok"])
+        self.assertGreaterEqual(status["candidateCount"], 1)
+        self.assertEqual(engine.health()["warmup"], status)
+
+    def test_startup_warmup_can_be_disabled_without_running_prediction(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text="unused")
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_WARMUP": "0"},
+        ):
+            engine = MlxLmEngine("fake-minimind", profile_id="minimind_ime_v2")
+            with patch.object(engine, "predict") as predict:
+                status = engine.warmup(max_tokens=8, temperature=0.15, top_p=0.85)
+
+        self.assertTrue(status["completed"])
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["skippedReason"], "disabled")
+        predict.assert_not_called()
+
     def test_normalized_request_keeps_prediction_request_type_and_rime_candidates(self) -> None:
         request = _normalize_prediction_request(
             {

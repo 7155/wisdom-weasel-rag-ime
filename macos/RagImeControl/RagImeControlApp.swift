@@ -9,11 +9,11 @@ struct RagImeControlApp: App {
         WindowGroup("RAG-IME 控制中心") {
             ControlRootView()
                 .environmentObject(model)
-                .frame(minWidth: 820, minHeight: 560)
+                .frame(minWidth: 1080, minHeight: 720)
                 .task { await model.start() }
                 .onDisappear { model.stop() }
         }
-        .defaultSize(width: 920, height: 640)
+        .defaultSize(width: 1280, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) { }
         }

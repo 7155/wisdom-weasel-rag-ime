@@ -755,6 +755,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="rag-ime-doctor-input-source-") as tmp:
             tmp_path = Path(tmp)
             calls_log = tmp_path / "squirrel-calls.log"
+            refresh_log = tmp_path / "refresh-calls.log"
             app = _write_fake_squirrel_app(
                 tmp_path / "Squirrel.app",
                 body="#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$SQUIRREL_CALLS_LOG\"\nexit 0\n",
@@ -774,6 +775,12 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             swift.chmod(0o755)
+            refresh = tmp_path / "refresh-input-source.sh"
+            refresh.write_text(
+                "#!/usr/bin/env bash\nprintf 'refresh\\n' >> \"$REFRESH_CALLS_LOG\"\n",
+                encoding="utf-8",
+            )
+            refresh.chmod(0o755)
 
             env = {
                 **{key: value for key, value in os.environ.items() if not key.startswith("RAG_IME_")},
@@ -788,7 +795,9 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 "RAG_IME_DOCTOR_REFRESH_INPUT_SOURCE": "1",
                 "RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE": "0",
                 "RAG_IME_DOCTOR_REQUIRE_PATCHED_APP": "0",
+                "RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT": str(refresh),
                 "SQUIRREL_CALLS_LOG": str(calls_log),
+                "REFRESH_CALLS_LOG": str(refresh_log),
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "doctor_squirrel_integration.sh")],
@@ -798,14 +807,14 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                 text=True,
                 capture_output=True,
             )
-            if not calls_log.exists() and "Killed: 9" in result.stderr:
+            if not refresh_log.exists() and "Killed: 9" in result.stderr:
                 self.skipTest("macOS killed the fake Squirrel.app fixture")
-            calls = calls_log.read_text(encoding="utf-8")
+            refresh_calls = refresh_log.read_text(encoding="utf-8")
 
         self.assertIn("[OK] installed Squirrel.app executable exists", result.stdout)
         self.assertIn("[OK] macOS input source enabled", result.stdout)
-        self.assertIn("--register-input-source", calls)
-        self.assertIn("--enable-input-source im.rime.inputmethod.Squirrel.Hans", calls)
+        self.assertEqual(refresh_calls.strip(), "refresh")
+        self.assertFalse(calls_log.exists())
         self.assertIn("summary: failures=0", result.stdout)
 
     def test_doctor_can_require_patched_squirrel_app_marker(self) -> None:

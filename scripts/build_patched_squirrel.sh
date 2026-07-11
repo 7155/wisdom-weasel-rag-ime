@@ -455,25 +455,32 @@ prepare_squirrel_dependencies() {
 
 ensure_squirrel_input_source_enabled() {
   local app="$1"
-  local attempt
   local output
 
   if [[ ! -x "$app/Contents/MacOS/Squirrel" ]]; then
     printf '[WARN] Squirrel executable missing; cannot verify input source: %s\n' "$app" >&2
     return 0
   fi
-  for attempt in 1 2 3 4 5; do
-    "$app/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-    sleep 0.5
-    "$app/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 || true
-    if output="$("$ROOT/scripts/check_macos_input_source.sh" --require-hitoolbox-enabled "$INPUT_SOURCE_ID" 2>&1)"; then
-      printf '[OK] macOS input source enabled for real use: %s\n' "$output"
-      return 0
-    fi
-    sleep 0.5
-  done
+  if output="$(RAG_IME_SQUIRREL_APP="$app" \
+    RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+    RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+    "$ROOT/scripts/refresh_squirrel_input_source_registration.sh" 2>&1)"; then
+    printf '[OK] macOS input source enabled for real use: %s\n' "$output"
+    return 0
+  fi
   printf '[WARN] macOS input source not confirmed for real use after install: %s\n' "$output" >&2
   printf '[WARN] If thirdPartyEnabled=false, add %s from System Settings -> Keyboard -> Input Sources.\n' "$DISPLAY_NAME" >&2
+}
+
+prevent_build_product_registration() {
+  local info="$PRODUCT_APP/Contents/Info.plist"
+  [[ -f "$info" ]] || return 0
+  /usr/libexec/PlistBuddy -c "Set :LSRegisterProhibited true" "$info" >/dev/null 2>&1 ||
+    /usr/libexec/PlistBuddy -c "Add :LSRegisterProhibited bool true" "$info"
+  if [[ -x "$LSREGISTER" ]]; then
+    "$LSREGISTER" -u "$PRODUCT_APP" >/dev/null 2>&1 || true
+  fi
+  printf '[OK] prevented temporary build product from registering as a second input method\n'
 }
 
 should_brand_app() {
@@ -615,6 +622,7 @@ install_squirrel_app() {
   sleep 0.5
   rm -rf "$TARGET_APP"
   cp -R "$PRODUCT_APP" "$TARGET_APP"
+  /usr/libexec/PlistBuddy -c "Delete :LSRegisterProhibited" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || true
   printf '[OK] installed patched Squirrel.app: %s\n' "$TARGET_APP"
 
   if should_brand_app; then
@@ -717,6 +725,7 @@ prepare_squirrel_dependencies
 "$XCODEBUILD" "${xcodebuild_build_args[@]}"
 printf '[OK] xcodebuild build succeeded\n'
 printf '[OK] built patched Squirrel.app: %s\n' "$PRODUCT_APP"
+prevent_build_product_registration
 
 if [[ "$ACTION" == "install" ]]; then
   install_squirrel_app

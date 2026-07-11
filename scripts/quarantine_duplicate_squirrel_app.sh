@@ -82,8 +82,10 @@ fi
 sudo mv "$DUPLICATE_APP" "$QUARANTINE_APP"
 "$LSREGISTER" -f "$CANONICAL_APP" >/dev/null 2>&1 || true
 killall TextInputMenuAgent TextInputSwitcher imklaunchagent >/dev/null 2>&1 || true
-"$CANONICAL_APP/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-"$CANONICAL_APP/Contents/MacOS/Squirrel" --enable-input-source "$INPUT_SOURCE_ID" >/dev/null 2>&1 || true
+RAG_IME_SQUIRREL_APP="$CANONICAL_APP" \
+  RAG_IME_SQUIRREL_BUNDLE_ID="${INPUT_SOURCE_ID%.*}" \
+  RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+  "$ROOT/scripts/refresh_squirrel_input_source_registration.sh" || true
 "$ROOT/scripts/select_macos_input_source.sh" "$INPUT_SOURCE_ID" || true
 python3 "$ROOT/scripts/audit_canonical_squirrel_bundles.py"
 echo "quarantined duplicate Squirrel.app at: $QUARANTINE_APP"

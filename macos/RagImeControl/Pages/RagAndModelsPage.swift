@@ -25,8 +25,10 @@ struct RagAndModelsPage: View {
                     }
                     advancedSettings
                 }
-                .padding(24)
-                .frame(maxWidth: 860, alignment: .leading)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 28)
+                .frame(maxWidth: 1120, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .task { await model.loadKnowledgeRoute() }
@@ -68,7 +70,8 @@ struct RagAndModelsPage: View {
             )
             Toggle("专家模式", isOn: $model.expertMode).toggleStyle(.switch)
         }
-        .padding(20)
+        .padding(.horizontal, 30)
+        .padding(.vertical, 22)
     }
 
     private var modePicker: some View {

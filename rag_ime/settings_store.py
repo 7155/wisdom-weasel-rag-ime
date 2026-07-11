@@ -83,7 +83,11 @@ class ManagementSettingsStore:
                 result={"changedKeys": changed},
             )
             timestamp = now_ms()
-            for section, value in normalized.items():
+            # Dotted-key updates normalize to a partial top-level section. Persist
+            # the fully merged section so changing one leaf never erases sibling
+            # overrides that were already stored.
+            for section in normalized:
+                value = after[section]
                 conn.execute(
                     """
                     INSERT INTO management_settings(key, value_json, updated_at_ms, updated_by, audit_id)

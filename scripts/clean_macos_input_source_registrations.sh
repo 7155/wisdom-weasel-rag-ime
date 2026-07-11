@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LSREGISTER="${RAG_IME_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
+BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-im.rime.inputmethod.Squirrel}"
+INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
 LEGACY_APP_NAMES="${RAG_IME_LEGACY_INPUT_METHOD_APP_NAMES:-RAG-IME.app:RagIme.app}"
 TMP_BASE="${TMPDIR:-/tmp}"
 tmpdir="$(mktemp -d "$TMP_BASE/rag-ime-clean-input-source-ls.XXXXXX")"
@@ -109,14 +111,17 @@ while IFS= read -r stale_path; do
   echo "unregistered stale input-source LS path: $stale_path"
 done <"$tmpdir/stale-paths.txt"
 
-if [[ -n "$canonical_squirrel" ]]; then
-  "$LSREGISTER" -f -R -trusted "$canonical_squirrel" >/dev/null 2>&1 || true
-  echo "registered canonical Squirrel app: $canonical_squirrel"
-fi
 "$LSREGISTER" -gc >/dev/null 2>&1 || true
 killall cfprefsd >/dev/null 2>&1 || true
 killall TextInputMenuAgent >/dev/null 2>&1 || true
 killall SystemUIServer >/dev/null 2>&1 || true
 
 echo "stale_registration_count=$count"
-"$ROOT/scripts/check_macos_input_source.sh" im.rime.inputmethod.Squirrel.Hans || true
+if [[ -n "$canonical_squirrel" ]]; then
+  RAG_IME_SQUIRREL_APP="$canonical_squirrel" \
+    RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+    RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+    "$ROOT/scripts/refresh_squirrel_input_source_registration.sh" || true
+else
+  "$ROOT/scripts/check_macos_input_source.sh" "$INPUT_SOURCE_ID" || true
+fi

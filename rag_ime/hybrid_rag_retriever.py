@@ -3,20 +3,27 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
 
 from .context_group import ContextGroup, context_group_compatibility
+from .embeddings import EmbeddingProvider, cosine_similarity, embed_query
 from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery
 from .hybrid_rag_ranker import rank_hybrid_hits
 from .memory_ingest import normalize_text
 from .query_expansion import build_query_expansion
+from .retrieval_vector_index import load_retrieval_doc_vectors
 from .text_utils import compact_whitespace, token_terms
 
 
 HYBRID_RAG_RETRIEVAL_SCHEMA_VERSION = "rag-ime.hybrid-rag-retrieval.v1"
 
 
-def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQuery) -> dict[str, object]:
+def retrieve_hybrid_rag_candidates(
+    conn: sqlite3.Connection,
+    query: HybridRagQuery,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> dict[str, object]:
     started = time.perf_counter()
     expansion = build_query_expansion(
         conn,
@@ -30,10 +37,22 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
     )
     docs = _active_docs(conn, query=query)
     blocked = _blocked_sets(conn)
-    enabled_lanes = _resolved_lane_enabled(query.enabled_lanes)
+    vector_available = bool(embedding_provider and embedding_provider.fingerprint != "none")
+    enabled_lanes = _resolved_lane_enabled(query.enabled_lanes, vector_available=vector_available)
     lane_weights = _resolved_lane_weights(query.lane_weights)
-    lane_hits: dict[str, list[HybridRagHit]] = {
-        "bm25_raw": _rank_docs(
+    vectors = (
+        load_retrieval_doc_vectors(conn, embedding_provider.fingerprint, (str(doc["doc_id"]) for doc in docs))
+        if vector_available and embedding_provider is not None else {}
+    )
+    query_vector = embed_query(embedding_provider, expansion.primary_query) if vectors and embedding_provider else []
+    # SQLite connections are thread-affine by default. Complete the only lane
+    # that still needs SQL here; all document-scoring lanes then run in parallel.
+    feedback_hits = (
+        _feedback_hits(conn, docs=docs, query=query, blocked=blocked, limit=max(8, query.top_k * 4))
+        if enabled_lanes["feedback"] else []
+    )
+    tasks = {
+        "bm25_raw": lambda: _rank_docs(
             docs,
             lane="bm25_raw",
             terms=(expansion.primary_query, *expansion.lexical_terms),
@@ -41,7 +60,7 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             blocked=blocked,
             limit=max(8, query.top_k * 4),
         ) if enabled_lanes["bm25_raw"] else [],
-        "bm25_tags": _rank_docs(
+        "bm25_tags": lambda: _rank_docs(
             docs,
             lane="bm25_tags",
             terms=(*expansion.matched_aliases, *expansion.activated_tags, *expansion.expansion_terms),
@@ -49,12 +68,15 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             blocked=blocked,
             limit=max(8, query.top_k * 4),
         ) if enabled_lanes["bm25_tags"] else [],
-        # These lanes stay explicitly unavailable until this retriever receives
-        # an embedding provider. EffectiveRuntimeConfig clamps them off instead
-        # of pretending that an empty list is a successful vector search.
-        "vector_raw": [],
-        "vector_tag_boost": [],
-        "tagmemo": _rank_docs(
+        "vector_raw": lambda: _rank_vector_docs(
+            docs, vectors=vectors, query_vector=query_vector, lane="vector_raw", vector_index=0,
+            blocked=blocked, limit=max(8, query.top_k * 4),
+        ) if enabled_lanes["vector_raw"] else [],
+        "vector_tag_boost": lambda: _rank_vector_docs(
+            docs, vectors=vectors, query_vector=query_vector, lane="vector_tag_boost", vector_index=1,
+            blocked=blocked, limit=max(8, query.top_k * 4), include_group=True,
+        ) if enabled_lanes["vector_tag_boost"] else [],
+        "tagmemo": lambda: _rank_docs(
             docs,
             lane="tagmemo",
             terms=expansion.activated_tags,
@@ -62,7 +84,7 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             blocked=blocked,
             limit=max(8, query.top_k * 4),
         ) if enabled_lanes["tagmemo"] else [],
-        "time": (
+        "time": lambda: (
             _rank_time_docs(
                 docs,
                 expansion_terms=(*expansion.expansion_terms, *expansion.activated_tags),
@@ -72,12 +94,11 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             if enabled_lanes["time"]
             else []
         ),
-        "feedback": (
-            _feedback_hits(conn, docs=docs, query=query, blocked=blocked, limit=max(8, query.top_k * 4))
-            if enabled_lanes["feedback"]
-            else []
-        ),
+        "feedback": lambda: feedback_hits,
     }
+    with ThreadPoolExecutor(max_workers=len(tasks), thread_name_prefix="rag-lane") as executor:
+        futures = {name: executor.submit(task) for name, task in tasks.items()}
+        lane_hits = {name: future.result() for name, future in futures.items()}
     hits = [hit for lane in lane_hits.values() for hit in lane]
     candidates = rank_hybrid_hits(
         hits,
@@ -100,17 +121,17 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
         "lanes": {
             name: {
                 "enabled": enabled_lanes[name],
-                "available": name not in {"vector_raw", "vector_tag_boost"},
+                "available": vector_available if name in {"vector_raw", "vector_tag_boost"} else True,
                 "implementation": (
                     "lexical_substring_fallback"
                     if name in {"bm25_raw", "bm25_tags"}
-                    else ("not_wired" if name in {"vector_raw", "vector_tag_boost"} else "native")
+                    else ("precomputed_cosine" if name in {"vector_raw", "vector_tag_boost"} and vector_available else ("not_wired" if name in {"vector_raw", "vector_tag_boost"} else "native"))
                 ),
                 "lexicalFallback": name in {"bm25_raw", "bm25_tags"},
                 "fts5Bm25": False,
                 "skippedReason": (
-                    "embedding_provider_not_wired"
-                    if name in {"vector_raw", "vector_tag_boost"}
+                    ("embedding_provider_not_wired" if not vector_available else "vector_index_empty")
+                    if name in {"vector_raw", "vector_tag_boost"} and not values
                     else ("disabled_by_effective_runtime_config" if not enabled_lanes[name] else "")
                 ),
                 "weight": lane_weights[name],
@@ -120,6 +141,8 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             for name, values in lane_hits.items()
         },
         "elapsedMs": elapsed_ms,
+        "parallelExecution": True,
+        "vectorIndexDocuments": len(vectors),
         "overBudget": elapsed_ms > max(1, int(query.latency_budget_ms)),
         "hits": [hit.__dict__ for hit in hits],
         "candidates": [candidate.__dict__ for candidate in candidates],
@@ -137,11 +160,11 @@ _DEFAULT_LANE_WEIGHTS = {
 }
 
 
-def _resolved_lane_enabled(values: tuple[tuple[str, bool], ...]) -> dict[str, bool]:
+def _resolved_lane_enabled(values: tuple[tuple[str, bool], ...], *, vector_available: bool = False) -> dict[str, bool]:
     configured = {str(key): bool(value) for key, value in values}
     resolved = {lane: configured.get(lane, True) for lane in _DEFAULT_LANE_WEIGHTS}
-    resolved["vector_raw"] = False
-    resolved["vector_tag_boost"] = False
+    resolved["vector_raw"] = vector_available and resolved["vector_raw"]
+    resolved["vector_tag_boost"] = vector_available and resolved["vector_tag_boost"]
     return resolved
 
 
@@ -150,8 +173,12 @@ def _resolved_lane_weights(values: tuple[tuple[str, float], ...]) -> dict[str, f
     return {lane: configured.get(lane, default) for lane, default in _DEFAULT_LANE_WEIGHTS.items()}
 
 
-def retrieve_hybrid_rag_candidate_objects(conn: sqlite3.Connection, query: HybridRagQuery) -> list[HybridRagCandidate]:
-    payload = retrieve_hybrid_rag_candidates(conn, query)
+def retrieve_hybrid_rag_candidate_objects(
+    conn: sqlite3.Connection,
+    query: HybridRagQuery,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> list[HybridRagCandidate]:
+    payload = retrieve_hybrid_rag_candidates(conn, query, embedding_provider)
     candidates: list[HybridRagCandidate] = []
     for item in payload.get("candidates", []):
         if isinstance(item, HybridRagCandidate):
@@ -258,6 +285,72 @@ def _rank_docs(
         weighted.append((score, doc))
     weighted.sort(key=lambda item: item[0], reverse=True)
     return [_hit_from_doc(doc, lane=lane, rank=index, raw_score=score) for index, (score, doc) in enumerate(weighted[:limit], start=1)]
+
+
+def _rank_vector_docs(
+    docs: list[dict[str, object]],
+    *,
+    vectors: dict[str, tuple[list[float], list[float], list[float]]],
+    query_vector: list[float],
+    lane: str,
+    vector_index: int,
+    blocked: dict[str, set[str]],
+    limit: int,
+    include_group: bool = False,
+) -> list[HybridRagHit]:
+    if not query_vector:
+        return []
+    eligible: list[tuple[dict[str, object], list[float], list[float]]] = []
+    for doc in docs:
+        if _doc_blocked(doc, blocked):
+            continue
+        doc_vectors = vectors.get(str(doc["doc_id"]))
+        if doc_vectors and doc_vectors[vector_index]:
+            eligible.append((doc, doc_vectors[vector_index], doc_vectors[2]))
+    try:
+        import numpy as np
+
+        if eligible:
+            query_array = np.asarray(query_vector, dtype=np.float32)
+            matrix = np.asarray([item[1] for item in eligible], dtype=np.float32)
+            scores = matrix @ query_array
+            if include_group:
+                group_matrix = np.asarray(
+                    [item[2] if item[2] else [0.0] * len(query_vector) for item in eligible],
+                    dtype=np.float32,
+                )
+                group_scores = np.maximum(0.0, group_matrix @ query_array)
+                compatibility = np.asarray([
+                    float(dict(item[0].get("metadata") or {}).get("groupCompatibility") or 0.0)
+                    for item in eligible
+                ], dtype=np.float32)
+                scores = scores * 0.75 + group_scores * 0.15 + compatibility * 0.10
+            weighted = [
+                (float(score), eligible[index][0])
+                for index, score in enumerate(scores)
+                if float(score) > 0.0
+            ]
+            weighted.sort(key=lambda item: item[0], reverse=True)
+            return [
+                _hit_from_doc(doc, lane=lane, rank=index, raw_score=score)
+                for index, (score, doc) in enumerate(weighted[:limit], start=1)
+            ]
+    except (ImportError, ValueError):
+        pass
+    weighted: list[tuple[float, dict[str, object]]] = []
+    for doc, doc_vector, group_vector in eligible:
+        score = cosine_similarity(query_vector, doc_vector)
+        if include_group and group_vector:
+            group_score = max(0.0, cosine_similarity(query_vector, group_vector))
+            compatibility = float(dict(doc.get("metadata") or {}).get("groupCompatibility") or 0.0)
+            score = score * 0.75 + group_score * 0.15 + compatibility * 0.10
+        if score > 0.0:
+            weighted.append((score, doc))
+    weighted.sort(key=lambda item: item[0], reverse=True)
+    return [
+        _hit_from_doc(doc, lane=lane, rank=index, raw_score=score)
+        for index, (score, doc) in enumerate(weighted[:limit], start=1)
+    ]
 
 
 def _rank_time_docs(

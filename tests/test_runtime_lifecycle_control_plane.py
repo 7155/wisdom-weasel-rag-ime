@@ -91,14 +91,18 @@ class RuntimeLifecycleControlPlaneTests(unittest.TestCase):
         scripts.mkdir(parents=True)
         redeploy = scripts / "install_squirrel_rag_config.sh"
         repair = scripts / "repair_rag_ime_launch_agents.sh"
+        refresh = scripts / "refresh_squirrel_input_source_registration.sh"
         redeploy.write_text("#!/bin/bash\n", encoding="utf-8")
         repair.write_text("#!/bin/bash\n", encoding="utf-8")
+        refresh.write_text("#!/bin/bash\n", encoding="utf-8")
 
         with patch.dict(os.environ, {"RAG_IME_SOURCE_ROOT": str(source_root)}, clear=False):
             command = self.management._command_for_action("redeploy_rime")
+            register_command = self.management._command_for_action("register_input_source")
             response = self.management.start_runtime_action({"action": "repair_launch_agents"})
 
         self.assertEqual(command, ["/bin/bash", str(redeploy)])
+        self.assertEqual(register_command, ["/bin/bash", str(refresh)])
         self.assertEqual(response["job"]["status"], "external-supervisor-required")
         self.assertEqual(response["job"]["result"]["externalCommand"], ["/bin/bash", str(repair)])
 

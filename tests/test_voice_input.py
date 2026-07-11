@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import plistlib
 import shutil
 import subprocess
@@ -29,7 +31,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("RunAtLoad bool true", launch)
         self.assertIn("KeepAlive:SuccessfulExit bool false", launch)
 
-    def test_credentials_are_keychain_only_and_sensitive_fields_are_blocked(self) -> None:
+    def test_credentials_avoid_repeat_prompts_and_sensitive_fields_are_blocked(self) -> None:
         keychain = (ROOT / "macos/Shared/VoiceKeychainStore.swift").read_text(encoding="utf-8")
         insertion = (ROOT / "macos/RagImeVoice/VoiceTextInsertion.swift").read_text(encoding="utf-8")
         coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
@@ -37,6 +39,9 @@ class VoiceInputTests(unittest.TestCase):
 
         self.assertIn("SecItemCopyMatching", keychain)
         self.assertIn("SecItemUpdate", keychain)
+        self.assertIn("VoiceCredentialFileStore.loadCredentials()", keychain)
+        self.assertIn("voice-credentials.json", keychain)
+        self.assertIn(".posixPermissions: 0o600", keychain)
         self.assertIn("IsSecureEventInputEnabled", insertion)
         for marker in ("securetextfield", "password", "验证码", "账号"):
             self.assertIn(marker, insertion)
@@ -75,6 +80,47 @@ class VoiceInputTests(unittest.TestCase):
             self.assertIn(marker, status)
         self.assertIn("仅记录状态、数量与时延，不保存音频或转写文本", page)
         self.assertIn("VoiceAgentStatusStore.write", delegate)
+
+    def test_middle_mouse_is_default_push_to_talk_and_keyboard_fallbacks_remain_configurable(self) -> None:
+        config = (ROOT / "macos/Shared/VoiceHotkeyConfig.swift").read_text(encoding="utf-8")
+        hotkey = (ROOT / "macos/RagImeVoice/GlobalVoiceHotkey.swift").read_text(encoding="utf-8")
+        coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
+        page = (ROOT / "macos/RagImeControl/Pages/VoiceInputPage.swift").read_text(encoding="utf-8")
+        configure = (ROOT / "scripts/configure_voice_hotkey.sh").read_text(encoding="utf-8")
+
+        self.assertIn('case middleMouse = "middle_mouse"', config)
+        self.assertIn('case rightOption = "right_option"', config)
+        self.assertIn('case optionSpace = "option_space"', config)
+        self.assertIn("choice: .middleMouse", config)
+        self.assertIn("voice-hotkey.json", config)
+        self.assertIn(".posixPermissions: 0o600", config)
+        self.assertIn("CGEventType.otherMouseDown", hotkey)
+        self.assertIn("CGEventType.otherMouseUp", hotkey)
+        self.assertIn("mouseEventButtonNumber", hotkey)
+        self.assertIn("middleMouseButton: Int64 = 2", hotkey)
+        self.assertIn("CGEventType.flagsChanged", hotkey)
+        self.assertIn("keyCode == 61", hotkey)
+        self.assertIn("suppressedReleaseChoice", hotkey)
+        self.assertIn("hotkey.reloadConfiguration()", coordinator)
+        self.assertIn("ForEach(VoiceHotkeyChoice.allCases)", page)
+        self.assertIn("按住鼠标滚轮中键", page)
+        self.assertIn("middle_mouse|right_option|option_space", configure)
+
+        with tempfile.TemporaryDirectory(prefix="rag-ime-voice-hotkey-") as directory:
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts/configure_voice_hotkey.sh"), "middle_mouse"],
+                text=True,
+                capture_output=True,
+                check=False,
+                env={**os.environ, "HOME": directory},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            path = Path(directory) / "Library/Application Support/RagIme/voice-hotkey.json"
+            self.assertEqual(
+                json.loads(path.read_text(encoding="utf-8")),
+                {"schemaVersion": "rag-ime.voice-hotkey.v1", "choice": "middle_mouse"},
+            )
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_hotwords_are_explicit_bounded_and_not_derived_from_rime(self) -> None:
         config = (ROOT / "macos/Shared/VoiceHotwordConfig.swift").read_text(encoding="utf-8")
@@ -141,6 +187,10 @@ import Foundation
 enum Harness {
     static func main() {
         let payload = Data("hello".utf8)
+        precondition(VoiceHotkeyConfig.default.choice == .middleMouse)
+        precondition(VoiceHotkeyChoice.allCases.first == .middleMouse)
+        precondition(VoiceHotkeyChoice.allCases.contains(.rightOption))
+        precondition(VoiceHotkeyChoice.allCases.contains(.optionSpace))
         let frame = VoiceASRFrame.build(
             messageType: .fullClientRequest,
             flags: .positiveSequence,
@@ -251,6 +301,7 @@ enum Harness {
                 [
                     swiftc,
                     "-parse-as-library",
+                    str(ROOT / "macos/Shared/VoiceHotkeyConfig.swift"),
                     str(ROOT / "macos/Shared/VoiceKeychainStore.swift"),
                     str(ROOT / "macos/Shared/VoiceAgentStatus.swift"),
                     str(ROOT / "macos/Shared/VoiceHotwordConfig.swift"),

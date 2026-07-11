@@ -20,7 +20,17 @@ def rebuild_retrieval_docs(
     include_items: bool = True,
 ) -> dict[str, object]:
     ensure_memory_v2_schema(conn)
-    conn.execute("DELETE FROM memory_retrieval_docs")
+    existing = {
+        str(row["doc_id"]): tuple(str(row[key] or "") for key in (
+            "raw_text", "tags_text", "aliases_text", "surface_hints_text",
+            "query_expansions_text", "project", "app", "metadata_json",
+        ))
+        for row in conn.execute(
+            """SELECT doc_id, raw_text, tags_text, aliases_text, surface_hints_text,
+                      query_expansions_text, project, app, metadata_json
+               FROM memory_retrieval_docs"""
+        ).fetchall()
+    }
     conn.execute("DELETE FROM memory_retrieval_docs_fts")
     docs: list[dict[str, object]] = []
     tombstones = _active_tombstone_sets(conn)
@@ -32,9 +42,18 @@ def rebuild_retrieval_docs(
         docs.extend(_memory_book_docs(conn, project=project, tombstones=tombstones))
     timestamp = now_ms()
     counts = {"item": 0, "phrase": 0, "atom": 0, "book": 0}
+    active_doc_ids: set[str] = set()
     for doc in docs:
+        active_doc_ids.add(str(doc["doc_id"]))
         doc_type = str(doc["doc_type"])
         counts[doc_type] = counts.get(doc_type, 0) + 1
+        metadata_json = json.dumps(doc.get("metadata") or {}, ensure_ascii=False, sort_keys=True)
+        signature = tuple(str(doc[key] or "") for key in (
+            "raw_text", "tags_text", "aliases_text", "surface_hints_text",
+            "query_expansions_text", "project", "app",
+        )) + (metadata_json,)
+        if existing.get(str(doc["doc_id"])) not in {None, signature}:
+            conn.execute("DELETE FROM memory_retrieval_doc_vectors WHERE doc_id = ?", (doc["doc_id"],))
         cur = conn.execute(
             """
             INSERT INTO memory_retrieval_docs(
@@ -43,6 +62,13 @@ def rebuild_retrieval_docs(
                 status, updated_at_ms, metadata_json
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+            ON CONFLICT(doc_id) DO UPDATE SET
+                doc_type=excluded.doc_type, source_id=excluded.source_id,
+                raw_text=excluded.raw_text, tags_text=excluded.tags_text,
+                aliases_text=excluded.aliases_text, surface_hints_text=excluded.surface_hints_text,
+                query_expansions_text=excluded.query_expansions_text, time_key=excluded.time_key,
+                project=excluded.project, app=excluded.app, status='active',
+                updated_at_ms=excluded.updated_at_ms, metadata_json=excluded.metadata_json
             """,
             (
                 doc["doc_id"],
@@ -57,10 +83,10 @@ def rebuild_retrieval_docs(
                 doc["project"],
                 doc["app"],
                 timestamp,
-                json.dumps(doc.get("metadata") or {}, ensure_ascii=False, sort_keys=True),
+                metadata_json,
             ),
         )
-        rowid = int(cur.lastrowid)
+        rowid = int(conn.execute("SELECT rowid FROM memory_retrieval_docs WHERE doc_id = ?", (doc["doc_id"],)).fetchone()[0])
         conn.execute(
             """
             INSERT INTO memory_retrieval_docs_fts(
@@ -82,6 +108,9 @@ def rebuild_retrieval_docs(
                 str(doc["app"]),
             ),
         )
+    stale_ids = set(existing) - active_doc_ids
+    if stale_ids:
+        conn.executemany("DELETE FROM memory_retrieval_docs WHERE doc_id = ?", ((doc_id,) for doc_id in stale_ids))
     return {
         "schemaVersion": RETRIEVAL_DOCS_REBUILD_SCHEMA_VERSION,
         "project": project,

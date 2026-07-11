@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trace
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.knowledge_workbench import KnowledgeGenerationResult
+from rag_ime.knowledge_workbench import KnowledgeGenerationResult, KnowledgeWorkbenchRequest
 from rag_ime.memory_ingest import normalize_text, upsert_memory_item
 from rag_ime.memory_book_compiler import memory_book_plan_from_compile_output, store_memory_book_plan
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
@@ -60,6 +60,20 @@ class _CapabilityProbePredictionProvider(_ManagementPredictionProvider):
             "capabilities": {"streaming": True, "serverTiming": True},
             "promptCache": {"enabled": False},
         }
+
+
+class _WarmupEmbeddingProvider:
+    fingerprint = "mlx-bert:test-q8:cfg-test"
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def embed(self, text: str) -> list[float]:
+        return self.embed_query(text)
+
+    def embed_query(self, text: str) -> list[float]:
+        self.queries.append(text)
+        return [0.25, 0.75]
 
 
 class _KnowledgeGenerator:
@@ -134,6 +148,24 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("sourceType", first)
         self.assertIn("score", first)
         self.assertIn("reason", first)
+
+    def test_local_mlx_embedding_is_warmed_before_health_becomes_ready(self) -> None:
+        provider = _WarmupEmbeddingProvider()
+        with tempfile.TemporaryDirectory(prefix="rag-ime-embedding-warmup-") as tmp:
+            with patch("rag_ime.debug_server.embedding_provider_from_env", return_value=provider):
+                service = DebugImeService(
+                    DebugServerConfig(
+                        db_path=Path(tmp) / "warmup.sqlite",
+                        seed_if_empty=False,
+                        predictor=_ManagementPredictionProvider(),
+                    )
+                )
+                report = service.health()["embeddingWarmup"]
+
+        self.assertTrue(report["enabled"])
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["dimensions"], 2)
+        self.assertEqual(provider.queries, ["输入法语义检索预热"])
 
     def test_predictor_status_reports_cache_capabilities(self) -> None:
         provider = _CapabilityProbePredictionProvider()
@@ -772,6 +804,80 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(response["evidence"]), 1)
         self.assertIn("contextInjection", response["diagnostics"])
 
+    def test_knowledge_workbench_retrieves_memories_from_other_apps(self) -> None:
+        self._upsert_item(
+            memory_id="stable:cross-app-bge",
+            kind="stable_memory",
+            text="BGE 向量索引需要在 provider 指纹变化后重新构建",
+            status="approved",
+            app="com.openai.codex",
+        )
+        self.service.rag_core_v3_rebuild_retrieval_docs({"project": "wisdom-weasel-rag-ime"})
+
+        evidence = self.service._knowledge_workbench_evidence(
+            KnowledgeWorkbenchRequest(
+                question="BGE provider 指纹变化后怎么处理向量索引",
+                mode="knowledge_answer",
+                app="com.rag-ime.control",
+            )
+        )
+
+        self.assertIn("stable:cross-app-bge", [item["sourceId"] for item in evidence])
+        matched = next(item for item in evidence if item["sourceId"] == "stable:cross-app-bge")
+        self.assertIn("BGE 向量索引", matched["text"])
+        self.assertGreater(matched["score"], 0.0)
+
+    def test_knowledge_workbench_reserves_structured_book_and_atom_evidence(self) -> None:
+        phrase_hits = [
+            {
+                "doc_id": "phrase:noisy",
+                "doc_type": "phrase",
+                "source_id": "phrase:noisy",
+                "text": "重复的短语证据",
+                "source_lane": lane,
+                "rank": 1,
+                "tags": ["输入法"],
+                "metadata": {},
+            }
+            for lane in ("bm25_raw", "bm25_tags", "tagmemo")
+        ]
+        structured_hits = [
+            {
+                "doc_id": "book:demo",
+                "doc_type": "book",
+                "source_id": "book:demo",
+                "text": "输入法优先演示路线",
+                "source_lane": "bm25_raw",
+                "rank": 2,
+                "tags": ["输入法", "RAG"],
+                "metadata": {"bookTitle": "输入法优先演示路线"},
+            },
+            {
+                "doc_id": "atom:demo",
+                "doc_type": "atom",
+                "source_id": "atom:demo",
+                "text": "DeepSeek 只处理显式知识工作台查询",
+                "source_lane": "bm25_tags",
+                "rank": 3,
+                "tags": ["DeepSeek"],
+                "metadata": {},
+            },
+        ]
+        with patch(
+            "rag_ime.debug_server.retrieve_hybrid_rag_candidates",
+            return_value={"candidates": [], "hits": [*phrase_hits, *structured_hits]},
+        ) as retrieve:
+            evidence = self.service._knowledge_workbench_evidence(
+                KnowledgeWorkbenchRequest(
+                    question="输入法演示如何联动知识工作台",
+                    mode="knowledge_answer",
+                    app="com.rag-ime.control.demo",
+                )
+            )
+
+        self.assertEqual([item["sourceId"] for item in evidence[:2]], ["book:demo", "atom:demo"])
+        self.assertEqual(retrieve.call_args.args[1].app, "")
+
     def test_knowledge_workbench_blocks_sensitive_text_before_retrieval(self) -> None:
         response = self.service.knowledge_workbench_start(
             {
@@ -997,7 +1103,15 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(payload["controlCenter"], "RagImeControl.app")
         self.assertFalse(payload["browserUI"])
 
-    def _upsert_item(self, *, memory_id: str, kind: str, text: str, status: str = "pending") -> None:
+    def _upsert_item(
+        self,
+        *,
+        memory_id: str,
+        kind: str,
+        text: str,
+        status: str = "pending",
+        app: str = "",
+    ) -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             upsert_memory_item(
                 conn,
@@ -1008,7 +1122,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 summary="management test",
                 source_event_id=None,
                 project="wisdom-weasel-rag-ime",
-                app="",
+                app=app,
                 confidence=0.7,
                 quality_score=0.5,
                 status=status,

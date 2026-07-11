@@ -17,8 +17,8 @@ def build_timeline_context_pack(
     app: str = "",
     current_context: str = "",
     selected_text: str = "",
-    recent_limit: int = 4,
-    recent_max_chars: int = 360,
+    recent_limit: int = 8,
+    recent_max_chars: int = 720,
     book_limit: int = 3,
 ) -> dict[str, object]:
     """Build a bounded notebook-style context pack from recent input and Memory Books."""

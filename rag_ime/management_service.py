@@ -631,12 +631,12 @@ class ManagementService:
             raise RuntimeError(f"{action} requires an external supervisor")
         if action in _AI_TOGGLE_ACTIONS:
             raise RuntimeError(f"{action} is a live setting action and does not execute a process")
+        if action == "register_input_source":
+            return ["/bin/bash", str(self._helper_path("refresh_squirrel_input_source_registration.sh"))]
         uid = str(os.getuid())
-        squirrel = str(Path.home() / "Library/Input Methods/Squirrel.app/Contents/MacOS/Squirrel")
         commands = {
             "restart_predictor": ["launchctl", "kickstart", "-k", f"gui/{uid}/com.rag-ime.mlx-predictor"],
             "redeploy_rime": ["/bin/bash", str(self._helper_path("install_squirrel_rag_config.sh"))],
-            "register_input_source": [squirrel, "--register-input-source"],
             "open_accessibility_settings": ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"],
         }
         return commands[action]

@@ -18,6 +18,7 @@ proof: the manifest-listed files must exist and their SHA-256 values must match.
 | [librime](https://github.com/rime/librime) | Rime engine linked by the pinned Squirrel checkout. | Commit `33e78140250125871856cdc5b42ddc6a5fcd3cd4` in the pinned checkout | BSD 3-Clause in the upstream `LICENSE`; retain its notices when distributing binaries. |
 | [MiniMind](https://github.com/jingyaogong/minimind) | Architecture and training baseline for the project-specific completion checkpoint. No upstream or local weights are committed here. | Obtain separately | Apache-2.0 covers upstream code. A custom checkpoint and training corpus need their own provenance and artifact license. |
 | [MLX](https://github.com/ml-explore/mlx) / [MLX-LM](https://github.com/ml-explore/mlx-lm) | Optional local Apple Silicon inference runtime installed separately. | Not vendored | Both are MIT upstream. Preserve their notices if a packaged release redistributes either runtime. |
+| [MLX Examples BERT](https://github.com/ml-explore/mlx-examples/tree/main/bert) | Reference architecture and Hugging Face key conversion used by the local MLX BERT embedding provider. | Adapted source | MIT. |
 | [Ollama](https://github.com/ollama/ollama) / [llama.cpp](https://github.com/ggml-org/llama.cpp) | Optional externally managed loopback model servers. | Not vendored | Both are MIT upstream. No binaries are redistributed by the current source tree. |
 
 ## Design And Interaction References

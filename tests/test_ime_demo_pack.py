@@ -6,7 +6,9 @@ import tempfile
 import unittest
 from contextlib import closing, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+from rag_ime.embeddings import HashingEmbeddingProvider
 from rag_ime.ime_demo_pack import (
     DEFAULT_FIXTURE_PATH,
     LIVE_CONFIRMATION,
@@ -70,6 +72,18 @@ class ImeFirstDemoPackTests(unittest.TestCase):
         self.assertTrue(checks["knowledgeWorkbench"]["contextInjected"])
         self.assertGreater(checks["knowledgeWorkbench"]["localEvidenceCount"], 0)
         self.assertFalse(checks["knowledgeWorkbench"]["networkCalled"])
+
+    def test_verify_passes_configured_embedding_provider_to_hybrid_rag(self) -> None:
+        seed_demo_database(self.db_path, reset=True)
+        provider = HashingEmbeddingProvider(dimensions=16)
+
+        with patch("rag_ime.ime_demo_pack.embedding_provider_from_env", return_value=provider):
+            report = verify_demo_database(self.db_path)
+
+        lanes = report["checks"]["ragMemory"]["lanes"]
+        self.assertTrue(lanes["vector_raw"]["available"])
+        self.assertEqual(lanes["vector_raw"]["skippedReason"], "vector_index_empty")
+        self.assertEqual(report["checks"]["ragMemory"]["embeddingProvider"], provider.fingerprint)
 
     def test_unknown_and_sensitive_demo_fields_do_not_store(self) -> None:
         seed_demo_database(self.db_path, reset=True)

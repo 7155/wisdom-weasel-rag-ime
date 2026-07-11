@@ -5,10 +5,84 @@ struct PageHeader: View {
     let subtitle: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.title2.weight(.semibold)).lineLimit(1)
-            Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 27, weight: .semibold)).lineLimit(1)
+            Text(subtitle).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(2)
         }
+    }
+}
+
+struct ControlSectionHeader: View {
+    let title: String
+    var trailing: String = ""
+
+    var body: some View {
+        HStack {
+            Text(title).font(.system(size: 16, weight: .semibold))
+            Spacer()
+            if !trailing.isEmpty {
+                Text(trailing).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+struct ControlMetricTile: View {
+    let title: String
+    let value: String
+    let detail: String
+    let symbol: String
+    var tint: Color = .blue
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: symbol)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(tint)
+                Spacer()
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Text(value)
+                .font(.system(size: 27, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+            Text(title).font(.callout).foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 124, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor).opacity(0.65), lineWidth: 0.7))
+    }
+}
+
+struct ControlReadinessTile: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let ready: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(ready ? Color.green : Color.orange)
+                Spacer()
+                Circle().fill(ready ? Color.green : Color.orange).frame(width: 8, height: 8)
+            }
+            Text(title).font(.headline)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .frame(minHeight: 30, alignment: .topLeading)
+        }
+        .padding(15)
+        .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor).opacity(0.65), lineWidth: 0.7))
     }
 }
 

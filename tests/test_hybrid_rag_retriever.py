@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.hybrid_rag_models import HybridRagQuery
 from rag_ime.hybrid_rag_retriever import retrieve_hybrid_rag_candidates
@@ -12,6 +13,7 @@ from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output
 from rag_ime.models import InputEvent
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
+from rag_ime.retrieval_vector_index import rebuild_retrieval_doc_vectors, warm_retrieval_doc_vector_cache
 from rag_ime.text_utils import now_ms
 
 
@@ -163,6 +165,47 @@ class HybridRagRetrieverTests(unittest.TestCase):
             "lexical_substring_fallback",
         )
 
+    def test_precomputed_vector_lanes_run_in_parallel(self) -> None:
+        self._record_event("苹果电脑输入方案", tags=("输入法", "本地模型"))
+        provider = SemanticFakeProvider()
+        with self.connect() as conn:
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            stats = rebuild_retrieval_doc_vectors(conn, provider, project="wisdom-weasel-rag-ime")
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(query_text="Mac 上怎么打字", project="wisdom-weasel-rag-ime"),
+                provider,
+            )
+
+        self.assertGreater(stats["documents"], 0)
+        self.assertTrue(payload["parallelExecution"])
+        self.assertGreater(payload["vectorIndexDocuments"], 0)
+        self.assertTrue(payload["lanes"]["vector_raw"]["available"])
+        self.assertGreater(payload["lanes"]["vector_raw"]["count"], 0)
+        self.assertEqual(payload["lanes"]["vector_tag_boost"]["implementation"], "precomputed_cosine")
+
+    def test_vector_warmup_populates_provider_cache_for_first_query(self) -> None:
+        self._record_event("苹果电脑输入方案", tags=("输入法", "本地模型"))
+        provider = SemanticFakeProvider()
+        with self.connect() as conn:
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            rebuild_retrieval_doc_vectors(conn, provider, project="wisdom-weasel-rag-ime")
+            warmup = warm_retrieval_doc_vector_cache(
+                conn,
+                provider.fingerprint,
+                project="wisdom-weasel-rag-ime",
+            )
+            with patch("rag_ime.retrieval_vector_index._vector", side_effect=AssertionError("cold parse")):
+                payload = retrieve_hybrid_rag_candidates(
+                    conn,
+                    HybridRagQuery(query_text="Mac 上怎么打字", project="wisdom-weasel-rag-ime"),
+                    provider,
+                )
+
+        self.assertTrue(warmup["ok"])
+        self.assertGreater(warmup["documents"], 0)
+        self.assertGreater(payload["vectorIndexDocuments"], 0)
+
     def test_group_compatibility_prioritizes_exact_and_rejects_other_short_term(self) -> None:
         with self.connect() as conn:
             docs = [
@@ -217,6 +260,17 @@ class HybridRagRetrieverTests(unittest.TestCase):
             )
         )
         return int(memory_id.split(":", 1)[1])
+
+
+class SemanticFakeProvider:
+    fingerprint = "test-semantic:v1"
+
+    def embed(self, text: str) -> list[float]:
+        semantic = any(term in text for term in ("苹果电脑", "输入方案", "输入法", "本地模型"))
+        return [1.0, 0.0] if semantic else [0.0, 1.0]
+
+    def embed_query(self, text: str) -> list[float]:
+        return [1.0, 0.0] if "Mac" in text or "打字" in text else [0.0, 1.0]
 
 
 def qwen_compile_output(event_id: int) -> dict[str, object]:

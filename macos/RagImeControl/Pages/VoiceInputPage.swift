@@ -13,31 +13,37 @@ struct VoiceInputPage: View {
     @State private var hotwordMessage = ""
     @State private var agentRunning = false
     @State private var voiceAgentStatus: VoiceAgentStatus?
+    @State private var hotkeyChoice = VoiceHotkeyChoice.middleMouse
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                PageHeader(title: "语音输入", subtitle: "豆包 ASR 2.0 边说边写；最终结果原位定稿")
+                PageHeader(title: "语音输入", subtitle: "按住鼠标滚轮中键立即听写，松开后由豆包 ASR 2.0 原位定稿")
                 Spacer()
             }
-            .padding(20)
+            .padding(.horizontal, 30)
+            .padding(.vertical, 22)
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    statusSection
+                VStack(alignment: .leading, spacing: 28) {
+                    pushToTalkSurface
+                    HStack(alignment: .top, spacing: 42) {
+                        statusSection.frame(maxWidth: .infinity, alignment: .topLeading)
+                        credentialSection.frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
                     if let telemetry = voiceAgentStatus?.telemetry {
                         Divider()
                         telemetrySection(telemetry)
                     }
                     Divider()
-                    credentialSection
-                    Divider()
                     hotwordSection
                     Divider()
                     behaviorSection
                 }
-                .padding(24)
-                .frame(maxWidth: 760, alignment: .leading)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 28)
+                .frame(maxWidth: 1080, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .task {
@@ -47,6 +53,35 @@ struct VoiceInputPage: View {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+    }
+
+    private var pushToTalkSurface: some View {
+        HStack(spacing: 18) {
+            Image(systemName: agentRunning ? "waveform.circle.fill" : "waveform.circle")
+                .font(.system(size: 42, weight: .medium))
+                .foregroundStyle(agentRunning ? Color.green : Color.accentColor)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(agentRunning ? "语音代理已待命" : "启动后即可在任意文本框听写")
+                    .font(.title3.weight(.semibold))
+                Text("默认按住滚轮中键说话，松开即完成。Esc 取消本次转写。")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(hotkeyChoice.compactTitle)
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(nsColor: .separatorColor), lineWidth: 0.7))
+            Button(agentRunning ? "停止" : "启动") { toggleAgent() }
+                .buttonStyle(.borderedProminent)
+                .disabled(!tokenConfigured || appID.isEmpty)
+        }
+        .padding(20)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor).opacity(0.65), lineWidth: 0.7))
     }
 
     private func telemetrySection(_ telemetry: VoiceSessionTelemetry) -> some View {
@@ -73,7 +108,7 @@ struct VoiceInputPage: View {
             voiceStatusRow("语音代理", ok: agentRunning, detail: agentRunning ? "后台运行中" : "尚未启动")
             voiceStatusRow("辅助功能", ok: voiceAgentStatus?.accessibilityTrusted == true, detail: accessibilityStatus)
             voiceStatusRow("麦克风", ok: voiceAgentStatus?.microphoneAuthorization == "authorized", detail: microphoneStatus)
-            voiceStatusRow("豆包凭据", ok: tokenConfigured && !appID.isEmpty, detail: tokenConfigured ? "已安全存入 Keychain" : "尚未配置")
+            voiceStatusRow("豆包凭据", ok: tokenConfigured && !appID.isEmpty, detail: tokenConfigured ? "已配置，启动时不再询问密码" : "尚未配置")
             voiceStatusRow(
                 "请求级热词",
                 ok: voiceAgentStatus?.hotwordsEnabled == true,
@@ -103,18 +138,18 @@ struct VoiceInputPage: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("豆包流式语音识别 2.0").font(.headline)
             LabeledContent("App ID") {
-                TextField("App ID", text: $appID).textFieldStyle(.roundedBorder).frame(width: 310)
+                TextField("App ID", text: $appID).textFieldStyle(.roundedBorder).frame(width: 330)
             }
             LabeledContent("Access Token") {
                 SecureField(tokenConfigured ? "已配置，留空则保持不变" : "Access Token", text: $accessToken)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 310)
+                    .frame(width: 330)
             }
             LabeledContent("Resource ID") {
-                TextField("Resource ID", text: $resourceID).textFieldStyle(.roundedBorder).frame(width: 310)
+                TextField("Resource ID", text: $resourceID).textFieldStyle(.roundedBorder).frame(width: 330)
             }
             HStack {
-                Button("保存到 Keychain", systemImage: "key.fill") { save() }
+                Button("保存到本机", systemImage: "key.fill") { save() }
                     .buttonStyle(.borderedProminent)
                 if !saveMessage.isEmpty {
                     Text(saveMessage).font(.caption).foregroundStyle(.secondary)
@@ -126,7 +161,16 @@ struct VoiceInputPage: View {
     private var behaviorSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("使用").font(.headline)
-            LabeledContent("按住说话") { Text("⌥ Space").font(.system(.body, design: .monospaced).weight(.semibold)) }
+            LabeledContent("按住说话") {
+                Picker("按住说话", selection: $hotkeyChoice) {
+                    ForEach(VoiceHotkeyChoice.allCases) { choice in
+                        Text(choice.title).tag(choice)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+                .onChange(of: hotkeyChoice) { value in saveHotkey(value) }
+            }
             LabeledContent("松开") { Text("发送终帧并原位定稿") }
             LabeledContent("Esc") { Text("取消并移除本次临时转写") }
             LabeledContent("隐私") { Text("密码、账号与 Secure Input 输入框不启动录音，也不写入历史") }
@@ -148,7 +192,7 @@ struct VoiceInputPage: View {
                     .font(.system(.body, design: .monospaced))
                     .scrollContentBackground(.hidden)
                     .padding(6)
-                    .frame(width: 420, height: 112)
+                    .frame(width: 560, height: 112)
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
@@ -235,6 +279,7 @@ struct VoiceInputPage: View {
         hotwordsEnabled = hotwordConfig.enabled
         hotwordsText = hotwordConfig.words.joined(separator: "\n")
         savedHotwordCount = hotwordConfig.effectiveWords.count
+        hotkeyChoice = VoiceHotkeyConfigStore.read().choice
         refreshAgentState()
     }
 
@@ -272,7 +317,7 @@ struct VoiceInputPage: View {
 
     private func save() {
         do {
-            try VoiceKeychainStore.save(
+            try VoiceKeychainStore.saveLocal(
                 appID: appID,
                 accessToken: accessToken.isEmpty ? nil : accessToken,
                 resourceID: resourceID
@@ -284,6 +329,16 @@ struct VoiceInputPage: View {
                 name: Notification.Name("com.rag-ime.voice.configuration-changed"),
                 object: nil
             )
+        } catch {
+            saveMessage = error.localizedDescription
+        }
+    }
+
+    private func saveHotkey(_ choice: VoiceHotkeyChoice) {
+        do {
+            try VoiceHotkeyConfigStore.write(choice)
+            saveMessage = "语音快捷键已切换为 \(choice.title)"
+            notifyConfigurationChanged()
         } catch {
             saveMessage = error.localizedDescription
         }

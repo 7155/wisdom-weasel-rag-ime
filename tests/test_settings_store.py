@@ -45,6 +45,26 @@ class SettingsStoreTests(unittest.TestCase):
 
         self.assertTrue(result.settings["activeRag"]["allowRemoteModel"])
 
+    def test_dotted_leaf_update_preserves_persisted_sibling_overrides(self) -> None:
+        self.store.update_settings(
+            {
+                "interaction.postCommit.idleTriggerMs": 180,
+                "interaction.postCommit.maxCallsPer10s": 6,
+                "interaction.postCommit.cooldownMs": 600,
+                "interaction.postCommit.panelTtlMs": 8500,
+            }
+        )
+
+        self.store.update_settings({"interaction.postCommit.minDeltaChars": 2})
+        persisted = self.store.get_settings(include_sensitive=True)
+        post_commit = persisted["interaction"]["postCommit"]
+
+        self.assertEqual(post_commit["idleTriggerMs"], 180)
+        self.assertEqual(post_commit["minDeltaChars"], 2)
+        self.assertEqual(post_commit["maxCallsPer10s"], 6)
+        self.assertEqual(post_commit["cooldownMs"], 600)
+        self.assertEqual(post_commit["panelTtlMs"], 8500)
+
     def test_profile_save_and_activate_dry_run(self) -> None:
         saved = self.store.save_profile(
             UserProfile(

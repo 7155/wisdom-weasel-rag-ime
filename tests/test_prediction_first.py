@@ -444,6 +444,42 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual(result.policy["sideInserted"], 3)
         self.assertEqual(result.policy["maxModelSideCandidates"], 3)
 
+    def test_post_commit_keeps_three_model_candidates_plus_rag(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=49,
+            committed_context="明天上午开会以后",
+            candidates=(),
+            max_visible_candidates=8,
+            max_side_candidates=5,
+        )
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(text=f"模型补全{i}", rank=i, provider_name="mlx", latency_ms=20)
+                for i in range(1, 5)
+            ],
+            suggestions=[
+                InputSuggestion(
+                    suggestion_id="rag-1",
+                    surface_text="等确认以后再发",
+                    suggestion_type="rag",
+                    source_event_id=1,
+                    evidence_preview="RAG memory",
+                    confidence=0.9,
+                    metadata={"source_type": "rag"},
+                )
+            ],
+        )
+
+        self.assertEqual(
+            [item.source_type for item in result.display_candidates],
+            ["model", "model", "model", "rag"],
+        )
+        self.assertEqual(result.policy["maxModelSideCandidates"], 3)
+        self.assertEqual(result.policy["ragBlockReserve"], 1)
+
     def test_post_commit_hides_connector_punctuation_but_commits_it(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",

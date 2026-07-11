@@ -32,7 +32,7 @@ from .contracts.json_schema import validate_contract
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
-from .embeddings import embedding_provider_from_env
+from .embeddings import embed_query, embedding_provider_from_env
 from .foreground_privacy import assess_foreground_write, storage_receipt
 from .frontend_gateway import FrontendGateway
 from .history_context import build_prediction_context
@@ -192,6 +192,7 @@ class DebugImeService:
         self._predictor_status_lock = RLock()
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
+        self._embedding_warmup_report = self._warm_embedding_provider()
         self.settings_store.initialize()
         self.runtime_config_resolver = RuntimeConfigResolver(self.settings_store, environ=os.environ)
         self.management = ManagementService(
@@ -249,8 +250,61 @@ class DebugImeService:
             "predictor": self._predictor_status(probe_capabilities=False),
             "suggestionCache": self._suggestion_cache_stats(),
             "vectorStats": self._vector_index_stats(),
+            "embeddingWarmup": self._embedding_warmup_report,
             "vectorAutoRebuild": self._vector_auto_rebuild_status(),
         }
+
+    def _warm_embedding_provider(self) -> dict[str, object]:
+        provider = getattr(self.core, "embedding_provider", None)
+        fingerprint = str(getattr(provider, "fingerprint", "") or "")
+        enabled_value = os.environ.get("RAG_IME_EMBEDDING_WARMUP", "1").strip().lower()
+        enabled = fingerprint.startswith("mlx-bert:") and enabled_value not in {"0", "false", "no", "off"}
+        report: dict[str, object] = {
+            "schemaVersion": "rag-ime.embedding-warmup.v1",
+            "enabled": enabled,
+            "providerFingerprint": fingerprint,
+            "ok": False,
+            "elapsedMs": 0,
+            "modelElapsedMs": 0,
+            "vectorCacheElapsedMs": 0,
+            "vectorDocuments": 0,
+            "dimensions": 0,
+        }
+        if not enabled or provider is None:
+            report["skippedReason"] = "provider_not_local_mlx" if provider is not None else "provider_missing"
+            return report
+        started = time.perf_counter()
+        try:
+            vector = embed_query(provider, "输入法语义检索预热")
+            model_elapsed_ms = int((time.perf_counter() - started) * 1000)
+            vector_cache_report = (
+                self.core.warm_retrieval_vector_cache(project=self.config.project)
+                if isinstance(self.core, LocalSqliteCoreClient)
+                else {"ok": True, "elapsedMs": 0, "documents": 0}
+            )
+        except Exception as exc:  # pragma: no cover - fail-open runtime guard
+            report.update(
+                {
+                    "elapsedMs": int((time.perf_counter() - started) * 1000),
+                    "error": exc.__class__.__name__,
+                }
+            )
+            return report
+        report.update(
+            {
+                "ok": bool(vector) and bool(vector_cache_report.get("ok")),
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "modelElapsedMs": model_elapsed_ms,
+                "vectorCacheElapsedMs": int(vector_cache_report.get("elapsedMs") or 0),
+                "vectorDocuments": int(vector_cache_report.get("documents") or 0),
+                "dimensions": len(vector),
+            }
+        )
+        if not vector:
+            report["error"] = "empty_embedding"
+        elif not vector_cache_report.get("ok"):
+            report["error"] = "vector_cache_warmup_failed"
+        return report
 
     def frontend_capabilities(self) -> dict[str, object]:
         return self.frontend_gateway.capabilities()
@@ -1287,19 +1341,33 @@ class DebugImeService:
         runtime_config = self.runtime_config_snapshot()
         if not runtime_config.hybrid_rag.enabled or not runtime_config.memory.enabled:
             return ()
+        # The native workbench is a global knowledge surface rather than the
+        # app that originally produced a memory. Keeping com.rag-ime.control
+        # here would hide memories captured in Codex, TextEdit, terminals, and
+        # browsers before ranking even starts.
+        retrieval_app = "" if request.app.startswith("com.rag-ime.control") else request.app
         query = HybridRagQuery(
             query_text=request.question,
             raw_input=request.question,
             committed_tail=request.context,
             project=request.project,
-            app=request.app,
+            app=retrieval_app,
             top_k=12,
             latency_budget_ms=800,
             enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
             lane_weights=runtime_config.hybrid_rag.query_weights(),
         )
         with self.core._connect() as conn:  # type: ignore[attr-defined]
-            payload = retrieve_hybrid_rag_candidates(conn, query)
+            payload = retrieve_hybrid_rag_candidates(conn, query, self.core.embedding_provider)
+        lane_weights = dict(query.lane_weights)
+        fused_ranks: dict[str, int] = {}
+        for index, item in enumerate(payload.get("candidates", []), start=1):
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            doc_id = _string(metadata.get("docId"))
+            if doc_id and doc_id not in fused_ranks:
+                fused_ranks[doc_id] = index
         combined: dict[str, dict[str, object]] = {}
         for item in payload.get("hits", []):
             if not isinstance(item, dict):
@@ -1311,32 +1379,70 @@ class DebugImeService:
             text = compact_whitespace(_string(item.get("text")))
             metadata = dict(item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {}
             current = combined.get(source_id)
-            score = float(item.get("raw_score") or item.get("rawScore") or 0.0)
             lane = _string(item.get("source_lane") or item.get("sourceLane")) or "local"
+            rank = max(1, int(item.get("rank") or 1))
+            # Raw BM25-like counts and cosine values are different units. Use
+            # weighted reciprocal rank here, just like the foreground fusion,
+            # so a large lexical count cannot drown out semantic evidence.
+            lane_score = float(lane_weights.get(lane, 1.0)) / (60.0 + rank)
             if current is None:
                 combined[source_id] = {
                     "sourceId": source_id,
                     "docId": doc_id,
+                    "docType": _string(item.get("doc_type") or item.get("docType")),
                     "sourceLane": lane,
                     "lanes": [lane],
                     "title": _string(metadata.get("bookTitle")) or truncate_text(text, 60),
                     "text": text,
                     "tags": list(item.get("tags") or []),
-                    "score": score,
-                    "rank": int(item.get("rank") or 0),
+                    "score": lane_score,
+                    "rank": rank,
+                    "fusedRank": fused_ranks.get(doc_id, 0),
                 }
                 continue
             lanes = list(current.get("lanes") or [])
             if lane not in lanes:
                 lanes.append(lane)
             current["lanes"] = lanes
-            current["score"] = max(float(current.get("score") or 0.0), score)
+            current["score"] = float(current.get("score") or 0.0) + lane_score
+            current["rank"] = min(int(current.get("rank") or rank), rank)
+            if len(text) > len(_string(current.get("text"))):
+                current["text"] = text
+                current["title"] = _string(metadata.get("bookTitle")) or truncate_text(text, 60)
+        for item in combined.values():
+            fused_rank = int(item.get("fusedRank") or 0)
+            if fused_rank > 0:
+                item["score"] = float(item.get("score") or 0.0) + 0.01 / fused_rank
         ranked = sorted(
             combined.values(),
             key=lambda item: (float(item.get("score") or 0.0), -int(item.get("rank") or 0)),
             reverse=True,
         )
-        return tuple(ranked[:12])
+        # A long-form knowledge answer needs the organized Memory Book/Atom
+        # contract, not twelve near-duplicate raw events. Reserve one relevant
+        # book and one atom when either ranked in the top twelve of a lane, then
+        # fill the remaining evidence slots by fused score.
+        selected: list[dict[str, object]] = []
+        for doc_type in ("book", "atom"):
+            structured = next(
+                (
+                    item
+                    for item in ranked
+                    if _string(item.get("docType")) == doc_type
+                    and int(item.get("rank") or 0) in range(1, 13)
+                ),
+                None,
+            )
+            if structured is not None:
+                selected.append(structured)
+        selected_ids = {_string(item.get("sourceId")) for item in selected}
+        for item in ranked:
+            if _string(item.get("sourceId")) in selected_ids:
+                continue
+            selected.append(item)
+            if len(selected) >= 12:
+                break
+        return tuple(selected[:12])
 
     def _knowledge_workbench_database_organizer(
         self,
@@ -1423,7 +1529,7 @@ class DebugImeService:
             lane_weights=runtime_config.hybrid_rag.query_weights(),
         )
         with self.core._connect() as conn:  # type: ignore[attr-defined]
-            payload_result = retrieve_hybrid_rag_candidates(conn, query)
+            payload_result = retrieve_hybrid_rag_candidates(conn, query, self.core.embedding_provider)
         include_text = self._include_raw_text()
         candidates = list(payload_result.get("candidates") or [])
         fused = [_debug_redact_rag_candidate(item, include_text=include_text) for item in candidates if isinstance(item, dict)]
@@ -5166,7 +5272,9 @@ def _parse_input_source_check_output(output: str) -> dict[str, object]:
 def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready: bool) -> dict[str, object]:
     enabled = parsed.get("enabled") is True
     selectable = parsed.get("selectable") is True
-    hitoolbox_enabled = parsed.get("hitoolboxEnabled") is not False
+    # Third-party input methods are canonically registered in
+    # com.apple.inputsources. Mirroring them into HIToolbox creates duplicate
+    # TIS rows on current macOS releases, so HIToolbox is diagnostic only.
     third_party_enabled = parsed.get("thirdPartyEnabled") is not False
     current = _string(parsed.get("current"))
     target = _string(parsed.get("id")) or "Squirrel"
@@ -5181,7 +5289,7 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
         },
         {
             "name": "third-party-list",
-            "passed": hitoolbox_enabled and third_party_enabled,
+            "passed": third_party_enabled,
             "hitoolboxEnabled": parsed.get("hitoolboxEnabled"),
             "thirdPartyEnabled": parsed.get("thirdPartyEnabled"),
         },
@@ -5201,7 +5309,7 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
             "verificationCommand": "scripts/wait_squirrel_typing_ready.sh",
             "readinessChecks": readiness_checks,
         }
-    if enabled and selectable and hitoolbox_enabled and third_party_enabled:
+    if enabled and selectable and third_party_enabled:
         return {
             "readinessState": "switch",
             "readinessMessage": f"{product_name} is installed; switch the menu bar input source",
@@ -5212,7 +5320,7 @@ def _input_source_readiness(parsed: dict[str, object], *, ok: bool, typing_ready
             "expectedInputSourceId": target,
             "currentInputSourceId": current,
         }
-    if not enabled or not selectable or not hitoolbox_enabled or not third_party_enabled:
+    if not enabled or not selectable or not third_party_enabled:
         return {
             "readinessState": "install",
             "readinessMessage": f"{product_name} is not enabled in every macOS input-source list",

@@ -226,6 +226,15 @@ class _ContinuationBranchSpec:
     max_candidate_chars: int
 
 
+def _mlx_warmup_enabled() -> bool:
+    return os.environ.get("RAG_IME_MLX_WARMUP", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
 class _LocalTokenizersBackendWrapper:
     def __init__(self, tokenizer: Any, *, eos_token_id: int | None = None) -> None:
         self._tokenizer = tokenizer
@@ -338,8 +347,58 @@ class MlxLmEngine:
             "cacheHitTokens": 0,
             "cacheMissTokens": 0,
         }
+        self._warmup_status: dict[str, Any] = {
+            "enabled": _mlx_warmup_enabled(),
+            "completed": False,
+            "ok": False,
+            "elapsedMs": 0,
+            "candidateCount": 0,
+        }
         if self._prompt_cache.enabled:
             self._prepare_prompt_cache()
+
+    def warmup(self, *, max_tokens: int, temperature: float, top_p: float) -> dict[str, Any]:
+        """Compile the resident MLX graph before the first foreground keystroke."""
+
+        if not _mlx_warmup_enabled():
+            self._warmup_status = {
+                "enabled": False,
+                "completed": True,
+                "ok": True,
+                "elapsedMs": 0,
+                "candidateCount": 0,
+                "skippedReason": "disabled",
+            }
+            return dict(self._warmup_status)
+        started = time.perf_counter()
+        try:
+            payload = self.predict(
+                current_input="",
+                recent_context="输入法本地三候选已经准备，接下来",
+                max_candidates=3,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                request_metadata={"requestId": "mlx-startup-warmup", "profileId": self.profile.id},
+            )
+            self._warmup_status = {
+                "enabled": True,
+                "completed": True,
+                "ok": bool(payload.get("ok")),
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "candidateCount": len(payload.get("candidates") or []),
+            }
+        except Exception as exc:
+            self._warmup_status = {
+                "enabled": True,
+                "completed": True,
+                "ok": False,
+                "elapsedMs": int((time.perf_counter() - started) * 1000),
+                "candidateCount": 0,
+                "error": type(exc).__name__,
+            }
+        return dict(self._warmup_status)
 
     def health(self) -> dict[str, Any]:
         prompt_cache = self.prompt_cache_status()
@@ -351,6 +410,7 @@ class MlxLmEngine:
             "modelProfile": self.profile.to_payload(),
             "modelLoaded": True,
             "modelInfo": self.model_info,
+            "warmup": dict(self._warmup_status),
             "promptCache": prompt_cache,
             "prefixCache": self.prefix_cache_status(),
             "capabilities": {
@@ -972,7 +1032,11 @@ class MlxLmEngine:
         display_limit = max(1, min(3, int(max_candidates)))
         seeds = _seed_replay_specs_from_logits(
             logits_candidates.get("candidateScores"),
-            max_seeds=max(3, display_limit * 2),
+            # Filtering malformed, echoed, or one-character branches can
+            # consume more than half of MiniMind's top logits. Keep a wider
+            # seed reserve so a request for three rows is not routinely
+            # returned as only one or two candidates.
+            max_seeds=max(6, display_limit * 4),
             allow_single_cjk=True,
         )
         if not seeds:
@@ -1715,6 +1779,8 @@ class MlxLmEngine:
             rime_candidates=rime_candidates,
             stream_first_candidate=stream_first_candidate,
         )
+        if not compact_whitespace(prompt):
+            return
         self._record_prefix_cache(prompt=prompt, request_metadata=metadata)
         if self._prompt_cache.ready_for_generation() and not stream_first_candidate and not self._base_completion_mode:
             try:
@@ -2169,6 +2235,11 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
         prompt_cache_max_kv_size=config.prompt_cache_max_kv_size,
         profile_id=config.profile_id,
     )
+    warmup = engine.warmup(
+        max_tokens=config.max_tokens,
+        temperature=config.temperature,
+        top_p=config.top_p,
+    )
     server = ThreadingHTTPServer((config.host, config.port), make_mlx_predictor_handler(engine))
     print(
         json.dumps(
@@ -2178,6 +2249,7 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
                 "model": config.model,
                 "profile": config.profile_id,
                 "maxTokens": config.max_tokens,
+                "warmup": warmup,
                 "promptCache": engine.prompt_cache_status(),
             },
             ensure_ascii=False,

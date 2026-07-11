@@ -169,7 +169,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--embedding-provider",
-        choices=("none", "local-hash", "openai-compatible", "openai"),
+        choices=("none", "local-hash", "local-bge", "sentence-transformers", "openai-compatible", "openai"),
         default=os.environ.get("RAG_IME_EMBEDDING_PROVIDER", "none"),
         help="Optional local-core vector provider. Defaults to none.",
     )

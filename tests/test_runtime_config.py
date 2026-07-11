@@ -113,6 +113,21 @@ class RuntimeConfigResolverTests(unittest.TestCase):
         self.assertFalse(payload["overlayConfig"]["fadeAnimation"])
         self.assertEqual(payload["activeRag"], {"enabled": False, "shortcut": "ctrl+r"})
 
+    def test_configured_remote_embedding_keeps_vector_lanes_enabled(self) -> None:
+        snapshot = RuntimeConfigResolver(
+            self.store,
+            environ={
+                "RAG_IME_RUNTIME_PROFILE": "foreground-rag-proof",
+                "RAG_IME_EMBEDDING_PROVIDER": "openai-compatible",
+                "RAG_IME_EMBEDDING_BASE_URL": "http://192.168.1.121:8000",
+                "RAG_IME_EMBEDDING_MODEL": "Qwen3-Embedding-0.6B",
+            },
+        ).resolve()
+
+        self.assertTrue(snapshot.hybrid_rag.lane_enabled("vector_raw"))
+        self.assertTrue(snapshot.hybrid_rag.lane_enabled("vector_tag_boost"))
+        self.assertNotIn("vector_raw_unavailable", snapshot.safety_clamps)
+
     def test_foreground_rag_proof_exposes_direct_rag_without_composition_ai(self) -> None:
         snapshot = RuntimeConfigResolver(
             self.store,

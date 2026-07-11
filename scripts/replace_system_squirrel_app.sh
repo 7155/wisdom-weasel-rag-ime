@@ -157,10 +157,10 @@ fi
 
 pkill -x Squirrel >/dev/null 2>&1 || true
 
-"$TARGET_APP/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-"$TARGET_APP/Contents/MacOS/Squirrel" --enable-input-source "$INPUT_SOURCE_ID" >/dev/null 2>&1 ||
-  "$TARGET_APP/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 ||
-  true
+RAG_IME_SQUIRREL_APP="$TARGET_APP" \
+  RAG_IME_SQUIRREL_BUNDLE_ID="${INPUT_SOURCE_ID%.*}" \
+  RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+  "$ROOT/scripts/refresh_squirrel_input_source_registration.sh"
 
 "$SELECT_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
 RAG_IME_SQUIRREL_APP="$TARGET_APP" "$CHECK_INPUT_SOURCE_SCRIPT" --require-selected "$INPUT_SOURCE_ID"

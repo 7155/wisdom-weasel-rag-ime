@@ -55,7 +55,7 @@ class EnableSquirrelHitoolboxInputSourceScriptTests(unittest.TestCase):
             self.assertFalse((home / "Desktop").exists())
             self.assertEqual(report["schemaVersion"], "rag-ime.squirrel-hitoolbox-repair.v1")
             self.assertTrue(report["dryRun"])
-            self.assertTrue(report["hitoolboxChanged"])
+            self.assertFalse(report["hitoolboxChanged"])
             self.assertTrue(report["thirdPartyChanged"])
             self.assertEqual(report["backups"], [])
 
@@ -95,6 +95,7 @@ class EnableSquirrelHitoolboxInputSourceScriptTests(unittest.TestCase):
                 capture_output=True,
             )
 
+            hitoolbox = plistlib.loads((preferences / "com.apple.HIToolbox.plist").read_bytes())
             inputsources = plistlib.loads((preferences / "com.apple.inputsources.plist").read_bytes())
             third_party = inputsources["AppleEnabledThirdPartyInputSources"]
             backups = sorted(desktop.glob("com.apple.inputsources.rag-ime-backup.*.plist"))
@@ -104,10 +105,14 @@ class EnableSquirrelHitoolboxInputSourceScriptTests(unittest.TestCase):
         self.assertTrue(backups)
         self.assertTrue(report["ok"])
         self.assertFalse(report["dryRun"])
+        self.assertTrue(report["hitoolboxChanged"])
         self.assertTrue(report["thirdPartyChanged"])
         self.assertTrue(report["backups"])
         self.assertEqual(report["deniedPreferenceDomains"], [])
         self.assertTrue(any(item.get("Input Mode") == "im.rime.inputmethod.Squirrel.Hans" for item in third_party))
+        self.assertFalse(
+            any(item.get("Bundle ID") == "im.rime.inputmethod.Squirrel" for item in hitoolbox["AppleEnabledInputSources"])
+        )
         self.assertTrue(
             any(
                 item.get("Bundle ID") == "im.rime.inputmethod.Squirrel" and "Input Mode" not in item
@@ -129,6 +134,8 @@ def _write_fake_tools(tmp_path: Path) -> Path:
                 'if [[ "$1" == "export" ]]; then',
                 '  domain="$2"',
                 '  out="$3"',
+                '  source="$HOME/Library/Preferences/$domain.plist"',
+                '  if [[ -f "$source" ]]; then cp "$source" "$out"; exit 0; fi',
                 '  /usr/bin/python3 - "$domain" "$out" <<\'PY\'',
                 "import plistlib",
                 "import sys",
@@ -194,7 +201,22 @@ def _write_successful_check_script(tmp_path: Path) -> Path:
 
 def _write_initial_preferences(preferences: Path) -> None:
     with (preferences / "com.apple.HIToolbox.plist").open("wb") as handle:
-        plistlib.dump({"AppleEnabledInputSources": []}, handle)
+        plistlib.dump(
+            {
+                "AppleEnabledInputSources": [
+                    {
+                        "Bundle ID": "im.rime.inputmethod.Squirrel",
+                        "Input Mode": "im.rime.inputmethod.Squirrel.Hans",
+                        "InputSourceKind": "Input Mode",
+                    },
+                    {
+                        "Bundle ID": "im.rime.inputmethod.Squirrel",
+                        "InputSourceKind": "Keyboard Input Method",
+                    },
+                ]
+            },
+            handle,
+        )
     with (preferences / "com.apple.inputsources.plist").open("wb") as handle:
         plistlib.dump({"AppleEnabledThirdPartyInputSources": []}, handle)
 

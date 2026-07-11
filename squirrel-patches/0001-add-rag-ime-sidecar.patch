@@ -209,7 +209,7 @@ index f998248..a56500e 100644
      return
 diff --git a/sources/RagImeAssistantPanelController.swift b/sources/RagImeAssistantPanelController.swift
 new file mode 100644
-index 0000000..5df661b
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
 @@ -0,0 +1,556 @@
@@ -771,7 +771,7 @@ index 0000000..5df661b
 +}
 diff --git a/sources/RagImeAssistantSurfaceState.swift b/sources/RagImeAssistantSurfaceState.swift
 new file mode 100644
-index 0000000..da50c1d
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeAssistantSurfaceState.swift
 @@ -0,0 +1,17 @@
@@ -794,7 +794,7 @@ index 0000000..da50c1d
 +}
 diff --git a/sources/RagImeNonActivatingPanel.swift b/sources/RagImeNonActivatingPanel.swift
 new file mode 100644
-index 0000000..1d81111
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeNonActivatingPanel.swift
 @@ -0,0 +1,6 @@
@@ -2790,10 +2790,10 @@ index 0000000..acea5cc
 +}
 diff --git a/sources/RagImeSuggestionCardView.swift b/sources/RagImeSuggestionCardView.swift
 new file mode 100644
-index 0000000..521b3dc
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeSuggestionCardView.swift
-@@ -0,0 +1,419 @@
+@@ -0,0 +1,425 @@
 +import AppKit
 +import QuartzCore
 +
@@ -2817,11 +2817,14 @@ index 0000000..521b3dc
 +  static let thinkingHeight: CGFloat = 52
 +  static let rowHeight: CGFloat = 36
 +  static let actionHeight: CGFloat = 31
++  static let maximumPredictionCandidates = 4
 +  static let minimumPredictionWidth: CGFloat = 304
 +  static let preferredPredictionWidth: CGFloat = 360
 +  static let maximumPredictionWidth: CGFloat = 420
 +
-+  private let rows = (0..<3).map { _ in RagImeSuggestionRowView(frame: .zero) }
++  private let rows = (0..<RagImeSuggestionCardView.maximumPredictionCandidates).map {
++    _ in RagImeSuggestionRowView(frame: .zero)
++  }
 +  private let actionSeparator = NSView()
 +  private let deepSeekButton = NSButton(title: "DS · 深度补全", target: nil, action: nil)
 +  private let deepSeekShortcutPlate = NSView()
@@ -2988,7 +2991,9 @@ index 0000000..521b3dc
 +    surfaceState = state
 +    self.canReplaceSelection = canReplaceSelection
 +    let indexedCandidates = Array(payload.candidates.enumerated())
-+    let realCandidates = indexedCandidates.filter { Self.isRealCandidate($0.element) }.prefix(3)
++    let realCandidates = indexedCandidates
++      .filter { Self.isRealCandidate($0.element) }
++      .prefix(Self.maximumPredictionCandidates)
 +    candidates = realCandidates.map(\.element)
 +    candidateIndexes = realCandidates.map(\.offset)
 +    if let action = indexedCandidates.first(where: { Self.isActionCandidate($0.element) }) {
@@ -3008,7 +3013,7 @@ index 0000000..521b3dc
 +    hideAll()
 +    switch state {
 +    case .compactPrediction, .expandedPredictions:
-+      let visibleCount = min(3, candidates.count)
++      let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
 +      for index in rows.indices where index < visibleCount {
 +        let shortcut = index == 0 ? "Tab   ⌥1" : "⌥\(index + 1)"
 +        rows[index].apply(candidate: candidates[index], shortcut: shortcut, isPrimary: index == 0)
@@ -3084,7 +3089,8 @@ index 0000000..521b3dc
 +  }
 +
 +  static func predictionHeight(candidateCount: Int, hasAction: Bool) -> CGFloat {
-+    rowHeight * CGFloat(max(0, min(3, candidateCount))) + (hasAction ? actionHeight : 0)
++    rowHeight * CGFloat(max(0, min(maximumPredictionCandidates, candidateCount)))
++      + (hasAction ? actionHeight : 0)
 +  }
 +
 +  private func hideAll() {
@@ -3215,7 +3221,7 @@ index 0000000..521b3dc
 +}
 diff --git a/sources/RagImeSuggestionRowView.swift b/sources/RagImeSuggestionRowView.swift
 new file mode 100644
-index 0000000..1c3179d
+index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeSuggestionRowView.swift
 @@ -0,0 +1,237 @@

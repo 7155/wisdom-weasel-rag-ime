@@ -112,11 +112,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("static let maximumPredictionWidth: CGFloat = 420", card_text)
         self.assertIn("static let rowHeight: CGFloat = 36", card_text)
         self.assertIn("static let actionHeight: CGFloat = 31", card_text)
-        self.assertIn("let visibleCount = min(3, candidates.count)", card_text)
+        self.assertIn("static let maximumPredictionCandidates = 4", card_text)
+        self.assertIn("let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)", card_text)
         self.assertIn('let shortcut = index == 0 ? "Tab   ⌥1" : "⌥\\(index + 1)"', card_text)
         self.assertIn("DS · 深度补全", card_text)
         self.assertIn("predictionHeight(candidateCount: realCandidates.count, hasAction: hasAction)", controller_text)
-        self.assertIn("rowHeight * CGFloat(max(0, min(3, candidateCount))) + (hasAction ? actionHeight : 0)", card_text)
+        self.assertIn("min(maximumPredictionCandidates, candidateCount)", card_text)
         self.assertIn("same_snapshot_stable_ids", controller_text)
         self.assertNotIn("state == .compactPrediction ? min(1, candidates.count)", card_text)
         self.assertNotIn("min(520, max(280, measuredWidth))", controller_text)
@@ -611,7 +612,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             self.assertIn('"rimeAPI.process_key(session, Int32(XK_BackSpace), 0)"', script_text)
             self.assertIn('"guard !isComposing else { return false }"', script_text)
 
-    def test_assistant_overlay_single_and_three_candidate_geometry_is_stable(self) -> None:
+    def test_assistant_overlay_single_three_and_four_candidate_geometry_is_stable(self) -> None:
         root = Path(__file__).resolve().parents[1]
         overlay_sources = root / "squirrel-patches" / "sources"
         card_text = (overlay_sources / "RagImeSuggestionCardView.swift").read_text(encoding="utf-8")
@@ -625,8 +626,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         action_height = float(action_height_match.group(1))
         self.assertEqual(row_height * min(3, 1), 36)
         self.assertEqual(row_height * min(3, 3), 108)
+        self.assertEqual(row_height * min(4, 4), 144)
         self.assertEqual(row_height * min(3, 1) + action_height, 67)
         self.assertEqual(row_height * min(3, 3) + action_height, 139)
+        self.assertEqual(row_height * min(4, 4) + action_height, 175)
         self.assertIn("payload.snapshotId == renderedSnapshotId", controller_text)
         self.assertIn("stableIds == renderedStableIds", controller_text)
         self.assertIn("same_snapshot_stable_ids", controller_text)

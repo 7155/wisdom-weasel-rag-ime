@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-struct VoiceASRCredentials: Equatable {
+struct VoiceASRCredentials: Codable, Equatable {
     let appID: String
     let accessToken: String
     let resourceID: String
@@ -24,6 +24,9 @@ enum VoiceKeychainStore {
     }
 
     static func loadCredentials() -> VoiceASRCredentials? {
+        if let local = VoiceCredentialFileStore.loadCredentials() {
+            return local
+        }
         guard let appID = read(.appID), let accessToken = read(.accessToken) else {
             return nil
         }
@@ -50,7 +53,26 @@ enum VoiceKeychainStore {
         }
     }
 
+    static func saveLocal(appID: String, accessToken: String?, resourceID: String) throws {
+        let previous = VoiceCredentialFileStore.loadCredentials()
+        let trimmedAppID = appID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedResourceID = resourceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAppID.isEmpty,
+              !trimmedResourceID.isEmpty,
+              let token = (trimmedToken?.isEmpty == false ? trimmedToken : previous?.accessToken),
+              !token.isEmpty else {
+            throw VoiceKeychainError.invalidValue
+        }
+        try VoiceCredentialFileStore.save(
+            VoiceASRCredentials(appID: trimmedAppID, accessToken: token, resourceID: trimmedResourceID)
+        )
+    }
+
     static var hasAccessToken: Bool {
+        if VoiceCredentialFileStore.loadCredentials()?.isComplete == true {
+            return true
+        }
         guard let token = read(.accessToken) else { return false }
         return !token.isEmpty
     }
@@ -90,6 +112,51 @@ enum VoiceKeychainStore {
             return
         }
         guard status == errSecSuccess else { throw VoiceKeychainError.osStatus(status) }
+    }
+}
+
+enum VoiceCredentialFileStore {
+    private struct Payload: Codable {
+        static let schemaVersion = "rag-ime.voice-credentials.v1"
+        let schemaVersion: String
+        let appID: String
+        let accessToken: String
+        let resourceID: String
+    }
+
+    static var configURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/RagIme", isDirectory: true)
+            .appendingPathComponent("voice-credentials.json")
+    }
+
+    static func loadCredentials() -> VoiceASRCredentials? {
+        guard let data = try? Data(contentsOf: configURL),
+              let payload = try? JSONDecoder().decode(Payload.self, from: data),
+              payload.schemaVersion == Payload.schemaVersion else {
+            return nil
+        }
+        let credentials = VoiceASRCredentials(
+            appID: payload.appID,
+            accessToken: payload.accessToken,
+            resourceID: payload.resourceID
+        )
+        return credentials.isComplete ? credentials : nil
+    }
+
+    static func save(_ credentials: VoiceASRCredentials) throws {
+        guard credentials.isComplete else { throw VoiceKeychainError.invalidValue }
+        let directory = configURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let payload = Payload(
+            schemaVersion: Payload.schemaVersion,
+            appID: credentials.appID,
+            accessToken: credentials.accessToken,
+            resourceID: credentials.resourceID
+        )
+        let data = try JSONEncoder().encode(payload)
+        try data.write(to: configURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
     }
 }
 

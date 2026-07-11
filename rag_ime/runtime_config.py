@@ -386,11 +386,18 @@ class RuntimeConfigResolver:
         direct_display = bool(profile.rag_direct_display and requested_direct_display)
         if requested_direct_display and not direct_display:
             safety_clamps.append("rag_direct_display_disabled_by_profile")
+        embedding_provider = _string_value(self.environ.get("RAG_IME_EMBEDDING_PROVIDER")).lower()
+        vector_available = embedding_provider not in {"", "none", "disabled", "off"}
+        if embedding_provider in {"openai", "openai-compatible"}:
+            vector_available = bool(
+                _string_value(self.environ.get("RAG_IME_EMBEDDING_BASE_URL"))
+                and _string_value(self.environ.get("RAG_IME_EMBEDDING_MODEL"))
+            )
         rag_lane_items: list[tuple[str, bool]] = []
         for lane in _RAG_LANES:
             requested = _bool_value(rag_lanes_settings.get(_settings_rag_lane(lane)), True)
             enabled = requested
-            if lane in {"vector_raw", "vector_tag_boost"}:
+            if lane in {"vector_raw", "vector_tag_boost"} and not vector_available:
                 enabled = False
                 if requested:
                     safety_clamps.append(f"{lane}_unavailable")

@@ -114,13 +114,16 @@ def parse_check_output(output: str) -> dict[str, Any]:
         parsed["missing"] = first_line.removeprefix("missing ").strip()
         return parsed
     for key in ("id", "name", "current"):
-        match = re.search(rf"(?:^|\s){re.escape(key)}=(.*?)(?=\s(?:id|name|enabled|selectable|selected|tisSelected|current|hitoolboxEnabled|thirdPartyEnabled)=|$)", first_line)
+        match = re.search(rf"(?:^|\s){re.escape(key)}=(.*?)(?=\s(?:id|name|enabled|selectable|selected|tisSelected|current|hitoolboxEnabled|thirdPartyEnabled|preferenceEnabled|matchCount)=|$)", first_line)
         if match:
             parsed[key] = match.group(1)
-    for key in ("enabled", "selectable", "selected", "tisSelected", "hitoolboxEnabled", "thirdPartyEnabled"):
+    for key in ("enabled", "selectable", "selected", "tisSelected", "hitoolboxEnabled", "thirdPartyEnabled", "preferenceEnabled"):
         match = re.search(rf"(?:^|\s){re.escape(key)}=(true|false)", first_line)
         if match:
             parsed[key] = match.group(1) == "true"
+    match_count = re.search(r"(?:^|\s)matchCount=(\d+)", first_line)
+    if match_count:
+        parsed["matchCount"] = int(match_count.group(1))
     return parsed
 
 
@@ -132,7 +135,7 @@ def preference_report(home: Path, input_source_id: str, bundle_id: str) -> dict[
     return {
         "hitoolbox": hitoolbox,
         "thirdParty": third_party,
-        "wouldChangeHitoolbox": not (hitoolbox["hasInputMode"] and hitoolbox["hasBundle"]),
+        "wouldChangeHitoolbox": bool(hitoolbox["matchingEntries"]),
         "wouldChangeThirdParty": not (third_party["hasInputMode"] and third_party["hasBundle"]),
     }
 
@@ -235,15 +238,19 @@ def parse_lsregister_dump(text: str) -> list[dict[str, str]]:
 
 
 def readiness_report(parsed: dict[str, Any], check_report: dict[str, Any], preferences: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(parsed.get("matchCount"), int) and parsed["matchCount"] > 1:
+        return {
+            "state": "duplicate",
+            "nextAction": "normalize third-party preferences and remove stale LaunchServices Squirrel paths",
+        }
     visible = parsed.get("enabled") is True and parsed.get("selectable") is True
-    hitoolbox = parsed.get("hitoolboxEnabled") is True
     third_party = parsed.get("thirdPartyEnabled") is True
     selected = parsed.get("selected") is True
-    if visible and hitoolbox and third_party and selected and check_report.get("exitCode") == 0:
+    if visible and third_party and selected and check_report.get("exitCode") == 0:
         return {"state": "ready", "nextAction": "type in a foreground text field with Squirrel selected"}
-    if visible and hitoolbox and third_party:
+    if visible and third_party:
         return {"state": "switch", "nextAction": "select Squirrel from the macOS input menu, then run scripts/wait_squirrel_typing_ready.sh"}
-    if visible and hitoolbox and not third_party:
+    if visible and not third_party:
         return {
             "state": "third-party-missing",
             "nextAction": "run scripts/enable_squirrel_hitoolbox_input_source.sh --dry-run or add Squirrel in System Settings",

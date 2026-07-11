@@ -1664,6 +1664,11 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         suggestions = InputMethodAdapter(vector_core).suggest(SuggestionRequest(current_input="火星任务", top_k=1))
 
         self.assertEqual(report["indexed"], 1)
+        self.assertGreaterEqual(report["retrievalDocs"]["documents"], 1)
+        self.assertGreaterEqual(
+            vector_core.vector_index_stats()["activeProviderRetrievalDocVectors"],
+            1,
+        )
         self.assertEqual(suggestions[0].surface_text, "赤色星球探索计划")
         self.assertIn("vector:", suggestions[0].metadata["reason"])
 

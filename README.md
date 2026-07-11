@@ -32,8 +32,8 @@ Pinyin composition
 Post-commit assistance
   -> trusted foreground-context snapshot
   -> local MiniMind completion (up to three alternatives)
-  -> local Hybrid RAG and curated memory
-  -> source-aware overlay
+  -> local Hybrid RAG and curated memory (one separately marked row)
+  -> source-aware overlay (up to four candidate rows plus the DeepSeek action)
   -> Tab or Option+number acceptance
 
 Explicit Active RAG
@@ -50,7 +50,7 @@ Explicit knowledge workbench
   -> stale remote results are rejected before local/remote synthesis
 
 Streaming voice input
-  -> hold Option+Space in any supported text field
+  -> hold the mouse middle button (wheel click) in any supported text field
   -> a separate native agent captures 16 kHz mono PCM in memory
   -> optional bounded hotwords come only from the user's explicit Control Center list
   -> Doubao streaming ASR 2.0 returns cumulative partial transcripts
@@ -64,12 +64,12 @@ Streaming voice input
 | --- | --- |
 | Pinyin | Rime owns composition, sentence generation, fuzzy Pinyin, and native user-dictionary learning. A public-safe 10-case deployed-librime regression currently passes Top-1 at 10/10, including `yon/yong -> 用` and common phrases. The patched post-selection feedback route remains `backend_only` until a fresh foreground selection trace passes. |
 | Local completion | MLX, local Ollama, and loopback OpenAI-compatible runtimes share one validated registry/lifecycle boundary. The current MiniMind-derived checkpoint is fast enough and reliably returns three branches, but its semantic quality gate and retraining signoff have not passed. |
-| Hybrid RAG | Local SQLite retrieval combines lexical, tag, time-book, and feedback signals. Vector lanes are disabled when no embedding provider is available. |
+| Hybrid RAG | Local SQLite retrieval combines lexical, tag, time-book, feedback, and precomputed vector signals. On Apple Silicon, a present MLX Q8 BGE artifact is preferred and warmed before sidecar health becomes ready; an explicit provider still wins and clean machines fall back to `local-hash`. |
 | Memory | Local events, stable memories, feedback, tombstones, anti-echo checks, and reviewed cleanup flows. |
 | Active RAG | Explicit selected-text workflow with local evidence and an optional remote DeepSeek-compatible route. It is never part of passive per-keystroke prediction. |
 | UI | The patched Squirrel native overlay has a v3 working-tree polish pass with compact material, source tints/icons, shortcut plates, hover/accept/streaming motion, bounded TTL, and Reduce Motion handling. Static/build checks are not a real foreground screenshot, so visual acceptance remains pending. `RagImeControl` is the one settings/diagnostics app; the legacy browser console has been removed and the voice agent is headless. |
 | Knowledge workbench | Explicit local-RAG + DeepSeek knowledge answers, long-form writing, recall, and review-only database organization. Optional Notion submission and polling are separate, observable gates. |
-| Voice input | The headless native agent, Keychain route, and a real Doubao PCM probe work. Its v3 status reports network state, first-partial/final latency, PCM/revision counts, discarded frames, and only the enabled hotword count without storing audio or transcript text. Request-level hotwords are optional, bounded, explicitly entered in the one Control Center, and never derived from the private Rime user dictionary. Foreground behavior stays `backend_only` until a user-authorized microphone run. |
+| Voice input | The headless native agent, mode-`600` credential file with Keychain fallback, and a real Doubao PCM probe work. Hold the mouse middle button by default; right Option and `Option+Space` remain configurable fallbacks in the one Control Center. Status reports network state, first-partial/final latency, PCM/revision counts, discarded frames, and only the enabled hotword count without storing audio or transcript text. Foreground behavior stays `backend_only` until a user-authorized microphone run. |
 | Observability | Redacted runtime status, trigger decisions, candidate score explanations, context provenance, and foreground traces. |
 
 The current MiniMind runtime is fast enough for the backend latency/count gate,
@@ -78,6 +78,11 @@ checkpoint still produces generic or weak continuations in real contexts, so
 the semantic gate, real single-user typing evaluation, and retraining decision
 remain open. The runtime abstains on uncertain branches rather than forcing
 three suggestions after every commit.
+
+When both local lanes are useful, the post-commit surface keeps three model
+branches and one separately tinted RAG row; the DeepSeek entry is a fifth,
+explicit action rather than a passive remote candidate. Ordinary number keys
+continue typing, Tab accepts the first row, and Option+number selects an ordinal.
 
 Machine-readable release status lives in
 [`docs/product-status.json`](docs/product-status.json). It intentionally keeps
@@ -228,16 +233,22 @@ scripts/install_voice_input_launch_agent.sh
 scripts/configure_volcengine_asr.sh \
   --app-id YOUR_APP_ID \
   --access-token-file /path/to/access-token-file
+scripts/configure_voice_hotkey.sh middle_mouse
 launchctl kickstart -k "gui/$(id -u)/com.rag-ime.voice"
 ```
 
-Credentials are restricted to the installed native binaries in macOS Keychain.
+Credentials can be stored once in the Control Center's private mode-`600`
+configuration file, with macOS Keychain retained as a fallback for existing
+installs. Neither route is committed to Git.
 The background agent never opens an Accessibility prompt on its own; microphone
 access is requested only after the user presses the voice shortcut. The Control
 Center reads the agent's local status file and does not inspect or request its
 own microphone/Accessibility permissions. Grant the two permissions to
-`RagImeVoice` explicitly when convenient, then hold
-`Option+Space` to speak and release it to finalize. See
+`RagImeVoice` explicitly when convenient, then hold the mouse wheel down to
+speak and release it to finalize. The shortcut can be changed to right Option
+or `Option+Space` in the Control Center, or with
+`scripts/configure_voice_hotkey.sh right_option` or
+`scripts/configure_voice_hotkey.sh option_space`. See
 [`docs/runtime-and-debug.md`](docs/runtime-and-debug.md#streaming-voice-input).
 Optional request-level hotwords are configured only in the Control Center. The
 agent sends at most 32 validated entries in the provider's `request.context`

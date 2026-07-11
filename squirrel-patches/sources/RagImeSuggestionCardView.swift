@@ -21,11 +21,14 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   static let thinkingHeight: CGFloat = 52
   static let rowHeight: CGFloat = 36
   static let actionHeight: CGFloat = 31
+  static let maximumPredictionCandidates = 4
   static let minimumPredictionWidth: CGFloat = 304
   static let preferredPredictionWidth: CGFloat = 360
   static let maximumPredictionWidth: CGFloat = 420
 
-  private let rows = (0..<3).map { _ in RagImeSuggestionRowView(frame: .zero) }
+  private let rows = (0..<RagImeSuggestionCardView.maximumPredictionCandidates).map {
+    _ in RagImeSuggestionRowView(frame: .zero)
+  }
   private let actionSeparator = NSView()
   private let deepSeekButton = NSButton(title: "DS · 深度补全", target: nil, action: nil)
   private let deepSeekShortcutPlate = NSView()
@@ -192,7 +195,9 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     surfaceState = state
     self.canReplaceSelection = canReplaceSelection
     let indexedCandidates = Array(payload.candidates.enumerated())
-    let realCandidates = indexedCandidates.filter { Self.isRealCandidate($0.element) }.prefix(3)
+    let realCandidates = indexedCandidates
+      .filter { Self.isRealCandidate($0.element) }
+      .prefix(Self.maximumPredictionCandidates)
     candidates = realCandidates.map(\.element)
     candidateIndexes = realCandidates.map(\.offset)
     if let action = indexedCandidates.first(where: { Self.isActionCandidate($0.element) }) {
@@ -212,7 +217,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     hideAll()
     switch state {
     case .compactPrediction, .expandedPredictions:
-      let visibleCount = min(3, candidates.count)
+      let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
       for index in rows.indices where index < visibleCount {
         let shortcut = index == 0 ? "Tab   ⌥1" : "⌥\(index + 1)"
         rows[index].apply(candidate: candidates[index], shortcut: shortcut, isPrimary: index == 0)
@@ -288,7 +293,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   }
 
   static func predictionHeight(candidateCount: Int, hasAction: Bool) -> CGFloat {
-    rowHeight * CGFloat(max(0, min(3, candidateCount))) + (hasAction ? actionHeight : 0)
+    rowHeight * CGFloat(max(0, min(maximumPredictionCandidates, candidateCount)))
+      + (hasAction ? actionHeight : 0)
   }
 
   private func hideAll() {

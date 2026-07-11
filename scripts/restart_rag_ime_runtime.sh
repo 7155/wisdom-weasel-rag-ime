@@ -9,6 +9,8 @@ MODEL_REGISTRY_EXPLICIT="${RAG_IME_MODEL_REGISTRY+x}"
 MODEL_REGISTRY_PATH="${RAG_IME_MODEL_REGISTRY:-$APP_SUPPORT_DIR/models.json}"
 MODEL_REGISTRY_ORIGIN="${RAG_IME_MODEL_REGISTRY_ORIGIN:-$([[ -n "$MODEL_REGISTRY_EXPLICIT" ]] && printf explicit || printf default)}"
 PORTABLE_MODELS_DIR="${RAG_IME_MODELS_DIR:-$APP_SUPPORT_DIR/Models}"
+EMBEDDING_PROVIDER_WAS_EXPLICIT="${RAG_IME_EMBEDDING_PROVIDER+x}"
+PREFERRED_MLX_BGE_Q8_MODEL="${RAG_IME_MLX_BGE_Q8_MODEL:-$PORTABLE_MODELS_DIR/bge-base-zh-v1.5-mlx-q8}"
 
 if [[ -n "$MODEL_REGISTRY_EXPLICIT" && ! -f "$MODEL_REGISTRY_PATH" ]]; then
   echo "Explicit model registry does not exist: $MODEL_REGISTRY_PATH" >&2
@@ -234,9 +236,79 @@ export RAG_IME_T0_DIRECT_MEMORY_THRESHOLD="${RAG_IME_T0_DIRECT_MEMORY_THRESHOLD:
 export RAG_IME_DEEPSEEK_THINKING="${RAG_IME_DEEPSEEK_THINKING:-disabled}"
 export RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS="${RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS:-1024}"
 
+existing_sidecar_environment() {
+  local key="$1"
+  local plist="$HOME/Library/LaunchAgents/${RAG_IME_LAUNCH_AGENT_LABEL:-com.rag-ime.sidecar}.plist"
+  [[ -f "$plist" ]] || return 0
+  /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:$key" "$plist" 2>/dev/null || true
+}
+
 export RAG_IME_ENABLE_LOCAL_VECTOR="${RAG_IME_ENABLE_LOCAL_VECTOR:-1}"
-export RAG_IME_EMBEDDING_PROVIDER="${RAG_IME_EMBEDDING_PROVIDER:-local-hash}"
-export RAG_IME_EMBEDDING_DIMENSIONS="${RAG_IME_EMBEDDING_DIMENSIONS:-96}"
+EXISTING_EMBEDDING_PROVIDER="$(existing_sidecar_environment RAG_IME_EMBEDDING_PROVIDER)"
+EXISTING_EMBEDDING_MODEL="$(existing_sidecar_environment RAG_IME_EMBEDDING_MODEL)"
+EXISTING_EMBEDDING_DIMENSIONS="$(existing_sidecar_environment RAG_IME_EMBEDDING_DIMENSIONS)"
+MLX_BGE_MODE="${RAG_IME_ENABLE_MLX_BGE:-auto}"
+if [[ "$MLX_BGE_MODE" == "auto" ]]; then
+  if [[ -n "$EMBEDDING_PROVIDER_WAS_EXPLICIT" ]]; then
+    MLX_BGE_MODE=0
+  elif [[ "$EXISTING_EMBEDDING_PROVIDER" == "local-bge-mlx" ]]; then
+    MLX_BGE_MODE=1
+  elif [[ -z "$EXISTING_EMBEDDING_PROVIDER" || "$EXISTING_EMBEDDING_PROVIDER" == "local-hash" ]]; then
+    [[ -d "$PREFERRED_MLX_BGE_Q8_MODEL" ]] && MLX_BGE_MODE=1 || MLX_BGE_MODE=0
+  else
+    MLX_BGE_MODE=0
+  fi
+fi
+
+if [[ "$MLX_BGE_MODE" == "1" ]]; then
+  if [[ -n "$EMBEDDING_PROVIDER_WAS_EXPLICIT" ]]; then
+    NORMALIZED_EXPLICIT_EMBEDDING_PROVIDER="$(printf '%s' "$RAG_IME_EMBEDDING_PROVIDER" | tr '[:upper:]' '[:lower:]')"
+    case "$NORMALIZED_EXPLICIT_EMBEDDING_PROVIDER" in
+      local-bge-mlx|mlx-bert|mlx-bge) ;;
+      *)
+        echo "RAG_IME_ENABLE_MLX_BGE=1 conflicts with explicit RAG_IME_EMBEDDING_PROVIDER=$RAG_IME_EMBEDDING_PROVIDER" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  DEFAULT_MLX_BGE_MODEL="$PREFERRED_MLX_BGE_Q8_MODEL"
+  if [[ "$EXISTING_EMBEDDING_PROVIDER" == "local-bge-mlx" && -n "$EXISTING_EMBEDDING_MODEL" ]]; then
+    DEFAULT_MLX_BGE_MODEL="$EXISTING_EMBEDDING_MODEL"
+  fi
+  RAG_IME_EMBEDDING_MODEL="${RAG_IME_EMBEDDING_MODEL:-$DEFAULT_MLX_BGE_MODEL}"
+  if [[ ! -d "$RAG_IME_EMBEDDING_MODEL" ]]; then
+    echo "MLX BGE model directory does not exist: $RAG_IME_EMBEDDING_MODEL" >&2
+    exit 1
+  fi
+  export RAG_IME_EMBEDDING_PROVIDER="local-bge-mlx"
+  export RAG_IME_EMBEDDING_MODEL
+  export RAG_IME_EMBEDDING_BITS="${RAG_IME_EMBEDDING_BITS:-8}"
+  export RAG_IME_EMBEDDING_GROUP_SIZE="${RAG_IME_EMBEDDING_GROUP_SIZE:-32}"
+  export RAG_IME_EMBEDDING_DIMENSIONS="${RAG_IME_EMBEDDING_DIMENSIONS:-768}"
+elif [[ "${RAG_IME_ENABLE_LOCAL_BGE:-0}" == "1" ]]; then
+  export RAG_IME_EMBEDDING_PROVIDER="local-bge"
+  export RAG_IME_EMBEDDING_MODEL="${RAG_IME_EMBEDDING_MODEL:-BAAI/bge-base-zh-v1.5}"
+  export RAG_IME_EMBEDDING_CACHE_DIR="${RAG_IME_EMBEDDING_CACHE_DIR:-$ROOT/.rag-ime-data/hf-cache/hub}"
+  export RAG_IME_EMBEDDING_LOCAL_FILES_ONLY="${RAG_IME_EMBEDDING_LOCAL_FILES_ONLY:-1}"
+  export RAG_IME_EMBEDDING_DIMENSIONS="${RAG_IME_EMBEDDING_DIMENSIONS:-768}"
+else
+  if [[ "$MLX_BGE_MODE" != "0" ]]; then
+    echo "RAG_IME_ENABLE_MLX_BGE must be auto, 0, or 1: $MLX_BGE_MODE" >&2
+    exit 1
+  fi
+  if [[ -z "${RAG_IME_EMBEDDING_PROVIDER:-}" ]]; then
+    if [[ "${RAG_IME_ENABLE_MLX_BGE:-auto}" == "0" && "$EXISTING_EMBEDDING_PROVIDER" == "local-bge-mlx" ]]; then
+      export RAG_IME_EMBEDDING_PROVIDER="local-hash"
+    else
+      export RAG_IME_EMBEDDING_PROVIDER="${EXISTING_EMBEDDING_PROVIDER:-local-hash}"
+    fi
+  fi
+  if [[ "$RAG_IME_EMBEDDING_PROVIDER" == "local-hash" ]]; then
+    export RAG_IME_EMBEDDING_DIMENSIONS="${RAG_IME_EMBEDDING_DIMENSIONS:-96}"
+  else
+    export RAG_IME_EMBEDDING_DIMENSIONS="${RAG_IME_EMBEDDING_DIMENSIONS:-${EXISTING_EMBEDDING_DIMENSIONS:-1024}}"
+  fi
+fi
 export RAG_IME_EMBEDDING_CACHE_SIZE="${RAG_IME_EMBEDDING_CACHE_SIZE:-32}"
 export RAG_IME_VECTOR_CANDIDATES="${RAG_IME_VECTOR_CANDIDATES:-32}"
 export RAG_IME_VECTOR_WEIGHT="${RAG_IME_VECTOR_WEIGHT:-1.4}"

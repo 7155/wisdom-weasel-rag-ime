@@ -12,6 +12,7 @@ from typing import Any, Sequence
 
 from .adapter import InputMethodAdapter
 from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
+from .embeddings import embedding_provider_from_env
 from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from .knowledge_workbench import KnowledgeWorkbenchRequest, build_knowledge_workbench_messages
@@ -430,6 +431,7 @@ def _verify_tab_chain(fixture: dict[str, Any]) -> dict[str, object]:
 
 def _verify_rag_memory(db_path: Path, *, fixture: dict[str, Any]) -> dict[str, object]:
     query_config = _object(fixture["ragQuery"], "RAG query")
+    embedding_provider = embedding_provider_from_env()
     with _connect(db_path) as conn:
         payload = retrieve_hybrid_rag_candidates(
             conn,
@@ -440,6 +442,7 @@ def _verify_rag_memory(db_path: Path, *, fixture: dict[str, Any]) -> dict[str, o
                 top_k=int(query_config.get("topK") or 5),
                 latency_budget_ms=1000,
             ),
+            embedding_provider=embedding_provider,
         )
     candidates = [dict(item) for item in payload.get("candidates", []) if isinstance(item, dict)]
     traceable = [
@@ -464,6 +467,10 @@ def _verify_rag_memory(db_path: Path, *, fixture: dict[str, Any]) -> dict[str, o
         "ok": bool(candidates and traceable and expected_sources_visible),
         "query": payload.get("query"),
         "lanes": payload.get("lanes"),
+        "embeddingProvider": embedding_provider.fingerprint,
+        "vectorIndexDocuments": int(payload.get("vectorIndexDocuments") or 0),
+        "elapsedMs": int(payload.get("elapsedMs") or 0),
+        "overBudget": bool(payload.get("overBudget")),
         "candidateCount": len(candidates),
         "candidates": candidates,
         "traceableCandidateCount": len(traceable),

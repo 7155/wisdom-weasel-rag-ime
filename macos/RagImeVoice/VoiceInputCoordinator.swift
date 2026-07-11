@@ -88,6 +88,7 @@ final class VoiceInputCoordinator {
     func reloadConfiguration() {
         credentials = VoiceKeychainStore.loadCredentials()
         hotwordConfig = VoiceHotwordConfigStore.read()
+        hotkey.reloadConfiguration()
         onStateChanged?()
     }
 

@@ -28,6 +28,7 @@ REQUIRE_SELECTED_INPUT_SOURCE="${RAG_IME_DOCTOR_REQUIRE_SELECTED_INPUT_SOURCE:-0
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
 REFRESH_INPUT_SOURCE="${RAG_IME_DOCTOR_REFRESH_INPUT_SOURCE:-1}"
+REFRESH_INPUT_SOURCE_SCRIPT="${RAG_IME_REFRESH_SQUIRREL_INPUT_SOURCE_REGISTRATION_SCRIPT:-$ROOT/scripts/refresh_squirrel_input_source_registration.sh}"
 REQUIRE_PATCHED_APP_CONFIGURED="${RAG_IME_DOCTOR_REQUIRE_PATCHED_APP:-}"
 REQUIRE_PATCHED_APP="${REQUIRE_PATCHED_APP_CONFIGURED:-0}"
 SQUIRREL_APP_BASENAME="$(basename "$SQUIRREL_APP")"
@@ -650,12 +651,9 @@ check_macos_input_source() {
   check_duplicate_squirrel_apps "$app"
 
   if bool_true "$REFRESH_INPUT_SOURCE"; then
-    "$app/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-    sleep 0.3
-    "$app/Contents/MacOS/Squirrel" --enable-input-source "$input_source_id" >/dev/null 2>&1 ||
-      "$app/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 ||
-      true
-    sleep 0.3
+    RAG_IME_SQUIRREL_APP="$app" \
+      RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$input_source_id" \
+      "$REFRESH_INPUT_SOURCE_SCRIPT" >/dev/null 2>&1 || true
   fi
 
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/rag-ime-tis-input-source.out.XXXXXX")"

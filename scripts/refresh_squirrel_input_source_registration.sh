@@ -6,6 +6,7 @@ APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-im.rime.inputmethod.Squirrel}"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
 CHECK_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/check_macos_input_source.sh}"
+PREFERENCE_REPAIR_SCRIPT="${RAG_IME_ENABLE_SQUIRREL_SCRIPT:-$ROOT/scripts/enable_squirrel_hitoolbox_input_source.sh}"
 SELECT_AFTER_REFRESH="${RAG_IME_SQUIRREL_AUTO_SELECT:-0}"
 QUARANTINE_STALE_APPS="${RAG_IME_QUARANTINE_STALE_SQUIRREL_APPS:-0}"
 QUARANTINE_ROOT="${RAG_IME_STALE_SQUIRREL_QUARANTINE_DIR:-$HOME/Library/Application Support/RagIme/disabled-input-method-backups}"
@@ -99,17 +100,57 @@ while IFS= read -r stale_path; do
   echo "unregistered stale input method bundle path: $stale_path"
 done <"$tmpdir/stale-paths.txt"
 
-"$LSREGISTER" -f -R -trusted "$APP" >/dev/null 2>&1 || true
 "$LSREGISTER" -gc >/dev/null 2>&1 || true
+killall cfprefsd TextInputMenuAgent TextInputSwitcher imklaunchagent >/dev/null 2>&1 || true
+sleep 1
 
-"$APP/Contents/MacOS/Squirrel" --register-input-source >/dev/null 2>&1 || true
-sleep 0.5
-"$APP/Contents/MacOS/Squirrel" --enable-input-source "$INPUT_SOURCE_ID" >/dev/null 2>&1 ||
-  "$APP/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 ||
-  true
+set +e
+check_output="$(RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" "$CHECK_SCRIPT" "$INPUT_SOURCE_ID" 2>&1)"
+check_status=$?
+set -e
 
-killall cfprefsd >/dev/null 2>&1 || true
-sleep 0.5
+if [[ "$check_status" == "5" ]]; then
+  echo "normalizing duplicate third-party input-source preference records"
+  RAG_IME_SQUIRREL_BUNDLE_ID="$BUNDLE_ID" \
+    RAG_IME_SQUIRREL_INPUT_SOURCE_ID="$INPUT_SOURCE_ID" \
+    "$PREFERENCE_REPAIR_SCRIPT" >/dev/null
+  killall cfprefsd TextInputMenuAgent TextInputSwitcher imklaunchagent >/dev/null 2>&1 || true
+  sleep 1
+  set +e
+  check_output="$(RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" "$CHECK_SCRIPT" "$INPUT_SOURCE_ID" 2>&1)"
+  check_status=$?
+  set -e
+fi
+
+if [[ "$check_status" == "2" ]]; then
+  echo "registering missing canonical Squirrel bundle once through LaunchServices"
+  "$LSREGISTER" -f -R -trusted "$APP" >/dev/null 2>&1 || true
+  killall TextInputMenuAgent TextInputSwitcher imklaunchagent >/dev/null 2>&1 || true
+  sleep 1
+  set +e
+  check_output="$(RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" "$CHECK_SCRIPT" "$INPUT_SOURCE_ID" 2>&1)"
+  check_status=$?
+  set -e
+fi
+
+if [[ "$check_status" != "0" && "$check_status" != "5" ]]; then
+  "$APP/Contents/MacOS/Squirrel" --enable-input-source "$INPUT_SOURCE_ID" >/dev/null 2>&1 ||
+    "$APP/Contents/MacOS/Squirrel" --enable-input-source >/dev/null 2>&1 ||
+    true
+  killall cfprefsd TextInputMenuAgent TextInputSwitcher >/dev/null 2>&1 || true
+  sleep 1
+  set +e
+  check_output="$(RAG_IME_INPUT_SOURCE_BUNDLE_ID="$BUNDLE_ID" "$CHECK_SCRIPT" "$INPUT_SOURCE_ID" 2>&1)"
+  check_status=$?
+  set -e
+fi
+
+if [[ "$check_status" != "0" ]]; then
+  printf '%s\n' "$check_output" >&2
+  echo "input-source registration is not unique and ready; no repeated TISRegisterInputSource call was made" >&2
+  exit "$check_status"
+fi
+echo "input-source registration is unique; skipped repeated --register-input-source"
 
 if bool_true "$SELECT_AFTER_REFRESH"; then
   "$ROOT/scripts/select_macos_input_source.sh" "$INPUT_SOURCE_ID" >/dev/null 2>&1 || true

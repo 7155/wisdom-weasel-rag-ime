@@ -147,9 +147,8 @@ final class AppModel: ObservableObject {
             updates = [
                 "interaction.postCommit.enabled": .bool(true),
                 "memory.enabled": .bool(true),
-                "rag.lanes.tagMemo": .bool(false),
-                "rag.lanes.timeDailyBook": .bool(false),
-                "activeRag.allowRemoteModel": .bool(false),
+                "rag.lanes.tagMemo": .bool(true),
+                "rag.lanes.timeDailyBook": .bool(true),
             ]
         case "调试模式":
             updates = [
@@ -164,7 +163,6 @@ final class AppModel: ObservableObject {
                 "memory.enabled": .bool(true),
                 "rag.lanes.tagMemo": .bool(true),
                 "rag.lanes.timeDailyBook": .bool(true),
-                "activeRag.allowRemoteModel": .bool(false),
             ]
         }
         do {

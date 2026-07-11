@@ -23,8 +23,8 @@ class NativeControlCenterTests(unittest.TestCase):
             self.assertNotIn(forbidden, text)
         self.assertIn("NSTableView", text)
         self.assertIn("applicationShouldTerminateAfterLastWindowClosed", text)
-        self.assertIn("defaultSize(width: 920, height: 640)", text)
-        self.assertIn("frame(minWidth: 820, minHeight: 560)", text)
+        self.assertIn("defaultSize(width: 1280, height: 820)", text)
+        self.assertIn("frame(minWidth: 1080, minHeight: 720)", text)
 
     def test_bundle_and_build_script_contract(self) -> None:
         with (ROOT / "macos" / "RagImeControl" / "Info.plist").open("rb") as handle:
@@ -71,6 +71,8 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn('case "DS": return "bolt.horizontal.circle"', components)
         self.assertIn('case "RAG": return "doc.text.magnifyingglass"', components)
         self.assertIn('default: return "MiniMind 实时补全"', components)
+        self.assertIn('value: "\\(memory.retrievalDocCount)"', source)
+        self.assertIn('Text("\\(prediction.providerCallCount ?? 0) 次调用")', source)
 
     def test_native_app_supervises_only_allowlisted_external_commands(self) -> None:
         root = ROOT / "macos" / "RagImeControl"

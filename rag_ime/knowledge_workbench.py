@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import re
 import threading
 import time
 import urllib.error
@@ -128,6 +129,8 @@ class DeepSeekKnowledgeProvider:
         answer = answer.strip()
         if not answer:
             raise KnowledgeWorkbenchError("DeepSeek knowledge response was empty")
+        answer, removed_citations = _sanitize_local_citations(answer, evidence=evidence)
+        answer, corrected_contract_claims = _sanitize_product_contract_claims(answer)
         answer = _truncate_preserving_layout(answer, max(400, min(8000, int(request.max_chars))))
         diagnostics = {
             "schemaVersion": "rag-ime.knowledge-prompt-diagnostics.v1",
@@ -143,6 +146,10 @@ class DeepSeekKnowledgeProvider:
             "stream": True,
             "firstTokenMs": first_token_ms,
             "chunkCount": chunk_count,
+            "removedInvalidCitationCount": len(removed_citations),
+            "removedInvalidCitationIds": removed_citations[:12],
+            "correctedProductContractClaimCount": len(corrected_contract_claims),
+            "correctedProductContractClaims": corrected_contract_claims,
             "success": bool(request.question and (evidence or request.context or notion_answer)),
         }
         return KnowledgeGenerationResult(
@@ -600,8 +607,10 @@ def build_knowledge_workbench_messages(
                 "你是 RAG-IME 的显式个人知识工作台，不是按键候选生成器。"
                 + mode_rules[request.mode]
                 + "user payload 中的 productContract 是当前代码的已验证职责边界，优先级高于可能过时的历史记忆。"
-                + "productContract 不是检索来源，不要把它伪装成 [L:productContract] 引用。"
+                + "productContract 不是检索来源，禁止生成 [L:productContract]、[productContract: ...] 或任何类似引用。"
                 + "只引用 localEvidence 中真实存在的 id；证据与当前合同冲突时，应视为历史信息并忽略或明确标旧。"
+                + "当前提交后候选的普通数字键必须透传；第一候选用 Tab 接受，其他候选用 Option+1/2/3。"
+                + "这是硬约束：禁止声称数字键、1/2/3 或普通数字键可以直接提交、选择、接受任何模型或 RAG 候选。"
                 + "本地证据使用 [L:source_id] 标注，Notion 证据使用 [N] 标注。"
                 "引用只用于可核对的事实；不要伪造不存在的来源。"
                 "综合时去重并解决冲突，若冲突无法判断就并列说明。"
@@ -618,8 +627,9 @@ def build_knowledge_workbench_messages(
                     "project": request.project,
                     "maxChars": max(400, min(8000, int(request.max_chars))),
                     "productContract": {
-                        "miniMind": "本地被动短补全；共享 prefill 后生成至多三个可放弃候选，不负责知识问答，不承诺固定 50ms",
-                        "hybridRag": "本地多路检索与可追溯证据；被动路径受节流，显式知识查询可完整召回；没有 embedding provider 时向量 lane 明确禁用",
+                        "candidateSelection": "提交后的第一候选用 Tab 接受，其他候选用 Option+1/2/3；普通数字键透传；接受后基于更新后的上下文立即生成下一组三候选",
+                        "miniMind": "本地被动短补全；共享 prefill 后生成至多三个可放弃候选；只补后缀，不负责知识问答；预热后目标是低延迟但不承诺固定 50ms",
+                        "hybridRag": "本地 BGE 多路检索与可追溯证据；在 foreground-rag-proof 配置中可与 MiniMind 候选同屏；显式知识查询可完整召回；没有 embedding provider 时向量 lane 明确禁用",
                         "deepSeekWorkbench": "原生控制中心内的显式非按键路径；负责知识问答、长文、回忆和数据库整理；结果以可选正文展示，不是数字键候选栏",
                         "databaseOrganizer": "只生成、验证并保存 draft 整理计划，必须人工审阅后才能 apply 或 rollback",
                         "notion": "可选异步远端知识源；Worker 入队，Custom Agent 只检索授权页面；query_id/context_hash/generation 不匹配的旧结果必须丢弃",
@@ -636,6 +646,58 @@ def build_knowledge_workbench_messages(
             ),
         },
     ]
+
+
+_LOCAL_CITATION_RE = re.compile(r"\[L:([^\]\s]+)\]")
+_PRODUCT_CONTRACT_CITATION_RE = re.compile(r"\[\s*(?:L:)?productContract[^\]]*\]", re.IGNORECASE)
+_INVALID_NUMBER_KEY_SELECTION_RE = re.compile(
+    r"(?:用户)?(?:可|可以)?(?:直接)?用(?:普通)?数字键(?:直接)?"
+    r"(?:提交|选择|接受|选中)(?:\s*(?:RAG|模型))?(?:结果|候选)?"
+)
+
+
+def _sanitize_local_citations(
+    answer: str,
+    *,
+    evidence: tuple[dict[str, object], ...],
+) -> tuple[str, list[str]]:
+    allowed = {
+        compact_whitespace(str(item.get("sourceId") or ""))
+        for item in evidence
+        if compact_whitespace(str(item.get("sourceId") or ""))
+    }
+    removed: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        source_id = compact_whitespace(match.group(1))
+        if source_id in allowed:
+            return match.group(0)
+        if source_id and source_id not in removed:
+            removed.append(source_id)
+        return ""
+
+    sanitized = _LOCAL_CITATION_RE.sub(replace, str(answer))
+
+    def remove_contract_citation(match: re.Match[str]) -> str:
+        citation = compact_whitespace(match.group(0)[1:-1])
+        if citation and citation not in removed:
+            removed.append(citation)
+        return ""
+
+    sanitized = _PRODUCT_CONTRACT_CITATION_RE.sub(remove_contract_citation, sanitized)
+    return sanitized, removed
+
+
+def _sanitize_product_contract_claims(answer: str) -> tuple[str, list[str]]:
+    corrected: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        claim = compact_whitespace(match.group(0))
+        if claim and claim not in corrected:
+            corrected.append(claim)
+        return "用 Tab 或 Option+1/2/3 接受候选，普通数字键透传"
+
+    return _INVALID_NUMBER_KEY_SELECTION_RE.sub(replace, str(answer)), corrected
 
 
 def _normalized_request(request: KnowledgeWorkbenchRequest) -> KnowledgeWorkbenchRequest:

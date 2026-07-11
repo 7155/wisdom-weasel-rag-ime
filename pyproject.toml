@@ -5,6 +5,15 @@ description = "Local-first RAG input method MVP inspired by Wisdom-Weasel."
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+embedding-local = [
+  "sentence-transformers>=5.0,<6",
+]
+embedding-mlx = [
+  "mlx>=0.29,<1",
+  "transformers>=4.50,<6",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

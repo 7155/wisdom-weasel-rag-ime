@@ -12,6 +12,19 @@ from rag_ime.timeline_context import build_timeline_context_pack, timeline_evide
 
 
 class TimelineContextTests(unittest.TestCase):
+    def test_timeline_injects_up_to_eight_recent_complete_inputs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-timeline-eight-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "timeline.sqlite")
+            for index in range(1, 11):
+                _record_event(core, f"语义完整的最近输入第{index}条")
+
+            pack = build_timeline_context_pack(core, project="wisdom-weasel-rag-ime")
+
+        recent = str(pack["recentInput"])
+        self.assertNotIn("第2条", recent)
+        for index in range(3, 11):
+            self.assertIn(f"第{index}条", recent)
+
     def test_timeline_context_pack_includes_recent_input_and_daily_books(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-timeline-context-") as tmp:
             core = LocalSqliteCoreClient(Path(tmp) / "timeline.sqlite")

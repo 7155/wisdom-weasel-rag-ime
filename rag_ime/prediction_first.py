@@ -102,7 +102,12 @@ class CandidatePool:
     model: tuple[PredictionCandidate, ...] = ()
     memory: tuple[PredictionCandidate, ...] = ()
 
-    def prediction_order(self, *, side_budget: int | None = None) -> tuple[PredictionCandidate, ...]:
+    def prediction_order(
+        self,
+        *,
+        side_budget: int | None = None,
+        post_commit: bool = False,
+    ) -> tuple[PredictionCandidate, ...]:
         groups = {
             "model": list(sorted(self.model, key=lambda item: item.score, reverse=True)),
             "rag": list(sorted(self.rag, key=lambda item: item.score, reverse=True)),
@@ -116,7 +121,11 @@ class CandidatePool:
         if side_budget is None:
             side_budget = model_count + suggestion_count
         budget = max(0, int(side_budget))
-        model_slot_cap = _prediction_max_model_slots(budget, has_suggestions=suggestion_count > 0)
+        model_slot_cap = _prediction_max_model_slots(
+            budget,
+            has_suggestions=suggestion_count > 0,
+            post_commit=post_commit,
+        )
         if budget <= 1:
             suggestion_reserve = 0 if model_count else min(suggestion_count, 1)
         elif budget == 2:
@@ -172,10 +181,15 @@ def _prediction_rag_block_reserve(side_budget: int) -> int:
     return 1
 
 
-def _prediction_max_model_slots(side_budget: int, *, has_suggestions: bool) -> int:
+def _prediction_max_model_slots(
+    side_budget: int,
+    *,
+    has_suggestions: bool,
+    post_commit: bool = False,
+) -> int:
     if side_budget <= 0:
         return 0
-    if has_suggestions:
+    if has_suggestions and not post_commit:
         return min(2, side_budget)
     return min(3, side_budget)
 
@@ -322,9 +336,14 @@ def merge_prediction_first_candidates(
     rime_reserve = _rime_reserve_for_mode(snapshot, resolved_mode, max_visible)
     side_budget = min(snapshot.max_side_candidates, max(0, max_visible - rime_reserve))
     side_slot_limit = max(0, max_visible - rime_reserve)
-    max_model_side = _prediction_max_model_slots(side_budget, has_suggestions=bool(pool.rag or pool.memory))
+    post_commit = resolved_mode == InputMode.POST_COMMIT_PREDICTING
+    max_model_side = _prediction_max_model_slots(
+        side_budget,
+        has_suggestions=bool(pool.rag or pool.memory),
+        post_commit=post_commit,
+    )
     rag_reserve = _prediction_rag_block_reserve(side_budget)
-    prediction_candidates = pool.prediction_order(side_budget=side_budget)
+    prediction_candidates = pool.prediction_order(side_budget=side_budget, post_commit=post_commit)
     strict_prefix_constraint = (
         resolved_mode == InputMode.PREFIX_CONSTRAINED_COMPOSING
         and not raw_inserted
