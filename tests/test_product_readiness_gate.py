@@ -331,6 +331,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
             prepare_script.chmod(0o755)
             env = self._gate_env()
             env["RAG_IME_REQUIRE_MACOS_FRONTEND"] = "1"
+            env["RAG_IME_REQUIRE_SICHUAN_FUZZY"] = "0"
             env["RAG_IME_PREPARE_SQUIRREL_FOREGROUND_CHECK_SCRIPT"] = str(prepare_script)
 
             result = subprocess.run(
@@ -351,6 +352,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
             prepare_args = call_log.read_text(encoding="utf-8")
 
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Sichuan fuzzy profile check skipped", result.stdout)
         self.assertIn("foreground readiness preflight", result.stdout)
         self.assertIn("--summary-path", prepare_args)
         self.assertIn(str(summary_path), prepare_args)
