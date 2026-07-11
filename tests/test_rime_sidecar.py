@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -50,6 +51,15 @@ class RecordingPredictionProvider:
             )
             for index, text in enumerate(self.predictions, start=1)
         ][:max_candidates]
+
+
+class InlinePredictionThread:
+    def __init__(self, *, target: Callable[..., object], kwargs: dict[str, object], **_: object) -> None:
+        self._target = target
+        self._kwargs = kwargs
+
+    def start(self) -> None:
+        self._target(**self._kwargs)
 
 
 class CuratedMemoryCore:
@@ -702,7 +712,10 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
     def test_v1_fast_local_model_returns_three_candidates_in_first_response(self) -> None:
         predictor = RecordingPredictionProvider(["结果", "速度", "方式"], sleep_s=0.03)
         started = time.perf_counter()
-        response = self._response(self._post_commit_payload(), predictor=predictor)
+        # Keep response-shaping deterministic; the slow-provider test above
+        # retains the real asynchronous thread and deadline path.
+        with patch.object(rime_sidecar_module, "Thread", InlinePredictionThread):
+            response = self._response(self._post_commit_payload(), predictor=predictor)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 
         self.assertLess(elapsed_ms, 220)
