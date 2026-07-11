@@ -32,6 +32,7 @@ from .contracts.json_schema import validate_contract
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from .embeddings import embedding_provider_from_env
 from .foreground_privacy import assess_foreground_write, storage_receipt
 from .frontend_gateway import FrontendGateway
 from .history_context import build_prediction_context
@@ -157,7 +158,10 @@ class DebugImeService:
 
     def __init__(self, config: DebugServerConfig):
         self.config = config
-        self.core = config.core or LocalSqliteCoreClient(config.db_path)
+        self.core = config.core or LocalSqliteCoreClient(
+            config.db_path,
+            embedding_provider=embedding_provider_from_env(),
+        )
         self.predictor = config.predictor or prediction_provider_from_env()
         self.adapter = InputMethodAdapter(self.core, project=config.project)
         self.deepseek_completion_provider = DeepSeekV4FlashCompletionProvider(

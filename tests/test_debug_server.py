@@ -252,6 +252,26 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)
 
+    def test_default_local_core_uses_configured_embedding_provider(self) -> None:
+        db_path = Path(self.tmp.name) / "configured-embedding.sqlite"
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_IME_EMBEDDING_PROVIDER": "openai-compatible",
+                "RAG_IME_EMBEDDING_BASE_URL": "http://embedding.test:8000",
+                "RAG_IME_EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-0.6B",
+                "RAG_IME_EMBEDDING_DIMENSIONS": "1024",
+            },
+            clear=False,
+        ):
+            service = DebugImeService(DebugServerConfig(db_path=db_path, seed_if_empty=False))
+        try:
+            self.assertIsInstance(service.core, LocalSqliteCoreClient)
+            assert isinstance(service.core, LocalSqliteCoreClient)
+            self.assertIn("Qwen/Qwen3-Embedding-0.6B", service.core.embedding_provider.fingerprint)
+        finally:
+            service.management.close()
+
     def test_startup_can_backfill_vector_index_when_provider_enabled(self) -> None:
         db_path = Path(self.tmp.name) / "startup-vector.sqlite"
         plain_core = LocalSqliteCoreClient(db_path)
