@@ -57,6 +57,8 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("VoiceAgentStatusStore.read()", page)
         self.assertNotIn("AXIsProcessTrusted", page)
         self.assertNotIn("AVCaptureDevice.authorizationStatus", page)
+        self.assertIn('openPrivacyPane("Privacy_Accessibility")', page)
+        self.assertIn('openPrivacyPane("Privacy_Microphone")', page)
 
         status = (ROOT / "macos/Shared/VoiceAgentStatus.swift").read_text(encoding="utf-8")
         self.assertIn("rag-ime.voice-agent-status.v3", status)

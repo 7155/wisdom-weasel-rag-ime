@@ -308,6 +308,34 @@ class RuntimeConfigIntegrationTests(unittest.TestCase):
         self.assertGreater(int(last_prediction["foregroundContext"]["capturedAtMs"]), 0)
         self.assertTrue(last_prediction["contextInjection"]["success"])
 
+    def test_management_foreground_status_ignores_native_doctor_probes(self) -> None:
+        self.service._prediction_live_trace.clear()
+        self.service._prediction_live_trace.extend(
+            [
+                {
+                    "sessionId": "squirrel-live",
+                    "foregroundContext": {
+                        "source": "text_input_client",
+                        "applied": True,
+                        "commitTextMatched": True,
+                    },
+                },
+                {
+                    "sessionId": "native-doctor",
+                    "foregroundContext": {
+                        "source": "missing",
+                        "applied": False,
+                        "reason": "foregroundText payload missing",
+                    },
+                },
+            ]
+        )
+
+        last_prediction = self.service._last_management_prediction()
+
+        self.assertEqual(last_prediction["foregroundContext"]["source"], "text_input_client")
+        self.assertTrue(last_prediction["contextInjection"]["success"])
+
     def test_hybrid_rag_disabled_skips_retrieval_before_dispatch(self) -> None:
         self.service.settings_update(
             {

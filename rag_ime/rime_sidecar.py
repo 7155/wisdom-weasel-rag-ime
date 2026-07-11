@@ -1627,6 +1627,7 @@ def _hard_clear_prediction_response(
     prediction_session_payload: dict[str, object] = {
         "phase": reason,
         "inputMode": reason,
+        "pinyinPrefix": "",
         "candidatePanelVisible": False,
         "predictionPanelVisible": False,
         "shouldClearPredictionPanel": True,

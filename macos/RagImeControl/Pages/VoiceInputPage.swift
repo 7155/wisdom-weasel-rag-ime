@@ -81,8 +81,15 @@ struct VoiceInputPage: View {
                 neutral: voiceAgentStatus?.hotwordsEnabled != true && !hotwordsEnabled
             )
             HStack {
-                Button("打开隐私设置", systemImage: "hand.raised") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                if voiceAgentStatus?.accessibilityTrusted != true {
+                    Button("辅助功能设置", systemImage: "hand.raised") {
+                        openPrivacyPane("Privacy_Accessibility")
+                    }
+                }
+                if voiceAgentStatus?.microphoneAuthorization != "authorized" {
+                    Button("麦克风设置", systemImage: "mic") {
+                        openPrivacyPane("Privacy_Microphone")
+                    }
                 }
                 Button(agentRunning ? "停止语音代理" : "启动语音代理", systemImage: agentRunning ? "stop.fill" : "play.fill") {
                     toggleAgent()
@@ -297,6 +304,11 @@ struct VoiceInputPage: View {
         NSWorkspace.shared.openApplication(at: url, configuration: .init())
         saveMessage = "语音代理正在启动"
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { refreshAgentState() }
+    }
+
+    private func openPrivacyPane(_ pane: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func refreshAgentState() {

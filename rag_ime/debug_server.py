@@ -354,7 +354,16 @@ class DebugImeService:
     def _last_management_prediction(self) -> dict[str, object]:
         if not self._prediction_live_trace:
             return {}
-        item = self._prediction_live_trace[-1]
+        item = next(
+            (
+                frame
+                for frame in reversed(self._prediction_live_trace)
+                if not _string(frame.get("sessionId")).startswith(("native-doctor", "cache-probe"))
+            ),
+            None,
+        )
+        if item is None:
+            return {}
         foreground = (
             dict(item.get("foregroundContext"))
             if isinstance(item.get("foregroundContext"), dict)

@@ -586,6 +586,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             self.assertEqual(response["ragCandidates"], [])
             self.assertTrue(response["predictionSession"]["shouldClearPredictionPanel"])
             self.assertEqual(response["predictionSession"]["clearReason"], "sensitive_field")
+            self.assertEqual(response["predictionSession"]["pinyinPrefix"], "")
             self.assertTrue(response["triggerDecision"]["hardClear"])
             self.assertFalse(response["assistantOverlay"]["visible"])
             self.assertEqual(response["assistantOverlay"]["dismissReason"], "sensitive_field")

@@ -2565,6 +2565,51 @@ index 0000000..acea5cc
 +  let compositionHash: String?
 +  let committedContextHash: String?
 +  let panelSessionId: String?
++
++  enum CodingKeys: String, CodingKey {
++    case phase, inputMode, pinyinPrefix, candidatePanelVisible, predictionPanelVisible
++    case shouldClearPredictionPanel, clearReason, selectionScope, rimeCompositionOwnedByRime
++    case sideCandidateCount, rimeCandidateCount, rawCommitCount, sessionFingerprint, contextFingerprint
++    case hardContextAnchor, queryAnchor, displayAnchor, snapshotId, stableSnapshotId, snapshotGeneration
++    case reusedLastGood, stablePanelAction, stablePanelReason, requestSeq, expiresAfterMs, frontendRevision
++    case selectionEpoch, frontAppBundleId, inputSourceId, compositionHash, committedContextHash, panelSessionId
++  }
++
++  init(from decoder: Decoder) throws {
++    let values = try decoder.container(keyedBy: CodingKeys.self)
++    phase = try values.decodeIfPresent(String.self, forKey: .phase) ?? "legacy"
++    inputMode = try values.decodeIfPresent(String.self, forKey: .inputMode) ?? phase
++    pinyinPrefix = try values.decodeIfPresent(String.self, forKey: .pinyinPrefix) ?? ""
++    candidatePanelVisible = try values.decodeIfPresent(Bool.self, forKey: .candidatePanelVisible) ?? false
++    predictionPanelVisible = try values.decodeIfPresent(Bool.self, forKey: .predictionPanelVisible) ?? false
++    shouldClearPredictionPanel = try values.decodeIfPresent(Bool.self, forKey: .shouldClearPredictionPanel) ?? false
++    clearReason = try values.decodeIfPresent(String.self, forKey: .clearReason) ?? ""
++    selectionScope = try values.decodeIfPresent(String.self, forKey: .selectionScope) ?? "none"
++    rimeCompositionOwnedByRime = try values.decodeIfPresent(Bool.self, forKey: .rimeCompositionOwnedByRime) ?? false
++    sideCandidateCount = try values.decodeIfPresent(Int.self, forKey: .sideCandidateCount)
++    rimeCandidateCount = try values.decodeIfPresent(Int.self, forKey: .rimeCandidateCount)
++    rawCommitCount = try values.decodeIfPresent(Int.self, forKey: .rawCommitCount)
++    sessionFingerprint = try values.decodeIfPresent(String.self, forKey: .sessionFingerprint)
++    contextFingerprint = try values.decodeIfPresent(String.self, forKey: .contextFingerprint)
++    hardContextAnchor = try values.decodeIfPresent(String.self, forKey: .hardContextAnchor)
++    queryAnchor = try values.decodeIfPresent(String.self, forKey: .queryAnchor)
++    displayAnchor = try values.decodeIfPresent(String.self, forKey: .displayAnchor)
++    snapshotId = try values.decodeIfPresent(String.self, forKey: .snapshotId)
++    stableSnapshotId = try values.decodeIfPresent(String.self, forKey: .stableSnapshotId)
++    snapshotGeneration = try values.decodeIfPresent(Int.self, forKey: .snapshotGeneration)
++    reusedLastGood = try values.decodeIfPresent(Bool.self, forKey: .reusedLastGood)
++    stablePanelAction = try values.decodeIfPresent(String.self, forKey: .stablePanelAction)
++    stablePanelReason = try values.decodeIfPresent(String.self, forKey: .stablePanelReason)
++    requestSeq = try values.decodeIfPresent(Int.self, forKey: .requestSeq)
++    expiresAfterMs = try values.decodeIfPresent(Int.self, forKey: .expiresAfterMs)
++    frontendRevision = try values.decodeIfPresent(Int.self, forKey: .frontendRevision)
++    selectionEpoch = try values.decodeIfPresent(Int.self, forKey: .selectionEpoch)
++    frontAppBundleId = try values.decodeIfPresent(String.self, forKey: .frontAppBundleId)
++    inputSourceId = try values.decodeIfPresent(String.self, forKey: .inputSourceId)
++    compositionHash = try values.decodeIfPresent(String.self, forKey: .compositionHash)
++    committedContextHash = try values.decodeIfPresent(String.self, forKey: .committedContextHash)
++    panelSessionId = try values.decodeIfPresent(String.self, forKey: .panelSessionId)
++  }
 +}
 +
 +struct RagImeProgressivePayload: Codable {
