@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.frontend-selection-response.v1",
+  "type": "object",
+  "required": ["schemaVersion", "gatewayVersion", "ok", "session", "selectionReceipt", "eventId", "origin", "insertText", "recordedActionCount", "privacy", "backendContract"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.frontend-selection-response.v1"},
+    "gatewayVersion": {"type": "string", "const": "rag-ime.frontend-gateway.v1"},
+    "ok": {"type": "boolean"},
+    "session": {"$ref": "#/$defs/session"},
+    "selectionReceipt": {"$ref": "#/$defs/selectionReceipt"},
+    "eventId": {"type": "string"},
+    "origin": {"type": "string"},
+    "insertText": {"type": "string"},
+    "recordedActionCount": {"type": "integer", "minimum": 0},
+    "privacy": {"type": "object"},
+    "backendContract": {"type": "string"}
+  },
+  "$defs": {
+    "session": {
+      "type": "object",
+      "required": ["id", "requestSeq", "inputGeneration"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "requestSeq": {"type": "integer", "minimum": 0},
+        "inputGeneration": {"type": "integer", "minimum": 0}
+      }
+    },
+    "selectionReceipt": {
+      "type": "object",
+      "required": ["sessionId", "requestSeq", "inputGeneration", "snapshotId", "snapshotGeneration", "candidateId", "requestConsistencyValidated", "runtimeFreshnessValidated"],
+      "properties": {
+        "sessionId": {"type": "string", "minLength": 1},
+        "requestSeq": {"type": "integer", "minimum": 0},
+        "inputGeneration": {"type": "integer", "minimum": 0},
+        "snapshotId": {"type": "string", "minLength": 1},
+        "snapshotGeneration": {"type": "integer", "minimum": 0},
+        "candidateId": {"type": "string", "minLength": 1},
+        "requestConsistencyValidated": {"type": "boolean"},
+        "runtimeFreshnessValidated": {"type": "boolean"}
+      }
+    }
+  }
+}

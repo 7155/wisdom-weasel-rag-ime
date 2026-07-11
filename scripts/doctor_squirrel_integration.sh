@@ -431,7 +431,7 @@ else:
         "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
         "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
         "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
-        "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
+        "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "180",
         "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
         "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
         "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
@@ -440,7 +440,7 @@ else:
         "RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS": "700",
         "RAG_IME_HYBRID_RAG_CORE": "1",
         "RAG_IME_RAG_DIRECT_DISPLAY": "0",
-        "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "0",
+        "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
         "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "0",
         "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "0",
     }
@@ -453,7 +453,7 @@ else:
         "sidecar LaunchAgent v1 foreground defaults",
         not v1_errors,
         require_plist,
-        "match post-commit 150/250ms and model UX budget 900ms"
+        "match post-commit 180/250ms and model UX budget 900ms"
         if not v1_errors
         else "drift: " + "; ".join(v1_errors[:6]),
     )
@@ -760,14 +760,30 @@ def validate_candidate_contract(result, *, require):
     rag_indices = []
     side_indices = []
     rime_indices = []
+    action_indices = []
+    selectable_index = 0
     for index, item in enumerate(display):
         if not isinstance(item, dict):
             errors.append(f"candidate {index + 1} is not an object")
             continue
+        source_type = str(item.get("sourceType") or "")
         label = str(item.get("label") or "")
         selection_key = str(item.get("selectionKey") or "")
         selection_rank = item.get("selectionRank")
-        expected_label = "0" if index == 9 else str(index + 1)
+        display_layout = str(item.get("displayLayout") or "")
+        display_lane = str(item.get("displayLane") or "")
+        selection_action = str(item.get("selectionAction") or "")
+        if source_type in {"action", "status"}:
+            if label or selection_key or selection_rank not in {None, 0}:
+                errors.append(f"{source_type} row {index + 1} must remain unnumbered")
+            if source_type == "action":
+                action_indices.append(index)
+                if selection_action != "start_active_rag_from_context" or display_lane != "active_rag":
+                    errors.append("DeepSeek action row has the wrong routing contract")
+            continue
+
+        selectable_index += 1
+        expected_label = "0" if selectable_index == 10 else str(selectable_index)
         if label != expected_label:
             errors.append(f"candidate {index + 1} label={label!r}, expected {expected_label!r}")
         if selection_key != label:
@@ -775,17 +791,13 @@ def validate_candidate_contract(result, *, require):
         if selection_rank != expected_rank_for_label(label):
             errors.append(f"candidate {index + 1} selectionRank={selection_rank!r}, expected rank for {label!r}")
 
-        source_type = str(item.get("sourceType") or "")
-        display_layout = str(item.get("displayLayout") or "")
-        display_lane = str(item.get("displayLane") or "")
-        selection_action = str(item.get("selectionAction") or "")
         if source_type in {"model", "rag"} and selection_action != "commit_side_candidate":
             errors.append(f"{source_type} candidate {label} does not commit side candidate")
         if source_type == "model":
             model_indices.append(index)
             side_indices.append(index)
-            if display_layout != "inline" or display_lane != "model":
-                errors.append(f"model candidate {label} is not inline/model")
+            if display_layout != "block" or display_lane != "model":
+                errors.append(f"model candidate {label} is not block/model")
         elif source_type == "rag":
             rag_indices.append(index)
             side_indices.append(index)
@@ -804,7 +816,7 @@ def validate_candidate_contract(result, *, require):
     if not side_indices:
         errors.append("no model/RAG side candidates")
     if model_indices and rag_indices and max(model_indices) > min(rag_indices):
-        errors.append("model inline candidates do not precede rag block candidates")
+        errors.append("model candidates do not precede rag block candidates")
     if rime_indices and side_indices and min(rime_indices) < max(side_indices):
         errors.append("Rime fallback appears before side candidates")
 
@@ -822,6 +834,7 @@ def validate_candidate_contract(result, *, require):
         "ragCount": len(rag_indices),
         "sideCount": len(side_indices),
         "rimeCount": len(rime_indices),
+        "actionCount": len(action_indices),
     }
 
 def post_rime_suggest(payload):
@@ -842,25 +855,42 @@ def doctor_prediction_payload(*, session_id="doctor", request_seq=1, latency_ms=
         # separate benchmark so a slow local MLX model does not look like a
         # broken LLM/RAG wiring path.
         effective_latency_ms = max(effective_latency_ms, 2000)
-    return {
+    context = "我想设计一个候选展示方式"
+    payload = {
         "sessionId": session_id,
         "requestSeq": request_seq,
+        "privacyDisposition": "allowed",
         "frontendBuild": "rag-ime.foreground-trace.v2",
         "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
         "rawInput": "",
         "preedit": "",
-        "commitTextPreview": "",
+        "commitTextPreview": "展示方式",
         "idleMs": 80,
-        "committedContext": "我想设计一个候选展示方式",
+        "committedContext": context,
         "maxVisibleCandidates": 8,
         "maxSideCandidates": 8,
         "latencyBudgetMs": effective_latency_ms,
         "forceSideCandidates": require_mixed_layout,
+        "frontendRevision": request_seq,
+        "selectionEpoch": request_seq,
+        "inputGeneration": request_seq,
+        "frontAppBundleId": "com.apple.TextEdit",
+        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+        "commitBurstReady": True,
+        "commitBurstDeltaChars": len(context),
+        "commitBurstTexts": ["展示方式"],
+        "foregroundText": reliable_foreground_text(
+            context=context,
+            request_seq=request_seq,
+            group_id="app:doctor-prediction",
+        ),
         "rimeContext": {"candidates": []},
     }
+    return payload
 
 def doctor_model_validation_payload(*, session_id="doctor-model-validation", request_seq=20, latency_ms=None):
     effective_latency_ms = max(latency_budget_ms, 2000) if latency_ms is None else max(latency_ms, 2000)
+    context = "我已经看完 Felix 的候选生命周期，下一步"
     return {
         "sessionId": session_id,
         "requestSeq": request_seq,
@@ -868,13 +898,49 @@ def doctor_model_validation_payload(*, session_id="doctor-model-validation", req
         "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
         "rawInput": "",
         "preedit": "",
+        "commitTextPreview": "下一步",
         "idleMs": 200,
-        "committedContext": "我已经看完 Felix 的候选生命周期，下一步",
+        "committedContext": context,
         "maxVisibleCandidates": 8,
         "maxSideCandidates": 8,
         "latencyBudgetMs": effective_latency_ms,
         "forceSideCandidates": True,
+        "frontendRevision": request_seq,
+        "selectionEpoch": request_seq,
+        "inputGeneration": request_seq,
+        "frontAppBundleId": "com.apple.TextEdit",
+        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+        "commitBurstReady": True,
+        "commitBurstDeltaChars": len(context),
+        "commitBurstTexts": ["下一步"],
+        "foregroundText": reliable_foreground_text(
+            context=context,
+            request_seq=request_seq,
+            group_id="app:doctor-model-validation",
+        ),
         "rimeContext": {"candidates": []},
+    }
+
+def reliable_foreground_text(*, context, request_seq, group_id):
+    return {
+        "available": True,
+        "source": "text_input_client",
+        "confidence": 0.92,
+        "freshnessMs": 0,
+        "selectedTextHash": "",
+        "selectedTextChars": 0,
+        "selectedTextPreview": "",
+        "surroundingBefore": context,
+        "surroundingAfter": "",
+        "wholeValueHash": "",
+        "wholeValueChars": len(context),
+        "canReplaceSelection": False,
+        "captureEpoch": request_seq,
+        "commitTextMatched": True,
+        "contextGroupId": group_id,
+        "contextGroupLevel": "app",
+        "contextGroupConfidence": 0.5,
+        "warnings": ["doctor_text_input_client_context"],
     }
 
 def extract_model_predictions(result, provider_name):
@@ -906,16 +972,16 @@ def retry_model_probe_if_needed(result, provider_name, *, force_validation_probe
         return result, model_predictions, skipped_reason
     last_result = result
     attempts = 4 if (skipped_reason in retry_reasons or force_validation_probe) else 1
+    probe_payload = doctor_model_validation_payload(
+        session_id=f"doctor-model-validation-{int(time.time() * 1000)}",
+        request_seq=20,
+        latency_ms=max(latency_budget_ms, 2000),
+    )
     for attempt in range(attempts):
-        if skipped_reason in retry_reasons or force_validation_probe:
-            time.sleep(0.18 * (attempt + 1))
-        probe = post_rime_suggest(
-            doctor_model_validation_payload(
-                session_id=f"doctor-model-validation-{int(time.time() * 1000)}-{attempt}",
-                request_seq=20 + attempt,
-                latency_ms=max(latency_budget_ms, 2000),
-            )
-        )
+        if attempt > 0:
+            time.sleep(0.18 * attempt)
+            probe_payload["progressiveFollowUp"] = True
+        probe = post_rime_suggest(probe_payload)
         model_predictions = extract_model_predictions(probe, provider_name)
         last_result = probe
         if model_predictions:
@@ -999,11 +1065,14 @@ def validate_model_generation_path(result, health):
     provider_name = str(predictor.get("providerName") or "")
     is_mlx = provider_matches("mlx", provider_name)
     if not require_logits_model and not is_mlx:
-        return {
-            "ok": True,
-            "checked": False,
-            "message": "model generation path: not required",
-        }
+        return (
+            {
+                "ok": True,
+                "checked": False,
+                "message": "model generation path: not required",
+            },
+            result,
+        )
 
     result, model_predictions, retry_reason = retry_model_probe_if_needed(
         result,
@@ -1076,26 +1145,30 @@ def validate_model_generation_path(result, health):
         message = "model generation path: model candidates available"
     else:
         message = "model generation path failed: " + "; ".join(errors[:5])
-    return {
-        "ok": ok,
-        "checked": True,
-        "message": message,
-        "providerName": provider_name,
-        "candidateModes": modes,
-        "fallbackJson": fallback_json_values,
-        "candidateScoreCounts": score_counts,
-        "promptCachePrepared": prompt_cache_prepared,
-        "logitsTopK": capabilities.get("logitsTopK"),
-    }
+    return (
+        {
+            "ok": ok,
+            "checked": True,
+            "message": message,
+            "providerName": provider_name,
+            "candidateModes": modes,
+            "fallbackJson": fallback_json_values,
+            "candidateScoreCounts": score_counts,
+            "promptCachePrepared": prompt_cache_prepared,
+            "logitsTopK": capabilities.get("logitsTopK"),
+        },
+        result,
+    )
 
 try:
     with urllib.request.urlopen(f"{base}/health", timeout=1.5) as response:
         health = json.loads(response.read().decode("utf-8"))
     result = post_rime_suggest(doctor_prediction_payload())
     raw_pinyin_guard = validate_raw_pinyin_guard()
-    model_generation_path = validate_model_generation_path(result, health)
+    model_generation_path, contract_result = validate_model_generation_path(result, health)
     select_payload = {
         "dryRun": True,
+        "privacyDisposition": "allowed",
         "candidate": {
             "label": "2",
             "text": "doctor side candidate",
@@ -1122,7 +1195,7 @@ try:
         and selection.get("schemaVersion") == "rag-ime.rime-selection.v1"
         and selection.get("ok") is not False
     ):
-        candidate_contract = validate_candidate_contract(result, require=require_mixed_layout)
+        candidate_contract = validate_candidate_contract(contract_result, require=require_mixed_layout)
         predictor = health.get("predictor") if isinstance(health.get("predictor"), dict) else {}
         provider_name = str(predictor.get("providerName") or "")
         model = str(predictor.get("model") or "")
@@ -1150,12 +1223,12 @@ try:
         print(json.dumps({
             "ok": True,
             "eventCount": health.get("eventCount"),
-            "displayCandidates": len(result.get("displayCandidates", [])),
+            "displayCandidates": len(contract_result.get("displayCandidates", [])),
             "rimeSelectOk": True,
             "candidateContract": candidate_contract,
             "rawPinyinGuard": raw_pinyin_guard,
             "modelGenerationPath": model_generation_path,
-            "rankingDiagnostics": result.get("rankingDiagnostics"),
+            "rankingDiagnostics": contract_result.get("rankingDiagnostics"),
             "predictorCheck": {
                 "ok": predictor_ok,
                 "message": "; ".join(messages),

@@ -127,7 +127,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_COMPOSING_MODEL"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL"], "0")
-        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS"], "150")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS"], "180")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS"], "250")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_COMPLETION_TTL_MS"], "12000")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS"], "8")
@@ -135,6 +135,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "900")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS"], "700")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PROGRESSIVE_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS"], "2500")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_PENDING_PREVIEW"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_PRESENTATION_STREAM"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ENABLE_DEMO_SAFE_FALLBACK"], "0")
@@ -144,13 +145,18 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES"], "32")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_SUGGESTION_CACHE_SIZE"], "32")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_RAG_DIRECT_DISPLAY"], "0")
-        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON"], "0")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_IDLE_MS"], "420")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS"], "8")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S"], "2")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS"], "2500")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_THINKING"], "disabled")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_REASONING_EFFORT"], "low")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_MAX_TOKENS"], "96")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_ENABLED"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_PROFILE"], "sichuan-mild")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_S_SH"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_ONG_ON"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_N_L"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PINYIN_FUZZY_F_H"], "0")
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
@@ -262,6 +268,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
                             "RAG_IME_PREDICTOR_MODEL": "/tmp/qwen3.5-0.8b",
                             "RAG_IME_PREDICTOR_PROFILE": "qwen3_06b_ime_hot",
                             "RAG_IME_PREDICTOR_STREAM_FIRST": "1",
+                            "RAG_IME_PREDICTOR_ENV": "/tmp/predictor.env",
+                            "RAG_IME_PREDICTOR_API_KEY": "preserved-local-secret",
                             "RAG_IME_EMBEDDING_PROVIDER": "local-hash",
                             "RAG_IME_VECTOR_CANDIDATES": "80",
                             "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "4500",
@@ -285,7 +293,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                     "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
                 }
             )
-            subprocess.run(
+            result = subprocess.run(
                 ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
                 cwd=root,
                 env=env,
@@ -302,6 +310,9 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_MODEL"], "/tmp/qwen3.5-0.8b")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_PROFILE"], "qwen3_06b_ime_hot")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_STREAM_FIRST"], "1")
+        self.assertEqual(env_vars["RAG_IME_PREDICTOR_ENV"], "/tmp/predictor.env")
+        self.assertEqual(env_vars["RAG_IME_PREDICTOR_API_KEY"], "preserved-local-secret")
+        self.assertNotIn("preserved-local-secret", result.stdout + result.stderr)
         self.assertEqual(env_vars["RAG_IME_EMBEDDING_PROVIDER"], "local-hash")
         self.assertEqual(env_vars["RAG_IME_VECTOR_CANDIDATES"], "80")
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_BASE_URL"], "https://api.kukuit.com")
@@ -410,7 +421,65 @@ class LaunchAgentScriptTests(unittest.TestCase):
         script_source = (root / "scripts" / "install_mlx_predictor_launch_agent.sh").read_text(encoding="utf-8")
         self.assertIn("kill_stale_mlx_predictor_processes", script_source)
         self.assertIn("wait_for_mlx_port_release", script_source)
+        self.assertIn('"$MODEL" "$MODEL_FINGERPRINT"', script_source)
+        self.assertIn("runtime_fingerprint = str(payload.get(\"modelFingerprint\")", script_source)
+        self.assertIn("matching_sha256", script_source)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
+
+    def test_standalone_mlx_installer_infers_qwen_profile_and_model_id(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-mlx-qwen-inference-test-") as tmp:
+            home = Path(tmp)
+            model = home / "models" / "mlx-community-Qwen3-0.6B-4bit-local"
+            model.mkdir(parents=True)
+            env = {key: value for key, value in os.environ.items() if not key.startswith("RAG_IME_")}
+            env.update(
+                {
+                    "HOME": str(home),
+                    "RAG_IME_MLX_PYTHON": sys.executable,
+                    "RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN": "1",
+                    "RAG_IME_MLX_MODEL": str(model),
+                }
+            )
+
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_mlx_predictor_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.mlx-predictor.plist"
+            with plist_path.open("rb") as handle:
+                payload = plistlib.load(handle)
+
+        env_vars = payload["EnvironmentVariables"]
+        self.assertEqual(env_vars["RAG_IME_MLX_PROFILE"], "qwen3_06b_ime_hot")
+        self.assertEqual(env_vars["RAG_IME_MODEL_ID"], model.name)
+        profile_index = payload["ProgramArguments"].index("--profile")
+        self.assertEqual(payload["ProgramArguments"][profile_index + 1], "qwen3_06b_ime_hot")
+
+    def test_launch_agent_health_checks_bracket_ipv6_and_disable_proxies(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        for script_name in (
+            "install_mlx_predictor_launch_agent.sh",
+            "install_sidecar_launch_agent.sh",
+        ):
+            with self.subTest(script=script_name):
+                script_source = (root / "scripts" / script_name).read_text(encoding="utf-8")
+                self.assertIn(
+                    'url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host',
+                    script_source,
+                )
+                self.assertIn(
+                    'opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))',
+                    script_source,
+                )
+                self.assertIn(
+                    'opener.open(f"http://{url_host}:{port}/health", timeout=1.0)',
+                    script_source,
+                )
 
     def test_install_mlx_predictor_launch_agent_rejects_broken_python(self) -> None:
         root = Path(__file__).resolve().parents[1]

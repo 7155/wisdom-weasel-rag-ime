@@ -62,12 +62,22 @@ def build_assistant_overlay_payload(
         for candidate in display_candidates
         if str(candidate.get("sourceType") or "") == "status" or bool(candidate.get("isStatus"))
     ]
-    overlay_candidates = [
+    primary_candidates = [
         dict(candidate)
         for candidate in display_candidates
         if str(candidate.get("sourceType") or "") in _OVERLAY_CANDIDATE_SOURCE_TYPES
-        or (str(candidate.get("sourceType") or "") == "action" and _pending_overlay_auto_enabled())
     ]
+    # The explicit DeepSeek/RAG control belongs beside a real passive result.
+    # Do not let it create an action-only popup for every commit, but also do
+    # not hide it merely because automatic pending rows are disabled.
+    action_candidates = [
+        dict(candidate)
+        for candidate in display_candidates
+        if str(candidate.get("sourceType") or "") == "action"
+    ]
+    overlay_candidates = primary_candidates + (
+        action_candidates if primary_candidates or _pending_overlay_auto_enabled() else []
+    )
     actual_candidates = [
         candidate
         for candidate in overlay_candidates

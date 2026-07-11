@@ -1,0 +1,3 @@
+-- Context-group columns are added by the compatibility initializer before the
+-- migration runner executes. This marker makes their deployed contract
+-- version explicit and gives future ALTER steps a stable predecessor.

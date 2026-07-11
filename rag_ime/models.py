@@ -6,12 +6,13 @@ from typing import Any
 
 @dataclass(frozen=True)
 class InputEvent:
-    """A committed input event that can become personal-memory evidence."""
+    """A committed event whose explicit privacy gate allows personal-memory storage."""
 
     event_id: int | None
     created_at_ms: int
     source: str
     committed_text: str
+    privacy_disposition: str
     recent_context: str = ""
     preedit: str = ""
     schema_id: str = "default"
@@ -22,6 +23,10 @@ class InputEvent:
     tags: tuple[str, ...] = ()
     context_group_id: str = ""
     context_group_level: str = "app"
+
+    def __post_init__(self) -> None:
+        if self.privacy_disposition not in {"allowed", "sensitive", "unknown"}:
+            raise ValueError("privacy_disposition must be allowed, sensitive, or unknown")
 
 
 @dataclass(frozen=True)

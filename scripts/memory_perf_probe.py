@@ -148,6 +148,7 @@ def _seed_dataset(
                 app="perf-probe",
                 provider_name="local",
                 tags=tags,
+                privacy_disposition="allowed",
             )
         )
         if not is_long_raw and index % 29 == 0:

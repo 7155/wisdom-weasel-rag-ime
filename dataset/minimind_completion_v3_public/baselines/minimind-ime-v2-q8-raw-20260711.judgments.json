@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "rag-ime.minimind-human-judgments.v1",
+  "datasetFingerprint": "sha256:e3d266245fa92d84e88d197bc48e08f5a6b2ac42effed8db84f8430c09538e87",
+  "scorerId": "minimind-ime-v2-q8-raw-20260711-human-review",
+  "checkpoint": "minimind-ime-v2-q8",
+  "evaluationStage": "raw_model_output",
+  "decodeTemperature": 0.0,
+  "reviewNote": "Manual review of the deterministic decoded raw branches captured before production candidate parsing/reranking.",
+  "judgments": [
+    {"caseId": "test-tech-model-chain-1", "candidate": "面再根据坏例继续调整", "accepted": false, "note": "broken word boundary after 随后"},
+    {"caseId": "test-tech-model-chain-1", "candidate": "不要增加太多上下文", "accepted": false, "note": "does not complete the annotated thought"},
+    {"caseId": "test-tech-model-chain-1", "candidate": "反复补几次", "accepted": false, "note": "vague and grammatically weak continuation"},
+    {"caseId": "test-tech-model-chain-2", "candidate": "如果结果不错", "accepted": false, "note": "generic unfinished branch"},
+    {"caseId": "test-tech-model-chain-2", "candidate": "我先跑一遍确认", "accepted": false, "note": "drifts from the required second-round semantic check"},
+    {"caseId": "test-tech-model-chain-2", "candidate": "先看复读率有没有", "accepted": false, "note": "unfinished and misses the annotated continuation"},
+    {"caseId": "test-tech-model-chain-3", "candidate": "如果语气放轻一点", "accepted": false, "note": "unrelated unfinished conditional"},
+    {"caseId": "test-tech-model-chain-3", "candidate": "这次主要看结果", "accepted": false, "note": "generic and not a useful next step"},
+    {"caseId": "test-tech-model-chain-3", "candidate": "我先跑一遍确认", "accepted": false, "note": "generic action that does not continue the annotated semantic check"},
+    {"caseId": "test-daily-travel-1", "candidate": "我晚点再发一版", "accepted": false, "note": "message-editing phrase unrelated to packing and travel"},
+    {"caseId": "test-daily-travel-1", "candidate": "如果时间来得及的话", "accepted": false, "note": "unfinished conditional and does not advance the travel plan"},
+    {"caseId": "test-daily-travel-1", "candidate": "今天先把手头这件", "accepted": false, "note": "truncated phrase"},
+    {"caseId": "test-daily-travel-2", "candidate": "明天早上如果还有时间", "accepted": false, "note": "unfinished condition after an already fixed departure plan"},
+    {"caseId": "test-daily-travel-2", "candidate": "我准备先跑一遍", "accepted": false, "note": "technical-task phrase unrelated to travel"},
+    {"caseId": "test-daily-travel-2", "candidate": "如果你想吃那家不然", "accepted": false, "note": "unrelated malformed conditional"},
+    {"caseId": "test-tech-latency-semantic", "candidate": "我准备先跑一个小测试", "accepted": false, "note": "generic action that ignores the latency-versus-quality contrast"},
+    {"caseId": "test-tech-latency-semantic", "candidate": "如果结果不错", "accepted": false, "note": "generic unfinished branch"},
+    {"caseId": "test-tech-latency-semantic", "candidate": "我想先把这个想法记", "accepted": false, "note": "truncated and semantically off target"}
+  ]
+}

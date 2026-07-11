@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from rag_ime.settings_models import UserProfile, UserVocabularyItem
@@ -92,7 +93,7 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertTrue(deleted["ok"])
 
     def _audit_count(self, action: str) -> int:
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             row = conn.execute("SELECT COUNT(*) FROM management_audit_log WHERE action = ?", (action,)).fetchone()
         return int(row[0])
 

@@ -17,6 +17,61 @@ from rag_ime.text_utils import now_ms, stable_text_hash
 
 
 class ActiveRagServiceTests(unittest.TestCase):
+    def test_sensitive_field_is_blocked_before_hash_validation_retrieval_and_remote(self) -> None:
+        provider = FakeActiveRagProvider(("绝不应该调用",))
+        service = ActiveRagService(completion_provider=provider)
+        secret = "账号 user@example.test 密码 swordfish"
+        request = ActiveRagStartRequest(
+            selected_text=secret,
+            selected_text_hash="frontend-supplied-secret-hash-must-not-return",
+            frontend_revision=9,
+            selection_epoch=2,
+            context=secret,
+            secure_input=True,
+            evidence_pack=({"surfaceHints": ["绝不应该召回"]},),
+            remote_model_allowed=True,
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            blocked = service.start(request)
+            status = service.status(str(blocked["sessionId"]))
+            diagnostics = service.diagnostics(str(blocked["sessionId"]))
+
+        blob = json.dumps(blocked, ensure_ascii=False)
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["error"], "sensitive_field_blocked")
+        self.assertEqual(blocked["selectedTextHash"], "")
+        self.assertEqual(blocked["candidateCount"], 0)
+        self.assertEqual(blocked["candidates"], [])
+        self.assertFalse(blocked["diagnostics"]["retrieval"]["called"])
+        self.assertFalse(blocked["diagnostics"]["remoteModel"]["requested"])
+        self.assertEqual(blocked["diagnostics"]["remoteModel"]["skipReason"], "sensitive_field_blocked")
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(status["status"], "blocked")
+        self.assertEqual(diagnostics["status"], "blocked")
+        self.assertNotIn(secret, blob)
+        self.assertNotIn("frontend-supplied-secret-hash", blob)
+        self.assertNotIn("sha256:", blob)
+
+    def test_sensitive_text_guard_blocks_credential_words_even_without_secure_flag(self) -> None:
+        service = ActiveRagService()
+        secret = "请保存 API key sk-example-secret"
+        request = ActiveRagStartRequest(
+            selected_text=secret,
+            selected_text_hash=stable_text_hash(secret),
+            frontend_revision=1,
+            selection_epoch=1,
+            context=secret,
+            sensitive_text_guard_enabled=False,
+        )
+
+        blocked = service.preview(request, local_only=True)
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["evidenceCount"], 0)
+        self.assertEqual(blocked["candidateCount"], 0)
+        self.assertNotIn(secret, json.dumps(blocked, ensure_ascii=False))
+
     def test_active_rag_local_evidence_pack_runs_without_deepseek_flag(self) -> None:
         provider = FakeActiveRagProvider(("DeepSeek不应调用",))
         service = ActiveRagService(completion_provider=provider)
@@ -52,6 +107,26 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertGreater(pending["pollAfterMs"], 0)
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["pollAfterMs"], 0)
+
+    def test_active_rag_publishes_unselectable_partial_stream_before_ready(self) -> None:
+        provider = StreamingActiveRagProvider()
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="选区", max_chars=120)
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            self.assertTrue(provider.emitted.wait(timeout=1))
+            pending = service.status(str(started["sessionId"]))
+            provider.release.set()
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(pending["status"], "pending")
+        self.assertFalse(pending["keyPolicy"]["ready"])
+        self.assertEqual(pending["candidates"][0]["text"], "第一段正在流式返回")
+        self.assertTrue(pending["candidates"][0]["metadata"]["streamingPartial"])
+        self.assertTrue(pending["diagnostics"]["modelRequest"]["partialVisible"])
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["candidates"][0]["text"], "第一段已经完整返回")
 
     def test_active_rag_uses_deepseek_when_enabled(self) -> None:
         provider = FakeActiveRagProvider(("这是原始选区长句", "DeepSeek主动候选"))
@@ -205,6 +280,18 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(context_packet["schemaVersion"], "rag-ime.smart-context-packet.v1")
         self.assertEqual(context_packet["currentInput"]["mode"], "active_rag")
         self.assertTrue(context_packet["notebook"]["items"])
+        diagnostics = ready["diagnostics"]
+        self.assertTrue(diagnostics["contextInjection"]["applied"])
+        self.assertGreater(diagnostics["contextInjection"]["contextChars"], 0)
+        self.assertTrue(str(diagnostics["contextInjection"]["contextHash"]).startswith("sha256:"))
+        self.assertGreaterEqual(diagnostics["retrieval"]["evidenceCount"], 1)
+        self.assertTrue(diagnostics["retrieval"]["lanes"])
+        self.assertTrue(diagnostics["remoteModel"]["allowed"])
+        self.assertEqual(diagnostics["remoteModel"]["provider"], "deepseek")
+        self.assertGreaterEqual(diagnostics["remoteModel"]["elapsedMs"], 0)
+        trace_names = [item["name"] for item in ready["traceEvents"]]
+        self.assertIn("deepseek_request_context_built", trace_names)
+        self.assertIn("deepseek_request_completed", trace_names)
 
     def test_active_rag_local_timeline_candidate_does_not_show_generic_recent_title(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-local-timeline-") as tmp:
@@ -413,6 +500,22 @@ class BlockingActiveRagProvider:
         yield CompletionCandidateDelta(text="第二个主动候选", insert_text="第二个主动候选")
 
 
+class StreamingActiveRagProvider:
+    supports_text_delta_callback = True
+
+    def __init__(self):
+        self.emitted = threading.Event()
+        self.release = threading.Event()
+
+    def stream_candidates(self, request, *, on_text_delta=None):
+        _ = request
+        if on_text_delta is not None:
+            on_text_delta("第一段正在流式返回")
+        self.emitted.set()
+        self.release.wait(timeout=2)
+        yield CompletionCandidateDelta(text="第一段已经完整返回", insert_text="第一段已经完整返回")
+
+
 def _record_timeline_event(core: LocalSqliteCoreClient, text: str) -> int:
     memory_id = core.record_event(
         InputEvent(
@@ -420,6 +523,7 @@ def _record_timeline_event(core: LocalSqliteCoreClient, text: str) -> int:
             created_at_ms=now_ms(),
             source="manual",
             committed_text=text,
+            privacy_disposition="allowed",
             recent_context="Active RAG 前台验收",
             project="wisdom-weasel-rag-ime",
             tags=("RAG", "DeepSeek"),

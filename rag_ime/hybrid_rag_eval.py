@@ -211,6 +211,7 @@ def _seed_case_state(*, core: LocalSqliteCoreClient, case: HybridRagEvalCase) ->
                 created_at_ms=int(event.get("createdAtMs") or now_ms()),
                 source=str(event.get("source") or "hybrid-rag-eval"),
                 committed_text=str(event.get("text") or event.get("committedText") or ""),
+                privacy_disposition="allowed",
                 recent_context=str(event.get("recentContext") or ""),
                 preedit=str(event.get("preedit") or ""),
                 schema_id=str(event.get("schemaId") or "hybrid-rag-eval"),

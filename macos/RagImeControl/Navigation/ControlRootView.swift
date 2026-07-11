@@ -18,6 +18,7 @@ struct ControlRootView: View {
                 switch model.destination {
                 case .overview: OverviewPage()
                 case .inputMethod: InputMethodPage()
+                case .voiceInput: VoiceInputPage()
                 case .memory: MemoryPage()
                 case .ragAndModels: RagAndModelsPage()
                 case .history: HistoryPage()
@@ -32,6 +33,11 @@ struct ControlRootView: View {
             Button("好") { model.errorMessage = "" }
         } message: {
             Text(model.errorMessage)
+        }
+        .alert("外部监督器已完成", isPresented: $model.showingRuntimeActionReport) {
+            Button("好") { }
+        } message: {
+            Text(model.lastRuntimeActionReport)
         }
     }
 

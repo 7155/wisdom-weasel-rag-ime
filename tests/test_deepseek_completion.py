@@ -91,6 +91,26 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual([item.text for item in deltas], ["修复LLM显示"])
         self.assertEqual(deltas[0].metadata["parseMode"], "content")
 
+    def test_active_rag_exposes_progressive_text_before_candidate_finishes(self) -> None:
+        provider = _provider(
+            [
+                _sse_delta("候选=流式"),
+                _sse_delta("内容逐步返回。"),
+                "data: [DONE]\n",
+            ]
+        )
+        partials: list[str] = []
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法", max_chars=120),
+                on_text_delta=partials.append,
+            )
+        )
+
+        self.assertEqual(partials, ["流式", "流式内容逐步返回。"])
+        self.assertEqual([item.text for item in deltas], ["流式内容逐步返回"])
+
     def test_deepseek_completion_falls_back_to_reasoning_candidate_json(self) -> None:
         provider = _provider(
             [
@@ -686,7 +706,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
         self.assertEqual(int(fake.body["max_tokens"]), 1024)
         self.assertEqual(fake.body["reasoning_effort"], "low")
-        self.assertFalse(fake.body["stream"])
+        self.assertTrue(fake.body["stream"])
         self.assertEqual(fake.calls[0][1], 1.234)
 
     def test_deepseek_stream_body_respects_config_stream_flag(self) -> None:

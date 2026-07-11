@@ -51,6 +51,33 @@ class PredictorLatencyTests(unittest.TestCase):
         self.assertNotIn("rawText", trace)
         self.assertNotIn("prompt", trace)
 
+    def test_branch_seed_logits_are_not_visible_candidate_latency(self) -> None:
+        trace = trace_from_prediction_payload(
+            {
+                "candidateMode": "base-completion-branches",
+                "totalMs": 220,
+                "candidates": ["可以继续整理样本", "主要看结果", "不要写得太散"],
+                "timing": {
+                    "candidateMode": "base-completion-branches",
+                    "logitsMs": 75,
+                    "branches": [
+                        {"elapsedMs": 43},
+                        {"elapsedMs": 35},
+                        {"elapsedMs": 57},
+                    ],
+                },
+            },
+            request_id="req-branches",
+            request_type="ime_post_commit",
+            profile_id="minimind_ime_v2",
+            model_id="fake-minimind",
+        ).to_payload()
+
+        self.assertEqual(trace["firstTokenMs"], 75)
+        self.assertEqual(trace["firstCandidateMs"], 220)
+        self.assertEqual(trace["threeCandidatesMs"], 220)
+        self.assertEqual(trace["branchMs"], 135)
+
     def test_latency_report_computes_p50_p95(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "latency.jsonl"

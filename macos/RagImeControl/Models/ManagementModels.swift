@@ -110,6 +110,84 @@ struct QueryLabResponse: Decodable {
     let error: String?
 }
 
+enum KnowledgeWorkbenchMode: String, CaseIterable, Identifiable {
+    case knowledgeAnswer = "knowledge_answer"
+    case longForm = "long_form"
+    case recall
+    case organizeDatabase = "organize_database"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .knowledgeAnswer: return "知识问答"
+        case .longForm: return "长文生成"
+        case .recall: return "帮我回忆"
+        case .organizeDatabase: return "整理数据库"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .knowledgeAnswer: return "text.magnifyingglass"
+        case .longForm: return "doc.text"
+        case .recall: return "clock.arrow.trianglehead.counterclockwise.rotate.90"
+        case .organizeDatabase: return "cylinder.split.1x2"
+        }
+    }
+
+    var maxChars: Double {
+        switch self {
+        case .knowledgeAnswer: return 2600
+        case .longForm: return 6000
+        case .recall: return 3200
+        case .organizeDatabase: return 1600
+        }
+    }
+}
+
+struct KnowledgeWorkbenchResponse: Decodable {
+    let schemaVersion: String
+    let ok: Bool
+    let sessionId: String?
+    let queryId: String?
+    let status: String
+    let stage: String?
+    let mode: String?
+    let generation: Int?
+    let contextHash: String?
+    let answer: String?
+    let localDraft: String?
+    let sources: [[String: JSONValue]]?
+    let evidence: [[String: JSONValue]]?
+    let notion: JSONValue?
+    let result: JSONValue?
+    let diagnostics: JSONValue?
+    let error: String?
+}
+
+struct KnowledgeRouteResponse: Decodable {
+    let schemaVersion: String
+    let deepseekReady: Bool
+    let notion: NotionRouteStatus
+}
+
+struct KnowledgeDatabaseActionResponse: Decodable {
+    let schemaVersion: String
+    let ok: Bool
+    let action: String?
+    let run: JSONValue?
+    let error: String?
+}
+
+struct NotionRouteStatus: Decodable {
+    let submitConfigured: Bool
+    let pollConfigured: Bool
+    let ready: Bool
+    let pollMode: String
+    let missing: [String]?
+}
+
 enum JSONValue: Codable, Equatable {
     case string(String)
     case number(Double)
@@ -160,6 +238,16 @@ enum JSONValue: Codable, Equatable {
     var numberValue: Double {
         if case .number(let value) = self { return value }
         return 0
+    }
+
+    var objectValue: [String: JSONValue] {
+        if case .object(let value) = self { return value }
+        return [:]
+    }
+
+    var arrayValue: [JSONValue] {
+        if case .array(let value) = self { return value }
+        return []
     }
 }
 

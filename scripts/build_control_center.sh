@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/macos/RagImeControl"
+SHARED="$ROOT/macos/Shared"
 APP="$ROOT/build/RagImeControl.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
@@ -14,12 +15,13 @@ mkdir -p "$MACOS" "$RESOURCES"
 cp "$SRC/Info.plist" "$CONTENTS/Info.plist"
 
 mapfile=()
-while IFS= read -r file; do mapfile+=("$file"); done < <(find "$SRC" -type f -name '*.swift' | sort)
+while IFS= read -r file; do mapfile+=("$file"); done < <(find "$SHARED" "$SRC" -type f -name '*.swift' | sort)
 
 xcrun swiftc \
   -O \
   -target arm64-apple-macosx13.0 \
   -framework AppKit \
+  -framework Security \
   -framework SwiftUI \
   "${mapfile[@]}" \
   -o "$MACOS/RagImeControl"
@@ -43,10 +45,9 @@ target.write_text(json.dumps({
 }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
-if [[ -f "$ROOT/build/RagImeMac.app/Contents/Resources/RagImeIcon.icns" ]]; then
-  cp "$ROOT/build/RagImeMac.app/Contents/Resources/RagImeIcon.icns" "$RESOURCES/RagImeIcon.icns"
-  /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string RagImeIcon' "$CONTENTS/Info.plist" 2>/dev/null || true
-fi
+"$ROOT/scripts/support/build_app_icon.sh" "$RESOURCES/RagImeIcon.icns"
+/usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string RagImeIcon' "$CONTENTS/Info.plist" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleIconFile RagImeIcon' "$CONTENTS/Info.plist"
 
 codesign --force --deep --sign - "$APP" >/dev/null
 bundle_id="$(defaults read "$CONTENTS/Info" CFBundleIdentifier)"

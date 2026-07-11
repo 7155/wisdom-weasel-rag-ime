@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "rag-ime.minimind-completion-dataset.v1",
+  "datasetId": "minimind-completion-v3-public",
+  "license": "CC0-1.0",
+  "language": "zh-CN",
+  "publicSafe": true,
+  "intendedUse": "contract-and-regression-seed",
+  "productionTrainingReady": false,
+  "task": "bare_suffix_completion",
+  "userModel": "single_user_continuous_typing",
+  "networkContract": {
+    "base": "MiniMind pretrain causal language model",
+    "tokenizer": "keep the checkpoint tokenizer fixed during an A/B experiment",
+    "input": "raw prefix tokens only",
+    "target": "new suffix tokens only",
+    "loss": "mask every prefix token; compute causal loss only on suffix tokens",
+    "chatTemplate": false,
+    "prompt": false,
+    "nativeCandidateCount": 1,
+    "runtimeCandidateStrategy": "shared prefill plus independent decode branches; rank and keep three"
+  },
+  "recordContract": {
+    "positiveFields": ["prefix", "completions"],
+    "completionsPerCase": 3,
+    "hardNegativesAreTargets": false,
+    "chainContinuation": "the next turn prefix equals prefix plus completions[0]"
+  },
+  "qualityGateContract": {
+    "evaluationStages": {
+      "production_candidate": "PredictionProvider output after provider-defined parsing and filtering",
+      "raw_model_output": "unparsed decode branches supplied by an explicit RawCompletionProvider or raw JSONL replay"
+    },
+    "lexicalReference": "character-sequence and bigram overlap diagnostic; not a semantic score",
+    "semanticJudgment": "explicit versioned local human-judgment fixture bound to this dataset fingerprint",
+    "implicitNetworkJudge": false,
+    "runtimeOutputRewrite": false,
+    "comparisonRequiresMatchingDatasetFingerprint": true
+  },
+  "reviewedBaselines": [
+    {
+      "checkpoint": "minimind-ime-v2-q8",
+      "evaluationStage": "production_candidate",
+      "humanJudgments": "baselines/minimind-ime-v2-q8-production-20260711.judgments.json"
+    },
+    {
+      "checkpoint": "minimind-ime-v2-q8",
+      "evaluationStage": "raw_model_output",
+      "decodeTemperature": 0.0,
+      "rawCapture": "baselines/minimind-ime-v2-q8-raw-20260711.jsonl",
+      "captureReport": "baselines/minimind-ime-v2-q8-raw-20260711.report.json",
+      "humanJudgments": "baselines/minimind-ime-v2-q8-raw-20260711.judgments.json",
+      "qualityReport": "baselines/minimind-ime-v2-q8-raw-20260711.quality.json"
+    }
+  ],
+  "splits": {
+    "train": "train.jsonl",
+    "val": "val.jsonl",
+    "test": "test.jsonl"
+  },
+  "splitPolicy": [
+    "chainId belongs to exactly one split",
+    "normalized prefix belongs to exactly one split",
+    "prefix plus completion target belongs to exactly one split",
+    "a hard negative never becomes a positive target for the same prefix"
+  ]
+}

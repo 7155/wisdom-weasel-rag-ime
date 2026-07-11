@@ -124,6 +124,7 @@ class QueryExpansionTests(unittest.TestCase):
                 created_at_ms=now_ms(),
                 source="manual",
                 committed_text=text,
+                privacy_disposition="allowed",
                 recent_context=recent_context,
                 project="wisdom-weasel-rag-ime",
                 tags=tags,

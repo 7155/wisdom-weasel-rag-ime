@@ -21,12 +21,23 @@ final class AppModel: ObservableObject {
     @Published var historyNextCursor = ""
     @Published var queryLabText = ""
     @Published var queryLabResult: QueryLabResponse?
+    @Published var knowledgeMode: KnowledgeWorkbenchMode = .knowledgeAnswer
+    @Published var knowledgeQuestion = ""
+    @Published var knowledgeContext = ""
+    @Published var knowledgeIncludeNotion = false
+    @Published var knowledgeResponse: KnowledgeWorkbenchResponse?
+    @Published var knowledgeRoute: KnowledgeRouteResponse?
+    @Published var knowledgeRunning = false
+    @Published var knowledgeDatabaseActionStatus = ""
+    @Published var lastRuntimeActionReport = ""
+    @Published var showingRuntimeActionReport = false
     @Published var errorMessage = ""
     @Published var showingError = false
 
     let api = ManagementAPIClient()
     private lazy var schemaClient = SettingsSchemaClient(api: api)
     private var eventTask: Task<Void, Never>?
+    private var knowledgeGeneration = 0
 
     func start() async {
         guard eventTask == nil else { return }
@@ -107,10 +118,14 @@ final class AppModel: ObservableObject {
         do {
             let response: MutationResponse = try await api.post("api/runtime/action", body: ["action": .string(action)])
             guard response.ok else { throw APIClientError.server(400, response.error ?? "操作未启动") }
+            guard let jobId = response.jobId, !jobId.isEmpty else {
+                throw APIClientError.server(500, "运行时操作没有返回 jobId")
+            }
+            try await waitForRuntimeJob(jobId, expectedAction: action)
             pendingApplyModes.removeAll()
-            try? await Task.sleep(for: .milliseconds(350))
             await refreshOverview()
         } catch {
+            await refreshOverview()
             present(error)
         }
     }
@@ -204,6 +219,102 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func loadKnowledgeRoute() async {
+        do {
+            let response: KnowledgeRouteResponse = try await api.get("api/knowledge/route-status")
+            knowledgeRoute = response
+        } catch {
+            knowledgeRoute = nil
+        }
+    }
+
+    func runKnowledgeWorkbench() async {
+        let question = knowledgeQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard knowledgeMode == .organizeDatabase || !question.isEmpty else { return }
+        knowledgeGeneration += 1
+        let generation = knowledgeGeneration
+        if knowledgeMode == .organizeDatabase { knowledgeDatabaseActionStatus = "" }
+        knowledgeRunning = true
+        defer {
+            if generation == knowledgeGeneration { knowledgeRunning = false }
+        }
+        do {
+            let started: KnowledgeWorkbenchResponse = try await api.post(
+                "api/knowledge/start",
+                body: [
+                    "question": .string(question),
+                    "context": .string(knowledgeContext.trimmingCharacters(in: .whitespacesAndNewlines)),
+                    "mode": .string(knowledgeMode.rawValue),
+                    "includeNotion": .bool(knowledgeIncludeNotion),
+                    "generation": .number(Double(generation)),
+                    "clientId": .string("native-control-center"),
+                    "project": .string("wisdom-weasel-rag-ime"),
+                    "app": .string("com.rag-ime.control"),
+                    "maxChars": .number(knowledgeMode.maxChars),
+                    "latencyBudgetMs": .number(180_000),
+                ]
+            )
+            knowledgeResponse = started
+            guard started.ok, let sessionId = started.sessionId, !sessionId.isEmpty else {
+                throw APIClientError.server(400, started.error ?? "知识任务未启动")
+            }
+            for _ in 0..<1_200 {
+                guard generation == knowledgeGeneration else { return }
+                let response: KnowledgeWorkbenchResponse = try await api.get(
+                    "api/knowledge/status",
+                    query: [URLQueryItem(name: "sessionId", value: sessionId)]
+                )
+                knowledgeResponse = response
+                if ["ready", "error", "cancelled", "blocked"].contains(response.status) {
+                    if response.status == "error" {
+                        throw APIClientError.server(500, response.error ?? "知识任务失败")
+                    }
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            throw APIClientError.server(504, "知识任务等待超时")
+        } catch is CancellationError {
+            return
+        } catch {
+            present(error)
+        }
+    }
+
+    func cancelKnowledgeWorkbench() async {
+        knowledgeGeneration += 1
+        knowledgeRunning = false
+        guard let sessionId = knowledgeResponse?.sessionId, !sessionId.isEmpty else { return }
+        do {
+            let response: KnowledgeWorkbenchResponse = try await api.post(
+                "api/knowledge/cancel",
+                body: ["sessionId": .string(sessionId)]
+            )
+            knowledgeResponse = response
+        } catch {
+            present(error)
+        }
+    }
+
+    func applyKnowledgeDatabasePlan(rollback: Bool = false) async {
+        guard let runId = knowledgeResponse?.result?.objectValue["plan"]?.objectValue["runId"]?.stringValue,
+              !runId.isEmpty else { return }
+        let action = rollback ? "rollback" : "apply"
+        do {
+            let response: KnowledgeDatabaseActionResponse = try await api.post(
+                "api/knowledge/database/\(action)",
+                body: ["runId": .string(runId), "confirm": .string(action)]
+            )
+            guard response.ok else {
+                throw APIClientError.server(400, response.error ?? "数据库草案操作失败")
+            }
+            knowledgeDatabaseActionStatus = response.run?.objectValue["status"]?.stringValue ?? action
+            await refreshOverview()
+        } catch {
+            present(error)
+        }
+    }
+
     func openAccessibilitySettings() async {
         await run(action: "open_accessibility_settings")
     }
@@ -212,16 +323,156 @@ final class AppModel: ObservableObject {
         switch destination {
         case .memory: await loadMemory()
         case .history: await loadHistory()
+        case .ragAndModels: await loadKnowledgeRoute()
         case .diagnostics:
             do { runtime = try await api.get("api/runtime/status") } catch { present(error) }
         default: break
         }
     }
 
+    private func waitForRuntimeJob(_ jobId: String, expectedAction: String) async throws {
+        for _ in 0..<400 {
+            let response: RuntimeJobEnvelope = try await api.get("api/runtime/job/\(jobId)")
+            guard response.ok, let job = response.job else {
+                throw APIClientError.server(404, response.error ?? "运行时任务不存在")
+            }
+            switch job.status {
+            case "succeeded":
+                return
+            case "queued", "running":
+                try await Task.sleep(for: .milliseconds(250))
+            case "external-supervisor-required":
+                if let serverAction = job.action, serverAction != expectedAction {
+                    throw APIClientError.server(409, "运行时任务 action 不匹配，拒绝执行外部命令")
+                }
+                let command = try externalCommand(job, action: expectedAction)
+                let result = try await ExternalRuntimeSupervisor.execute(action: expectedAction, command: command)
+                lastRuntimeActionReport = runtimeSupervisorReport(action: expectedAction, result: result)
+                guard result.succeeded else {
+                    throw APIClientError.server(
+                        result.timedOut ? 504 : 500,
+                        lastRuntimeActionReport
+                    )
+                }
+                try await waitForSidecarRecovery(jobId: jobId)
+                showingRuntimeActionReport = true
+                return
+            case "failed", "timed_out", "cancelled", "rejected":
+                throw APIClientError.server(500, runtimeJobErrorMessage(job))
+            default:
+                throw APIClientError.server(500, "运行时任务返回未知状态：\(job.status)")
+            }
+        }
+        throw APIClientError.server(504, "运行时任务等待超时，请查看诊断页")
+    }
+
+    private func waitForSidecarRecovery(jobId: String) async throws {
+        var lastFailure = "Sidecar 暂时不可连接"
+        for _ in 0..<100 {
+            let health: HealthEnvelope
+            do {
+                health = try await api.get("api/health")
+            } catch {
+                lastFailure = error.localizedDescription
+                try await Task.sleep(for: .milliseconds(250))
+                continue
+            }
+            guard health.ok else {
+                lastFailure = "Sidecar health 尚未恢复"
+                try await Task.sleep(for: .milliseconds(250))
+                continue
+            }
+
+            // Restarting Sidecar clears its in-memory job table. A missing old job is
+            // therefore expected once the new process reports healthy.
+            do {
+                let jobResponse: RuntimeJobEnvelope = try await api.get("api/runtime/job/\(jobId)")
+                guard jobResponse.ok, let recoveredJob = jobResponse.job else { return }
+                switch recoveredJob.status {
+                case "succeeded", "external-supervisor-required":
+                    return
+                case "queued", "running":
+                    lastFailure = "Sidecar 已恢复，但原任务仍未终止"
+                case "failed", "timed_out", "cancelled", "rejected":
+                    throw RuntimeRecoveryStateError.terminal(runtimeJobErrorMessage(recoveredJob))
+                default:
+                    throw RuntimeRecoveryStateError.terminal("恢复后的任务状态未知：\(recoveredJob.status)")
+                }
+            } catch RuntimeRecoveryStateError.terminal(let message) {
+                throw APIClientError.server(500, message)
+            } catch {
+                lastFailure = error.localizedDescription
+            }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        throw APIClientError.server(504, "外部命令已完成，但 Sidecar 未恢复：\(lastFailure)")
+    }
+
     private func present(_ error: Error) {
         errorMessage = error.localizedDescription
         showingError = true
     }
+}
+
+private struct RuntimeJobEnvelope: Decodable {
+    let ok: Bool
+    let error: String?
+    let job: RuntimeJobState?
+}
+
+private struct RuntimeJobState: Decodable {
+    let action: String?
+    let status: String
+    let error: String
+    let result: [String: JSONValue]
+}
+
+private struct HealthEnvelope: Decodable {
+    let ok: Bool
+}
+
+private enum RuntimeRecoveryStateError: Error {
+    case terminal(String)
+}
+
+private func externalCommand(_ job: RuntimeJobState, action: String) throws -> [String] {
+    guard case .array(let values)? = job.result["externalCommand"] else {
+        throw ExternalRuntimeSupervisorError.missingCommand(action)
+    }
+    var command: [String] = []
+    for value in values {
+        guard case .string(let argument) = value else {
+            throw ExternalRuntimeSupervisorError.rejectedCommand("externalCommand 必须是纯字符串数组")
+        }
+        command.append(argument)
+    }
+    guard !command.isEmpty else {
+        throw ExternalRuntimeSupervisorError.missingCommand(action)
+    }
+    return command
+}
+
+private func runtimeSupervisorReport(action: String, result: ExternalSupervisorExecutionResult) -> String {
+    var details = [
+        "action: \(action)",
+        "exitCode: \(result.exitCode)",
+        "command: \(result.command.joined(separator: " "))",
+    ]
+    if result.timedOut { details.append("timedOut: true") }
+    details.append("stdout:\n\(result.stdout.isEmpty ? "<empty>" : result.stdout)")
+    details.append("stderr:\n\(result.stderr.isEmpty ? "<empty>" : result.stderr)")
+    return details.joined(separator: "\n")
+}
+
+private func runtimeJobErrorMessage(_ job: RuntimeJobState) -> String {
+    var details: [String] = []
+    if !job.error.isEmpty { details.append(job.error) }
+    for key in ["code", "stderr", "stdout", "exitCode"] {
+        guard let value = job.result[key] else { continue }
+        let rendered = value.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !rendered.isEmpty { details.append("\(key): \(rendered)") }
+    }
+    return details.isEmpty ? "运行时任务失败（\(job.status)）" : details.joined(separator: "\n")
 }
 
 private func setting(_ root: JSONValue, key: String, value: JSONValue) -> JSONValue {

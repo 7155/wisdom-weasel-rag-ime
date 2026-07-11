@@ -1,0 +1,759 @@
+from __future__ import annotations
+
+import json
+import inspect
+import threading
+import time
+import urllib.error
+import urllib.request
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+from .deepseek_completion import _direct_deepseek_urlopen, _iter_model_deltas
+from .deepseek_config import DeepSeekConfig
+from .notion_knowledge import NotionAsyncKnowledgeClient, NotionKnowledgeError, NotionStaleResultError
+from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
+
+
+KNOWLEDGE_WORKBENCH_SCHEMA_VERSION = "rag-ime.knowledge-workbench.v1"
+KNOWLEDGE_MODES = {"long_form", "recall", "knowledge_answer", "organize_database"}
+
+
+class KnowledgeWorkbenchError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class KnowledgeWorkbenchRequest:
+    question: str
+    mode: str
+    context: str = ""
+    project: str = "wisdom-weasel-rag-ime"
+    app: str = "com.rag-ime.control"
+    include_notion: bool = False
+    generation: int = 1
+    context_hash: str = ""
+    client_id: str = "native-control-center"
+    max_chars: int = 2400
+    latency_budget_ms: int = 120_000
+
+
+@dataclass(frozen=True)
+class KnowledgeGenerationResult:
+    answer: str
+    elapsed_ms: int
+    model: str
+    prompt_diagnostics: dict[str, object]
+    first_token_ms: int = 0
+    chunk_count: int = 0
+
+
+@dataclass
+class KnowledgeWorkbenchSession:
+    session_id: str
+    query_id: str
+    request: KnowledgeWorkbenchRequest
+    status: str = "pending"
+    stage: str = "queued"
+    answer: str = ""
+    local_draft: str = ""
+    evidence: tuple[dict[str, object], ...] = ()
+    sources: list[dict[str, object]] = field(default_factory=list)
+    notion: dict[str, object] = field(default_factory=dict)
+    result: dict[str, object] = field(default_factory=dict)
+    diagnostics: dict[str, object] = field(default_factory=dict)
+    error: str = ""
+    cancelled: bool = False
+    created_at_ms: int = field(default_factory=now_ms)
+    updated_at_ms: int = field(default_factory=now_ms)
+
+
+EvidenceRetriever = Callable[[KnowledgeWorkbenchRequest], tuple[dict[str, object], ...]]
+DatabaseOrganizer = Callable[[KnowledgeWorkbenchRequest], dict[str, object]]
+
+
+class DeepSeekKnowledgeProvider:
+    def __init__(
+        self,
+        config: DeepSeekConfig,
+        *,
+        urlopen: Callable[..., Any] | None = None,
+    ):
+        self.config = config
+        self.urlopen = urlopen or _direct_deepseek_urlopen
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.config.api_key)
+
+    def generate(
+        self,
+        request: KnowledgeWorkbenchRequest,
+        *,
+        evidence: tuple[dict[str, object], ...],
+        notion_answer: str = "",
+        notion_sources: list[object] | None = None,
+        on_delta: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> KnowledgeGenerationResult:
+        if not self.config.api_key:
+            raise KnowledgeWorkbenchError("DeepSeek credentials are not configured")
+        messages = build_knowledge_workbench_messages(
+            request,
+            evidence=evidence,
+            notion_answer=notion_answer,
+            notion_sources=notion_sources or [],
+        )
+        max_tokens = max(512, min(4096, int(getattr(self.config, "knowledge_max_tokens", 4096) or 4096)))
+        body: dict[str, object] = {
+            "model": self.config.model,
+            "messages": messages,
+            "temperature": 0.25 if request.mode == "long_form" else 0.15,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if self.config.thinking:
+            body["thinking"] = {"type": self.config.thinking}
+        if self.config.reasoning_effort and self.config.thinking != "disabled":
+            body["reasoning_effort"] = self.config.reasoning_effort
+        started = time.perf_counter()
+        answer, first_token_ms, chunk_count = self._call_stream(
+            body,
+            timeout_ms=request.latency_budget_ms,
+            max_chars=max(400, min(8000, int(request.max_chars))),
+            on_delta=on_delta,
+            should_cancel=should_cancel,
+        )
+        answer = answer.strip()
+        if not answer:
+            raise KnowledgeWorkbenchError("DeepSeek knowledge response was empty")
+        answer = _truncate_preserving_layout(answer, max(400, min(8000, int(request.max_chars))))
+        diagnostics = {
+            "schemaVersion": "rag-ime.knowledge-prompt-diagnostics.v1",
+            "mode": request.mode,
+            "questionHash": stable_text_hash(request.question),
+            "questionChars": len(request.question),
+            "contextHash": request.context_hash,
+            "contextChars": len(request.context),
+            "localEvidenceCount": len(evidence),
+            "localEvidenceIds": [str(item.get("sourceId") or "") for item in evidence],
+            "notionIncluded": bool(notion_answer),
+            "notionSourceCount": len(notion_sources or []),
+            "stream": True,
+            "firstTokenMs": first_token_ms,
+            "chunkCount": chunk_count,
+            "success": bool(request.question and (evidence or request.context or notion_answer)),
+        }
+        return KnowledgeGenerationResult(
+            answer=answer,
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            model=self.config.model,
+            prompt_diagnostics=diagnostics,
+            first_token_ms=first_token_ms,
+            chunk_count=chunk_count,
+        )
+
+    def _call_stream(
+        self,
+        body: dict[str, object],
+        *,
+        timeout_ms: int,
+        max_chars: int,
+        on_delta: Callable[[str], None] | None,
+        should_cancel: Callable[[], bool] | None,
+    ) -> tuple[str, int, int]:
+        attempts = [body]
+        if "reasoning_effort" in body:
+            retry = dict(body)
+            retry.pop("reasoning_effort", None)
+            attempts.append(retry)
+        last_error: BaseException | None = None
+        for attempt in attempts:
+            content = ""
+            first_token_ms = 0
+            chunk_count = 0
+            started = time.perf_counter()
+            request = urllib.request.Request(
+                f"{self.config.api_base_url.rstrip('/')}/chat/completions",
+                data=json.dumps(attempt, ensure_ascii=False).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "User-Agent": "rag-ime/1.0 knowledge-workbench",
+                },
+                method="POST",
+            )
+            try:
+                with self.urlopen(
+                    request,
+                    timeout=max(1.0, min(self.config.request_timeout_seconds, timeout_ms / 1000)),
+                ) as response:
+                    for kind, delta in _iter_knowledge_deltas(response):
+                        if should_cancel is not None and should_cancel():
+                            break
+                        if kind != "content" or not delta:
+                            continue
+                        if first_token_ms == 0:
+                            first_token_ms = max(1, int((time.perf_counter() - started) * 1000))
+                        chunk_count += 1
+                        content += delta
+                        visible = _truncate_preserving_layout(content, max_chars)
+                        if on_delta is not None:
+                            on_delta(visible)
+                        if len(content) >= max_chars:
+                            content = visible
+                            break
+                if content:
+                    return content, first_token_ms, chunk_count
+                if should_cancel is not None and should_cancel():
+                    raise KnowledgeWorkbenchError("DeepSeek knowledge request cancelled")
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                try:
+                    exc.close()
+                except Exception:
+                    pass
+                continue
+            except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
+                last_error = exc
+                if content:
+                    return content, first_token_ms, chunk_count
+                break
+        raise KnowledgeWorkbenchError(f"DeepSeek knowledge request failed: {last_error}") from last_error
+
+
+class KnowledgeWorkbenchService:
+    def __init__(
+        self,
+        *,
+        evidence_retriever: EvidenceRetriever,
+        generator: DeepSeekKnowledgeProvider,
+        database_organizer: DatabaseOrganizer,
+        notion_client: NotionAsyncKnowledgeClient | None = None,
+    ):
+        self.evidence_retriever = evidence_retriever
+        self.generator = generator
+        self.database_organizer = database_organizer
+        self.notion_client = notion_client
+        self._lock = threading.RLock()
+        self._sessions: dict[str, KnowledgeWorkbenchSession] = {}
+
+    def route_status(self) -> dict[str, object]:
+        notion = self.notion_client.route_status() if self.notion_client is not None else {
+            "schemaVersion": "rag-ime.notion-route-status.v1",
+            "submitConfigured": False,
+            "pollConfigured": False,
+            "ready": False,
+            "pollMode": "none",
+            "missing": ["worker_url", "status_channel"],
+        }
+        return {
+            "schemaVersion": "rag-ime.knowledge-route-status.v1",
+            "deepseekReady": self.generator.ready,
+            "notion": notion,
+            "modes": sorted(KNOWLEDGE_MODES),
+            "streaming": {"knowledgeWorkbench": True, "activeRag": True},
+        }
+
+    def start(self, request: KnowledgeWorkbenchRequest) -> dict[str, object]:
+        normalized = _normalized_request(request)
+        _validate_request(normalized)
+        session = KnowledgeWorkbenchSession(
+            session_id=f"knowledge:{uuid.uuid4().hex[:16]}",
+            query_id=f"q-{uuid.uuid4().hex}",
+            request=normalized,
+            diagnostics={
+                "contextInjection": {
+                    "success": False,
+                    "contextHash": normalized.context_hash,
+                    "contextChars": len(normalized.context),
+                    "questionChars": len(normalized.question),
+                    "localEvidenceCount": 0,
+                    "notionIncluded": False,
+                }
+            },
+        )
+        with self._lock:
+            self._drop_stale_locked(normalized)
+            self._sessions[session.session_id] = session
+            while len(self._sessions) > 24:
+                self._sessions.pop(next(iter(self._sessions)))
+        threading.Thread(target=self._run, args=(session.session_id,), daemon=True).start()
+        return self.status(session.session_id)
+
+    def status(self, session_id: str) -> dict[str, object]:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return {
+                    "schemaVersion": KNOWLEDGE_WORKBENCH_SCHEMA_VERSION,
+                    "ok": False,
+                    "sessionId": session_id,
+                    "status": "missing",
+                    "error": "knowledge session not found",
+                }
+            return _session_payload(session)
+
+    def cancel(self, session_id: str) -> dict[str, object]:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return self.status(session_id)
+            session.cancelled = True
+            session.status = "cancelled"
+            session.stage = "cancelled"
+            session.updated_at_ms = now_ms()
+            return _session_payload(session)
+
+    def _run(self, session_id: str) -> None:
+        try:
+            session = self._session_or_raise(session_id)
+            if session.request.mode == "organize_database":
+                self._run_database_organizer(session)
+            else:
+                self._run_knowledge_query(session)
+        except Exception as exc:
+            with self._lock:
+                session = self._sessions.get(session_id)
+                if session is not None and not session.cancelled:
+                    session.status = "error"
+                    session.stage = "failed"
+                    session.error = compact_whitespace(str(exc))[:300] or type(exc).__name__
+                    session.updated_at_ms = now_ms()
+
+    def _run_database_organizer(self, session: KnowledgeWorkbenchSession) -> None:
+        self._update(session, status="running", stage="building_memory_bundle")
+        result = self.database_organizer(session.request)
+        if self._cancelled(session):
+            return
+        validation = result.get("validation") if isinstance(result.get("validation"), dict) else {}
+        plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
+        counts = validation.get("counts") if isinstance(validation.get("counts"), dict) else {}
+        summary = compact_whitespace(str(plan.get("summary") or ""))
+        answer = summary or "数据库整理草案已生成，等待人工审阅。"
+        if counts:
+            answer += "\n\n" + "；".join(f"{key}: {value}" for key, value in counts.items())
+        with self._lock:
+            if session.cancelled:
+                return
+            session.status = "ready" if bool(validation.get("ok")) else "error"
+            session.stage = "review_ready" if bool(validation.get("ok")) else "validation_failed"
+            session.answer = answer
+            session.result = result
+            session.error = "" if bool(validation.get("ok")) else "memory book plan failed validation"
+            session.updated_at_ms = now_ms()
+
+    def _run_knowledge_query(self, session: KnowledgeWorkbenchSession) -> None:
+        request = session.request
+        self._update(session, status="running", stage="retrieving_local")
+        evidence = self.evidence_retriever(request)
+        with self._lock:
+            if session.cancelled:
+                return
+            session.evidence = evidence
+            session.sources = _local_sources(evidence)
+            injection = dict(session.diagnostics.get("contextInjection") or {})
+            injection.update({"localEvidenceCount": len(evidence), "success": bool(evidence or request.context)})
+            session.diagnostics["contextInjection"] = injection
+            session.stage = "generating_local"
+            session.updated_at_ms = now_ms()
+
+        notion_poll = False
+        if request.include_notion:
+            notion_poll = self._submit_notion(session)
+        local_result = self._generate(
+            request,
+            evidence=evidence,
+            on_delta=lambda text: self._publish_stream(session, text, stage="streaming_local", local_draft=True),
+            should_cancel=lambda: self._cancelled(session),
+        )
+        with self._lock:
+            if session.cancelled:
+                return
+            session.answer = local_result.answer
+            session.local_draft = local_result.answer
+            session.status = "partial" if notion_poll else "ready"
+            session.stage = "notion_pending" if notion_poll else "complete"
+            session.diagnostics["model"] = {
+                "provider": "deepseek",
+                "model": local_result.model,
+                "elapsedMs": local_result.elapsed_ms,
+                "firstTokenMs": local_result.first_token_ms,
+                "chunkCount": local_result.chunk_count,
+                "stream": True,
+                "passes": 1,
+            }
+            session.diagnostics["prompt"] = local_result.prompt_diagnostics
+            session.updated_at_ms = now_ms()
+        if not notion_poll or self._cancelled(session):
+            return
+        self._complete_with_notion(session)
+
+    def _submit_notion(self, session: KnowledgeWorkbenchSession) -> bool:
+        client = self.notion_client
+        if client is None:
+            with self._lock:
+                session.notion = {"status": "not_configured", "error": "Notion client is not configured"}
+            return False
+        route = client.route_status()
+        if not route.get("submitConfigured"):
+            with self._lock:
+                session.notion = {"status": "not_configured", "routeStatus": route}
+            return False
+        try:
+            accepted = client.submit(
+                query_id=session.query_id,
+                question=session.request.question,
+                context=session.request.context,
+                context_hash=session.request.context_hash,
+                generation=session.request.generation,
+                project=session.request.project,
+                mode=session.request.mode,
+            )
+        except NotionKnowledgeError as exc:
+            with self._lock:
+                session.notion = {"status": "submit_failed", "error": compact_whitespace(str(exc))[:240], "routeStatus": route}
+            return False
+        with self._lock:
+            session.notion = {**accepted, "routeStatus": route}
+        return bool(route.get("pollConfigured"))
+
+    def _complete_with_notion(self, session: KnowledgeWorkbenchSession) -> None:
+        assert self.notion_client is not None
+        try:
+            notion_result = self.notion_client.poll(
+                query_id=session.query_id,
+                context_hash=session.request.context_hash,
+                generation=session.request.generation,
+                timeout_ms=session.request.latency_budget_ms,
+            )
+        except NotionStaleResultError as exc:
+            with self._lock:
+                session.notion = {"status": "stale_dropped", "error": str(exc)}
+                session.status = "ready"
+                session.stage = "complete_local_only"
+                session.updated_at_ms = now_ms()
+            return
+        except NotionKnowledgeError as exc:
+            with self._lock:
+                session.notion = {"status": "poll_failed", "error": compact_whitespace(str(exc))[:240]}
+                session.status = "ready"
+                session.stage = "complete_local_only"
+                session.updated_at_ms = now_ms()
+            return
+        if self._cancelled(session):
+            return
+        with self._lock:
+            session.notion = notion_result
+        if notion_result.get("status") != "done" or not compact_whitespace(str(notion_result.get("answer") or "")):
+            with self._lock:
+                session.status = "ready"
+                session.stage = "complete_local_only"
+                session.updated_at_ms = now_ms()
+            return
+        self._update(session, status="running", stage="merging_notion")
+        merged = self._generate(
+            session.request,
+            evidence=session.evidence,
+            notion_answer=str(notion_result.get("answer") or ""),
+            notion_sources=list(notion_result.get("sources") or []),
+            on_delta=lambda text: self._publish_stream(session, text, stage="streaming_merge", local_draft=False),
+            should_cancel=lambda: self._cancelled(session),
+        )
+        with self._lock:
+            if session.cancelled:
+                return
+            session.answer = merged.answer
+            session.sources = _merge_sources(session.sources, list(notion_result.get("sources") or []))
+            session.status = "ready"
+            session.stage = "complete"
+            model = dict(session.diagnostics.get("model") or {})
+            model.update(
+                {
+                    "elapsedMs": int(model.get("elapsedMs") or 0) + merged.elapsed_ms,
+                    "firstTokenMs": merged.first_token_ms,
+                    "chunkCount": int(model.get("chunkCount") or 0) + merged.chunk_count,
+                    "stream": True,
+                    "passes": 2,
+                }
+            )
+            session.diagnostics["model"] = model
+            session.diagnostics["prompt"] = merged.prompt_diagnostics
+            injection = dict(session.diagnostics.get("contextInjection") or {})
+            injection.update({"notionIncluded": True, "success": True})
+            session.diagnostics["contextInjection"] = injection
+            session.updated_at_ms = now_ms()
+
+    def _session_or_raise(self, session_id: str) -> KnowledgeWorkbenchSession:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                raise KnowledgeWorkbenchError("knowledge session not found")
+            return session
+
+    def _drop_stale_locked(self, request: KnowledgeWorkbenchRequest) -> None:
+        for session in self._sessions.values():
+            same_client = session.request.client_id == request.client_id
+            older = session.request.generation < request.generation
+            if same_client and older and session.status in {"pending", "running", "partial"}:
+                session.cancelled = True
+                session.status = "cancelled"
+                session.stage = "superseded"
+                session.error = "superseded_by_newer_generation"
+                session.updated_at_ms = now_ms()
+
+    def _update(self, session: KnowledgeWorkbenchSession, *, status: str, stage: str) -> None:
+        with self._lock:
+            if session.cancelled:
+                return
+            session.status = status
+            session.stage = stage
+            session.updated_at_ms = now_ms()
+
+    def _publish_stream(
+        self,
+        session: KnowledgeWorkbenchSession,
+        text: str,
+        *,
+        stage: str,
+        local_draft: bool,
+    ) -> None:
+        with self._lock:
+            if session.cancelled:
+                return
+            session.status = "running"
+            session.stage = stage
+            session.answer = text
+            if local_draft:
+                session.local_draft = text
+            session.updated_at_ms = now_ms()
+
+    def _generate(
+        self,
+        request: KnowledgeWorkbenchRequest,
+        *,
+        evidence: tuple[dict[str, object], ...],
+        notion_answer: str = "",
+        notion_sources: list[object] | None = None,
+        on_delta: Callable[[str], None],
+        should_cancel: Callable[[], bool],
+    ) -> KnowledgeGenerationResult:
+        method = self.generator.generate
+        parameters = inspect.signature(method).parameters
+        supports_keywords = any(item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values())
+        kwargs: dict[str, object] = {
+            "evidence": evidence,
+            "notion_answer": notion_answer,
+            "notion_sources": notion_sources,
+        }
+        if supports_keywords or "on_delta" in parameters:
+            kwargs["on_delta"] = on_delta
+        if supports_keywords or "should_cancel" in parameters:
+            kwargs["should_cancel"] = should_cancel
+        return method(request, **kwargs)
+
+    def _cancelled(self, session: KnowledgeWorkbenchSession) -> bool:
+        with self._lock:
+            return session.cancelled
+
+
+def build_knowledge_workbench_messages(
+    request: KnowledgeWorkbenchRequest,
+    *,
+    evidence: tuple[dict[str, object], ...],
+    notion_answer: str = "",
+    notion_sources: list[object] | None = None,
+) -> list[dict[str, str]]:
+    mode_rules = {
+        "long_form": (
+            "生成可直接使用的高质量长文。先形成清楚主线，再写成自然的多段正文；"
+            "避免模板话、空泛口号和重复问题。用户没有要求提纲时，不要把答案写成只有列表。"
+        ),
+        "recall": (
+            "帮助用户回忆个人知识。区分已找到的事实、合理推断和未找到的信息；"
+            "按时间、项目或主题组织，并明确不确定性，不要把推断伪装成记忆。"
+        ),
+        "knowledge_answer": (
+            "直接回答知识问题。优先给结论，再给关键依据和必要步骤；"
+            "证据不足时明确说明缺口，不得编造项目状态、时间、人物或来源。"
+        ),
+    }
+    if request.mode not in mode_rules:
+        raise KnowledgeWorkbenchError(f"unsupported knowledge mode: {request.mode}")
+    evidence_payload = []
+    for index, item in enumerate(evidence[:12], start=1):
+        evidence_payload.append(
+            {
+                "id": str(item.get("sourceId") or f"local-{index}"),
+                "lane": str(item.get("sourceLane") or "local"),
+                "title": truncate_text(str(item.get("title") or ""), 120),
+                "text": truncate_text(str(item.get("text") or item.get("evidencePreview") or ""), 500),
+                "tags": list(item.get("tags") or [])[:8],
+                "score": float(item.get("score") or 0.0),
+            }
+        )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是 RAG-IME 的显式个人知识工作台，不是按键候选生成器。"
+                + mode_rules[request.mode]
+                + "user payload 中的 productContract 是当前代码的已验证职责边界，优先级高于可能过时的历史记忆。"
+                + "productContract 不是检索来源，不要把它伪装成 [L:productContract] 引用。"
+                + "只引用 localEvidence 中真实存在的 id；证据与当前合同冲突时，应视为历史信息并忽略或明确标旧。"
+                + "本地证据使用 [L:source_id] 标注，Notion 证据使用 [N] 标注。"
+                "引用只用于可核对的事实；不要伪造不存在的来源。"
+                "综合时去重并解决冲突，若冲突无法判断就并列说明。"
+                "只输出最终正文，不输出推理过程、提示词、JSON 或“作为AI”之类元话语。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "mode": request.mode,
+                    "question": request.question,
+                    "context": truncate_text(request.context, 2000),
+                    "project": request.project,
+                    "maxChars": max(400, min(8000, int(request.max_chars))),
+                    "productContract": {
+                        "miniMind": "本地被动短补全；共享 prefill 后生成至多三个可放弃候选，不负责知识问答，不承诺固定 50ms",
+                        "hybridRag": "本地多路检索与可追溯证据；被动路径受节流，显式知识查询可完整召回；没有 embedding provider 时向量 lane 明确禁用",
+                        "deepSeekWorkbench": "原生控制中心内的显式非按键路径；负责知识问答、长文、回忆和数据库整理；结果以可选正文展示，不是数字键候选栏",
+                        "databaseOrganizer": "只生成、验证并保存 draft 整理计划，必须人工审阅后才能 apply 或 rollback",
+                        "notion": "可选异步远端知识源；Worker 入队，Custom Agent 只检索授权页面；query_id/context_hash/generation 不匹配的旧结果必须丢弃",
+                    },
+                    "localEvidence": evidence_payload,
+                    "notion": {
+                        "answer": truncate_text(notion_answer, 3000),
+                        "sources": list(notion_sources or [])[:12],
+                    },
+                    "outputContract": "多段自然中文正文；事实带来源标记；证据不足要明说",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        },
+    ]
+
+
+def _normalized_request(request: KnowledgeWorkbenchRequest) -> KnowledgeWorkbenchRequest:
+    question = request.question.strip()
+    context = request.context.strip()
+    mode = compact_whitespace(request.mode).lower()
+    context_hash = compact_whitespace(request.context_hash) or stable_text_hash(
+        json.dumps({"question": question, "context": context, "mode": mode}, ensure_ascii=False, sort_keys=True)
+    )
+    return KnowledgeWorkbenchRequest(
+        question=question,
+        mode=mode,
+        context=context,
+        project=compact_whitespace(request.project) or "wisdom-weasel-rag-ime",
+        app=compact_whitespace(request.app) or "com.rag-ime.control",
+        include_notion=bool(request.include_notion),
+        generation=max(0, int(request.generation)),
+        context_hash=context_hash,
+        client_id=compact_whitespace(request.client_id) or "native-control-center",
+        max_chars=max(400, min(8000, int(request.max_chars))),
+        latency_budget_ms=max(1000, min(300_000, int(request.latency_budget_ms))),
+    )
+
+
+def _validate_request(request: KnowledgeWorkbenchRequest) -> None:
+    if request.mode not in KNOWLEDGE_MODES:
+        raise ValueError(f"unsupported knowledge mode: {request.mode}")
+    if request.mode != "organize_database" and not request.question:
+        raise ValueError("question is required")
+
+
+def _session_payload(session: KnowledgeWorkbenchSession) -> dict[str, object]:
+    return {
+        "schemaVersion": KNOWLEDGE_WORKBENCH_SCHEMA_VERSION,
+        "ok": session.status not in {"error", "missing"},
+        "sessionId": session.session_id,
+        "queryId": session.query_id,
+        "status": session.status,
+        "stage": session.stage,
+        "mode": session.request.mode,
+        "generation": session.request.generation,
+        "contextHash": session.request.context_hash,
+        "answer": session.answer,
+        "localDraft": session.local_draft,
+        "sources": list(session.sources),
+        "evidence": list(session.evidence),
+        "notion": dict(session.notion),
+        "result": dict(session.result),
+        "diagnostics": dict(session.diagnostics),
+        "error": session.error,
+        "createdAtMs": session.created_at_ms,
+        "updatedAtMs": session.updated_at_ms,
+    }
+
+
+def _local_sources(evidence: tuple[dict[str, object], ...]) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(evidence, start=1):
+        source_id = compact_whitespace(str(item.get("sourceId") or f"local-{index}"))
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        result.append(
+            {
+                "id": source_id,
+                "kind": "local",
+                "lane": compact_whitespace(str(item.get("sourceLane") or "local")),
+                "title": compact_whitespace(str(item.get("title") or item.get("text") or ""))[:80],
+            }
+        )
+    return result
+
+
+def _merge_sources(local: list[dict[str, object]], notion: list[object]) -> list[dict[str, object]]:
+    result = list(local)
+    seen = {str(item.get("id") or item.get("url") or item.get("title") or "") for item in local}
+    for index, raw in enumerate(notion, start=1):
+        item = dict(raw) if isinstance(raw, dict) else {"title": str(raw)}
+        key = compact_whitespace(str(item.get("id") or item.get("url") or item.get("title") or f"notion-{index}"))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append({"id": key, "kind": "notion", **item})
+    return result
+
+
+def _chat_completion_text(payload: dict[str, object]) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    message = first.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), str):
+        return str(message["content"])
+    return str(first.get("text") or "")
+
+
+def _iter_knowledge_deltas(response):
+    try:
+        iter(response)
+    except TypeError:
+        raw = response.read()
+        text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+        payload = json.loads(text)
+        if not isinstance(payload, dict):
+            raise KnowledgeWorkbenchError("DeepSeek knowledge response must be a JSON object")
+        content = _chat_completion_text(payload)
+        if content:
+            yield ("content", content)
+        return
+    yield from _iter_model_deltas(response)
+
+
+def _truncate_preserving_layout(text: str, max_chars: int) -> str:
+    value = text.strip()
+    if len(value) <= max_chars:
+        return value
+    return value[: max(1, max_chars - 1)].rstrip() + "…"

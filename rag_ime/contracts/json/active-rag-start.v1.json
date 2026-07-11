@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.active-rag-start.v1",
+  "type": "object",
+  "properties": {
+    "selectedText": {"type": "string"},
+    "selected_text": {"type": "string"},
+    "selectedTextHash": {"type": "string"},
+    "selected_text_hash": {"type": "string"},
+    "privacyDisposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
+    "sensitiveField": {"type": "boolean"},
+    "secureInput": {"type": "boolean"},
+    "isPasswordField": {"type": "boolean"},
+    "credentialField": {"type": "boolean"},
+    "app": {"type": "string"},
+    "frontAppBundleId": {"type": "string"}
+  },
+  "additionalProperties": true
+}

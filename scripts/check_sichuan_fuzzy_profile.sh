@@ -22,6 +22,7 @@ EXPECTED = {
     "s_sh": ["derive/^sh/s/", "derive/^s/sh/"],
     "en_eng": ["derive/eng$/en/", "derive/en$/eng/"],
     "in_ing": ["derive/ing$/in/", "derive/in$/ing/"],
+    "ong_on": ["derive/ong$/on/"],
 }
 FORBIDDEN = {
     "n_l": ["derive/^n/l/", "derive/^l/n/"],

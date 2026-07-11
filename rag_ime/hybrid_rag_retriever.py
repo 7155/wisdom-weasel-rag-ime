@@ -30,6 +30,8 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
     )
     docs = _active_docs(conn, query=query)
     blocked = _blocked_sets(conn)
+    enabled_lanes = _resolved_lane_enabled(query.enabled_lanes)
+    lane_weights = _resolved_lane_weights(query.lane_weights)
     lane_hits: dict[str, list[HybridRagHit]] = {
         "bm25_raw": _rank_docs(
             docs,
@@ -38,7 +40,7 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             fields=("raw_text",),
             blocked=blocked,
             limit=max(8, query.top_k * 4),
-        ),
+        ) if enabled_lanes["bm25_raw"] else [],
         "bm25_tags": _rank_docs(
             docs,
             lane="bm25_tags",
@@ -46,7 +48,10 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             fields=("tags_text", "aliases_text", "surface_hints_text", "query_expansions_text"),
             blocked=blocked,
             limit=max(8, query.top_k * 4),
-        ),
+        ) if enabled_lanes["bm25_tags"] else [],
+        # These lanes stay explicitly unavailable until this retriever receives
+        # an embedding provider. EffectiveRuntimeConfig clamps them off instead
+        # of pretending that an empty list is a successful vector search.
         "vector_raw": [],
         "vector_tag_boost": [],
         "tagmemo": _rank_docs(
@@ -56,9 +61,22 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             fields=("tags_text", "aliases_text", "query_expansions_text"),
             blocked=blocked,
             limit=max(8, query.top_k * 4),
+        ) if enabled_lanes["tagmemo"] else [],
+        "time": (
+            _rank_time_docs(
+                docs,
+                expansion_terms=(*expansion.expansion_terms, *expansion.activated_tags),
+                blocked=blocked,
+                limit=max(8, query.top_k * 4),
+            )
+            if enabled_lanes["time"]
+            else []
         ),
-        "time": _rank_time_docs(docs, expansion_terms=(*expansion.expansion_terms, *expansion.activated_tags), blocked=blocked, limit=max(8, query.top_k * 4)),
-        "feedback": _feedback_hits(conn, docs=docs, query=query, blocked=blocked, limit=max(8, query.top_k * 4)),
+        "feedback": (
+            _feedback_hits(conn, docs=docs, query=query, blocked=blocked, limit=max(8, query.top_k * 4))
+            if enabled_lanes["feedback"]
+            else []
+        ),
     }
     hits = [hit for lane in lane_hits.values() for hit in lane]
     candidates = rank_hybrid_hits(
@@ -66,6 +84,7 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
         query_text=query.query_text,
         committed_tail=query.committed_tail,
         top_k=query.top_k,
+        lane_weights=lane_weights,
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {
@@ -79,7 +98,25 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
             "expansionTerms": list(expansion.expansion_terms),
         },
         "lanes": {
-            name: {"count": len(values), "docIds": [hit.doc_id for hit in values[:5]]}
+            name: {
+                "enabled": enabled_lanes[name],
+                "available": name not in {"vector_raw", "vector_tag_boost"},
+                "implementation": (
+                    "lexical_substring_fallback"
+                    if name in {"bm25_raw", "bm25_tags"}
+                    else ("not_wired" if name in {"vector_raw", "vector_tag_boost"} else "native")
+                ),
+                "lexicalFallback": name in {"bm25_raw", "bm25_tags"},
+                "fts5Bm25": False,
+                "skippedReason": (
+                    "embedding_provider_not_wired"
+                    if name in {"vector_raw", "vector_tag_boost"}
+                    else ("disabled_by_effective_runtime_config" if not enabled_lanes[name] else "")
+                ),
+                "weight": lane_weights[name],
+                "count": len(values),
+                "docIds": [hit.doc_id for hit in values[:5]],
+            }
             for name, values in lane_hits.items()
         },
         "elapsedMs": elapsed_ms,
@@ -87,6 +124,30 @@ def retrieve_hybrid_rag_candidates(conn: sqlite3.Connection, query: HybridRagQue
         "hits": [hit.__dict__ for hit in hits],
         "candidates": [candidate.__dict__ for candidate in candidates],
     }
+
+
+_DEFAULT_LANE_WEIGHTS = {
+    "bm25_raw": 1.00,
+    "bm25_tags": 1.15,
+    "vector_raw": 0.95,
+    "vector_tag_boost": 1.05,
+    "tagmemo": 1.10,
+    "time": 0.90,
+    "feedback": 1.20,
+}
+
+
+def _resolved_lane_enabled(values: tuple[tuple[str, bool], ...]) -> dict[str, bool]:
+    configured = {str(key): bool(value) for key, value in values}
+    resolved = {lane: configured.get(lane, True) for lane in _DEFAULT_LANE_WEIGHTS}
+    resolved["vector_raw"] = False
+    resolved["vector_tag_boost"] = False
+    return resolved
+
+
+def _resolved_lane_weights(values: tuple[tuple[str, float], ...]) -> dict[str, float]:
+    configured = {str(key): max(0.0, float(value)) for key, value in values}
+    return {lane: configured.get(lane, default) for lane, default in _DEFAULT_LANE_WEIGHTS.items()}
 
 
 def retrieve_hybrid_rag_candidate_objects(conn: sqlite3.Connection, query: HybridRagQuery) -> list[HybridRagCandidate]:

@@ -252,6 +252,16 @@ def optimize_suggestions_if_enabled(
             "contextFrame": asdict(context) if config.trace_enabled else {},
             "queryPlan": asdict(plan) if config.trace_enabled else {},
         }
+    if not suggestions and not config.trace_enabled:
+        return [], {
+            "enabled": True,
+            "traceEnabled": config.trace_enabled,
+            "maxMs": config.max_ms,
+            "skippedReason": "no_suggestions",
+            "latencyMs": 0.0,
+            "contextFrame": asdict(context) if config.trace_enabled else {},
+            "queryPlan": asdict(plan) if config.trace_enabled else {},
+        }
     raw_hits = _raw_hits_from_suggestions(suggestions)
     optimizer_callable = getattr(core, "optimize_memory_candidates", None) if core is not None else None
     try:

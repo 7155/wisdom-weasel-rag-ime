@@ -39,6 +39,18 @@ class ModelProfile:
 
 DEFAULT_MODEL_PROFILES: tuple[ModelProfile, ...] = (
     ModelProfile(
+        id="minimind_ime_v2",
+        lane="hot",
+        model_path="~/Library/Application Support/RagIme/Models/minimind-ime-v2",
+        max_tokens=8,
+        target_candidates=3,
+        latency_budget_ms=900,
+        resident=True,
+        prefix_cache=False,
+        sequence_fork=False,
+        append_only=True,
+    ),
+    ModelProfile(
         id="qwen3_06b_ime_hot",
         lane="hot",
         model_path="mlx-community/Qwen3-0.6B-4bit",
@@ -83,12 +95,14 @@ def profile_by_id(profile_id: str) -> ModelProfile:
     for profile in DEFAULT_MODEL_PROFILES:
         if profile.id == normalized:
             return profile
-    if normalized in {"ime_hot", "instant", "hot"}:
+    if normalized in {"minimind", "minimind_v2", "base_completion"}:
         return DEFAULT_MODEL_PROFILES[0]
+    if normalized in {"ime_hot", "instant", "hot", "qwen_hot"}:
+        return next(item for item in DEFAULT_MODEL_PROFILES if item.id == "qwen3_06b_ime_hot")
     if normalized in {"ime_post_commit", "main", "post_commit"}:
-        return DEFAULT_MODEL_PROFILES[1]
+        return next(item for item in DEFAULT_MODEL_PROFILES if item.lane == "main")
     if normalized in {"ime_quality", "quality"}:
-        return DEFAULT_MODEL_PROFILES[2]
+        return next(item for item in DEFAULT_MODEL_PROFILES if item.lane == "quality")
     return DEFAULT_MODEL_PROFILES[0]
 
 

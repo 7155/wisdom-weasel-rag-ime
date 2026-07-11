@@ -6,6 +6,7 @@ import hashlib
 import json
 import plistlib
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -17,14 +18,24 @@ def main() -> int:
     parser.add_argument("--user-dir", default=str(Path.home() / "Library/Input Methods"))
     parser.add_argument("--bundle-id", default="im.rime.inputmethod.Squirrel")
     parser.add_argument("--report-path", default="")
+    parser.add_argument(
+        "--preinstall",
+        action="store_true",
+        help="Allow the canonical target to be missing or stale, but fail on every same-bundle app at another path.",
+    )
     args = parser.parse_args()
 
     canonical = Path(args.canonical_app).expanduser().resolve()
     candidates: list[dict[str, Any]] = []
+    seen_paths: set[Path] = set()
     for directory in (Path(args.user_dir).expanduser(), Path(args.system_dir).expanduser()):
         if not directory.is_dir():
             continue
         for app in sorted(directory.glob("*.app")):
+            resolved_app = app.resolve()
+            if resolved_app in seen_paths:
+                continue
+            seen_paths.add(resolved_app)
             info = inspect_app(app)
             if info.get("bundleId") == args.bundle_id:
                 info["canonical"] = app.resolve() == canonical
@@ -32,15 +43,21 @@ def main() -> int:
 
     canonical_entries = [item for item in candidates if item.get("canonical")]
     errors: list[str] = []
-    if len(canonical_entries) != 1:
-        errors.append(f"canonical bundle count is {len(canonical_entries)}, expected 1")
-    if len(candidates) != 1:
-        errors.append(f"same-bundle Squirrel count is {len(candidates)}, expected 1")
-    if canonical_entries and not canonical_entries[0].get("patchedMarkers"):
-        errors.append("canonical bundle lacks current RAG-IME markers")
+    if args.preinstall:
+        conflicts = [item for item in candidates if not item.get("canonical")]
+        if conflicts:
+            errors.append(f"preinstall same-bundle conflict count is {len(conflicts)}, expected 0")
+    else:
+        if len(canonical_entries) != 1:
+            errors.append(f"canonical bundle count is {len(canonical_entries)}, expected 1")
+        if len(candidates) != 1:
+            errors.append(f"same-bundle Squirrel count is {len(candidates)}, expected 1")
+        if canonical_entries and not canonical_entries[0].get("patchedMarkers"):
+            errors.append("canonical bundle lacks current RAG-IME markers")
 
     report = {
         "schemaVersion": "rag-ime.canonical-squirrel-audit.v1",
+        "mode": "preinstall" if args.preinstall else "installed",
         "ok": not errors,
         "bundleId": args.bundle_id,
         "canonicalApp": str(canonical),
@@ -54,6 +71,8 @@ def main() -> int:
         path = Path(args.report_path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(rendered, encoding="utf-8")
+    for error in errors:
+        print(f"[ERROR] {error}", file=sys.stderr)
     print(rendered, end="")
     return 0 if report["ok"] else 1
 

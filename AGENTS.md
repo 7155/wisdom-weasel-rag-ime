@@ -6,7 +6,8 @@ This repository is being prepared for public inspection at
 ## Product Boundary
 
 - Product route: patched macOS Squirrel/Rime plus the local Python sidecar.
-- Debug-only route: `macos/RagImeMac`; do not treat it as the shipping IME.
+- Do not reintroduce an independent InputMethodKit frontend; use the patched
+  Squirrel sources and engine-neutral frontend contracts as the single route.
 - Base IME responsibility stays with Rime/Wanxiang: pinyin parsing, fuzzy pinyin,
   dictionary candidates, paging, and fallback.
 - RAG-IME adds side candidates from local model prediction and local

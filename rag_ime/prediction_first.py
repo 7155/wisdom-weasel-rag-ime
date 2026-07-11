@@ -632,9 +632,11 @@ def _candidate_from_suggestion(suggestion: InputSuggestion, index: int) -> Predi
 
 def _candidate_from_model(prediction: ModelPrediction, index: int) -> PredictionCandidate:
     metadata = dict(prediction.metadata)
+    insert_text = str(metadata.get("insert_text") or prediction.text)
+    display_text = compact_whitespace(prediction.text).lstrip(",，。！？；;、 ")
     return PredictionCandidate(
-        display_text=prediction.text,
-        insert_text=str(metadata.get("insert_text") or prediction.text),
+        display_text=display_text,
+        insert_text=insert_text,
         source_type="model",
         source_index=prediction.rank - 1 if prediction.rank > 0 else index,
         score=1.0 + prediction.confidence - (index * 0.001),

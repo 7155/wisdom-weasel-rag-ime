@@ -147,6 +147,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
                 app="codex",
                 source="codex_history",
                 tags=tags,
+                privacy_disposition="allowed",
             )
 
         for text in BAD_CANDIDATE_FRAGMENTS:
@@ -157,6 +158,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
                 app="codex",
                 source="codex_history",
                 tags=("runtime-noise",),
+                privacy_disposition="allowed",
             )
 
         frequent_id = self.adapter.commit_text(
@@ -166,6 +168,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
             app="codex",
             source="codex_history",
             tags=("frequency", "quality"),
+            privacy_disposition="allowed",
         )
         suggestion = self.adapter.suggest(SuggestionRequest(current_input="Codex 用户输入 质量测试", top_k=1))[0]
         if str(suggestion.metadata.get("memory_id")) == frequent_id:
@@ -246,6 +249,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
             payload={
                 "sessionId": "raw-code",
                 "requestSeq": 7,
+                "privacyDisposition": "allowed",
                 "rawInput": "git status",
                 "preedit": "git status",
                 "committedContext": "用户正在输入 shell 命令和路径, 需要保护原文提交。",
@@ -285,6 +289,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
                 payload={
                     "sessionId": "source-distribution",
                     "requestSeq": 11,
+                    "privacyDisposition": "allowed",
                     "rawInput": "ragshurufa",
                     "preedit": "ragshurufa",
                     "committedContext": "RAG 输入法 候选可选性 LLM 来源 本地记忆",
@@ -335,6 +340,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
             payload={
                 "sessionId": "prediction-first-source-distribution",
                 "requestSeq": 12,
+                "privacyDisposition": "allowed",
                 "commitTextPreview": "RAG 输入法 LLM 记忆 embedding",
                 "committedContext": "我正在实现 Prediction-first RAG 输入法, 需要 LLM RAG memory 都成功。",
                 "predictionFirstMerge": True,

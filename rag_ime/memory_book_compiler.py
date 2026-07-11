@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import sqlite3
@@ -7,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .db import apply_database_migrations
 from .deepseek_memory_organizer import MEMORY_BOOK_COMPILE_SCHEMA_VERSION
 from .memory_ingest import normalize_text, upsert_memory_item
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
@@ -18,8 +20,37 @@ MEMORY_BOOK_VALIDATE_SCHEMA_VERSION = "rag-ime.memory-book-validate.v1"
 MEMORY_BOOK_APPLY_SCHEMA_VERSION = "rag-ime.memory-book-apply.v1"
 MEMORY_BOOK_ROLLBACK_SCHEMA_VERSION = "rag-ime.memory-book-rollback.v1"
 
-_SECRET_RE = re.compile(r"(password|token|api[_ -]?key|bearer|sk-[A-Za-z0-9]{8,}|secret|验证码|身份证|手机号)", re.IGNORECASE)
-_PATH_RE = re.compile(r"(?:(?:/Users|/Volumes)/[^\s\"']+)")
+_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----.*?-----END(?: [A-Z0-9]+)? PRIVATE KEY-----",
+    re.IGNORECASE | re.DOTALL,
+)
+_URL_SECRET_QUERY_RE = re.compile(
+    r"(?P<separator>[?&])"
+    r"(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|apikey|secret|password|passwd|credential|auth)"
+    r"=[^&#\s]*",
+    re.IGNORECASE,
+)
+_CREDENTIAL_ASSIGNMENT_RE = re.compile(
+    r"(?<![A-Za-z0-9_])"
+    r"(?:password|passwd|token|api[_ -]?key|secret|credential|authorization)\s*[:=]\s*"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\s,;，；]+)",
+    re.IGNORECASE,
+)
+_SECRET_RE = re.compile(
+    r"(?<!REDACTED_)(password|token|api[_ -]?key|bearer|sk-[A-Za-z0-9_-]{8,}|secret|验证码|身份证|手机号)",
+    re.IGNORECASE,
+)
+_PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
+_IDENTITY_RE = re.compile(r"(?<!\d)[1-9]\d{16}[0-9Xx](?![0-9Xx])")
+_PAYMENT_CARD_RE = re.compile(r"(?<!\d)(?:\d[ -]?){11,18}\d(?!\d)")
+_IPV4_CANDIDATE_RE = re.compile(r"(?<![0-9A-Za-z_.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9A-Za-z_.])")
+_IPV6_CANDIDATE_RE = re.compile(
+    r"(?<![0-9A-Fa-f:])(?=[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:)(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])"
+)
+_PATH_RE = re.compile(
+    r"(?:(?:/(?:Users|Volumes|home)/|~/)[^\s\"']+|(?:[A-Za-z]:\\(?:Users\\)?|\\\\[^\\\s]+\\[^\\\s]+\\)[^\s\"']+)",
+    re.IGNORECASE,
+)
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 
 
@@ -48,12 +79,24 @@ def build_memory_book_source_bundle(
         (cursor, cutoff_ms, project, project, max(1, int(limit))),
     ).fetchall()
     events: list[dict[str, object]] = []
-    redaction_stats = {"secret": 0, "path": 0, "email": 0}
+    redaction_stats = _empty_redaction_counts()
     for row in rows:
         text, text_counts = _sanitize_text(str(row["committed_text"] or ""), max_chars=220)
         recent, recent_counts = _sanitize_text(str(row["recent_context"] or ""), max_chars=220)
+        app, app_counts = _sanitize_text(str(row["app"] or ""), max_chars=120)
+        event_project, project_counts = _sanitize_text(str(row["project"] or ""), max_chars=120)
+        tags: list[str] = []
+        tag_counts = _empty_redaction_counts()
+        for tag in _json_list(row["tags_json"]):
+            sanitized_tag, counts = _sanitize_text(tag, max_chars=48)
+            _merge_counts(tag_counts, counts)
+            if sanitized_tag:
+                tags.append(sanitized_tag)
         _merge_counts(redaction_stats, text_counts)
         _merge_counts(redaction_stats, recent_counts)
+        _merge_counts(redaction_stats, app_counts)
+        _merge_counts(redaction_stats, project_counts)
+        _merge_counts(redaction_stats, tag_counts)
         events.append(
             {
                 "eventId": int(row["id"]),
@@ -61,9 +104,9 @@ def build_memory_book_source_bundle(
                 "source": str(row["source"] or ""),
                 "text": text,
                 "recentContext": recent,
-                "app": str(row["app"] or ""),
-                "project": str(row["project"] or ""),
-                "tags": _json_list(row["tags_json"]),
+                "app": app,
+                "project": event_project,
+                "tags": tags,
                 "contextGroupId": str(row["context_group_id"] or ""),
                 "contextGroupLevel": str(row["context_group_level"] or "app"),
             }
@@ -390,14 +433,20 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
             _validate_required_text(errors, index, op, payload, "bookKey")
             _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
             _validate_short_terms(errors, index, op, "surfaceHints", payload.get("surfaceHints"), max_len=16)
-            _validate_secret_free(errors, index, op, payload, ("title", "summary", "surfaceHints", "queryExpansions"))
+            _validate_secret_free(errors, index, op, payload, ("title", "summary", "tags", "surfaceHints", "queryExpansions"))
         elif op == "upsert_memory_atom":
             counts["memoryAtoms"] += 1
             _validate_required_text(errors, index, op, payload, "atomId")
             _validate_required_text(errors, index, op, payload, "canonicalText")
             _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
             _validate_short_terms(errors, index, op, "surfaceHints", payload.get("surfaceHints"), max_len=16)
-            _validate_secret_free(errors, index, op, payload, ("canonicalText", "summary", "aliases", "surfaceHints", "queryExpansions"))
+            _validate_secret_free(
+                errors,
+                index,
+                op,
+                payload,
+                ("canonicalText", "summary", "tags", "aliases", "surfaceHints", "queryExpansions"),
+            )
             if bool(payload.get("directCandidateAllowed")):
                 errors.append(_issue(index, op, "directCandidateAllowed", "canonical_text_must_not_be_direct_candidate"))
         elif op == "upsert_tag_edge":
@@ -481,6 +530,49 @@ def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
             )
         _sync_run_status(conn, run_id)
         _advance_compile_state(conn, plan=plan)
+    return memory_book_run_payload(conn, run_id=run_id)
+
+
+def store_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) -> dict[str, object]:
+    """Persist a validated compiler plan as a draft without changing user memory."""
+    validation = inspect_memory_book_plan(plan)
+    if not validation.get("ok"):
+        raise ValueError("memory book plan failed validation")
+    run_id = compact_whitespace(str(plan.get("runId") or ""))
+    if not run_id:
+        raise ValueError("memory book runId is required")
+    with conn:
+        _persist_memory_book_run(conn, plan)
+    return memory_book_run_payload(conn, run_id=run_id)
+
+
+def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> dict[str, object]:
+    """Apply a previously reviewed draft run without regenerating it."""
+    current = memory_book_run_payload(conn, run_id=run_id)
+    if not current.get("provider"):
+        raise ValueError(f"memory book run not found: {run_id}")
+    with conn:
+        rows = conn.execute(
+            """
+            SELECT id, op, target_memory_id, payload_json
+            FROM memory_cleanup_diffs
+            WHERE run_id = ? AND status IN ('pending', 'approved')
+            ORDER BY id ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        for row in rows:
+            rollback = _apply_memory_book_diff(conn, row=row)
+            conn.execute(
+                """
+                UPDATE memory_cleanup_diffs
+                SET status = 'applied', applied_at_ms = ?, rollback_json = ?
+                WHERE id = ?
+                """,
+                (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
+            )
+        _sync_run_status(conn, run_id)
+        _advance_compile_state(conn, plan={"metadata": dict(current.get("metadata") or {})})
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -908,11 +1000,13 @@ def _synthesize_daily_book_diff_from_diffs(
         "bookId": book_id,
         "bookType": "daily",
         "bookKey": book_key,
-        "title": "RAG 输入法真实历史整理摘要",
-        "summary": f"本轮从真实 Codex 历史整理出 {len(atom_payloads)} 个记忆原子和若干短候选，用于输入法 RAG 展示和评测。",
-        "tags": _unique_strings(tags or ["RAG", "输入法", "Memory Book"], limit=8),
-        "surfaceHints": unique_hints[:3] or ["历史整理", "流式候选", "真实链路"],
-        "queryExpansions": ["RAG 输入法", "DeepSeek 整理", "Memory Book"],
+        "title": f"本地记忆归档 {book_key}",
+        "summary": (
+            f"按来源事件归档 {len(source_ids)} 条记录，保留 {len(atom_payloads)} 个去重记忆项。"
+        ),
+        "tags": _unique_strings(tags, limit=8),
+        "surfaceHints": unique_hints[:3],
+        "queryExpansions": [],
         "sourceEventIds": source_ids[:10],
         "memoryAtomIds": atom_ids,
         "project": project,
@@ -924,155 +1018,81 @@ def _synthesize_daily_book_diff_from_diffs(
     return {"op": "upsert_memory_book", "targetId": book_id, "payload": payload, "status": "pending"}
 
 
-def _fallback_compile_output_from_source_bundle(source_bundle: dict[str, object], *, project: str) -> dict[str, object]:
-    events = [event for event in _source_event_records(source_bundle) if _fallback_event_is_safe(str(event.get("text") or ""))]
+def _fallback_compile_output_from_source_bundle(
+    source_bundle: dict[str, object],
+    *,
+    project: str,
+) -> dict[str, object]:
+    events = [
+        event
+        for event in _source_event_records(source_bundle)
+        if _fallback_event_is_safe(str(event.get("text") or ""))
+    ]
     atoms: dict[str, dict[str, object]] = {}
     phrases: dict[str, dict[str, object]] = {}
-    edges: dict[str, dict[str, object]] = {}
-
-    def add_atom(
-        atom_id: str,
-        *,
-        canonical: str,
-        summary: str,
-        tags: list[str],
-        aliases: list[str],
-        hints: list[str],
-        phrase_terms: list[str],
-        source_event_id: int,
-    ) -> None:
-        payload = atoms.setdefault(
-            atom_id,
-            {
-                "atomId": atom_id,
-                "kind": "project_fact",
-                "canonicalText": canonical,
-                "summary": summary,
-                "tags": tags,
-                "aliases": aliases,
-                "surfaceHints": hints,
-                "queryExpansions": aliases,
-                "sourceEventIds": [],
-                "directCandidateAllowed": False,
-                "project": project,
-                "confidence": 0.62,
-                "qualityScore": 0.62,
-            },
-        )
-        source_ids = _positive_ints(payload.get("sourceEventIds"))
-        if source_event_id not in source_ids:
-            source_ids.append(source_event_id)
-            payload["sourceEventIds"] = source_ids[:6]
-        for term in phrase_terms:
-            if 2 <= len(term) <= 16:
-                phrase = phrases.setdefault(
-                    term,
-                    {
-                        "text": term,
-                        "tags": tags[:3],
-                        "sourceEventIds": [],
-                        "weight": 0.62,
-                        "project": project,
-                    },
-                )
-                phrase_ids = _positive_ints(phrase.get("sourceEventIds"))
-                if source_event_id not in phrase_ids:
-                    phrase_ids.append(source_event_id)
-                    phrase["sourceEventIds"] = phrase_ids[:6]
-
-    def add_edge(src: str, dst: str, edge_type: str, source_event_id: int) -> None:
-        key = f"{src}->{dst}:{edge_type}"
-        payload = edges.setdefault(
-            key,
-            {
-                "src": src,
-                "dst": dst,
-                "edgeType": edge_type,
-                "weight": 0.58,
-                "evidenceEventIds": [],
-            },
-        )
-        evidence_ids = _positive_ints(payload.get("evidenceEventIds"))
-        if source_event_id not in evidence_ids:
-            evidence_ids.append(source_event_id)
-            payload["evidenceEventIds"] = evidence_ids[:6]
 
     for event in events[:80]:
         event_id = int(event["eventId"])
-        text = str(event.get("text") or "")
-        haystack = text.lower()
-        if "deepseek" in haystack and ("历史" in text or "整理" in text or "rag" in haystack):
-            add_atom(
-                "atom:deepseek-history-rag-cleanup",
-                canonical="用户希望使用 DeepSeek 离线整理 Codex 历史并写入 RAG DB。",
-                summary="DeepSeek 用于离线清理、整理和追加历史记忆，不走实时按键预测。",
-                tags=["DeepSeek", "RAG DB", "Codex历史"],
-                aliases=["DeepSeek整理历史", "历史库清理"],
-                hints=["DeepSeek整理", "历史库清理"],
-                phrase_terms=["DeepSeek整理", "历史库清理"],
-                source_event_id=event_id,
+        canonical = compact_whitespace(str(event.get("committedText") or ""))
+        if len(canonical) < 2:
+            continue
+        tags = [
+            tag
+            for tag in _unique_strings(_strings(event.get("tags")), limit=8)
+            if _fallback_event_is_safe(tag) and not _contains_sensitive_text(tag)
+        ]
+        phrase_terms = _fallback_short_phrases(canonical, tags=tags)
+        digest = stable_text_hash(normalize_text(canonical)).removeprefix("sha256:")
+        atom_id = f"atom:source-event:{digest[:16]}"
+        if atom_id not in atoms and len(atoms) >= 8:
+            continue
+        atom = atoms.setdefault(
+            atom_id,
+            {
+                "atomId": atom_id,
+                "kind": "source_event_archive",
+                "canonicalText": canonical,
+                "summary": "",
+                "tags": tags,
+                "aliases": [],
+                "surfaceHints": phrase_terms[:3],
+                "queryExpansions": [],
+                "sourceEventIds": [],
+                "directCandidateAllowed": False,
+                "project": project,
+                "groupId": compact_whitespace(str(event.get("contextGroupId") or "")),
+                "confidence": 0.55,
+                "qualityScore": 0.55,
+            },
+        )
+        atom_source_ids = _positive_ints(atom.get("sourceEventIds"))
+        if event_id not in atom_source_ids:
+            atom_source_ids.append(event_id)
+            atom["sourceEventIds"] = atom_source_ids[:10]
+        atom["tags"] = _unique_strings([*_strings(atom.get("tags")), *tags], limit=8)
+        atom["surfaceHints"] = _unique_strings(
+            [*_strings(atom.get("surfaceHints")), *phrase_terms],
+            limit=3,
+        )
+        for term in phrase_terms:
+            phrase_key = normalize_text(term)
+            if phrase_key not in phrases and len(phrases) >= 12:
+                continue
+            phrase = phrases.setdefault(
+                phrase_key,
+                {
+                    "text": term,
+                    "tags": tags[:3],
+                    "sourceEventIds": [],
+                    "weight": 0.55,
+                    "project": project,
+                    "groupId": compact_whitespace(str(event.get("contextGroupId") or "")),
+                },
             )
-            add_edge("DeepSeek", "RAG DB", "offline_cleanup", event_id)
-        if "流式" in text or "首帧" in text or "没有流" in text or "stream" in haystack:
-            add_atom(
-                "atom:ime-visible-streaming-candidate",
-                canonical="用户要求输入法 LLM 候选具备可见首帧和连续流式更新。",
-                summary="post-commit 预测必须先显示首帧候选，再用同一槽位持续替换更新。",
-                tags=["输入法", "流式候选", "LLM"],
-                aliases=["首帧流式", "post-commit流式"],
-                hints=["流式候选", "首帧候选"],
-                phrase_terms=["流式候选", "首帧候选"],
-                source_event_id=event_id,
-            )
-            add_edge("输入法", "流式候选", "requires", event_id)
-        if "squirrel" in haystack or "rime" in haystack or ("真实" in text and "输入法" in text):
-            add_atom(
-                "atom:real-squirrel-rime-chain",
-                canonical="RAG-IME 的功能必须挂回真实 Squirrel/Rime 输入法候选链路。",
-                summary="整理不是删功能，而是把 RAG、LLM 和 Active Assist 接回真实输入法链路。",
-                tags=["Squirrel", "Rime", "真实链路"],
-                aliases=["真实输入法链路", "Squirrel候选"],
-                hints=["真实链路", "Squirrel链路"],
-                phrase_terms=["真实链路", "Squirrel链路"],
-                source_event_id=event_id,
-            )
-            add_edge("RAG-IME", "Squirrel", "frontend_chain", event_id)
-        if "快捷键" in text or "框选" in text or "选区" in text or "active rag" in haystack:
-            add_atom(
-                "atom:active-rag-assist-shortcut-selection",
-                canonical="Active RAG Assist 应通过快捷键触发选区预测，不塞进每次按键。",
-                summary="普通 rime-suggest 保持轻量，选区/框选预测走独立助手入口。",
-                tags=["Active RAG Assist", "快捷键", "选区预测"],
-                aliases=["框选预测", "快捷键触发"],
-                hints=["选区预测", "框选预测"],
-                phrase_terms=["选区预测", "框选预测"],
-                source_event_id=event_id,
-            )
-            add_edge("Active RAG Assist", "快捷键", "triggered_by", event_id)
-        if "面试" in text or "展示" in text or "demo" in haystack:
-            add_atom(
-                "atom:interview-demo-quality-priority",
-                canonical="项目当前优先保证面试演示可见、可解释、可评测。",
-                summary="候选质量、真实链路和 eval gate 比堆功能更适合面试展示。",
-                tags=["面试展示", "质量闸门", "项目目标"],
-                aliases=["面试演示", "demo质量"],
-                hints=["面试演示", "展示质量"],
-                phrase_terms=["面试演示", "展示质量"],
-                source_event_id=event_id,
-            )
-            add_edge("面试展示", "eval gate", "validated_by", event_id)
-        if "memory-book" in haystack or ("preview" in haystack and "validate" in haystack and "apply" in haystack):
-            add_atom(
-                "atom:memory-book-preview-validate-apply-eval",
-                canonical="RAG DB 整理流程应走 memory-book-preview、validate、apply、eval gate。",
-                summary="真实历史先 dry-run 预览，再校验、应用、重建检索文档并用评测闸门把关。",
-                tags=["Memory Book", "eval gate", "RAG DB"],
-                aliases=["Memory Book闭环", "评测闸门"],
-                hints=["整理闭环", "评测闸门"],
-                phrase_terms=["整理闭环", "评测闸门"],
-                source_event_id=event_id,
-            )
-            add_edge("Memory Book", "eval gate", "guarded_by", event_id)
+            phrase_source_ids = _positive_ints(phrase.get("sourceEventIds"))
+            if event_id not in phrase_source_ids:
+                phrase_source_ids.append(event_id)
+                phrase["sourceEventIds"] = phrase_source_ids[:10]
 
     daily_books: list[dict[str, object]] = []
     if atoms:
@@ -1085,14 +1105,19 @@ def _fallback_compile_output_from_source_bundle(source_bundle: dict[str, object]
             [tag for atom in atoms.values() for tag in _strings(atom.get("tags"))],
             limit=8,
         )
+        book_key = _default_book_key(source_bundle)
+        hints = [str(item.get("text") or "") for item in phrases.values()]
         daily_books.append(
             {
-                "bookKey": _default_book_key(source_bundle),
-                "title": "RAG 输入法真实历史整理摘要",
-                "summary": "近期历史重点集中在 DeepSeek 离线整理、流式候选、真实 Squirrel/Rime 链路和面试展示质量。",
+                "bookKey": book_key,
+                "title": f"本地记忆归档 {book_key}",
+                "summary": (
+                    f"按来源事件归档 {len(source_ids)} 条记录，"
+                    f"保留 {len(atoms)} 个去重记忆项和 {len(phrases)} 个短语候选。"
+                ),
                 "tags": tags,
-                "surfaceHints": ["历史整理", "流式候选", "真实链路"],
-                "queryExpansions": ["RAG 输入法", "DeepSeek 整理", "Memory Book"],
+                "surfaceHints": _unique_strings(hints, limit=3),
+                "queryExpansions": [],
                 "sourceEventIds": source_ids[:10],
                 "memoryAtomIds": list(atoms.keys()),
                 "project": project,
@@ -1104,7 +1129,7 @@ def _fallback_compile_output_from_source_bundle(source_bundle: dict[str, object]
         "schemaVersion": MEMORY_BOOK_COMPILE_SCHEMA_VERSION,
         "dailyBooks": daily_books,
         "memoryAtoms": list(atoms.values())[:8],
-        "tagEdges": list(edges.values())[:12],
+        "tagEdges": [],
         "phraseCandidates": list(phrases.values())[:12],
         "warnings": ["local_source_bundle_fallback_used"],
     }
@@ -1113,7 +1138,26 @@ def _fallback_compile_output_from_source_bundle(source_bundle: dict[str, object]
 def _fallback_event_is_safe(text: str) -> bool:
     if not text:
         return False
-    return not any(marker in text for marker in ("[REDACTED_SECRET]", "[REDACTED_PATH]", "[REDACTED_EMAIL]"))
+    return "[REDACTED_" not in text and not _contains_sensitive_text(text)
+
+
+def _fallback_short_phrases(text: str, *, tags: list[str]) -> list[str]:
+    candidates = list(tags)
+    candidates.extend(re.split(r"(?:->|[，。！？!?；;、,\n\r]+)", text))
+    candidates.extend(
+        re.findall(r"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_+.-]{1,15}(?![A-Za-z0-9_])", text)
+    )
+    candidates.extend(
+        re.findall(r"(?<![\u3400-\u9fff])[\u3400-\u9fff]{2,16}(?![\u3400-\u9fff])", text)
+    )
+    result: list[str] = []
+    for candidate in candidates:
+        item = compact_whitespace(candidate)
+        if 2 <= len(item) <= 16 and _fallback_event_is_safe(item) and item not in result:
+            result.append(item)
+        if len(result) >= 8:
+            break
+    return result
 
 
 def _unique_strings(values: list[str], *, limit: int) -> list[str]:
@@ -1174,13 +1218,15 @@ def _source_event_records(source_bundle: dict[str, object] | None) -> list[dict[
         event_ids = _positive_ints([item.get("eventId")])
         if not event_ids:
             continue
-        tags = " ".join(_strings(item.get("tags")))
+        committed_text = compact_whitespace(str(item.get("text") or ""))
+        recent_context = compact_whitespace(str(item.get("recentContext") or ""))
+        tags = _strings(item.get("tags"))
         text = compact_whitespace(
             " ".join(
                 [
-                    str(item.get("text") or ""),
-                    str(item.get("recentContext") or ""),
-                    tags,
+                    committed_text,
+                    recent_context,
+                    " ".join(tags),
                     str(item.get("app") or ""),
                     str(item.get("project") or ""),
                     str(item.get("source") or ""),
@@ -1192,6 +1238,10 @@ def _source_event_records(source_bundle: dict[str, object] | None) -> list[dict[
                 "eventId": event_ids[0],
                 "createdAtMs": _optional_int(item.get("createdAtMs")),
                 "text": text,
+                "committedText": committed_text,
+                "recentContext": recent_context,
+                "tags": tags,
+                "contextGroupId": compact_whitespace(str(item.get("contextGroupId") or "")),
             }
         )
     return events
@@ -1233,12 +1283,79 @@ def _memory_book_summary(diffs: list[dict[str, object]]) -> str:
 
 
 def _sanitize_text(text: str, *, max_chars: int) -> tuple[str, dict[str, int]]:
-    counts = {"secret": 0, "path": 0, "email": 0}
-    value = compact_whitespace(text)
-    value, counts["secret"] = _SECRET_RE.subn("[REDACTED_SECRET]", value)
+    counts = _empty_redaction_counts()
+    value = text or ""
+    value, private_key_count = _PRIVATE_KEY_RE.subn("[REDACTED_SECRET]", value)
+    counts["secret"] += private_key_count
+    value, url_secret_count = _URL_SECRET_QUERY_RE.subn(
+        lambda match: f"{match.group('separator')}[REDACTED_SECRET]",
+        value,
+    )
+    counts["secret"] += url_secret_count
+    value, assignment_count = _CREDENTIAL_ASSIGNMENT_RE.subn("[REDACTED_SECRET]", value)
+    counts["secret"] += assignment_count
+    value = compact_whitespace(value)
+    value, counts["identity"] = _IDENTITY_RE.subn("[REDACTED_IDENTITY]", value)
+    value, counts["phone"] = _PHONE_RE.subn("[REDACTED_PHONE]", value)
+    value, counts["paymentCard"] = _PAYMENT_CARD_RE.subn("[REDACTED_PAYMENT_CARD]", value)
     value, counts["path"] = _PATH_RE.subn("[REDACTED_PATH]", value)
     value, counts["email"] = _EMAIL_RE.subn("[REDACTED_EMAIL]", value)
+    value, ip_count = _redact_ip_addresses(value)
+    counts["ipAddress"] += ip_count
+    value, bare_secret_count = _SECRET_RE.subn("[REDACTED_SECRET]", value)
+    counts["secret"] += bare_secret_count
     return truncate_text(value, max_chars), counts
+
+
+def _empty_redaction_counts() -> dict[str, int]:
+    return {
+        "secret": 0,
+        "path": 0,
+        "email": 0,
+        "phone": 0,
+        "identity": 0,
+        "paymentCard": 0,
+        "ipAddress": 0,
+    }
+
+
+def _redact_ip_addresses(text: str) -> tuple[str, int]:
+    count = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal count
+        candidate = match.group(0)
+        try:
+            ipaddress.ip_address(candidate)
+        except ValueError:
+            return candidate
+        count += 1
+        return "[REDACTED_IP]"
+
+    value = _IPV4_CANDIDATE_RE.sub(replace, text)
+    value = _IPV6_CANDIDATE_RE.sub(replace, value)
+    return value, count
+
+
+def _contains_sensitive_text(text: str) -> bool:
+    value = text or ""
+    if any(
+        pattern.search(value)
+        for pattern in (
+            _PRIVATE_KEY_RE,
+            _URL_SECRET_QUERY_RE,
+            _CREDENTIAL_ASSIGNMENT_RE,
+            _SECRET_RE,
+            _PHONE_RE,
+            _IDENTITY_RE,
+            _PAYMENT_CARD_RE,
+            _PATH_RE,
+            _EMAIL_RE,
+        )
+    ):
+        return True
+    _, count = _redact_ip_addresses(value)
+    return count > 0
 
 
 def _merge_counts(target: dict[str, int], source: dict[str, int]) -> None:
@@ -1289,17 +1406,7 @@ def _row_dict(row: sqlite3.Row | None) -> dict[str, object]:
 
 
 def _ensure_compile_state_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS memory_compile_state (
-            project TEXT PRIMARY KEY,
-            last_compiled_event_id INTEGER NOT NULL DEFAULT 0,
-            last_run_ms INTEGER NOT NULL DEFAULT 0,
-            pending_event_count INTEGER NOT NULL DEFAULT 0,
-            last_bundle_hash TEXT NOT NULL DEFAULT ''
-        )
-        """
-    )
+    apply_database_migrations(conn)
 
 
 def _advance_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object]) -> None:
@@ -1368,7 +1475,7 @@ def _existing_book_summaries(conn: sqlite3.Connection, *, project: str) -> list[
             "bookId": str(row["book_id"] or ""),
             "title": _sanitize_text(str(row["title"] or ""), max_chars=80)[0],
             "summary": _sanitize_text(str(row["summary"] or ""), max_chars=180)[0],
-            "tags": _json_list(row["tags_json"]),
+            "tags": [_sanitize_text(tag, max_chars=48)[0] for tag in _json_list(row["tags_json"])],
             "sourceEventIds": _json_list(row["source_event_ids_json"]),
         }
         for row in rows
@@ -1424,7 +1531,7 @@ def _validate_secret_free(
     for field in fields:
         values = _strings(payload.get(field)) if isinstance(payload.get(field), list) else [compact_whitespace(str(payload.get(field) or ""))]
         for value in values:
-            if _SECRET_RE.search(value) or _PATH_RE.search(value) or _EMAIL_RE.search(value):
+            if _contains_sensitive_text(value):
                 errors.append(_issue(index, op, field, "sensitive_text_detected", preview=truncate_text(value, 80)))
 
 

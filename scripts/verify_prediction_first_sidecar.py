@@ -123,6 +123,7 @@ def patched_frontend_base(case_id: str, latency_budget_ms: int) -> dict[str, Any
     return {
         "sessionId": f"verify-{case_id}",
         "requestSeq": 1,
+        "privacyDisposition": "allowed",
         "frontendBuild": "rag-ime.foreground-trace.v2",
         "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
         "forceSideCandidates": True,
@@ -218,8 +219,8 @@ def raw_path_payload(latency_budget_ms: int) -> dict[str, Any]:
     payload = patched_frontend_base("raw-path", latency_budget_ms)
     payload.update(
         {
-            "rawInput": "/Volumes/undo 4t/git/learnA",
-            "preedit": "/Volumes/undo 4t/git/learnA",
+            "rawInput": "/workspace/example-project",
+            "preedit": "/workspace/example-project",
             "committedContext": "正在调试 Codex 项目路径输入保护",
             "rimeContext": {"candidates": [{"label": "1", "text": "路径", "comment": "wanxiang", "index": 0}]},
         }
@@ -317,7 +318,7 @@ def check_case(case: dict[str, Any], response: dict[str, Any], *, elapsed_ms: in
     elif case_id == "raw-path-keeps-english-first":
         first = display[0] if display and isinstance(display[0], dict) else {}
         require(first.get("sourceType") == "raw_english", case_id, "raw path must stay first", failures)
-        require(first.get("insertText") == "/Volumes/undo 4t/git/learnA", case_id, "raw path insert text mismatch", failures)
+        require(first.get("insertText") == "/workspace/example-project", case_id, "raw path insert text mismatch", failures)
         require(len(display) == 1, case_id, "raw path must not mix model/RAG/Rime candidates", failures)
     elif case_id == "rime-fallback-when-no-context":
         require(source_types[:2] == ["rime", "rime"], case_id, "plain anchor should keep Rime fallback", failures)

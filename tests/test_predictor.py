@@ -1301,6 +1301,7 @@ class PredictionProviderTests(unittest.TestCase):
             "ok": True,
             "provider": "mlx-lm",
             "model": "mlx-qwen3.5-0.8b",
+            "modelFingerprint": "sha256:" + "a" * 64,
             "modelLoaded": True,
             "promptCache": {
                 "enabled": True,
@@ -1350,6 +1351,7 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertFalse(status["capabilities"]["sequenceFork"])
         self.assertFalse(status["capabilities"]["batchCandidates"])
         self.assertEqual(status["capabilityProbe"]["promptCache"]["hits"], 3)
+        self.assertEqual(status["capabilityProbe"]["modelFingerprint"], "sha256:" + "a" * 64)
 
     def test_mlx_provider_status_exposes_text_only_model_info(self) -> None:
         _MockMlxHandler.captured_path = ""

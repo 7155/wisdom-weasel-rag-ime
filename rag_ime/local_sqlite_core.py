@@ -76,18 +76,6 @@ _PHRASE_FEEDBACK_JOIN = """
 """
 
 
-def _ensure_column(
-    conn: sqlite3.Connection,
-    *,
-    table: str,
-    column: str,
-    definition: str,
-) -> None:
-    columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    if column not in columns:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-
-
 class LocalSqliteCoreClient:
     """Mac-local SQLite/FTS5 implementation of the CoreClient protocol.
 
@@ -116,6 +104,8 @@ class LocalSqliteCoreClient:
         self.legacy_governance_filter_enabled = bool(legacy_governance_filter_enabled)
         self.v2_governance_filter_enabled = bool(v2_governance_filter_enabled)
         self.memory_v2_enabled = True
+        self._initialized = False
+        self._initialize_lock = RLock()
         self._suggestion_cache: OrderedDict[tuple[str, str, str, str, str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
         self._suggestion_cache_lock = RLock()
         self._suggestion_cache_hits = 0
@@ -123,144 +113,17 @@ class LocalSqliteCoreClient:
         self._suggestion_cache_evictions = 0
         self._suggestion_cache_invalidations = 0
 
-    def initialize(self) -> None:
+    def initialize(self, *, force: bool = False) -> None:
+        if self._initialized and not force:
+            return
+        with self._initialize_lock:
+            if self._initialized and not force:
+                return
+            self._initialize_database()
+            self._initialized = True
+
+    def _initialize_database(self) -> None:
         with self._connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS input_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at_ms INTEGER NOT NULL,
-                    source TEXT NOT NULL,
-                    committed_text TEXT NOT NULL,
-                    recent_context TEXT NOT NULL DEFAULT '',
-                    preedit TEXT NOT NULL DEFAULT '',
-                    schema_id TEXT NOT NULL DEFAULT 'default',
-                    app TEXT NOT NULL DEFAULT 'manual',
-                    project TEXT NOT NULL DEFAULT '',
-                    candidate_rank INTEGER,
-                    provider_name TEXT NOT NULL DEFAULT 'local',
-                    tags_json TEXT NOT NULL DEFAULT '[]',
-                    context_group_id TEXT NOT NULL DEFAULT '',
-                    context_group_level TEXT NOT NULL DEFAULT 'app'
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_state (
-                    event_id INTEGER PRIMARY KEY,
-                    accepted_count INTEGER NOT NULL DEFAULT 0,
-                    skipped_count INTEGER NOT NULL DEFAULT 0,
-                    pinned INTEGER NOT NULL DEFAULT 0,
-                    downranked INTEGER NOT NULL DEFAULT 0,
-                    deleted INTEGER NOT NULL DEFAULT 0,
-                    updated_at_ms INTEGER NOT NULL,
-                    FOREIGN KEY(event_id) REFERENCES input_events(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS phrase_stats (
-                    committed_text TEXT PRIMARY KEY,
-                    input_frequency INTEGER NOT NULL DEFAULT 0,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS phrase_project_stats (
-                    committed_text TEXT NOT NULL,
-                    project TEXT NOT NULL,
-                    input_frequency INTEGER NOT NULL DEFAULT 0,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    PRIMARY KEY(committed_text, project)
-                );
-
-                CREATE TABLE IF NOT EXISTS phrase_app_stats (
-                    committed_text TEXT NOT NULL,
-                    app TEXT NOT NULL,
-                    input_frequency INTEGER NOT NULL DEFAULT 0,
-                    first_seen_ms INTEGER NOT NULL,
-                    last_seen_ms INTEGER NOT NULL,
-                    PRIMARY KEY(committed_text, app)
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_actions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at_ms INTEGER NOT NULL,
-                    memory_id TEXT NOT NULL,
-                    event_id INTEGER,
-                    action_type TEXT NOT NULL,
-                    query TEXT NOT NULL DEFAULT '',
-                    suggestion_id TEXT NOT NULL DEFAULT '',
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    FOREIGN KEY(event_id) REFERENCES input_events(id) ON DELETE SET NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_feedback_events (
-                    id TEXT PRIMARY KEY,
-                    candidate_id TEXT,
-                    candidate_text TEXT NOT NULL DEFAULT '',
-                    candidate_source TEXT NOT NULL DEFAULT 'unknown',
-                    action TEXT NOT NULL,
-                    context_hash TEXT,
-                    front_app_bundle_id TEXT,
-                    raw_input TEXT,
-                    preedit TEXT,
-                    committed_tail TEXT,
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    created_at_ms INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS rime_rank_feedback (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at_ms INTEGER NOT NULL,
-                    preedit TEXT NOT NULL,
-                    rejected_text TEXT NOT NULL DEFAULT '',
-                    accepted_text TEXT NOT NULL DEFAULT '',
-                    action TEXT NOT NULL,
-                    app TEXT NOT NULL DEFAULT '',
-                    project TEXT NOT NULL DEFAULT '',
-                    candidate_rank INTEGER,
-                    context_hash TEXT NOT NULL DEFAULT '',
-                    metadata_json TEXT NOT NULL DEFAULT '{}'
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_rime_rank_feedback_lookup
-                ON rime_rank_feedback(project, preedit, accepted_text, rejected_text, action);
-
-                CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-                    content_text,
-                    committed_text,
-                    recent_context,
-                    project,
-                    tags,
-                    tokenize = 'unicode61'
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_vectors (
-                    event_id INTEGER PRIMARY KEY,
-                    provider_fingerprint TEXT NOT NULL,
-                    vector_json TEXT NOT NULL,
-                    updated_at_ms INTEGER NOT NULL,
-                    FOREIGN KEY(event_id) REFERENCES input_events(id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_memory_vectors_provider
-                ON memory_vectors(provider_fingerprint);
-                """
-            )
-            _ensure_column(
-                conn,
-                table="input_events",
-                column="context_group_id",
-                definition="TEXT NOT NULL DEFAULT ''",
-            )
-            _ensure_column(
-                conn,
-                table="input_events",
-                column="context_group_level",
-                definition="TEXT NOT NULL DEFAULT 'app'",
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_input_events_context_group "
-                "ON input_events(context_group_id, created_at_ms DESC)"
-            )
             ensure_memory_v2_schema(conn)
             conn.executescript(
                 """
@@ -332,18 +195,26 @@ class LocalSqliteCoreClient:
                     "phrase_stats",
                     "phrase_project_stats",
                     "phrase_app_stats",
+                    "schema_migrations",
                 )
             )
         )
-        with self._connect() as conn:
-            conn.execute("PRAGMA foreign_keys = OFF")
-            for table in table_names:
-                conn.execute(f"DROP TABLE IF EXISTS {table}")
-            conn.execute("PRAGMA foreign_keys = ON")
-        self.initialize()
+        with self._initialize_lock:
+            with self._connect() as conn:
+                conn.execute("PRAGMA foreign_keys = OFF")
+                for table in table_names:
+                    conn.execute(f"DROP TABLE IF EXISTS {table}")
+                conn.execute("PRAGMA foreign_keys = ON")
+            self._initialized = False
+            self.initialize()
         self._clear_suggestion_cache()
 
     def record_event(self, event: InputEvent) -> str:
+        privacy_disposition = compact_whitespace(event.privacy_disposition).lower()
+        if privacy_disposition not in {"allowed", "sensitive", "unknown"}:
+            raise ValueError("privacy_disposition must be allowed, sensitive, or unknown")
+        if privacy_disposition != "allowed":
+            return f"skipped:privacy_{privacy_disposition}"
         self.initialize()
         text = compact_whitespace(event.committed_text)
         if not text:
@@ -546,6 +417,8 @@ class LocalSqliteCoreClient:
         context_group_id: str = "",
         context_group_level: str = "app",
         context_group_parent_ids: tuple[str, ...] = (),
+        enabled_lanes: tuple[tuple[str, bool], ...] = (),
+        lane_weights: tuple[tuple[str, float], ...] = (),
     ) -> list[MemoryCandidateV2]:
         self.initialize()
         with self._connect() as conn:
@@ -563,6 +436,8 @@ class LocalSqliteCoreClient:
                 context_group_id=context_group_id,
                 context_group_level=context_group_level,
                 context_group_parent_ids=context_group_parent_ids,
+                enabled_lanes=enabled_lanes,
+                lane_weights=lane_weights,
             )
 
     def _legacy_suggest_for_input(
@@ -2068,11 +1943,13 @@ class LocalSqliteCoreClient:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._harden_storage_permissions()
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
+        self._harden_storage_permissions()
         try:
             yield conn
             conn.commit()
@@ -2081,6 +1958,25 @@ class LocalSqliteCoreClient:
             raise
         finally:
             conn.close()
+
+    def _harden_storage_permissions(self) -> None:
+        if os.name == "nt":
+            return
+        try:
+            os.chmod(self.db_path.parent, 0o700)
+        except OSError:
+            pass
+        for path in (
+            self.db_path,
+            Path(f"{self.db_path}-wal"),
+            Path(f"{self.db_path}-shm"),
+        ):
+            if not path.exists():
+                continue
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
 
     def _embedding_enabled(self) -> bool:
         return self.embedding_provider.fingerprint != "none"
@@ -4026,6 +3922,7 @@ def _pinyin_runtime_cache_fingerprint() -> str:
         "RAG_IME_PINYIN_FUZZY_S_SH",
         "RAG_IME_PINYIN_FUZZY_EN_ENG",
         "RAG_IME_PINYIN_FUZZY_IN_ING",
+        "RAG_IME_PINYIN_FUZZY_ONG_ON",
         "RAG_IME_PINYIN_FUZZY_N_L",
         "RAG_IME_PINYIN_FUZZY_F_H",
     )

@@ -11,7 +11,13 @@ from pathlib import Path
 import rag_ime.cli as cli_module
 from rag_ime.cli import main
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
-from rag_ime.memory_book_compiler import inspect_memory_book_plan, memory_book_plan_from_compile_output
+from rag_ime.memory_book_compiler import (
+    apply_stored_memory_book_run,
+    inspect_memory_book_plan,
+    memory_book_plan_from_compile_output,
+    rollback_memory_book_run,
+    store_memory_book_plan,
+)
 from rag_ime.models import InputEvent
 from rag_ime.text_utils import now_ms
 
@@ -42,6 +48,7 @@ class MemoryBookCompilerTests(unittest.TestCase):
                     created_at_ms=now_ms(),
                     source="manual",
                     committed_text="RAG 输入法多路召回方案",
+                    privacy_disposition="allowed",
                     recent_context="BM25 向量 TagMemo Time DeepSeek",
                     project="wisdom-weasel-rag-ime",
                     tags=("RAG", "输入法"),
@@ -172,23 +179,34 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["counts"]["memoryBooks"], 1)
         self.assertIn("daily_book_synthesized_from_atoms", plan["metadata"]["warnings"])
+        book = next(item["payload"] for item in plan["diffs"] if item["op"] == "upsert_memory_book")
+        self.assertEqual(book["title"], f"本地记忆归档 {book['bookKey']}")
+        self.assertEqual(book["queryExpansions"], [])
+        self.assertNotIn("真实 Codex 历史", book["summary"])
 
-    def test_memory_book_compile_uses_local_fallback_when_model_returns_empty(self) -> None:
+    def test_memory_book_compile_uses_generic_source_archive_when_model_returns_empty(self) -> None:
         bundle = {
             "recentEvents": [
                 {
                     "eventId": self.event_id,
                     "createdAtMs": now_ms(),
-                    "text": "用 DeepSeek 整理真实历史库，跑 memory-book-preview -> validate -> apply，再用 eval gate 看候选质量。",
-                    "recentContext": "RAG DB 面试展示",
-                    "tags": ["RAG", "DeepSeek"],
+                    "text": "周五上午十点和设计团队复盘新版支付流程。",
+                    "recentContext": "会议安排",
+                    "tags": ["团队复盘", "支付流程"],
                 },
                 {
                     "eventId": self.event_id + 1,
                     "createdAtMs": now_ms(),
-                    "text": "还是没有流式输出，需要真实 Squirrel/Rime 链路里显示首帧候选。",
-                    "recentContext": "输入法 post-commit",
-                    "tags": ["输入法", "流式"],
+                    "text": "周五上午十点和设计团队复盘新版支付流程。",
+                    "recentContext": "重复记录应该合并",
+                    "tags": ["团队复盘", "支付流程"],
+                },
+                {
+                    "eventId": self.event_id + 2,
+                    "createdAtMs": now_ms(),
+                    "text": "采购清单需要补充燕麦和咖啡豆。",
+                    "recentContext": "生活记录",
+                    "tags": ["采购清单"],
                 },
             ]
         }
@@ -211,10 +229,17 @@ class MemoryBookCompilerTests(unittest.TestCase):
         report = inspect_memory_book_plan(plan)
 
         self.assertTrue(report["ok"])
-        self.assertGreaterEqual(report["counts"]["memoryBooks"], 1)
-        self.assertGreaterEqual(report["counts"]["memoryAtoms"], 2)
-        self.assertGreaterEqual(report["counts"]["phraseCandidates"], 2)
+        self.assertEqual(report["counts"]["memoryBooks"], 1)
+        self.assertEqual(report["counts"]["memoryAtoms"], 2)
+        self.assertGreaterEqual(report["counts"]["phraseCandidates"], 3)
         self.assertIn("local_source_bundle_fallback_used", plan["metadata"]["warnings"])
+        atoms = [item["payload"] for item in plan["diffs"] if item["op"] == "upsert_memory_atom"]
+        duplicate = next(item for item in atoms if item["canonicalText"].startswith("周五上午十点"))
+        self.assertEqual(duplicate["sourceEventIds"], [self.event_id, self.event_id + 1])
+        self.assertTrue(all(item["kind"] == "source_event_archive" for item in atoms))
+        serialized = json.dumps(plan, ensure_ascii=False)
+        for injected_term in ("DeepSeek", "Squirrel", "RAG 输入法", "面试展示", "eval gate"):
+            self.assertNotIn(injected_term, serialized)
 
     def test_memory_book_compile_rejects_long_surface_hint(self) -> None:
         output = sample_compile_output(self.event_id)
@@ -235,6 +260,34 @@ class MemoryBookCompilerTests(unittest.TestCase):
 
         self.assertFalse(report["ok"])
         self.assertTrue(any(item["code"] == "sensitive_text_detected" for item in report["errors"]))
+
+    def test_memory_book_compile_rejects_extended_sensitive_values(self) -> None:
+        cases = {
+            "phone": "13812345678",
+            "identity": "11010519491231002X",
+            "payment_card": "6222021234567890123",
+            "ipv4": "192.168.1.10",
+            "ipv6": "2001:db8::1",
+            "url_query": "https://example.com/cb?access_token=supersecret&x=1",
+            "private_key": "-----BEGIN PRIVATE KEY----- material -----END PRIVATE KEY-----",
+            "linux_path": "/home/alice/private/note.txt",
+            "windows_path": r"C:\Users\alice\private\note.txt",
+        }
+        for label, value in cases.items():
+            with self.subTest(label=label):
+                output = sample_compile_output(self.event_id)
+                output["memoryAtoms"][0]["aliases"] = [value]
+                plan = memory_book_plan_from_compile_output(
+                    output,
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                )
+
+                report = inspect_memory_book_plan(plan)
+
+                self.assertFalse(report["ok"])
+                self.assertTrue(any(item["code"] == "sensitive_text_detected" for item in report["errors"]))
 
     def test_memory_book_apply_requires_apply_flag(self) -> None:
         plan_path = self._write_sample_plan()
@@ -279,6 +332,25 @@ class MemoryBookCompilerTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_aliases").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_items WHERE memory_id = 'phrase:多路召回'").fetchone()[0], 0)
+
+    def test_stored_workbench_draft_can_be_applied_and_rolled_back(self) -> None:
+        plan = memory_book_plan_from_compile_output(
+            sample_compile_output(self.event_id),
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            draft = store_memory_book_plan(conn, plan)
+            applied = apply_stored_memory_book_run(conn, run_id=plan["runId"])
+            rolled_back = rollback_memory_book_run(conn, run_id=plan["runId"])
+
+        self.assertEqual(draft["status"], "draft")
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(rolled_back["status"], "rolled_back")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0], 0)
 
     def _write_sample_plan(self) -> Path:
         plan = memory_book_plan_from_compile_output(

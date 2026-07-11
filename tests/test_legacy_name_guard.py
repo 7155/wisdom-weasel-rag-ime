@@ -21,12 +21,10 @@ class LegacyNameGuardTests(unittest.TestCase):
             "im.rag-ime.inputmethod.RagIme",
         )
         allowed_prefixes = (
-            "docs/archive/",
             "docs/agent/",
             "tests/",
         )
         allowed_paths = {
-            "rag-ime-db-cleanup-handoff-2026-07-06.txt",
             "scripts/build_patched_squirrel.sh",
             "scripts/clean_macos_input_source_registrations.sh",
             "scripts/stop_rag_ime_runtime.sh",

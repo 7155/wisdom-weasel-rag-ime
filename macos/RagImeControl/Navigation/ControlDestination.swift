@@ -3,6 +3,7 @@ import SwiftUI
 enum ControlDestination: String, CaseIterable, Identifiable {
     case overview
     case inputMethod
+    case voiceInput
     case memory
     case ragAndModels
     case history
@@ -14,6 +15,7 @@ enum ControlDestination: String, CaseIterable, Identifiable {
         switch self {
         case .overview: return "概览"
         case .inputMethod: return "输入法"
+        case .voiceInput: return "语音输入"
         case .memory: return "记忆"
         case .ragAndModels: return "RAG 与模型"
         case .history: return "历史与反馈"
@@ -25,6 +27,7 @@ enum ControlDestination: String, CaseIterable, Identifiable {
         switch self {
         case .overview: return "gauge.with.dots.needle.67percent"
         case .inputMethod: return "keyboard"
+        case .voiceInput: return "waveform.and.mic"
         case .memory: return "brain.head.profile"
         case .ragAndModels: return "point.3.connected.trianglepath.dotted"
         case .history: return "clock.arrow.circlepath"

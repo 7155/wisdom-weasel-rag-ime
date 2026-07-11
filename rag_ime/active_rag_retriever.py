@@ -10,10 +10,20 @@ from .retrieval_docs import rebuild_retrieval_docs
 from .text_utils import compact_whitespace
 
 
-def retrieve_active_rag_evidence(core: LocalSqliteCoreClient, frame: ActiveRagFrame) -> tuple[ActiveRagEvidence, ...]:
+def retrieve_active_rag_evidence(
+    core: LocalSqliteCoreClient,
+    frame: ActiveRagFrame,
+    *,
+    enabled_lanes: tuple[tuple[str, bool], ...] = (),
+    lane_weights: tuple[tuple[str, float], ...] = (),
+) -> tuple[ActiveRagEvidence, ...]:
     """Retrieve short evidence objects for explicit selected-text assistance."""
     core.initialize()
-    query = _query_from_frame(frame)
+    query = _query_from_frame(
+        frame,
+        enabled_lanes=enabled_lanes,
+        lane_weights=lane_weights,
+    )
     with core._connect() as conn:
         candidates = _retrieve_candidates_with_rebuild(conn, query)
     return tuple(_evidence_from_candidate(candidate) for candidate in candidates)
@@ -38,7 +48,12 @@ def _retrieve_candidates_with_rebuild(conn: sqlite3.Connection, query: HybridRag
     return retrieve_hybrid_rag_candidate_objects(conn, query)
 
 
-def _query_from_frame(frame: ActiveRagFrame) -> HybridRagQuery:
+def _query_from_frame(
+    frame: ActiveRagFrame,
+    *,
+    enabled_lanes: tuple[tuple[str, bool], ...] = (),
+    lane_weights: tuple[tuple[str, float], ...] = (),
+) -> HybridRagQuery:
     selected = compact_whitespace(frame.selected_text)
     context = compact_whitespace(" ".join(item for item in (frame.surrounding_before, frame.surrounding_after) if item))
     intent_terms = {
@@ -59,6 +74,8 @@ def _query_from_frame(frame: ActiveRagFrame) -> HybridRagQuery:
         input_mode="active_rag_assist",
         top_k=max(1, min(12, int(frame.max_candidates) * 3)),
         latency_budget_ms=2500,
+        enabled_lanes=enabled_lanes,
+        lane_weights=lane_weights,
     )
 
 

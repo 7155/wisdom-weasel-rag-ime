@@ -215,7 +215,7 @@ class _DoctorSidecarHandler(BaseHTTPRequestHandler):
                 "sourceType": "model",
                 "selectionAction": "commit_side_candidate",
                 "sourceIndex": index,
-                "displayLayout": "inline",
+                "displayLayout": "block",
                 "displayLane": "model",
                 "metadata": dict(self.__class__.model_metadata),
             }
@@ -367,9 +367,15 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertEqual(main_probe.get("frontendBuild"), "rag-ime.foreground-trace.v2")
         self.assertEqual(main_probe.get("schemaVersion"), "rag-ime.squirrel-frontend-trace.v1")
         self.assertEqual(main_probe.get("rawInput"), "")
-        self.assertEqual(main_probe.get("commitTextPreview"), "")
+        self.assertEqual(main_probe.get("commitTextPreview"), "展示方式")
         self.assertEqual(main_probe.get("queryBasis"), None)
         self.assertIn("候选展示方式", str(main_probe.get("committedContext") or ""))
+        foreground = main_probe.get("foregroundText")
+        self.assertIsInstance(foreground, dict)
+        self.assertEqual(foreground.get("source"), "text_input_client")
+        self.assertTrue(foreground.get("commitTextMatched"))
+        self.assertEqual(foreground.get("captureEpoch"), main_probe.get("requestSeq"))
+        self.assertTrue(main_probe.get("commitBurstReady"))
         self.assertIn("[OK] raw pinyin guard: dirty raw input skips side lanes", result.stdout)
         self.assertIn("summary: failures=0", result.stdout)
 
@@ -717,7 +723,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("[FAIL] sidecar LaunchAgent v1 foreground defaults: drift:", result.stdout)
         self.assertIn("RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT='0', expected '1'", result.stdout)
-        self.assertIn("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON='1', expected '0'", result.stdout)
+        self.assertNotIn("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON='1', expected '0'", result.stdout)
         self.assertIn("[FAIL] sidecar LaunchAgent v1 DeepSeek passive gate", result.stdout)
 
     def test_doctor_tryout_mode_fails_when_squirrel_workdir_is_missing(self) -> None:
@@ -1193,7 +1199,7 @@ def _write_sidecar_launch_agent_plist(
             "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
             "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
             "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
-            "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "150",
+            "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "180",
             "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
             "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
             "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
@@ -1202,7 +1208,7 @@ def _write_sidecar_launch_agent_plist(
             "RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS": "700",
             "RAG_IME_HYBRID_RAG_CORE": "1",
             "RAG_IME_RAG_DIRECT_DISPLAY": "0",
-            "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "0",
+            "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
             "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "0",
             "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "0",
         },

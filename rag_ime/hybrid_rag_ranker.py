@@ -27,17 +27,19 @@ def rank_hybrid_hits(
     query_text: str = "",
     committed_tail: str = "",
     top_k: int = 5,
+    lane_weights: dict[str, float] | None = None,
 ) -> list[HybridRagCandidate]:
+    effective_lane_weights = {**LANE_WEIGHTS, **(lane_weights or {})}
     grouped: dict[str, list[HybridRagHit]] = defaultdict(list)
     for hit in hits:
         grouped[hit.doc_id].append(hit)
     candidates: list[HybridRagCandidate] = []
     for doc_id, doc_hits in grouped.items():
-        best_hit = _best_hit(doc_hits)
+        best_hit = _best_hit(doc_hits, lane_weights=effective_lane_weights)
         text = _candidate_text(best_hit)
         if not text or _raw_echo_penalty(text=text, query_text=query_text, committed_tail=committed_tail) >= 1.0:
             continue
-        features = _score_features(doc_hits)
+        features = _score_features(doc_hits, lane_weights=effective_lane_weights)
         score = sum(features.values())
         source_ids = tuple(sorted({hit.source_id for hit in doc_hits if hit.source_id}))
         doc_type = best_hit.doc_type
@@ -72,15 +74,15 @@ def rank_hybrid_hits(
     return candidates[: max(1, int(top_k))]
 
 
-def _best_hit(hits: list[HybridRagHit]) -> HybridRagHit:
-    return sorted(hits, key=lambda hit: (LANE_WEIGHTS.get(hit.source_lane, 0.1), -hit.rank, hit.raw_score), reverse=True)[0]
+def _best_hit(hits: list[HybridRagHit], *, lane_weights: dict[str, float]) -> HybridRagHit:
+    return sorted(hits, key=lambda hit: (lane_weights.get(hit.source_lane, 0.1), -hit.rank, hit.raw_score), reverse=True)[0]
 
 
-def _score_features(hits: list[HybridRagHit]) -> dict[str, float]:
+def _score_features(hits: list[HybridRagHit], *, lane_weights: dict[str, float]) -> dict[str, float]:
     features: dict[str, float] = {}
     for hit in hits:
         lane = hit.source_lane
-        lane_score = LANE_WEIGHTS.get(lane, 0.5) * rrf(hit.rank)
+        lane_score = lane_weights.get(lane, 0.5) * rrf(hit.rank)
         features[lane] = max(features.get(lane, 0.0), lane_score)
     best_metadata = hits[0].metadata if hits else {}
     if bool(best_metadata.get("projectScope")):

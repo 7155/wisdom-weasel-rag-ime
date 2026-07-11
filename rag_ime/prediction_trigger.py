@@ -17,6 +17,9 @@ TriggerAction = Literal[
 ]
 
 
+_ACCEPTED_CONTINUATION_CALLS_PER_10S = 8
+
+
 @dataclass(frozen=True)
 class PredictionTriggerConfig:
     idle_ms: int = 500
@@ -127,10 +130,19 @@ class PredictionTrigger:
         if not (state.dirty_chars >= self.config.min_delta_chars or state.punctuation or state.accepted_continuation):
             return self._decision("skip", "minimum_delta_not_reached", group, state)
         self._prune_calls(state, current)
-        if len(state.call_times_ms) >= self.config.max_calls_per_10s:
+        call_limit = (
+            max(self.config.max_calls_per_10s, _ACCEPTED_CONTINUATION_CALLS_PER_10S)
+            if state.accepted_continuation
+            else self.config.max_calls_per_10s
+        )
+        if len(state.call_times_ms) >= call_limit:
             return TriggerDecision(
                 action="rate_limited",
-                reason="max_calls_per_10s",
+                reason=(
+                    "accepted_continuation_rate_limit"
+                    if state.accepted_continuation
+                    else "max_calls_per_10s"
+                ),
                 group_id=group,
                 generation=state.generation,
                 context_hash=state.context_hash,

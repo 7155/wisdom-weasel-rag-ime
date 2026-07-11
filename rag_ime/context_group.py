@@ -201,4 +201,5 @@ class GroupShortBuffer:
 
 def _group_id(prefix: str, *parts: str) -> str:
     material = "\x1f".join(compact_whitespace(part) for part in parts)
-    return f"{prefix}:{stable_text_hash(material)[:16]}"
+    digest = stable_text_hash(material).removeprefix("sha256:")
+    return f"{prefix}:{digest[:16]}"

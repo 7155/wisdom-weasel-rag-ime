@@ -28,15 +28,18 @@ class PinyinIndexTests(unittest.TestCase):
         self.assertIn("shijie", fuzzy_pinyin_variants("sijie"))
         self.assertIn("chen", fuzzy_pinyin_variants("cheng"))
         self.assertIn("qing", fuzzy_pinyin_variants("qin"))
+        self.assertIn("yong", fuzzy_pinyin_variants("yon"))
         self.assertNotIn("lian", fuzzy_pinyin_variants("nian"))
         self.assertNotIn("fua", fuzzy_pinyin_variants("hua"))
 
     def test_fuzzy_pairs_can_be_controlled_by_runtime_settings_env(self) -> None:
         with _patched_env(
             RAG_IME_PINYIN_FUZZY_S_SH="0",
+            RAG_IME_PINYIN_FUZZY_ONG_ON="0",
             RAG_IME_PINYIN_FUZZY_N_L="1",
         ):
             self.assertNotIn("sijie", fuzzy_pinyin_variants("shijie"))
+            self.assertNotIn("yong", fuzzy_pinyin_variants("yon"))
             self.assertIn("lian", fuzzy_pinyin_variants("nian"))
 
     def test_phrase_search_document_includes_full_pinyin_and_fuzzy_forms(self) -> None:

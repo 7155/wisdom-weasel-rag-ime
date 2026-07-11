@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.foreground-commit.v1",
+  "type": "object",
+  "required": ["text"],
+  "properties": {
+    "text": {"type": "string", "minLength": 1},
+    "recentContext": {"type": "string"},
+    "preedit": {"type": "string"},
+    "project": {"type": "string"},
+    "app": {"type": "string"},
+    "frontAppBundleId": {"type": "string"},
+    "frontmostApp": {"type": "string"},
+    "bundleId": {"type": "string"},
+    "candidateRank": {"type": ["integer", "null"]},
+    "providerName": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "source": {"type": "string"},
+    "contextGroupId": {"type": "string"},
+    "contextGroupLevel": {"type": "string"},
+    "privacyDisposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
+    "sensitiveField": {"type": "boolean"},
+    "secureInput": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

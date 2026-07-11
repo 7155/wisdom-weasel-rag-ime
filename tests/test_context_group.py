@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 
 from rag_ime.context_group import (
@@ -24,6 +25,9 @@ class ContextGroupTest(unittest.TestCase):
         self.assertEqual(first.context_group_id, second.context_group_id)
         self.assertEqual(first.context_group_level, "document")
         self.assertIn(first.project_group_id, first.parent_group_ids)
+        expected = hashlib.sha256("com.apple.TextEdit file:///tmp/interview.txt".encode()).hexdigest()[:16]
+        self.assertEqual(first.context_group_id, f"doc:{expected}")
+        self.assertNotIn("sha256:", first.context_group_id)
 
     def test_window_title_then_app_fallback(self) -> None:
         window = resolve_context_group(app_bundle_id="com.apple.TextEdit", window_title="Untitled 2")

@@ -35,6 +35,29 @@ class _FastProvider:
         ][:max_candidates]
 
 
+class _BranchProvider:
+    def predict(self, *, current_input: str, recent_context: str = "", max_candidates: int = 5, **_kwargs):
+        metadata = {
+            "candidate_mode": "base-completion-branches",
+            "latency_trace": {
+                "firstTokenMs": 75,
+                "firstCandidateMs": 75,
+                "threeCandidatesMs": 75,
+                "totalMs": 220,
+            },
+        }
+        return [
+            ModelPrediction(
+                text=text,
+                rank=index,
+                provider_name="local-mlx",
+                latency_ms=220,
+                metadata=metadata,
+            )
+            for index, text in enumerate(("可以继续整理样本", "主要看结果", "不要写得太散"), start=1)
+        ][:max_candidates]
+
+
 class PredictorBenchmarkTests(unittest.TestCase):
     def test_load_predictor_latency_cases(self) -> None:
         cases = load_predictor_latency_cases(Path("docs/eval/predictor_latency_cases.jsonl"))
@@ -50,6 +73,20 @@ class PredictorBenchmarkTests(unittest.TestCase):
         self.assertTrue(report["gatePassed"])
         self.assertEqual(report["summary"]["formatValidRate"], 1.0)
         self.assertLessEqual(report["summary"]["firstCandidateP95Ms"], 500)
+
+    def test_branch_benchmark_uses_full_response_not_seed_logits(self) -> None:
+        cases = load_predictor_latency_cases(Path("docs/eval/predictor_latency_cases.jsonl"))
+        report = benchmark_predictor_latency(
+            _BranchProvider(),
+            cases[:1],
+            profile="minimind_ime_v2",
+            repeat=1,
+        )
+
+        sample = report["cases"][0]
+        self.assertEqual(sample["firstCandidateMs"], 220)
+        self.assertEqual(sample["threeCandidatesMs"], 220)
+        self.assertEqual(sample["totalMs"], 220)
 
     def test_benchmark_report_can_be_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

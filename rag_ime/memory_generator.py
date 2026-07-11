@@ -328,24 +328,13 @@ def generated_memory_context(source_text: str, recent_context: str, reason: str)
 
 def default_vcp_rebuild_env_path() -> Path | None:
     env_override = (
-        os.environ.get("RAG_IME_MODEL_ENV", "").strip()
+        os.environ.get("RAG_IME_MEMORY_GENERATOR_ENV", "").strip()
+        or os.environ.get("RAG_IME_MODEL_ENV", "").strip()
         or os.environ.get("RAG_IME_X1API_ENV", "").strip()
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", "").strip()
     )
     if env_override:
         return Path(env_override).expanduser()
-    candidates: list[Path] = []
-    cwd = Path.cwd()
-    candidates.append(cwd / "vcp-agent-rebuild/backend/.env")
-    for parent in (cwd, *cwd.parents):
-        candidates.append(parent / "vcp-agent-rebuild/backend/.env")
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        candidates.append(parent / "vcp-agent-rebuild/backend/.env")
-        candidates.append(parent.parent / "vcp-agent-rebuild/backend/.env")
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
     return None
 
 

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.frontend-selection.v1",
+  "type": "object",
+  "required": ["schemaVersion", "frontend", "session", "privacy", "candidate"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.frontend-selection.v1"},
+    "frontend": {"type": "object"},
+    "session": {"$ref": "#/$defs/session"},
+    "privacy": {
+      "type": "object",
+      "required": ["disposition"],
+      "properties": {
+        "disposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
+        "reason": {"type": "string"},
+        "sensitiveField": {"type": "boolean"},
+        "secureInput": {"type": "boolean"}
+      }
+    },
+    "candidate": {"$ref": "#/$defs/candidate"},
+    "visibleCandidates": {"type": "array", "items": {"$ref": "#/$defs/candidate"}},
+    "context": {"type": "object"},
+    "providerName": {"type": "string"},
+    "dryRun": {"type": "boolean"}
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": ["id", "snapshotId", "snapshotGeneration", "inputGeneration", "text", "insertText", "origin"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "snapshotId": {"type": "string", "minLength": 1},
+        "snapshotGeneration": {"type": "integer", "minimum": 0},
+        "inputGeneration": {"type": "integer", "minimum": 0},
+        "label": {"type": "string"},
+        "text": {"type": "string"},
+        "insertText": {"type": "string", "minLength": 1},
+        "origin": {"type": "string", "enum": ["native", "model", "retrieval", "memory", "action", "status", "literal", "assistant"]},
+        "rank": {"type": "integer", "minimum": 1},
+        "nativeIndex": {"type": ["integer", "null"]},
+        "selectionAction": {"type": "string"},
+        "suggestionId": {"type": "string"},
+        "memoryId": {"type": "string"},
+        "sourceEventId": {"type": ["integer", "null"]},
+        "metadata": {"type": "object"}
+      }
+    },
+    "session": {
+      "type": "object",
+      "required": ["id", "requestSeq", "inputGeneration"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "requestSeq": {"type": "integer", "minimum": 0},
+        "inputGeneration": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

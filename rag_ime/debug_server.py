@@ -4,7 +4,6 @@ import copy
 import hashlib
 import ipaddress
 import json
-import mimetypes
 import os
 import re
 import subprocess
@@ -17,18 +16,42 @@ from threading import Event, RLock
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .active_rag_service import ACTIVE_RAG_DEFAULT_MAX_CHARS, ActiveRagService, ActiveRagStartRequest
+from .active_rag_service import (
+    ACTIVE_RAG_DEFAULT_MAX_CHARS,
+    SENSITIVE_FIELD_BLOCK_REASON,
+    ActiveRagService,
+    ActiveRagStartRequest,
+    active_rag_sensitive_text_blocked,
+)
 from .adapter import InputMethodAdapter, SuggestionRequest
+from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .cli import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
+from .contracts.context_observability import build_context_injection_trace
+from .contracts.json_schema import validate_contract
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
+from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from .foreground_privacy import assess_foreground_write, storage_receipt
+from .frontend_gateway import FrontendGateway
 from .history_context import build_prediction_context
 from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from .local_sqlite_core import LocalSqliteCoreClient
+from .knowledge_workbench import (
+    DeepSeekKnowledgeProvider,
+    KnowledgeWorkbenchRequest,
+    KnowledgeWorkbenchService,
+)
 from .management_service import ManagementService, page_request
-from .memory_book_compiler import build_memory_book_source_bundle
+from .memory_book_compiler import (
+    apply_stored_memory_book_run,
+    build_memory_book_source_bundle,
+    inspect_memory_book_plan,
+    memory_book_plan_from_compile_output,
+    rollback_memory_book_run,
+    store_memory_book_plan,
+)
 from .memory_generator import (
     MemoryGenerationError,
     VcpRebuildMemoryGenerator,
@@ -36,6 +59,7 @@ from .memory_generator import (
     generated_memory_dedupe_tag,
 )
 from .models import MemoryAction
+from .notion_knowledge import NotionAsyncKnowledgeClient, load_notion_knowledge_config
 from .payloads import action_response_payload, suggestions_response_payload
 from .prediction_anchors import build_prediction_anchors_from_snapshot
 from .predictor import (
@@ -50,6 +74,7 @@ from .predictor_latency import latency_log_path_from_env, latency_report
 from .rime_sidecar import (
     build_rime_sidecar_response,
     choose_semantic_query,
+    configure_auto_prediction_trigger,
     decide_side_candidate_refresh,
     frontend_transaction_to_payload,
     parse_rime_context_payload,
@@ -57,12 +82,16 @@ from .rime_sidecar import (
     record_rime_side_candidate_selection,
     rime_context_to_payload,
     semantic_signal_length,
+    sensitive_input_requested,
 )
+from .rag_core_v3 import memory_candidates_v2_to_input_suggestions
 from .retrieval_docs import rebuild_retrieval_docs
-from .runtime_flags import assert_deepseek_scene_allowed
+from .rime_native_feedback import record_native_rime_selection
+from .runtime_config import RuntimeConfigResolver, RuntimeConfigSnapshot
+from .runtime_flags import load_hybrid_rag_runtime_flags
 from .settings_models import UserProfile, UserVocabularyItem
-from .settings_store import ManagementSettingsStore, settings_response
-from .text_utils import compact_whitespace, now_ms, stable_text_hash
+from .settings_store import ManagementSettingsStore, ensure_management_tables, settings_response
+from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
 
 
 def _host_is_loopback(host: str) -> bool:
@@ -99,6 +128,7 @@ class DebugServerConfig:
     input_source_require_hitoolbox: bool = True
     vector_auto_rebuild_limit: int = 0
     include_raw_text: bool = False
+    runtime_command_runner: Any | None = None
 
 
 @dataclass
@@ -123,7 +153,7 @@ class _PredictorStatusCacheEntry:
 
 
 class DebugImeService:
-    """Small local HTTP facade for browser-based IME debugging."""
+    """Local diagnostic and management API used by the native Control Center."""
 
     def __init__(self, config: DebugServerConfig):
         self.config = config
@@ -138,7 +168,14 @@ class DebugImeService:
             core=self.core if isinstance(self.core, LocalSqliteCoreClient) else None,
             completion_provider=self.deepseek_completion_provider,
         )
+        self.knowledge_workbench = KnowledgeWorkbenchService(
+            evidence_retriever=self._knowledge_workbench_evidence,
+            generator=DeepSeekKnowledgeProvider(load_deepseek_config()),
+            database_organizer=self._knowledge_workbench_database_organizer,
+            notion_client=NotionAsyncKnowledgeClient(load_notion_knowledge_config()),
+        )
         self.settings_store = ManagementSettingsStore(config.db_path)
+        self._runtime_command_runner = config.runtime_command_runner or subprocess.run
         self._rime_cache: dict[str, _RimeSuggestCacheEntry] = {}
         self._rime_inflight: dict[str, _RimeSuggestInflightEntry] = {}
         self._rime_cache_lock = RLock()
@@ -152,6 +189,7 @@ class DebugImeService:
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
         self.settings_store.initialize()
+        self.runtime_config_resolver = RuntimeConfigResolver(self.settings_store, environ=os.environ)
         self.management = ManagementService(
             db_path=config.db_path,
             project=config.project,
@@ -160,15 +198,26 @@ class DebugImeService:
             health_provider=self.health,
             input_source_provider=self.input_source_status,
             predictor_provider=self.predictor_status,
+            runtime_config_provider=self.runtime_config_snapshot,
             last_prediction_provider=self._last_management_prediction,
+            cache_invalidator=self._clear_rime_cache,
         )
-        _apply_pinyin_settings_to_process_env(self.settings_store.get_settings(include_sensitive=True))
+        self.frontend_gateway = FrontendGateway(
+            suggest_handler=self.rime_suggest,
+            selection_handler=self.rime_select,
+            default_project=config.project,
+        )
+        initial_settings = self.settings_store.get_settings(include_sensitive=True)
+        initial_snapshot = self.runtime_config_snapshot(settings=initial_settings)
+        _apply_pinyin_settings_to_process_env(initial_snapshot.effective_settings(initial_settings))
         if config.seed_if_empty and self._event_count() == 0:
             seed_demo_memories(self.adapter, default_fixture_memories())
         self._vector_auto_rebuild_report = self._maybe_auto_rebuild_vector_index()
 
     def health(self) -> dict[str, object]:
         settings = self.settings_store.get_settings()
+        runtime_config = self.runtime_config_snapshot()
+        effective_settings = runtime_config.effective_settings(settings)
         return {
             "ok": True,
             "project": self.config.project,
@@ -178,9 +227,10 @@ class DebugImeService:
                 "schemaVersion": "rag-ime.debug-management.v1",
                 "localhostOnly": _host_is_loopback(self.config.host),
                 "rawTextVisible": self._include_raw_text(),
-                "settings": settings,
+                "settings": effective_settings,
+                "runtimeConfig": runtime_config.payload(),
             },
-            "pinyinRuntime": _pinyin_runtime_status(settings),
+            "pinyinRuntime": _pinyin_runtime_status(effective_settings),
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
             "rimeSuggestCache": {
@@ -198,6 +248,15 @@ class DebugImeService:
             "vectorAutoRebuild": self._vector_auto_rebuild_status(),
         }
 
+    def frontend_capabilities(self) -> dict[str, object]:
+        return self.frontend_gateway.capabilities()
+
+    def frontend_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.frontend_gateway.suggest(payload)
+
+    def frontend_select(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.frontend_gateway.select(payload)
+
     def predictor_status(self) -> dict[str, object]:
         return {
             "schemaVersion": "rag-ime.predictor-status.v1",
@@ -206,7 +265,23 @@ class DebugImeService:
         }
 
     def settings(self) -> dict[str, object]:
-        return settings_response(self.settings_store.get_settings())
+        settings = self.settings_store.get_settings()
+        snapshot = self.runtime_config_snapshot()
+        return {
+            **settings_response(settings),
+            "effectiveSettings": snapshot.effective_settings(settings),
+            "runtimeConfig": snapshot.payload(),
+        }
+
+    def runtime_config_snapshot(
+        self,
+        *,
+        settings: dict[str, object] | None = None,
+    ) -> RuntimeConfigSnapshot:
+        return self.runtime_config_resolver.resolve(settings=settings)
+
+    def runtime_config(self) -> dict[str, object]:
+        return self.management.runtime_config()
 
     def management_security_settings(self) -> dict[str, object]:
         settings = self.settings_store.get_settings(include_sensitive=True)
@@ -222,36 +297,78 @@ class DebugImeService:
             updated_by=_string(payload.get("updatedBy")) or "local-console",
             confirm_text=_string(payload.get("confirmText")),
         )
-        _apply_pinyin_settings_to_process_env(result.settings)
+        persisted = self.settings_store.get_settings(include_sensitive=True)
+        snapshot = self.runtime_config_snapshot(settings=persisted)
+        _apply_pinyin_settings_to_process_env(snapshot.effective_settings(persisted))
         self._clear_rime_cache()
-        return {
+        response = {
             **settings_response(result.settings),
             "auditId": result.audit_id,
             "changedKeys": list(result.changed_keys),
-            **self.management.settings_changed(audit_id=result.audit_id, changed_keys=list(result.changed_keys)),
+            **self.management.settings_changed(
+                audit_id=result.audit_id,
+                changed_keys=list(result.changed_keys),
+                snapshot=snapshot,
+            ),
         }
+        active_settings = (
+            result.settings.get("activeRag")
+            if isinstance(result.settings.get("activeRag"), dict)
+            else {}
+        )
+        response["runtimeSync"] = self._apply_active_rag_runtime_sync(
+            active_settings=active_settings,
+            changed_keys=tuple(result.changed_keys),
+        )
+        return response
 
     def settings_reset_section(self, payload: dict[str, Any]) -> dict[str, object]:
         section = _string(payload.get("section"))
         result = self.settings_store.reset_section(section, updated_by=_string(payload.get("updatedBy")) or "local-console")
-        _apply_pinyin_settings_to_process_env(result.settings)
+        persisted = self.settings_store.get_settings(include_sensitive=True)
+        snapshot = self.runtime_config_snapshot(settings=persisted)
+        _apply_pinyin_settings_to_process_env(snapshot.effective_settings(persisted))
         self._clear_rime_cache()
-        return {
+        response = {
             **settings_response(result.settings),
             "auditId": result.audit_id,
             "changedKeys": list(result.changed_keys),
             "section": section,
-            **self.management.settings_changed(audit_id=result.audit_id, changed_keys=list(result.changed_keys)),
+            **self.management.settings_changed(
+                audit_id=result.audit_id,
+                changed_keys=list(result.changed_keys),
+                snapshot=snapshot,
+            ),
         }
+        active_settings = (
+            result.settings.get("activeRag")
+            if isinstance(result.settings.get("activeRag"), dict)
+            else {}
+        )
+        response["runtimeSync"] = self._apply_active_rag_runtime_sync(
+            active_settings=active_settings,
+            changed_keys=tuple(result.changed_keys),
+        )
+        return response
 
     def _last_management_prediction(self) -> dict[str, object]:
         if not self._prediction_live_trace:
             return {}
         item = self._prediction_live_trace[-1]
+        foreground = (
+            dict(item.get("foregroundContext"))
+            if isinstance(item.get("foregroundContext"), dict)
+            else {}
+        )
         return {
             "requestId": item.get("requestId", ""),
             "triggerReason": item.get("triggerReason", item.get("reason", "")),
-            "contextSource": item.get("foregroundContextSource", ""),
+            "contextSource": foreground.get("source", item.get("foregroundContextSource", "")),
+            "foregroundContext": foreground,
+            "contextInjection": {
+                "success": foreground.get("applied") is True,
+                "error": foreground.get("captureFailureReason") or foreground.get("reason") or "",
+            },
             "sourceTypes": item.get("sourceTypes", []),
             "visibleCandidate": item.get("visibleCandidate", ""),
             "totalLatencyMs": item.get("totalLatencyMs", item.get("elapsedMs", 0)),
@@ -345,9 +462,11 @@ class DebugImeService:
             "ok": True,
             "settings": settings.get("models", {}),
             "predictor": self._predictor_status(probe_capabilities=True),
+            "activeRagRoute": self.active_rag_route_status(local_only=False),
         }
 
     def model_profiles(self) -> dict[str, object]:
+        active_rag_route = self.active_rag_route_status(local_only=False)
         return {
             "schemaVersion": "rag-ime.model-profiles.v3",
             "ok": True,
@@ -366,8 +485,10 @@ class DebugImeService:
                     "label": "DeepSeek V4 Flash Active RAG",
                     "provider": "deepseek",
                     "lane": "active_rag",
-                    "enabled": False,
+                    "enabled": bool(active_rag_route["remoteReady"]),
                     "requiresExplicitOptIn": True,
+                    "skipReason": active_rag_route["skipReason"],
+                    "gates": active_rag_route["gates"],
                 },
             ],
         }
@@ -404,12 +525,73 @@ class DebugImeService:
             "schemaVersion": "rag-ime.active-rag-settings.v3",
             "ok": True,
             "settings": settings.get("activeRag", {}),
+            "routeStatus": self.active_rag_route_status(local_only=False),
+            "previewRouteStatus": self.active_rag_route_status(),
+        }
+
+    def active_rag_route_status(
+        self,
+        *,
+        local_only: bool | None = None,
+    ) -> dict[str, object]:
+        settings = self.settings_store.get_settings(include_sensitive=True)
+        runtime_config = self.runtime_config_snapshot(settings=settings)
+        active = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
+        privacy = settings.get("privacy") if isinstance(settings.get("privacy"), dict) else {}
+        models = settings.get("models") if isinstance(settings.get("models"), dict) else {}
+        resolved_local_only = bool(active.get("localOnlyDefault", True)) if local_only is None else bool(local_only)
+        config = load_deepseek_config()
+        flags = load_hybrid_rag_runtime_flags()
+        gates = {
+            "featureEnabled": runtime_config.active_rag.enabled,
+            "notLocalOnly": not resolved_local_only,
+            "allowRemoteModel": bool(active.get("allowRemoteModel", False)),
+            "privacyOptIn": bool(privacy.get("allowRemoteModelForActiveRag", False)),
+            "sceneEnvEnabled": bool(flags.deepseek_active_rag),
+            "credentialsConfigured": bool(config.api_key),
+        }
+        skip_reason = ""
+        for key, reason in (
+            ("featureEnabled", "active_rag_disabled"),
+            ("notLocalOnly", "local_only"),
+            ("allowRemoteModel", "active_rag_remote_not_allowed"),
+            ("privacyOptIn", "privacy_remote_not_allowed"),
+            ("sceneEnvEnabled", "scene_flag_disabled"),
+            ("credentialsConfigured", "credentials_missing"),
+        ):
+            if not gates[key]:
+                skip_reason = reason
+                break
+        return {
+            "schemaVersion": "rag-ime.active-rag-route-status.v1",
+            "route": "explicit_active_rag_deepseek",
+            "explicitOnly": True,
+            "localOnly": resolved_local_only,
+            "remoteReady": all(gates.values()),
+            "provider": "deepseek",
+            "model": config.model,
+            "selectedModel": _string(models.get("activeRag")) or "local",
+            "shortcut": runtime_config.active_rag.shortcut,
+            "stream": True,
+            "skipReason": skip_reason,
+            "gates": gates,
+            "passivePostCommitRemoteAllowed": False,
         }
 
     def active_rag_settings_update(self, payload: dict[str, Any]) -> dict[str, object]:
-        settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else payload
+        raw_settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else payload
+        settings = {
+            key: value
+            for key, value in raw_settings.items()
+            if key not in {"confirmText", "updatedBy", "previewToken"}
+        }
+        update_payload = (
+            dict(settings)
+            if any(str(key).startswith("activeRag.") for key in settings)
+            else {"activeRag": dict(settings)}
+        )
         update_result = self.settings_store.update_settings(
-            {"activeRag": dict(settings)},
+            update_payload,
             updated_by=_string(payload.get("updatedBy")) or "local-console",
             confirm_text=_string(payload.get("confirmText")),
         )
@@ -419,13 +601,80 @@ class DebugImeService:
             "auditId": update_result.audit_id,
             "changedKeys": list(update_result.changed_keys),
         }
-        result["runtimeSync"] = _active_rag_runtime_sync_payload(
-            active_settings=result.get("settings", {}).get("activeRag", {}) if isinstance(result.get("settings"), dict) else {},
+        result["runtimeSync"] = self._apply_active_rag_runtime_sync(
+            active_settings=(
+                result.get("settings", {}).get("activeRag", {})
+                if isinstance(result.get("settings"), dict)
+                else {}
+            ),
             changed_keys=tuple(str(item) for item in result.get("changedKeys", []) if item),
         )
+        result["routeStatus"] = self.active_rag_route_status(local_only=False)
+        result["previewRouteStatus"] = self.active_rag_route_status()
         return result
 
+    def _apply_active_rag_runtime_sync(
+        self,
+        *,
+        active_settings: object,
+        changed_keys: tuple[str, ...],
+    ) -> dict[str, object]:
+        payload = _active_rag_runtime_sync_payload(
+            active_settings=active_settings,
+            changed_keys=changed_keys,
+        )
+        commands = payload.get("commands") if isinstance(payload.get("commands"), list) else []
+        relevant = any(key in _ACTIVE_RAG_RUNTIME_SYNC_KEYS for key in changed_keys)
+        if not relevant:
+            return {**payload, "attempted": False, "applied": True, "results": []}
+        results: list[dict[str, object]] = []
+        for raw_command in commands:
+            command = [str(item) for item in raw_command] if isinstance(raw_command, list) else []
+            if not _active_rag_defaults_command_allowed(command):
+                results.append({"command": command, "ok": False, "error": "command_not_allowlisted"})
+                continue
+            try:
+                completed = self._runtime_command_runner(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                return_code = int(getattr(completed, "returncode", 1))
+                results.append(
+                    {
+                        "command": command,
+                        "ok": return_code == 0,
+                        "returnCode": return_code,
+                        "stdout": compact_whitespace(str(getattr(completed, "stdout", "")))[:240],
+                        "stderr": compact_whitespace(str(getattr(completed, "stderr", "")))[:240],
+                    }
+                )
+            except Exception as exc:  # pragma: no cover - defensive OS boundary
+                results.append(
+                    {
+                        "command": command,
+                        "ok": False,
+                        "error": type(exc).__name__,
+                    }
+                )
+        applied = bool(results) and all(bool(item.get("ok")) for item in results)
+        return {
+            **payload,
+            "attempted": True,
+            "applied": applied,
+            "results": results,
+            "error": "" if applied else "one_or_more_defaults_writes_failed",
+        }
+
     def active_rag_management_preview(self, payload: dict[str, Any]) -> dict[str, object]:
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return self._active_rag_privacy_blocked_response(
+                privacy_assessment,
+                preview=True,
+            )
         settings = self.settings_store.get_settings()
         active_settings = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
         if not active_settings.get("enabled", True):
@@ -438,6 +687,14 @@ class DebugImeService:
         )
         request_payload = {**payload, "maxCandidates": max_candidates}
         local_only = _bool(payload.get("localOnly"), default=bool(active_settings.get("localOnlyDefault", True)))
+        route_status = self.active_rag_route_status(local_only=local_only)
+        route_gates = route_status.get("gates") if isinstance(route_status.get("gates"), dict) else {}
+        request_payload["remoteModelAllowed"] = all(
+            bool(route_gates.get(key))
+            for key in ("featureEnabled", "notLocalOnly", "allowRemoteModel", "privacyOptIn")
+        )
+        request_payload["remoteModelSkipReason"] = _string(route_status.get("skipReason"))
+        request_payload["remoteModelGates"] = dict(route_gates)
         try:
             request = self._active_rag_request_from_payload(request_payload)
             preview = self.active_rag.preview(request, local_only=local_only)
@@ -447,11 +704,21 @@ class DebugImeService:
             {
                 "schemaVersion": "rag-ime.active-rag-preview.v3",
                 "localOnly": local_only,
+                "routeStatus": route_status,
                 "latencyBudgetMs": _bounded_int(
                     payload.get("latencyBudgetMs"),
                     default=_bounded_int(active_settings.get("latencyBudgetMs"), default=15000, minimum=100, maximum=30000),
                     minimum=100,
                     maximum=30000,
+                ),
+                "stored": False,
+                "noStore": False,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(
+                    privacy_assessment,
+                    stored=False,
+                    outcome="no_write",
+                    reason="active_rag_preview_is_read_only",
                 ),
                 **preview,
             },
@@ -503,8 +770,27 @@ class DebugImeService:
         return self.active_rag_status({"sessionId": session_id}) if session_id else started
 
     def _active_rag_request_from_payload(self, payload: dict[str, Any]) -> ActiveRagStartRequest:
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return self._active_rag_privacy_blocked_request()
         selected_text = compact_whitespace(_string(payload.get("selectedText") or payload.get("selected_text")))
-        if not selected_text:
+        context = _string(payload.get("context") or payload.get("currentContext"))
+        surrounding_before = _string(payload.get("surroundingBefore"))
+        surrounding_after = _string(payload.get("surroundingAfter"))
+        sensitive_field, secure_input = _active_rag_secure_flags(payload)
+        settings = self.settings_store.get_settings()
+        active_settings = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
+        runtime_config = self.runtime_config_snapshot(settings=settings)
+        sensitive_guard_enabled = bool(active_settings.get("sensitiveTextGuard", True))
+        sensitive_guard_hit = _bool(payload.get("sensitiveTextGuardHit"), default=False) or active_rag_sensitive_text_blocked(
+            selected_text,
+            context,
+            surrounding_before,
+            surrounding_after,
+            guard_enabled=sensitive_guard_enabled,
+        )
+        sensitive_blocked = sensitive_field or secure_input or sensitive_guard_hit
+        if not selected_text and not sensitive_blocked:
             raise ValueError("selectedText is required for explicit Active RAG")
         evidence_pack = (
             tuple(item for item in payload.get("evidencePack", []) if isinstance(item, dict))
@@ -513,16 +799,28 @@ class DebugImeService:
         )
         return ActiveRagStartRequest(
             selected_text=selected_text,
-            selected_text_hash=_string(payload.get("selectedTextHash") or payload.get("selected_text_hash")) or stable_text_hash(selected_text),
+            selected_text_hash=(
+                ""
+                if sensitive_blocked
+                else _string(payload.get("selectedTextHash") or payload.get("selected_text_hash")) or stable_text_hash(selected_text)
+            ),
             frontend_revision=_bounded_int(payload.get("frontendRevision"), default=1, minimum=0, maximum=1_000_000_000),
             selection_epoch=_bounded_int(payload.get("selectionEpoch"), default=1, minimum=0, maximum=1_000_000_000),
             panel_session_id=_string(payload.get("panelSessionId")),
             front_app_bundle_id=_string(payload.get("frontAppBundleId")),
-            surrounding_before=_string(payload.get("surroundingBefore")),
-            surrounding_after=_string(payload.get("surroundingAfter")),
+            surrounding_before=surrounding_before,
+            surrounding_after=surrounding_after,
             intent=_string(payload.get("intent")) or "rewrite",
             placement=_string(payload.get("placement")) or "replace_selection",
-            context=_string(payload.get("context") or payload.get("currentContext")),
+            context=context,
+            context_source=_string(payload.get("contextSource")),
+            frontend_context_hash=_string(payload.get("contextHash")),
+            frontend_context_chars=_bounded_int(
+                payload.get("contextChars"), default=0, minimum=0, maximum=1_000_000
+            ),
+            frontend_selected_text_chars=_bounded_int(
+                payload.get("selectedTextChars"), default=0, minimum=0, maximum=1_000_000
+            ),
             evidence_pack=evidence_pack,
             project=_string(payload.get("project")) or self.config.project,
             app=_string(payload.get("app")),
@@ -534,7 +832,64 @@ class DebugImeService:
                 maximum=180,
             ),
             latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=15000, minimum=100, maximum=30000),
+            remote_model_allowed=(
+                _bool(payload.get("remoteModelAllowed"), default=False)
+                if "remoteModelAllowed" in payload
+                else None
+            ),
+            remote_model_skip_reason=_string(payload.get("remoteModelSkipReason")),
+            remote_model_gates=(
+                {str(key): bool(value) for key, value in payload.get("remoteModelGates", {}).items()}
+                if isinstance(payload.get("remoteModelGates"), dict)
+                else {}
+            ),
+            sensitive_field=sensitive_field,
+            secure_input=secure_input,
+            sensitive_text_guard_enabled=sensitive_guard_enabled,
+            sensitive_text_guard_hit=sensitive_guard_hit,
+            local_retrieval_allowed=runtime_config.hybrid_rag.enabled and runtime_config.memory.enabled,
+            local_retrieval_skip_reason=(
+                "memory_disabled"
+                if not runtime_config.memory.enabled
+                else ("hybrid_rag_disabled" if not runtime_config.hybrid_rag.enabled else "")
+            ),
+            rag_enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
+            rag_lane_weights=runtime_config.hybrid_rag.query_weights(),
         )
+
+    @staticmethod
+    def _active_rag_privacy_blocked_request() -> ActiveRagStartRequest:
+        return ActiveRagStartRequest(
+            selected_text="",
+            selected_text_hash="",
+            frontend_revision=0,
+            selection_epoch=0,
+            remote_model_allowed=False,
+            sensitive_field=True,
+            secure_input=True,
+            local_retrieval_allowed=False,
+            local_retrieval_skip_reason=SENSITIVE_FIELD_BLOCK_REASON,
+        )
+
+    def _active_rag_privacy_blocked_response(
+        self,
+        privacy_assessment: dict[str, object],
+        *,
+        preview: bool,
+    ) -> dict[str, object]:
+        request = self._active_rag_privacy_blocked_request()
+        response = (
+            self.active_rag.preview(request, local_only=True)
+            if preview
+            else self.active_rag.start(request)
+        )
+        return {
+            **response,
+            "stored": False,
+            "noStore": True,
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+        }
 
     def _active_rag_error_payload(self, error: str) -> dict[str, object]:
         return {
@@ -544,11 +899,48 @@ class DebugImeService:
         }
 
     def active_rag_start(self, payload: dict[str, Any]) -> dict[str, object]:
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return self._active_rag_privacy_blocked_response(
+                privacy_assessment,
+                preview=False,
+            )
         if not isinstance(self.core, LocalSqliteCoreClient):
             return self._active_rag_error_payload("Active RAG requires local SQLite core")
+        runtime_config = self.runtime_config_snapshot()
+        if not runtime_config.active_rag.enabled:
+            return self._active_rag_error_payload("Active RAG disabled by management settings")
+        # The foreground Ctrl+. request is explicit. localOnlyDefault only controls
+        # management previews; product start follows the two remote privacy opt-ins.
+        local_only = _bool(payload.get("localOnly"), default=False)
+        route_status = self.active_rag_route_status(local_only=local_only)
+        route_gates = route_status.get("gates") if isinstance(route_status.get("gates"), dict) else {}
+        settings_allow_remote = all(
+            bool(route_gates.get(key))
+            for key in ("featureEnabled", "notLocalOnly", "allowRemoteModel", "privacyOptIn")
+        )
         try:
-            request = self._active_rag_request_from_payload(payload)
-            return self.active_rag.start(request)
+            request = self._active_rag_request_from_payload(
+                {
+                    **payload,
+                    "remoteModelAllowed": settings_allow_remote,
+                    "remoteModelSkipReason": _string(route_status.get("skipReason")),
+                    "remoteModelGates": dict(route_gates),
+                }
+            )
+            return {
+                **self.active_rag.start(request),
+                "routeStatus": route_status,
+                "stored": False,
+                "noStore": False,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(
+                    privacy_assessment,
+                    stored=False,
+                    outcome="no_write",
+                    reason="active_rag_session_is_not_typing_history",
+                ),
+            }
         except ValueError as exc:
             return self._active_rag_error_payload(str(exc))
 
@@ -557,6 +949,17 @@ class DebugImeService:
         if not session_id:
             return {"schemaVersion": "rag-ime.active-rag-service.v1", "status": "missing", "error": "sessionId is required"}
         return self.active_rag.status(session_id)
+
+    def active_rag_diagnostics(self, payload: dict[str, Any]) -> dict[str, object]:
+        session_id = _string(payload.get("sessionId") or payload.get("id"))
+        if not session_id:
+            return {
+                "schemaVersion": "rag-ime.active-rag-diagnostics.v1",
+                "ok": False,
+                "status": "missing",
+                "error": "sessionId is required",
+            }
+        return self.active_rag.diagnostics(session_id)
 
     def active_rag_cancel(self, payload: dict[str, Any]) -> dict[str, object]:
         session_id = _string(payload.get("sessionId") or payload.get("id"))
@@ -733,9 +1136,266 @@ class DebugImeService:
         )
         return {"ok": True, **report}
 
+    def knowledge_workbench_route_status(self) -> dict[str, object]:
+        active_route = self.active_rag_route_status(local_only=False)
+        workbench_route = self.knowledge_workbench.route_status()
+        return {
+            **workbench_route,
+            "deepseekReady": bool(workbench_route.get("deepseekReady") and active_route.get("remoteReady")),
+            "deepseekRoute": active_route,
+        }
+
+    def knowledge_workbench_start(self, payload: dict[str, Any]) -> dict[str, object]:
+        mode = _string(payload.get("mode")).lower() or "knowledge_answer"
+        question = _string(payload.get("question") or payload.get("query"))
+        context = _string(payload.get("context"))
+        sensitive_field, secure_input = _active_rag_secure_flags(payload)
+        settings = self.settings_store.get_settings()
+        active_settings = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
+        sensitive_guard_enabled = bool(active_settings.get("sensitiveTextGuard", True))
+        if sensitive_field or secure_input or active_rag_sensitive_text_blocked(
+            question,
+            context,
+            guard_enabled=sensitive_guard_enabled,
+        ):
+            return {
+                "schemaVersion": "rag-ime.knowledge-workbench.v1",
+                "ok": False,
+                "status": "blocked",
+                "error": SENSITIVE_FIELD_BLOCK_REASON,
+                "retrieval": {"called": False},
+                "remoteModel": {"requested": False},
+            }
+        route = self.knowledge_workbench_route_status()
+        if not route.get("deepseekReady"):
+            deepseek_route = route.get("deepseekRoute") if isinstance(route.get("deepseekRoute"), dict) else {}
+            return {
+                "schemaVersion": "rag-ime.knowledge-workbench.v1",
+                "ok": False,
+                "status": "blocked",
+                "error": f"DeepSeek knowledge route blocked: {_string(deepseek_route.get('skipReason')) or 'not_configured'}",
+                "routeStatus": route,
+            }
+        request = KnowledgeWorkbenchRequest(
+            question=question,
+            mode=mode,
+            context=context,
+            project=_string(payload.get("project")) or self.config.project,
+            app=_string(payload.get("app")) or "com.rag-ime.control",
+            include_notion=_bool(payload.get("includeNotion"), default=False),
+            generation=_bounded_int(payload.get("generation"), default=1, minimum=0, maximum=1_000_000_000),
+            context_hash=_string(payload.get("contextHash")),
+            client_id=_string(payload.get("clientId")) or "native-control-center",
+            max_chars=_bounded_int(payload.get("maxChars"), default=2400, minimum=400, maximum=8000),
+            latency_budget_ms=_bounded_int(
+                payload.get("latencyBudgetMs"),
+                default=120_000,
+                minimum=1_000,
+                maximum=300_000,
+            ),
+        )
+        try:
+            return {**self.knowledge_workbench.start(request), "routeStatus": route}
+        except ValueError as exc:
+            return {
+                "schemaVersion": "rag-ime.knowledge-workbench.v1",
+                "ok": False,
+                "status": "error",
+                "error": str(exc),
+                "routeStatus": route,
+            }
+
+    def knowledge_workbench_status(self, payload: dict[str, Any]) -> dict[str, object]:
+        session_id = _string(payload.get("sessionId") or payload.get("id"))
+        if not session_id:
+            return {
+                "schemaVersion": "rag-ime.knowledge-workbench.v1",
+                "ok": False,
+                "status": "missing",
+                "error": "sessionId is required",
+            }
+        return self.knowledge_workbench.status(session_id)
+
+    def knowledge_workbench_cancel(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.knowledge_workbench.cancel(_string(payload.get("sessionId") or payload.get("id")))
+
+    def knowledge_workbench_database_apply(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.knowledge-database-action.v1", "ok": False, "error": "local SQLite core required"}
+        run_id = _string(payload.get("runId"))
+        if _string(payload.get("confirm")) != "apply":
+            return {
+                "schemaVersion": "rag-ime.knowledge-database-action.v1",
+                "ok": False,
+                "error": 'confirmation required: set confirm="apply"',
+                "requiredConfirm": "apply",
+            }
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            run = apply_stored_memory_book_run(conn, run_id=run_id)
+            retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.knowledge-database-action.v1",
+            "ok": True,
+            "action": "apply",
+            "run": run,
+            "retrieval": retrieval,
+        }
+
+    def knowledge_workbench_database_rollback(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.knowledge-database-action.v1", "ok": False, "error": "local SQLite core required"}
+        run_id = _string(payload.get("runId"))
+        if _string(payload.get("confirm")) != "rollback":
+            return {
+                "schemaVersion": "rag-ime.knowledge-database-action.v1",
+                "ok": False,
+                "error": 'confirmation required: set confirm="rollback"',
+                "requiredConfirm": "rollback",
+            }
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            run = rollback_memory_book_run(conn, run_id=run_id)
+            retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.knowledge-database-action.v1",
+            "ok": True,
+            "action": "rollback",
+            "run": run,
+            "retrieval": retrieval,
+        }
+
+    def _knowledge_workbench_evidence(
+        self,
+        request: KnowledgeWorkbenchRequest,
+    ) -> tuple[dict[str, object], ...]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return ()
+        runtime_config = self.runtime_config_snapshot()
+        if not runtime_config.hybrid_rag.enabled or not runtime_config.memory.enabled:
+            return ()
+        query = HybridRagQuery(
+            query_text=request.question,
+            raw_input=request.question,
+            committed_tail=request.context,
+            project=request.project,
+            app=request.app,
+            top_k=12,
+            latency_budget_ms=800,
+            enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
+            lane_weights=runtime_config.hybrid_rag.query_weights(),
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            payload = retrieve_hybrid_rag_candidates(conn, query)
+        combined: dict[str, dict[str, object]] = {}
+        for item in payload.get("hits", []):
+            if not isinstance(item, dict):
+                continue
+            doc_id = _string(item.get("doc_id") or item.get("docId"))
+            source_id = _string(item.get("source_id") or item.get("sourceId")) or doc_id
+            if not source_id:
+                continue
+            text = compact_whitespace(_string(item.get("text")))
+            metadata = dict(item.get("metadata") or {}) if isinstance(item.get("metadata"), dict) else {}
+            current = combined.get(source_id)
+            score = float(item.get("raw_score") or item.get("rawScore") or 0.0)
+            lane = _string(item.get("source_lane") or item.get("sourceLane")) or "local"
+            if current is None:
+                combined[source_id] = {
+                    "sourceId": source_id,
+                    "docId": doc_id,
+                    "sourceLane": lane,
+                    "lanes": [lane],
+                    "title": _string(metadata.get("bookTitle")) or truncate_text(text, 60),
+                    "text": text,
+                    "tags": list(item.get("tags") or []),
+                    "score": score,
+                    "rank": int(item.get("rank") or 0),
+                }
+                continue
+            lanes = list(current.get("lanes") or [])
+            if lane not in lanes:
+                lanes.append(lane)
+            current["lanes"] = lanes
+            current["score"] = max(float(current.get("score") or 0.0), score)
+        ranked = sorted(
+            combined.values(),
+            key=lambda item: (float(item.get("score") or 0.0), -int(item.get("rank") or 0)),
+            reverse=True,
+        )
+        return tuple(ranked[:12])
+
+    def _knowledge_workbench_database_organizer(
+        self,
+        request: KnowledgeWorkbenchRequest,
+    ) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            raise ValueError("database organization requires local SQLite core")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project=request.project,
+                since_days=30,
+                limit=120,
+                after_event_id=0,
+            )
+        config = load_deepseek_config()
+        organizer = DeepSeekMemoryOrganizer(config)
+        compile_output = organizer.compile_memory_book(bundle=bundle, project=request.project)
+        plan = memory_book_plan_from_compile_output(
+            compile_output,
+            project=request.project,
+            provider=organizer.provider_name,
+            model=config.model,
+            source_bundle=bundle,
+        )
+        validation = inspect_memory_book_plan(plan)
+        stored_run: dict[str, object] = {}
+        if validation.get("ok"):
+            with self.core._connect() as conn:  # type: ignore[attr-defined]
+                stored_run = store_memory_book_plan(conn, plan)
+        return {
+            "schemaVersion": "rag-ime.knowledge-database-organize.v1",
+            "ok": bool(validation.get("ok")),
+            "dryRun": True,
+            "applySupported": True,
+            "applyRequiresReview": True,
+            "source": {
+                "bundleHash": bundle.get("bundleHash"),
+                "eventCount": len(bundle.get("recentEvents") or []),
+                "redactionStats": bundle.get("redactionStats"),
+            },
+            "plan": plan,
+            "validation": validation,
+            "storedRun": stored_run,
+        }
+
     def rag_core_v3_query_preview(self, payload: dict[str, Any]) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
             return {"schemaVersion": "rag-ime.rag-core-v3-preview.v1", "ok": False, "error": "local SQLite core required"}
+        runtime_config = self.runtime_config_snapshot()
+        if not runtime_config.hybrid_rag.enabled or not runtime_config.memory.enabled:
+            return {
+                "schemaVersion": "rag-ime.rag-core-v3-preview.v1",
+                "ok": True,
+                "retrieval": {"called": False},
+                "lanes": {
+                    _camel_lane_name(name): {
+                        "enabled": False,
+                        "configuredEnabled": enabled,
+                        "weight": runtime_config.hybrid_rag.lane_weight(name),
+                        "count": 0,
+                        "docIds": [],
+                    }
+                    for name, enabled in runtime_config.hybrid_rag.query_lanes()
+                },
+                "fusedCandidates": [],
+                "blocked": [{"reason": "memory_disabled" if not runtime_config.memory.enabled else "hybrid_rag_disabled"}],
+                "deepseekEvidencePack": [],
+                "deepseekCandidates": [],
+                "elapsedMs": 0,
+                "rawTextVisible": self._include_raw_text(),
+            }
         query = HybridRagQuery(
             query_text=_string(payload.get("query")) or _string(payload.get("currentInput")),
             raw_input=_string(payload.get("rawInput") or payload.get("currentInput")),
@@ -745,7 +1405,9 @@ class DebugImeService:
             project=_string(payload.get("project")) or self.config.project,
             app=_string(payload.get("app")),
             top_k=_bounded_int(payload.get("topK"), default=5, minimum=1, maximum=20),
-            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=25, minimum=1, maximum=5000),
+            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=400, minimum=1, maximum=5000),
+            enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
+            lane_weights=runtime_config.hybrid_rag.query_weights(),
         )
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             payload_result = retrieve_hybrid_rag_candidates(conn, query)
@@ -753,11 +1415,12 @@ class DebugImeService:
         candidates = list(payload_result.get("candidates") or [])
         fused = [_debug_redact_rag_candidate(item, include_text=include_text) for item in candidates if isinstance(item, dict)]
         evidence_pack = _debug_deepseek_evidence_pack(candidates, include_text=include_text)
-        settings = self.settings_store.get_settings(include_sensitive=True)
-        rag_settings = settings.get("rag") if isinstance(settings.get("rag"), dict) else {}
-        lane_settings = rag_settings.get("lanes") if isinstance(rag_settings.get("lanes"), dict) else {}
         lane_breakdown = _debug_lane_breakdown(payload_result.get("lanes"))
-        disabled_lanes = sorted(str(name) for name, enabled in lane_settings.items() if enabled is False)
+        disabled_lanes = sorted(
+            _camel_lane_name(name)
+            for name, enabled in runtime_config.hybrid_rag.query_lanes()
+            if not enabled
+        )
         for lane in disabled_lanes:
             lane_breakdown.setdefault(lane, {"count": 0})
             lane_breakdown[lane]["disabledBySettings"] = True
@@ -771,6 +1434,7 @@ class DebugImeService:
             "deepseekEvidencePack": evidence_pack,
             "deepseekCandidates": [],
             "elapsedMs": int(payload_result.get("elapsedMs") or 0),
+            "retrieval": {"called": True},
             "rawTextVisible": include_text,
         }
 
@@ -860,20 +1524,23 @@ class DebugImeService:
         }
 
     def deepseek_completion_preview(self, payload: dict[str, Any]) -> dict[str, object]:
-        try:
-            assert_deepseek_scene_allowed("active_rag")
-        except RuntimeError as exc:
-            expected_token = os.environ.get("RAG_IME_DEEPSEEK_PREVIEW_TOKEN", "")
-            provided_token = _string(payload.get("previewToken"))
-            if not (expected_token and provided_token and provided_token == expected_token):
-                return {
-                    "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
-                    "ok": False,
-                    "error": str(exc),
-                    "requires": "RAG_IME_DEEPSEEK_ACTIVE_RAG=1 or previewToken",
-                }
         current_context = _string(payload.get("currentContext") or payload.get("context"))
         selected_text = _string(payload.get("selectedText"))
+        sensitive_field, secure_input = _active_rag_secure_flags(payload)
+        settings = self.settings_store.get_settings()
+        active_settings = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
+        sensitive_guard_enabled = bool(active_settings.get("sensitiveTextGuard", True))
+        if (
+            sensitive_field
+            or secure_input
+            or _bool(payload.get("sensitiveTextGuardHit"), default=False)
+            or active_rag_sensitive_text_blocked(
+                current_context,
+                selected_text,
+                guard_enabled=sensitive_guard_enabled,
+            )
+        ):
+            return _sensitive_deepseek_preview_payload()
         evidence_pack = (
             tuple(item for item in payload.get("evidencePack", []) if isinstance(item, dict))
             if isinstance(payload.get("evidencePack"), list)
@@ -885,11 +1552,32 @@ class DebugImeService:
                 selected_text=selected_text,
                 payload=payload,
             )
+        config = load_deepseek_config(_string(payload.get("modelEnvPath")) or None)
+        route_status = self.active_rag_route_status(local_only=False)
+        route_status = {
+            **route_status,
+            "model": config.model,
+            "gates": {
+                **dict(route_status.get("gates") or {}),
+                "credentialsConfigured": bool(config.api_key),
+            },
+        }
+        expected_token = os.environ.get("RAG_IME_DEEPSEEK_PREVIEW_TOKEN", "")
+        provided_token = _string(payload.get("previewToken"))
+        debug_override = bool(expected_token and provided_token and provided_token == expected_token)
+        route_status["debugOverride"] = debug_override
+        route_status["remoteReady"] = bool(all(route_status["gates"].values()))  # type: ignore[union-attr]
+        if route_status["remoteReady"]:
+            route_status["skipReason"] = ""
+        elif not config.api_key:
+            route_status["skipReason"] = "credentials_missing"
+        context_packet = payload.get("contextPacket") if isinstance(payload.get("contextPacket"), dict) else None
         request = DeepSeekCompletionRequest(
             scene="active_rag",
             current_context=current_context,
             selected_text=selected_text,
             evidence_pack=evidence_pack,
+            context_packet=dict(context_packet) if context_packet else None,
             max_candidates=_bounded_int(payload.get("maxCandidates"), default=1, minimum=1, maximum=8),
             max_chars=_bounded_int(
                 payload.get("maxChars"),
@@ -900,40 +1588,99 @@ class DebugImeService:
             latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=2500, minimum=100, maximum=15000),
         )
         messages = build_deepseek_completion_messages(request)
-        if _bool(payload.get("dryRun"), default=True):
+        include_text = self._include_raw_text()
+        request_diagnostics = build_context_injection_trace(
+            current_context=current_context,
+            selected_text=selected_text,
+            evidence_pack=evidence_pack,
+            context_packet=context_packet,
+            messages=messages,
+            include_text=include_text,
+        )
+        safe_messages: object
+        safe_evidence: object
+        if include_text:
+            safe_messages = messages
+            safe_evidence = list(evidence_pack)
+        else:
+            safe_messages = request_diagnostics["prompt"]["messages"]  # type: ignore[index]
+            safe_evidence = request_diagnostics["evidence"]["items"]  # type: ignore[index]
+        base_response: dict[str, object] = {
+            "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
+            "routeStatus": route_status,
+            "requestDiagnostics": request_diagnostics,
+            "messages": safe_messages,
+            "evidencePack": safe_evidence,
+        }
+        authorized = bool(route_status["remoteReady"] or debug_override)
+        if not authorized:
             return {
-                "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
-                "ok": True,
-                "dryRun": True,
-                "messages": _redact_mapping({"messages": messages}, include_text=self._include_raw_text())["messages"],
-                "evidencePack": _redact_mapping({"items": list(evidence_pack)}, include_text=self._include_raw_text())["items"],
+                **base_response,
+                "ok": False,
+                "dryRun": _bool(payload.get("dryRun"), default=True),
+                "error": f"DeepSeek Active RAG route blocked: {route_status['skipReason']}",
+                "requires": (
+                    "activeRag.allowRemoteModel=true, privacy.allowRemoteModelForActiveRag=true, "
+                    "RAG_IME_DEEPSEEK_ACTIVE_RAG=1, configured credentials, or previewToken"
+                ),
                 "candidates": [],
             }
-        config = load_deepseek_config(_string(payload.get("modelEnvPath")) or None)
+        if _bool(payload.get("dryRun"), default=True):
+            return {
+                **base_response,
+                "ok": True,
+                "dryRun": True,
+                "candidates": [],
+            }
         provider = DeepSeekV4FlashCompletionProvider(config, enforce_runtime_flags=False)
         candidates: list[dict[str, object]] = []
         stream_events: list[dict[str, object]] = []
-        for item in provider.stream_candidates(request):
-            payload_item = item.__dict__
-            candidates.append(payload_item)
-            stream_events.append(
-                {
-                    "text": item.text,
-                    "insertText": item.insert_text,
-                    "sourceLane": item.source_lane,
-                    "done": item.done,
-                    "elapsedMs": item.metadata.get("elapsedMs"),
-                    "metadata": dict(item.metadata),
-                }
-            )
+        started = time.perf_counter()
+        try:
+            for item in provider.stream_candidates(request):
+                payload_item = item.__dict__
+                candidates.append(payload_item)
+                stream_events.append(
+                    {
+                        "text": item.text,
+                        "insertText": item.insert_text,
+                        "sourceLane": item.source_lane,
+                        "done": item.done,
+                        "elapsedMs": item.metadata.get("elapsedMs"),
+                        "metadata": dict(item.metadata),
+                    }
+                )
+        except Exception as exc:
+            return {
+                **base_response,
+                "ok": False,
+                "dryRun": False,
+                "remoteModel": {
+                    "requested": True,
+                    "allowed": authorized,
+                    "provider": "deepseek",
+                    "model": config.model,
+                    "skipReason": type(exc).__name__,
+                    "failureReason": _safe_debug_error(exc),
+                    "elapsedMs": round((time.perf_counter() - started) * 1000, 2),
+                },
+                "streamEvents": [],
+                "candidates": [],
+            }
         return {
-            "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
+            **base_response,
             "ok": True,
             "dryRun": False,
-            "messages": _redact_mapping({"messages": messages}, include_text=self._include_raw_text())["messages"],
-            "evidencePack": _redact_mapping({"items": list(evidence_pack)}, include_text=self._include_raw_text())["items"],
-            "streamEvents": _redact_mapping({"items": stream_events}, include_text=self._include_raw_text())["items"],
-            "candidates": _redact_mapping({"items": candidates}, include_text=self._include_raw_text())["items"],
+            "remoteModel": {
+                "requested": True,
+                "allowed": authorized,
+                "provider": "deepseek",
+                "model": config.model,
+                "skipReason": "",
+                "elapsedMs": round((time.perf_counter() - started) * 1000, 2),
+            },
+            "streamEvents": _redact_mapping({"items": stream_events}, include_text=include_text)["items"],
+            "candidates": _redact_mapping({"items": candidates}, include_text=include_text)["items"],
         }
 
     def _deepseek_preview_evidence_pack(
@@ -946,17 +1693,54 @@ class DebugImeService:
         query = compact_whitespace(_string(payload.get("query")) or current_context or selected_text)
         if not query:
             return ()
+        runtime_config = self.runtime_config_snapshot()
+        if (
+            not runtime_config.active_rag.enabled
+            or not runtime_config.hybrid_rag.enabled
+            or not runtime_config.memory.enabled
+        ):
+            return ()
         top_k = _bounded_int(payload.get("evidenceTopK"), default=8, minimum=1, maximum=20)
         try:
-            suggestions = self.adapter.suggest(
-                SuggestionRequest(
+            if isinstance(self.core, LocalSqliteCoreClient):
+                candidates = self.core.retrieve_candidates_v3(
                     current_input=query,
                     recent_context=compact_whitespace(selected_text or current_context),
                     project=_string(payload.get("project")) or self.config.project,
                     app=_string(payload.get("app")),
                     top_k=top_k,
+                    source_budget_ms=runtime_config.hybrid_rag.budget_ms,
+                    enabled_lanes=runtime_config.hybrid_rag.query_lanes(),
+                    lane_weights=runtime_config.hybrid_rag.query_weights(),
                 )
-            )
+                suggestions = memory_candidates_v2_to_input_suggestions(candidates)
+                if not suggestions and all(
+                    enabled
+                    for lane, enabled in runtime_config.hybrid_rag.query_lanes()
+                    if lane not in {"vector_raw", "vector_tag_boost"}
+                ):
+                    # Preserve the established legacy evidence fallback only
+                    # when every implemented lane is enabled. A customized
+                    # lane policy must never be bypassed by that fallback.
+                    suggestions = self.adapter.suggest(
+                        SuggestionRequest(
+                            current_input=query,
+                            recent_context=compact_whitespace(selected_text or current_context),
+                            project=_string(payload.get("project")) or self.config.project,
+                            app=_string(payload.get("app")),
+                            top_k=top_k,
+                        )
+                    )
+            else:
+                suggestions = self.adapter.suggest(
+                    SuggestionRequest(
+                        current_input=query,
+                        recent_context=compact_whitespace(selected_text or current_context),
+                        project=_string(payload.get("project")) or self.config.project,
+                        app=_string(payload.get("app")),
+                        top_k=top_k,
+                    )
+                )
         except Exception:
             return ()
         return tuple(_deepseek_evidence_from_suggestion(item) for item in suggestions[:top_k])
@@ -1558,6 +2342,7 @@ class DebugImeService:
                     recent_context=generated_memory_context(source_text, recent_context, item.reason),
                     project=project,
                     app=_string(payload.get("app")) or "debug-memory-console",
+                    privacy_disposition="allowed",
                     source="api_memory_generator",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
@@ -1839,9 +2624,25 @@ class DebugImeService:
         )
 
     def rime_suggest(self, payload: dict[str, Any]) -> dict[str, object]:
-        settings = self.settings_store.get_settings(include_sensitive=True)
-        _apply_pinyin_settings_to_process_env(settings)
-        cache_key = self._rime_suggest_cache_key(payload, settings=settings)
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True or sensitive_input_requested(payload):
+            return build_rime_sidecar_response(
+                payload=payload,
+                adapter=self.adapter,
+                core=self.core,
+                predictor=self.predictor,
+                default_project=self.config.project,
+            )
+        persisted_settings = self.settings_store.get_settings(include_sensitive=True)
+        runtime_config = self.runtime_config_snapshot(settings=persisted_settings)
+        effective_settings = runtime_config.effective_settings(persisted_settings)
+        _apply_pinyin_settings_to_process_env(effective_settings)
+        configure_auto_prediction_trigger(
+            min_delta_chars=runtime_config.post_commit.min_delta_chars,
+            max_calls_per_10s=runtime_config.post_commit.max_calls_per_10s,
+            ignore_cooldown_ms=runtime_config.post_commit.cooldown_ms,
+        )
+        cache_key = self._rime_suggest_cache_key(payload, runtime_config=runtime_config)
         bypass_cache = self._rime_suggest_cache_bypass(payload)
         cached = None if bypass_cache else self._get_cached_rime_response(cache_key, payload)
         if cached is not None:
@@ -1859,12 +2660,18 @@ class DebugImeService:
                 core=self.core,
                 predictor=self.predictor,
                 default_project=self.config.project,
+                runtime_config=runtime_config,
             )
         except BaseException as exc:
             self._finish_rime_inflight(cache_key, error=exc)
             raise
         _attach_rime_ranking_diagnostics(response)
-        self._apply_management_settings_to_rime_response(response, request_payload=payload, settings=settings)
+        self._apply_management_settings_to_rime_response(
+            response,
+            request_payload=payload,
+            settings=effective_settings,
+            runtime_config=runtime_config,
+        )
         if self._rime_response_cacheable(response, request_payload=payload):
             self._store_rime_response(cache_key, response)
         self._finish_rime_inflight(cache_key, response=response)
@@ -1878,23 +2685,26 @@ class DebugImeService:
         response: dict[str, object],
         *,
         request_payload: dict[str, Any],
-        settings: dict[str, object] | None = None,
+        settings: dict[str, object],
+        runtime_config: RuntimeConfigSnapshot,
     ) -> None:
-        if settings is None:
-            settings = self.settings_store.get_settings(include_sensitive=True)
-        interaction = settings.get("interaction") if isinstance(settings.get("interaction"), dict) else {}
-        composition = interaction.get("composition") if isinstance(interaction.get("composition"), dict) else {}
-        post_commit = interaction.get("postCommit") if isinstance(interaction.get("postCommit"), dict) else {}
         display = settings.get("display") if isinstance(settings.get("display"), dict) else {}
-        badges = display.get("badges") if isinstance(display.get("badges"), dict) else {}
         colors = display.get("colors") if isinstance(display.get("colors"), dict) else {}
         active_composition = bool(compact_whitespace(_string(request_payload.get("rawInput")) or _string(request_payload.get("preedit"))))
+        debug_force_side_candidates = _bool(
+            request_payload.get("forceSideCandidates") or request_payload.get("force_side_candidates"),
+            default=False,
+        )
         items = [dict(item) for item in response.get("displayCandidates", []) if isinstance(item, dict)]
-        if active_composition and composition.get("showPrediction") is False:
+        if active_composition and not runtime_config.composition_ai and not debug_force_side_candidates:
             items = [item for item in items if _string(item.get("sourceType")) in {"rime", "raw_english", "status"}]
-        if post_commit.get("showPendingStatus") is False:
+        if not active_composition and not runtime_config.post_commit.enabled:
+            items = []
+        if (not runtime_config.hybrid_rag.enabled or not runtime_config.memory.enabled) and not debug_force_side_candidates:
+            items = [item for item in items if _string(item.get("sourceType")) not in {"rag", "memory"}]
+        if not runtime_config.post_commit.show_pending_status:
             items = [item for item in items if _string(item.get("sourceType")) != "status" and _string(item.get("displayLayout")) != "status_row"]
-        max_post_commit = _bounded_int(display.get("maxPostCommitCandidates"), default=5, minimum=1, maximum=10)
+        max_post_commit = runtime_config.post_commit.max_candidates
         if not active_composition:
             kept: list[dict[str, object]] = []
             selectable_count = 0
@@ -1906,10 +2716,10 @@ class DebugImeService:
                 if selectable_count <= max_post_commit:
                     kept.append(item)
             items = kept
-        show_badges = display.get("showSourceBadge") is not False
+        show_badges = runtime_config.source_badges.enabled
         for item in items:
             source_type = _string(item.get("sourceType"))
-            custom_badge = _string(badges.get(source_type))
+            custom_badge = runtime_config.source_badges.badge_for(source_type)
             custom_color = _string(colors.get(source_type))
             if not show_badges:
                 item["badge"] = ""
@@ -1920,18 +2730,112 @@ class DebugImeService:
             if custom_color:
                 item["colorToken"] = custom_color
         response["displayCandidates"] = items
+        response["runtimeConfig"] = runtime_config.payload()
+        response["runtimeRevision"] = runtime_config.runtime_revision
+        response["settingsRevision"] = runtime_config.settings_revision
+        response["runtimeProfile"] = runtime_config.profile
         response["managementSettings"] = {
-            "settingsHash": _settings_hash(settings),
+            "settingsHash": runtime_config.settings_revision,
+            "settingsRevision": runtime_config.settings_revision,
+            "runtimeRevision": runtime_config.runtime_revision,
+            "snapshotHash": runtime_config.snapshot_hash,
+            "profile": runtime_config.profile,
+            "debugForceSideCandidates": debug_force_side_candidates,
             "interactionApplied": True,
             "displayApplied": True,
         }
-        if isinstance(response.get("keyPolicy"), dict) and post_commit.get("numberKeys"):
-            response["keyPolicy"]["numberKeys"] = post_commit.get("numberKeys")  # type: ignore[index]
+        if active_composition:
+            effective_key_policy = {
+                "numberKeys": runtime_config.key_policy.composition_number_keys,
+                "tab": runtime_config.key_policy.composition_tab,
+                "optionNumber": runtime_config.key_policy.composition_option_number,
+                "escape": runtime_config.key_policy.composition_escape,
+            }
+        else:
+            effective_key_policy = {
+                "numberKeys": runtime_config.key_policy.post_commit_number_keys,
+                "tab": runtime_config.key_policy.tab_action,
+                "optionNumber": runtime_config.key_policy.option_number,
+                "escape": runtime_config.key_policy.escape,
+            }
+        if isinstance(response.get("keyPolicy"), dict):
+            response["keyPolicy"].update(effective_key_policy)  # type: ignore[union-attr]
+            applied_key_policy = dict(response["keyPolicy"])  # type: ignore[arg-type]
+        else:
+            applied_key_policy = dict(effective_key_policy)
+            response["keyPolicy"] = applied_key_policy
         prediction_session = response.get("predictionSession")
         if isinstance(prediction_session, dict):
             policy = prediction_session.get("keyPolicy")
-            if isinstance(policy, dict) and post_commit.get("numberKeys"):
-                policy["numberKeys"] = post_commit.get("numberKeys")
+            if isinstance(policy, dict):
+                policy.update(effective_key_policy)
+            if not bool(prediction_session.get("shouldClearPredictionPanel")) and not active_composition:
+                prediction_session["expiresAfterMs"] = runtime_config.post_commit.panel_ttl_ms
+        input_mode = _string(response.get("inputMode"))
+        existing_overlay = response.get("assistantOverlay")
+        if not input_mode and isinstance(existing_overlay, dict):
+            input_mode = _string(existing_overlay.get("inputMode"))
+        response["candidatePanel"] = build_candidate_panel_payload(
+            input_mode=input_mode,
+            display_candidates=items,
+        )
+        rag_candidates = (
+            response.get("ragCandidates")
+            if runtime_config.hybrid_rag.enabled and runtime_config.memory.enabled
+            else []
+        )
+        response["assistantOverlay"] = build_assistant_overlay_payload(
+            ui_mode=_string(response.get("uiMode")),
+            input_mode=input_mode,
+            display_candidates=items,
+            rag_candidates=rag_candidates if isinstance(rag_candidates, list) else [],
+            prediction_session=prediction_session if isinstance(prediction_session, dict) else None,
+            key_policy=applied_key_policy,
+            progressive=response.get("progressive") if isinstance(response.get("progressive"), dict) else None,
+            frontend_transaction=(
+                response.get("frontendTransaction")
+                if isinstance(response.get("frontendTransaction"), dict)
+                else None
+            ),
+        )
+        overlay_config = {
+            **runtime_config.overlay.payload(
+                expires_after_ms=(
+                    runtime_config.post_commit.panel_ttl_ms
+                    if not active_composition
+                    and not (
+                        isinstance(prediction_session, dict)
+                        and bool(prediction_session.get("shouldClearPredictionPanel"))
+                    )
+                    else 0
+                )
+            ),
+            "maxCandidates": runtime_config.post_commit.max_candidates,
+            "showSourceBadge": runtime_config.source_badges.enabled,
+            "badges": dict(runtime_config.source_badges.items),
+            "colors": dict(runtime_config.source_colors),
+            "keyPolicy": dict(applied_key_policy),
+            "activeRag": runtime_config.active_rag.payload(),
+        }
+        response["overlayConfig"] = overlay_config
+        response["assistantOverlay"]["overlayConfig"] = overlay_config  # type: ignore[index]
+        trace_events = response.get("predictionTraceEvents")
+        if isinstance(trace_events, list):
+            trace_events.append(
+                {
+                    "event": "effective_runtime_config_applied",
+                    "fields": {
+                        "runtimeRevision": runtime_config.runtime_revision,
+                        "postCommitEnabled": runtime_config.post_commit.enabled,
+                        "memoryEnabled": runtime_config.memory.enabled,
+                        "hybridRagEnabled": runtime_config.hybrid_rag.enabled,
+                        "ragLanes": dict(runtime_config.hybrid_rag.query_lanes()),
+                        "ragWeights": dict(runtime_config.hybrid_rag.query_weights()),
+                        "activeRagEnabled": runtime_config.active_rag.enabled,
+                        "activeRagShortcut": runtime_config.active_rag.shortcut,
+                    },
+                }
+            )
 
     def rime_select(self, payload: dict[str, Any]) -> dict[str, object]:
         response = record_rime_side_candidate_selection(
@@ -1940,19 +2844,45 @@ class DebugImeService:
             core=self.core,
             default_project=self.config.project,
         )
-        if not response.get("dryRun"):
+        if response.get("stored") is True:
             self._clear_rime_cache()
         return response
+
+    def rime_rank_feedback(self, payload: dict[str, Any]) -> dict[str, object]:
+        return record_native_rime_selection(
+            payload,
+            db_path=self.config.db_path,
+            default_project=self.config.project,
+        )
 
     def commit(self, payload: dict[str, Any]) -> dict[str, object]:
         text = _string(payload.get("text")).strip()
         if not text:
             raise ValueError("text must not be empty")
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return {
+                "schemaVersion": "rag-ime.foreground-commit.v1",
+                "ok": True,
+                "stored": False,
+                "noStore": True,
+                "eventId": "",
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+            }
         event_id = self.adapter.commit_text(
             text,
             recent_context=_string(payload.get("recentContext")),
             preedit=_string(payload.get("preedit")),
             project=_string(payload.get("project")) or self.config.project,
+            app=_string(
+                payload.get("app")
+                or payload.get("frontAppBundleId")
+                or payload.get("frontmostApp")
+                or payload.get("bundleId")
+            )
+            or "squirrel",
+            privacy_disposition=str(privacy_assessment["disposition"]),
             candidate_rank=_optional_int(payload.get("candidateRank")),
             provider_name=_string(payload.get("providerName")) or "debug-page",
             tags=tuple(_string_list(payload.get("tags"))),
@@ -1961,13 +2891,45 @@ class DebugImeService:
             context_group_level=_string(payload.get("contextGroupLevel")) or "app",
         )
         self._clear_rime_cache()
-        return {"ok": True, "eventId": event_id, "eventCount": self._event_count()}
+        stored = bool(event_id) and not event_id.startswith("skipped:")
+        return {
+            "schemaVersion": "rag-ime.foreground-commit.v1",
+            "ok": True,
+            "stored": stored,
+            "noStore": False,
+            "eventId": event_id,
+            "eventCount": self._event_count(),
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(
+                privacy_assessment,
+                stored=stored,
+                event_id=event_id,
+            ),
+        }
 
     def action(self, payload: dict[str, Any]) -> dict[str, object]:
         action_type = _canonical_action(_string(payload.get("actionType")))
         memory_id = _string(payload.get("memoryId"))
         if not memory_id:
             raise ValueError("memoryId must not be empty")
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return {
+                "schemaVersion": "rag-ime.action.v1",
+                "ok": True,
+                "actionId": None,
+                "createdAtMs": now_ms(),
+                "memoryId": memory_id,
+                "actionType": action_type,
+                "query": _string(payload.get("query")),
+                "suggestionId": _string(payload.get("suggestionId")),
+                "sourceEventId": _optional_int(payload.get("sourceEventId")),
+                "metadata": {},
+                "stored": False,
+                "noStore": True,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+            }
         action = self.core.apply_action(
             MemoryAction(
                 action_id=None,
@@ -1981,7 +2943,117 @@ class DebugImeService:
             )
         )
         self._clear_rime_cache()
-        return action_response_payload(action)
+        return {
+            **action_response_payload(action),
+            "ok": True,
+            "stored": True,
+            "noStore": False,
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(privacy_assessment, stored=True),
+        }
+
+    def assistant_candidate_action(self, payload: dict[str, Any]) -> dict[str, object]:
+        action = _string(payload.get("action")).strip().lower()
+        if action not in {"remember", "suppress"}:
+            raise ValueError("assistant candidate action must be remember or suppress")
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return {
+                "schemaVersion": "rag-ime.assistant-candidate-action.v1",
+                "ok": True,
+                "action": action,
+                "stored": False,
+                "noStore": True,
+                "memoryId": None,
+                "tombstoneId": None,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+            }
+        candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
+        assert isinstance(candidate, dict)
+        text = compact_whitespace(
+            _string(candidate.get("insertText")) or _string(candidate.get("text"))
+        )
+        if not text:
+            raise ValueError("assistant candidate text must not be empty")
+
+        source_type = _string(candidate.get("sourceType")) or "model"
+        memory_id = _string(candidate.get("memoryId"))
+        source_event_id = _optional_int(candidate.get("sourceEventId"))
+        query = _string(payload.get("query"))
+        project = _string(payload.get("project")) or self.config.project
+        app = _string(payload.get("app"))
+        tombstone_id: int | None = None
+        if action == "remember":
+            has_actionable_memory = (
+                source_type in {"rag", "memory"}
+                and bool(memory_id)
+                and source_event_id is not None
+            )
+            if not has_actionable_memory:
+                memory_id = self.adapter.commit_text(
+                    text,
+                    recent_context=query,
+                    project=project,
+                    app=app or "squirrel",
+                    privacy_disposition=str(privacy_assessment["disposition"]),
+                    source="squirrel_assistant_remember",
+                    provider_name=f"assistant-overlay:{source_type}",
+                    tags=("assistant-overlay", "remembered"),
+                )
+            pinned = self.core.apply_action(
+                MemoryAction(
+                    action_id=None,
+                    created_at_ms=now_ms(),
+                    memory_id=memory_id,
+                    action_type="pin",
+                    query=query,
+                    suggestion_id=_string(candidate.get("suggestionId")) or f"assistant:{stable_text_hash(text)}",
+                    source_event_id=source_event_id,
+                    metadata={"surface_text": text, "source_type": source_type, "app": app, "project": project},
+                )
+            )
+            result: dict[str, object] = {"pinned": action_response_payload(pinned)}
+        else:
+            if not isinstance(self.core, LocalSqliteCoreClient):
+                raise ValueError("assistant suppression requires the local SQLite core")
+            tombstone = self.core.add_memory_tombstone(
+                target_type="normalized_text",
+                target_value=text,
+                reason="assistant_overlay_suppress",
+                metadata={"sourceType": source_type, "app": app, "project": project},
+            )
+            tombstone_id = int(tombstone.get("id") or 0) or None
+            self.core.record_memory_feedback(
+                {
+                    "event": "hide",
+                    "candidateId": memory_id or _string(candidate.get("candidateStableId")),
+                    "candidateText": text,
+                    "sourceType": source_type,
+                    "contextHash": query,
+                    "frontAppBundleId": app,
+                    "project": project,
+                    "metadata": {"source": "assistant_overlay_suppress"},
+                }
+            )
+            result = {"tombstone": tombstone}
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.assistant-candidate-action.v1",
+            "ok": True,
+            "action": action,
+            "stored": True,
+            "noStore": False,
+            "memoryId": memory_id or None,
+            "tombstoneId": tombstone_id,
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(
+                privacy_assessment,
+                stored=True,
+                event_id=memory_id or tombstone_id,
+            ),
+            **result,
+        }
 
     def _predictor_ttfc_cases(self, payload: dict[str, Any]) -> list[PredictionBenchmarkCase]:
         raw_cases = payload.get("cases")
@@ -2059,6 +3131,8 @@ class DebugImeService:
         return {
             "sessionId": "cache-probe",
             "requestSeq": 0,
+            # Cache probes operate on fixed synthetic text, never foreground input.
+            "privacyDisposition": "allowed",
             "rawInput": _string(payload.get("rawInput")) or current_input,
             "preedit": _string(payload.get("preedit")) or current_input,
             "committedContext": recent_context,
@@ -2149,7 +3223,13 @@ class DebugImeService:
         with self._rime_cache_lock:
             return len(self._rime_inflight)
 
-    def _rime_suggest_cache_key(self, payload: dict[str, Any], *, settings: dict[str, object] | None = None) -> str:
+    def _rime_suggest_cache_key(
+        self,
+        payload: dict[str, Any],
+        *,
+        runtime_config: RuntimeConfigSnapshot | None = None,
+    ) -> str:
+        runtime_config = runtime_config or self.runtime_config_snapshot()
         snapshot = parse_rime_context_payload(payload, default_project=self.config.project)
         semantic_query, query_basis = choose_semantic_query(snapshot)
         trigger_decision = decide_side_candidate_refresh(
@@ -2158,7 +3238,7 @@ class DebugImeService:
             query_basis=query_basis,
         )
         raw_sensitive_input = {}
-        if query_basis in ("preedit", "rawInputFallback") or snapshot.force_side_candidates:
+        if query_basis in ("preedit", "rawInputFallback"):
             raw_sensitive_input = {
                 "rawInput": snapshot.raw_input,
                 "preedit": snapshot.preedit,
@@ -2184,7 +3264,8 @@ class DebugImeService:
         material = {
             "snapshot": normalized_snapshot,
             "project": self.config.project,
-            "managementSettingsHash": _settings_hash(settings or self.settings_store.get_settings(include_sensitive=True)),
+            "runtimeConfigHash": runtime_config.snapshot_hash,
+            "runtimeRevision": runtime_config.runtime_revision,
             "eventCount": self._event_count(),
             "actionCount": self._action_count(),
             "vectorStats": self._vector_index_stats(),
@@ -2421,6 +3502,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/health", "/health"):
             self._write_json(HTTPStatus.OK, self.service.health())
             return
+        if parsed.path in ("/api/frontend/v1/capabilities", "/frontend/v1/capabilities"):
+            response = self.service.frontend_capabilities()
+            validate_contract(response, "frontend-capabilities.v1.json")
+            self._write_json(HTTPStatus.OK, response)
+            return
         if parsed.path in ("/api/input-source", "/input-source"):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
@@ -2430,6 +3516,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/runtime/status":
             self._write_json(HTTPStatus.OK, self.service.management.runtime_status())
+            return
+        if parsed.path == "/api/runtime/config":
+            self._write_json(HTTPStatus.OK, self.service.runtime_config())
             return
         if parsed.path == "/api/runtime/components":
             self._write_json(HTTPStatus.OK, self.service.management.runtime_components())
@@ -2522,6 +3611,26 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/active-rag/settings",):
             self._write_json(HTTPStatus.OK, self.service.active_rag_settings())
             return
+        if parsed.path in ("/api/active-rag/route-status",):
+            local_only_raw = _query_first(query, "localOnly")
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.active_rag_route_status(
+                    local_only=_bool(local_only_raw, default=True) if local_only_raw else None
+                ),
+            )
+            return
+        if parsed.path in ("/api/knowledge/route-status",):
+            self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_route_status())
+            return
+        if parsed.path in ("/api/knowledge/status", "/api/knowledge/session"):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.knowledge_workbench_status(
+                    {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
+                ),
+            )
+            return
         if parsed.path in ("/api/predictor/latency",):
             self._write_json(
                 HTTPStatus.OK,
@@ -2540,6 +3649,14 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(
                 HTTPStatus.OK,
                 self.service.active_rag_status({"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}),
+            )
+            return
+        if parsed.path in ("/api/active-rag/diagnostics",):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.active_rag_diagnostics(
+                    {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
+                ),
             )
             return
         if parsed.path.startswith("/api/active-rag/session/"):
@@ -2700,7 +3817,22 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        self._serve_static(parsed.path)
+        if parsed.path in ("", "/"):
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "schemaVersion": "rag-ime.local-api-root.v1",
+                    "ok": True,
+                    "service": self.service.config.server_name,
+                    "controlCenter": "RagImeControl.app",
+                    "browserUI": False,
+                },
+            )
+            return
+        self._write_json(
+            HTTPStatus.NOT_FOUND,
+            {"schemaVersion": "rag-ime.local-api-error.v1", "ok": False, "error": "route_not_found"},
+        )
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
         try:
@@ -2712,6 +3844,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             if path in ("/api/suggest", "/suggest"):
                 self._write_json(HTTPStatus.OK, self.service.suggest(payload))
+            elif path in ("/api/frontend/v1/suggest", "/frontend/v1/suggest"):
+                validate_contract(payload, "frontend-suggest-request.v1.json")
+                response = self.service.frontend_suggest(payload)
+                validate_contract(response, "frontend-suggest-response.v1.json")
+                self._write_json(HTTPStatus.OK, response)
+            elif path in ("/api/frontend/v1/select", "/frontend/v1/select"):
+                validate_contract(payload, "frontend-selection.v1.json")
+                response = self.service.frontend_select(payload)
+                validate_contract(response, "frontend-selection-response.v1.json")
+                self._write_json(HTTPStatus.OK, response)
             elif path == "/api/runtime/action":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.management.start_runtime_action(payload))
             elif path == "/api/memory/action":
@@ -2752,9 +3894,19 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/active-rag/preview",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_preview(payload))
             elif path in ("/api/rime-suggest", "/rime-suggest"):
-                self._write_json(HTTPStatus.OK, self.service.rime_suggest(payload))
+                validate_contract(payload, "rime-suggest-request.v1.json")
+                response = self.service.rime_suggest(payload)
+                validate_contract(response, "rime-suggest-response.v1.json")
+                validate_contract(response.get("assistantOverlay"), "assistant-overlay.v1.json")
+                if isinstance(response.get("overlayConfig"), dict):
+                    validate_contract(response.get("overlayConfig"), "overlay-config.v1.json")
+                self._write_json(HTTPStatus.OK, response)
             elif path in ("/api/rime-select", "/rime-select"):
+                validate_contract(payload, "rime-select.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
+            elif path in ("/api/rime-rank-feedback", "/rime-rank-feedback"):
+                validate_contract(payload, "rime-rank-selection.v1.json")
+                self._write_json(HTTPStatus.OK, self.service.rime_rank_feedback(payload))
             elif path in ("/api/predictor-ttfc", "/predictor-ttfc"):
                 self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
             elif path in ("/api/predictor/benchmark",):
@@ -2764,13 +3916,26 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/active-rag/preview",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_preview(payload))
             elif path in ("/api/active-rag/start",):
+                validate_contract(payload, "active-rag-start.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.active_rag_start(payload))
             elif path in ("/api/active-rag/status", "/api/active-rag/session"):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_status(payload))
+            elif path in ("/api/active-rag/diagnostics",):
+                self._write_json(HTTPStatus.OK, self.service.active_rag_diagnostics(payload))
             elif path in ("/api/active-rag/cancel",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_cancel(payload))
             elif path in ("/api/active-rag/accept",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_accept(payload))
+            elif path in ("/api/knowledge/start",):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_start(payload))
+            elif path in ("/api/knowledge/status", "/api/knowledge/session"):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_status(payload))
+            elif path in ("/api/knowledge/cancel",):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_cancel(payload))
+            elif path in ("/api/knowledge/database/apply",):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_apply(payload))
+            elif path in ("/api/knowledge/database/rollback",):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_rollback(payload))
             elif path in ("/api/cache-probe", "/cache-probe"):
                 self._write_json(HTTPStatus.OK, self.service.cache_probe(payload))
             elif path in ("/api/rebuild-vector-index", "/rebuild-vector-index"):
@@ -2818,9 +3983,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/deepseek/completion-preview",):
                 self._write_json(HTTPStatus.OK, self.service.deepseek_completion_preview(payload))
             elif path in ("/api/commit", "/commit"):
+                validate_contract(payload, "foreground-commit.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.commit(payload))
             elif path in ("/api/action", "/action"):
                 self._write_json(HTTPStatus.OK, self.service.action(payload))
+            elif path in ("/api/assistant-candidate-action", "/assistant-candidate-action"):
+                validate_contract(payload, "assistant-candidate-action.v1.json")
+                self._write_json(HTTPStatus.OK, self.service.assistant_candidate_action(payload))
             elif path in ("/api/seed", "/seed"):
                 self._write_json(HTTPStatus.OK, self.service.seed())
             else:
@@ -2829,7 +3998,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
 
     def log_message(self, fmt: str, *args: object) -> None:
-        if self.path.startswith(("/api/active-rag/status", "/api/active-rag/session")):
+        if self.path.startswith(("/api/active-rag/status", "/api/active-rag/session", "/api/knowledge/status", "/api/knowledge/session")):
             return
         print(f"[rag-ime-debug] {self.address_string()} - {fmt % args}")
 
@@ -2887,38 +4056,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 
-    def _serve_static(self, request_path: str) -> None:
-        relative = "index.html" if request_path in ("", "/") else unquote(request_path.lstrip("/"))
-        candidate = (self.static_dir / relative).resolve()
-        static_root = self.static_dir.resolve()
-        if static_root not in candidate.parents and candidate != static_root:
-            self.send_error(HTTPStatus.FORBIDDEN)
-            return
-        if not candidate.exists() or not candidate.is_file():
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
-        body = candidate.read_bytes()
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-
 def run_debug_server(config: DebugServerConfig) -> None:
     service = DebugImeService(config)
-    static_dir = config.static_dir
 
     class Handler(DebugRequestHandler):
         pass
 
     Handler.service = service
-    Handler.static_dir = static_dir
     server = ThreadingHTTPServer((config.host, config.port), Handler)
-    url = f"http://{config.host}:{config.port}/"
-    print(f"RAG IME {config.server_name}: {url}")
+    url = f"http://{config.host}:{config.port}/api/health"
+    print(f"RAG IME {config.server_name} API: {url}")
     print(f"DB: {config.db_path}")
     server.serve_forever()
 
@@ -2930,8 +4077,11 @@ def _stable_debug_hash(text: str) -> str:
     return "sha256:" + hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
 
 
-def _settings_hash(settings: dict[str, object]) -> str:
-    return _stable_debug_hash(json.dumps(settings, ensure_ascii=False, sort_keys=True))
+def _safe_debug_error(error: BaseException) -> str:
+    value = compact_whitespace(str(error))[:240]
+    value = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}\b", "[REDACTED_SECRET]", value)
+    value = re.sub(r"(?:/Users/|/Volumes/|/var/folders/)[^\s，。；;]+", "[REDACTED_PATH]", value)
+    return value or type(error).__name__
 
 
 _PINYIN_PAIR_ENV_NAMES = {
@@ -2940,6 +4090,7 @@ _PINYIN_PAIR_ENV_NAMES = {
     "sSh": "RAG_IME_PINYIN_FUZZY_S_SH",
     "enEng": "RAG_IME_PINYIN_FUZZY_EN_ENG",
     "inIng": "RAG_IME_PINYIN_FUZZY_IN_ING",
+    "ongOn": "RAG_IME_PINYIN_FUZZY_ONG_ON",
     "nL": "RAG_IME_PINYIN_FUZZY_N_L",
     "fH": "RAG_IME_PINYIN_FUZZY_F_H",
 }
@@ -2949,6 +4100,7 @@ _PINYIN_PAIR_DEFAULTS = {
     "sSh": True,
     "enEng": True,
     "inIng": True,
+    "ongOn": True,
     "nL": False,
     "fH": False,
 }
@@ -2992,12 +4144,27 @@ def _pinyin_runtime_status(settings: dict[str, object]) -> dict[str, object]:
     }
 
 
+_ACTIVE_RAG_RUNTIME_SYNC_KEYS = {
+    "activeRag.enabled",
+    "activeRag.shortcut",
+    "activeRag.capture.accessibility",
+    "activeRag.capture.clipboardFallback",
+}
+_ACTIVE_RAG_DEFAULTS_KEYS = {
+    "RagImeActiveRagEnabled": "-bool",
+    "RagImeActiveRagShortcut": "-string",
+    "RagImeActiveRagCaptureAccessibility": "-bool",
+    "RagImeActiveRagCaptureClipboardFallback": "-bool",
+}
+
+
 def _active_rag_runtime_sync_payload(*, active_settings: object, changed_keys: tuple[str, ...]) -> dict[str, object]:
     settings = dict(active_settings) if isinstance(active_settings, dict) else {}
     capture = settings.get("capture") if isinstance(settings.get("capture"), dict) else {}
-    shortcut = compact_whitespace(str(settings.get("shortcut") or "ctrl+shift+r")).lower().replace(" ", "")
+    shortcut = compact_whitespace(str(settings.get("shortcut") or "ctrl+.")).lower().replace(" ", "")
     domains = ["im.rime.inputmethod.Squirrel"]
     defaults = {
+        "RagImeActiveRagEnabled": {"type": "bool", "value": bool(settings.get("enabled", True))},
         "RagImeActiveRagShortcut": {"type": "string", "value": shortcut},
         "RagImeActiveRagCaptureAccessibility": {"type": "bool", "value": bool(capture.get("accessibility", True))},
         "RagImeActiveRagCaptureClipboardFallback": {"type": "bool", "value": bool(capture.get("clipboardFallback", True))},
@@ -3022,6 +4189,96 @@ def _active_rag_runtime_sync_payload(*, active_settings: object, changed_keys: t
     }
 
 
+def _active_rag_defaults_command_allowed(command: list[str]) -> bool:
+    if len(command) != 6:
+        return False
+    executable, action, domain, key, value_type, value = command
+    if executable != "defaults" or action != "write" or domain != "im.rime.inputmethod.Squirrel":
+        return False
+    if _ACTIVE_RAG_DEFAULTS_KEYS.get(key) != value_type:
+        return False
+    if value_type == "-bool" and value not in {"true", "false"}:
+        return False
+    if value_type == "-string" and not (1 <= len(value) <= 80):
+        return False
+    return True
+
+
+def _active_rag_secure_flags(payload: dict[str, Any]) -> tuple[bool, bool]:
+    foreground = payload.get("foregroundText") if isinstance(payload.get("foregroundText"), dict) else {}
+    sensitive_field = _bool(
+        payload.get("sensitiveField")
+        or payload.get("isSensitiveField")
+        or foreground.get("sensitiveField")
+        or foreground.get("isSensitiveField"),
+        default=False,
+    )
+    secure_input = _bool(
+        payload.get("secureInput")
+        or payload.get("isSecureInput")
+        or foreground.get("secureInput")
+        or foreground.get("isSecureInput"),
+        default=False,
+    )
+    return sensitive_field, secure_input
+
+
+def _sensitive_deepseek_preview_payload() -> dict[str, object]:
+    empty_text = {"present": False, "chars": 0, "utf8Bytes": 0, "hash": ""}
+    diagnostics = {
+        "schemaVersion": "rag-ime.context-injection-trace.v1",
+        "privacy": {
+            "rawTextIncluded": False,
+            "hashAlgorithm": "none_for_sensitive_fields",
+            "sensitiveFieldBlocked": True,
+        },
+        "capturedContext": {
+            "currentContext": dict(empty_text),
+            "selectedText": dict(empty_text),
+            "surroundingBefore": dict(empty_text),
+            "surroundingAfter": dict(empty_text),
+        },
+        "evidence": {"count": 0, "sourceCounts": {}, "sourceLaneCounts": {}, "items": []},
+        "contextPacket": {"present": False, "packetIdHash": "", "sectionCounts": {}},
+        "prompt": {"messageCount": 0, "messages": []},
+        "injection": {
+            "promptBuilt": False,
+            "currentContextIncluded": False,
+            "selectedTextIncluded": False,
+            "contextPacketIncluded": False,
+            "evidenceIncluded": False,
+            "success": False,
+            "missing": [SENSITIVE_FIELD_BLOCK_REASON],
+        },
+    }
+    return {
+        "schemaVersion": "rag-ime.deepseek-completion-preview.v1",
+        "ok": False,
+        "dryRun": True,
+        "error": SENSITIVE_FIELD_BLOCK_REASON,
+        "routeStatus": {
+            "schemaVersion": "rag-ime.active-rag-route-status.v1",
+            "route": "explicit_active_rag_deepseek",
+            "remoteReady": False,
+            "skipReason": SENSITIVE_FIELD_BLOCK_REASON,
+            "gates": {"sensitiveFieldClear": False},
+            "passivePostCommitRemoteAllowed": False,
+        },
+        "requestDiagnostics": diagnostics,
+        "retrieval": {"called": False, "evidenceCount": 0, "lanes": {}, "elapsedMs": 0.0},
+        "remoteModel": {
+            "requested": False,
+            "allowed": False,
+            "provider": "",
+            "model": "",
+            "skipReason": SENSITIVE_FIELD_BLOCK_REASON,
+            "elapsedMs": 0.0,
+        },
+        "messages": [],
+        "evidencePack": [],
+        "streamEvents": [],
+        "candidates": [],
+    }
 def _debug_lane_breakdown(raw_lanes: object) -> dict[str, object]:
     if not isinstance(raw_lanes, dict):
         return {}
@@ -3030,6 +4287,13 @@ def _debug_lane_breakdown(raw_lanes: object) -> dict[str, object]:
         if not isinstance(payload, dict):
             continue
         result[_camel_lane_name(str(name))] = {
+            "enabled": bool(payload.get("enabled", True)),
+            "available": bool(payload.get("available", True)),
+            "implementation": _string(payload.get("implementation")),
+            "lexicalFallback": bool(payload.get("lexicalFallback")),
+            "fts5Bm25": bool(payload.get("fts5Bm25")),
+            "skippedReason": _string(payload.get("skippedReason")),
+            "weight": float(payload.get("weight") or 0.0),
             "count": int(payload.get("count") or 0),
             "docIds": list(payload.get("docIds") or []),
         }
@@ -3341,19 +4605,7 @@ def _management_action(raw: str) -> str:
 
 
 def _ensure_management_audit_schema(conn) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS management_audit_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at_ms INTEGER NOT NULL,
-            action TEXT NOT NULL,
-            target_type TEXT NOT NULL,
-            target_id TEXT NOT NULL,
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            result_json TEXT NOT NULL DEFAULT '{}'
-        )
-        """
-    )
+    ensure_management_tables(conn)
 
 
 def _json_loads_dict(raw: object) -> dict[str, object]:
@@ -3634,13 +4886,22 @@ def _prediction_live_trace_frame(
     include_raw_text: bool,
 ) -> dict[str, object]:
     prediction_session = response.get("predictionSession") if isinstance(response.get("predictionSession"), dict) else {}
+    sensitive_response = _string(prediction_session.get("clearReason")) == "sensitive_field"
     rag_lane = response.get("ragLane") if isinstance(response.get("ragLane"), dict) else {}
     model_lane = response.get("modelLane") if isinstance(response.get("modelLane"), dict) else {}
     display_candidates = response.get("displayCandidates") if isinstance(response.get("displayCandidates"), list) else []
     trace_events = response.get("predictionTraceEvents") if isinstance(response.get("predictionTraceEvents"), list) else []
-    raw_input = _string(response.get("rawInput") or request_payload.get("rawInput"))
-    preedit = _string(response.get("preedit") or request_payload.get("preedit"))
-    committed_context = _string(response.get("committedContext") or request_payload.get("committedContext"))
+    raw_input = "" if sensitive_response else _string(response.get("rawInput") or request_payload.get("rawInput"))
+    preedit = "" if sensitive_response else _string(response.get("preedit") or request_payload.get("preedit"))
+    committed_context = "" if sensitive_response else _string(
+        response.get("committedContext") or request_payload.get("committedContext")
+    )
+    raw_foreground = (
+        model_lane.get("foregroundContext")
+        if isinstance(model_lane.get("foregroundContext"), dict)
+        else rag_lane.get("foregroundContext")
+    )
+    foreground_context = _foreground_context_trace_payload(raw_foreground)
     frame: dict[str, object] = {
         "schemaVersion": "rag-ime.prediction-frame.v1",
         "recordedAtMs": now_ms(),
@@ -3652,6 +4913,7 @@ def _prediction_live_trace_frame(
         "input": _redacted_text_snapshot(raw_input, include_raw_text=include_raw_text),
         "preedit": _redacted_text_snapshot(preedit, include_raw_text=include_raw_text),
         "committedContext": _redacted_text_snapshot(committed_context, include_raw_text=include_raw_text),
+        "foregroundContext": foreground_context,
         "predictionSession": {
             "phase": _string(prediction_session.get("phase")),
             "inputMode": _string(prediction_session.get("inputMode")),
@@ -3686,6 +4948,29 @@ def _prediction_live_trace_frame(
         "traceEvents": _prediction_trace_event_summaries(trace_events),
     }
     return frame
+
+
+def _foreground_context_trace_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    keep = (
+        "applied",
+        "source",
+        "confidence",
+        "freshnessMs",
+        "capturedAtMs",
+        "captureEpoch",
+        "captureFailureReason",
+        "reason",
+        "commitTextMatched",
+        "commitTextMatchDeclared",
+        "contextGroupLevel",
+        "contextGroupConfidence",
+        "selectedTextChars",
+        "surroundingBeforeChars",
+        "surroundingAfterChars",
+    )
+    return {key: value.get(key) for key in keep if value.get(key) not in (None, "")}
 
 
 def _redacted_text_snapshot(text: str, *, include_raw_text: bool) -> dict[str, object]:

@@ -16,6 +16,20 @@ from .source import (
 SOAK_REPORT_SCHEMA_VERSION = "rag-ime.squirrel-soak-report.v1"
 INPUT_SOURCE_SELECTION_SCHEMA_VERSION = "rag-ime.macos-input-source-selection.v1"
 
+ACTIVE_RAG_TRACE_EVENT_NAMES = frozenset(
+    {
+        "active_rag_context_captured",
+        "active_rag_sensitive_field_blocked",
+        "active_rag_retrieval_completed",
+        "active_rag_evidence_governed",
+        "deepseek_request_context_built",
+        "deepseek_request_started",
+        "deepseek_request_completed",
+        "deepseek_request_failed",
+        "active_rag_candidates_displayed",
+    }
+)
+
 POST_COMMIT_BARRIER_EVENTS = frozenset(
     {
         "commit_observe_timeout",

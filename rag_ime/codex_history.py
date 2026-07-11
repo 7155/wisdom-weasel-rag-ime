@@ -155,6 +155,7 @@ def input_event_from_codex_record(record: CodexHistoryRecord, *, project: str) -
         created_at_ms=record.created_at_ms or now_ms(),
         source="codex_history",
         committed_text=record.text,
+        privacy_disposition="allowed",
         recent_context=compact_whitespace(f"codex_history:{source_label}{role}"),
         preedit="",
         schema_id="codex_history",

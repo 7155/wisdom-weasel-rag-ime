@@ -131,6 +131,38 @@ class HybridRagRetrieverTests(unittest.TestCase):
         self.assertLessEqual(payload["elapsedMs"], 1000)
         self.assertFalse(payload["overBudget"])
 
+    def test_disabled_lane_is_not_executed_and_vector_lanes_report_unavailable(self) -> None:
+        self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG",))
+        with self.connect() as conn:
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="多路召回",
+                    project="wisdom-weasel-rag-ime",
+                    enabled_lanes=(("bm25_raw", False), ("bm25_tags", True)),
+                ),
+            )
+
+        self.assertFalse(payload["lanes"]["bm25_raw"]["enabled"])
+        self.assertEqual(payload["lanes"]["bm25_raw"]["count"], 0)
+        self.assertEqual(
+            payload["lanes"]["bm25_raw"]["skippedReason"],
+            "disabled_by_effective_runtime_config",
+        )
+        self.assertFalse(payload["lanes"]["vector_raw"]["available"])
+        self.assertEqual(
+            payload["lanes"]["vector_raw"]["skippedReason"],
+            "embedding_provider_not_wired",
+        )
+        self.assertTrue(all(item["source_lane"] != "bm25_raw" for item in payload["hits"]))
+        self.assertTrue(payload["lanes"]["bm25_tags"]["lexicalFallback"])
+        self.assertFalse(payload["lanes"]["bm25_tags"]["fts5Bm25"])
+        self.assertEqual(
+            payload["lanes"]["bm25_tags"]["implementation"],
+            "lexical_substring_fallback",
+        )
+
     def test_group_compatibility_prioritizes_exact_and_rejects_other_short_term(self) -> None:
         with self.connect() as conn:
             docs = [
@@ -178,6 +210,7 @@ class HybridRagRetrieverTests(unittest.TestCase):
                 created_at_ms=now_ms(),
                 source="manual",
                 committed_text=text,
+                privacy_disposition="allowed",
                 recent_context=recent_context,
                 project="wisdom-weasel-rag-ime",
                 tags=tags,

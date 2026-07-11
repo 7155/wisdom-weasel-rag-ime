@@ -24,6 +24,9 @@ class MlxPrefixCache:
         self.max_entries = max(1, int(max_entries))
         self.max_bytes = max(0, int(max_bytes))
         self._entries: list[PrefixCacheEntry] = []
+        self._lookups = 0
+        self._misses = 0
+        self._evictions = 0
 
     def lookup_longest_prefix(
         self,
@@ -33,6 +36,7 @@ class MlxPrefixCache:
         token_ids: Sequence[int],
     ) -> PrefixCacheEntry | None:
         query = tuple(int(item) for item in token_ids)
+        self._lookups += 1
         best: PrefixCacheEntry | None = None
         for entry in self._entries:
             if entry.profile_id != profile_id or entry.prompt_format != prompt_format:
@@ -46,6 +50,8 @@ class MlxPrefixCache:
         if best is not None:
             best.hit_count += 1
             best.last_used_at_ms = _now_ms()
+        else:
+            self._misses += 1
         return best
 
     def put(self, entry: PrefixCacheEntry) -> None:
@@ -54,19 +60,27 @@ class MlxPrefixCache:
         self.evict()
 
     def evict(self) -> None:
-        self._entries.sort(key=lambda item: (item.last_used_at_ms, item.hit_count), reverse=True)
+        before_ids = {item.cache_id for item in self._entries}
+        # A reused prefix survives a burst of one-shot newer prefixes, while
+        # recency still decides between entries in the same admission class.
+        self._entries.sort(
+            key=lambda item: (item.hit_count > 0, item.last_used_at_ms, item.hit_count),
+            reverse=True,
+        )
         self._entries = self._entries[: self.max_entries]
         if self.max_bytes <= 0:
+            self._evictions += len(before_ids - {item.cache_id for item in self._entries})
             return
         kept: list[PrefixCacheEntry] = []
         total = 0
         for entry in self._entries:
             size = max(0, int(entry.bytes_estimate))
-            if kept and total + size > self.max_bytes:
+            if total + size > self.max_bytes:
                 continue
             kept.append(entry)
             total += size
         self._entries = kept
+        self._evictions += len(before_ids - {item.cache_id for item in self._entries})
 
     def stats(self) -> dict[str, int]:
         return {
@@ -75,6 +89,10 @@ class MlxPrefixCache:
             "bytesEstimate": sum(max(0, int(item.bytes_estimate)) for item in self._entries),
             "maxBytes": self.max_bytes,
             "hits": sum(max(0, int(item.hit_count)) for item in self._entries),
+            "lookups": self._lookups,
+            "misses": self._misses,
+            "evictions": self._evictions,
+            "hitRatePermille": int(1000 * (self._lookups - self._misses) / self._lookups) if self._lookups else 0,
         }
 
     def clear(self) -> None:

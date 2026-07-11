@@ -50,9 +50,16 @@ MANAGED_BLOCK = f"""{BEGIN}
 #
 # RAG-IME Sichuan mild fuzzy-pinyin profile.
 # Rime still owns pinyin parsing; RAG-IME only installs this schema patch.
-# Mild defaults: z_zh/c_ch/s_sh/en_eng/in_ing enabled; n_l/f_h disabled.
+# Mild defaults: z_zh/c_ch/s_sh/en_eng/in_ing plus dropped-final-g
+# tolerance for ong are enabled; n_l/f_h remain disabled.
 
 patch:
+  # Keep ranking and phrase learning in Rime's native user dictionary. The
+  # sidecar must not replace the composition candidate order.
+  translator/enable_user_dict: true
+  translator/enable_sentence: true
+  translator/encode_commit_history: true
+
   switches/@next:
     name: rag_ime_sichuan_fuzzy
     reset: 1
@@ -69,6 +76,7 @@ patch:
     - derive/en$/eng/
     - derive/ing$/in/
     - derive/in$/ing/
+    - derive/ong$/on/
     - abbrev/^([a-z]).+$/$1/
     - abbrev/^([zcs]h).+$/$1/
 {END}
@@ -127,7 +135,12 @@ def main() -> int:
         "applied": applied,
         "changed": changed,
         "backupPath": backup_path,
-        "enabledPairs": ["z_zh", "c_ch", "s_sh", "en_eng", "in_ing"],
+        "enabledPairs": ["z_zh", "c_ch", "s_sh", "en_eng", "in_ing", "ong_on"],
+        "nativeRanking": {
+            "enableUserDict": True,
+            "enableSentence": True,
+            "encodeCommitHistory": True,
+        },
         "disabledPairs": ["n_l", "f_h"],
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))

@@ -11,6 +11,7 @@ from rag_ime.memory_generator import (
     VcpRebuildMemoryGenerator,
     _build_openai_url,
     _core_optimization_max_tokens,
+    default_vcp_rebuild_env_path,
     _extract_json_object,
     _parse_generated_lexicon_phrases,
     _parse_generated_memory_items,
@@ -19,6 +20,19 @@ from rag_ime.memory_generator import (
 
 
 class MemoryGeneratorTests(unittest.TestCase):
+    def test_default_generator_env_requires_an_explicit_provider_path(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_MEMORY_GENERATOR_ENV": "",
+                "RAG_IME_MODEL_ENV": "",
+                "RAG_IME_X1API_ENV": "",
+                "RAG_IME_VCP_REBUILD_ENV": "",
+            },
+            clear=False,
+        ):
+            self.assertIsNone(default_vcp_rebuild_env_path())
+
     def test_parse_generated_memory_items_filters_noise_and_secrets(self) -> None:
         raw = """
         ```json

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.rime-rank-selection.v1",
+  "type": "object",
+  "required": ["schemaVersion", "selectionId", "sourceType", "preedit", "acceptedText", "candidateRank"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.rime-rank-selection.v1"},
+    "selectionId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "sourceType": {"const": "rime"},
+    "selectionSource": {"type": "string", "maxLength": 80},
+    "preedit": {"type": "string", "minLength": 1, "maxLength": 240},
+    "acceptedText": {"type": "string", "minLength": 1, "maxLength": 240},
+    "rejectedText": {"type": "string", "maxLength": 240},
+    "candidateRank": {"type": "integer", "minimum": 1, "maximum": 999},
+    "shownCandidateCount": {"type": "integer", "minimum": 0, "maximum": 999},
+    "app": {"type": "string", "maxLength": 240},
+    "frontAppBundleId": {"type": "string", "maxLength": 240},
+    "frontmostApp": {"type": "string", "maxLength": 240},
+    "bundleId": {"type": "string", "maxLength": 240},
+    "project": {"type": "string", "maxLength": 240},
+    "privacyDisposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
+    "sensitiveField": {"type": "boolean"},
+    "secureInput": {"type": "boolean"},
+    "dryRun": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

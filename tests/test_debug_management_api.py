@@ -5,17 +5,20 @@ import threading
 import unittest
 import json
 import os
+import subprocess
 import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trace
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.knowledge_workbench import KnowledgeGenerationResult
 from rag_ime.memory_ingest import normalize_text, upsert_memory_item
+from rag_ime.memory_book_compiler import memory_book_plan_from_compile_output, store_memory_book_plan
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
 from rag_ime.predictor import OpenAICompatiblePredictionConfig
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
@@ -52,9 +55,24 @@ class _CapabilityProbePredictionProvider(_ManagementPredictionProvider):
         return {
             "ok": True,
             "providerName": "local-mlx",
+            "model": "/models/minimind-ime-v3",
+            "modelFingerprint": "sha256:" + "b" * 64,
             "capabilities": {"streaming": True, "serverTiming": True},
             "promptCache": {"enabled": False},
         }
+
+
+class _KnowledgeGenerator:
+    ready = True
+
+    def generate(self, request, *, evidence, notion_answer="", notion_sources=None):
+        _ = request, evidence, notion_sources
+        return KnowledgeGenerationResult(
+            answer="本地知识答案" if not notion_answer else f"已合并：{notion_answer}",
+            elapsed_ms=5,
+            model="deepseek-test",
+            prompt_diagnostics={"success": True, "notionIncluded": bool(notion_answer)},
+        )
 
 
 class DebugManagementApiTests(unittest.TestCase):
@@ -67,6 +85,7 @@ class DebugManagementApiTests(unittest.TestCase):
             "RAG_IME_PINYIN_FUZZY_S_SH",
             "RAG_IME_PINYIN_FUZZY_EN_ENG",
             "RAG_IME_PINYIN_FUZZY_IN_ING",
+            "RAG_IME_PINYIN_FUZZY_ONG_ON",
             "RAG_IME_PINYIN_FUZZY_N_L",
             "RAG_IME_PINYIN_FUZZY_F_H",
         )
@@ -98,6 +117,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_001,
                 source="manual",
                 committed_text="候选解释需要展示排序原因",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法管理界面",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -130,6 +150,11 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertFalse(status["predictor"]["statusCache"]["hit"])
         self.assertTrue(cached["predictor"]["statusCache"]["hit"])
         self.assertFalse(forced["predictor"]["statusCache"]["hit"])
+
+        runtime = self.service.management.runtime_status()
+        detail = runtime["components"]["predictor"]["detail"]
+        self.assertIn("minimind-ime-v3", detail)
+        self.assertIn("bbbbbbbbbbbb", detail)
 
     def test_pinyin_settings_apply_to_runtime_env_immediately(self) -> None:
         result = self.service.settings_update(
@@ -196,6 +221,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_010,
                 source="manual",
                 committed_text="这是一整段旧输入历史不应该默认完整展示",
+                privacy_disposition="allowed",
                 recent_context="包含用户真实输入上下文",
                 project="wisdom-weasel-rag-ime",
                 tags=("user-input",),
@@ -226,6 +252,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_011,
                 source="manual",
                 committed_text="只有显式调试开关才展示完整原文",
+                privacy_disposition="allowed",
                 recent_context="debug raw text",
                 project="wisdom-weasel-rag-ime",
             )
@@ -296,6 +323,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_020,
                 source="manual",
                 committed_text="离线整理稳定记忆",
+                privacy_disposition="allowed",
                 recent_context="用户接受过这个短语",
                 project="wisdom-weasel-rag-ime",
                 tags=("memory",),
@@ -355,6 +383,10 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(self._audit_count("settings_reset_section"), 1)
 
     def test_active_rag_shortcut_update_returns_runtime_sync_commands(self) -> None:
+        runner = Mock(
+            return_value=subprocess.CompletedProcess(["defaults"], 0, "", "")
+        )
+        self.service._runtime_command_runner = runner
         result = self.service.active_rag_settings_update(
             {
                 "shortcut": "ctrl+r",
@@ -370,6 +402,9 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["settings"]["activeRag"]["shortcut"], "ctrl+r")
         self.assertEqual(runtime_sync["shortcut"], "ctrl+r")
+        self.assertTrue(runtime_sync["attempted"])
+        self.assertTrue(runtime_sync["applied"])
+        self.assertEqual(runner.call_count, 4)
         self.assertIn("activeRag.shortcut", result["changedKeys"])
         self.assertNotIn("confirmText", result["settings"])
         self.assertIn(
@@ -386,6 +421,7 @@ class DebugManagementApiTests(unittest.TestCase):
         payload = {
             "sessionId": "custom-display",
             "requestSeq": 1,
+            "privacyDisposition": "allowed",
             "rawInput": "",
             "preedit": "",
             "committedContext": "我想设计一个候选栏",
@@ -421,6 +457,7 @@ class DebugManagementApiTests(unittest.TestCase):
             {
                 "sessionId": "custom-composition",
                 "requestSeq": 1,
+                "privacyDisposition": "allowed",
                 "rawInput": "houxuan",
                 "preedit": "houxuan",
                 "committedContext": "输入法",
@@ -454,7 +491,12 @@ class DebugManagementApiTests(unittest.TestCase):
         )
         items = self.service.vocabulary_items({"query": "Stable"})
         export_preview = self.service.vocabulary_rime_export_preview({})
-        active = self.service.active_rag_preview({"selectedText": "候选栏闪烁，需要解释原因"})
+        active = self.service.active_rag_preview(
+            {
+                "selectedText": "候选栏闪烁，需要解释原因",
+                "privacyDisposition": "allowed",
+            }
+        )
 
         self.assertTrue(added["ok"])
         self.assertEqual(items["items"][0]["surface"], "StableCandidateSnapshot")
@@ -485,7 +527,10 @@ class DebugManagementApiTests(unittest.TestCase):
                 urlopen(request, timeout=5)
                 denied_payload = {"ok": True}
             except HTTPError as exc:
-                denied_payload = json.loads(exc.read().decode("utf-8"))
+                try:
+                    denied_payload = json.loads(exc.read().decode("utf-8"))
+                finally:
+                    exc.close()
 
             allowed_request = Request(
                 f"http://127.0.0.1:{server.server_port}/api/settings/update",
@@ -511,6 +556,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_030,
                 source="manual",
                 committed_text="多路召回",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法",
                 project="wisdom-weasel-rag-ime",
                 tags=("RAG",),
@@ -532,6 +578,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_031,
                 source="manual",
                 committed_text="隐私短语",
+                privacy_disposition="allowed",
                 recent_context="超级秘密上下文",
                 project="wisdom-weasel-rag-ime",
                 tags=("RAG",),
@@ -556,6 +603,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_032,
                 source="manual",
                 committed_text="多路召回",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法",
                 project="wisdom-weasel-rag-ime",
                 tags=("RAG",),
@@ -576,6 +624,29 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertFalse(preview["ok"])
         self.assertIn("RAG_IME_DEEPSEEK_ACTIVE_RAG=1", preview["requires"])
 
+    def test_deepseek_preview_blocks_secure_input_before_retrieval_or_prompt_build(self) -> None:
+        secret = "账号 admin 密码 cannot-leave-this-machine"
+
+        preview = self.service.deepseek_completion_preview(
+            {
+                "currentContext": secret,
+                "selectedText": secret,
+                "secureInput": True,
+                "dryRun": False,
+            }
+        )
+
+        blob = json.dumps(preview, ensure_ascii=False)
+        self.assertFalse(preview["ok"])
+        self.assertEqual(preview["error"], "sensitive_field_blocked")
+        self.assertFalse(preview["retrieval"]["called"])
+        self.assertFalse(preview["remoteModel"]["requested"])
+        self.assertEqual(preview["messages"], [])
+        self.assertEqual(preview["evidencePack"], [])
+        self.assertEqual(preview["candidates"], [])
+        self.assertNotIn(secret, blob)
+        self.assertNotIn("sha256:", blob)
+
     def test_deepseek_preview_dry_run_builds_single_candidate_rag_evidence(self) -> None:
         self.core.record_event(
             InputEvent(
@@ -583,13 +654,28 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_034,
                 source="manual",
                 committed_text="BM25 加向量召回用于输入法候选",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法核心改造",
                 project="wisdom-weasel-rag-ime",
                 tags=("RAG",),
             )
         )
 
-        with patch.dict("os.environ", {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}, clear=False):
+        self.service.settings_update(
+            {
+                "activeRag.allowRemoteModel": True,
+                "privacy.allowRemoteModelForActiveRag": True,
+                "confirmText": "ALLOW REMOTE MODEL",
+            }
+        )
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_DEEPSEEK_ACTIVE_RAG": "1",
+                "RAG_IME_DEEPSEEK_API_KEY": "test-key-not-sent-by-dry-run",
+            },
+            clear=False,
+        ):
             preview = self.service.deepseek_completion_preview(
                 {"currentContext": "RAG 输入法核心改造", "dryRun": True}
             )
@@ -597,18 +683,175 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(preview["ok"])
         self.assertTrue(preview["dryRun"])
         self.assertGreaterEqual(len(preview["evidencePack"]), 1)
-        user_payload = json.loads(preview["messages"][1]["content"])
-        self.assertEqual(user_payload["maxCandidates"], 1)
-        self.assertGreaterEqual(len(user_payload["evidenceHints"]), 1)
+        self.assertTrue(preview["requestDiagnostics"]["injection"]["success"])
+        self.assertTrue(preview["requestDiagnostics"]["injection"]["evidenceIncluded"])
+        self.assertNotIn("text", preview["messages"][1]["content"])
+        self.assertIn("hash", preview["messages"][1]["content"])
+        self.assertNotIn("RAG 输入法核心改造", json.dumps(preview, ensure_ascii=False))
 
-    def test_debug_ui_can_render_rag_core_v3_view(self) -> None:
+    def test_active_rag_route_status_reports_every_remote_gate(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_DEEPSEEK_ACTIVE_RAG": "1",
+                "RAG_IME_DEEPSEEK_API_KEY": "route-test-key",
+            },
+            clear=False,
+        ):
+            blocked = self.service.active_rag_route_status(local_only=False)
+            self.service.settings_update(
+                {
+                    "activeRag.allowRemoteModel": True,
+                    "privacy.allowRemoteModelForActiveRag": True,
+                    "confirmText": "ALLOW REMOTE MODEL",
+                }
+            )
+            ready = self.service.active_rag_route_status(local_only=False)
+
+        self.assertFalse(blocked["remoteReady"])
+        self.assertEqual(blocked["skipReason"], "active_rag_remote_not_allowed")
+        self.assertTrue(ready["remoteReady"])
+        self.assertTrue(all(ready["gates"].values()))
+        self.assertFalse(ready["passivePostCommitRemoteAllowed"])
+
+    def test_knowledge_workbench_runs_explicit_deepseek_session(self) -> None:
+        self.service.knowledge_workbench.generator = _KnowledgeGenerator()
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_044,
+                source="manual",
+                committed_text="个人知识工作台使用本地 RAG 证据",
+                privacy_disposition="allowed",
+                recent_context="DeepSeek 显式知识问答",
+                project="wisdom-weasel-rag-ime",
+                tags=("knowledge-workbench",),
+            )
+        )
+        self._upsert_item(
+            memory_id="stable:knowledge-workbench",
+            kind="stable_memory",
+            text="个人知识工作台使用本地 RAG 证据",
+            status="approved",
+        )
+        self.service.rag_core_v3_rebuild_retrieval_docs({"project": "wisdom-weasel-rag-ime"})
+        self.service.settings_update(
+            {
+                "activeRag.allowRemoteModel": True,
+                "privacy.allowRemoteModelForActiveRag": True,
+                "confirmText": "ALLOW REMOTE MODEL",
+            }
+        )
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_DEEPSEEK_ACTIVE_RAG": "1",
+                "RAG_IME_DEEPSEEK_API_KEY": "knowledge-route-test-key",
+            },
+            clear=False,
+        ):
+            started = self.service.knowledge_workbench_start(
+                {
+                    "mode": "knowledge_answer",
+                    "question": "个人知识工作台使用本地 RAG 证据",
+                    "context": "本地 RAG",
+                    "generation": 3,
+                    "includeNotion": False,
+                }
+            )
+            deadline = time.monotonic() + 2
+            response = started
+            while response.get("status") not in {"ready", "error", "cancelled"} and time.monotonic() < deadline:
+                time.sleep(0.005)
+                response = self.service.knowledge_workbench_status({"sessionId": started["sessionId"]})
+
+        self.assertTrue(started["ok"])
+        self.assertEqual(response["status"], "ready")
+        self.assertEqual(response["answer"], "本地知识答案")
+        self.assertEqual(response["generation"], 3)
+        self.assertGreaterEqual(len(response["evidence"]), 1)
+        self.assertIn("contextInjection", response["diagnostics"])
+
+    def test_knowledge_workbench_blocks_sensitive_text_before_retrieval(self) -> None:
+        response = self.service.knowledge_workbench_start(
+            {
+                "mode": "recall",
+                "question": "帮我回忆账号密码",
+                "context": "password=must-not-leave",
+                "secureInput": True,
+            }
+        )
+
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"], "sensitive_field_blocked")
+        self.assertFalse(response["retrieval"]["called"])
+        self.assertFalse(response["remoteModel"]["requested"])
+
+    def test_knowledge_route_reports_worker_and_polling_as_separate_gates(self) -> None:
+        route = self.service.knowledge_workbench_route_status()
+
+        self.assertIn("notion", route)
+        self.assertIn("submitConfigured", route["notion"])
+        self.assertIn("pollConfigured", route["notion"])
+        self.assertFalse(route["notion"]["ready"])
+
+    def test_knowledge_database_draft_requires_confirmation_and_supports_rollback(self) -> None:
+        event_ref = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_045,
+                source="manual",
+                committed_text="数据库整理草案验证",
+                privacy_disposition="allowed",
+                recent_context="Memory Book",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        event_id = int(event_ref.split(":", 1)[1])
+        plan = memory_book_plan_from_compile_output(
+            {
+                "schemaVersion": "rag-ime.memory-book-compile.v1",
+                "dailyBooks": [
+                    {
+                        "bookKey": "2026-07-10",
+                        "title": "数据库整理草案",
+                        "summary": "显式审阅后才应用。",
+                        "sourceEventIds": [event_id],
+                    }
+                ],
+                "memoryAtoms": [],
+                "tagEdges": [],
+                "phraseCandidates": [],
+                "warnings": [],
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-test",
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            store_memory_book_plan(conn, plan)
+
+        blocked = self.service.knowledge_workbench_database_apply({"runId": plan["runId"]})
+        applied = self.service.knowledge_workbench_database_apply(
+            {"runId": plan["runId"], "confirm": "apply"}
+        )
+        rolled_back = self.service.knowledge_workbench_database_rollback(
+            {"runId": plan["runId"], "confirm": "rollback"}
+        )
+
+        self.assertFalse(blocked["ok"])
+        self.assertEqual(blocked["requiredConfirm"], "apply")
+        self.assertEqual(applied["run"]["status"], "applied")
+        self.assertEqual(rolled_back["run"]["status"], "rolled_back")
+        self.assertIn("retrieval", applied)
+
+    def test_legacy_browser_control_surface_is_removed(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        index = (root / "debug" / "index.html").read_text(encoding="utf-8")
-        app = (root / "debug" / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('data-view="ragcore"', index)
-        self.assertIn("RAG Core v3", index)
-        self.assertIn("/api/rag-core-v3/query-preview", app)
+        self.assertFalse((root / "debug" / "index.html").exists())
+        self.assertFalse((root / "debug" / "app.js").exists())
+        self.assertFalse((root / "debug" / "styles.css").exists())
+        self.assertTrue((root / "macos" / "RagImeControl" / "RagImeControlApp.swift").is_file())
 
     def test_memory_book_preview_is_dry_run_and_redacted(self) -> None:
         self.core.record_event(
@@ -617,6 +860,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_033,
                 source="manual",
                 committed_text="真实历史整理入口",
+                privacy_disposition="allowed",
                 recent_context="不应该默认展示的上下文",
                 project="wisdom-weasel-rag-ime",
                 tags=("RAG",),
@@ -640,6 +884,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_040,
                 source="manual",
                 committed_text="HTTP 管理接口默认脱敏展示",
+                privacy_disposition="allowed",
                 recent_context="debug management route",
                 project="wisdom-weasel-rag-ime",
             )
@@ -673,6 +918,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_at_ms=1_900_000_100_050,
                 source="manual",
                 committed_text="离线整理稳定记忆",
+                privacy_disposition="allowed",
                 recent_context="用户接受过这个短语",
                 project="wisdom-weasel-rag-ime",
                 tags=("memory",),
@@ -728,41 +974,28 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(apply_payload["result"]["diff"]["status"], "applied")
         self.assertEqual(self._audit_count("cleanup_diff_apply"), 1)
 
-    def test_management_console_sends_cleanup_confirmation(self) -> None:
-        app_js = Path(__file__).resolve().parents[1].joinpath("debug", "app.js").read_text(encoding="utf-8")
+    def test_api_root_names_the_single_native_control_center(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
 
-        self.assertIn("confirmCleanupDiffAction", app_js)
-        self.assertIn("confirm: action", app_js)
+        Handler.service = self.service
+        Handler.static_dir = Path(".")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with urlopen(f"http://127.0.0.1:{server.server_port}/", timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                content_type = response.headers.get_content_type()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
 
-    def test_management_console_actions_use_selected_row(self) -> None:
-        app_js = Path(__file__).resolve().parents[1].joinpath("debug", "app.js").read_text(encoding="utf-8")
-        index_html = Path(__file__).resolve().parents[1].joinpath("debug", "index.html").read_text(encoding="utf-8")
-
-        self.assertIn("managementSelectedRowKey", app_js)
-        self.assertIn("function managementRowKey", app_js)
-        self.assertIn("function selectManagementRow", app_js)
-        self.assertIn("item.addEventListener(\"click\", () => selectManagementRow(rowKey))", app_js)
-        self.assertIn("is-selected", app_js)
-        self.assertNotIn("return rows[0]?.raw || null", app_js)
-        self.assertIn("managementExportButton", index_html)
-        self.assertIn("function exportManagementLexicon", app_js)
-        self.assertIn("/api/lexicon/export-rime", app_js)
-        self.assertIn('data-view="predictor"', index_html)
-        self.assertIn("/api/predictor/status", app_js)
-        self.assertIn("/api/predictor/benchmark", app_js)
-        self.assertIn('state.managementView !== "predictor"', app_js)
-        self.assertIn("state.managementView !== \"lexicon\"", app_js)
-
-    def test_management_console_does_not_start_hot_path_on_page_load(self) -> None:
-        app_js = Path(__file__).resolve().parents[1].joinpath("debug", "app.js").read_text(encoding="utf-8")
-        boot_tail = app_js.split("render();\nrefreshHealth().then(render);", 1)[-1]
-
-        self.assertNotIn("suggestNow();", boot_tail)
-        self.assertNotIn("refreshMemoryHistory();", boot_tail)
-        self.assertNotIn("refreshManagementConsole();", boot_tail)
-        self.assertNotIn("refreshInputSource({ silent: true });", boot_tail)
-        self.assertNotIn("startInputSourcePolling();", boot_tail)
-        self.assertIn("startInputSourcePolling();", app_js)
+        self.assertEqual(content_type, "application/json")
+        self.assertEqual(payload["schemaVersion"], "rag-ime.local-api-root.v1")
+        self.assertEqual(payload["controlCenter"], "RagImeControl.app")
+        self.assertFalse(payload["browserUI"])
 
     def _upsert_item(self, *, memory_id: str, kind: str, text: str, status: str = "pending") -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]

@@ -444,6 +444,32 @@ class PredictionFirstTests(unittest.TestCase):
         self.assertEqual(result.policy["sideInserted"], 3)
         self.assertEqual(result.policy["maxModelSideCandidates"], 3)
 
+    def test_post_commit_hides_connector_punctuation_but_commits_it(self) -> None:
+        snapshot = RimeContextSnapshot(
+            session_id="s1",
+            request_seq=49,
+            committed_context="模型可能是语料问题",
+            candidates=(),
+            max_visible_candidates=4,
+            max_side_candidates=3,
+        )
+
+        result = merge_prediction_first_candidates(
+            snapshot=snapshot,
+            model_predictions=[
+                ModelPrediction(
+                    text="，需要重新训练",
+                    rank=1,
+                    provider_name="minimind",
+                    latency_ms=80,
+                )
+            ],
+            suggestions=[],
+        )
+
+        self.assertEqual(result.display_candidates[0].text, "需要重新训练")
+        self.assertEqual(result.display_candidates[0].insert_text, "，需要重新训练")
+
     def test_long_rag_evidence_is_not_rendered_as_candidate_text(self) -> None:
         snapshot = RimeContextSnapshot(
             session_id="s1",

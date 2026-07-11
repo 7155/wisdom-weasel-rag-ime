@@ -18,6 +18,8 @@ class HybridRagQuery:
     context_group_id: str = ""
     context_group_level: str = "app"
     context_group_parent_ids: tuple[str, ...] = ()
+    enabled_lanes: tuple[tuple[str, bool], ...] = ()
+    lane_weights: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)

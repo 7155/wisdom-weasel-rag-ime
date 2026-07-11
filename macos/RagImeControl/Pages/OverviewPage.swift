@@ -29,11 +29,10 @@ struct OverviewPage: View {
         HStack(spacing: 14) {
             PageHeader(title: "RAG-IME", subtitle: "输入法、记忆与模型运行概览")
             Spacer()
-            Picker("运行模式", selection: $selectedProfile) {
+            Picker("运行模式", selection: profileSelection) {
                 ForEach(["安全模式", "标准模式", "记忆增强", "调试模式"], id: \.self, content: Text.init)
             }
             .frame(width: 150)
-            .onChange(of: selectedProfile) { value in Task { await model.applyProfile(value) } }
             Button {
                 Task { await model.toggleAI() }
             } label: {
@@ -41,6 +40,16 @@ struct OverviewPage: View {
             }
         }
         .padding(20)
+    }
+
+    private var profileSelection: Binding<String> {
+        Binding(
+            get: { selectedProfile },
+            set: { value in
+                selectedProfile = value
+                Task { await model.applyProfile(value) }
+            }
+        )
     }
 
     private func componentSection(_ overview: OverviewResponse) -> some View {
@@ -54,16 +63,34 @@ struct OverviewPage: View {
     }
 
     private func predictionSection(_ prediction: LastPrediction) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("最近一次预测").font(.headline)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("最近一次预测").font(.headline)
+                Spacer()
+                if let latency = prediction.totalLatencyMs {
+                    Label("\(Int(latency)) ms", systemImage: "speedometer")
+                        .font(.caption.monospacedDigit().weight(.medium))
+                        .foregroundStyle(latency <= 100 ? Color.green : Color.orange)
+                }
+            }
             if prediction.triggerReason == nil {
                 Text("还没有可展示的预测记录").foregroundStyle(.secondary).padding(.vertical, 12)
             } else {
-                LabeledContent("触发", value: prediction.triggerReason ?? "-")
-                LabeledContent("上下文", value: prediction.contextSource ?? "-")
-                LabeledContent("结果", value: prediction.visibleCandidate ?? "未显示候选")
-                LabeledContent("总耗时", value: "\(Int(prediction.totalLatencyMs ?? 0)) ms")
-                LabeledContent("模型调用", value: "\(prediction.providerCallCount ?? 0) 次")
+                Text(prediction.visibleCandidate ?? "未显示候选")
+                    .font(.system(size: 16, weight: .medium))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, minHeight: 42, alignment: .topLeading)
+                HStack(spacing: 16) {
+                    ForEach(Array(Set(prediction.sourceTypes ?? [])).sorted(), id: \.self) { source in
+                        SourceLaneLabel(source: source)
+                    }
+                    Spacer()
+                    Text(prediction.triggerReason ?? "-")
+                    Text(prediction.contextSource ?? "-")
+                    Text("\(prediction.providerCallCount ?? 0) 次调用")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
         .padding(16)

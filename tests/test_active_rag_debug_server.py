@@ -5,12 +5,47 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.debug_server import DebugImeService, DebugServerConfig
+from rag_ime.contracts.json_schema import validate_contract
 from rag_ime.text_utils import stable_text_hash
 
 
 class ActiveRagDebugServerTests(unittest.TestCase):
+    def test_debug_service_blocks_sensitive_active_rag_without_storing_hash_or_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=Path(temp_dir) / "active-rag-sensitive.sqlite",
+                    seed_if_empty=False,
+                )
+            )
+            secret = "password=hunter2"
+
+            blocked = service.active_rag_start(
+                {
+                    "selectedText": secret,
+                    "privacyDisposition": "allowed",
+                    "selectedTextHash": stable_text_hash(secret),
+                    "context": secret,
+                    "sensitiveField": True,
+                    "frontendRevision": 4,
+                    "selectionEpoch": 8,
+                }
+            )
+            status = service.active_rag_status({"sessionId": blocked["sessionId"]})
+
+        blob = json.dumps(blocked, ensure_ascii=False)
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(status["status"], "blocked")
+        self.assertEqual(blocked["candidateCount"], 0)
+        self.assertFalse(blocked["diagnostics"]["retrieval"]["called"])
+        self.assertEqual(blocked["diagnostics"]["remoteModel"]["skipReason"], "sensitive_field_blocked")
+        self.assertNotIn(secret, blob)
+        self.assertNotIn("sha256:", blob)
+        validate_contract(blocked, "active-rag-status.v1.json")
+
     def test_debug_service_exposes_active_rag_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             service = DebugImeService(
@@ -23,6 +58,7 @@ class ActiveRagDebugServerTests(unittest.TestCase):
             started = service.active_rag_start(
                 {
                     "selectedText": "选区 RAG 助手显式触发",
+                    "privacyDisposition": "allowed",
                     "frontendRevision": 1,
                     "selectionEpoch": 1,
                     "panelSessionId": "panel-1",
@@ -42,6 +78,8 @@ class ActiveRagDebugServerTests(unittest.TestCase):
             self.assertEqual(ready["uiMode"], "active_rag_assist")
             self.assertFalse(ready["keyPolicy"]["thinkingRowSelectable"])
             self.assertEqual(cancelled["status"], "ready")
+            validate_contract(started, "active-rag-status.v1.json")
+            validate_contract(ready, "active-rag-status.v1.json")
 
     def test_active_rag_preview_is_read_only_and_redacts_selected_text(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -52,10 +90,17 @@ class ActiveRagDebugServerTests(unittest.TestCase):
                 )
             )
             selected_text = "这段真实选区只允许显式请求进入后端，不能出现在默认调试响应"
+            current_context = "通过辅助功能捕获的光标上下文"
 
             preview = service.active_rag_preview(
                 {
                     "selectedText": selected_text,
+                    "privacyDisposition": "allowed",
+                    "selectedTextChars": len(selected_text),
+                    "currentContext": current_context,
+                    "contextSource": "accessibility_selected_text",
+                    "contextChars": len(current_context),
+                    "contextHash": stable_text_hash(current_context),
                     "frontendRevision": 3,
                     "selectionEpoch": 5,
                     "panelSessionId": "panel-preview",
@@ -77,6 +122,50 @@ class ActiveRagDebugServerTests(unittest.TestCase):
         self.assertEqual(preview["selectedTextHash"], stable_text_hash(selected_text))
         self.assertEqual(preview["keyPolicy"]["numberKeys"], "select_candidate_when_ready_else_noop")
         self.assertEqual(preview["keyPolicy"]["tab"], "accept_top_when_ready")
+        self.assertFalse(preview["diagnostics"]["contextInjection"]["applied"])
+        self.assertEqual(preview["diagnostics"]["contextInjection"]["source"], "accessibility_selected_text")
+        self.assertEqual(preview["diagnostics"]["contextInjection"]["contextChars"], len(current_context))
+        self.assertEqual(preview["diagnostics"]["contextInjection"]["contextHash"], stable_text_hash(current_context))
+        self.assertEqual(preview["diagnostics"]["remoteModel"]["skipReason"], "local_only_request")
+        self.assertNotIn(selected_text, json.dumps(preview["diagnostics"], ensure_ascii=False))
+        self.assertNotIn(current_context, json.dumps(preview["diagnostics"], ensure_ascii=False))
+
+    def test_missing_and_unknown_privacy_block_before_retrieval_provider_or_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=Path(temp_dir) / "active-rag-privacy.sqlite",
+                    seed_if_empty=False,
+                )
+            )
+            secret = "selected text must not be hashed or sent"
+            with patch.object(
+                service.active_rag,
+                "_retrieve_local_evidence",
+                side_effect=AssertionError("retriever must not run"),
+            ) as retriever, patch.object(
+                service.active_rag,
+                "_deepseek_candidates",
+                side_effect=AssertionError("provider must not run"),
+            ) as provider:
+                missing = service.active_rag_start({"selectedText": secret})
+                unknown = service.active_rag_start(
+                    {"selectedText": secret, "privacyDisposition": "unknown"}
+                )
+
+            for response in (missing, unknown):
+                blob = json.dumps(response, ensure_ascii=False)
+                self.assertEqual(response["status"], "blocked")
+                self.assertTrue(response["noStore"])
+                self.assertFalse(response["stored"])
+                self.assertEqual(response["privacyAssessment"]["disposition"], "unknown")
+                self.assertEqual(response["selectedTextHash"], "")
+                self.assertFalse(response["diagnostics"]["retrieval"]["called"])
+                self.assertFalse(response["diagnostics"]["remoteModel"]["requested"])
+                self.assertNotIn(secret, blob)
+                self.assertNotIn("sha256:", blob)
+            retriever.assert_not_called()
+            provider.assert_not_called()
 
 
 def _wait_ready(service: DebugImeService, session_id: str) -> dict[str, object]:

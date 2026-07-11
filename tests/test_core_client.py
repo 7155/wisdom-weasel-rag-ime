@@ -5,9 +5,25 @@ import unittest
 
 from rag_ime.core_client import JsonCommandCoreClient
 from rag_ime.memory_optimizer_models import ContextFrame, RawRetrievalHit
+from rag_ime.models import InputEvent
 
 
 class JsonCommandCoreClientTests(unittest.TestCase):
+    def test_sensitive_event_is_not_sent_to_external_core(self) -> None:
+        client = JsonCommandCoreClient([sys.executable, "-c", "raise SystemExit(99)"])
+
+        result = client.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1,
+                source="squirrel",
+                committed_text="must-not-leave-process",
+                privacy_disposition="sensitive",
+            )
+        )
+
+        self.assertEqual(result, "skipped:privacy_sensitive")
+
     def test_optimize_memory_candidates_preserves_blocked_reasons(self) -> None:
         command = [
             sys.executable,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -14,7 +15,7 @@ class ContextGroupSqliteTest(unittest.TestCase):
     def test_initialize_migrates_old_input_events_and_persists_group(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-group-migration-") as tmp:
             db_path = Path(tmp) / "rag-ime.sqlite"
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 conn.execute(
                     """
                     CREATE TABLE input_events (
@@ -41,11 +42,12 @@ class ContextGroupSqliteTest(unittest.TestCase):
                     created_at_ms=now_ms(),
                     source="squirrel",
                     committed_text="完成前台闭环",
+                    privacy_disposition="allowed",
                     context_group_id="doc:a",
                     context_group_level="document",
                 )
             )
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn, conn:
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(input_events)")}
                 row = conn.execute(
                     "SELECT context_group_id, context_group_level FROM input_events ORDER BY id DESC LIMIT 1"

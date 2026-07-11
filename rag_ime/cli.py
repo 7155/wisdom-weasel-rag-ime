@@ -32,6 +32,7 @@ from .codex_history import (
 )
 from .core_client import CoreMemory, FixtureCoreClient, JsonCommandCoreClient, default_fixture_memories
 from .embeddings import embedding_provider_from_env
+from .foreground_privacy import assess_foreground_write, storage_receipt
 from .history_context import build_prediction_context
 from .hybrid_rag_eval import run_hybrid_rag_eval
 from .local_sqlite_core import LocalSqliteCoreClient
@@ -450,6 +451,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     commit.add_argument("--source", default="manual_commit")
     commit.add_argument("--tag", action="append", default=[])
     commit.add_argument("--sensitive", action="store_true", help="Do not record this input")
+    commit.add_argument(
+        "--privacy-disposition",
+        choices=("allowed", "sensitive", "unknown"),
+        default="unknown",
+        help="Explicit foreground privacy assessment; missing defaults to no-store",
+    )
     commit.add_argument("--recording-disabled", action="store_true", help="Skip recording for this commit")
 
     generate_memory = subparsers.add_parser(
@@ -551,6 +558,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     action_json.add_argument("--source-event-id", type=int, default=0)
     action_json.add_argument("--query", default="")
     action_json.add_argument("--surface-text", default="")
+    action_json.add_argument(
+        "--privacy-disposition",
+        choices=("allowed", "sensitive", "unknown"),
+        default="unknown",
+        help="Explicit foreground privacy assessment; missing defaults to no-store",
+    )
 
     demo = subparsers.add_parser("demo", help="Render one or all UI scenarios")
     demo.add_argument("--scenario", choices=[item.scenario_id for item in SCENARIOS], default="")
@@ -1053,11 +1066,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     squirrel_tryout_gate.add_argument("--include-cases", action="store_true")
     squirrel_tryout_gate.add_argument("--report-path", default="")
 
-    debug_server = subparsers.add_parser("debug-server", help="Run the browser debug page and local API")
+    debug_server = subparsers.add_parser("debug-server", help="Run the local diagnostic/management API")
     debug_server.add_argument("--host", default=os.environ.get("RAG_IME_DEBUG_HOST", "127.0.0.1"))
     debug_server.add_argument("--port", type=int, default=int(os.environ.get("RAG_IME_DEBUG_PORT", "8765")))
     debug_server.add_argument("--project", default="wisdom-weasel-rag-ime")
-    debug_server.add_argument("--static-dir", default=os.environ.get("RAG_IME_DEBUG_STATIC_DIR", "debug"))
+    debug_server.add_argument("--static-dir", default="", help=argparse.SUPPRESS)
     debug_server.add_argument("--no-seed", action="store_true", help="Do not seed demo memories when DB is empty")
     debug_server.add_argument(
         "--rime-cache-ttl-ms",
@@ -1820,6 +1833,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "commit":
+        privacy_disposition = "sensitive" if args.sensitive else args.privacy_disposition
         event_id = adapter.commit_text(
             args.text,
             recent_context=args.recent_context,
@@ -1828,7 +1842,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             source=args.source,
             tags=tuple(args.tag),
             recording_enabled=not args.recording_disabled,
-            field_is_sensitive=args.sensitive,
+            privacy_disposition=privacy_disposition,
         )
         print(
             json.dumps(
@@ -1883,6 +1897,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     recent_context=generated_memory_context(args.text, args.recent_context, item.reason),
                     project=args.project,
                     app=args.app,
+                    privacy_disposition="allowed",
                     source="api_memory_generator",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
@@ -1979,6 +1994,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     recent_context=generated_memory_context("core optimization snapshot", "", item.reason),
                     project=args.project,
                     app=args.app,
+                    privacy_disposition="allowed",
                     source="api_core_optimizer",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
@@ -2015,6 +2031,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     recent_context=f"API lexicon optimization | reason: {compact_whitespace(phrase.reason)}",
                     project=args.project,
                     app=args.app,
+                    privacy_disposition="allowed",
                     source="api_lexicon_optimizer",
                     provider_name=f"{report.provider}:{report.model}",
                     tags=tags,
@@ -2183,6 +2200,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "action-json":
+        privacy_assessment = assess_foreground_write(
+            {"privacyDisposition": args.privacy_disposition}
+        )
+        if privacy_assessment["storeAllowed"] is not True:
+            print(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "stored": False,
+                        "noStore": True,
+                        "privacyAssessment": privacy_assessment,
+                        "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
         action = core.apply_action(
             MemoryAction(
                 action_id=None,
@@ -2905,7 +2940,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 port=args.port,
                 db_path=Path(args.db_path),
                 project=args.project,
-                static_dir=Path(args.static_dir),
+                static_dir=Path(args.static_dir or "."),
                 seed_if_empty=not args.no_seed,
                 core=core,
                 rime_cache_ttl_ms=args.rime_cache_ttl_ms,
@@ -2923,7 +2958,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 port=args.port,
                 db_path=Path(args.db_path),
                 project=args.project,
-                static_dir=Path("debug"),
+                static_dir=Path("."),
                 seed_if_empty=not args.no_seed,
                 core=core,
                 server_name="sidecar server",
@@ -2953,6 +2988,7 @@ def seed_demo_memories(adapter: InputMethodAdapter, memories: list[CoreMemory]) 
                 created_at_ms=created_at + index,
                 source="demo_seed",
                 committed_text=memory.text,
+                privacy_disposition="allowed",
                 recent_context=memory.evidence_preview,
                 preedit="",
                 schema_id="demo",
@@ -2997,6 +3033,7 @@ def seed_eval_case_memories(adapter: InputMethodAdapter, cases: list[CodexEvalCa
                 created_at_ms=created_at + index,
                 source="eval_case_seed",
                 committed_text=committed_text,
+                privacy_disposition="allowed",
                 recent_context=compact_whitespace(f"eval_case:{case.case_id} expected:{expected}"),
                 preedit="",
                 schema_id="eval_case",
@@ -3957,6 +3994,7 @@ def _tryout_sidecar_rime_suggest(base_url: str) -> dict[str, object]:
     request_payload = {
         "sessionId": "tryout-gate",
         "requestSeq": 1,
+        "privacyDisposition": "allowed",
         "rawInput": "bendi",
         "preedit": "bendi",
         "committedContext": "Squirrel tryout gate",
@@ -4919,6 +4957,7 @@ def _rime_eval_payload(
     return {
         "sessionId": f"eval-rime-sidecar:{case.case_id}",
         "requestSeq": request_seq,
+        "privacyDisposition": "allowed",
         "rawInput": "",
         "preedit": "",
         "committedContext": case.recent_context,
@@ -4927,6 +4966,7 @@ def _rime_eval_payload(
         "maxSideCandidates": max_side_candidates,
         "latencyBudgetMs": max(30, int(latency_budget_ms)),
         "forceSideCandidates": force_side_candidates,
+        "debugUseLegacyRagFallback": True,
         "rimeContext": {
             "candidates": [
                 {

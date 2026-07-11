@@ -32,6 +32,8 @@ def collapse_repeated_tail(text: str, *, min_unit_chars: int = 2, max_unit_chars
 
 def candidate_has_self_repetition(candidate: str, *, min_unit_chars: int = 2, max_unit_chars: int = 16) -> bool:
     norm = repeat_norm(candidate)
+    if re.search(r"([能再先在给把要可很就让还都也并])\1", norm):
+        return True
     if len(norm) < min_unit_chars * 2:
         return False
     max_width = min(max_unit_chars, len(norm) // 2)

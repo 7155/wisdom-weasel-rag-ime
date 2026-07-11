@@ -49,6 +49,8 @@ Urlopen = Callable[..., Any]
 
 
 class DeepSeekV4FlashCompletionProvider:
+    supports_text_delta_callback = True
+
     def __init__(
         self,
         config: DeepSeekConfig,
@@ -60,7 +62,12 @@ class DeepSeekV4FlashCompletionProvider:
         self.urlopen = urlopen or _direct_deepseek_urlopen
         self.enforce_runtime_flags = bool(enforce_runtime_flags)
 
-    def stream_candidates(self, request: DeepSeekCompletionRequest) -> Iterator[CompletionCandidateDelta]:
+    def stream_candidates(
+        self,
+        request: DeepSeekCompletionRequest,
+        *,
+        on_text_delta: Callable[[str], None] | None = None,
+    ) -> Iterator[CompletionCandidateDelta]:
         if self.enforce_runtime_flags:
             _assert_completion_scene_allowed(request.scene)
         if not self.config.api_key:
@@ -70,7 +77,10 @@ class DeepSeekV4FlashCompletionProvider:
             "messages": build_deepseek_completion_messages(request),
             "temperature": 0.2,
             "max_tokens": min(_completion_token_budget(request), _configured_completion_token_cap(self.config, request)),
-            "stream": bool(request.stream and self.config.stream),
+            # Active RAG is an explicit user action and always benefits from
+            # first-token delivery. Passive post-commit completion keeps the
+            # configured all-at-once behavior to avoid flashing fragments.
+            "stream": bool(request.stream and (self.config.stream or request.scene == "active_rag")),
         }
         if self.config.thinking:
             body["thinking"] = {"type": self.config.thinking}
@@ -98,6 +108,10 @@ class DeepSeekV4FlashCompletionProvider:
                             continue
                         content_buffer += delta
                         content_buffer = content_buffer.replace("\\n", "\n").replace("\\r", "\r")
+                        if on_text_delta is not None and request.scene == "active_rag":
+                            partial_text = _active_rag_partial_candidate_text(content_buffer)
+                            if partial_text:
+                                on_text_delta(partial_text)
                         lines = content_buffer.splitlines(keepends=True)
                         content_buffer = ""
                         for line in lines:
@@ -392,6 +406,16 @@ def _chat_delta_text(payload: dict[str, Any]) -> str:
         return str(message["content"])
     text = first.get("text")
     return text if isinstance(text, str) else ""
+
+
+def _active_rag_partial_candidate_text(content: str) -> str:
+    value = content.replace("\\n", "\n").replace("\\r", "\r")
+    marker = "候选="
+    if marker not in value:
+        return ""
+    value = value.split(marker, 1)[1]
+    value = value.replace("```", "").strip().strip('"`')
+    return compact_whitespace(value)
 
 
 def _chat_delta_reasoning_text(payload: dict[str, Any]) -> str:

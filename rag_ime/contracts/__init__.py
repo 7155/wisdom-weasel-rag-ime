@@ -9,6 +9,13 @@ from .key_policy import (
     TAB_ACCEPT_TOP_PREDICTION,
     key_policy_for_prediction_session,
 )
+from .context_observability import (
+    ACTIVE_RAG_ROUTE_STATUS_SCHEMA_VERSION,
+    CONTEXT_INJECTION_TRACE_SCHEMA_VERSION,
+    build_context_injection_trace,
+    evidence_injection_diagnostics,
+    text_fingerprint,
+)
 from .source import (
     SOURCE_BADGES,
     SOURCE_COLOR_TOKENS,
@@ -22,12 +29,16 @@ from .source import (
     source_color_token_for,
 )
 from .trace import (
+    ACTIVE_RAG_TRACE_EVENT_NAMES,
     REQUIRED_TRACE_EVENT_NAMES,
     SOAK_REPORT_SCHEMA_VERSION,
     V1_FOREGROUND_METRIC_KEYS,
 )
 
 __all__ = [
+    "ACTIVE_RAG_TRACE_EVENT_NAMES",
+    "ACTIVE_RAG_ROUTE_STATUS_SCHEMA_VERSION",
+    "CONTEXT_INJECTION_TRACE_SCHEMA_VERSION",
     "NUMBER_KEYS_PASS_THROUGH",
     "NUMBER_KEYS_SELECT_RIME_CANDIDATE",
     "OPTION_NUMBER_SELECT_PREDICTION_BY_ORDINAL",
@@ -45,7 +56,10 @@ __all__ = [
     "SOAK_REPORT_SCHEMA_VERSION",
     "TAB_ACCEPT_TOP_PREDICTION",
     "V1_FOREGROUND_METRIC_KEYS",
+    "build_context_injection_trace",
+    "evidence_injection_diagnostics",
     "key_policy_for_prediction_session",
     "source_badge_for",
     "source_color_token_for",
+    "text_fingerprint",
 ]

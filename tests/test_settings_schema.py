@@ -21,11 +21,20 @@ class SettingsSchemaTests(unittest.TestCase):
     def test_defaults_include_user_customization_controls(self) -> None:
         defaults = default_settings()
 
+        self.assertFalse(defaults["interaction"]["composition"]["showPrediction"])
+        self.assertTrue(defaults["interaction"]["composition"]["showOnlyRime"])
+        self.assertEqual(defaults["models"]["hot"], "minimind_ime_v2")
         self.assertFalse(defaults["interaction"]["postCommit"]["showPendingStatus"])
+        self.assertEqual(defaults["interaction"]["postCommit"]["idleTriggerMs"], 420)
+        self.assertEqual(defaults["interaction"]["postCommit"]["minDeltaChars"], 8)
+        self.assertEqual(defaults["interaction"]["postCommit"]["maxCallsPer10s"], 2)
+        self.assertEqual(defaults["interaction"]["postCommit"]["cooldownMs"], 2500)
+        self.assertEqual(defaults["interaction"]["postCommit"]["panelTtlMs"], 2800)
         self.assertEqual(defaults["display"]["badges"]["model"], "模")
         self.assertEqual(defaults["display"]["badges"]["action"], "生成")
         self.assertEqual(defaults["display"]["colors"]["action"], "blue")
         self.assertTrue(defaults["rag"]["lanes"]["bm25Raw"])
+        self.assertEqual(defaults["rag"]["hybrid"]["budgetMs"], 400)
         self.assertEqual(defaults["activeRag"]["shortcut"], "ctrl+.")
         self.assertTrue(defaults["activeRag"]["capture"]["accessibility"])
         self.assertTrue(defaults["activeRag"]["capture"]["clipboardFallback"])
@@ -34,8 +43,14 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["pinyin"]["fuzzyProfile"], "sichuan-mild")
         self.assertTrue(defaults["pinyin"]["rerankUsesFuzzy"])
         self.assertTrue(defaults["pinyin"]["pairs"]["sSh"])
+        self.assertTrue(defaults["pinyin"]["pairs"]["ongOn"])
         self.assertFalse(defaults["pinyin"]["pairs"]["nL"])
         self.assertFalse(defaults["privacy"]["debugIncludeText"])
+
+        fields = {field["key"]: field for section in settings_schema()["sections"] for field in section["fields"]}
+        self.assertFalse(fields["interaction.composition.showPrediction"]["default"])
+        self.assertTrue(fields["interaction.composition.showOnlyRime"]["default"])
+        self.assertEqual(fields["models.hot"]["default"], "minimind_ime_v2")
 
     def test_flatten_roundtrip(self) -> None:
         original = {"interaction": {"postCommit": {"panelTtlMs": 4200}}, "display": {"badges": {"model": "模"}}}

@@ -28,14 +28,8 @@ while [[ "${1:-}" == --* ]]; do
       ;;
   esac
 done
-INPUT_SOURCE_ID="${1:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}}}"
-if [[ -n "${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-}" ]]; then
-  INPUT_SOURCE_BUNDLE_ID="$RAG_IME_INPUT_SOURCE_BUNDLE_ID"
-elif [[ -n "${RAG_IME_MACOS_INPUT_SOURCE_ID:-}" && "$INPUT_SOURCE_ID" == "$RAG_IME_MACOS_INPUT_SOURCE_ID" ]]; then
-  INPUT_SOURCE_BUNDLE_ID="${RAG_IME_MACOS_BUNDLE_ID:-dev.local.inputmethod.RagImeMac}"
-else
-  INPUT_SOURCE_BUNDLE_ID="${INPUT_SOURCE_ID%.*}"
-fi
+INPUT_SOURCE_ID="${1:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}}"
+INPUT_SOURCE_BUNDLE_ID="${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-${INPUT_SOURCE_ID%.*}}"
 MODULE_CACHE="${RAG_IME_SWIFT_MODULE_CACHE:-${TMPDIR:-/tmp}/rag-ime-swift-module-cache}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 

@@ -40,6 +40,7 @@ def _record_event(core: LocalSqliteCoreClient, text: str) -> int:
             created_at_ms=now_ms(),
             source="manual",
             committed_text=text,
+            privacy_disposition="allowed",
             recent_context="RAG-IME 真实前台验收",
             project="wisdom-weasel-rag-ime",
             tags=("RAG", "DeepSeek"),

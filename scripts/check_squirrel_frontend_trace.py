@@ -44,12 +44,16 @@ USER_TEXT_TRACE_KEYS = {
     "commitTextPreview",
     "committedText",
     "committedContextSuffix",
+    "hardContextAnchor",
+    "queryAnchor",
+    "displayAnchor",
     "query",
     "text",
     "insertText",
     "comment",
     "evidencePreview",
 }
+OPAQUE_TEXT_IDENTITY_TRACE_KEYS = {"hardContextAnchor", "queryAnchor", "displayAnchor"}
 
 
 def main() -> int:
@@ -1038,6 +1042,12 @@ def trace_privacy_violations_for_value(value: Any, *, path: str) -> list[dict[st
         for key, child in value.items():
             child_path = f"{path}.{key}" if path else str(key)
             if key in USER_TEXT_TRACE_KEYS:
+                if (
+                    key in OPAQUE_TEXT_IDENTITY_TRACE_KEYS
+                    and isinstance(child, str)
+                    and child.startswith("sha256:")
+                ):
+                    continue
                 if is_unsanitized_trace_text_value(child):
                     violations.append(
                         {

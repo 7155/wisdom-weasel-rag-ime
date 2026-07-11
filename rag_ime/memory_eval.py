@@ -220,6 +220,11 @@ def _run_one_case(
         started = time.perf_counter()
         with _temporary_env(
             {
+                # The evaluator exercises the retrieval and optimizer lanes,
+                # not the foreground composition policy. Keep it deterministic
+                # even when the installed IME enables post-commit-only mode.
+                "RAG_IME_AI_AFTER_COMMIT_ONLY": "0",
+                "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "1",
                 "RAG_IME_MEMORY_OPTIMIZER": "1",
                 "RAG_IME_MEMORY_OPTIMIZER_TRACE": "1",
                 "RAG_IME_MEMORY_OPTIMIZER_MAX_MS": str(max(1, optimizer_max_ms)),
@@ -349,6 +354,7 @@ def _seed_case_state(*, core: LocalSqliteCoreClient, case: MemoryOptimizerEvalCa
                 created_at_ms=int(event.get("createdAtMs") or now_ms()),
                 source=str(event.get("source") or "memory-eval"),
                 committed_text=str(event.get("text") or event.get("committedText") or ""),
+                privacy_disposition="allowed",
                 recent_context=str(event.get("recentContext") or ""),
                 preedit=str(event.get("preedit") or ""),
                 schema_id=str(event.get("schemaId") or "eval"),
@@ -487,6 +493,7 @@ def _payload_for_case(
     payload: dict[str, object] = {
         "sessionId": f"eval-memory-optimizer:{case_id}",
         "requestSeq": repeat_index_from_case_id(case_id),
+        "privacyDisposition": "allowed",
         "rawInput": case.raw_input,
         "preedit": case.preedit,
         "committedContext": case.committed_context,

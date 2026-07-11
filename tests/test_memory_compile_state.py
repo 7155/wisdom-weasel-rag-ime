@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -28,10 +30,15 @@ class MemoryCompileStateTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
 
     def test_apply_advances_incremental_cursor_and_next_bundle_only_reads_new_events(self) -> None:
         first_id = int(self.core.record_event(self._event("完成真实前台闭环", "doc:a")).split(":", 1)[1])
@@ -139,6 +146,41 @@ class MemoryCompileStateTest(unittest.TestCase):
             self.assertFalse(report["ok"])
             self.assertTrue(any(item["code"] == "context_group_not_in_source_bundle" for item in report["errors"]))
 
+    def test_source_bundle_redacts_structured_personal_and_network_identifiers(self) -> None:
+        sensitive_values = (
+            "13812345678",
+            "11010519491231002X",
+            "6222021234567890123",
+            "192.168.1.10",
+            "2001:db8::1",
+            "supersecret",
+            "private-key-material",
+            "/home/alice/private/note.txt",
+            r"C:\Users\alice\private\note.txt",
+        )
+        texts = (
+            f"联系电话 {sensitive_values[0]}",
+            f"证件号码 {sensitive_values[1]}",
+            f"银行卡号 {sensitive_values[2]}",
+            f"服务地址 {sensitive_values[3]} 和 {sensitive_values[4]}",
+            f"访问 https://example.com/cb?access_token={sensitive_values[5]}&x=1",
+            f"-----BEGIN PRIVATE KEY----- {sensitive_values[6]} -----END PRIVATE KEY-----",
+            f"Linux 文件 {sensitive_values[7]}",
+            f"Windows 文件 {sensitive_values[8]}",
+        )
+        for index, text in enumerate(texts, start=1):
+            self.core.record_event(self._event(text, f"doc:privacy-{index}"))
+
+        with self._connect() as conn:
+            bundle = build_memory_book_source_bundle(conn, project="ime")
+
+        serialized = json.dumps(bundle, ensure_ascii=False)
+        for value in sensitive_values:
+            self.assertNotIn(value, serialized)
+        stats = bundle["redactionStats"]
+        for key in ("secret", "path", "phone", "identity", "paymentCard", "ipAddress"):
+            self.assertGreater(int(stats[key]), 0)
+
     @staticmethod
     def _event(text: str, group_id: str) -> InputEvent:
         return InputEvent(
@@ -146,6 +188,7 @@ class MemoryCompileStateTest(unittest.TestCase):
             created_at_ms=now_ms(),
             source="squirrel",
             committed_text=text,
+            privacy_disposition="allowed",
             app="com.apple.TextEdit",
             project="ime",
             context_group_id=group_id,

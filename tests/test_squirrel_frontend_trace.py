@@ -618,6 +618,85 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual(report["tracePrivacyViolations"], [])
 
+    def test_trace_check_rejects_raw_candidate_anchors_when_trace_text_is_disabled(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-anchor-privacy-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 11,
+                        "traceIncludesText": False,
+                        "queryAnchor": "用户输入的查询原文",
+                        "displayAnchor": "用户输入的展示原文",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["passed"])
+        self.assertEqual(
+            {violation["field"] for violation in report["tracePrivacyViolations"]},
+            {"queryAnchor", "displayAnchor"},
+        )
+
+    def test_trace_check_accepts_hashed_candidate_anchors_when_trace_text_is_disabled(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-trace-anchor-privacy-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            log_path.write_text(
+                json.dumps(
+                    {
+                        "event": "panel_display_candidates",
+                        "timestampMs": 11,
+                        "traceIncludesText": False,
+                        "queryAnchor": "sha256:query",
+                        "displayAnchor": "sha256:display",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_frontend_trace.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--print-last",
+                    "0",
+                ],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["tracePrivacyViolations"], [])
+
     def test_trace_check_can_require_active_rag_lifecycle(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-trace-") as tmp:

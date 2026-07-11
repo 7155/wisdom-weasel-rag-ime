@@ -6,8 +6,10 @@ import shutil
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from threading import RLock
 from typing import Any, Mapping
 
+from .db import apply_database_migrations
 from .settings_models import SettingsUpdateResult, UserProfile, UserVocabularyItem
 from .settings_schema import (
     deep_merge_settings,
@@ -25,11 +27,20 @@ from .text_utils import now_ms
 class ManagementSettingsStore:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
+        self._initialized = False
+        self._initialize_lock = RLock()
 
     def initialize(self) -> None:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            ensure_management_tables(conn)
+        if self._initialized:
+            return
+        with self._initialize_lock:
+            if self._initialized:
+                return
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._connect() as conn:
+                ensure_management_tables(conn)
+                _purge_transport_metadata(conn)
+            self._initialized = True
 
     def get_settings(self, *, include_sensitive: bool = False) -> dict[str, object]:
         self.initialize()
@@ -42,10 +53,10 @@ class ManagementSettingsStore:
                 value = json.loads(str(row["value_json"]))
             except json.JSONDecodeError:
                 continue
-            if key in settings and isinstance(value, dict):
-                settings[key] = deep_merge_settings(settings[key], value)  # type: ignore[arg-type]
-            else:
-                settings = deep_merge_settings(settings, unflatten_settings({key: value}))
+            candidate = {key: value}
+            validated = _validated_flat_updates(flatten_settings(candidate), strict=False)
+            if validated:
+                settings = deep_merge_settings(settings, unflatten_settings(validated))
         return settings if include_sensitive else redact_settings(settings)
 
     def update_settings(
@@ -123,6 +134,78 @@ class ManagementSettingsStore:
             **settings_schema(),
             "defaults": default_settings(),
         }
+
+    def resolve_runtime_config_revision(
+        self,
+        *,
+        snapshot_hash: str,
+        settings_revision: str,
+        profile: str,
+    ) -> int:
+        self.initialize()
+        with self._connect() as conn:
+            current = conn.execute(
+                "SELECT runtime_revision, snapshot_hash FROM runtime_config_state WHERE singleton_id = 1"
+            ).fetchone()
+        if current is not None and str(current["snapshot_hash"]) == snapshot_hash:
+            return int(current["runtime_revision"])
+
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT runtime_revision, snapshot_hash FROM runtime_config_state WHERE singleton_id = 1"
+            ).fetchone()
+            if row is None:
+                revision = 1
+                conn.execute(
+                    """
+                    INSERT INTO runtime_config_state(
+                      singleton_id, runtime_revision, snapshot_hash,
+                      settings_revision, profile, updated_at_ms
+                    ) VALUES (1, ?, ?, ?, ?, ?)
+                    """,
+                    (revision, snapshot_hash, settings_revision, profile, now_ms()),
+                )
+                return revision
+            revision = int(row["runtime_revision"])
+            if str(row["snapshot_hash"]) == snapshot_hash:
+                return revision
+            revision += 1
+            conn.execute(
+                """
+                UPDATE runtime_config_state
+                SET runtime_revision = ?, snapshot_hash = ?, settings_revision = ?,
+                    profile = ?, updated_at_ms = ?
+                WHERE singleton_id = 1
+                """,
+                (revision, snapshot_hash, settings_revision, profile, now_ms()),
+            )
+            return revision
+
+    def bump_runtime_config_revision(self) -> int:
+        self.initialize()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT runtime_revision FROM runtime_config_state WHERE singleton_id = 1"
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO runtime_config_state(
+                      singleton_id, runtime_revision, snapshot_hash,
+                      settings_revision, profile, updated_at_ms
+                    ) VALUES (1, 1, '', '', '', ?)
+                    """,
+                    (now_ms(),),
+                )
+                return 1
+            revision = int(row["runtime_revision"]) + 1
+            conn.execute(
+                "UPDATE runtime_config_state SET runtime_revision = ?, updated_at_ms = ? WHERE singleton_id = 1",
+                (revision, now_ms()),
+            )
+            return revision
 
     def list_profiles(self, *, kind: str = "") -> dict[str, object]:
         self.initialize()
@@ -364,62 +447,7 @@ class ManagementSettingsStore:
 
 
 def ensure_management_tables(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS management_audit_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at_ms INTEGER NOT NULL,
-            action TEXT NOT NULL,
-            target_type TEXT NOT NULL,
-            target_id TEXT NOT NULL,
-            payload_json TEXT NOT NULL DEFAULT '{}',
-            result_json TEXT NOT NULL DEFAULT '{}'
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS management_settings (
-            key TEXT PRIMARY KEY,
-            value_json TEXT NOT NULL,
-            updated_at_ms INTEGER NOT NULL,
-            updated_by TEXT NOT NULL DEFAULT 'local',
-            audit_id INTEGER
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS user_profiles (
-            profile_id TEXT PRIMARY KEY,
-            profile_kind TEXT NOT NULL,
-            label TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            settings_json TEXT NOT NULL DEFAULT '{}',
-            enabled INTEGER NOT NULL DEFAULT 1,
-            created_at_ms INTEGER NOT NULL,
-            updated_at_ms INTEGER NOT NULL,
-            audit_id INTEGER
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS user_vocabulary (
-            vocab_id TEXT PRIMARY KEY,
-            surface TEXT NOT NULL,
-            aliases_json TEXT NOT NULL DEFAULT '[]',
-            pinyin TEXT NOT NULL DEFAULT '',
-            tags_json TEXT NOT NULL DEFAULT '[]',
-            scope TEXT NOT NULL DEFAULT 'global',
-            priority INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'active',
-            created_at_ms INTEGER NOT NULL,
-            updated_at_ms INTEGER NOT NULL,
-            audit_id INTEGER
-        )
-        """
-    )
+    apply_database_migrations(conn)
 
 
 def record_management_audit(
@@ -463,11 +491,118 @@ def _normalize_updates(updates: Mapping[str, object]) -> dict[str, object]:
     flat: dict[str, object] = {}
     nested: dict[str, object] = {}
     for key, value in dict(source).items():
-        if "." in str(key):
-            flat[str(key)] = value
+        normalized_key = str(key)
+        if normalized_key in _UPDATE_METADATA_KEYS:
+            continue
+        if "." in normalized_key:
+            flat[normalized_key] = value
         else:
-            nested[str(key)] = value
-    return deep_merge_settings(nested, unflatten_settings(flat))
+            nested[normalized_key] = value
+    merged = deep_merge_settings(nested, unflatten_settings(flat))
+    return unflatten_settings(_validated_flat_updates(flatten_settings(merged), strict=True))
+
+
+_UPDATE_METADATA_KEYS = {
+    "auditId",
+    "confirmText",
+    "confirm_text",
+    "previewToken",
+    "runtimeRevision",
+    "schemaVersion",
+    "settingsRevision",
+    "updatedBy",
+    "updated_by",
+}
+
+
+def _purge_transport_metadata(conn: sqlite3.Connection) -> None:
+    placeholders = ",".join("?" for _ in _UPDATE_METADATA_KEYS)
+    conn.execute(
+        f"DELETE FROM management_settings WHERE key IN ({placeholders})",
+        tuple(sorted(_UPDATE_METADATA_KEYS)),
+    )
+
+
+def _setting_defaults_by_key() -> dict[str, object]:
+    defaults = flatten_settings(default_settings())
+    # The management token is intentionally not shipped with a default value,
+    # but it is a supported sensitive setting when token enforcement is enabled.
+    defaults["managementSecurity.token"] = ""
+    return defaults
+
+
+def _setting_schema_by_key() -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for section in settings_schema().get("sections", []):
+        if not isinstance(section, Mapping):
+            continue
+        for field in section.get("fields", []):
+            if isinstance(field, Mapping) and str(field.get("key") or ""):
+                result[str(field["key"])] = dict(field)
+    return result
+
+
+def _validated_flat_updates(values: Mapping[str, object], *, strict: bool) -> dict[str, object]:
+    defaults = _setting_defaults_by_key()
+    fields = _setting_schema_by_key()
+    validated: dict[str, object] = {}
+    for key, value in values.items():
+        if key not in defaults:
+            if strict:
+                raise ValueError(f"unknown setting key: {key}")
+            continue
+        try:
+            normalized = _validated_setting_value(key, value, default=defaults[key], field=fields.get(key, {}))
+        except ValueError:
+            if strict:
+                raise
+            continue
+        validated[key] = normalized
+    return validated
+
+
+def _validated_setting_value(
+    key: str,
+    value: object,
+    *,
+    default: object,
+    field: Mapping[str, object],
+) -> object:
+    field_type = str(field.get("type") or "")
+    if isinstance(default, bool):
+        if not isinstance(value, bool):
+            raise ValueError(f"setting {key} must be a boolean")
+        normalized: object = value
+    elif isinstance(default, int):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"setting {key} must be an integer")
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"setting {key} must be an integer")
+        normalized = int(value)
+    elif isinstance(default, float):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"setting {key} must be a number")
+        normalized = float(value)
+    elif isinstance(default, str):
+        if not isinstance(value, str):
+            raise ValueError(f"setting {key} must be a string")
+        normalized = value
+    else:
+        if not isinstance(value, type(default)):
+            raise ValueError(f"setting {key} has an invalid type")
+        normalized = value
+
+    options = field.get("options")
+    if field_type == "enum" and isinstance(options, list) and normalized not in options:
+        raise ValueError(f"setting {key} must be one of: {', '.join(str(item) for item in options)}")
+    if isinstance(normalized, (int, float)) and not isinstance(normalized, bool):
+        minimum = field.get("min")
+        maximum = field.get("max")
+        if isinstance(minimum, (int, float)) and normalized < minimum:
+            raise ValueError(f"setting {key} must be >= {minimum}")
+        if isinstance(maximum, (int, float)) and normalized > maximum:
+            raise ValueError(f"setting {key} must be <= {maximum}")
+    return normalized
 
 
 def _validate_remote_opt_in(updates: Mapping[str, object], *, confirm_text: str) -> None:

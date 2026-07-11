@@ -167,6 +167,7 @@ for key in (
     "max_side_candidates",
     "latency_budget_ms",
     "debounce_ms",
+    "post_commit_idle_ms",
     "timeout_ms",
     "frontend_trace",
 ):

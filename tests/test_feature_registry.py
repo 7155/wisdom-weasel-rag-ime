@@ -38,7 +38,6 @@ DEBUG_OR_OFFLINE_PROJECT_STATUS_ROWS = {
     "Active RAG preview / selected text assist": "C",
     "`x1top` / x1api cleanup": "C",
     "Rime export apply/rollback": "C",
-    "`macos/RagImeMac` preview": "C",
     "MLX benchmark/model matrix": "C",
 }
 
@@ -91,8 +90,7 @@ class FeatureRegistryTests(unittest.TestCase):
         by_id = {feature["featureId"]: feature for feature in _load_registry()}
         self.assertEqual(by_id["x1top-cleanup-to-curated-memory"]["v1Status"], "offline_tool")
         self.assertIn("curated", by_id["x1top-cleanup-to-curated-memory"]["dataSource"])
-        self.assertEqual(by_id["ragimemac-debug-harness"]["v1Status"], "debug_preview")
-        self.assertIn("patched Squirrel/Rime", by_id["ragimemac-debug-harness"]["realImeTrigger"])
+        self.assertNotIn("ragimemac-debug-harness", by_id)
         self.assertIn("local MLX", by_id["mlx-provider-health"]["dataSource"])
         self.assertIn("remote/OpenAI-compatible providers are offline", by_id["mlx-provider-health"]["dataSource"])
 

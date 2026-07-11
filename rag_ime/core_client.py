@@ -93,6 +93,8 @@ class JsonCommandCoreClient:
         self.timeout_s = timeout_s
 
     def record_event(self, event: InputEvent) -> str:
+        if event.privacy_disposition != "allowed":
+            return f"skipped:privacy_{event.privacy_disposition}"
         payload = self._request("record_event", {"event": asdict(event)})
         return str(payload["event_id"])
 
@@ -252,12 +254,15 @@ class FixtureCoreClient:
         }
 
     def record_event(self, event: InputEvent) -> str:
+        if event.privacy_disposition != "allowed":
+            return f"skipped:privacy_{event.privacy_disposition}"
         event_id = event.event_id if event.event_id is not None else len(self.events) + 1
         stored = InputEvent(
             event_id=event_id,
             created_at_ms=event.created_at_ms or now_ms(),
             source=event.source,
             committed_text=event.committed_text,
+            privacy_disposition=event.privacy_disposition,
             recent_context=event.recent_context,
             preedit=event.preedit,
             schema_id=event.schema_id,

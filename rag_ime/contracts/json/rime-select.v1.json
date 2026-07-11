@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.rime-select.v1",
+  "type": "object",
+  "required": ["candidate"],
+  "properties": {
+    "candidate": {"$ref": "#/$defs/candidate"},
+    "shownCandidates": {"type": "array", "items": {"$ref": "#/$defs/candidate"}},
+    "query": {"type": "string"},
+    "recentContext": {"type": "string"},
+    "committedContext": {"type": "string"},
+    "preedit": {"type": "string"},
+    "project": {"type": "string"},
+    "app": {"type": "string"},
+    "frontAppBundleId": {"type": "string"},
+    "frontmostApp": {"type": "string"},
+    "bundleId": {"type": "string"},
+    "contextGroupId": {"type": "string"},
+    "contextGroupLevel": {"type": "string"},
+    "privacyDisposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
+    "sensitiveField": {"type": "boolean"},
+    "secureInput": {"type": "boolean"},
+    "dryRun": {"type": "boolean"}
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": ["insertText", "sourceType"],
+      "properties": {
+        "text": {"type": "string"},
+        "insertText": {"type": "string", "minLength": 1},
+        "sourceType": {"type": "string"},
+        "memoryId": {"type": "string"},
+        "suggestionId": {"type": "string"},
+        "sourceEventId": {"type": ["integer", "null"]}
+      }
+    }
+  }
+}

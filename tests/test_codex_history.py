@@ -943,6 +943,7 @@ class CodexHistoryTests(unittest.TestCase):
             recent_context="结构化 RAG 候选用于 sidecar eval, raw Codex history 不直接作为输入法候选。",
             project="wisdom-weasel-rag-ime",
             tags=("structure", "rag-ime"),
+            privacy_disposition="allowed",
         )
 
         cases_file = self.root / "rime-sidecar-cases.jsonl"

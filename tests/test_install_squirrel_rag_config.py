@@ -60,6 +60,7 @@ class InstallSquirrelRagConfigScriptTests(unittest.TestCase):
         self.assertIn('"style/color_scheme": "native"', config)
         self.assertEqual(config.count("# >>> RAG-IME managed block"), 1)
         self.assertIn('"rag_ime/sidecar_url": "http://127.0.0.1:9999/api"', config)
+        self.assertIn('"rag_ime/post_commit_idle_ms": 60', config)
         self.assertNotIn("http://127.0.0.1:8766/api", config)
         self.assertEqual(default_config.count("# >>> RAG-IME default managed block"), 1)
         self.assertIn('"menu/page_size": 8', default_config)
@@ -82,6 +83,7 @@ def _write_snippet(path: Path, *, sidecar_url: str) -> None:
                 "  max_side_candidates: 5",
                 "  latency_budget_ms: 300",
                 "  debounce_ms: 80",
+                "  post_commit_idle_ms: 60",
                 "  timeout_ms: 250",
             ]
         )

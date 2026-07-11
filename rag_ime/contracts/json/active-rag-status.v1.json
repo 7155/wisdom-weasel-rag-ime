@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.active-rag-status.v1",
+  "type": "object",
+  "required": ["schemaVersion", "sessionId", "status", "evidenceCount", "candidateCount", "diagnostics"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.active-rag-service.v1"},
+    "sessionId": {"type": "string", "minLength": 1},
+    "status": {"type": "string"},
+    "evidenceCount": {"type": "integer", "minimum": 0},
+    "candidateCount": {"type": "integer", "minimum": 0},
+    "candidates": {"type": "array"},
+    "stored": {"type": "boolean"},
+    "noStore": {"type": "boolean"},
+    "privacyAssessment": {"type": "object"},
+    "storageReceipt": {"type": "object"},
+    "diagnostics": {
+      "type": "object",
+      "required": ["contextInjection", "retrieval", "remoteModel"],
+      "properties": {
+        "contextInjection": {
+          "type": "object",
+          "required": ["applied", "source", "contextChars", "contextHash", "selectedTextChars", "warnings"],
+          "properties": {
+            "applied": {"type": "boolean"},
+            "source": {"type": "string"},
+            "contextChars": {"type": "integer", "minimum": 0},
+            "contextHash": {"type": "string"},
+            "selectedTextChars": {"type": "integer", "minimum": 0},
+            "warnings": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "retrieval": {
+          "type": "object",
+          "required": ["called", "evidenceCount", "lanes", "elapsedMs"],
+          "properties": {
+            "called": {"type": "boolean"},
+            "evidenceCount": {"type": "integer", "minimum": 0},
+            "lanes": {"type": "object"},
+            "elapsedMs": {"type": "number", "minimum": 0}
+          }
+        },
+        "remoteModel": {
+          "type": "object",
+          "required": ["requested", "allowed", "provider", "model", "skipReason", "elapsedMs"],
+          "properties": {
+            "requested": {"type": "boolean"},
+            "allowed": {"type": "boolean"},
+            "provider": {"type": "string"},
+            "model": {"type": "string"},
+            "skipReason": {"type": "string"},
+            "elapsedMs": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "traceEvents": {"type": "array"}
+  }
+}

@@ -4,6 +4,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MEMORY_PROFILE="${RAG_IME_MEMORY_PROFILE:-low}"
 RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-v1-proof}"
+APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
+MODEL_REGISTRY_EXPLICIT="${RAG_IME_MODEL_REGISTRY+x}"
+MODEL_REGISTRY_PATH="${RAG_IME_MODEL_REGISTRY:-$APP_SUPPORT_DIR/models.json}"
+MODEL_REGISTRY_ORIGIN="${RAG_IME_MODEL_REGISTRY_ORIGIN:-$([[ -n "$MODEL_REGISTRY_EXPLICIT" ]] && printf explicit || printf default)}"
+PORTABLE_MODELS_DIR="${RAG_IME_MODELS_DIR:-$APP_SUPPORT_DIR/Models}"
+
+if [[ -n "$MODEL_REGISTRY_EXPLICIT" && ! -f "$MODEL_REGISTRY_PATH" ]]; then
+  echo "Explicit model registry does not exist: $MODEL_REGISTRY_PATH" >&2
+  exit 1
+fi
 
 is_low_memory_profile() {
   local normalized
@@ -19,20 +29,14 @@ detect_mlx_model() {
   local candidates=()
   if is_low_memory_profile; then
     candidates=(
-      "/Volumes/undo 4t/models/minimind-3-ime-v2-final-mlx-q8"
-      "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit"
-      "/Volumes/undo 4t/models/mlx-community-Qwen3-0.6B-4bit-local"
+      "$PORTABLE_MODELS_DIR/minimind-ime-v2"
+      "$PORTABLE_MODELS_DIR/minimind-ime-v2-q8"
       "$ROOT/../models/mlx/Qwen3-0.6B-4bit"
-      "/Volumes/undo 4t/models/minimind-3-ime-v2-final-mlx-fp16"
-      "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local"
     )
   else
     candidates=(
-      "/Volumes/undo 4t/models/minimind-3-ime-v2-final-mlx-fp16"
-      "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local"
-      "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-4bit"
-      "/Volumes/undo 4t/models/mlx-community-Qwen3-0.6B-4bit-local"
-      "/Volumes/undo 4t/models/minimind-3-ime-v2-final-mlx-q8"
+      "$PORTABLE_MODELS_DIR/minimind-ime-v2"
+      "$PORTABLE_MODELS_DIR/minimind-ime-v2-fp16"
       "$ROOT/../models/mlx/Qwen3-0.6B-4bit"
     )
   fi
@@ -45,56 +49,132 @@ detect_mlx_model() {
   return 1
 }
 
+detect_sidecar_python() {
+  local candidate
+  local candidates=()
+  candidates+=("${RAG_IME_PYTHON:-}")
+  candidates+=("$ROOT/.venv/bin/python")
+  candidates+=("$ROOT/.venv-mlx313/bin/python")
+  candidates+=("$ROOT/.venv-mlx314sys/bin/python")
+  candidates+=("/opt/homebrew/bin/python3")
+  candidates+=("$(command -v python3 2>/dev/null || true)")
+  candidates+=("/usr/local/bin/python3")
+  for candidate in "${candidates[@]}"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+resolve_registered_model() {
+  local python_exec
+  if [[ -n "${RAG_IME_PYTHON:-}" && -x "$RAG_IME_PYTHON" ]]; then
+    python_exec="$RAG_IME_PYTHON"
+  elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+    python_exec="$ROOT/.venv/bin/python"
+  else
+    python_exec="$(command -v python3 2>/dev/null || true)"
+  fi
+  [[ -n "$python_exec" && -x "$python_exec" && -f "$MODEL_REGISTRY_PATH" ]] || return 1
+  PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$python_exec" -m rag_ime.model_runtime \
+    --registry "$MODEL_REGISTRY_PATH" --lane hot --format shell
+}
+
 detect_mlx_prompt_mode() {
   local model_dir="$1"
   case "$model_dir" in
-    *minimind-3-ime-v2-final*) printf '%s\n' "base-completion" ;;
+    *minimind-3-ime-v2-final*|*minimind-ime-v2*) printf '%s\n' "base-completion" ;;
     *) printf '%s\n' "" ;;
+  esac
+}
+
+detect_mlx_profile() {
+  local model_dir="$1"
+  case "$model_dir" in
+    *minimind-3-ime-v2-final*|*minimind-ime-v2*) printf '%s\n' "minimind_ime_v2" ;;
+    *Qwen3*|*qwen3*) printf '%s\n' "qwen3_06b_ime_hot" ;;
+    *) printf '%s\n' "qwen3_06b_ime_hot" ;;
   esac
 }
 
 detect_predictor_stream_first() {
   local model_dir="$1"
   case "$model_dir" in
-    *minimind-3-ime-v2-final*) printf '%s\n' "0" ;;
+    *minimind-3-ime-v2-final*|*minimind-ime-v2*) printf '%s\n' "0" ;;
     *) printf '%s\n' "1" ;;
   esac
 }
 
-MODEL_DIR="${RAG_IME_MLX_MODEL:-$(detect_mlx_model || true)}"
-if [[ -n "${RAG_IME_MLX_PYTHON:-}" ]]; then
-  MLX_PYTHON="$RAG_IME_MLX_PYTHON"
-elif [[ -x "$ROOT/.venv-mlx313/bin/python" ]]; then
-  MLX_PYTHON="$ROOT/.venv-mlx313/bin/python"
-elif [[ -x "$ROOT/.venv/bin/python" ]]; then
-  MLX_PYTHON="$ROOT/.venv/bin/python"
-else
-  MLX_PYTHON="$ROOT/.venv-mlx314sys/bin/python"
+RAG_IME_REGISTERED_MODEL_PATH=""
+RAG_IME_REGISTERED_MODEL_PROFILE=""
+RAG_IME_REGISTERED_MODEL_PROMPT_MODE=""
+RAG_IME_REGISTERED_MODEL_ID=""
+RAG_IME_REGISTERED_MODEL_FINGERPRINT=""
+RAG_IME_MODEL_RUNTIME=""
+RAG_IME_MODEL_RUNTIME_LIFECYCLE=""
+RAG_IME_MODEL_RUNTIME_READY="0"
+if [[ -f "$MODEL_REGISTRY_PATH" ]]; then
+  if ! REGISTERED_RUNTIME_ENV="$(resolve_registered_model)"; then
+    echo "Active hot model registry entry is invalid or its artifact is missing: $MODEL_REGISTRY_PATH" >&2
+    exit 1
+  fi
+  eval "$REGISTERED_RUNTIME_ENV"
 fi
 
-if [[ ! -d "$MODEL_DIR" ]]; then
+MODEL_RUNTIME="${RAG_IME_MODEL_RUNTIME:-mlx}"
+
+if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
+  MODEL_DIR="${RAG_IME_MLX_MODEL:-${RAG_IME_REGISTERED_MODEL_PATH:-$(detect_mlx_model || true)}}"
+else
+  MODEL_DIR="${RAG_IME_PREDICTOR_MODEL:-${RAG_IME_REGISTERED_MODEL_NAME:-${RAG_IME_REGISTERED_MODEL_PATH:-}}}"
+fi
+LEGACY_MODEL_PROFILE="$(detect_mlx_profile "$MODEL_DIR")"
+LEGACY_MODEL_ID="$(basename "${MODEL_DIR:-local-model}")"
+MLX_PYTHON=""
+if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
+  if [[ -n "${RAG_IME_MLX_PYTHON:-}" ]]; then
+    MLX_PYTHON="$RAG_IME_MLX_PYTHON"
+  elif [[ -x "$ROOT/.venv-mlx313/bin/python" ]]; then
+    MLX_PYTHON="$ROOT/.venv-mlx313/bin/python"
+  elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+    MLX_PYTHON="$ROOT/.venv/bin/python"
+  elif [[ -x "$ROOT/.venv-mlx314sys/bin/python" ]]; then
+    MLX_PYTHON="$ROOT/.venv-mlx314sys/bin/python"
+  fi
+fi
+
+if [[ "$MODEL_RUNTIME" == "mlx" && ! -d "$MODEL_DIR" ]]; then
   echo "MLX model directory not found: $MODEL_DIR" >&2
   echo "Set RAG_IME_MLX_MODEL to a local MLX model directory." >&2
   exit 1
 fi
 
-if [[ ! -x "$MLX_PYTHON" ]]; then
+if [[ "$MODEL_RUNTIME" == "mlx" && ! -x "$MLX_PYTHON" ]]; then
   echo "MLX python is not executable: $MLX_PYTHON" >&2
   echo "Set RAG_IME_MLX_PYTHON to a Python that can import mlx_lm." >&2
   exit 1
 fi
 
-if [[ -n "${RAG_IME_PYTHON:-}" ]]; then
-  SIDECAR_PYTHON="$RAG_IME_PYTHON"
-elif [[ -x "$ROOT/.venv/bin/python" ]]; then
-  SIDECAR_PYTHON="$ROOT/.venv/bin/python"
-else
-  SIDECAR_PYTHON="$MLX_PYTHON"
+SIDECAR_PYTHON="$(detect_sidecar_python || true)"
+if [[ -z "$SIDECAR_PYTHON" || ! -x "$SIDECAR_PYTHON" ]]; then
+  echo "Sidecar Python is not available; set RAG_IME_PYTHON to an executable Python 3.11+." >&2
+  exit 1
 fi
 eval "$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$SIDECAR_PYTHON" -m rag_ime.runtime_profile --profile "$RUNTIME_PROFILE" --format shell)"
 
-export RAG_IME_MLX_MODEL="$MODEL_DIR"
-export RAG_IME_MLX_PYTHON="$MLX_PYTHON"
+export RAG_IME_MODEL_REGISTRY="$MODEL_REGISTRY_PATH"
+export RAG_IME_MODEL_REGISTRY_ORIGIN="$MODEL_REGISTRY_ORIGIN"
+export RAG_IME_MODEL_RUNTIME="$MODEL_RUNTIME"
+export RAG_IME_MODEL_ID="${RAG_IME_MODEL_ID:-${RAG_IME_REGISTERED_MODEL_ID:-$LEGACY_MODEL_ID}}"
+export RAG_IME_MODEL_FINGERPRINT="${RAG_IME_MODEL_FINGERPRINT:-$RAG_IME_REGISTERED_MODEL_FINGERPRINT}"
+if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
+  export RAG_IME_MLX_MODEL="$MODEL_DIR"
+  export RAG_IME_MLX_PYTHON="$MLX_PYTHON"
+  export RAG_IME_MLX_HOST="${RAG_IME_MLX_HOST:-127.0.0.1}"
+  export RAG_IME_MLX_PORT="${RAG_IME_MLX_PORT:-8767}"
+fi
 export RAG_IME_PYTHON="$SIDECAR_PYTHON"
 export RAG_IME_MEMORY_PROFILE="$MEMORY_PROFILE"
 export RAG_IME_MLX_MAX_TOKENS="${RAG_IME_MLX_MAX_TOKENS:-8}"
@@ -108,14 +188,20 @@ fi
 export RAG_IME_MLX_PREFIX_CACHE="${RAG_IME_MLX_PREFIX_CACHE:-0}"
 export RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES="${RAG_IME_MLX_PREFIX_CACHE_MAX_ENTRIES:-8}"
 export RAG_IME_MLX_PREFIX_CACHE_MAX_MB="${RAG_IME_MLX_PREFIX_CACHE_MAX_MB:-32}"
-export RAG_IME_MLX_PROFILE="${RAG_IME_MLX_PROFILE:-qwen3_06b_ime_hot}"
-export RAG_IME_MLX_PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-$(detect_mlx_prompt_mode "$MODEL_DIR")}"
+export RAG_IME_MLX_PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_REGISTERED_MODEL_PROFILE:-$LEGACY_MODEL_PROFILE}}"
+export RAG_IME_MLX_PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-${RAG_IME_REGISTERED_MODEL_PROMPT_MODE:-$(detect_mlx_prompt_mode "$MODEL_DIR")}}"
 export RAG_IME_LAUNCH_KEEP_ALIVE="${RAG_IME_LAUNCH_KEEP_ALIVE:-0}"
 
-export RAG_IME_PREDICTOR_PROVIDER="${RAG_IME_PREDICTOR_PROVIDER:-mlx}"
-export RAG_IME_PREDICTOR_BASE_URL="${RAG_IME_PREDICTOR_BASE_URL:-http://127.0.0.1:8767}"
+MLX_BASE_HOST="${RAG_IME_MLX_HOST:-127.0.0.1}"
+if [[ "$MLX_BASE_HOST" == *:* && "$MLX_BASE_HOST" != \[*\] ]]; then
+  MLX_BASE_HOST="[$MLX_BASE_HOST]"
+fi
+DEFAULT_PREDICTOR_BASE_URL="http://$MLX_BASE_HOST:${RAG_IME_MLX_PORT:-8767}"
+export RAG_IME_PREDICTOR_PROVIDER="${RAG_IME_PREDICTOR_PROVIDER:-$MODEL_RUNTIME}"
+export RAG_IME_PREDICTOR_BASE_URL="${RAG_IME_PREDICTOR_BASE_URL:-${RAG_IME_REGISTERED_MODEL_ENDPOINT:-$DEFAULT_PREDICTOR_BASE_URL}}"
 export RAG_IME_PREDICTOR_MODEL="${RAG_IME_PREDICTOR_MODEL:-$MODEL_DIR}"
-export RAG_IME_PREDICTOR_PROFILE="${RAG_IME_PREDICTOR_PROFILE:-qwen3_06b_ime_hot}"
+export RAG_IME_PREDICTOR_PROFILE="${RAG_IME_PREDICTOR_PROFILE:-${RAG_IME_REGISTERED_MODEL_PROFILE:-$LEGACY_MODEL_PROFILE}}"
+export RAG_IME_PREDICTOR_PROMPT_MODE="${RAG_IME_PREDICTOR_PROMPT_MODE:-${RAG_IME_REGISTERED_MODEL_PROMPT_MODE:-}}"
 export RAG_IME_PREDICTOR_STREAM_FIRST="${RAG_IME_PREDICTOR_STREAM_FIRST:-$(detect_predictor_stream_first "$MODEL_DIR")}"
 export RAG_IME_PREDICTOR_TIMEOUT_MS="${RAG_IME_PREDICTOR_TIMEOUT_MS:-3000}"
 export RAG_IME_PREDICTOR_MAX_TOKENS="${RAG_IME_PREDICTOR_MAX_TOKENS:-8}"
@@ -126,7 +212,7 @@ export RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION="${RAG_IME_ENABLE_POST_COMMIT
 export RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL="${RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL:-1}"
 export RAG_IME_ENABLE_COMPOSING_MODEL="${RAG_IME_ENABLE_COMPOSING_MODEL:-$RAG_IME_PROFILE_COMPOSITION_AI}"
 export RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL="${RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL:-$RAG_IME_PROFILE_PINYIN_CONSTRAINED_MODEL}"
-export RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS="${RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS:-150}"
+export RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS="${RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS:-180}"
 export RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS="${RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS:-250}"
 export RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS="${RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS:-8}"
 export RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT="${RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT:-$RAG_IME_PROFILE_REQUIRE_FOREGROUND_CONTEXT}"
@@ -139,10 +225,11 @@ export RAG_IME_POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES="${RAG_IME_POST_COMMI
 export RAG_IME_SUGGESTION_CACHE_SIZE="${RAG_IME_SUGGESTION_CACHE_SIZE:-32}"
 export RAG_IME_HYBRID_RAG_CORE="${RAG_IME_HYBRID_RAG_CORE:-$RAG_IME_PROFILE_HYBRID_RAG_CORE}"
 export RAG_IME_RAG_DIRECT_DISPLAY="${RAG_IME_RAG_DIRECT_DISPLAY:-$RAG_IME_PROFILE_RAG_DIRECT_DISPLAY}"
-export RAG_IME_AUTO_PREDICT_IDLE_MS="${RAG_IME_AUTO_PREDICT_IDLE_MS:-500}"
-export RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS="${RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS:-6}"
+export RAG_IME_AUTO_PREDICT_IDLE_MS="${RAG_IME_AUTO_PREDICT_IDLE_MS:-420}"
+export RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS="${RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS:-8}"
 export RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S="${RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S:-2}"
-export RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS="${RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS:-1500}"
+export RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS="${RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS:-2500}"
+export RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON="${RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON:-1}"
 export RAG_IME_T0_DIRECT_MEMORY_THRESHOLD="${RAG_IME_T0_DIRECT_MEMORY_THRESHOLD:-0.86}"
 export RAG_IME_DEEPSEEK_THINKING="${RAG_IME_DEEPSEEK_THINKING:-disabled}"
 export RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS="${RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS:-1024}"
@@ -163,8 +250,38 @@ export RAG_IME_SQUIRREL_TIMEOUT_MS="${RAG_IME_SQUIRREL_TIMEOUT_MS:-$RAG_IME_PROF
 export RAG_IME_SQUIRREL_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}"
 export RAG_IME_INPUT_SOURCE_BUNDLE_ID="${RAG_IME_INPUT_SOURCE_BUNDLE_ID:-im.rime.inputmethod.Squirrel}"
 
-"$ROOT/scripts/install_mlx_predictor_launch_agent.sh"
-"$ROOT/scripts/install_sidecar_launch_agent.sh"
+STOP_OLD_MLX_AFTER_SIDECAR=0
+SIDECAR_PLIST_PATH="$HOME/Library/LaunchAgents/${RAG_IME_LAUNCH_AGENT_LABEL:-com.rag-ime.sidecar}.plist"
+SIDECAR_PLIST_BACKUP=""
+if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
+  "$ROOT/scripts/install_mlx_predictor_launch_agent.sh"
+else
+  if ! PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$SIDECAR_PYTHON" -m rag_ime.model_runtime \
+    --registry "$MODEL_REGISTRY_PATH" --lane hot --probe >/dev/null; then
+    echo "External predictor runtime is not reachable; refusing to start Sidecar with a dead model route." >&2
+    exit 1
+  fi
+  STOP_OLD_MLX_AFTER_SIDECAR=1
+  if [[ "${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}" != "1" && -f "$SIDECAR_PLIST_PATH" ]]; then
+    SIDECAR_PLIST_BACKUP="$(mktemp "${TMPDIR:-/tmp}/rag-ime-sidecar-plist.XXXXXX")"
+    cp "$SIDECAR_PLIST_PATH" "$SIDECAR_PLIST_BACKUP"
+  fi
+fi
+if ! "$ROOT/scripts/install_sidecar_launch_agent.sh"; then
+  if [[ -n "$SIDECAR_PLIST_BACKUP" && -f "$SIDECAR_PLIST_BACKUP" ]]; then
+    cp "$SIDECAR_PLIST_BACKUP" "$SIDECAR_PLIST_PATH"
+    launchctl bootout "gui/$(id -u)/${RAG_IME_LAUNCH_AGENT_LABEL:-com.rag-ime.sidecar}" >/dev/null 2>&1 || true
+    launchctl enable "gui/$(id -u)/${RAG_IME_LAUNCH_AGENT_LABEL:-com.rag-ime.sidecar}" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$(id -u)" "$SIDECAR_PLIST_PATH" >/dev/null 2>&1 || true
+  fi
+  rm -f "$SIDECAR_PLIST_BACKUP"
+  echo "Sidecar switch failed; the previous MLX runtime was left running." >&2
+  exit 1
+fi
+rm -f "$SIDECAR_PLIST_BACKUP"
+if [[ "$STOP_OLD_MLX_AFTER_SIDECAR" == "1" && "${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}" != "1" ]]; then
+  launchctl bootout "gui/$(id -u)/com.rag-ime.mlx-predictor" >/dev/null 2>&1 || true
+fi
 if [[ "${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}" == "1" || "${RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN:-0}" == "1" ]]; then
   echo "dry-run: skipping input-source readiness wait"
   exit 0

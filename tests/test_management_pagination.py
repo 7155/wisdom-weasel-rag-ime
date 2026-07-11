@@ -24,6 +24,7 @@ class ManagementPaginationTests(unittest.TestCase):
                     created_at_ms=1_900_000_000_000 + index,
                     source="manual",
                     committed_text=f"不能默认返回的真实历史正文 {index}",
+                    privacy_disposition="allowed",
                     recent_context=f"private context {index}",
                     app="TextEdit",
                     project="wisdom-weasel-rag-ime",

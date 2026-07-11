@@ -43,15 +43,19 @@ class FeatureBridgeTests(unittest.TestCase):
         statuses = {feature["v1Status"] for feature in features}
         ids = {feature["featureId"] for feature in features}
 
-        self.assertEqual(len(features), 12)
+        self.assertEqual(len(features), len(ids))
+        self.assertGreaterEqual(len(features), 14)
         self.assertIn("backend_only", statuses)
-        self.assertIn("debug_preview", statuses)
+        self.assertNotIn("debug_preview", statuses)
         self.assertIn("offline_tool", statuses)
         self.assertIn("blocked_by_bug", statuses)
         self.assertIn("active-rag-selected-text-bridge", ids)
         self.assertIn("x1top-cleanup-to-curated-memory", ids)
         self.assertIn("rime-export-bridge", ids)
         self.assertIn("group-aware-memory-completion", ids)
+        self.assertIn("generic-frontend-gateway", ids)
+        self.assertIn("ime-first-demo-pack", ids)
+        self.assertIn("minimind-retraining-quality-gate", ids)
 
     def test_validate_feature_registry_rejects_bad_status_and_duplicate_id(self) -> None:
         features = load_feature_registry(ROOT / "docs" / "feature-registry.md")

@@ -19,14 +19,15 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
         subprocess.run(["git", "config", "user.name", "RAG IME Test"], cwd=upstream, check=True)
         (upstream / "README.md").write_text("fake squirrel\n", encoding="utf-8")
         (upstream / "sources" / "RagImeSidecarModels.swift").write_text(
-            "import Foundation\nstruct RagImeSidecarRequest: Codable {}\n"
+            "import Foundation\nstruct RagImeSidecarRequest: Codable { let privacyDisposition: String }\n"
             "struct RagImeDisplayCandidate { let displayLayout: String? }\n",
             encoding="utf-8",
         )
         (upstream / "sources" / "RagImeSidecarClient.swift").write_text(
             "import Foundation\nstruct RagImeSidecarClient {\n"
             "  init?(config: SquirrelConfig?) {}\n"
-            "  func call() { _ = \"rime-suggest\"; _ = \"rime-select\" }\n"
+            "  func call() { _ = \"rime-suggest\"; _ = \"rime-select\"; _ = \"rime-rank-feedback\" }\n"
+            "  // request.privacyDisposition == \"allowed\"\n"
             "}\n",
             encoding="utf-8",
         )
@@ -38,6 +39,10 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             "    _ = kAXStringForRangeParameterizedAttribute\n"
             "    _ = kAXValueAttribute\n"
             "  }\n"
+            "  // privacy_unknown_app_bundle_missing privacy_unknown_ax_not_trusted\n"
+            "  // privacy_unknown_focused_element_missing privacy_unknown_metadata_read_failed\n"
+            "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle\n"
+            "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens\n"
             "}\n",
             encoding="utf-8",
         )
@@ -50,8 +55,14 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     "  func mergedRagImePanelCandidates() {}",
                     "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
                     "  func ragImePanelUsesSideDisplay() -> Bool { false }",
+                    '  // ragImePrivacyDisposition == "allowed"; privacyDisposition: ragImePrivacyDisposition',
                     "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
                     "  func traceRagImeFrontendEvent() {}",
+                    "  // guard ragImeSidecarClient?.frontendTrace == true else { return }",
+                    "  // guard !ragImeSensitiveFieldActive else { return }",
+                    "  // ragImePrepareFrontendTraceLog .posixPermissions: 0o600 appendingPathExtension(\"1\")",
+                    "  // let contextAnchor = ragImeStableTextHash(context)",
+                    "  // queryAnchor: contextAnchor displayAnchor: contextAnchor",
                     "  func traceRagImePanelTextLayout() { _ = \"panel_text_layout\" }",
                     "  func traceSidecarRequestScheduled() { _ = \"sidecar_request_scheduled\" }",
                     "  func traceSidecarEmptyResponseCleared() { _ = \"sidecar_empty_response_cleared\" }",
@@ -64,6 +75,13 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     "  func foregroundCaptureResolved() { _ = \"foreground_context_capture_resolved\" }",
                     "  func foregroundCaptureFailed() { _ = \"foreground_context_capture_failed\" }",
                     "  func sideCandidateFeedbackRecorded() { _ = \"side_candidate_feedback_recorded\" }",
+                    "  // ragImeNativeSelectionSnapshot native_rime_rank_feedback_recorded",
+                    "  // guard !enforceRagImeSensitiveFieldGuard() else { return }",
+                    "  // discardRagImeSensitiveNativeLearningTransaction",
+                    "  // guard rimeAPI.get_status(session, &status) else { return false }",
+                    "  // guard !isComposing else { return false } return !backspaceHandled",
+                    "  // rimeAPI.process_key(session, Int32(XK_BackSpace), 0)",
+                    '  // "forwardedToClient": false',
                     "  func assistantOverlayCandidateVisible() { _ = \"assistant_overlay_candidate_visible\" }",
                     "  func ragImeDisplayComment() { _ = \"candidate.sourceType == \\\"model\\\"\" }",
                     "}",
@@ -211,7 +229,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             subprocess.run(["git", "commit", "-m", "base"], cwd=upstream, check=True, capture_output=True, text=True)
 
             (upstream / "sources" / "RagImeSidecarModels.swift").write_text(
-                "import CryptoKit\nimport Foundation\nstruct RagImeSidecarRequest: Codable {}\nstruct RagImeDisplayCandidate { let displayLayout: String? }\n",
+                "import CryptoKit\nimport Foundation\nstruct RagImeSidecarRequest: Codable { let privacyDisposition: String }\nstruct RagImeDisplayCandidate { let displayLayout: String? }\n",
                 encoding="utf-8",
             )
             (upstream / "sources" / "RagImeSidecarClient.swift").write_text(
@@ -223,6 +241,8 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func call() {",
                         '    _ = "rime-suggest"',
                         '    _ = "rime-select"',
+                        '    _ = "rime-rank-feedback"',
+                        '    // request.privacyDisposition == "allowed"',
                         "  }",
                         "}",
                     ]
@@ -241,6 +261,10 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "    _ = kAXStringForRangeParameterizedAttribute",
                         "    _ = kAXValueAttribute",
                         "  }",
+                        "  // privacy_unknown_app_bundle_missing privacy_unknown_ax_not_trusted",
+                        "  // privacy_unknown_focused_element_missing privacy_unknown_metadata_read_failed",
+                        "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle",
+                        "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens",
                         "}",
                     ]
                 )
@@ -256,8 +280,14 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func mergedRagImePanelCandidates() {}",
                         "  func ragImePanelForcesHorizontalLayout() -> Bool { false }",
                         "  func ragImePanelUsesSideDisplay() -> Bool { false }",
+                        '  // ragImePrivacyDisposition == "allowed"; privacyDisposition: ragImePrivacyDisposition',
                         "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
                         "  func traceRagImeFrontendEvent() {}",
+                        "  // guard ragImeSidecarClient?.frontendTrace == true else { return }",
+                        "  // guard !ragImeSensitiveFieldActive else { return }",
+                        '  // ragImePrepareFrontendTraceLog .posixPermissions: 0o600 appendingPathExtension("1")',
+                        "  // let contextAnchor = ragImeStableTextHash(context)",
+                        "  // queryAnchor: contextAnchor displayAnchor: contextAnchor",
                         '  func traceRagImePanelTextLayout() { _ = "panel_text_layout" }',
                         '  func traceSidecarRequestScheduled() { _ = "sidecar_request_scheduled" }',
                         '  func traceSidecarEmptyResponseCleared() { _ = "sidecar_empty_response_cleared" }',
@@ -270,6 +300,13 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         '  func foregroundCaptureResolved() { _ = "foreground_context_capture_resolved" }',
                         '  func foregroundCaptureFailed() { _ = "foreground_context_capture_failed" }',
                         '  func sideCandidateFeedbackRecorded() { _ = "side_candidate_feedback_recorded" }',
+                        '  // ragImeNativeSelectionSnapshot native_rime_rank_feedback_recorded',
+                        '  // guard !enforceRagImeSensitiveFieldGuard() else { return }',
+                        '  // discardRagImeSensitiveNativeLearningTransaction',
+                        '  // guard rimeAPI.get_status(session, &status) else { return false }',
+                        '  // guard !isComposing else { return false } return !backspaceHandled',
+                        '  // rimeAPI.process_key(session, Int32(XK_BackSpace), 0)',
+                        '  // "forwardedToClient": false',
                         '  func assistantOverlayCandidateVisible() { _ = "assistant_overlay_candidate_visible" }',
                         '  func ragImeDisplayComment() { _ = "candidate.sourceType == \\"model\\"" }',
                         "}",

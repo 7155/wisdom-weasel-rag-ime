@@ -40,7 +40,7 @@ USAGE
       ;;
   esac
 done
-INPUT_SOURCE_ID="${INPUT_SOURCE_ID:-${RAG_IME_MACOS_INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-dev.local.inputmethod.RagImeMac.Hans}}}"
+INPUT_SOURCE_ID="${INPUT_SOURCE_ID:-${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-im.rime.inputmethod.Squirrel.Hans}}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MODULE_CACHE="${RAG_IME_SWIFT_MODULE_CACHE:-${TMPDIR:-/tmp}/rag-ime-swift-module-cache}"
 TMP_BASE="${TMPDIR:-/tmp}"

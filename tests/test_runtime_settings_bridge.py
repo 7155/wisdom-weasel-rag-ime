@@ -29,7 +29,7 @@ class RuntimeSettingsBridgeTests(unittest.TestCase):
 
     def test_runtime_action_is_an_async_job(self) -> None:
         self.service.management._command_for_action = lambda _action: ["/usr/bin/true"]  # type: ignore[method-assign]
-        response = self.service.management.start_runtime_action({"action": "restart_sidecar"})
+        response = self.service.management.start_runtime_action({"action": "restart_predictor"})
         job_id = response["jobId"]
 
         self.assertIn(response["job"]["status"], {"queued", "running", "succeeded"})

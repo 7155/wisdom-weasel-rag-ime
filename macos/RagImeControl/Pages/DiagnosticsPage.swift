@@ -23,12 +23,28 @@ struct DiagnosticsPage: View {
                         ForEach(components.values.sorted { $0.id < $1.id }) { StatusRow(status: $0); Divider() }
                     }
                     repairActions
+                    if !model.lastRuntimeActionReport.isEmpty {
+                        supervisorResult
+                    }
                     destructiveNotice
                 }
                 .padding(24)
                 .frame(maxWidth: 760, alignment: .leading)
             }
         }
+    }
+
+    private var supervisorResult: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("最近一次外部监督器结果").font(.headline)
+            Text(model.lastRuntimeActionReport)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private var repairActions: some View {

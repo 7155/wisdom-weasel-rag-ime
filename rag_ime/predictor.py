@@ -15,10 +15,14 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .models import ModelPrediction
+from .model_registry import is_loopback_endpoint
 from .model_profiles import profile_by_id
 from .pinyin_index import build_pinyin_metadata
 from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
 from .text_utils import compact_whitespace
+
+
+_LOOPBACK_URL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 PREDICTION_REQUEST_NO_INPUT = "no_input_prediction"
@@ -390,7 +394,7 @@ class OpenAICompatiblePredictionProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             self.last_error = _prediction_error_name(exc)
@@ -432,7 +436,7 @@ class OpenAICompatiblePredictionProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             self.last_error = _prediction_error_name(exc)
@@ -541,7 +545,7 @@ class OllamaPredictionProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             self.last_error = _prediction_error_name(exc)
@@ -736,7 +740,7 @@ class MlxPredictionServiceProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=self.config.timeout_s) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             self.last_error = _prediction_error_name(exc)
@@ -791,7 +795,7 @@ class MlxPredictionServiceProvider:
             method="GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=min(max(self.config.timeout_s, 0.05), 1.0)) as response:
+            with _LOOPBACK_URL_OPENER.open(request, timeout=min(max(self.config.timeout_s, 0.05), 1.0)) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             return {
@@ -828,6 +832,7 @@ class MlxPredictionServiceProvider:
             "providerName": self.config.provider_name,
             "provider": payload.get("provider"),
             "model": payload.get("model"),
+            "modelFingerprint": payload.get("modelFingerprint"),
             "modelLoaded": bool(payload.get("modelLoaded")),
             "modelInfo": model_info,
             "promptCache": prompt_cache,
@@ -981,7 +986,7 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
     else:
         configured_provider = OpenAICompatiblePredictionProvider(
             OpenAICompatiblePredictionConfig(
-            base_url=base_url,
+            base_url=_openai_base_url(base_url),
             model=model,
             api_key=source.get("RAG_IME_PREDICTOR_API_KEY", "").strip(),
             profile=profile,
@@ -1042,19 +1047,7 @@ def _canonical_x1api_base_url(value: str) -> str:
 
 
 def _is_loopback_realtime_predictor_url(value: str) -> bool:
-    cleaned = compact_whitespace(value)
-    if not cleaned:
-        return False
-    try:
-        parsed = urllib.parse.urlsplit(cleaned)
-    except ValueError:
-        return False
-    host = (parsed.hostname or "").lower()
-    if not host:
-        return False
-    if host in {"localhost", "127.0.0.1", "::1"}:
-        return True
-    return host.startswith("127.")
+    return is_loopback_endpoint(compact_whitespace(value))
 
 
 def prediction_provider_status(provider: PredictionProvider, *, probe_capabilities: bool = False) -> dict[str, object]:
@@ -1396,7 +1389,7 @@ def _measure_ollama_stream_ttft(
     full_text = ""
     candidates: list[str] = []
     try:
-        with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
+        with _LOOPBACK_URL_OPENER.open(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
             for raw_line in response:
                 if not raw_line.strip():
                     continue
@@ -1499,7 +1492,7 @@ def _measure_mlx_stream_ttft(
     prompt_cache: dict[str, Any] = {}
     server_timing: dict[str, Any] = {}
     try:
-        with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
+        with _LOOPBACK_URL_OPENER.open(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
             for raw_line in response:
                 if not raw_line.strip():
                     continue
@@ -2593,6 +2586,13 @@ def _ollama_base_url(base_url: str) -> str:
     return normalized
 
 
+def _openai_base_url(base_url: str) -> str:
+    normalized = base_url.strip().rstrip("/")
+    if normalized.endswith("/v1"):
+        return normalized[:-3].rstrip("/")
+    return normalized
+
+
 def _ollama_chat_body(
     config: Any,
     *,
@@ -3100,7 +3100,7 @@ def _probe_openai_compatible_models(provider: PredictionProvider) -> dict[str, A
         method="GET",
     )
     try:
-        with urllib.request.urlopen(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
+        with _LOOPBACK_URL_OPENER.open(request, timeout=float(getattr(config, "timeout_s", 0.8))) as response:
             payload = json.loads(response.read().decode("utf-8"))
             status_code = getattr(response, "status", 200)
     except urllib.error.HTTPError as exc:

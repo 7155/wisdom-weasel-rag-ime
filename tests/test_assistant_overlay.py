@@ -73,6 +73,32 @@ class AssistantOverlayTests(unittest.TestCase):
         self.assertFalse(payload["visible"])
         self.assertEqual(payload["dismissReason"], "pending_overlay_disabled")
 
+    def test_deepseek_action_is_visible_beside_real_model_candidates(self) -> None:
+        payload = build_assistant_overlay_payload(
+            ui_mode="post_commit_prediction",
+            input_mode="post_commit_predicting",
+            display_candidates=[
+                {"text": "继续优化上下文", "insertText": "继续优化上下文", "sourceType": "model"},
+                {
+                    "text": "DeepSeek 生成",
+                    "insertText": "",
+                    "sourceType": "action",
+                    "selectionAction": "start_active_rag_from_context",
+                },
+            ],
+            rag_candidates=[],
+            prediction_session={"phase": "post_commit", "requestSeq": 3},
+            key_policy={},
+            progressive={},
+            frontend_transaction={},
+        )
+
+        self.assertTrue(payload["visible"])
+        self.assertEqual(
+            [(item["sourceType"], item["text"]) for item in payload["candidates"]],
+            [("model", "继续优化上下文"), ("action", "DeepSeek 生成")],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

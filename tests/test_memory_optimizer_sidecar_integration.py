@@ -110,6 +110,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-off",
                 "requestSeq": 1,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想做一个输入法",
                 "maxVisibleCandidates": 4,
@@ -132,6 +133,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-off",
                 "requestSeq": 11,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想做一个输入法",
                 "maxVisibleCandidates": 4,
@@ -155,6 +157,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-on",
                 "requestSeq": 2,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "rawInput": "sj",
                 "preedit": "sj",
@@ -182,6 +185,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-delegate",
                 "requestSeq": 21,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "rawInput": "sj",
                 "preedit": "sj",
@@ -211,6 +215,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-fail-closed",
                 "requestSeq": 29,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想设计一个输入法",
                 "maxVisibleCandidates": 4,
@@ -237,6 +242,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-trace-write-fail",
                 "requestSeq": 30,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想设计一个输入法",
                 "maxVisibleCandidates": 4,
@@ -261,6 +267,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-degraded",
                 "requestSeq": 32,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想设计一个输入法",
                 "maxVisibleCandidates": 4,
@@ -288,6 +295,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "optimizer-feedback-write-fail",
                 "requestSeq": 33,
+                "privacyDisposition": "allowed",
                 "forceSideCandidates": True,
                 "committedContext": "我想设计一个输入法",
                 "maxVisibleCandidates": 4,
@@ -308,6 +316,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
             payload={
                 "sessionId": "selection-feedback-write-fail",
                 "requestSeq": 34,
+                "privacyDisposition": "allowed",
                 "project": "wisdom-weasel-rag-ime",
                 "query": "连续",
                 "committedContext": "我们继续写 RAG 输入法",
@@ -363,6 +372,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 "本地检索优先",
                 recent_context="输入法 RAG 和记忆优化需要保持 local-first",
                 project="wisdom-weasel-rag-ime",
+                privacy_disposition="allowed",
                 tags=("phrase-memory",),
             )
 
@@ -391,6 +401,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                     payload={
                         "sessionId": "optimizer-no-cloud",
                         "requestSeq": 31,
+                        "privacyDisposition": "allowed",
                         "forceSideCandidates": True,
                         "committedContext": "我想优化 RAG 和记忆候选",
                         "maxVisibleCandidates": 4,
@@ -416,6 +427,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 "连续预测",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
+                privacy_disposition="allowed",
                 tags=("phrase-memory",),
             )
             with closing(sqlite3.connect(core.db_path)) as conn, conn:
@@ -431,6 +443,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 payload={
                     "sessionId": "optimizer-suppressed",
                     "requestSeq": 3,
+                    "privacyDisposition": "allowed",
                     "forceSideCandidates": True,
                     "committedContext": "我想继续写连续",
                     "maxVisibleCandidates": 4,
@@ -463,12 +476,14 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 "连续预测",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
+                privacy_disposition="allowed",
                 tags=("phrase-memory",),
             )
             response = build_rime_sidecar_response(
                 payload={
                     "sessionId": "optimizer-trace",
                     "requestSeq": 4,
+                    "privacyDisposition": "allowed",
                     "forceSideCandidates": True,
                     "committedContext": "我想继续写连续",
                     "maxVisibleCandidates": 4,
@@ -551,6 +566,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 payload={
                     "sessionId": "optimizer-tag-explain",
                     "requestSeq": 35,
+                    "privacyDisposition": "allowed",
                     "forceSideCandidates": True,
                     "rawInput": "shurufa",
                     "preedit": "shurufa",

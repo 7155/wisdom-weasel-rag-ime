@@ -1,4 +1,5 @@
 .rag-ime-data/
+.rag-ime-demo/
 .venv/
 .venv-mlx*/
 build/
@@ -27,9 +28,12 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .pip-cache/
+.uv-cache/
 .mypy_cache/
 .ruff_cache/
+*.userdb/
 .DS_Store
 **/.DS_Store
 installation.yaml
 rag-ime-handoff-for-debug-model-*.txt
+dataset/quarantine/

@@ -36,7 +36,8 @@ class InputMethodAdapter:
         app: str = "manual",
         project: str | None = None,
         recording_enabled: bool = True,
-        field_is_sensitive: bool = False,
+        privacy_disposition: str = "unknown",
+        field_is_sensitive: bool | None = None,
         source: str = "manual_commit",
         candidate_rank: int | None = None,
         provider_name: str = "ime-adapter",
@@ -46,13 +47,23 @@ class InputMethodAdapter:
     ) -> str:
         if not recording_enabled:
             return "skipped:recording_disabled"
-        if field_is_sensitive:
+        disposition = str(privacy_disposition or "unknown").strip().lower()
+        if field_is_sensitive is True:
+            disposition = "sensitive"
+        elif field_is_sensitive is False and disposition == "unknown":
+            disposition = "allowed"
+        if disposition not in {"allowed", "sensitive", "unknown"}:
+            raise ValueError("privacy_disposition must be allowed, sensitive, or unknown")
+        if field_is_sensitive is True:
             return "skipped:sensitive_field"
+        if disposition != "allowed":
+            return f"skipped:privacy_{disposition}"
         event = InputEvent(
             event_id=None,
             created_at_ms=now_ms(),
             source=source,
             committed_text=text,
+            privacy_disposition=disposition,
             recent_context=recent_context,
             preedit=preedit,
             schema_id=schema_id,

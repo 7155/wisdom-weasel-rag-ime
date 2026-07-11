@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_models import ImeQueryContext
-from rag_ime.memory_schema_v2 import memory_v2_table_names
+from rag_ime.memory_schema_v2 import ensure_memory_v2_schema, memory_v2_table_names
 from rag_ime.models import InputEvent
 
 
@@ -29,6 +29,26 @@ class MemorySchemaV2Tests(unittest.TestCase):
         for table_name in memory_v2_table_names():
             self.assertIn(table_name, names)
 
+    def test_feedback_schema_is_order_independent_and_keeps_legacy_defaults(self) -> None:
+        alternate_path = Path(self.tmp.name) / "v2-first.sqlite"
+        with closing(sqlite3.connect(alternate_path)) as conn, conn:
+            ensure_memory_v2_schema(conn)
+        LocalSqliteCoreClient(alternate_path).initialize()
+
+        with closing(sqlite3.connect(alternate_path)) as conn, conn:
+            columns = {str(row[1]): row for row in conn.execute("PRAGMA table_info(memory_feedback_events)")}
+            self.assertEqual(columns["candidate_text"][4], "''")
+            self.assertEqual(columns["candidate_source"][4], "'unknown'")
+            conn.execute(
+                "INSERT INTO memory_feedback_events(id, candidate_id, action, created_at_ms) VALUES (?, ?, ?, ?)",
+                ("feedback:defaults", "candidate:1", "skipped", 1),
+            )
+            row = conn.execute(
+                "SELECT candidate_text, candidate_source FROM memory_feedback_events WHERE id = ?",
+                ("feedback:defaults",),
+            ).fetchone()
+        self.assertEqual(row, ("", "unknown"))
+
     def test_record_event_populates_memory_items_and_phrase_layer(self) -> None:
         memory_id = self.core.record_event(
             InputEvent(
@@ -36,6 +56,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_000,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="我们在做 sequenceFork 的输入法实验",
                 project="wisdom-weasel-rag-ime",
                 app="com.apple.TextEdit",
@@ -55,6 +76,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_001,
                 source="manual",
                 committed_text="Bearer sk-secret-value",
+                privacy_disposition="allowed",
                 recent_context="敏感 token",
                 project="wisdom-weasel-rag-ime",
             )
@@ -71,6 +93,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_002,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="sequenceFork 连续预测",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory", "sequenceFork"),
@@ -82,6 +105,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_003,
                 source="manual",
                 committed_text="这是一个很长的历史输入句子，不应该直接复读出来",
+                privacy_disposition="allowed",
                 recent_context="连续预测",
                 project="wisdom-weasel-rag-ime",
                 tags=("user-input",),
@@ -106,6 +130,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_004,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -127,6 +152,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_005,
                 source="manual",
                 committed_text="这是一个很长的历史输入句子，里面一直在讲候选展示方式和排序细节，不应该直接整段复读出来",
+                privacy_disposition="allowed",
                 recent_context="用户之前的大段抱怨",
                 project="wisdom-weasel-rag-ime",
                 tags=("user-input",),
@@ -138,6 +164,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_006,
                 source="manual",
                 committed_text="设计一个候选展示方式",
+                privacy_disposition="allowed",
                 recent_context="Prediction-first RAG IME",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -161,6 +188,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_007,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -172,6 +200,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_008,
                 source="manual",
                 committed_text="连续补齐",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -200,6 +229,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_009,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -211,6 +241,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_010,
                 source="manual",
                 committed_text="连续补齐",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -254,6 +285,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_011,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -265,6 +297,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_012,
                 source="manual",
                 committed_text="连续补齐",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -311,6 +344,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_013,
                 source="manual",
                 committed_text="连续预测",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),
@@ -322,6 +356,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 created_at_ms=1_900_000_000_014,
                 source="manual",
                 committed_text="连续补齐",
+                privacy_disposition="allowed",
                 recent_context="RAG 输入法需要更好的候选",
                 project="wisdom-weasel-rag-ime",
                 tags=("phrase-memory",),

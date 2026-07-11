@@ -59,6 +59,59 @@ class PredictionTriggerTest(unittest.TestCase):
         )
         self.assertTrue(self.trigger.poll("doc:a").should_call_predictor)
 
+    def test_accepted_continuations_bypass_normal_limit_but_keep_dedupe_and_chain_cap(self) -> None:
+        for index in range(2):
+            self.now = index * 1_000
+            self.trigger.record_commit(
+                group_id="doc:tab-chain",
+                text="普通输入已经达到阈值",
+                context_hash=f"normal:{index}",
+                reliable=True,
+            )
+            self.now += 500
+            decision = self.trigger.poll("doc:tab-chain")
+            self.assertTrue(decision.should_call_predictor)
+            self.assertTrue(self.trigger.complete(decision, result_count=3))
+
+        # Explicit Tab acceptance is a user-driven continuation, so it must
+        # keep working after the ordinary two-calls-per-10s budget is full.
+        for index in range(6):
+            self.now = 2_100 + index * 100
+            self.trigger.record_commit(
+                group_id="doc:tab-chain",
+                text="短",
+                context_hash=f"accepted:{index}",
+                reliable=True,
+                accepted_candidate=True,
+            )
+            decision = self.trigger.poll("doc:tab-chain")
+            self.assertTrue(decision.should_call_predictor)
+            self.assertTrue(self.trigger.complete(decision, result_count=3))
+
+        self.now = 2_800
+        self.trigger.record_commit(
+            group_id="doc:tab-chain",
+            text="短",
+            context_hash="accepted:overflow",
+            reliable=True,
+            accepted_candidate=True,
+        )
+        limited = self.trigger.poll("doc:tab-chain")
+        self.assertFalse(limited.should_call_predictor)
+        self.assertEqual(limited.reason, "accepted_continuation_rate_limit")
+
+        self.now = 12_500
+        self.trigger.record_commit(
+            group_id="doc:tab-chain",
+            text="短",
+            context_hash="accepted:5",
+            reliable=True,
+            accepted_candidate=True,
+        )
+        duplicate = self.trigger.poll("doc:tab-chain")
+        self.assertFalse(duplicate.should_call_predictor)
+        self.assertEqual(duplicate.reason, "duplicate_context_hash")
+
     def test_empty_result_enters_cooldown(self) -> None:
         self.trigger.record_commit(group_id="doc:a", text="已经输入六个字", context_hash="a", reliable=True)
         self.now = 500
