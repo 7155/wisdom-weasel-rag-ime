@@ -175,9 +175,34 @@ class ActiveRagServiceTests(unittest.TestCase):
             ready = _wait_ready(service, str(started["sessionId"]))
 
         self.assertEqual(provider.calls[0].max_chars, ACTIVE_RAG_DEFAULT_MAX_CHARS)
+        self.assertEqual(ACTIVE_RAG_DEFAULT_MAX_CHARS, 0)
+        self.assertEqual(provider.calls[0].context_packet["outputContract"]["maxCandidateChars"], 0)
+        self.assertEqual(provider.calls[0].context_packet["outputContract"]["outputFormat"], "candidate_document")
         self.assertEqual(ready["status"], "ready")
         self.assertGreaterEqual(len(ready["candidates"][0]["text"]), 40)
-        self.assertLessEqual(len(ready["candidates"][0]["text"]), ACTIVE_RAG_DEFAULT_MAX_CHARS)
+
+    def test_active_rag_default_keeps_full_multi_paragraph_remote_result(self) -> None:
+        first = "第一段说明前台上下文优先，并保留完整的用户意图。" * 5
+        second = "第二段说明检索证据、生成正文和确认插入之间的边界。" * 5
+        expected = f"{first}\n\n{second}"
+        provider = FakeActiveRagProvider((expected,))
+        service = ActiveRagService(completion_provider=provider)
+        request = ActiveRagStartRequest(
+            selected_text="请输出多段完整说明",
+            selected_text_hash=stable_text_hash("请输出多段完整说明"),
+            frontend_revision=7,
+            selection_epoch=3,
+            context="请输出多段完整说明",
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertGreater(len(expected), 180)
+        self.assertEqual(ready["candidates"][0]["text"], expected)
+        self.assertNotIn("lengthGoverned", ready["candidates"][0]["metadata"])
 
     def test_active_rag_governs_remote_candidate_length(self) -> None:
         provider = FakeActiveRagProvider(("这是一个过长候选，需要缩短，保留关键动作",))
@@ -323,7 +348,7 @@ class ActiveRagServiceTests(unittest.TestCase):
             started = service.start(request)
             session_id = str(started["sessionId"])
             with service._lock:
-                service._sessions[session_id].created_at_ms -= 16_000
+                service._sessions[session_id].created_at_ms -= 121_000
             ready = service.status(session_id)
             gate.set()
 

@@ -37,7 +37,7 @@ class KnowledgeWorkbenchRequest:
     generation: int = 1
     context_hash: str = ""
     client_id: str = "native-control-center"
-    max_chars: int = 2400
+    max_chars: int = 0
     latency_budget_ms: int = 120_000
 
 
@@ -120,10 +120,11 @@ class DeepSeekKnowledgeProvider:
         if self.config.reasoning_effort and self.config.thinking != "disabled":
             body["reasoning_effort"] = self.config.reasoning_effort
         started = time.perf_counter()
+        output_char_limit = _output_char_limit(request.max_chars)
         answer, first_token_ms, chunk_count = self._call_stream(
             body,
             timeout_ms=request.latency_budget_ms,
-            max_chars=max(400, min(8000, int(request.max_chars))),
+            max_chars=output_char_limit,
             on_delta=on_delta,
             should_cancel=should_cancel,
         )
@@ -132,7 +133,8 @@ class DeepSeekKnowledgeProvider:
             raise KnowledgeWorkbenchError("DeepSeek knowledge response was empty")
         answer, removed_citations = _sanitize_local_citations(answer, evidence=evidence)
         answer, corrected_contract_claims = _sanitize_product_contract_claims(answer)
-        answer = _truncate_preserving_layout(answer, max(400, min(8000, int(request.max_chars))))
+        if output_char_limit > 0:
+            answer = _truncate_preserving_layout(answer, output_char_limit)
         diagnostics = {
             "schemaVersion": "rag-ime.knowledge-prompt-diagnostics.v1",
             "mode": request.mode,
@@ -206,10 +208,10 @@ class DeepSeekKnowledgeProvider:
                             first_token_ms = max(1, int((time.perf_counter() - started) * 1000))
                         chunk_count += 1
                         content += delta
-                        visible = _truncate_preserving_layout(content, max_chars)
+                        visible = _truncate_preserving_layout(content, max_chars) if max_chars > 0 else content
                         if on_delta is not None:
                             on_delta(visible)
-                        if len(content) >= max_chars:
+                        if max_chars > 0 and len(content) >= max_chars:
                             content = visible
                             break
                 if content:
@@ -645,7 +647,7 @@ def build_knowledge_workbench_messages(
                     "question": request.question,
                     "context": truncate_text(request.context, 2000),
                     "project": request.project,
-                    "maxChars": max(400, min(8000, int(request.max_chars))),
+                    "maxChars": _output_char_limit(request.max_chars),
                     "productContract": {
                         "candidateSelection": "提交后的第一候选用 Tab 接受，其他候选用 Option+1/2/3；普通数字键透传；接受后基于更新后的上下文立即生成下一组三候选",
                         "miniMind": "本地被动短补全；共享 prefill 后生成至多三个可放弃候选；只补后缀，不负责知识问答；预热后目标是低延迟但不承诺固定 50ms",
@@ -659,7 +661,7 @@ def build_knowledge_workbench_messages(
                         "answer": truncate_text(notion_answer, 3000),
                         "sources": list(notion_sources or [])[:12],
                     },
-                    "outputContract": "多段自然中文正文；事实带来源标记；证据不足要明说",
+                    "outputContract": "按任务需要输出完整的多段自然中文正文，不设字符上限；事实带来源标记；证据不足要明说",
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -737,7 +739,7 @@ def _normalized_request(request: KnowledgeWorkbenchRequest) -> KnowledgeWorkbenc
         generation=max(0, int(request.generation)),
         context_hash=context_hash,
         client_id=compact_whitespace(request.client_id) or "native-control-center",
-        max_chars=max(400, min(8000, int(request.max_chars))),
+        max_chars=_output_char_limit(request.max_chars),
         latency_budget_ms=max(1000, min(300_000, int(request.latency_budget_ms))),
     )
 
@@ -839,3 +841,10 @@ def _truncate_preserving_layout(text: str, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
     return value[: max(1, max_chars - 1)].rstrip() + "…"
+
+
+def _output_char_limit(value: object) -> int:
+    requested = int(value or 0)
+    if requested <= 0:
+        return 0
+    return max(400, min(8000, requested))

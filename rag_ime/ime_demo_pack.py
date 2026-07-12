@@ -509,7 +509,7 @@ def _verify_knowledge_workbench(fixture: dict[str, Any], *, rag_memory: dict[str
         project=str(fixture["project"]),
         app="com.rag-ime.control.demo",
         include_notion=False,
-        max_chars=int(config.get("maxChars") or 2400),
+        max_chars=int(config.get("maxChars")) if config.get("maxChars") is not None else 0,
     )
     messages = build_knowledge_workbench_messages(request, evidence=tuple(evidence))
     injected = json.loads(messages[1]["content"])

@@ -787,9 +787,14 @@ class DebugImeService:
                 "routeStatus": route_status,
                 "latencyBudgetMs": _bounded_int(
                     payload.get("latencyBudgetMs"),
-                    default=_bounded_int(active_settings.get("latencyBudgetMs"), default=15000, minimum=100, maximum=30000),
+                    default=_bounded_int(
+                        active_settings.get("latencyBudgetMs"),
+                        default=120_000,
+                        minimum=100,
+                        maximum=300_000,
+                    ),
                     minimum=100,
-                    maximum=30000,
+                    maximum=300_000,
                 ),
                 "stored": False,
                 "noStore": False,
@@ -908,10 +913,15 @@ class DebugImeService:
             max_chars=_bounded_int(
                 payload.get("maxChars"),
                 default=ACTIVE_RAG_DEFAULT_MAX_CHARS,
-                minimum=4,
-                maximum=180,
+                minimum=0,
+                maximum=12000,
             ),
-            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=15000, minimum=100, maximum=30000),
+            latency_budget_ms=_bounded_int(
+                payload.get("latencyBudgetMs"),
+                default=120_000,
+                minimum=100,
+                maximum=300_000,
+            ),
             remote_model_allowed=(
                 _bool(payload.get("remoteModelAllowed"), default=False)
                 if "remoteModelAllowed" in payload
@@ -1266,7 +1276,7 @@ class DebugImeService:
             generation=_bounded_int(payload.get("generation"), default=1, minimum=0, maximum=1_000_000_000),
             context_hash=_string(payload.get("contextHash")),
             client_id=_string(payload.get("clientId")) or "native-control-center",
-            max_chars=_bounded_int(payload.get("maxChars"), default=2400, minimum=400, maximum=8000),
+            max_chars=_bounded_int(payload.get("maxChars"), default=0, minimum=0, maximum=8000),
             latency_budget_ms=_bounded_int(
                 payload.get("latencyBudgetMs"),
                 default=120_000,
@@ -1740,10 +1750,15 @@ class DebugImeService:
             max_chars=_bounded_int(
                 payload.get("maxChars"),
                 default=ACTIVE_RAG_DEFAULT_MAX_CHARS,
-                minimum=4,
-                maximum=180,
+                minimum=0,
+                maximum=12000,
             ),
-            latency_budget_ms=_bounded_int(payload.get("latencyBudgetMs"), default=2500, minimum=100, maximum=15000),
+            latency_budget_ms=_bounded_int(
+                payload.get("latencyBudgetMs"),
+                default=120_000,
+                minimum=100,
+                maximum=300_000,
+            ),
         )
         messages = build_deepseek_completion_messages(request)
         include_text = self._include_raw_text()

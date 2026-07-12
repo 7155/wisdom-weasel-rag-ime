@@ -119,6 +119,15 @@ class DeepSeekV4FlashCompletionProvider:
                                 last_safe_partial = partial_text
                                 if on_text_delta is not None:
                                     on_text_delta(partial_text)
+                            if time.perf_counter() >= deadline:
+                                fallback_reason = "budget_elapsed"
+                                budget_elapsed = True
+                                break
+                            if _active_rag_paragraph_output(request):
+                                # Explicit generation is one document, not one
+                                # candidate per line. Keep paragraph boundaries
+                                # in the shared buffer until the stream finishes.
+                                continue
                         lines = content_buffer.splitlines(keepends=True)
                         content_buffer = ""
                         for line in lines:
@@ -231,8 +240,18 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
     evidence = _redacted_evidence_pack(request.evidence_pack)
     foreground_only = not evidence
     context_packet = _compact_active_rag_context_packet(request.context_packet)
-    max_chars = max(4, int(request.max_chars))
-    min_chars = 40 if max_chars >= 80 else 4
+    max_chars = max(0, int(request.max_chars or 0))
+    min_chars = 40 if max_chars == 0 or max_chars >= 80 else 4
+    output_length_rule = (
+        "按任务需要输出完整正文，不设字符上限，可以包含多个自然段。"
+        if max_chars == 0
+        else f"输出 {min_chars} 到 {max_chars} 个中文字。"
+    )
+    output_format_rule = (
+        "第一段行首固定为“候选=”，等号后直接写正文；后续可以换行分段。"
+        if max_chars == 0
+        else "只输出一行，不换行；行首固定为“候选=”，等号后直接写一段正文。"
+    )
     task_mode = _active_rag_task_mode(request)
     task_instruction = {
         "answer": "直接回答 currentRequest 中的问题或请求，只给答案正文，不重复问题。",
@@ -263,7 +282,7 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                 "selectedText 在 insert_after_selection/append_at_cursor 场景只是光标前文本锚点，不是示例，不要引用它来讲解。"
                 "第一句必须以“候选=”开头，等号后直接写候选内容。"
                 "不要解释，不要总结，不要 Markdown，不要输出任务标题，不要举例。"
-                "候选必须是一段完整的话，具体、可直接插入；不要复述 selectedText/currentContext/Notebook 原句。"
+                "候选必须是完整正文，具体、可直接插入，可以包含多个自然段；不要复述 selectedText/currentContext/Notebook 原句。"
                 "禁止写元话语：不要说你将如何回答、补全、整理或围绕什么生成。"
                 "禁止出现“我会”“我将”“围绕”“继续补全当前表达”“把上下文”“真实意图”“整理成”“放到光标后”等措辞。"
                 "evidenceHints 可能包含用户刚输入的问题、短词或历史片段，它们只用于理解语境，不自动代表事实。"
@@ -301,7 +320,7 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                     "contextPacket": context_packet,
                     "evidenceHints": _unique_candidates([truncate_text(item, 80) for item in hints])[:12],
                     "task": (
-                        f"输出 {min_chars} 到 {max_chars} 个中文字。"
+                        f"{output_length_rule}"
                         f"{task_instruction}"
                         "禁止写“下一步/接下来/可以继续/根据上述/短语/格式/Notebook/evidence/oneRing”。"
                         "禁止写“我会/我将/围绕/继续补全/把上下文/真实意图/整理成/放到光标后”；"
@@ -311,7 +330,7 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                         "如果当前语境就是输入法候选质量，可以自然写“候选”；"
                         "禁止写教学示例或产品说明，尤其不要以“例如/比如/可以描述/当用户输入/系统会”开头；"
                         "不要把 RAG 证据或 Notebook 标题原样显示。"
-                        "只输出一行，不换行；行首固定为“候选=”，等号后直接写一段正文。"
+                        f"{output_format_rule}"
                     ),
                 },
                 ensure_ascii=False,
@@ -564,11 +583,16 @@ def _candidates_from_text(
     seen: set[str],
     started: float,
 ) -> Iterator[CompletionCandidateDelta]:
-    for candidate in _parse_candidate_texts(text):
+    parsed_candidates = (
+        [_active_rag_full_candidate_text(text)]
+        if request.scene == "active_rag"
+        else _parse_candidate_texts(text)
+    )
+    for candidate in parsed_candidates:
         candidate = _normalize_candidate_for_request(candidate, request=request)
         if not _candidate_allowed(candidate, request=request, seen=seen):
             continue
-        seen.add(candidate)
+        seen.add(compact_whitespace(candidate))
         yield CompletionCandidateDelta(
             text=candidate,
             insert_text=candidate,
@@ -623,14 +647,49 @@ def _plain_candidate_texts(text: str) -> list[str]:
 
 
 def _normalize_candidate_for_request(candidate: str, *, request: DeepSeekCompletionRequest) -> str:
-    text = compact_whitespace(candidate)
-    if _active_rag_paragraph_output(request):
-        text = re.sub(r"^(?:例如|比如)[，,、\s]*", "", text)
-    return compact_whitespace(text)
+    if request.scene == "active_rag":
+        text = _preserve_paragraph_layout(candidate)
+        if _active_rag_paragraph_output(request):
+            text = re.sub(r"^(?:例如|比如)[，,、\s]*", "", text)
+            return _preserve_paragraph_layout(text)
+        return compact_whitespace(text).strip("\"'“”‘’").strip("。；;，, ")
+    return compact_whitespace(candidate)
 
 
 def _active_rag_paragraph_output(request: DeepSeekCompletionRequest) -> bool:
-    return request.scene == "active_rag" and int(request.max_chars or 0) >= 80
+    max_chars = int(request.max_chars or 0)
+    return request.scene == "active_rag" and (max_chars == 0 or max_chars >= 80)
+
+
+def _active_rag_full_candidate_text(text: str) -> str:
+    stripped = _strip_markdown_fence(str(text or "").replace("\\n", "\n").replace("\\r", "\r"))
+    payload = _json_loads_or_none(stripped)
+    if payload is not None:
+        candidates = _candidate_texts_from_payload(payload)
+        return candidates[0] if candidates else ""
+    match = re.match(
+        r"^(?:候选|candidate|output|输出)\s*[=＝:：]\s*(?P<text>.*)$",
+        stripped,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        stripped = match.group("text")
+    return _preserve_paragraph_layout(stripped.strip('"`“”'))
+
+
+def _preserve_paragraph_layout(text: str) -> str:
+    value = str(text or "").replace("\\n", "\n").replace("\\r", "\r").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [compact_whitespace(line) for line in value.split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    result: list[str] = []
+    for line in lines:
+        if not line and result and not result[-1]:
+            continue
+        result.append(line)
+    return "\n".join(result).strip()
 
 
 def _placeholder_candidate(text: str) -> bool:
@@ -740,7 +799,7 @@ def _unique_candidates(values: list[str]) -> list[str]:
 
 
 def _completion_token_budget(request: DeepSeekCompletionRequest) -> int:
-    max_chars = max(4, int(request.max_chars))
+    max_chars = max(4, int(request.max_chars or 0))
     max_candidates = max(1, int(request.max_candidates))
     if request.scene == "editor":
         base = 80
@@ -749,7 +808,7 @@ def _completion_token_budget(request: DeepSeekCompletionRequest) -> int:
         # Active RAG is explicit user-triggered generation. The current V4 Flash
         # gateway streams substantial reasoning_content before content, so this
         # lane needs a larger budget than the per-key/post-commit hot path.
-        return 1024
+        return 4096
     else:
         base = 16
         cap = 96
@@ -759,7 +818,7 @@ def _completion_token_budget(request: DeepSeekCompletionRequest) -> int:
 
 def _configured_completion_token_cap(config: DeepSeekConfig, request: DeepSeekCompletionRequest) -> int:
     if request.scene == "active_rag":
-        return max(128, int(getattr(config, "active_rag_max_tokens", 1024) or 1024))
+        return max(128, int(getattr(config, "active_rag_max_tokens", 4096) or 4096))
     return max(16, int(config.max_tokens))
 
 
@@ -768,7 +827,8 @@ def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, se
     if not text or text in seen:
         return False
     paragraph_mode = _active_rag_paragraph_output(request)
-    if len(text) < 2 or len(text) > max(4, int(request.max_chars)):
+    max_chars = max(0, int(request.max_chars or 0))
+    if len(text) < 2 or (max_chars > 0 and len(candidate) > max(4, max_chars)):
         return False
     if _placeholder_candidate(text):
         return False
@@ -1040,14 +1100,15 @@ def _longest_shared_contiguous_chars(left: str, right: str) -> int:
 
 
 def _stable_partial_can_finish(text: str, *, request: DeepSeekCompletionRequest) -> bool:
-    value = compact_whitespace(text)
+    value = _normalize_candidate_for_request(text, request=request)
     if not value or not _candidate_allowed(value, request=request, seen=set()):
         return False
     if not _active_rag_paragraph_output(request):
         return True
     # Do not promote a tiny mid-token fragment into a paid generation result.
     # A complete sentence can finish early; otherwise require a useful clause.
-    return value.endswith(("。", "！", "？", "!", "?", "；", ";")) or len(value) >= 24
+    compact = compact_whitespace(value)
+    return compact.endswith(("。", "！", "？", "!", "?", "；", ";")) or len(compact) >= 24
 
 
 def _has_unapproved_ascii_word(text: str) -> bool:

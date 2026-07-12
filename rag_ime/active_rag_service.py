@@ -35,9 +35,15 @@ from .timeline_context import timeline_evidence_pack_from_core
 
 
 ACTIVE_RAG_SERVICE_SCHEMA_VERSION = "rag-ime.active-rag-service.v1"
-ACTIVE_RAG_VISIBLE_READY_TIMEOUT_MS = 15_000
-ACTIVE_RAG_DEFAULT_MAX_CHARS = 120
+ACTIVE_RAG_VISIBLE_READY_TIMEOUT_MS = 120_000
+ACTIVE_RAG_DEFAULT_MAX_CHARS = 0
+ACTIVE_RAG_LOCAL_EVIDENCE_MAX_CHARS = 120
 SENSITIVE_FIELD_BLOCK_REASON = "sensitive_field_blocked"
+
+
+def _local_evidence_max_chars(requested_max_chars: int) -> int:
+    requested = int(requested_max_chars or 0)
+    return requested if requested > 0 else ACTIVE_RAG_LOCAL_EVIDENCE_MAX_CHARS
 
 _TIMELINE_GENERIC_TERMS = {
     "这里",
@@ -98,7 +104,7 @@ class ActiveRagStartRequest:
     app: str = ""
     max_candidates: int = 1
     max_chars: int = ACTIVE_RAG_DEFAULT_MAX_CHARS
-    latency_budget_ms: int = 15000
+    latency_budget_ms: int = ACTIVE_RAG_VISIBLE_READY_TIMEOUT_MS
     remote_model_allowed: bool | None = None
     remote_model_skip_reason: str = ""
     remote_model_gates: dict[str, bool] = field(default_factory=dict)
@@ -179,7 +185,7 @@ class ActiveRagService:
             evidence,
             frame=_frame_from_request(request),
             max_candidates=request.max_candidates,
-            max_chars=request.max_chars,
+            max_chars=_local_evidence_max_chars(request.max_chars),
         )
         if not local_only:
             route = _remote_active_rag_route(self.completion_provider, request=request)
@@ -779,7 +785,7 @@ class ActiveRagService:
             evidence,
             frame=_frame_from_request(request),
             max_candidates=request.max_candidates,
-            max_chars=request.max_chars,
+            max_chars=_local_evidence_max_chars(request.max_chars),
         )
         return local_candidates
 

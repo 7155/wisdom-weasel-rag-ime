@@ -67,6 +67,10 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn("清洗语音和错别字", page)
         self.assertIn("整理标签关系", page)
         self.assertIn("更新常用词表", page)
+        self.assertIn(
+            "case .knowledgeAnswer, .longForm, .recall, .organizeDatabase: return 0",
+            models,
+        )
 
     def test_overview_does_not_apply_a_profile_during_programmatic_startup_sync(self) -> None:
         source = (ROOT / "macos" / "RagImeControl" / "Pages" / "OverviewPage.swift").read_text(encoding="utf-8")

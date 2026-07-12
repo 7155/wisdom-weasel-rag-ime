@@ -5693,7 +5693,7 @@ index c2adf74..b6e3973 100644
 +      contextHash: ragImeStableTextHash(requestContext),
 +      project: sidecarClient.project,
 +      maxCandidates: 1,
-+      latencyBudgetMs: 15000
++      latencyBudgetMs: 120000
 +    )
 +    traceRagImeFrontendEvent("active_rag_thinking_displayed", fields: [
 +      "selectedTextHash": request.selectedTextHash,
@@ -5775,7 +5775,7 @@ index c2adf74..b6e3973 100644
 +      contextHash: ragImeStableTextHash(context.isEmpty ? anchorText : context),
 +      project: sidecarClient.project,
 +      maxCandidates: 1,
-+      latencyBudgetMs: 15000
++      latencyBudgetMs: 120000
 +    )
 +    traceRagImeFrontendEvent("active_rag_context_button_triggered", fields: [
 +      "selectedTextHash": request.selectedTextHash,
@@ -6070,7 +6070,7 @@ index c2adf74..b6e3973 100644
 +    attempt: Int,
 +    generation: Int
 +  ) {
-+    guard attempt <= 80 else { return }
++    guard attempt <= 180 else { return }
 +    guard response.status == "pending" || response.thinkingRow else { return }
 +    guard let sidecarClient = ragImeSidecarClient else { return }
 +    let serverDelayMs = response.pollAfterMs ?? 0

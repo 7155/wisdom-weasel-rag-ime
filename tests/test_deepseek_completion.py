@@ -48,6 +48,17 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual(user_payload["groundingMode"], "foreground_only")
         self.assertIn("唯一语义来源", messages[0]["content"])
 
+    def test_active_rag_unlimited_prompt_requests_complete_multi_paragraph_output(self) -> None:
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(scene="active_rag", current_context="请写一份完整说明", max_chars=0)
+        )
+        user_payload = json.loads(messages[1]["content"])
+
+        self.assertEqual(user_payload["maxChars"], 0)
+        self.assertIn("不设字符上限", user_payload["task"])
+        self.assertIn("后续可以换行分段", user_payload["task"])
+        self.assertNotIn("只输出一行", user_payload["task"])
+
     def test_active_rag_foreground_only_rejects_unrequested_character_recommendations(self) -> None:
         provider = _provider(
             [_sse_delta("候选=推荐初音未来、洛天依或绊爱作为二次元形象。\n"), "data: [DONE]\n"]
@@ -144,7 +155,32 @@ class DeepSeekCompletionTests(unittest.TestCase):
         )
 
         self.assertEqual(partials, ["流式内容逐步返回。"])
-        self.assertEqual([item.text for item in deltas], ["流式内容逐步返回"])
+        self.assertEqual([item.text for item in deltas], ["流式内容逐步返回。"])
+
+    def test_active_rag_preserves_unlimited_multi_paragraph_stream(self) -> None:
+        first = "第一段给出结论，并把当前问题的核心边界说明清楚。" * 4
+        second = "第二段继续补充实现步骤、验收方式和失败恢复策略。" * 4
+        provider = _provider(
+            [
+                _sse_delta(f"候选={first}"),
+                _sse_delta(f"\n\n{second}"),
+                "data: [DONE]\n",
+            ]
+        )
+        partials: list[str] = []
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(scene="active_rag", current_context="请写完整说明", max_chars=0),
+                on_text_delta=partials.append,
+            )
+        )
+
+        expected = f"{first}\n\n{second}"
+        self.assertGreater(len(expected), 180)
+        self.assertEqual([item.text for item in deltas], [expected])
+        self.assertEqual(deltas[0].insert_text, expected)
+        self.assertEqual(partials[-1], expected)
 
     def test_active_rag_never_streams_or_returns_thinking_content(self) -> None:
         provider = _provider(
@@ -440,7 +476,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         )
 
         self.assertEqual(deltas[0].metadata["parseMode"], "content")
-        self.assertEqual(deltas[0].text, "在测试中，我注意到 RAG 记忆能有效补全上下文，让 DeepSeek 生成更贴合当前场景的说明")
+        self.assertEqual(deltas[0].text, "在测试中，我注意到 RAG 记忆能有效补全上下文，让 DeepSeek 生成更贴合当前场景的说明。")
 
     def test_active_rag_allows_product_terms_in_real_paragraph(self) -> None:
         payload = {
@@ -757,7 +793,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
 
         self.assertEqual([item.text for item in deltas], ["直连低延迟"])
         self.assertEqual(len(fake.calls), 1)
-        self.assertEqual(int(fake.body["max_tokens"]), 1024)
+        self.assertEqual(int(fake.body["max_tokens"]), 4096)
         self.assertEqual(fake.body["reasoning_effort"], "low")
         self.assertTrue(fake.body["stream"])
         self.assertEqual(fake.calls[0][1], 1.234)

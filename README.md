@@ -42,7 +42,8 @@ Explicit Active RAG
   -> local lexical + MLX BGE retrieval assembles relevant evidence
   -> recent input remains a separately counted diagnostic and is not injected
   -> optional configured DeepSeek-compatible provider generates one result
-  -> streamed and final text pass the same anti-echo and prompt-leak governor
+  -> streamed and final text keep paragraph layout and pass the same anti-echo and prompt-leak governor
+  -> no local character cap truncates the explicit result; model tokens, timeout, and safety governors remain bounded
   -> an empty governed result gets one context-only retry, never a fake answer
   -> a fully governed streamed clause can finish safely if a later tail is rejected
   -> the provider-neutral result stays pinned; Tab inserts only final text
@@ -50,7 +51,7 @@ Explicit Active RAG
 Explicit knowledge workbench
   -> user asks for a knowledge answer, long-form draft, recall, or database organization
   -> local SQLite RAG returns traceable evidence
-  -> DeepSeek generates a multi-paragraph answer outside the keystroke path
+  -> DeepSeek generates a complete multi-paragraph answer outside the keystroke path without local character truncation
   -> optional Notion Worker + Custom Agent adds authorized workspace knowledge
   -> stale remote results are rejected before local/remote synthesis
 
@@ -71,9 +72,9 @@ Streaming voice input
 | Local completion | MLX, local Ollama, and loopback OpenAI-compatible runtimes share one validated registry/lifecycle boundary. The current MiniMind-derived checkpoint is fast enough and reliably returns three branches, but its semantic quality gate and retraining signoff have not passed. |
 | Hybrid RAG | Local SQLite retrieval combines lexical, tag, time-book, feedback, and precomputed vector signals. On Apple Silicon, a present MLX Q8 BGE artifact is preferred and warmed before sidecar health becomes ready; an explicit provider still wins and clean machines fall back to `local-hash`. |
 | Memory | Keyboard commits and final voice transcripts enter the same raw local ledger, but raw history is not searchable memory. The user can describe an organization goal in ordinary Chinese or run the project default; DeepSeek V4 then reconstructs fragments, cleans text, maintains coarse Groups/semantic Tags/tag edges, and creates a validated Memory Book/Atom/phrase draft. Apply and rollback remain separate local actions. |
-| Active RAG | Explicit selected-text workflow with live-context request resolution, separately counted grounding evidence, MLX BGE retrieval, and an optional remote compatible route. Recent input and phrase candidates cannot inflate the visible RAG count. It is never part of passive per-keystroke prediction. |
+| Active RAG | Explicit selected-text workflow with live-context request resolution, separately counted grounding evidence, MLX BGE retrieval, and an optional remote compatible route. The default remote result has no local character cap, preserves multiple paragraphs, and can remain pending for up to 120 seconds; the model token ceiling, timeout, anti-echo, privacy, and prompt-leak governors still apply. Recent input and phrase candidates cannot inflate the visible RAG count. It is never part of passive per-keystroke prediction. |
 | UI | The patched Squirrel native overlay now gives deterministic post-commit feedback: a compact companion pulse appears immediately, ready rows replace it in place, Tab acceptance switches directly to `继续联想`, and a terminal empty result reports `这次没有合适建议` instead of silently vanishing. Real rows are icon-first, use one compact shortcut area, remain actionable for at least 12 seconds, and honor Reduce Motion. A TextEdit foreground trace has passed pending -> candidates -> Tab -> next candidates. `RagImeControl` remains the one settings/diagnostics app and the voice agent is headless. |
-| Knowledge workbench | Explicit local-RAG + DeepSeek knowledge answers, long-form writing, recall, and review-only database organization. Optional Notion submission and polling are separate, observable gates. |
+| Knowledge workbench | Explicit local-RAG + DeepSeek knowledge answers, long-form writing, recall, and review-only database organization. The native client sends `maxChars=0`, so full streamed paragraphs are kept instead of being cut at the former per-mode character limits; generation is still bounded by the configured token and request budgets. Optional Notion submission and polling are separate, observable gates. |
 | Voice input | The headless native agent supports isolated provider adapters, mode-`600` credentials with Keychain fallback, and a real streaming PCM probe. Hold the mouse middle button by default; right Option and `Option+Space` remain configurable fallbacks. A project-owned book-companion pulse expands into the same compact material/rail language as the IME overlay. Mouse monitoring gives immediate feedback even before Accessibility is authorized; cursor insertion still fails closed until that permission and microphone access are granted. |
 | Observability | Redacted runtime status, trigger decisions, candidate score explanations, context provenance, and foreground traces. |
 

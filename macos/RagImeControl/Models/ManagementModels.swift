@@ -177,10 +177,7 @@ enum KnowledgeWorkbenchMode: String, CaseIterable, Identifiable {
 
     var maxChars: Double {
         switch self {
-        case .knowledgeAnswer: return 2600
-        case .longForm: return 6000
-        case .recall: return 3200
-        case .organizeDatabase: return 1600
+        case .knowledgeAnswer, .longForm, .recall, .organizeDatabase: return 0
         }
     }
 }

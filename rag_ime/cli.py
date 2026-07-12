@@ -528,7 +528,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     active_rag_demo.add_argument("--frontend-revision", type=int, default=1)
     active_rag_demo.add_argument("--selection-epoch", type=int, default=1)
     active_rag_demo.add_argument("--max-candidates", type=int, default=5)
-    active_rag_demo.add_argument("--max-chars", type=int, default=120)
+    active_rag_demo.add_argument(
+        "--max-chars",
+        type=int,
+        default=0,
+        help="Optional local output character cap; 0 keeps the full multi-paragraph result",
+    )
     active_rag_demo.add_argument("--wait-ms", type=int, default=3000)
 
     rime_suggest_json = subparsers.add_parser(
@@ -2156,7 +2161,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             project=args.project,
             app=args.app,
             max_candidates=max(1, args.max_candidates),
-            max_chars=max(4, args.max_chars),
+            max_chars=max(0, args.max_chars),
         )
         started = service.start(request)
         ready = _wait_active_rag_status(service, str(started["sessionId"]), wait_ms=max(1, args.wait_ms))

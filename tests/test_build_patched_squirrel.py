@@ -819,6 +819,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("postActiveRagStatus", patch_text)
         self.assertIn("active_rag_status_poll_scheduled", patch_text)
         self.assertIn("response.pollAfterMs", patch_text)
+        self.assertIn("latencyBudgetMs: 120000", patch_text)
+        self.assertIn("guard attempt <= 180 else { return }", patch_text)
         self.assertIn("postActiveRagStart", patch_text)
         self.assertIn('endpoint("active-rag/start"', patch_text)
         self.assertIn("static func failure(sessionId: String", patch_text)

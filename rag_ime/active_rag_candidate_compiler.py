@@ -26,18 +26,18 @@ def compile_active_rag_candidates(
     *,
     selected_text: str = "",
     max_candidates: int = 5,
-    max_chars: int = 24,
+    max_chars: int = 0,
 ) -> tuple[ActiveRagCandidate, ...]:
     selected = compact_whitespace(selected_text)
     char_limit = _candidate_char_limit(max_chars)
     seen: set[str] = set()
     result: list[ActiveRagCandidate] = []
     for delta in deltas:
-        raw_text = compact_whitespace(delta.text)
+        raw_text = _preserve_paragraph_layout(delta.text)
         text = _fit_active_rag_candidate_text(raw_text, max_chars=char_limit)
         if not _active_rag_candidate_allowed(text, selected_text=selected, seen=seen, max_chars=char_limit):
             continue
-        seen.add(text.lower())
+        seen.add(compact_whitespace(text).lower())
         metadata = dict(delta.metadata)
         if text != raw_text:
             metadata["lengthGoverned"] = True
@@ -111,28 +111,30 @@ def compile_active_rag_candidates_from_evidence(
 
 
 def _active_rag_candidate_allowed(text: str, *, selected_text: str, seen: set[str], max_chars: int = 24) -> bool:
-    if not text:
+    compact = compact_whitespace(text)
+    if not compact:
         return False
-    if text.lower() in seen:
+    if compact.lower() in seen:
         return False
-    if len(text) > _candidate_char_limit(max_chars):
+    char_limit = _candidate_char_limit(max_chars)
+    if char_limit > 0 and len(text) > char_limit:
         return False
-    if text.isascii() and any(char.isalpha() for char in text) and len(text) <= 12:
+    if compact.isascii() and any(char.isalpha() for char in compact) and len(compact) <= 12:
         return False
-    if not _contains_cjk(text):
+    if not _contains_cjk(compact):
         return False
-    if candidate_has_self_repetition(text):
+    if candidate_has_self_repetition(compact):
         return False
-    if candidate_has_keyword_echo(text):
+    if candidate_has_keyword_echo(compact):
         return False
     if selected_text:
-        if repeat_norm(text) == repeat_norm(selected_text):
+        if repeat_norm(compact) == repeat_norm(selected_text):
             return False
-        if len(text) >= 8 and text in selected_text:
+        if len(compact) >= 8 and compact in selected_text:
             return False
-    if any(marker in text for marker in ("下一步", "接下来", "根据上述", "可以进行", "可以继续")):
+    if any(marker in compact for marker in ("下一步", "接下来", "根据上述", "可以进行", "可以继续")):
         return False
-    if _looks_sensitive(text):
+    if _looks_sensitive(compact):
         return False
     return True
 
@@ -157,7 +159,10 @@ def _candidate_texts_from_evidence(evidence: ActiveRagEvidence) -> tuple[str, ..
 
 
 def _candidate_char_limit(max_chars: int) -> int:
-    return max(4, min(180, int(max_chars or 24)))
+    requested = int(max_chars or 0)
+    if requested <= 0:
+        return 0
+    return max(4, min(12000, requested))
 
 
 def _context_only_evidence(evidence: ActiveRagEvidence) -> bool:
@@ -174,10 +179,12 @@ def _contains_cjk(text: str) -> bool:
 
 
 def _fit_active_rag_candidate_text(text: str, *, max_chars: int) -> str:
-    value = compact_whitespace(text)
+    value = _preserve_paragraph_layout(text)
     if not value:
         return ""
     limit = _candidate_char_limit(max_chars)
+    if limit <= 0:
+        return value
     if len(value) <= limit:
         return value
     if limit > 48:
@@ -193,6 +200,8 @@ def _fit_active_rag_candidate_text(text: str, *, max_chars: int) -> str:
 
 def _fit_active_rag_paragraph_text(text: str, *, max_chars: int) -> str:
     limit = _candidate_char_limit(max_chars)
+    if limit <= 0:
+        return _preserve_paragraph_layout(text)
     value = compact_whitespace(text)
     if len(value) <= limit:
         return value
@@ -224,6 +233,21 @@ def _candidate_segments(text: str) -> list[str]:
 
 def re_split_candidate_segments(text: str) -> list[str]:
     return re.split(r"[，。；、,.!?！？;:\n]+", text)
+
+
+def _preserve_paragraph_layout(text: str) -> str:
+    value = str(text or "").replace("\\n", "\n").replace("\\r", "\r").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [compact_whitespace(line) for line in value.split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    result: list[str] = []
+    for line in lines:
+        if not line and result and not result[-1]:
+            continue
+        result.append(line)
+    return "\n".join(result).strip()
 
 
 def _display_lane(evidence: ActiveRagEvidence) -> str:

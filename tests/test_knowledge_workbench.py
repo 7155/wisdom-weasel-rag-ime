@@ -153,6 +153,8 @@ class KnowledgeWorkbenchTests(unittest.TestCase):
         self.assertIn("Option+1/2/3", payload["productContract"]["candidateSelection"])
         self.assertIn("普通数字键透传", payload["productContract"]["candidateSelection"])
         self.assertIn("[L:source_id]", answer[0]["content"])
+        self.assertEqual(payload["maxChars"], 0)
+        self.assertIn("不设字符上限", payload["outputContract"])
 
     def test_deepseek_provider_preserves_multi_paragraph_answer(self) -> None:
         captured = {}
@@ -193,6 +195,27 @@ class KnowledgeWorkbenchTests(unittest.TestCase):
         self.assertGreater(result.first_token_ms, 0)
         self.assertTrue(result.prompt_diagnostics["success"])
         self.assertEqual(result.prompt_diagnostics["localEvidenceCount"], 1)
+
+    def test_deepseek_provider_does_not_truncate_unlimited_multi_paragraph_answer(self) -> None:
+        first = "第一段完整正文。" * 520
+        second = "第二段仍然保留。" * 520
+        expected = f"{first}\n\n{second}"
+
+        def fake_urlopen(_request, timeout):
+            _ = timeout
+            return _Response([_sse_delta(first), _sse_delta(f"\n\n{second}"), "data: [DONE]\n"])
+
+        provider = DeepSeekKnowledgeProvider(
+            DeepSeekConfig(api_key="secret", model="deepseek-v4-flash", knowledge_max_tokens=4096),
+            urlopen=fake_urlopen,
+        )
+        result = provider.generate(
+            KnowledgeWorkbenchRequest(question="生成多段长文", mode="long_form", max_chars=0),
+            evidence=(),
+        )
+
+        self.assertGreater(len(expected), 8000)
+        self.assertEqual(result.answer, expected)
 
     def test_deepseek_provider_removes_citations_that_are_not_real_local_sources(self) -> None:
         def fake_urlopen(_request, timeout):

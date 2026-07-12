@@ -174,9 +174,9 @@ def build_active_rag_context_packet(
         },
         "outputContract": {
             "maxCandidates": max(1, int(max_candidates)),
-            "minCandidateChars": 40 if int(max_chars) >= 80 else 2,
-            "maxCandidateChars": max(4, int(max_chars)),
-            "outputFormat": "candidate_json",
+            "minCandidateChars": 40 if int(max_chars) == 0 or int(max_chars) >= 80 else 2,
+            "maxCandidateChars": max(0, int(max_chars)),
+            "outputFormat": "candidate_document" if int(max_chars) == 0 else "candidate_json",
             "intent": compact_whitespace(intent),
             "placement": compact_whitespace(placement),
             "allowedPlacements": ["replace_selection", "insert_after_selection", "append_at_cursor", "show_only"],
