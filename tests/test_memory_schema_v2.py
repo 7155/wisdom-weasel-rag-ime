@@ -7,6 +7,7 @@ from contextlib import closing
 from pathlib import Path
 
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output
 from rag_ime.memory_models import ImeQueryContext
 from rag_ime.memory_schema_v2 import ensure_memory_v2_schema, memory_v2_table_names
 from rag_ime.models import InputEvent
@@ -21,6 +22,27 @@ class MemorySchemaV2Tests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def _approve_phrase(self, event_token: str, text: str) -> None:
+        event_id = int(event_token.split(":", 1)[1])
+        plan = memory_book_plan_from_compile_output(
+            {
+                "phraseCandidates": [
+                    {
+                        "text": text,
+                        "sourceEventIds": [event_id],
+                        "tags": ["输入法短语"],
+                        "weight": 0.8,
+                    }
+                ]
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            apply_memory_book_plan(conn, plan)
 
     def test_initialize_creates_v2_tables_repeatably(self) -> None:
         self.core.initialize()
@@ -49,7 +71,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row, ("", "unknown"))
 
-    def test_record_event_populates_memory_items_and_phrase_layer(self) -> None:
+    def test_record_event_stays_hidden_until_dsv4_compiles_a_phrase(self) -> None:
         memory_id = self.core.record_event(
             InputEvent(
                 event_id=None,
@@ -60,17 +82,43 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 recent_context="我们在做 sequenceFork 的输入法实验",
                 project="wisdom-weasel-rag-ime",
                 app="com.apple.TextEdit",
-                tags=("phrase-memory", "sequenceFork"),
+                tags=("source-metadata", "sequenceFork"),
             )
         )
         self.assertTrue(memory_id.startswith("event:"))
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            raw = conn.execute(
+                "SELECT id, status, metadata_json FROM memory_items WHERE memory_id = ?",
+                ("raw:event:1",),
+            ).fetchone()
+            self.assertIsNotNone(raw)
+            self.assertEqual(raw["status"], "hidden")
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM memory_items_fts WHERE rowid = ?", (raw["id"],)).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM memory_item_vectors WHERE memory_item_id = ?", (raw["id"],)).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM memory_item_tags WHERE memory_item_id = ?", (raw["id"],)).fetchone()[0],
+                0,
+            )
+            self.assertIn("source_tags", raw["metadata_json"])
+            self.assertIsNone(
+                conn.execute("SELECT id FROM memory_items WHERE memory_id = ?", ("phrase:连续预测",)).fetchone()
+            )
+
+        self._approve_phrase(memory_id, "连续预测")
         payload = self.core.inspect_memory_v2(project="wisdom-weasel-rag-ime", limit=10)
         memory_ids = {item["memoryId"] for item in payload["items"]}
         self.assertIn("raw:event:1", memory_ids)
         self.assertIn("phrase:连续预测", memory_ids)
 
     def test_sensitive_event_does_not_become_direct_phrase_candidate(self) -> None:
-        self.core.record_event(
+        phrase_event = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_001,
@@ -87,7 +135,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
         self.assertEqual(sensitive["status"], "hidden")
 
     def test_retrieve_candidates_v2_prefers_phrase_memory_and_filters_raw_echo(self) -> None:
-        self.core.record_event(
+        phrase_event = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_002,
@@ -99,6 +147,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory", "sequenceFork"),
             )
         )
+        self._approve_phrase(phrase_event, "连续预测")
         self.core.record_event(
             InputEvent(
                 event_id=None,
@@ -124,7 +173,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
         self.assertNotIn("这是一个很长的历史输入句子，不应该直接复读出来", texts)
 
     def test_suggest_for_input_falls_back_to_v2_phrase_memory_when_legacy_is_empty(self) -> None:
-        self.core.record_event(
+        phrase_event = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_004,
@@ -136,6 +185,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
+        self._approve_phrase(phrase_event, "连续预测")
         suggestions = self.core.suggest_for_input(
             current_input="我想继续写连续 连续",
             recent_context="我想继续写连续",
@@ -146,7 +196,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
         self.assertEqual(suggestions[0].metadata.get("memory_id"), "phrase:连续预测")
 
     def test_suggest_for_input_prefers_v2_compiled_phrase_over_legacy_raw_history_echo(self) -> None:
-        self.core.record_event(
+        phrase_event = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_005,
@@ -158,7 +208,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("user-input",),
             )
         )
-        self.core.record_event(
+        phrase_event = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_006,
@@ -170,6 +220,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
+        self._approve_phrase(phrase_event, "设计一个候选展示方式")
 
         suggestions = self.core.suggest_for_input(
             current_input="候选展示",
@@ -182,7 +233,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
         self.assertFalse(any(item.surface_text.startswith("这是一个很长的历史输入句子") for item in suggestions))
 
     def test_suggest_for_input_respects_tombstone_for_legacy_phrase_memory(self) -> None:
-        self.core.record_event(
+        first_phrase_event = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_007,
@@ -194,7 +245,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
-        self.core.record_event(
+        second_phrase_event = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_008,
@@ -206,6 +257,8 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
+        self._approve_phrase(first_phrase_event, "连续预测")
+        self._approve_phrase(second_phrase_event, "连续补齐")
         self.core.add_memory_tombstone(
             target_type="normalized_text",
             target_value="连续预测",
@@ -235,7 +288,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
-        self.core.record_event(
+        second_id = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_010,
@@ -247,6 +300,8 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
+        self._approve_phrase(first_id, "连续预测")
+        self._approve_phrase(second_id, "连续补齐")
         self.core.record_memory_feedback(
             {
                 "event": "skipped",
@@ -291,7 +346,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
-        self.core.record_event(
+        second_id = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_012,
@@ -303,6 +358,8 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
+        self._approve_phrase(first_id, "连续预测")
+        self._approve_phrase(second_id, "连续补齐")
         self.core.record_memory_feedback(
             {
                 "event": "skipped",
@@ -338,7 +395,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
         self.assertNotIn("连续预测", texts)
 
     def test_retrieve_candidates_v2_never_surfaces_status_tombstoned_item(self) -> None:
-        self.core.record_event(
+        first_phrase_event = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_013,
@@ -350,7 +407,7 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
-        self.core.record_event(
+        second_phrase_event = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_000_014,
@@ -362,6 +419,8 @@ class MemorySchemaV2Tests(unittest.TestCase):
                 tags=("phrase-memory",),
             )
         )
+        self._approve_phrase(first_phrase_event, "连续预测")
+        self._approve_phrase(second_phrase_event, "连续补齐")
         self.core.add_memory_tombstone(
             target_type="memory_id",
             target_value="phrase:连续预测",

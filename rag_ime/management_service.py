@@ -343,8 +343,13 @@ class ManagementService:
                         row = conn.execute("SELECT id FROM memory_tags WHERE tag = ?", (tag,)).fetchone()
                         if row is None:
                             cursor = conn.execute(
-                                "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms) "
-                                "VALUES (?, ?, 'user', 0.9, ?, ?)",
+                                """
+                                INSERT INTO memory_tags(
+                                    tag, normalized_tag, tag_type, quality_score,
+                                    created_at_ms, updated_at_ms, description,
+                                    source, status, metadata_json
+                                ) VALUES (?, ?, 'concept', 0.9, ?, ?, '', 'user', 'active', '{}')
+                                """,
                                 (tag, normalize_text(tag), timestamp, timestamp),
                             )
                             tag_id = int(cursor.lastrowid)
@@ -357,6 +362,9 @@ class ManagementService:
                     changes = {"text": text, "tags": tags}
             elif kind in {"tag", "tags"}:
                 tag = " ".join(str(payload.get("title") or payload.get("tag") or "").split())
+                description = " ".join(
+                    str(payload.get("description") or payload.get("summary") or payload.get("note") or "").split()
+                )
                 tag_type = " ".join(str(payload.get("type") or "concept").split()) or "concept"
                 aliases = _string_list_value(payload.get("aliases"))
                 color = str(payload.get("color") or "blue").strip().lower()
@@ -381,8 +389,13 @@ class ManagementService:
                     if duplicate is not None:
                         raise ValueError("tag already exists; use merge instead of rename")
                     cursor = conn.execute(
-                        "UPDATE memory_tags SET tag = ?, normalized_tag = ?, tag_type = ?, updated_at_ms = ? WHERE CAST(id AS TEXT) = ?",
-                        (tag, normalize_text(tag), tag_type, timestamp, item_id),
+                        """
+                        UPDATE memory_tags
+                        SET tag = ?, normalized_tag = ?, tag_type = ?, description = ?,
+                            source = 'user', status = 'active', updated_at_ms = ?
+                        WHERE CAST(id AS TEXT) = ?
+                        """,
+                        (tag, normalize_text(tag), tag_type, description, timestamp, item_id),
                     )
                     if cursor.rowcount != 1:
                         raise ValueError(f"memory tag not found: {item_id}")
@@ -397,26 +410,45 @@ class ManagementService:
                         """,
                         (int(item_id), color, json.dumps(aliases, ensure_ascii=False), timestamp),
                     )
-                    changes = {"tag": tag, "type": tag_type, "aliases": aliases, "color": color}
+                    changes = {
+                        "tag": tag,
+                        "description": description,
+                        "type": tag_type,
+                        "aliases": aliases,
+                        "color": color,
+                    }
             elif kind in {"group", "groups"}:
                 title = " ".join(str(payload.get("title") or "").split())
                 note = " ".join(str(payload.get("note") or payload.get("summary") or "").split())
                 color = str(payload.get("color") or "blue").strip().lower()
                 if color not in {"blue", "teal", "green", "orange", "pink", "purple", "gray"}:
                     color = "blue"
-                conn.execute(
-                    """
-                    INSERT INTO memory_group_overrides(context_group_id, title, note, color_token, updated_at_ms)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(context_group_id) DO UPDATE SET
-                        title = excluded.title,
-                        note = excluded.note,
-                        color_token = excluded.color_token,
-                        updated_at_ms = excluded.updated_at_ms
-                    """,
-                    (item_id, title, note, color, timestamp),
-                )
-                changes = {"title": title, "note": note, "color": color}
+                if merge_into_id:
+                    changes = _merge_semantic_groups(
+                        conn,
+                        source_id=item_id,
+                        target_id=merge_into_id,
+                        changed_at_ms=timestamp,
+                    )
+                else:
+                    if conn.execute(
+                        "SELECT 1 FROM memory_semantic_groups WHERE group_id = ?",
+                        (item_id,),
+                    ).fetchone() is None:
+                        raise ValueError(f"semantic group not found: {item_id}")
+                    conn.execute(
+                        """
+                        INSERT INTO memory_group_overrides(context_group_id, title, note, color_token, updated_at_ms)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(context_group_id) DO UPDATE SET
+                            title = excluded.title,
+                            note = excluded.note,
+                            color_token = excluded.color_token,
+                            updated_at_ms = excluded.updated_at_ms
+                        """,
+                        (item_id, title, note, color, timestamp),
+                    )
+                    changes = {"title": title, "note": note, "color": color}
             elif kind in {"negative", "tombstone"}:
                 reason = " ".join(str(payload.get("reason") or "user_edit").split())
                 active = 1 if bool(payload.get("active", True)) else 0
@@ -655,6 +687,7 @@ class ManagementService:
                 SELECT mat.memory_atom_id, mt.tag
                 FROM memory_atom_tags mat
                 JOIN memory_tags mt ON CAST(mt.id AS TEXT) = CAST(mat.tag_id AS TEXT)
+                WHERE mt.status = 'active' AND mt.source IN ('dsv4', 'user')
                 """
             ).fetchall()
         tags_by_atom: dict[str, list[str]] = {}
@@ -684,18 +717,20 @@ class ManagementService:
             rows = conn.execute(
                 """
                 SELECT mt.id AS row_cursor, CAST(mt.id AS TEXT) AS id, mt.tag,
-                       mt.tag_type AS type, mt.quality_score, mt.updated_at_ms,
+                       mt.tag_type AS type, mt.description, mt.source, mt.status,
+                       mt.quality_score, mt.updated_at_ms,
                        COALESCE(mtp.color_token, 'blue') AS color_token,
                        COALESCE(mtp.aliases_json, '[]') AS aliases_json,
-                       COUNT(DISTINCT mit.memory_item_id) + COUNT(DISTINCT mat.memory_atom_id) AS item_count,
+                       (SELECT COUNT(*) FROM memory_item_tags mit WHERE mit.tag_id = mt.id)
+                         + (SELECT COUNT(*) FROM memory_atom_tags mat WHERE CAST(mat.tag_id AS TEXT) = CAST(mt.id AS TEXT))
+                         AS item_count,
                        (SELECT COUNT(*) FROM memory_tag_edges e WHERE e.src_tag_id = mt.id OR e.dst_tag_id = mt.id) AS edge_count
                 FROM memory_tags mt
                 LEFT JOIN memory_tag_profiles mtp ON mtp.tag_id = mt.id
-                LEFT JOIN memory_item_tags mit ON mit.tag_id = mt.id
-                LEFT JOIN memory_atom_tags mat ON CAST(mat.tag_id AS TEXT) = CAST(mt.id AS TEXT)
                 WHERE (? = 0 OR mt.id < ?)
+                  AND mt.status = 'active'
+                  AND mt.source IN ('dsv4', 'user')
                   AND (? = '' OR mt.tag LIKE ? OR mt.tag_type LIKE ?)
-                GROUP BY mt.id
                 ORDER BY mt.quality_score DESC, mt.id DESC LIMIT ?
                 """,
                 (cursor, cursor, request.query, like, like, limit + 1),
@@ -795,21 +830,24 @@ class ManagementService:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT MAX(ie.id) AS row_cursor, ie.context_group_id AS id,
-                       ie.context_group_level AS level, ie.project, ie.app,
-                       COUNT(*) AS event_count, MAX(ie.created_at_ms) AS updated_at_ms,
-                       COALESCE(mgo.title, '') AS title,
-                       COALESCE(mgo.note, '') AS note,
-                       COALESCE(mgo.color_token, 'blue') AS color_token
-                FROM input_events ie
-                LEFT JOIN memory_group_overrides mgo ON mgo.context_group_id = ie.context_group_id
-                WHERE ie.context_group_id != '' AND (? = '' OR ie.context_group_id LIKE ? OR ie.project LIKE ? OR ie.app LIKE ? OR mgo.title LIKE ?)
-                GROUP BY ie.context_group_id, ie.context_group_level, ie.project, ie.app,
-                         mgo.title, mgo.note, mgo.color_token
-                HAVING (? = 0 OR MAX(ie.id) < ?)
-                ORDER BY row_cursor DESC LIMIT ?
+                SELECT msg.rowid AS row_cursor, msg.group_id AS id,
+                       'semantic' AS level, msg.project, '' AS app,
+                       COUNT(msgm.member_id) AS event_count, msg.updated_at_ms,
+                       COALESCE(NULLIF(mgo.title, ''), msg.title) AS title,
+                       COALESCE(NULLIF(mgo.note, ''), msg.description) AS note,
+                       COALESCE(mgo.color_token, 'blue') AS color_token,
+                       msg.aliases_json, msg.tags_json, msg.confidence, msg.quality_score
+                FROM memory_semantic_groups msg
+                LEFT JOIN memory_semantic_group_members msgm ON msgm.group_id = msg.group_id
+                LEFT JOIN memory_group_overrides mgo ON mgo.context_group_id = msg.group_id
+                WHERE msg.status = 'active'
+                  AND (? = 0 OR msg.rowid < ?)
+                  AND (? = '' OR msg.group_id LIKE ? OR msg.title LIKE ? OR msg.description LIKE ? OR msg.project LIKE ?)
+                GROUP BY msg.group_id, msg.rowid, msg.project, msg.updated_at_ms,
+                         msg.title, msg.description, mgo.title, mgo.note, mgo.color_token
+                ORDER BY msg.quality_score DESC, row_cursor DESC LIMIT ?
                 """,
-                (request.query, query, query, query, query, cursor, cursor, limit + 1),
+                (cursor, cursor, request.query, query, query, query, query, limit + 1),
             ).fetchall()
         has_more = len(rows) > limit
         rows = rows[:limit]
@@ -817,16 +855,9 @@ class ManagementService:
         for row in rows:
             item = dict(row)
             item.pop("row_cursor", None)
-            level = str(item.get("level") or "app")
-            project = str(item.get("project") or "")
-            app = str(item.get("app") or "")
-            if level == "project" and project:
-                rule = f"同一项目：{project}"
-            elif app:
-                rule = f"同一应用：{app}"
-            else:
-                rule = f"分组级别：{level}"
-            item["ruleDescription"] = rule
+            item["aliases"] = _json_list(item.pop("aliases_json", "[]"))
+            item["tags"] = _json_list(item.pop("tags_json", "[]"))
+            item["ruleDescription"] = f"内容主题 · {int(item.get('event_count') or 0)} 条知识"
             item["latestAtMs"] = int(item.get("updated_at_ms") or 0)
             items.append(item)
         return items, str(rows[-1]["row_cursor"]) if has_more and rows else ""
@@ -1549,6 +1580,96 @@ def _merge_memory_tags(
         "mergedIntoTag": target_label,
         "aliases": merged_aliases,
         "color": resolved_color,
+    }
+
+
+def _merge_semantic_groups(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    target_id: str,
+    changed_at_ms: int,
+) -> dict[str, object]:
+    if source_id == target_id:
+        raise ValueError("semantic group cannot merge into itself")
+    rows = conn.execute(
+        "SELECT * FROM memory_semantic_groups WHERE group_id IN (?, ?)",
+        (source_id, target_id),
+    ).fetchall()
+    by_id = {str(row["group_id"]): row for row in rows}
+    source = by_id.get(source_id)
+    target = by_id.get(target_id)
+    if source is None or target is None:
+        raise ValueError("source or target semantic group was not found")
+
+    aliases = _string_list_value(
+        [
+            *_json_list(target["aliases_json"]),
+            str(source["title"] or ""),
+            *_json_list(source["aliases_json"]),
+        ]
+    )
+    tags = _string_list_value([*_json_list(target["tags_json"]), *_json_list(source["tags_json"])])
+    source_event_ids = _deduplicated_values(
+        [*_json_list(target["source_event_ids_json"]), *_json_list(source["source_event_ids_json"])]
+    )
+    description = str(target["description"] or source["description"] or "")
+    conn.execute(
+        """
+        UPDATE memory_semantic_groups
+        SET description = ?, aliases_json = ?, tags_json = ?, source_event_ids_json = ?,
+            confidence = MAX(confidence, ?), quality_score = MAX(quality_score, ?),
+            updated_at_ms = ?
+        WHERE group_id = ?
+        """,
+        (
+            description,
+            json.dumps(aliases, ensure_ascii=False),
+            json.dumps(tags, ensure_ascii=False),
+            json.dumps(source_event_ids, ensure_ascii=False),
+            float(source["confidence"] or 0.0),
+            float(source["quality_score"] or 0.0),
+            changed_at_ms,
+            target_id,
+        ),
+    )
+
+    for member in conn.execute(
+        """
+        SELECT member_type, member_id, weight
+        FROM memory_semantic_group_members
+        WHERE group_id = ?
+        """,
+        (source_id,),
+    ).fetchall():
+        conn.execute(
+            """
+            INSERT INTO memory_semantic_group_members(
+                group_id, member_type, member_id, weight, source, updated_at_ms
+            ) VALUES (?, ?, ?, ?, 'user_merge', ?)
+            ON CONFLICT(group_id, member_type, member_id) DO UPDATE SET
+                weight = MAX(memory_semantic_group_members.weight, excluded.weight),
+                source = 'user_merge',
+                updated_at_ms = excluded.updated_at_ms
+            """,
+            (target_id, str(member[0]), str(member[1]), float(member[2] or 0.8), changed_at_ms),
+        )
+    conn.execute("DELETE FROM memory_semantic_group_members WHERE group_id = ?", (source_id,))
+    conn.execute(
+        "UPDATE memory_semantic_groups SET status = 'merged', updated_at_ms = ? WHERE group_id = ?",
+        (changed_at_ms, source_id),
+    )
+    conn.execute("DELETE FROM memory_group_overrides WHERE context_group_id = ?", (source_id,))
+    return {
+        "merged": True,
+        "mergedIntoId": target_id,
+        "mergedIntoTitle": str(target["title"] or target_id),
+        "movedMemberCount": int(
+            conn.execute(
+                "SELECT COUNT(*) FROM memory_semantic_group_members WHERE group_id = ?",
+                (target_id,),
+            ).fetchone()[0]
+        ),
     }
 
 

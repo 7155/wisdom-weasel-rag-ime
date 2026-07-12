@@ -511,7 +511,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       parts.append("未读取上下文")
     }
     if let recentInputChars, recentInputChars > 0 {
-      parts.append(recentInputUsed == true ? "历史补充 \(recentInputChars) 字" : "历史未注入")
+      parts.append(recentInputUsed == true ? "历史补充 \(recentInputChars) 字" : "历史已记录，本次未引用")
     }
     if let evidenceCount, evidenceCount > 0 {
       parts.append("RAG \(evidenceCount) 条")

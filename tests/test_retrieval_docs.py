@@ -38,7 +38,7 @@ class RetrievalDocsTests(unittest.TestCase):
             conn.close()
 
     def test_retrieval_docs_include_memory_item_tags_aliases(self) -> None:
-        self.core.record_event(
+        event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=now_ms(),
@@ -50,8 +50,27 @@ class RetrievalDocsTests(unittest.TestCase):
                 tags=("phrase-memory", "RAG"),
             )
         )
+        event_id = int(event_ref.split(":", 1)[1])
 
         with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    {
+                        "phraseCandidates": [
+                            {
+                                "text": "连续预测",
+                                "tags": ["phrase-memory", "RAG"],
+                                "sourceEventIds": [event_id],
+                                "weight": 0.8,
+                            }
+                        ]
+                    },
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
             report = rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
             row = conn.execute(
                 "SELECT * FROM memory_retrieval_docs WHERE doc_type = 'phrase' AND source_id = 'phrase:连续预测'"
@@ -180,7 +199,27 @@ class RetrievalDocsTests(unittest.TestCase):
                 tags=("RAG", "输入法"),
             )
         )
-        return int(memory_id.split(":", 1)[1])
+        event_id = int(memory_id.split(":", 1)[1])
+        with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    {
+                        "phraseCandidates": [
+                            {
+                                "text": "RAG 输入法多路召回方案",
+                                "tags": ["RAG", "输入法"],
+                                "sourceEventIds": [event_id],
+                                "weight": 0.8,
+                            }
+                        ]
+                    },
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+        return event_id
 
 
 def sample_compile_output(event_id: int) -> dict[str, object]:

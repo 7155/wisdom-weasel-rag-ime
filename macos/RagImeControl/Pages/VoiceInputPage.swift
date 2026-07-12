@@ -111,6 +111,7 @@ struct VoiceInputPage: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("运行状态").font(.headline)
             voiceStatusRow("语音代理", ok: agentRunning, detail: agentRunning ? "后台运行中" : "尚未启动")
+            voiceStatusRow("中键监听", ok: voiceAgentStatus?.hotkeyInstalled == true, detail: hotkeyMonitorStatus)
             voiceStatusRow("辅助功能", ok: voiceAgentStatus?.accessibilityTrusted == true, detail: accessibilityStatus)
             voiceStatusRow("麦克风", ok: voiceAgentStatus?.microphoneAuthorization == "authorized", detail: microphoneStatus)
             voiceStatusRow("语音服务凭据", ok: credentialsReady, detail: tokenConfigured ? "已按服务隔离保存，启动时不再询问密码" : "尚未配置")
@@ -271,6 +272,15 @@ struct VoiceInputPage: View {
         guard agentRunning else { return "启动语音代理后检查" }
         guard let voiceAgentStatus else { return "等待语音代理回报" }
         return voiceAgentStatus.accessibilityTrusted ? "语音代理可以写入当前光标" : "语音代理需要在系统设置中授权"
+    }
+
+    private var hotkeyMonitorStatus: String {
+        guard agentRunning else { return "启动语音代理后检查" }
+        switch voiceAgentStatus?.hotkeyMode {
+        case "event_tap": return "已接管中键，按住说话、松开定稿"
+        case "passive_middle_mouse": return "已监听中键；授权后自动切换为完整写入"
+        default: return "监听未启动"
+        }
     }
 
     private var hotwordStatus: String {

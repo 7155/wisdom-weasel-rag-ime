@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     @Published var queryLabResult: QueryLabResponse?
     @Published var knowledgeMode: KnowledgeWorkbenchMode = .knowledgeAnswer
     @Published var knowledgeQuestion = ""
+    @Published var knowledgeOrganizationInstruction = ""
     @Published var knowledgeContext = ""
     @Published var knowledgeIncludeNotion = false
     @Published var knowledgeResponse: KnowledgeWorkbenchResponse?
@@ -372,13 +373,19 @@ final class AppModel: ObservableObject {
         do {
             let response: KnowledgeRouteResponse = try await api.get("api/knowledge/route-status")
             knowledgeRoute = response
+            if knowledgeOrganizationInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                knowledgeOrganizationInstruction = response.defaultOrganizationInstruction ?? ""
+            }
         } catch {
             knowledgeRoute = nil
         }
     }
 
     func runKnowledgeWorkbench() async {
-        let question = knowledgeQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let questionSource = knowledgeMode == .organizeDatabase
+            ? knowledgeOrganizationInstruction
+            : knowledgeQuestion
+        let question = questionSource.trimmingCharacters(in: .whitespacesAndNewlines)
         guard knowledgeMode == .organizeDatabase || !question.isEmpty else { return }
         knowledgeGeneration += 1
         let generation = knowledgeGeneration

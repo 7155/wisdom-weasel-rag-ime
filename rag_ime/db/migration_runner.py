@@ -238,6 +238,28 @@ def _migrate_context_group_columns(conn: sqlite3.Connection) -> None:
     )
 
 
+def _canonicalize_input_events(conn: sqlite3.Connection) -> None:
+    """Bring early input-event tables up to the legacy-core contract in place."""
+    if not _table_exists(conn, "input_events"):
+        return
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(input_events)")}
+    additions = (
+        ("recent_context", "TEXT NOT NULL DEFAULT ''"),
+        ("preedit", "TEXT NOT NULL DEFAULT ''"),
+        ("schema_id", "TEXT NOT NULL DEFAULT 'default'"),
+        ("app", "TEXT NOT NULL DEFAULT 'manual'"),
+        ("project", "TEXT NOT NULL DEFAULT ''"),
+        ("candidate_rank", "INTEGER"),
+        ("provider_name", "TEXT NOT NULL DEFAULT 'local'"),
+        ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("context_group_id", "TEXT NOT NULL DEFAULT ''"),
+        ("context_group_level", "TEXT NOT NULL DEFAULT 'app'"),
+    )
+    for name, declaration in additions:
+        if name not in columns:
+            conn.execute(f"ALTER TABLE input_events ADD COLUMN {name} {declaration}")
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -248,4 +270,5 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 _MIGRATION_HOOKS: dict[int, MigrationHook] = {
     1: _canonicalize_memory_feedback_events,
     3: _migrate_context_group_columns,
+    7: _canonicalize_input_events,
 }

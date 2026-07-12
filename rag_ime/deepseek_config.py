@@ -20,7 +20,7 @@ class DeepSeekConfig:
     reasoning_effort: str = "low"
     max_tokens: int = 96
     active_rag_max_tokens: int = 1024
-    memory_book_max_tokens: int = 2048
+    memory_book_max_tokens: int = 3072
     knowledge_max_tokens: int = 4096
     env_path: Path | None = None
 
@@ -78,7 +78,7 @@ def load_deepseek_config(env_path: str | Path | None = None, env: Mapping[str, s
         ),
         memory_book_max_tokens=_int_value(
             _first_value(values, "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS", "DEEPSEEK_MEMORY_BOOK_MAX_TOKENS"),
-            default=2048,
+            default=3072,
         ),
         knowledge_max_tokens=_int_value(
             _first_value(values, "RAG_IME_DEEPSEEK_KNOWLEDGE_MAX_TOKENS", "DEEPSEEK_KNOWLEDGE_MAX_TOKENS"),

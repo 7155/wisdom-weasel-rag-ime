@@ -18,7 +18,7 @@ from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trac
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.knowledge_workbench import KnowledgeGenerationResult, KnowledgeWorkbenchRequest
 from rag_ime.memory_ingest import normalize_text, upsert_memory_item
-from rag_ime.memory_book_compiler import memory_book_plan_from_compile_output, store_memory_book_plan
+from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output, store_memory_book_plan
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
 from rag_ime.predictor import OpenAICompatiblePredictionConfig
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
@@ -128,8 +128,23 @@ class DebugManagementApiTests(unittest.TestCase):
                 os.environ[key] = value
         self.tmp.cleanup()
 
+    def _compile_phrase(self, event_ref: str, text: str, *, tags: tuple[str, ...] = ()) -> None:
+        event_id = int(event_ref.split(":", 1)[1])
+        plan = memory_book_plan_from_compile_output(
+            {
+                "phraseCandidates": [
+                    {"text": text, "tags": list(tags), "sourceEventIds": [event_id], "weight": 0.8}
+                ]
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            apply_memory_book_plan(conn, plan)
+
     def test_candidate_explain_returns_ranking_reasons(self) -> None:
-        self.core.record_event(
+        event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_100_001,
@@ -395,7 +410,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(self.service.rime_lexicon_review({})["entryCount"], 1)
 
     def test_cleanup_diff_apply_and_rollback_are_audited(self) -> None:
-        self.core.record_event(
+        event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_100_020,
@@ -407,6 +422,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 tags=("memory",),
             )
         )
+        self._compile_phrase(event_ref, "离线整理稳定记忆", tags=("memory",))
         self.core.apply_action(
             MemoryAction(
                 action_id=None,
@@ -628,7 +644,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(allowed_payload["ok"])
 
     def test_rag_core_v3_preview_is_read_only(self) -> None:
-        self.core.record_event(
+        event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_100_030,
@@ -640,6 +656,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 tags=("RAG",),
             )
         )
+        self._compile_phrase(event_ref, "多路召回", tags=("RAG",))
         before = self._retrieval_doc_count()
 
         preview = self.service.rag_core_v3_query_preview({"query": "多路召回", "project": "wisdom-weasel-rag-ime"})
@@ -650,7 +667,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_rag_core_v3_preview_redacts_raw_text_by_default(self) -> None:
-        self.core.record_event(
+        event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_100_031,
@@ -662,6 +679,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 tags=("RAG",),
             )
         )
+        self._compile_phrase(event_ref, "隐私短语", tags=("RAG",))
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
 
@@ -675,7 +693,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("evidencePreviewHash", blob)
 
     def test_rag_core_v3_preview_reports_lane_breakdown(self) -> None:
-        self.core.record_event(
+        event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_100_032,
@@ -687,6 +705,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 tags=("RAG",),
             )
         )
+        self._compile_phrase(event_ref, "BM25 加向量召回用于输入法候选", tags=("RAG",))
 
         rebuild = self.service.rag_core_v3_rebuild_retrieval_docs({"project": "wisdom-weasel-rag-ime"})
         preview = self.service.rag_core_v3_query_preview({"query": "多路召回", "project": "wisdom-weasel-rag-ime"})
@@ -726,7 +745,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertNotIn("sha256:", blob)
 
     def test_deepseek_preview_dry_run_builds_single_candidate_rag_evidence(self) -> None:
-        self.core.record_event(
+        event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_100_034,
@@ -738,6 +757,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 tags=("RAG",),
             )
         )
+        self._compile_phrase(event_ref, "BM25 加向量召回用于输入法候选", tags=("RAG",))
 
         self.service.settings_update(
             {
@@ -944,6 +964,8 @@ class DebugManagementApiTests(unittest.TestCase):
         route = self.service.knowledge_workbench_route_status()
 
         self.assertIn("notion", route)
+        self.assertIn("defaultOrganizationInstruction", route)
+        self.assertIn("少量长期主题", route["defaultOrganizationInstruction"])
         self.assertIn("submitConfigured", route["notion"])
         self.assertIn("pollConfigured", route["notion"])
         self.assertFalse(route["notion"]["ready"])
@@ -1065,7 +1087,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertNotIn("text", payload["items"][0])
 
     def test_management_cleanup_diff_http_requires_confirmation(self) -> None:
-        self.core.record_event(
+        event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_100_050,
@@ -1077,6 +1099,7 @@ class DebugManagementApiTests(unittest.TestCase):
                 tags=("memory",),
             )
         )
+        self._compile_phrase(event_ref, "离线整理稳定记忆", tags=("memory",))
         self.core.apply_action(
             MemoryAction(
                 action_id=None,

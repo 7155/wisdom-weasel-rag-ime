@@ -2,25 +2,55 @@ import AppKit
 import ApplicationServices
 
 final class GlobalVoiceHotkey {
+    enum MonitoringMode: String {
+        case unavailable
+        case eventTap = "event_tap"
+        case passiveMiddleMouse = "passive_middle_mouse"
+    }
+
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
     var onCancel: (() -> Void)?
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var globalMouseMonitor: Any?
     private var pressed = false
     private var activeChoice: VoiceHotkeyChoice?
     private var suppressedReleaseChoice: VoiceHotkeyChoice?
     private var configuration = VoiceHotkeyConfigStore.read()
 
     private let middleMouseButton: Int64 = 2
+    private(set) var monitoringMode: MonitoringMode = .unavailable
 
     deinit { stop() }
 
     @discardableResult
     func start() -> Bool {
-        guard eventTap == nil, AXIsProcessTrusted() else { return false }
+        if eventTap != nil || globalMouseMonitor != nil { return true }
         configuration = VoiceHotkeyConfigStore.read()
+        if AXIsProcessTrusted(), startEventTap() {
+            monitoringMode = .eventTap
+            return true
+        }
+        guard configuration.choice == .middleMouse else {
+            monitoringMode = .unavailable
+            return false
+        }
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.otherMouseDown, .otherMouseUp]
+        ) { [weak self] event in
+            let isDown = event.type == .otherMouseDown
+            let buttonNumber = Int64(event.buttonNumber)
+            DispatchQueue.main.async { [weak self] in
+                self?.handlePassiveMiddleMouse(isDown: isDown, buttonNumber: buttonNumber)
+            }
+        }
+        monitoringMode = globalMouseMonitor == nil ? .unavailable : .passiveMiddleMouse
+        return globalMouseMonitor != nil
+    }
+
+    private func startEventTap() -> Bool {
         let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue)
             | (CGEventMask(1) << CGEventType.keyUp.rawValue)
             | (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
@@ -49,18 +79,31 @@ final class GlobalVoiceHotkey {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
         if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: false) }
+        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
         runLoopSource = nil
         eventTap = nil
+        globalMouseMonitor = nil
         pressed = false
         activeChoice = nil
         suppressedReleaseChoice = nil
+        monitoringMode = .unavailable
     }
 
     func reloadConfiguration() {
-        configuration = VoiceHotkeyConfigStore.read()
         if pressed {
             cancelActivePress()
             DispatchQueue.main.async { [weak self] in self?.onCancel?() }
+        }
+        stop()
+        _ = start()
+    }
+
+    private func handlePassiveMiddleMouse(isDown: Bool, buttonNumber: Int64) {
+        guard configuration.choice == .middleMouse, buttonNumber == middleMouseButton else { return }
+        if isDown, !pressed {
+            beginPress(.middleMouse)
+        } else if !isDown, pressed, activeChoice == .middleMouse {
+            finishPress()
         }
     }
 

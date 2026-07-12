@@ -58,7 +58,12 @@ class MemoryCleanupDiffTests(unittest.TestCase):
         plan = self.core.build_memory_cleanup_plan(project="wisdom-weasel-rag-ime")
         ops = [item["op"] for item in plan["diffs"]]
         self.assertIn("add_stable_memory", ops)
-        self.assertIn("tombstone", ops)
+        self.assertNotIn("tombstone", ops)
+        with self.core._connect() as conn:
+            raw_status = conn.execute(
+                "SELECT status FROM memory_items WHERE memory_id = 'raw:event:2'",
+            ).fetchone()[0]
+        self.assertEqual(raw_status, "hidden")
 
         applied = self.core.apply_memory_cleanup_plan(run_id=plan["runId"])
         statuses = {item["status"] for item in applied["diffs"]}

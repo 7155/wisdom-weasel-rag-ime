@@ -58,9 +58,9 @@ Streaming voice input
   -> hold the mouse middle button (wheel click) in any supported text field
   -> a separate native agent captures 16 kHz mono PCM in memory
   -> optional bounded hotwords come only from the user's explicit Control Center list
-  -> Doubao streaming ASR 2.0 returns cumulative partial transcripts
+  -> the configured streaming ASR adapter returns cumulative partial transcripts
   -> the volatile transcript is replaced in place at the current cursor
-  -> releasing the shortcut sends the final frame and commits Doubao's final text
+  -> releasing the shortcut sends the final frame and commits the provider's corrected final text
 ```
 
 ## Current Capabilities
@@ -70,11 +70,11 @@ Streaming voice input
 | Pinyin | Rime owns composition, sentence generation, fuzzy Pinyin, and native user-dictionary learning. A public-safe 10-case deployed-librime regression currently passes Top-1 at 10/10, including `yon/yong -> 用` and common phrases. The patched post-selection feedback route remains `backend_only` until a fresh foreground selection trace passes. |
 | Local completion | MLX, local Ollama, and loopback OpenAI-compatible runtimes share one validated registry/lifecycle boundary. The current MiniMind-derived checkpoint is fast enough and reliably returns three branches, but its semantic quality gate and retraining signoff have not passed. |
 | Hybrid RAG | Local SQLite retrieval combines lexical, tag, time-book, feedback, and precomputed vector signals. On Apple Silicon, a present MLX Q8 BGE artifact is preferred and warmed before sidecar health becomes ready; an explicit provider still wins and clean machines fall back to `local-hash`. |
-| Memory | Keyboard commits and final voice transcripts enter the same local event store. An explicit DeepSeek V4 organizer creates a validated Memory Book/Atom/phrase draft; apply and rollback remain separate local actions. Phrase suggestions need valid Pinyin and still enter the same reviewed Rime proposal queue instead of writing the live dictionary. |
+| Memory | Keyboard commits and final voice transcripts enter the same raw local ledger, but raw history is not searchable memory. The user can describe an organization goal in ordinary Chinese or run the project default; DeepSeek V4 then reconstructs fragments, cleans text, maintains coarse Groups/semantic Tags/tag edges, and creates a validated Memory Book/Atom/phrase draft. Apply and rollback remain separate local actions. |
 | Active RAG | Explicit selected-text workflow with live-context request resolution, separately counted grounding evidence, MLX BGE retrieval, and an optional remote compatible route. Recent input and phrase candidates cannot inflate the visible RAG count. It is never part of passive per-keystroke prediction. |
 | UI | The patched Squirrel native overlay now gives deterministic post-commit feedback: a compact companion pulse appears immediately, ready rows replace it in place, Tab acceptance switches directly to `继续联想`, and a terminal empty result reports `这次没有合适建议` instead of silently vanishing. Real rows are icon-first, use one compact shortcut area, remain actionable for at least 12 seconds, and honor Reduce Motion. A TextEdit foreground trace has passed pending -> candidates -> Tab -> next candidates. `RagImeControl` remains the one settings/diagnostics app and the voice agent is headless. |
 | Knowledge workbench | Explicit local-RAG + DeepSeek knowledge answers, long-form writing, recall, and review-only database organization. Optional Notion submission and polling are separate, observable gates. |
-| Voice input | The headless native agent, mode-`600` credential file with Keychain fallback, and a real Doubao PCM probe work. Hold the mouse middle button by default; right Option and `Option+Space` remain configurable fallbacks in the one Control Center. Status reports network state, first-partial/final latency, PCM/revision counts, discarded frames, and only the enabled hotword count without storing audio or transcript text. Foreground behavior stays `backend_only` until a user-authorized microphone run. |
+| Voice input | The headless native agent supports isolated provider adapters, mode-`600` credentials with Keychain fallback, and a real streaming PCM probe. Hold the mouse middle button by default; right Option and `Option+Space` remain configurable fallbacks. A project-owned book-companion pulse expands into the same compact material/rail language as the IME overlay. Mouse monitoring gives immediate feedback even before Accessibility is authorized; cursor insertion still fails closed until that permission and microphone access are granted. |
 | Observability | Redacted runtime status, trigger decisions, candidate score explanations, context provenance, and foreground traces. |
 
 ### Retrieval Algorithm Truth
@@ -140,9 +140,46 @@ contains lowercase, toneless Pinyin plus its reason and source-event evidence.
 If the first organizer response omits Pinyin, one bounded DeepSeek V4 repair
 request receives only the missing phrase texts; unresolved items remain local
 memory and cannot enter the dictionary queue. This bridge is implemented and
-covered by tests. The current live review queue still contains only two
-usage-derived proposals because no new post-repair draft with valid Pinyin has
-been explicitly generated and approved.
+covered by tests. Generated phrases remain proposals until the user selects and
+applies them; a successful model response never writes the live dictionary by
+itself.
+
+### Natural-language memory organization
+
+The organizer is intentionally not a configuration-language feature. In the
+Control Center, `整理数据库` accepts plain goals such as `把输入法内容合并成一个组，修正语音错字，标签不要太碎`.
+Leaving the field unchanged runs the repository's default policy:
+
+1. rebuild adjacent Rime commits and final voice transcripts into coherent
+   utterances, then remove probes, filler repetitions, fragments, and only
+   context-supported ASR/typing errors;
+2. reuse and merge existing semantic Groups, keeping a few stable themes rather
+   than splitting by app, date, status, or one-off action;
+3. keep facts, preferences, decisions, plans, questions, and conditions
+   distinct so an unfinished request cannot become a completed fact;
+4. create a small set of semantic Tags, aliases, and evidence-backed tag edges,
+   then attach Books, Atoms, Tags, and phrase proposals to their Groups;
+5. interpret acceptance, backspace, replacement, and correction feedback as
+   reviewable phrase add/boost/demote/suppress proposals.
+
+The data boundary is strict:
+
+```text
+typed commits + final voice transcripts + correction feedback
+  -> immutable raw event ledger (not in BM25/BGE)
+  -> local reconstruction, redaction, noise filtering, and bounded compaction
+  -> DeepSeek V4 semantic organizer
+  -> editable draft: Groups + Tags + tag edges + Books + Atoms + phrase proposals
+  -> schema/evidence validation
+  -> explicit review and apply
+  -> curated retrieval documents
+  -> SQLite FTS5 BM25 + MLX BGE + tag/time/feedback fusion
+```
+
+If generation is empty, truncated, or invalid, one compact retry is allowed and
+the raw cursor remains pending. There is no fallback that silently indexes
+uncleaned history. The final workbench status reports reconstructed source-event
+count and bundle hash so users can see that history was actually supplied.
 
 High-intelligence routes accept DeepSeek V4 model identifiers only. Legacy X1
 and X2 proxy hosts are rejected at configuration validation, and the remote
@@ -355,7 +392,12 @@ access is requested only after the user presses the voice shortcut. The Control
 Center reads the agent's local status file and does not inspect or request its
 own microphone/Accessibility permissions. Grant the two permissions to
 `RagImeVoice` explicitly when convenient, then hold the mouse wheel down to
-speak and release it to finalize. The shortcut can be changed to right Option
+speak and release it to finalize. Without Accessibility, the middle-button
+observer still opens the companion with a precise permission error instead of
+failing silently, but it cannot write text. Local development builds are ad-hoc
+signed, so rebuilding the app changes its designated code identity and macOS
+may require `RagImeVoice` to be disabled and enabled once again in Accessibility;
+a signed release must use a stable signing identity. The shortcut can be changed to right Option
 or `Option+Space` in the Control Center, or with
 `scripts/configure_voice_hotkey.sh right_option` or
 `scripts/configure_voice_hotkey.sh option_space`. See

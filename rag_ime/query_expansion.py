@@ -167,7 +167,14 @@ def _activated_tags(
 
 def _direct_tag_matches(conn: sqlite3.Connection, *, query_terms: tuple[str, ...]) -> list[tuple[int, str]]:
     matches: list[tuple[int, str]] = []
-    rows = conn.execute("SELECT id, tag, normalized_tag FROM memory_tags ORDER BY quality_score DESC, id ASC").fetchall()
+    rows = conn.execute(
+        """
+        SELECT id, tag, normalized_tag
+        FROM memory_tags
+        WHERE status = 'active' AND source IN ('dsv4', 'user')
+        ORDER BY quality_score DESC, id ASC
+        """
+    ).fetchall()
     for row in rows:
         tag = str(row["tag"] or "")
         normalized = str(row["normalized_tag"] or normalize_text(tag))
@@ -193,6 +200,8 @@ def _atom_tags(conn: sqlite3.Connection, *, atom_ids: list[str]) -> list[tuple[i
             FROM memory_atom_tags at
             JOIN memory_tags t ON CAST(t.id AS TEXT) = CAST(at.tag_id AS TEXT)
             WHERE at.memory_atom_id IN ({placeholders})
+              AND t.status = 'active'
+              AND t.source IN ('dsv4', 'user')
             ORDER BY at.weight DESC, t.quality_score DESC
             """,
             tuple(atom_ids),
@@ -244,6 +253,8 @@ def _neighbor_tags(conn: sqlite3.Connection, *, seed_tag_ids: list[int]) -> list
             FROM memory_tag_edges e
             JOIN memory_tags t ON t.id = e.dst_tag_id
             WHERE e.src_tag_id IN ({placeholders})
+              AND t.status = 'active'
+              AND t.source IN ('dsv4', 'user')
             GROUP BY t.id, t.tag
             ORDER BY weight DESC, t.quality_score DESC
             LIMIT 16
@@ -273,14 +284,28 @@ def _negative_feedback_tags(conn: sqlite3.Connection, *, project: str, app: str)
             continue
         tag_rows = conn.execute(
             """
-            SELECT t.tag
-            FROM memory_items mi
-            JOIN memory_item_tags mit ON mit.memory_item_id = mi.id
-            JOIN memory_tags t ON t.id = mit.tag_id
-            WHERE mi.memory_id = ?
-            ORDER BY mit.weight DESC
+            SELECT tag
+            FROM (
+                SELECT t.tag AS tag, mit.weight AS weight
+                FROM memory_items mi
+                JOIN memory_item_tags mit ON mit.memory_item_id = mi.id
+                JOIN memory_tags t ON t.id = mit.tag_id
+                WHERE mi.memory_id = ?
+                  AND t.status = 'active'
+                  AND t.source IN ('dsv4', 'user')
+
+                UNION ALL
+
+                SELECT t.tag AS tag, mat.weight AS weight
+                FROM memory_atom_tags mat
+                JOIN memory_tags t ON CAST(t.id AS TEXT) = CAST(mat.tag_id AS TEXT)
+                WHERE mat.memory_atom_id = ?
+                  AND t.status = 'active'
+                  AND t.source IN ('dsv4', 'user')
+            ) governed_tags
+            ORDER BY weight DESC
             """,
-            (memory_id,),
+            (memory_id, memory_id),
         ).fetchall()
         for tag_row in tag_rows:
             tag = str(tag_row["tag"] or "")

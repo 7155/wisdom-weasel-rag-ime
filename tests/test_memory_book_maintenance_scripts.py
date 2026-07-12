@@ -58,7 +58,7 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_REASONING_EFFORT"], "low")
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS"], "2048")
         self.assertTrue(env_vars["RAG_IME_DEEPSEEK_ENV"].endswith("Application Support/RagIme/deepseek.env"))
-        self.assertNotIn("RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY", env_vars)
+        self.assertEqual(env_vars["RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY"], "1")
 
     def test_install_discovers_existing_app_support_model_env(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -89,7 +89,7 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
             str(app_support / "deepseek.env"),
         )
 
-    def test_memory_book_runner_uses_non_overlapping_lock_and_apply_is_opt_in(self) -> None:
+    def test_memory_book_runner_uses_non_overlapping_lock_and_standalone_apply_is_explicit(self) -> None:
         root = Path(__file__).resolve().parents[1]
         source = (root / "scripts" / "run_memory_book_maintenance_once.sh").read_text(encoding="utf-8")
 

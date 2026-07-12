@@ -107,6 +107,9 @@ environment = {
     "RAG_IME_DEEPSEEK_THINKING": os.environ.get("RAG_IME_DEEPSEEK_THINKING", "disabled"),
     "RAG_IME_DEEPSEEK_REASONING_EFFORT": os.environ.get("RAG_IME_DEEPSEEK_REASONING_EFFORT", "low"),
     "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS": os.environ.get("RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS", "2048"),
+    # Periodic maintenance writes only schema-validated semantic memory. Rime
+    # dictionary mutations remain in the separate review/apply workflow.
+    "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": os.environ.get("RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY", "1"),
 }
 environment["RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER"] = "scheduled"
 for key in env_keys:

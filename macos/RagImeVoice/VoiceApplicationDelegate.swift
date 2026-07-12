@@ -39,8 +39,11 @@ final class VoiceApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startHotkeyWhenTrusted() {
+        coordinator?.startHotkeyMonitor()
         if AXIsProcessTrusted() {
-            coordinator?.startHotkeyMonitor()
+            if coordinator?.agentStatus().hotkeyMode != GlobalVoiceHotkey.MonitoringMode.eventTap.rawValue {
+                coordinator?.restartHotkeyMonitor()
+            }
             publishStatus()
             permissionRetryTimer?.invalidate()
             permissionRetryTimer = nil

@@ -305,6 +305,7 @@ class KnowledgeWorkbenchTests(unittest.TestCase):
             database_organizer=lambda _request: {
                 "ok": True,
                 "dryRun": True,
+                "source": {"eventCount": 12, "bundleHash": "sha256:bundle"},
                 "plan": {"runId": "memory_book_1", "summary": "生成 2 个记忆草案"},
                 "validation": {"ok": True, "counts": {"memoryBooks": 1, "memoryAtoms": 1}},
                 "storedRun": {"status": "draft"},
@@ -316,7 +317,38 @@ class KnowledgeWorkbenchTests(unittest.TestCase):
         self.assertEqual(ready["stage"], "review_ready")
         self.assertTrue(ready["result"]["dryRun"])
         self.assertEqual(ready["result"]["storedRun"]["status"], "draft")
+        self.assertTrue(ready["diagnostics"]["contextInjection"]["success"])
+        self.assertEqual(ready["diagnostics"]["contextInjection"]["sourceEventCount"], 12)
+        self.assertFalse(ready["diagnostics"]["contextInjection"]["rawHistoryWritten"])
         self.assertEqual(generator.calls, [])
+
+    def test_database_organizer_keeps_history_pending_when_model_returns_no_memory(self) -> None:
+        service = KnowledgeWorkbenchService(
+            evidence_retriever=lambda _request: (),
+            generator=_Generator(),
+            database_organizer=lambda request: {
+                "ok": False,
+                "dryRun": True,
+                "plan": {"summary": "", "metadata": {"instruction": request.question}},
+                "validation": {
+                    "ok": False,
+                    "counts": {},
+                    "errors": [{"code": "organizer_returned_no_governed_memory"}],
+                },
+            },
+        )
+
+        started = service.start(
+            KnowledgeWorkbenchRequest(
+                question="合并输入法分组，修正语音错字",
+                mode="organize_database",
+            )
+        )
+        failed = _wait_ready(service, started["sessionId"])
+
+        self.assertEqual(failed["status"], "error")
+        self.assertEqual(failed["stage"], "validation_failed")
+        self.assertIn("原始历史仍保持待整理", failed["answer"])
 
     def test_newer_generation_supersedes_older_session_for_same_client(self) -> None:
         generator = _Generator()

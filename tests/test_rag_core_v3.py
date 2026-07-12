@@ -74,7 +74,23 @@ class RagCoreV3Tests(unittest.TestCase):
                 tags=tags,
             )
         )
-        return int(memory_id.split(":", 1)[1])
+        event_id = int(memory_id.split(":", 1)[1])
+        if 2 <= len(text) <= 18:
+            with self.core._connect() as conn:
+                apply_memory_book_plan(
+                    conn,
+                    memory_book_plan_from_compile_output(
+                        {
+                            "phraseCandidates": [
+                                {"text": text, "tags": list(tags), "sourceEventIds": [event_id], "weight": 0.8}
+                            ]
+                        },
+                        project="wisdom-weasel-rag-ime",
+                        provider="deepseek",
+                        model="deepseek-v4-flash",
+                    ),
+                )
+        return event_id
 
 
 def _book_compile_output(event_id: int) -> dict[str, object]:

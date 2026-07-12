@@ -1492,11 +1492,14 @@ class DebugImeService:
                 project=request.project,
                 since_days=30,
                 limit=120,
-                after_event_id=0,
             )
         config = load_deepseek_config()
         organizer = DeepSeekMemoryOrganizer(config)
-        compile_output = organizer.compile_memory_book(bundle=bundle, project=request.project)
+        compile_output = organizer.compile_memory_book(
+            bundle=bundle,
+            project=request.project,
+            instruction=request.question,
+        )
         plan = memory_book_plan_from_compile_output(
             compile_output,
             project=request.project,

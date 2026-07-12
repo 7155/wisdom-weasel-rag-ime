@@ -1,6 +1,13 @@
 import AppKit
 import SwiftUI
 
+private enum VoiceOverlayMetrics {
+    static let compactWidth: CGFloat = 60
+    static let expandedWidth: CGFloat = 392
+    static let height: CGFloat = 64
+    static let cornerRadius: CGFloat = 8
+}
+
 @MainActor
 final class VoiceOverlayModel: ObservableObject {
     enum Phase: Equatable {
@@ -12,7 +19,7 @@ final class VoiceOverlayModel: ObservableObject {
 
     @Published var phase: Phase = .listening
     @Published var transcript = ""
-    @Published var message = "正在聆听"
+    @Published var message = "听着呢"
     @Published var level = 0.12
 
     var isCompact: Bool { transcript.isEmpty && phase == .listening }
@@ -101,7 +108,7 @@ struct VoiceOverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: model.isCompact ? 0 : 10) {
+        HStack(spacing: model.isCompact ? 0 : 9) {
             VoiceCompanionGlyph(phase: model.phase, level: model.level, reduceMotion: reduceMotion)
             if !model.isCompact {
                 VStack(alignment: .leading, spacing: 3) {
@@ -117,11 +124,25 @@ struct VoiceOverlayView: View {
                 Spacer(minLength: 4)
             }
         }
-        .padding(.horizontal, model.isCompact ? 7 : 10)
-        .frame(width: model.isCompact ? 68 : 420, height: 68)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.primary.opacity(0.12), lineWidth: 0.7))
+        .padding(.horizontal, model.isCompact ? 3 : 10)
+        .frame(
+            width: model.isCompact ? VoiceOverlayMetrics.compactWidth : VoiceOverlayMetrics.expandedWidth,
+            height: VoiceOverlayMetrics.height
+        )
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: VoiceOverlayMetrics.cornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: VoiceOverlayMetrics.cornerRadius)
+                .stroke(.primary.opacity(0.13), lineWidth: 0.7)
+        )
+        .overlay(alignment: .leading) {
+            if !model.isCompact {
+                Capsule()
+                    .fill(Color(red: 0.05, green: 0.67, blue: 0.62))
+                    .frame(width: 3, height: 46)
+                    .padding(.leading, 1)
+            }
+        }
         .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.86), value: model.isCompact)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(model.message)，\(model.transcript)")
@@ -147,30 +168,30 @@ final class VoiceOverlayController {
     func showListening(anchor: NSPoint?) {
         dismissWorkItem?.cancel()
         model.phase = .listening
-        model.message = "正在聆听"
+        model.message = "听着呢"
         model.transcript = ""
         anchorPoint = anchor
-        show(anchor: anchor, width: 68)
+        show(anchor: anchor, width: VoiceOverlayMetrics.compactWidth)
     }
 
     func updateTranscript(_ text: String) {
         model.transcript = String(text.suffix(120))
-        if !model.transcript.isEmpty { resize(width: 420) }
+        if !model.transcript.isEmpty { resize(width: VoiceOverlayMetrics.expandedWidth) }
     }
 
     func updateLevel(_ level: Double) { model.level = level }
 
     func showFinalizing() {
         model.phase = .finalizing
-        model.message = "正在校正"
-        resize(width: 420)
+        model.message = "我在校正"
+        resize(width: VoiceOverlayMetrics.expandedWidth)
     }
 
     func showDone(_ text: String) {
         model.phase = .done
-        model.message = "已定稿"
+        model.message = "已经整理好"
         model.transcript = String(text.suffix(120))
-        resize(width: 420)
+        resize(width: VoiceOverlayMetrics.expandedWidth)
         scheduleDismiss(after: 1.4)
     }
 
@@ -179,7 +200,7 @@ final class VoiceOverlayController {
         model.message = "语音输入未完成"
         model.transcript = message
         anchorPoint = anchor ?? anchorPoint
-        show(anchor: anchorPoint, width: 420)
+        show(anchor: anchorPoint, width: VoiceOverlayMetrics.expandedWidth)
         scheduleDismiss(after: 3.2)
     }
 
@@ -207,7 +228,7 @@ final class VoiceOverlayController {
 
     private func position(panel: NSPanel, anchor: NSPoint, width: CGFloat) {
         let screen = NSScreen.screens.first(where: { NSMouseInRect(anchor, $0.frame, false) }) ?? NSScreen.main
-        let target = NSSize(width: width, height: 68)
+        let target = NSSize(width: width, height: VoiceOverlayMetrics.height)
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let x = min(max(anchor.x - width / 2, frame.minX + 12), frame.maxX - width - 12)
         let y = min(max(anchor.y + 18, frame.minY + 12), frame.maxY - target.height - 12)
@@ -216,7 +237,12 @@ final class VoiceOverlayController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 68, height: 68),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: VoiceOverlayMetrics.compactWidth,
+                height: VoiceOverlayMetrics.height
+            ),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false

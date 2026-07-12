@@ -43,7 +43,9 @@ final class VoiceInputCoordinator {
 
     var statusText: String {
         if credentials?.isComplete != true { return "未配置语音服务" }
-        if !AXIsProcessTrusted() { return "等待辅助功能权限" }
+        if !AXIsProcessTrusted() {
+            return hotkeyInstalled ? "中键监听已就绪，写入需辅助功能权限" : "等待辅助功能权限"
+        }
         if !hotkeyInstalled { return "语音快捷键未启动" }
         switch state {
         case .idle: return VoiceAudioRecorder.permissionGranted ? "语音输入已就绪" : "首次使用时申请麦克风权限"
@@ -61,6 +63,7 @@ final class VoiceInputCoordinator {
             accessibilityTrusted: AXIsProcessTrusted(),
             microphoneAuthorization: VoiceAudioRecorder.authorizationName,
             credentialsConfigured: credentials?.isComplete == true,
+            hotkeyMode: hotkey.monitoringMode.rawValue,
             hotwordsEnabled: hotwordConfig.enabled,
             hotwordCount: hotwordConfig.effectiveWords.count,
             hotkeyInstalled: hotkeyInstalled,
@@ -82,6 +85,12 @@ final class VoiceInputCoordinator {
 
     func startHotkeyMonitor() {
         guard !hotkeyInstalled else { return }
+        hotkeyInstalled = hotkey.start()
+        onStateChanged?()
+    }
+
+    func restartHotkeyMonitor() {
+        hotkey.stop()
         hotkeyInstalled = hotkey.start()
         onStateChanged?()
     }

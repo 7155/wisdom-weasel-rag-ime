@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from .deepseek_completion import _direct_deepseek_urlopen, _iter_model_deltas
 from .deepseek_config import DeepSeekConfig
+from .deepseek_memory_organizer import DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION
 from .notion_knowledge import NotionAsyncKnowledgeClient, NotionKnowledgeError, NotionStaleResultError
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
 
@@ -260,6 +261,7 @@ class KnowledgeWorkbenchService:
             "deepseekReady": self.generator.ready,
             "notion": notion,
             "modes": sorted(KNOWLEDGE_MODES),
+            "defaultOrganizationInstruction": DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION,
             "streaming": {"knowledgeWorkbench": True, "activeRag": True},
         }
 
@@ -338,17 +340,35 @@ class KnowledgeWorkbenchService:
         plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
         counts = validation.get("counts") if isinstance(validation.get("counts"), dict) else {}
         summary = compact_whitespace(str(plan.get("summary") or ""))
-        answer = summary or "数据库整理草案已生成，等待人工审阅。"
-        if counts:
+        validation_ok = bool(validation.get("ok"))
+        validation_errors = validation.get("errors") if isinstance(validation.get("errors"), list) else []
+        first_error = validation_errors[0] if validation_errors and isinstance(validation_errors[0], dict) else {}
+        error_code = compact_whitespace(str(first_error.get("code") or ""))
+        source = result.get("source") if isinstance(result.get("source"), dict) else {}
+        source_event_count = int(source.get("eventCount") or 0)
+        if validation_ok:
+            answer = summary or "整理草案已生成，等待审阅。"
+        elif error_code == "organizer_returned_no_governed_memory":
+            answer = "模型这次没有整理出可靠内容，原始历史仍保持待整理。请重试，或把要求缩小为一个目标。"
+        else:
+            answer = "整理结果未通过安全校验，原始历史没有写入记忆库。"
+        if counts and validation_ok:
             answer += "\n\n" + "；".join(f"{key}: {value}" for key, value in counts.items())
         with self._lock:
             if session.cancelled:
                 return
-            session.status = "ready" if bool(validation.get("ok")) else "error"
-            session.stage = "review_ready" if bool(validation.get("ok")) else "validation_failed"
+            session.status = "ready" if validation_ok else "error"
+            session.stage = "review_ready" if validation_ok else "validation_failed"
             session.answer = answer
             session.result = result
-            session.error = "" if bool(validation.get("ok")) else "memory book plan failed validation"
+            session.diagnostics["contextInjection"] = {
+                "success": source_event_count > 0,
+                "sourceType": "governed_memory_bundle",
+                "sourceEventCount": source_event_count,
+                "bundleHash": compact_whitespace(str(source.get("bundleHash") or "")),
+                "rawHistoryWritten": False,
+            }
+            session.error = "" if validation_ok else answer
             session.updated_at_ms = now_ms()
 
     def _run_knowledge_query(self, session: KnowledgeWorkbenchSession) -> None:

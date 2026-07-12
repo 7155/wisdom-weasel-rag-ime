@@ -376,6 +376,12 @@ private struct MemoryTagTile: View {
                 Text(item["tag"]?.stringValue ?? "未命名标签").font(.headline).lineLimit(1)
                 Text("关联 \(Int(item["item_count"]?.numberValue ?? 0)) · 连接 \(Int(item["edge_count"]?.numberValue ?? 0))")
                     .font(.caption).foregroundStyle(.secondary)
+                if let description = item["description"]?.stringValue, !description.isEmpty {
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
                 if !aliases.isEmpty {
                     Text("别名：\(aliases.joined(separator: "、"))")
                         .font(.caption2)
@@ -420,7 +426,7 @@ private struct MemoryGroupTile: View {
             HStack {
                 Label(item["ruleDescription"]?.stringValue ?? item["level"]?.stringValue ?? "app", systemImage: "scope")
                 Spacer()
-                Text("\(Int(item["event_count"]?.numberValue ?? 0)) 条输入")
+                Text("\(Int(item["event_count"]?.numberValue ?? 0)) 条知识")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -500,7 +506,7 @@ private struct MemoryEditorSheet: View {
             initialDetail = item["summary"]?.stringValue ?? ""
         case "tags":
             initialTitle = item["tag"]?.stringValue ?? ""
-            initialDetail = ""
+            initialDetail = item["description"]?.stringValue ?? ""
         case "groups":
             initialTitle = item["title"]?.stringValue ?? ""
             initialDetail = item["note"]?.stringValue ?? ""
@@ -537,7 +543,7 @@ private struct MemoryEditorSheet: View {
                 LabeledContent("屏蔽项") { Text(title).textSelection(.enabled) }
             }
 
-            if ["books", "groups", "negative"].contains(kind) {
+            if ["books", "groups", "tags", "negative"].contains(kind) {
                 LabeledContent(detailLabel) {
                     TextEditor(text: $detail)
                         .font(.body)
@@ -573,7 +579,7 @@ private struct MemoryEditorSheet: View {
                 }
             }
 
-            if ["atoms", "tags"].contains(kind), !availableMergeCandidates.isEmpty {
+            if ["atoms", "tags", "groups"].contains(kind), !availableMergeCandidates.isEmpty {
                 LabeledContent("合并到") {
                     Picker("合并到", selection: $mergeIntoId) {
                         Text("不合并").tag("")
@@ -639,7 +645,11 @@ private struct MemoryEditorSheet: View {
         }
     }
     private var titleLabel: String { kind == "tags" ? "名称" : (kind == "phrases" || kind == "atoms" ? "内容" : "标题") }
-    private var detailLabel: String { kind == "groups" ? "备注" : (kind == "negative" ? "原因" : "摘要") }
+    private var detailLabel: String {
+        if kind == "groups" { return "说明" }
+        if kind == "tags" { return "标签含义" }
+        return kind == "negative" ? "原因" : "摘要"
+    }
     private var parsedTags: [String] {
         tagsText.replacingOccurrences(of: "，", with: ",").split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
@@ -654,6 +664,8 @@ private struct MemoryEditorSheet: View {
             let title: String
             if kind == "tags" {
                 title = candidate["tag"]?.stringValue ?? id
+            } else if kind == "groups" {
+                title = candidate["title"]?.stringValue ?? id
             } else {
                 title = candidate["text"]?.stringValue ?? candidate["textPreview"]?.stringValue ?? id
             }

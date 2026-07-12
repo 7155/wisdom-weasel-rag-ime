@@ -146,10 +146,23 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("CGEventType.flagsChanged", hotkey)
         self.assertIn("keyCode == 61", hotkey)
         self.assertIn("suppressedReleaseChoice", hotkey)
+        self.assertIn("NSEvent.addGlobalMonitorForEvents", hotkey)
+        self.assertIn("passiveMiddleMouse", hotkey)
         self.assertIn("hotkey.reloadConfiguration()", coordinator)
+        self.assertIn("restartHotkeyMonitor", coordinator)
         self.assertIn("ForEach(VoiceHotkeyChoice.allCases)", page)
         self.assertIn("按住鼠标滚轮中键", page)
+        self.assertIn("中键监听", page)
         self.assertIn("middle_mouse|right_option|option_space", configure)
+
+        delegate = (ROOT / "macos/RagImeVoice/VoiceApplicationDelegate.swift").read_text(encoding="utf-8")
+        self.assertLess(delegate.index("coordinator?.startHotkeyMonitor()"), delegate.index("if AXIsProcessTrusted()"))
+
+        overlay = (ROOT / "macos/RagImeVoice/VoiceOverlay.swift").read_text(encoding="utf-8")
+        self.assertIn("VoiceCompanionGlyph", overlay)
+        self.assertIn('model.message = "听着呢"', overlay)
+        self.assertIn("VoiceOverlayMetrics.compactWidth", overlay)
+        self.assertIn("Capsule()", overlay)
 
         with tempfile.TemporaryDirectory(prefix="rag-ime-voice-hotkey-") as directory:
             result = subprocess.run(

@@ -281,6 +281,8 @@ def _memory_item_tags(conn: sqlite3.Connection, *, memory_item_pk: int) -> list[
             FROM memory_item_tags it
             JOIN memory_tags t ON t.id = it.tag_id
             WHERE it.memory_item_id = ?
+              AND t.status = 'active'
+              AND t.source IN ('curated_import', 'dsv4', 'user')
             ORDER BY it.position ASC, it.weight DESC
             """,
             (memory_item_pk,),
@@ -298,6 +300,8 @@ def _memory_atom_tags(conn: sqlite3.Connection, *, atom_id: str) -> list[str]:
             FROM memory_atom_tags at
             JOIN memory_tags t ON CAST(t.id AS TEXT) = CAST(at.tag_id AS TEXT)
             WHERE at.memory_atom_id = ?
+              AND t.status = 'active'
+              AND t.source IN ('curated_import', 'dsv4', 'user')
             ORDER BY at.weight DESC, t.tag ASC
             """,
             (atom_id,),

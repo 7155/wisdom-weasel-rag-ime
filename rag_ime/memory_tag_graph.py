@@ -1,53 +1,58 @@
 from __future__ import annotations
 
 import sqlite3
-from collections import defaultdict
 
 from .text_utils import compact_whitespace, token_terms
 
 
 def recompute_tag_graph(conn: sqlite3.Connection, *, project: str = "") -> dict[str, object]:
     params: list[object] = []
-    where = ["mi.status != 'deleted'"]
+    where = [
+        "mi.status IN ('active', 'approved')",
+        "mt.status = 'active'",
+        "mt.source IN ('dsv4', 'user')",
+    ]
     if project:
         where.append("(mi.project = ? OR mi.project = '')")
         params.append(project)
-    rows = conn.execute(
+    memory_item_count = int(conn.execute(
         f"""
-        SELECT mi.id AS memory_item_id, mit.tag_id
+        SELECT COUNT(DISTINCT mi.id)
         FROM memory_items mi
         JOIN memory_item_tags mit ON mit.memory_item_id = mi.id
+        JOIN memory_tags mt ON mt.id = mit.tag_id
         WHERE {' AND '.join(where)}
         ORDER BY mi.id, mit.position
         """,
         params,
-    ).fetchall()
-    grouped: dict[int, list[int]] = defaultdict(list)
-    for row in rows:
-        grouped[int(row["memory_item_id"])].append(int(row["tag_id"]))
+    ).fetchone()[0])
+    # Co-occurrence edges were a legacy heuristic and made noisy automatic
+    # tags look authoritative. The graph is now exclusively maintained by
+    # reviewed DSV4 tagEdge operations (or explicit user edits).
+    deleted_heuristic_edges = int(
+        conn.execute("SELECT COUNT(*) FROM memory_tag_edges WHERE edge_type = 'cooccur'").fetchone()[0]
+    )
     conn.execute("DELETE FROM memory_tag_edges WHERE edge_type = 'cooccur'")
-    edge_count = 0
-    for tag_ids in grouped.values():
-        for src in tag_ids:
-            for dst in tag_ids:
-                if src == dst:
-                    continue
-                edge_count += 1
-                conn.execute(
-                    """
-                    INSERT INTO memory_tag_edges(src_tag_id, dst_tag_id, edge_type, weight, direction_bias, evidence_count, updated_at_ms, metadata_json)
-                    VALUES (?, ?, 'cooccur', 1.0, 0.0, 1, strftime('%s','now') * 1000, '{}')
-                    ON CONFLICT(src_tag_id, dst_tag_id, edge_type) DO UPDATE SET
-                        weight = memory_tag_edges.weight + 0.2,
-                        evidence_count = memory_tag_edges.evidence_count + 1,
-                        updated_at_ms = excluded.updated_at_ms
-                    """,
-                    (src, dst),
-                )
+    governed_edge_count = int(
+        conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM memory_tag_edges edge
+            JOIN memory_tags src ON src.id = edge.src_tag_id
+            JOIN memory_tags dst ON dst.id = edge.dst_tag_id
+            WHERE src.status = 'active' AND dst.status = 'active'
+              AND src.source IN ('dsv4', 'user')
+              AND dst.source IN ('dsv4', 'user')
+            """
+        ).fetchone()[0]
+    )
     return {
         "project": project,
-        "memoryItems": len(grouped),
-        "edgeWrites": edge_count,
+        "mode": "dsv4_governed",
+        "memoryItems": memory_item_count,
+        "edgeWrites": 0,
+        "deletedHeuristicEdges": deleted_heuristic_edges,
+        "governedEdges": governed_edge_count,
     }
 
 
@@ -71,8 +76,11 @@ def propagate_tag_energy(
             neighbors = conn.execute(
                 """
                 SELECT dst_tag_id, weight, direction_bias
-                FROM memory_tag_edges
-                WHERE src_tag_id = ?
+                FROM memory_tag_edges edge
+                JOIN memory_tags dst ON dst.id = edge.dst_tag_id
+                WHERE edge.src_tag_id = ?
+                  AND dst.status = 'active'
+                  AND dst.source IN ('dsv4', 'user')
                 ORDER BY weight DESC
                 LIMIT ?
                 """,
@@ -101,9 +109,14 @@ def score_memory_items_from_tag_energy(conn: sqlite3.Connection, energy: dict[in
     for tag_id, tag_energy in energy.items():
         rows = conn.execute(
             """
-            SELECT memory_item_id, weight
-            FROM memory_item_tags
-            WHERE tag_id = ?
+            SELECT item_tag.memory_item_id, item_tag.weight
+            FROM memory_item_tags item_tag
+            JOIN memory_items item ON item.id = item_tag.memory_item_id
+            JOIN memory_tags tag ON tag.id = item_tag.tag_id
+            WHERE item_tag.tag_id = ?
+              AND item.status IN ('active', 'approved')
+              AND tag.status = 'active'
+              AND tag.source IN ('dsv4', 'user')
             """,
             (tag_id,),
         ).fetchall()
@@ -121,7 +134,9 @@ def _seed_tag_ids(conn: sqlite3.Connection, query_text: str) -> dict[int, float]
             """
             SELECT id, quality_score
             FROM memory_tags
-            WHERE normalized_tag = ? OR tag = ?
+            WHERE (normalized_tag = ? OR tag = ?)
+              AND status = 'active'
+              AND source IN ('dsv4', 'user')
             ORDER BY quality_score DESC, id ASC
             LIMIT 1
             """,

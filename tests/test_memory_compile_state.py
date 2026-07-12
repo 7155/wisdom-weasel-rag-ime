@@ -127,14 +127,18 @@ class MemoryCompileStateTest(unittest.TestCase):
                 "根据上述",
             )
 
-    def test_validator_rejects_model_invented_group(self) -> None:
+    def test_validator_rejects_unplanned_semantic_group(self) -> None:
         event_id = int(self.core.record_event(self._event("合法 Group", "doc:a")).split(":", 1)[1])
         with self._connect() as conn:
             bundle = build_memory_book_source_bundle(conn, project="ime")
             plan = memory_book_plan_from_compile_output(
                 {
                     "phraseCandidates": [
-                        {"text": "完成前台闭环", "sourceEventIds": [event_id], "groupId": "doc:invented"}
+                        {
+                            "text": "完成前台闭环",
+                            "sourceEventIds": [event_id],
+                            "semanticGroupIds": ["group:invented"],
+                        }
                     ]
                 },
                 project="ime",
@@ -144,7 +148,7 @@ class MemoryCompileStateTest(unittest.TestCase):
             )
             report = inspect_memory_book_plan(plan)
             self.assertFalse(report["ok"])
-            self.assertTrue(any(item["code"] == "context_group_not_in_source_bundle" for item in report["errors"]))
+            self.assertTrue(any(item["code"] == "semantic_group_not_in_plan" for item in report["errors"]))
 
     def test_source_bundle_redacts_structured_personal_and_network_identifiers(self) -> None:
         sensitive_values = (
@@ -180,6 +184,119 @@ class MemoryCompileStateTest(unittest.TestCase):
         stats = bundle["redactionStats"]
         for key in ("secret", "path", "phone", "identity", "paymentCard", "ipAddress"):
             self.assertGreater(int(stats[key]), 0)
+
+    def test_source_bundle_reconstructs_rime_fragments_before_dsv4(self) -> None:
+        base = now_ms()
+        ids = [
+            int(
+                self.core.record_event(
+                    InputEvent(
+                        event_id=None,
+                        created_at_ms=base + offset,
+                        source="squirrel_rime_commit_burst",
+                        committed_text=committed,
+                        recent_context=context,
+                        privacy_disposition="allowed",
+                        app="com.openai.codex",
+                        project="ime",
+                        context_group_id="app:codex",
+                    )
+                ).split(":", 1)[1]
+            )
+            for offset, committed, context in (
+                (0, "BM", "目前BM"),
+                (1_000, "25", "目前BM25"),
+                (2_000, "这些", "目前BM25这些"),
+                (3_000, "真实", "目前BM25这些真实实现"),
+            )
+        ]
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=base + 2_500,
+                source="squirrel_rime_sidecar",
+                committed_text="这是模型生成的文字，不应重新学习",
+                recent_context="目前BM25这些",
+                privacy_disposition="allowed",
+                app="squirrel",
+                project="ime",
+            )
+        )
+
+        with self._connect() as conn:
+            bundle = build_memory_book_source_bundle(conn, project="ime", after_event_id=0)
+            events = bundle["recentEvents"]
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["text"], "目前BM25这些真实实现")
+            self.assertEqual(events[0]["sourceEventIds"], ids)
+            self.assertEqual(bundle["rawEventCount"], 5)
+            self.assertEqual(bundle["reconstruction"]["excludedGeneratedEventCount"], 1)
+
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": "BM25 已在输入法项目中真实实现。",
+                            "sourceEventIds": [ids[0], ids[-1]],
+                        }
+                    ]
+                },
+                project="ime",
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                source_bundle=bundle,
+            )
+            self.assertTrue(inspect_memory_book_plan(plan)["ok"])
+
+    def test_source_bundle_filters_runtime_probes_and_merges_duplicate_user_text(self) -> None:
+        base = now_ms()
+        for offset in (0, 2_000):
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=base + offset,
+                    source="manual_commit",
+                    committed_text="输入法记忆应由模型清洗后再索引",
+                    privacy_disposition="allowed",
+                    app="com.openai.codex",
+                    project="ime",
+                    context_group_id="app:codex",
+                )
+            )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=base + 3_000,
+                source="manual_commit",
+                committed_text="Type: ceshiwendang. Wait for LLM/model. Press a visible candidate and wait for the next prediction.",
+                privacy_disposition="allowed",
+                app="com.apple.TextEdit",
+                project="ime",
+                context_group_id="app:textedit",
+            )
+        )
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=base + 4_000,
+                source="manual_commit",
+                committed_text="我想设计一个候选展示方式",
+                privacy_disposition="allowed",
+                app="com.apple.TextEdit",
+                project="ime",
+                context_group_id="app:doctor-prediction",
+            )
+        )
+
+        with self._connect() as conn:
+            bundle = build_memory_book_source_bundle(conn, project="ime", after_event_id=0)
+
+        self.assertEqual(len(bundle["recentEvents"]), 1)
+        self.assertEqual(bundle["recentEvents"][0]["text"], "输入法记忆应由模型清洗后再索引")
+        self.assertEqual(len(bundle["recentEvents"][0]["sourceEventIds"]), 2)
+        self.assertEqual(bundle["reconstruction"]["mergedDuplicateEventCount"], 1)
+        self.assertEqual(bundle["reconstruction"]["droppedRuntimeProbeCount"], 1)
+        self.assertEqual(bundle["reconstruction"]["droppedDoctorEventCount"], 1)
 
     @staticmethod
     def _event(text: str, group_id: str) -> InputEvent:

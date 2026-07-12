@@ -53,6 +53,22 @@ _PATH_RE = re.compile(
     re.IGNORECASE,
 )
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_RIME_FRAGMENT_SOURCE = "squirrel_rime_commit_burst"
+_MODEL_GENERATED_EVENT_SOURCES = {
+    "api_core_optimizer",
+    "api_lexicon_optimizer",
+    "squirrel_rime_sidecar",
+    "vcp_memory_generator",
+}
+_NON_MEMORY_EVENT_SOURCES = {
+    "ime_demo_fixture",
+}
+_RUNTIME_PROBE_MARKERS = (
+    "ceshiwendang",
+    "press a visible candidate",
+    "wait for llm/model",
+    "wait for the next prediction",
+)
 
 
 def build_memory_book_source_bundle(
@@ -79,7 +95,7 @@ def build_memory_book_source_bundle(
         """,
         (cursor, cutoff_ms, project, project, max(1, int(limit))),
     ).fetchall()
-    events: list[dict[str, object]] = []
+    raw_events: list[dict[str, object]] = []
     redaction_stats = _empty_redaction_counts()
     for row in rows:
         text, text_counts = _sanitize_text(str(row["committed_text"] or ""), max_chars=220)
@@ -98,24 +114,43 @@ def build_memory_book_source_bundle(
         _merge_counts(redaction_stats, app_counts)
         _merge_counts(redaction_stats, project_counts)
         _merge_counts(redaction_stats, tag_counts)
-        events.append(
+        raw_events.append(
             {
                 "eventId": int(row["id"]),
+                "sourceEventIds": [int(row["id"])],
                 "createdAtMs": int(row["created_at_ms"] or 0),
                 "source": str(row["source"] or ""),
                 "text": text,
                 "recentContext": recent,
                 "app": app,
                 "project": event_project,
-                "tags": tags,
+                # Source tags are transport metadata, not semantic labels. The
+                # organizer may use them as weak hints but must never copy them
+                # into the long-term tag graph without semantic evidence.
+                "sourceMetadataTags": tags,
                 "contextGroupId": str(row["context_group_id"] or ""),
                 "contextGroupLevel": str(row["context_group_level"] or "app"),
             }
         )
-    feedback = _source_feedback(conn, event_ids=[int(item["eventId"]) for item in events])
+    events, reconstruction = _reconstruct_memory_source_events(raw_events)
+    raw_event_ids = [int(item["eventId"]) for item in raw_events]
+    feedback, feedback_redactions = _source_feedback(
+        conn,
+        event_ids=raw_event_ids,
+        project=project,
+    )
+    rime_rank_feedback, rime_feedback_redactions = _source_rime_rank_feedback(
+        conn,
+        project=project,
+        cutoff_ms=cutoff_ms,
+    )
+    _merge_counts(redaction_stats, feedback_redactions)
+    _merge_counts(redaction_stats, rime_feedback_redactions)
     existing_books = _existing_book_summaries(conn, project=project)
+    existing_groups = _existing_semantic_groups(conn, project=project)
+    existing_tags = _existing_semantic_tags(conn)
     legal_groups = sorted({str(item.get("contextGroupId") or "") for item in events if item.get("contextGroupId")})
-    max_event_id = max((int(item["eventId"]) for item in events), default=cursor)
+    max_event_id = max(raw_event_ids, default=cursor)
     pending_count = int(
         conn.execute(
             "SELECT COUNT(*) FROM input_events WHERE id > ? AND (? = '' OR project = ? OR project = '')",
@@ -129,8 +164,13 @@ def build_memory_book_source_bundle(
         "exportedAtMs": now_ms(),
         "redactionStats": redaction_stats,
         "recentEvents": events,
+        "rawEventCount": len(raw_events),
+        "reconstruction": reconstruction,
         "feedback": feedback,
+        "rimeRankFeedback": rime_rank_feedback,
         "existingMemoryBooks": existing_books,
+        "existingSemanticGroups": existing_groups,
+        "existingSemanticTags": existing_tags,
         "legalContextGroupIds": legal_groups,
         "cursor": {
             "fromEventId": cursor,
@@ -140,6 +180,175 @@ def build_memory_book_source_bundle(
     }
     payload["bundleHash"] = stable_text_hash(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return payload
+
+
+def _reconstruct_memory_source_events(
+    raw_events: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """Turn Rime's per-commit ledger into coherent model-facing utterances.
+
+    The source rows remain immutable. This projection only removes generated or
+    demo rows and collapses cumulative Rime context snapshots before DSV4 sees
+    them, so the model receives sentences instead of two-character commits.
+    """
+
+    result: list[dict[str, object]] = []
+    fragment_run: list[dict[str, object]] = []
+    excluded_counts: dict[str, int] = {}
+
+    def flush_fragments() -> None:
+        if not fragment_run:
+            return
+        result.append(_collapse_rime_fragment_run(fragment_run))
+        fragment_run.clear()
+
+    for event in raw_events:
+        source = compact_whitespace(str(event.get("source") or ""))
+        if source in _MODEL_GENERATED_EVENT_SOURCES or source in _NON_MEMORY_EVENT_SOURCES:
+            excluded_counts[source] = excluded_counts.get(source, 0) + 1
+            continue
+        if source == _RIME_FRAGMENT_SOURCE:
+            if fragment_run and not _rime_fragments_belong_together(fragment_run[-1], event):
+                flush_fragments()
+            fragment_run.append(event)
+            continue
+        flush_fragments()
+        result.append(dict(event))
+    flush_fragments()
+
+    filtered, filter_stats = _filter_reconstructed_memory_events(result)
+    return filtered, {
+        "schemaVersion": "rag-ime.memory-source-reconstruction.v1",
+        "rawEventCount": len(raw_events),
+        "modelEventCount": len(filtered),
+        "collapsedEventCount": max(0, len(raw_events) - sum(excluded_counts.values()) - len(result)),
+        "excludedGeneratedEventCount": sum(
+            count for source, count in excluded_counts.items() if source in _MODEL_GENERATED_EVENT_SOURCES
+        ),
+        "excludedNonMemoryEventCount": sum(
+            count for source, count in excluded_counts.items() if source in _NON_MEMORY_EVENT_SOURCES
+        ),
+        "excludedSources": excluded_counts,
+        **filter_stats,
+    }
+
+
+def _rime_fragments_belong_together(previous: dict[str, object], current: dict[str, object]) -> bool:
+    if compact_whitespace(str(previous.get("app") or "")) != compact_whitespace(str(current.get("app") or "")):
+        return False
+    if compact_whitespace(str(previous.get("contextGroupId") or "")) != compact_whitespace(
+        str(current.get("contextGroupId") or "")
+    ):
+        return False
+    previous_ms = _optional_int(previous.get("createdAtMs"))
+    current_ms = _optional_int(current.get("createdAtMs"))
+    gap_ms = max(0, current_ms - previous_ms)
+    if gap_ms > 5 * 60 * 1000:
+        return False
+    previous_context = compact_whitespace(str(previous.get("recentContext") or ""))
+    current_context = compact_whitespace(str(current.get("recentContext") or ""))
+    if not previous_context or not current_context:
+        return gap_ms <= 8_000
+    if previous_context in current_context or current_context in previous_context:
+        return True
+    overlap_limit = min(len(previous_context), len(current_context), 80)
+    for size in range(overlap_limit, 7, -1):
+        if previous_context[-size:] == current_context[:size]:
+            return True
+    return False
+
+
+def _collapse_rime_fragment_run(events: list[dict[str, object]]) -> dict[str, object]:
+    source_event_ids = [
+        event_id
+        for event in events
+        for event_id in _positive_ints(event.get("sourceEventIds") or [event.get("eventId")])
+    ]
+    source_event_ids = list(dict.fromkeys(source_event_ids))
+    committed = compact_whitespace("".join(str(item.get("text") or "") for item in events))
+    contexts = [compact_whitespace(str(item.get("recentContext") or "")) for item in events]
+    contexts = [item for item in contexts if item]
+    reconstructed = max([committed, *contexts], key=len, default=committed)
+    last = dict(events[-1])
+    tags = _unique_strings(
+        [tag for item in events for tag in _strings(item.get("sourceMetadataTags"))],
+        limit=24,
+    )
+    last.update(
+        {
+            "eventId": source_event_ids[-1] if source_event_ids else _optional_int(last.get("eventId")),
+            "sourceEventIds": source_event_ids,
+            "source": "reconstructed_user_input",
+            "text": reconstructed,
+            "recentContext": "",
+            "sourceMetadataTags": tags,
+            "reconstruction": {
+                "method": "rime-cumulative-context",
+                "rawEventCount": len(events),
+            },
+        }
+    )
+    return last
+
+
+def _filter_reconstructed_memory_events(
+    events: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    filtered: list[dict[str, object]] = []
+    dropped_doctor = 0
+    dropped_probe = 0
+    dropped_fragment = 0
+    for event in events:
+        text = compact_whitespace(str(event.get("text") or ""))
+        group_id = compact_whitespace(str(event.get("contextGroupId") or "")).lower()
+        if "doctor-" in group_id or group_id.startswith("doctor:"):
+            dropped_doctor += 1
+            continue
+        lowered = text.lower()
+        if sum(marker in lowered for marker in _RUNTIME_PROBE_MARKERS) >= 2:
+            dropped_probe += 1
+            continue
+        if len(text) < 4 or not _evidence_tokens(text):
+            dropped_fragment += 1
+            continue
+        filtered.append(dict(event))
+
+    merged: list[dict[str, object]] = []
+    duplicate_count = 0
+    for event in filtered:
+        normalized = normalize_text(str(event.get("text") or ""))
+        app = compact_whitespace(str(event.get("app") or ""))
+        group_id = compact_whitespace(str(event.get("contextGroupId") or ""))
+        match_index = next(
+            (
+                index
+                for index, previous in enumerate(merged)
+                if app == compact_whitespace(str(previous.get("app") or ""))
+                and group_id == compact_whitespace(str(previous.get("contextGroupId") or ""))
+                and normalize_text(str(previous.get("text") or "")) == normalized
+            ),
+            None,
+        )
+        if match_index is None:
+            merged.append(event)
+            continue
+        previous = dict(merged[match_index])
+        ids = _positive_ints(previous.get("sourceEventIds"))
+        ids.extend(item for item in _positive_ints(event.get("sourceEventIds")) if item not in ids)
+        previous["sourceEventIds"] = ids
+        previous["eventId"] = ids[-1] if ids else previous.get("eventId")
+        reconstruction = dict(previous.get("reconstruction") or {})
+        reconstruction["repeatCount"] = int(reconstruction.get("repeatCount") or 1) + 1
+        previous["reconstruction"] = reconstruction
+        merged[match_index] = previous
+        duplicate_count += 1
+
+    return merged, {
+        "droppedDoctorEventCount": dropped_doctor,
+        "droppedRuntimeProbeCount": dropped_probe,
+        "droppedLowSignalEventCount": dropped_fragment,
+        "mergedDuplicateEventCount": duplicate_count,
+    }
 
 
 def memory_compile_state(conn: sqlite3.Connection, *, project: str) -> dict[str, object]:
@@ -196,10 +405,91 @@ def memory_book_plan_from_compile_output(
     provider: str,
     model: str,
     source_bundle: dict[str, object] | None = None,
-    _allow_fallback: bool = True,
 ) -> dict[str, object]:
     diffs: list[dict[str, object]] = []
     warnings = list(compile_output.get("warnings") or [])
+    existing_group_ids = {
+        compact_whitespace(str(item.get("groupId") or "")).lower()
+        for item in _list_of_dicts((source_bundle or {}).get("existingSemanticGroups"))
+        if compact_whitespace(str(item.get("groupId") or ""))
+    }
+    accepted_group_ids: set[str] = set()
+    group_source_ids: dict[str, list[int]] = {}
+    new_group_count = 0
+    for item in _list_of_dicts(compile_output.get("semanticGroups")):
+        title = compact_whitespace(str(item.get("title") or item.get("name") or ""))
+        description = compact_whitespace(str(item.get("description") or item.get("summary") or ""))
+        if not title or not description:
+            continue
+        group_id = _semantic_group_id(item.get("groupId"), title=title)
+        if group_id in accepted_group_ids:
+            warnings.append(f"duplicate_semantic_group_ignored:{group_id}")
+            continue
+        if len(accepted_group_ids) >= 8:
+            warnings.append("semantic_group_total_limit_applied")
+            continue
+        if group_id not in existing_group_ids:
+            if new_group_count >= 3:
+                warnings.append("semantic_group_new_limit_applied")
+                continue
+            new_group_count += 1
+        accepted_group_ids.add(group_id)
+        source_ids = _positive_ints(item.get("sourceEventIds")) or _infer_source_event_ids(
+            [title, description, *_strings(item.get("aliases")), *_strings(item.get("tags"))],
+            source_bundle=source_bundle,
+        )
+        group_source_ids[group_id] = source_ids
+        diffs.append(
+            {
+                "op": "upsert_semantic_group",
+                "targetId": group_id,
+                "payload": {
+                    "groupId": group_id,
+                    "title": title,
+                    "description": description,
+                    "project": compact_whitespace(str(item.get("project") or project)),
+                    "aliases": _strings(item.get("aliases")),
+                    "tags": _strings(item.get("tags")),
+                    "sourceEventIds": source_ids,
+                    "confidence": _bounded_float(item.get("confidence"), default=0.7),
+                    "qualityScore": _bounded_float(item.get("qualityScore"), default=0.7),
+                    "status": compact_whitespace(str(item.get("status") or "active")) or "active",
+                },
+                "status": "pending",
+            }
+        )
+    for item in _list_of_dicts(compile_output.get("semanticTags")):
+        name = compact_whitespace(str(item.get("name") or item.get("tag") or ""))
+        description = compact_whitespace(str(item.get("description") or ""))
+        if not name or not description:
+            continue
+        source_ids = _positive_ints(item.get("sourceEventIds")) or _infer_source_event_ids(
+            [name, description, *_strings(item.get("aliases"))],
+            source_bundle=source_bundle,
+        )
+        target = f"semantic-tag:{stable_text_hash(normalize_text(name)).removeprefix('sha256:')[:20]}"
+        diffs.append(
+            {
+                "op": "upsert_semantic_tag",
+                "targetId": target,
+                "payload": {
+                    "name": name,
+                    "description": description,
+                    "type": compact_whitespace(str(item.get("type") or "concept")) or "concept",
+                    "aliases": _strings(item.get("aliases")),
+                    "semanticGroupIds": _resolved_semantic_group_ids(
+                        item,
+                        source_ids=source_ids,
+                        group_source_ids=group_source_ids,
+                    ),
+                    "sourceEventIds": source_ids,
+                    "confidence": _bounded_float(item.get("confidence"), default=0.7),
+                    "qualityScore": _bounded_float(item.get("qualityScore"), default=0.7),
+                    "status": compact_whitespace(str(item.get("status") or "active")) or "active",
+                },
+                "status": "pending",
+            }
+        )
     book_items = [
         *(("daily", item) for item in _list_of_dicts(compile_output.get("dailyBooks"))),
         *(("topic", item) for item in _list_of_dicts(compile_output.get("topicBooks"))),
@@ -231,13 +521,17 @@ def memory_book_plan_from_compile_output(
             "queryExpansions": _strings(item.get("queryExpansions")),
             "sourceEventIds": source_ids,
             "memoryAtomIds": _strings(item.get("memoryAtomIds")),
+            "semanticGroupIds": _resolved_semantic_group_ids(
+                item,
+                source_ids=source_ids,
+                group_source_ids=group_source_ids,
+            ),
             "project": compact_whitespace(str(item.get("project") or project)),
             "app": compact_whitespace(str(item.get("app") or "")),
             "confidence": _bounded_float(item.get("confidence"), default=0.5),
             "qualityScore": _bounded_float(item.get("qualityScore"), default=_bounded_float(item.get("confidence"), default=0.5)),
             "status": compact_whitespace(str(item.get("status") or "active")) or "active",
-            "contextGroupId": compact_whitespace(str(item.get("groupId") or item.get("contextGroupId") or ""))
-            or _group_for_source_ids(source_ids, source_bundle=source_bundle),
+            "contextGroupId": _group_for_source_ids(source_ids, source_bundle=source_bundle),
         }
         diffs.append({"op": "upsert_memory_book", "targetId": book_id, "payload": payload, "status": "pending"})
     for item in _list_of_dicts(compile_output.get("memoryAtoms")):
@@ -269,22 +563,26 @@ def memory_book_plan_from_compile_output(
             "queryExpansions": _strings(item.get("queryExpansions")),
             "sourceEventIds": source_ids,
             "sourceMemoryIds": _strings(item.get("sourceMemoryIds")),
+            "semanticGroupIds": _resolved_semantic_group_ids(
+                item,
+                source_ids=source_ids,
+                group_source_ids=group_source_ids,
+            ),
             "directCandidateAllowed": bool(item.get("directCandidateAllowed", False)),
             "project": compact_whitespace(str(item.get("project") or project)),
             "app": compact_whitespace(str(item.get("app") or "")),
             "confidence": _bounded_float(item.get("confidence"), default=0.5),
             "qualityScore": _bounded_float(item.get("qualityScore"), default=0.5),
             "status": compact_whitespace(str(item.get("status") or "active")) or "active",
-            "contextGroupId": compact_whitespace(str(item.get("groupId") or item.get("contextGroupId") or ""))
-            or _group_for_source_ids(source_ids, source_bundle=source_bundle),
+            "contextGroupId": _group_for_source_ids(source_ids, source_bundle=source_bundle),
         }
         diffs.append({"op": "upsert_memory_atom", "targetId": atom_id, "payload": payload, "status": "pending"})
     for item in _list_of_dicts(compile_output.get("tagEdges")):
-        src = compact_whitespace(str(item.get("src") or ""))
-        dst = compact_whitespace(str(item.get("dst") or ""))
+        src = compact_whitespace(str(item.get("src") or item.get("sourceTagName") or item.get("source") or ""))
+        dst = compact_whitespace(str(item.get("dst") or item.get("targetTagName") or item.get("target") or ""))
         if not src or not dst:
             continue
-        edge_type = compact_whitespace(str(item.get("edgeType") or "related")) or "related"
+        edge_type = compact_whitespace(str(item.get("edgeType") or item.get("relationType") or "related")) or "related"
         evidence_ids = _positive_ints(item.get("evidenceEventIds")) or _infer_source_event_ids(
             [src, dst, edge_type],
             source_bundle=source_bundle,
@@ -298,7 +596,10 @@ def memory_book_plan_from_compile_output(
                     "src": src,
                     "dst": dst,
                     "edgeType": edge_type,
-                    "weight": _bounded_float(item.get("weight"), default=0.5),
+                    "weight": _bounded_float(
+                        item.get("weight"),
+                        default=_bounded_float(item.get("confidence"), default=0.5),
+                    ),
                     "evidenceEventIds": evidence_ids,
                 },
                 "status": "pending",
@@ -326,11 +627,15 @@ def memory_book_plan_from_compile_output(
                     "reviewSource": review_source if pinyin else "memory",
                     "reviewReason": compact_whitespace(str(item.get("reason") or "")),
                     "tags": _strings(item.get("tags")),
+                    "semanticGroupIds": _resolved_semantic_group_ids(
+                        item,
+                        source_ids=source_ids,
+                        group_source_ids=group_source_ids,
+                    ),
                     "sourceEventIds": source_ids,
                     "weight": _bounded_float(item.get("weight"), default=0.6),
                     "project": compact_whitespace(str(item.get("project") or project)),
-                    "contextGroupId": compact_whitespace(str(item.get("groupId") or item.get("contextGroupId") or ""))
-                    or _group_for_source_ids(source_ids, source_bundle=source_bundle),
+                    "contextGroupId": _group_for_source_ids(source_ids, source_bundle=source_bundle),
                 },
                 "status": "pending",
             }
@@ -385,23 +690,11 @@ def memory_book_plan_from_compile_output(
         if daily_book:
             diffs.insert(0, daily_book)
             warnings.append("daily_book_synthesized_from_atoms")
-    if _allow_fallback and not diffs and source_bundle:
-        fallback_output = _fallback_compile_output_from_source_bundle(source_bundle, project=project)
-        if any(
-            fallback_output.get(key)
-            for key in ("dailyBooks", "topicBooks", "memoryAtoms", "tagEdges", "phraseCandidates")
-        ):
-            fallback_warnings = list(fallback_output.get("warnings") or [])
-            fallback_output["warnings"] = [*warnings, *fallback_warnings]
-            fallback_output["elapsedMs"] = int(compile_output.get("elapsedMs") or 0)
-            return memory_book_plan_from_compile_output(
-                fallback_output,
-                project=project,
-                provider=provider,
-                model=model,
-                source_bundle=source_bundle,
-                _allow_fallback=False,
-            )
+    if not diffs and source_bundle:
+        # Never turn raw history into semantic memory when the organizer did
+        # not produce a governed result. The cursor stays pending so a later
+        # DSV4 run can retry instead of indexing uncleaned ASR/user text.
+        warnings.append("organizer_returned_no_governed_memory")
     return {
         "schemaVersion": MEMORY_BOOK_RUN_SCHEMA_VERSION,
         "runId": run_id,
@@ -412,10 +705,19 @@ def memory_book_plan_from_compile_output(
             "compileSchemaVersion": str(compile_output.get("schemaVersion") or MEMORY_BOOK_COMPILE_SCHEMA_VERSION),
             "warnings": warnings,
             "elapsedMs": int(compile_output.get("elapsedMs") or 0),
+            "modelDiagnostics": dict(compile_output.get("modelDiagnostics") or {}),
+            "modelBundleStats": dict(compile_output.get("modelBundleStats") or {}),
+            "instruction": _sanitize_text(str(compile_output.get("instruction") or ""), max_chars=600)[0],
             "project": project,
             "bundleHash": str((source_bundle or {}).get("bundleHash") or ""),
             "sourceCursor": dict((source_bundle or {}).get("cursor") or {}),
             "legalContextGroupIds": list((source_bundle or {}).get("legalContextGroupIds") or []),
+            "legalSourceEventIds": _legal_source_event_ids(source_bundle),
+            "existingSemanticGroupIds": [
+                str(item.get("groupId") or "")
+                for item in _list_of_dicts((source_bundle or {}).get("existingSemanticGroups"))
+                if compact_whitespace(str(item.get("groupId") or ""))
+            ],
         },
         "diffs": diffs,
     }
@@ -432,6 +734,8 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
     errors: list[dict[str, object]] = []
     warnings: list[dict[str, object]] = []
     counts: dict[str, int] = {
+        "semanticGroups": 0,
+        "semanticTags": 0,
         "memoryBooks": 0,
         "memoryAtoms": 0,
         "tagEdges": 0,
@@ -440,23 +744,56 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
         "supersedes": 0,
     }
     diffs = _list_of_dicts(plan.get("diffs"))
+    metadata = dict(plan.get("metadata") or {})
+    legal_source_event_ids = set(_positive_ints(metadata.get("legalSourceEventIds")))
+    legal_groups = {
+        compact_whitespace(str(item))
+        for item in metadata.get("legalContextGroupIds", [])
+        if compact_whitespace(str(item))
+    }
+    planned_semantic_groups = {
+        compact_whitespace(str(item.get("payload", {}).get("groupId") or ""))
+        for item in diffs
+        if item.get("op") == "upsert_semantic_group" and isinstance(item.get("payload"), dict)
+    }
+    existing_semantic_groups = {
+        compact_whitespace(str(item))
+        for item in metadata.get("existingSemanticGroupIds", [])
+        if compact_whitespace(str(item))
+    }
     if compact_whitespace(str(plan.get("schemaVersion") or "")) != MEMORY_BOOK_RUN_SCHEMA_VERSION:
         errors.append(_issue(0, "", "schemaVersion", "unsupported_schema_version"))
+    source_cursor = dict(metadata.get("sourceCursor") or {})
+    if not diffs and int(source_cursor.get("pendingEventCount") or 0) > 0:
+        errors.append(_issue(0, "", "diffs", "organizer_returned_no_governed_memory"))
     for index, diff in enumerate(diffs, start=1):
         op = compact_whitespace(str(diff.get("op") or ""))
         payload = diff.get("payload") if isinstance(diff.get("payload"), dict) else {}
-        if op == "upsert_memory_book":
+        if op == "upsert_semantic_group":
+            counts["semanticGroups"] += 1
+            _validate_required_text(errors, index, op, payload, "groupId")
+            _validate_required_text(errors, index, op, payload, "title")
+            _validate_required_text(errors, index, op, payload, "description")
+            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
+            _validate_secret_free(errors, index, op, payload, ("title", "description", "aliases", "tags"))
+        elif op == "upsert_semantic_tag":
+            counts["semanticTags"] += 1
+            _validate_required_text(errors, index, op, payload, "name")
+            _validate_required_text(errors, index, op, payload, "description")
+            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
+            _validate_secret_free(errors, index, op, payload, ("name", "description", "aliases"))
+        elif op == "upsert_memory_book":
             counts["memoryBooks"] += 1
             _validate_required_text(errors, index, op, payload, "bookId")
             _validate_required_text(errors, index, op, payload, "bookKey")
-            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
+            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
             _validate_short_terms(errors, index, op, "surfaceHints", payload.get("surfaceHints"), max_len=16)
             _validate_secret_free(errors, index, op, payload, ("title", "summary", "tags", "surfaceHints", "queryExpansions"))
         elif op == "upsert_memory_atom":
             counts["memoryAtoms"] += 1
             _validate_required_text(errors, index, op, payload, "atomId")
             _validate_required_text(errors, index, op, payload, "canonicalText")
-            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
+            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
             _validate_short_terms(errors, index, op, "surfaceHints", payload.get("surfaceHints"), max_len=16)
             _validate_secret_free(
                 errors,
@@ -471,12 +808,19 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
             counts["tagEdges"] += 1
             _validate_required_text(errors, index, op, payload, "src")
             _validate_required_text(errors, index, op, payload, "dst")
-            _validate_source_ids(errors, index, op, payload.get("evidenceEventIds"))
+            _validate_source_ids(
+                errors,
+                index,
+                op,
+                payload.get("evidenceEventIds"),
+                field="evidenceEventIds",
+                legal_source_event_ids=legal_source_event_ids,
+            )
             _validate_secret_free(errors, index, op, payload, ("src", "dst"))
         elif op == "add_phrase_candidate":
             counts["phraseCandidates"] += 1
             _validate_required_text(errors, index, op, payload, "text")
-            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
+            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
             text = compact_whitespace(str(payload.get("text") or ""))
             if len(text) < 2 or len(text) > 18:
                 errors.append(_issue(index, op, "text", "phrase_text_length_out_of_range", value=len(text), preview=truncate_text(text, 80)))
@@ -488,25 +832,25 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
             counts["negativePhrases"] += 1
             _validate_required_text(errors, index, op, payload, "suppressionId")
             _validate_required_text(errors, index, op, payload, "text")
-            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
+            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
             _validate_secret_free(errors, index, op, payload, ("text", "reason"))
         elif op == "supersede_memory":
             counts["supersedes"] += 1
             _validate_required_text(errors, index, op, payload, "oldId")
             _validate_required_text(errors, index, op, payload, "newId")
-            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"))
+            _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
         else:
             errors.append(_issue(index, op, "op", "unsupported_op"))
         if op and _looks_like_long_history_sentence(payload):
             warnings.append(_issue(index, op, "payload", "looks_like_long_history_sentence"))
-        legal_groups = {
-            compact_whitespace(str(item))
-            for item in dict(plan.get("metadata") or {}).get("legalContextGroupIds", [])
-            if compact_whitespace(str(item))
-        }
         group_id = compact_whitespace(str(payload.get("contextGroupId") or ""))
         if group_id and legal_groups and group_id not in legal_groups and group_id != "global":
             errors.append(_issue(index, op, "contextGroupId", "context_group_not_in_source_bundle"))
+        for semantic_group_id in _strings(payload.get("semanticGroupIds")):
+            if semantic_group_id not in planned_semantic_groups | existing_semantic_groups:
+                errors.append(
+                    _issue(index, op, "semanticGroupIds", "semantic_group_not_in_plan", preview=semantic_group_id)
+                )
     return {
         "schemaVersion": MEMORY_BOOK_VALIDATE_SCHEMA_VERSION,
         "ok": not errors,
@@ -550,7 +894,8 @@ def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
                 (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
             )
         _sync_run_status(conn, run_id)
-        _advance_compile_state(conn, plan=plan)
+        if rows:
+            _advance_compile_state(conn, plan=plan)
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -668,7 +1013,8 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
                 (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
             )
         _sync_run_status(conn, run_id)
-        _advance_compile_state(conn, plan={"metadata": dict(current.get("metadata") or {})})
+        if rows:
+            _advance_compile_state(conn, plan={"metadata": dict(current.get("metadata") or {})})
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -767,6 +1113,10 @@ def _persist_memory_book_run(conn: sqlite3.Connection, plan: dict[str, object]) 
 def _apply_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) -> dict[str, object]:
     op = str(row["op"])
     payload = json.loads(row["payload_json"] or "{}")
+    if op == "upsert_semantic_group":
+        return _apply_semantic_group(conn, payload)
+    if op == "upsert_semantic_tag":
+        return _apply_semantic_tag(conn, payload)
     if op == "upsert_memory_book":
         return _apply_memory_book(conn, payload)
     if op == "upsert_memory_atom":
@@ -785,21 +1135,43 @@ def _apply_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) -> di
 def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) -> None:
     op = str(row["op"])
     rollback = json.loads(row["rollback_json"] or "{}")
-    if op == "upsert_memory_book":
+    if op == "upsert_semantic_group":
+        _restore_or_delete_row(conn, table="memory_semantic_groups", pk="group_id", rollback=rollback)
+    elif op == "upsert_semantic_tag":
+        _restore_or_delete_row(conn, table="memory_tags", pk="id", rollback=rollback)
+        _restore_or_delete_row(conn, table="memory_tag_profiles", pk="tag_id", rollback=dict(rollback.get("profile") or {}))
+        _restore_semantic_group_members(conn, rollback)
+    elif op == "upsert_memory_book":
         _restore_or_delete_row(conn, table="memory_books", pk="book_id", rollback=rollback)
+        _restore_semantic_group_members(conn, rollback)
     elif op == "upsert_memory_atom":
         _restore_or_delete_row(conn, table="memory_atoms", pk="id", rollback=rollback)
+        _restore_semantic_group_members(conn, rollback)
         for alias_id in rollback.get("createdAliasIds", []) or []:
             conn.execute("DELETE FROM memory_aliases WHERE id = ?", (str(alias_id),))
     elif op == "upsert_tag_edge":
         edge = rollback.get("edge")
         if isinstance(edge, dict):
-            conn.execute(
-                "DELETE FROM memory_tag_edges WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = ?",
-                (int(edge.get("srcTagId") or 0), int(edge.get("dstTagId") or 0), str(edge.get("edgeType") or "")),
-            )
+            previous = rollback.get("previous")
+            if isinstance(previous, dict) and previous:
+                columns = list(previous.keys())
+                conn.execute(
+                    f"INSERT OR REPLACE INTO memory_tag_edges({', '.join(columns)}) "
+                    f"VALUES ({', '.join('?' for _ in columns)})",
+                    [previous[column] for column in columns],
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM memory_tag_edges WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = ?",
+                    (
+                        int(edge.get("srcTagId") or 0),
+                        int(edge.get("dstTagId") or 0),
+                        str(edge.get("edgeType") or ""),
+                    ),
+                )
     elif op == "add_phrase_candidate":
         _restore_or_delete_row(conn, table="memory_items", pk="memory_id", rollback=rollback)
+        _restore_semantic_group_members(conn, rollback)
         conn.execute("DELETE FROM memory_items_fts WHERE rowid NOT IN (SELECT id FROM memory_items)")
         conn.execute("DELETE FROM memory_item_tags WHERE memory_item_id NOT IN (SELECT id FROM memory_items)")
     elif op == "add_negative_phrase":
@@ -809,6 +1181,132 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
         pk = "id" if table == "memory_atoms" else "memory_id"
         if table in {"memory_atoms", "memory_items"}:
             _restore_or_delete_row(conn, table=table, pk=pk, rollback=rollback)
+
+
+def _apply_semantic_group(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
+    group_id = str(payload["groupId"])
+    previous = _row_dict(
+        conn.execute("SELECT * FROM memory_semantic_groups WHERE group_id = ?", (group_id,)).fetchone()
+    )
+    timestamp = now_ms()
+    conn.execute(
+        """
+        INSERT INTO memory_semantic_groups(
+            group_id, title, description, project, aliases_json, tags_json,
+            source_event_ids_json, status, confidence, quality_score,
+            created_at_ms, updated_at_ms, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(group_id) DO UPDATE SET
+            title = excluded.title,
+            description = excluded.description,
+            project = excluded.project,
+            aliases_json = excluded.aliases_json,
+            tags_json = excluded.tags_json,
+            source_event_ids_json = excluded.source_event_ids_json,
+            status = excluded.status,
+            confidence = excluded.confidence,
+            quality_score = excluded.quality_score,
+            updated_at_ms = excluded.updated_at_ms,
+            metadata_json = excluded.metadata_json
+        """,
+        (
+            group_id,
+            str(payload.get("title") or ""),
+            str(payload.get("description") or ""),
+            str(payload.get("project") or ""),
+            json.dumps(_strings(payload.get("aliases")), ensure_ascii=False),
+            json.dumps(_strings(payload.get("tags")), ensure_ascii=False),
+            json.dumps(_positive_ints(payload.get("sourceEventIds")), ensure_ascii=False),
+            str(payload.get("status") or "active"),
+            _bounded_float(payload.get("confidence"), default=0.7),
+            _bounded_float(payload.get("qualityScore"), default=0.7),
+            int(previous.get("created_at_ms") or timestamp),
+            timestamp,
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        ),
+    )
+    return {"table": "memory_semantic_groups", "pk": "group_id", "pkValue": group_id, "previous": previous}
+
+
+def _apply_semantic_tag(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
+    name = str(payload["name"])
+    row = conn.execute("SELECT id FROM memory_tags WHERE tag = ?", (name,)).fetchone()
+    timestamp = now_ms()
+    if row is None:
+        cursor = conn.execute(
+            """
+            INSERT INTO memory_tags(
+                tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms,
+                description, source, status, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'dsv4', ?, ?)
+            """,
+            (
+                name,
+                normalize_text(name),
+                str(payload.get("type") or "concept"),
+                _bounded_float(payload.get("qualityScore"), default=0.7),
+                timestamp,
+                timestamp,
+                str(payload.get("description") or ""),
+                str(payload.get("status") or "active"),
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        tag_id = int(cursor.lastrowid)
+        previous: dict[str, object] = {}
+    else:
+        tag_id = int(row["id"])
+        previous = _row_dict(conn.execute("SELECT * FROM memory_tags WHERE id = ?", (tag_id,)).fetchone())
+        conn.execute(
+            """
+            UPDATE memory_tags
+            SET normalized_tag = ?, tag_type = ?, quality_score = ?, updated_at_ms = ?,
+                description = ?,
+                source = CASE WHEN source = 'user' THEN 'user' ELSE 'dsv4' END,
+                status = ?, metadata_json = ?
+            WHERE id = ?
+            """,
+            (
+                normalize_text(name),
+                str(payload.get("type") or "concept"),
+                _bounded_float(payload.get("qualityScore"), default=0.7),
+                timestamp,
+                str(payload.get("description") or ""),
+                str(payload.get("status") or "active"),
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                tag_id,
+            ),
+        )
+    profile_previous = _row_dict(
+        conn.execute("SELECT * FROM memory_tag_profiles WHERE tag_id = ?", (tag_id,)).fetchone()
+    )
+    conn.execute(
+        """
+        INSERT INTO memory_tag_profiles(tag_id, color_token, aliases_json, updated_at_ms)
+        VALUES (?, 'blue', ?, ?)
+        ON CONFLICT(tag_id) DO UPDATE SET aliases_json = excluded.aliases_json, updated_at_ms = excluded.updated_at_ms
+        """,
+        (tag_id, json.dumps(_strings(payload.get("aliases")), ensure_ascii=False), timestamp),
+    )
+    memberships = _sync_semantic_group_members(
+        conn,
+        member_type="tag",
+        member_id=str(tag_id),
+        group_ids=_strings(payload.get("semanticGroupIds")),
+    )
+    return {
+        "table": "memory_tags",
+        "pk": "id",
+        "pkValue": str(tag_id),
+        "previous": previous,
+        "profile": {
+            "table": "memory_tag_profiles",
+            "pk": "tag_id",
+            "pkValue": str(tag_id),
+            "previous": profile_previous,
+        },
+        **memberships,
+    }
 
 
 def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
@@ -847,7 +1345,13 @@ def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
         ),
     )
-    return {"table": "memory_books", "pk": "book_id", "pkValue": book_id, "previous": previous}
+    memberships = _sync_semantic_group_members(
+        conn,
+        member_type="book",
+        member_id=book_id,
+        group_ids=_strings(payload.get("semanticGroupIds")),
+    )
+    return {"table": "memory_books", "pk": "book_id", "pkValue": book_id, "previous": previous, **memberships}
 
 
 def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
@@ -901,7 +1405,7 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
                 created_alias_ids.append(alias_id)
     conn.execute("DELETE FROM memory_atom_tags WHERE memory_atom_id = ?", (atom_id,))
     for tag in _strings(payload.get("tags")):
-        tag_id = _ensure_tag(conn, tag)
+        tag_id = _ensure_tag(conn, tag, source="dsv4")
         conn.execute(
             """
             INSERT OR REPLACE INTO memory_atom_tags(memory_atom_id, tag_id, weight, source)
@@ -909,13 +1413,32 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             """,
             (atom_id, str(tag_id)),
         )
-    return {"table": "memory_atoms", "pk": "id", "pkValue": atom_id, "previous": previous, "createdAliasIds": created_alias_ids}
+    memberships = _sync_semantic_group_members(
+        conn,
+        member_type="atom",
+        member_id=atom_id,
+        group_ids=_strings(payload.get("semanticGroupIds")),
+    )
+    return {
+        "table": "memory_atoms",
+        "pk": "id",
+        "pkValue": atom_id,
+        "previous": previous,
+        "createdAliasIds": created_alias_ids,
+        **memberships,
+    }
 
 
 def _apply_tag_edge(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
-    src_id = _ensure_tag(conn, str(payload.get("src") or ""))
-    dst_id = _ensure_tag(conn, str(payload.get("dst") or ""))
+    src_id = _ensure_tag(conn, str(payload.get("src") or ""), source="dsv4")
+    dst_id = _ensure_tag(conn, str(payload.get("dst") or ""), source="dsv4")
     edge_type = str(payload.get("edgeType") or "related")
+    previous = _row_dict(
+        conn.execute(
+            "SELECT * FROM memory_tag_edges WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = ?",
+            (src_id, dst_id, edge_type),
+        ).fetchone()
+    )
     conn.execute(
         """
         INSERT INTO memory_tag_edges(src_tag_id, dst_tag_id, edge_type, weight, direction_bias, evidence_count, updated_at_ms, metadata_json)
@@ -936,7 +1459,10 @@ def _apply_tag_edge(conn: sqlite3.Connection, payload: dict[str, object]) -> dic
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
         ),
     )
-    return {"edge": {"srcTagId": src_id, "dstTagId": dst_id, "edgeType": edge_type}}
+    return {
+        "edge": {"srcTagId": src_id, "dstTagId": dst_id, "edgeType": edge_type},
+        "previous": previous,
+    }
 
 
 def _apply_phrase_candidate(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
@@ -964,8 +1490,15 @@ def _apply_phrase_candidate(conn: sqlite3.Connection, payload: dict[str, object]
         metadata={**payload, "direct_candidate_allowed": True, "source": "memory_book_compile"},
         tags=tuple(_strings(payload.get("tags"))),
         embedding_provider=None,
+        tag_source="dsv4",
     )
-    return {"table": "memory_items", "pk": "memory_id", "pkValue": memory_id, "previous": previous}
+    memberships = _sync_semantic_group_members(
+        conn,
+        member_type="phrase",
+        member_id=memory_id,
+        group_ids=_strings(payload.get("semanticGroupIds")),
+    )
+    return {"table": "memory_items", "pk": "memory_id", "pkValue": memory_id, "previous": previous, **memberships}
 
 
 def _apply_negative_phrase(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
@@ -1017,17 +1550,102 @@ def _restore_or_delete_row(conn: sqlite3.Connection, *, table: str, pk: str, rol
         conn.execute(f"DELETE FROM {table} WHERE {pk} = ?", (pk_value,))
 
 
-def _ensure_tag(conn: sqlite3.Connection, tag: str) -> int:
+def _sync_semantic_group_members(
+    conn: sqlite3.Connection,
+    *,
+    member_type: str,
+    member_id: str,
+    group_ids: list[str],
+) -> dict[str, object]:
+    previous = [
+        dict(row)
+        for row in conn.execute(
+            """
+            SELECT group_id, member_type, member_id, weight, source, updated_at_ms
+            FROM memory_semantic_group_members
+            WHERE member_type = ? AND member_id = ?
+            """,
+            (member_type, member_id),
+        ).fetchall()
+    ]
+    conn.execute(
+        "DELETE FROM memory_semantic_group_members WHERE member_type = ? AND member_id = ?",
+        (member_type, member_id),
+    )
+    timestamp = now_ms()
+    for group_id in dict.fromkeys(_strings(group_ids)):
+        if conn.execute(
+            "SELECT 1 FROM memory_semantic_groups WHERE group_id = ? AND status = 'active'",
+            (group_id,),
+        ).fetchone() is None:
+            continue
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO memory_semantic_group_members(
+                group_id, member_type, member_id, weight, source, updated_at_ms
+            ) VALUES (?, ?, ?, 0.8, 'dsv4', ?)
+            """,
+            (group_id, member_type, member_id, timestamp),
+        )
+    return {
+        "semanticMemberType": member_type,
+        "semanticMemberId": member_id,
+        "previousSemanticGroupMembers": previous,
+    }
+
+
+def _restore_semantic_group_members(conn: sqlite3.Connection, rollback: dict[str, object]) -> None:
+    member_type = compact_whitespace(str(rollback.get("semanticMemberType") or ""))
+    member_id = compact_whitespace(str(rollback.get("semanticMemberId") or ""))
+    if not member_type or not member_id:
+        return
+    conn.execute(
+        "DELETE FROM memory_semantic_group_members WHERE member_type = ? AND member_id = ?",
+        (member_type, member_id),
+    )
+    for row in _list_of_dicts(rollback.get("previousSemanticGroupMembers")):
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO memory_semantic_group_members(
+                group_id, member_type, member_id, weight, source, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(row.get("group_id") or ""),
+                str(row.get("member_type") or member_type),
+                str(row.get("member_id") or member_id),
+                _bounded_float(row.get("weight"), default=0.8),
+                str(row.get("source") or "dsv4"),
+                int(row.get("updated_at_ms") or now_ms()),
+            ),
+        )
+
+
+def _ensure_tag(conn: sqlite3.Connection, tag: str, *, source: str = "dsv4") -> int:
     value = compact_whitespace(tag)
     row = conn.execute("SELECT id FROM memory_tags WHERE tag = ?", (value,)).fetchone()
     if row is not None:
-        return int(row["id"])
+        tag_id = int(row["id"])
+        if source == "dsv4":
+            conn.execute(
+                """
+                UPDATE memory_tags
+                SET source = CASE WHEN source = 'user' THEN 'user' ELSE 'dsv4' END,
+                    status = 'active', updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (now_ms(), tag_id),
+            )
+        return tag_id
     cur = conn.execute(
         """
-        INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms)
-        VALUES (?, ?, 'concept', 0.6, ?, ?)
+        INSERT INTO memory_tags(
+            tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms,
+            description, source, status, metadata_json
+        )
+        VALUES (?, ?, 'concept', 0.6, ?, ?, '', ?, 'active', '{}')
         """,
-        (value, normalize_text(value), now_ms(), now_ms()),
+        (value, normalize_text(value), now_ms(), now_ms(), source),
     )
     return int(cur.lastrowid)
 
@@ -1065,6 +1683,7 @@ def _synthesize_daily_book_diff_from_diffs(
     tags: list[str] = []
     hints: list[str] = []
     atom_ids: list[str] = []
+    semantic_group_ids: list[str] = []
     for payload in atom_payloads:
         if not isinstance(payload, dict):
             continue
@@ -1073,6 +1692,7 @@ def _synthesize_daily_book_diff_from_diffs(
                 source_ids.append(event_id)
         tags.extend(_strings(payload.get("tags")))
         hints.extend(_strings(payload.get("surfaceHints")))
+        semantic_group_ids.extend(_strings(payload.get("semanticGroupIds")))
         atom_id = compact_whitespace(str(payload.get("atomId") or ""))
         if atom_id and atom_id not in atom_ids:
             atom_ids.append(atom_id)
@@ -1105,6 +1725,7 @@ def _synthesize_daily_book_diff_from_diffs(
         "queryExpansions": [],
         "sourceEventIds": source_ids[:10],
         "memoryAtomIds": atom_ids,
+        "semanticGroupIds": _unique_strings(semantic_group_ids, limit=4),
         "project": project,
         "app": "",
         "confidence": 0.6,
@@ -1112,148 +1733,6 @@ def _synthesize_daily_book_diff_from_diffs(
         "status": "active",
     }
     return {"op": "upsert_memory_book", "targetId": book_id, "payload": payload, "status": "pending"}
-
-
-def _fallback_compile_output_from_source_bundle(
-    source_bundle: dict[str, object],
-    *,
-    project: str,
-) -> dict[str, object]:
-    events = [
-        event
-        for event in _source_event_records(source_bundle)
-        if _fallback_event_is_safe(str(event.get("text") or ""))
-    ]
-    atoms: dict[str, dict[str, object]] = {}
-    phrases: dict[str, dict[str, object]] = {}
-
-    for event in events[:80]:
-        event_id = int(event["eventId"])
-        canonical = compact_whitespace(str(event.get("committedText") or ""))
-        if len(canonical) < 2:
-            continue
-        tags = [
-            tag
-            for tag in _unique_strings(_strings(event.get("tags")), limit=8)
-            if _fallback_event_is_safe(tag) and not _contains_sensitive_text(tag)
-        ]
-        phrase_terms = _fallback_short_phrases(canonical, tags=tags)
-        digest = stable_text_hash(normalize_text(canonical)).removeprefix("sha256:")
-        atom_id = f"atom:source-event:{digest[:16]}"
-        if atom_id not in atoms and len(atoms) >= 8:
-            continue
-        atom = atoms.setdefault(
-            atom_id,
-            {
-                "atomId": atom_id,
-                "kind": "source_event_archive",
-                "canonicalText": canonical,
-                "summary": "",
-                "tags": tags,
-                "aliases": [],
-                "surfaceHints": phrase_terms[:3],
-                "queryExpansions": [],
-                "sourceEventIds": [],
-                "directCandidateAllowed": False,
-                "project": project,
-                "groupId": compact_whitespace(str(event.get("contextGroupId") or "")),
-                "confidence": 0.55,
-                "qualityScore": 0.55,
-            },
-        )
-        atom_source_ids = _positive_ints(atom.get("sourceEventIds"))
-        if event_id not in atom_source_ids:
-            atom_source_ids.append(event_id)
-            atom["sourceEventIds"] = atom_source_ids[:10]
-        atom["tags"] = _unique_strings([*_strings(atom.get("tags")), *tags], limit=8)
-        atom["surfaceHints"] = _unique_strings(
-            [*_strings(atom.get("surfaceHints")), *phrase_terms],
-            limit=3,
-        )
-        for term in phrase_terms:
-            phrase_key = normalize_text(term)
-            if phrase_key not in phrases and len(phrases) >= 12:
-                continue
-            phrase = phrases.setdefault(
-                phrase_key,
-                {
-                    "text": term,
-                    "tags": tags[:3],
-                    "sourceEventIds": [],
-                    "weight": 0.55,
-                    "project": project,
-                    "groupId": compact_whitespace(str(event.get("contextGroupId") or "")),
-                },
-            )
-            phrase_source_ids = _positive_ints(phrase.get("sourceEventIds"))
-            if event_id not in phrase_source_ids:
-                phrase_source_ids.append(event_id)
-                phrase["sourceEventIds"] = phrase_source_ids[:10]
-
-    daily_books: list[dict[str, object]] = []
-    if atoms:
-        source_ids: list[int] = []
-        for atom in atoms.values():
-            for event_id in _positive_ints(atom.get("sourceEventIds")):
-                if event_id not in source_ids:
-                    source_ids.append(event_id)
-        tags = _unique_strings(
-            [tag for atom in atoms.values() for tag in _strings(atom.get("tags"))],
-            limit=8,
-        )
-        book_key = _default_book_key(source_bundle)
-        hints = [str(item.get("text") or "") for item in phrases.values()]
-        daily_books.append(
-            {
-                "bookKey": book_key,
-                "title": f"本地记忆归档 {book_key}",
-                "summary": (
-                    f"按来源事件归档 {len(source_ids)} 条记录，"
-                    f"保留 {len(atoms)} 个去重记忆项和 {len(phrases)} 个短语候选。"
-                ),
-                "tags": tags,
-                "surfaceHints": _unique_strings(hints, limit=3),
-                "queryExpansions": [],
-                "sourceEventIds": source_ids[:10],
-                "memoryAtomIds": list(atoms.keys()),
-                "project": project,
-                "confidence": 0.62,
-                "qualityScore": 0.62,
-            }
-        )
-    return {
-        "schemaVersion": MEMORY_BOOK_COMPILE_SCHEMA_VERSION,
-        "dailyBooks": daily_books,
-        "memoryAtoms": list(atoms.values())[:8],
-        "tagEdges": [],
-        "phraseCandidates": list(phrases.values())[:12],
-        "warnings": ["local_source_bundle_fallback_used"],
-    }
-
-
-def _fallback_event_is_safe(text: str) -> bool:
-    if not text:
-        return False
-    return "[REDACTED_" not in text and not _contains_sensitive_text(text)
-
-
-def _fallback_short_phrases(text: str, *, tags: list[str]) -> list[str]:
-    candidates = list(tags)
-    candidates.extend(re.split(r"(?:->|[，。！？!?；;、,\n\r]+)", text))
-    candidates.extend(
-        re.findall(r"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_+.-]{1,15}(?![A-Za-z0-9_])", text)
-    )
-    candidates.extend(
-        re.findall(r"(?<![\u3400-\u9fff])[\u3400-\u9fff]{2,16}(?![\u3400-\u9fff])", text)
-    )
-    result: list[str] = []
-    for candidate in candidates:
-        item = compact_whitespace(candidate)
-        if 2 <= len(item) <= 16 and _fallback_event_is_safe(item) and item not in result:
-            result.append(item)
-        if len(result) >= 8:
-            break
-    return result
 
 
 def _unique_strings(values: list[str], *, limit: int) -> list[str]:
@@ -1311,7 +1790,7 @@ def _source_event_records(source_bundle: dict[str, object] | None) -> list[dict[
     for item in raw_events:
         if not isinstance(item, dict):
             continue
-        event_ids = _positive_ints([item.get("eventId")])
+        event_ids = _positive_ints(item.get("sourceEventIds") or [item.get("eventId")])
         if not event_ids:
             continue
         committed_text = compact_whitespace(str(item.get("text") or ""))
@@ -1332,6 +1811,7 @@ def _source_event_records(source_bundle: dict[str, object] | None) -> list[dict[
         events.append(
             {
                 "eventId": event_ids[0],
+                "sourceEventIds": event_ids,
                 "createdAtMs": _optional_int(item.get("createdAtMs")),
                 "text": text,
                 "committedText": committed_text,
@@ -1370,12 +1850,16 @@ def _optional_int(value: object) -> int:
 
 
 def _memory_book_summary(diffs: list[dict[str, object]]) -> str:
-    return (
-        f"books={sum(1 for item in diffs if item.get('op') == 'upsert_memory_book')} "
-        f"atoms={sum(1 for item in diffs if item.get('op') == 'upsert_memory_atom')} "
-        f"edges={sum(1 for item in diffs if item.get('op') == 'upsert_tag_edge')} "
-        f"phrases={sum(1 for item in diffs if item.get('op') == 'add_phrase_candidate')}"
-    )
+    counts = {
+        "分组": sum(1 for item in diffs if item.get("op") == "upsert_semantic_group"),
+        "标签": sum(1 for item in diffs if item.get("op") == "upsert_semantic_tag"),
+        "主题": sum(1 for item in diffs if item.get("op") == "upsert_memory_book"),
+        "记忆": sum(1 for item in diffs if item.get("op") == "upsert_memory_atom"),
+        "标签关系": sum(1 for item in diffs if item.get("op") == "upsert_tag_edge"),
+        "词表提案": sum(1 for item in diffs if item.get("op") == "add_phrase_candidate"),
+    }
+    visible = [f"{label} {count}" for label, count in counts.items() if count]
+    return "；".join(visible) if visible else "没有生成可入库的高置信变更"
 
 
 def _sanitize_text(text: str, *, max_chars: int) -> tuple[str, dict[str, int]]:
@@ -1467,6 +1951,14 @@ def _json_list(raw: object) -> list[str]:
     return _strings(parsed)
 
 
+def _json_object(raw: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
 def _list_of_dicts(value: object) -> list[dict[str, object]]:
     return [dict(item) for item in value or [] if isinstance(item, dict)]
 
@@ -1485,6 +1977,14 @@ def _positive_ints(value: object) -> list[int]:
         if number > 0 and number not in result:
             result.append(number)
     return result
+
+
+def _optional_positive_int(value: object) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
 
 
 def _bounded_float(value: object, *, default: float) -> float:
@@ -1533,26 +2033,99 @@ def _advance_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object])
     )
 
 
-def _source_feedback(conn: sqlite3.Connection, *, event_ids: list[int]) -> list[dict[str, object]]:
+def _source_feedback(
+    conn: sqlite3.Connection,
+    *,
+    event_ids: list[int],
+    project: str,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
     if not event_ids:
-        return []
+        return [], _empty_redaction_counts()
     rows = conn.execute(
         """
-        SELECT action, candidate_text, candidate_source, created_at_ms, metadata_json
+        SELECT action, candidate_id, candidate_text, candidate_source, raw_input,
+               preedit, committed_tail, created_at_ms, metadata_json
         FROM memory_feedback_events
         ORDER BY created_at_ms DESC
         LIMIT 80
         """
     ).fetchall()
-    return [
-        {
-            "action": str(row["action"] or ""),
-            "text": _sanitize_text(str(row["candidate_text"] or ""), max_chars=80)[0],
-            "source": str(row["candidate_source"] or ""),
-            "createdAtMs": int(row["created_at_ms"] or 0),
-        }
-        for row in rows
-    ]
+    wanted_event_ids = set(event_ids)
+    result: list[dict[str, object]] = []
+    redaction_stats = _empty_redaction_counts()
+    for row in rows:
+        metadata = _json_object(row["metadata_json"])
+        metadata_project = compact_whitespace(str(metadata.get("project") or ""))
+        if project and metadata_project and metadata_project != project:
+            continue
+        source_event_id = _optional_positive_int(metadata.get("sourceEventId"))
+        if source_event_id and source_event_id not in wanted_event_ids:
+            continue
+        text, text_counts = _sanitize_text(str(row["candidate_text"] or ""), max_chars=100)
+        raw_input, raw_counts = _sanitize_text(str(row["raw_input"] or ""), max_chars=80)
+        preedit, preedit_counts = _sanitize_text(str(row["preedit"] or ""), max_chars=80)
+        committed_tail, tail_counts = _sanitize_text(str(row["committed_tail"] or ""), max_chars=180)
+        selected_text, selected_counts = _sanitize_text(str(metadata.get("selectedText") or ""), max_chars=100)
+        for counts in (text_counts, raw_counts, preedit_counts, tail_counts, selected_counts):
+            _merge_counts(redaction_stats, counts)
+        result.append(
+            {
+                "action": str(row["action"] or ""),
+                "candidateId": _sanitize_text(str(row["candidate_id"] or ""), max_chars=120)[0],
+                "text": text,
+                "source": str(row["candidate_source"] or ""),
+                "rawInput": raw_input,
+                "preedit": preedit,
+                "committedTail": committed_tail,
+                "selectedText": selected_text,
+                "selectedRank": _optional_positive_int(metadata.get("selectedRank")) or 0,
+                "deleteCount": _optional_positive_int(metadata.get("deleteCount")) or 0,
+                "sourceEventId": source_event_id,
+                "createdAtMs": int(row["created_at_ms"] or 0),
+            }
+        )
+    return result, redaction_stats
+
+
+def _source_rime_rank_feedback(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    cutoff_ms: int,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    rows = conn.execute(
+        """
+        SELECT preedit, rejected_text, accepted_text, action, app, project,
+               candidate_rank, created_at_ms, metadata_json
+        FROM rime_rank_feedback
+        WHERE created_at_ms >= ?
+          AND (? = '' OR project = ? OR project = '')
+        ORDER BY created_at_ms DESC, id DESC
+        LIMIT 80
+        """,
+        (cutoff_ms, project, project),
+    ).fetchall()
+    result: list[dict[str, object]] = []
+    redaction_stats = _empty_redaction_counts()
+    for row in rows:
+        preedit, preedit_counts = _sanitize_text(str(row["preedit"] or ""), max_chars=80)
+        rejected, rejected_counts = _sanitize_text(str(row["rejected_text"] or ""), max_chars=100)
+        accepted, accepted_counts = _sanitize_text(str(row["accepted_text"] or ""), max_chars=100)
+        app, app_counts = _sanitize_text(str(row["app"] or ""), max_chars=120)
+        for counts in (preedit_counts, rejected_counts, accepted_counts, app_counts):
+            _merge_counts(redaction_stats, counts)
+        result.append(
+            {
+                "action": str(row["action"] or ""),
+                "preedit": preedit,
+                "rejectedText": rejected,
+                "acceptedText": accepted,
+                "candidateRank": int(row["candidate_rank"] or 0),
+                "app": app,
+                "createdAtMs": int(row["created_at_ms"] or 0),
+            }
+        )
+    return result, redaction_stats
 
 
 def _existing_book_summaries(conn: sqlite3.Connection, *, project: str) -> list[dict[str, object]]:
@@ -1578,19 +2151,122 @@ def _existing_book_summaries(conn: sqlite3.Connection, *, project: str) -> list[
     ]
 
 
+def _existing_semantic_groups(conn: sqlite3.Connection, *, project: str) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT group_id, title, description, aliases_json, tags_json, source_event_ids_json
+        FROM memory_semantic_groups
+        WHERE status = 'active' AND (? = '' OR project = ? OR project = '')
+        ORDER BY quality_score DESC, updated_at_ms DESC
+        LIMIT 24
+        """,
+        (project, project),
+    ).fetchall()
+    return [
+        {
+            "groupId": str(row["group_id"] or ""),
+            "title": _sanitize_text(str(row["title"] or ""), max_chars=48)[0],
+            "description": _sanitize_text(str(row["description"] or ""), max_chars=160)[0],
+            "aliases": [_sanitize_text(item, max_chars=32)[0] for item in _json_list(row["aliases_json"])],
+            "tags": [_sanitize_text(item, max_chars=32)[0] for item in _json_list(row["tags_json"])],
+            "sourceEventIds": _json_list(row["source_event_ids_json"]),
+        }
+        for row in rows
+    ]
+
+
+def _existing_semantic_tags(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT mt.tag, mt.description, mt.tag_type, mt.quality_score, mt.metadata_json,
+               COALESCE(mtp.aliases_json, '[]') AS aliases_json
+        FROM memory_tags mt
+        LEFT JOIN memory_tag_profiles mtp ON mtp.tag_id = mt.id
+        WHERE mt.status = 'active' AND mt.source IN ('dsv4', 'user')
+        ORDER BY mt.quality_score DESC, mt.updated_at_ms DESC
+        LIMIT 80
+        """
+    ).fetchall()
+    result: list[dict[str, object]] = []
+    for row in rows:
+        metadata = _json_object(row["metadata_json"])
+        result.append(
+            {
+                "name": _sanitize_text(str(row["tag"] or ""), max_chars=32)[0],
+                "description": _sanitize_text(str(row["description"] or ""), max_chars=120)[0],
+                "type": str(row["tag_type"] or "concept"),
+                "aliases": [_sanitize_text(item, max_chars=32)[0] for item in _json_list(row["aliases_json"])],
+                "qualityScore": float(row["quality_score"] or 0.0),
+                "sourceEventIds": _positive_ints(metadata.get("sourceEventIds")),
+            }
+        )
+    return result
+
+
 def _group_for_source_ids(source_ids: list[int], *, source_bundle: dict[str, object] | None) -> str:
     if not source_bundle:
         return ""
     wanted = set(source_ids)
     for event in _list_of_dicts(source_bundle.get("recentEvents")):
-        try:
-            event_id = int(event.get("eventId") or 0)
-        except (TypeError, ValueError):
-            continue
+        event_ids = set(_positive_ints(event.get("sourceEventIds") or [event.get("eventId")]))
         group_id = compact_whitespace(str(event.get("contextGroupId") or ""))
-        if event_id in wanted and group_id:
+        if wanted.intersection(event_ids) and group_id:
             return group_id
     return ""
+
+
+def _legal_source_event_ids(source_bundle: dict[str, object] | None) -> list[int]:
+    if not source_bundle:
+        return []
+    result: list[int] = []
+    for event in _list_of_dicts(source_bundle.get("recentEvents")):
+        for event_id in _positive_ints(event.get("sourceEventIds") or [event.get("eventId")]):
+            if event_id not in result:
+                result.append(event_id)
+    for collection_name in ("existingMemoryBooks", "existingSemanticGroups", "existingSemanticTags"):
+        for item in _list_of_dicts(source_bundle.get(collection_name)):
+            for event_id in _positive_ints(item.get("sourceEventIds")):
+                if event_id not in result:
+                    result.append(event_id)
+    return result
+
+
+def _semantic_group_id(value: object, *, title: str) -> str:
+    raw = compact_whitespace(str(value or "")).lower()
+    if raw.startswith("group:") and re.fullmatch(r"group:[a-z0-9][a-z0-9._-]{1,63}", raw):
+        return raw
+    digest = stable_text_hash(normalize_text(title)).removeprefix("sha256:")[:16]
+    return f"group:topic-{digest}"
+
+
+def _semantic_group_ids(item: dict[str, object]) -> list[str]:
+    values = item.get("semanticGroupIds")
+    if values is None:
+        values = item.get("groupIds")
+    return [
+        value.lower()
+        for value in _strings(values)
+        if re.fullmatch(r"group:[a-z0-9][a-z0-9._-]{1,63}", value.lower())
+    ][:4]
+
+
+def _resolved_semantic_group_ids(
+    item: dict[str, object],
+    *,
+    source_ids: list[int],
+    group_source_ids: dict[str, list[int]],
+) -> list[str]:
+    explicit = _semantic_group_ids(item)
+    if explicit or not source_ids or not group_source_ids:
+        return explicit
+
+    wanted = set(source_ids)
+    scored = [
+        (len(wanted.intersection(event_ids)), group_id)
+        for group_id, event_ids in group_source_ids.items()
+    ]
+    overlap, group_id = max(scored, default=(0, ""))
+    return [group_id] if overlap > 0 and group_id else []
 
 
 def _normalized_rime_pinyin(value: object) -> str:
@@ -1603,9 +2279,31 @@ def _validate_required_text(errors: list[dict[str, object]], index: int, op: str
         errors.append(_issue(index, op, field, "required"))
 
 
-def _validate_source_ids(errors: list[dict[str, object]], index: int, op: str, value: object) -> None:
-    if not _positive_ints(value):
-        errors.append(_issue(index, op, "sourceEventIds", "missing_source_event_ids"))
+def _validate_source_ids(
+    errors: list[dict[str, object]],
+    index: int,
+    op: str,
+    value: object,
+    *,
+    field: str = "sourceEventIds",
+    legal_source_event_ids: set[int] | None = None,
+) -> None:
+    source_ids = _positive_ints(value)
+    if not source_ids:
+        errors.append(_issue(index, op, field, "missing_source_event_ids"))
+        return
+    legal_ids = legal_source_event_ids or set()
+    unknown_ids = [source_id for source_id in source_ids if legal_ids and source_id not in legal_ids]
+    if unknown_ids:
+        errors.append(
+            _issue(
+                index,
+                op,
+                field,
+                "source_event_not_in_bundle",
+                preview=",".join(str(source_id) for source_id in unknown_ids[:8]),
+            )
+        )
 
 
 def _validate_short_terms(

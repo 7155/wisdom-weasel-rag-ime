@@ -12,14 +12,18 @@ import rag_ime.cli as cli_module
 from rag_ime.cli import main
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import (
+    apply_memory_book_plan,
     apply_stored_memory_book_run,
+    build_memory_book_source_bundle,
     inspect_memory_book_plan,
+    memory_compile_state,
     memory_book_plan_from_compile_output,
     rollback_memory_book_run,
     store_memory_book_plan,
     update_stored_memory_book_diff,
 )
 from rag_ime.models import InputEvent
+from rag_ime.rime_rank_export import record_rime_rank_feedback
 from rag_ime.text_utils import now_ms
 
 
@@ -98,6 +102,46 @@ class MemoryBookCompilerTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_cleanup_runs WHERE run_id LIKE 'memory_book_%'").fetchone()[0], 0)
 
+    def test_source_bundle_exposes_delete_and_correction_feedback_to_dsv4(self) -> None:
+        self.core.record_memory_feedback(
+            {
+                "event": "backspace_after_accept",
+                "candidateId": "candidate:错别字",
+                "candidateText": "错别宇",
+                "sourceType": "rime",
+                "sourceEventId": self.event_id,
+                "project": "wisdom-weasel-rag-ime",
+                "metadata": {"deleteCount": 3},
+            }
+        )
+        record_rime_rank_feedback(
+            self.db_path,
+            preedit="cuo bie zi",
+            rejected_text="错别宇",
+            accepted_text="错别字",
+            action="correction_pair",
+            project="wisdom-weasel-rag-ime",
+        )
+
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                since_days=7,
+                limit=20,
+                after_event_id=0,
+            )
+
+        feedback = bundle["feedback"]
+        self.assertTrue(any(item["action"] == "backspace_after_accept" for item in feedback))
+        self.assertTrue(any(item["deleteCount"] == 3 for item in feedback))
+        rank_feedback = bundle["rimeRankFeedback"]
+        correction = next(item for item in rank_feedback if item["action"] == "correction_pair")
+        self.assertEqual(correction["rejectedText"], "错别宇")
+        self.assertEqual(correction["acceptedText"], "错别字")
+        self.assertEqual(correction["preedit"], "cuo bie zi")
+
     def test_memory_book_compile_requires_source_event_ids(self) -> None:
         output = sample_compile_output(self.event_id)
         output["dailyBooks"][0]["sourceEventIds"] = []
@@ -108,6 +152,80 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertTrue(any(item["code"] == "missing_source_event_ids" for item in report["errors"]))
 
+    def test_memory_book_compile_limits_new_semantic_groups(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["semanticGroups"] = [
+            {
+                "groupId": f"group:topic-{index}",
+                "title": f"主题 {index}",
+                "description": f"第 {index} 个粗粒度内容主题",
+                "sourceEventIds": [self.event_id],
+            }
+            for index in range(5)
+        ]
+        bundle = {
+            "recentEvents": [{"eventId": self.event_id, "text": "RAG 输入法多路召回方案"}],
+            "existingSemanticGroups": [],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        report = inspect_memory_book_plan(plan)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["counts"]["semanticGroups"], 3)
+        self.assertIn("semantic_group_new_limit_applied", plan["metadata"]["warnings"])
+
+    def test_tag_edge_accepts_dsv4_descriptive_field_names(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["tagEdges"] = [
+            {
+                "sourceTagName": "输入法",
+                "targetTagName": "记忆清洗",
+                "relationType": "depends_on",
+                "confidence": 0.83,
+                "evidenceEventIds": [self.event_id],
+            }
+        ]
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        edge = next(item for item in plan["diffs"] if item["op"] == "upsert_tag_edge")
+        self.assertEqual(edge["payload"]["src"], "输入法")
+        self.assertEqual(edge["payload"]["dst"], "记忆清洗")
+        self.assertEqual(edge["payload"]["edgeType"], "depends_on")
+        self.assertAlmostEqual(edge["payload"]["weight"], 0.83)
+
+    def test_memory_book_compile_rejects_hallucinated_source_event_id(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["memoryAtoms"][0]["sourceEventIds"] = [self.event_id + 999]
+        bundle = {
+            "recentEvents": [{"eventId": self.event_id, "text": "RAG 输入法多路召回方案"}],
+            "existingMemoryBooks": [],
+            "existingSemanticGroups": [],
+            "existingSemanticTags": [],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        report = inspect_memory_book_plan(plan)
+
+        self.assertFalse(report["ok"])
+        self.assertTrue(any(item["code"] == "source_event_not_in_bundle" for item in report["errors"]))
+
     def test_memory_book_compile_backfills_source_ids_from_bundle(self) -> None:
         output = sample_compile_output(self.event_id)
         output["dailyBooks"][0]["sourceEventIds"] = []
@@ -115,6 +233,12 @@ class MemoryBookCompilerTests(unittest.TestCase):
         output["tagEdges"][0]["evidenceEventIds"] = []
         output["phraseCandidates"][0]["sourceEventIds"] = []
         bundle = {
+            "bundleHash": "sha256:test-empty-organizer",
+            "cursor": {
+                "fromEventId": 0,
+                "toEventId": self.event_id + 2,
+                "pendingEventCount": 3,
+            },
             "recentEvents": [
                 {
                     "eventId": self.event_id,
@@ -222,8 +346,14 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(book["bookType"], "topic")
         self.assertEqual(book["bookKey"], "ai-input-method")
 
-    def test_memory_book_compile_uses_generic_source_archive_when_model_returns_empty(self) -> None:
+    def test_memory_book_compile_keeps_raw_history_pending_when_model_returns_empty(self) -> None:
         bundle = {
+            "bundleHash": "sha256:test-empty-organizer",
+            "cursor": {
+                "fromEventId": 0,
+                "toEventId": self.event_id + 2,
+                "pendingEventCount": 3,
+            },
             "recentEvents": [
                 {
                     "eventId": self.event_id,
@@ -266,18 +396,31 @@ class MemoryBookCompilerTests(unittest.TestCase):
         )
         report = inspect_memory_book_plan(plan)
 
-        self.assertTrue(report["ok"])
-        self.assertEqual(report["counts"]["memoryBooks"], 1)
-        self.assertEqual(report["counts"]["memoryAtoms"], 2)
-        self.assertGreaterEqual(report["counts"]["phraseCandidates"], 3)
-        self.assertIn("local_source_bundle_fallback_used", plan["metadata"]["warnings"])
-        atoms = [item["payload"] for item in plan["diffs"] if item["op"] == "upsert_memory_atom"]
-        duplicate = next(item for item in atoms if item["canonicalText"].startswith("周五上午十点"))
-        self.assertEqual(duplicate["sourceEventIds"], [self.event_id, self.event_id + 1])
-        self.assertTrue(all(item["kind"] == "source_event_archive" for item in atoms))
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["diffCount"], 0)
+        self.assertEqual(report["counts"]["memoryBooks"], 0)
+        self.assertEqual(report["counts"]["memoryAtoms"], 0)
+        self.assertEqual(report["counts"]["phraseCandidates"], 0)
+        self.assertIn("organizer_returned_no_governed_memory", plan["metadata"]["warnings"])
+        self.assertTrue(any(item["code"] == "organizer_returned_no_governed_memory" for item in report["errors"]))
         serialized = json.dumps(plan, ensure_ascii=False)
-        for injected_term in ("DeepSeek", "Squirrel", "RAG 输入法", "面试展示", "eval gate"):
+        for injected_term in (
+            "周五上午十点",
+            "采购清单",
+            "DeepSeek",
+            "Squirrel",
+            "RAG 输入法",
+            "面试展示",
+            "eval gate",
+        ):
             self.assertNotIn(injected_term, serialized)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            with self.assertRaises(ValueError):
+                apply_memory_book_plan(conn, plan)
+            state = memory_compile_state(conn, project="wisdom-weasel-rag-ime")
+        self.assertEqual(state["lastCompiledEventId"], 0)
+        self.assertGreaterEqual(state["pendingEventCount"], 1)
 
     def test_memory_book_compile_rejects_long_surface_hint(self) -> None:
         output = sample_compile_output(self.event_id)
@@ -429,6 +572,100 @@ class MemoryBookCompilerTests(unittest.TestCase):
             row = conn.execute("SELECT title FROM memory_books LIMIT 1").fetchone()
             self.assertEqual(row["title"], "输入法记忆与召回")
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0], 0)
+
+    def test_dsv4_semantic_groups_tags_and_members_are_applied_and_rolled_back(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["semanticGroups"] = [
+            {
+                "groupId": "group:input-method",
+                "title": "输入法",
+                "description": "输入法、候选预测、语音与个人知识召回相关的长期主题。",
+                "aliases": ["RAG 输入法"],
+                "tags": ["输入法"],
+                "sourceEventIds": [self.event_id],
+                "confidence": 0.92,
+                "qualityScore": 0.9,
+            }
+        ]
+        output["semanticTags"] = [
+            {
+                "name": "混合召回",
+                "description": "BM25、向量、标签与时间信号共同参与的检索策略。",
+                "aliases": ["Hybrid RAG"],
+                "semanticGroupIds": ["group:input-method"],
+                "sourceEventIds": [self.event_id],
+                "confidence": 0.88,
+                "qualityScore": 0.86,
+            }
+        ]
+        output["memoryAtoms"][0]["semanticGroupIds"] = ["group:input-method"]
+        output["phraseCandidates"][0]["semanticGroupIds"] = ["group:input-method"]
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        report = inspect_memory_book_plan(plan)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["counts"]["semanticGroups"], 1)
+        self.assertEqual(report["counts"]["semanticTags"], 1)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            apply_memory_book_plan(conn, plan)
+            self.assertEqual(
+                conn.execute("SELECT title FROM memory_semantic_groups WHERE group_id = 'group:input-method'").fetchone()[0],
+                "输入法",
+            )
+            tag = conn.execute("SELECT description, source FROM memory_tags WHERE tag = '混合召回'").fetchone()
+            self.assertEqual(tag["source"], "dsv4")
+            self.assertIn("BM25", tag["description"])
+            members = conn.execute(
+                "SELECT member_type FROM memory_semantic_group_members WHERE group_id = 'group:input-method' ORDER BY member_type"
+            ).fetchall()
+            self.assertEqual({row[0] for row in members}, {"atom", "book", "phrase", "tag"})
+            rollback_memory_book_run(conn, run_id=plan["runId"])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_semantic_groups").fetchone()[0], 0)
+
+    def test_group_membership_is_inferred_from_shared_source_evidence(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["semanticGroups"] = [
+            {
+                "groupId": "group:input-method",
+                "title": "输入法",
+                "description": "输入法、候选预测、语音与个人知识召回相关的长期主题。",
+                "sourceEventIds": [self.event_id],
+            }
+        ]
+        output["semanticTags"] = [
+            {
+                "name": "混合召回",
+                "description": "BM25 与向量共同参与的检索策略。",
+                "sourceEventIds": [self.event_id],
+            }
+        ]
+        bundle = {
+            "recentEvents": [
+                {
+                    "eventId": self.event_id,
+                    "sourceEventIds": [self.event_id],
+                    "text": "RAG 输入法多路召回方案",
+                }
+            ],
+            "existingSemanticGroups": [],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+
+        for op in ("upsert_semantic_tag", "upsert_memory_book", "upsert_memory_atom", "add_phrase_candidate"):
+            payload = next(item["payload"] for item in plan["diffs"] if item["op"] == op)
+            self.assertEqual(payload["semanticGroupIds"], ["group:input-method"])
 
     def _write_sample_plan(self) -> Path:
         plan = memory_book_plan_from_compile_output(

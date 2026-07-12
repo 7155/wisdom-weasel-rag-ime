@@ -133,17 +133,49 @@ struct RagAndModelsPage: View {
                         .padding(.top, 8)
                 }
             } else {
-                HStack(spacing: 12) {
-                    Image(systemName: "cylinder.split.1x2")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.blue)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("生成 Memory Book 整理草案").font(.headline)
-                        Text("结果先进入 draft，验证通过后仍需人工审阅。")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.blue)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("告诉知识管家怎么整理").font(.headline)
+                            Text("直接描述目标，系统会清洗历史、合并分组、补标签并生成词表提案。")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
                     }
-                    Spacer()
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $model.knowledgeOrganizationInstruction)
+                            .font(.system(size: 15))
+                            .scrollContentBackground(.hidden)
+                            .padding(10)
+                            .frame(minHeight: 92)
+                        if model.knowledgeOrganizationInstruction.isEmpty {
+                            Text(questionPlaceholder)
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 15)
+                                .padding(.vertical, 18)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor), lineWidth: 0.7))
+                    HStack {
+                        Menu {
+                            Button("恢复项目默认") { model.knowledgeOrganizationInstruction = model.knowledgeRoute?.defaultOrganizationInstruction ?? "" }
+                            Divider()
+                            Button("合并零散分组") { model.knowledgeOrganizationInstruction = "合并内容重复或过细的分组，保持少量稳定主题，并重新归类记忆。" }
+                            Button("清洗语音和错别字") { model.knowledgeOrganizationInstruction = "结合上下文批量修正语音转写错字、重复口语和残句，只保留确认后的清晰表达。" }
+                            Button("整理标签关系") { model.knowledgeOrganizationInstruction = "删除碎片标签，补充稳定语义标签、别名和有证据的标签关系。" }
+                            Button("更新常用词表") { model.knowledgeOrganizationInstruction = "根据重复输入、接受和删除反馈，生成常用词新增、提权、降权与屏蔽提案。" }
+                        } label: {
+                            Label("常用整理目标", systemImage: "text.badge.checkmark")
+                        }
+                        Spacer()
+                    }
                 }
                 .padding(.vertical, 10)
             }
@@ -311,7 +343,7 @@ struct RagAndModelsPage: View {
                     .font(.caption2.monospaced().weight(.semibold))
                     .foregroundStyle(databaseRunStatus == "applied" ? .green : .orange)
                 Spacer()
-                Text("已选 (organizeDiffs.filter(databaseDiffSelected).count) / (organizeDiffs.count)")
+                Text("已选 \(organizeDiffs.filter(databaseDiffSelected).count) / \(organizeDiffs.count)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if databaseRunStatus == "applied" || databaseRunStatus == "partial" {
@@ -459,12 +491,12 @@ struct RagAndModelsPage: View {
         case .knowledgeAnswer: return "询问项目、笔记或个人知识中的具体问题"
         case .longForm: return "描述要生成的长文、目标读者和重点"
         case .recall: return "输入想回忆的项目、时间或主题"
-        case .organizeDatabase: return ""
+        case .organizeDatabase: return "例如：把输入法相关内容合并为一个组，修正语音错字，标签不要太碎，并整理常用词。"
         }
     }
 
     private var runButtonTitle: String {
-        model.knowledgeMode == .organizeDatabase ? "生成草案" : "开始"
+        model.knowledgeMode == .organizeDatabase ? "整理记忆" : "开始"
     }
 
     private var stageTitle: String {
@@ -565,9 +597,11 @@ struct RagAndModelsPage: View {
     private var databaseDraftGroups: [DatabaseDraftGroup] {
         let diffs = organizeDiffs.map(DatabaseDraftDiff.init)
         let definitions: [(String, String, String, Color)] = [
+            ("groups", "内容分组", "square.grid.2x2", .indigo),
             ("books", "主题书", "books.vertical", .blue),
             ("atoms", "记忆条目", "circle.hexagongrid", .teal),
-            ("tags", "标签关系", "tag", .purple),
+            ("semanticTags", "语义标签", "tag.fill", .purple),
+            ("tags", "标签关系", "point.3.connected.trianglepath.dotted", .purple),
             ("phrases", "可用短语", "text.badge.plus", .green),
             ("negative", "屏蔽与替代", "hand.raised", .orange),
         ]
@@ -584,6 +618,8 @@ struct RagAndModelsPage: View {
 
     private func databaseDiffSymbol(_ operation: String) -> String {
         switch operation {
+        case "upsert_semantic_group": return "square.grid.2x2"
+        case "upsert_semantic_tag": return "tag.fill"
         case "upsert_memory_book": return "book.closed"
         case "upsert_memory_atom": return "circle.hexagongrid"
         case "upsert_tag_edge": return "point.3.connected.trianglepath.dotted"
@@ -612,6 +648,8 @@ private struct DatabaseDraftDiff: Identifiable {
 
     var groupKey: String {
         switch operation {
+        case "upsert_semantic_group": return "groups"
+        case "upsert_semantic_tag": return "semanticTags"
         case "upsert_memory_book": return "books"
         case "upsert_memory_atom": return "atoms"
         case "upsert_tag_edge": return "tags"
@@ -622,6 +660,8 @@ private struct DatabaseDraftDiff: Identifiable {
 
     var title: String {
         switch operation {
+        case "upsert_semantic_group": return value("title", fallback: "未命名分组")
+        case "upsert_semantic_tag": return value("name", fallback: "未命名标签")
         case "upsert_memory_book": return value("title", fallback: "未命名主题书")
         case "upsert_memory_atom": return value("canonicalText", fallback: "未命名记忆")
         case "upsert_tag_edge": return "\(value("src", fallback: "标签")) → \(value("dst", fallback: "标签"))"
@@ -634,6 +674,8 @@ private struct DatabaseDraftDiff: Identifiable {
 
     var detail: String {
         switch operation {
+        case "upsert_semantic_group": return value("description")
+        case "upsert_semantic_tag": return value("description")
         case "upsert_memory_book": return value("summary")
         case "upsert_memory_atom": return value("summary")
         case "upsert_tag_edge": return "关系：\(value("edgeType", fallback: "相关"))"
@@ -647,9 +689,10 @@ private struct DatabaseDraftDiff: Identifiable {
     var tags: [String] { payload["tags"]?.arrayValue.map(\.stringValue).filter { !$0.isEmpty } ?? [] }
     var tint: Color {
         switch groupKey {
+        case "groups": return .indigo
         case "books": return .blue
         case "atoms": return .teal
-        case "tags": return .purple
+        case "semanticTags", "tags": return .purple
         case "phrases": return .green
         default: return .orange
         }
@@ -720,6 +763,14 @@ private struct DatabaseDraftEditorSheet: View {
     @ViewBuilder
     private var formFields: some View {
         switch operation {
+        case "upsert_semantic_group":
+            labeledField("分组名称", text: $first)
+            labeledEditor("分组说明", text: $second)
+            labeledField("别名（逗号分隔）", text: $tags)
+        case "upsert_semantic_tag":
+            labeledField("标签名称", text: $first)
+            labeledEditor("标签说明", text: $second)
+            labeledField("别名（逗号分隔）", text: $tags)
         case "upsert_memory_book":
             labeledField("主题", text: $first)
             labeledEditor("摘要", text: $second)
@@ -768,6 +819,8 @@ private struct DatabaseDraftEditorSheet: View {
 
     private var editorTitle: String {
         switch operation {
+        case "upsert_semantic_group": return "编辑内容分组"
+        case "upsert_semantic_tag": return "编辑语义标签"
         case "upsert_memory_book": return "编辑主题书"
         case "upsert_memory_atom": return "编辑记忆条目"
         case "upsert_tag_edge": return "编辑标签关系"
@@ -784,6 +837,14 @@ private struct DatabaseDraftEditorSheet: View {
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         switch operation {
+        case "upsert_semantic_group":
+            payload["title"] = .string(first)
+            payload["description"] = .string(second)
+            payload["aliases"] = .array(tagValues.map(JSONValue.string))
+        case "upsert_semantic_tag":
+            payload["name"] = .string(first)
+            payload["description"] = .string(second)
+            payload["aliases"] = .array(tagValues.map(JSONValue.string))
         case "upsert_memory_book":
             payload["title"] = .string(first)
             payload["summary"] = .string(second)
@@ -815,6 +876,8 @@ private struct DatabaseDraftEditorSheet: View {
     ) -> (String, String, String, String) {
         let tags = payload["tags"]?.arrayValue.map(\.stringValue).joined(separator: "，") ?? ""
         switch operation {
+        case "upsert_semantic_group": return (payload["title"]?.stringValue ?? "", payload["description"]?.stringValue ?? "", payload["aliases"]?.arrayValue.map(\.stringValue).joined(separator: "，") ?? "", "")
+        case "upsert_semantic_tag": return (payload["name"]?.stringValue ?? "", payload["description"]?.stringValue ?? "", payload["aliases"]?.arrayValue.map(\.stringValue).joined(separator: "，") ?? "", "")
         case "upsert_memory_book": return (payload["title"]?.stringValue ?? "", payload["summary"]?.stringValue ?? "", tags, "")
         case "upsert_memory_atom": return (payload["canonicalText"]?.stringValue ?? "", payload["summary"]?.stringValue ?? "", tags, "")
         case "upsert_tag_edge": return (payload["src"]?.stringValue ?? "", payload["dst"]?.stringValue ?? "", "", payload["edgeType"]?.stringValue ?? "related")

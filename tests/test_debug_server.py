@@ -278,6 +278,7 @@ class DebugImeServiceTests(unittest.TestCase):
         InputMethodAdapter(plain_core).commit_text(
             "赤色星球探索计划",
             recent_context="航天项目背景",
+            tags=("curated",),
             privacy_disposition="allowed",
         )
 
@@ -304,6 +305,7 @@ class DebugImeServiceTests(unittest.TestCase):
         InputMethodAdapter(plain_core).commit_text(
             "赤色星球探索计划",
             recent_context="航天项目背景",
+            tags=("curated",),
             privacy_disposition="allowed",
         )
 
@@ -415,6 +417,13 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(any(item["runId"] == cleanup["runId"] for item in cleanup_runs["items"]))
 
     def test_memory_cleanup_review_and_tombstone_endpoints(self) -> None:
+        self.service.adapter.commit_text(
+            "连续预测",
+            recent_context="RAG 输入法需要更好的候选",
+            project=self.service.config.project,
+            tags=("phrase-memory",),
+            privacy_disposition="allowed",
+        )
         self.service.adapter.commit_text(
             "连续预测",
             recent_context="RAG 输入法需要更好的候选",
@@ -605,7 +614,7 @@ class DebugImeServiceTests(unittest.TestCase):
             "设计一个候选展示方式",
             recent_context="Prediction-first RAG IME 需要解释候选排序",
             project="wisdom-weasel-rag-ime",
-            tags=("rag", "memory"),
+            tags=("rag", "memory", "phrase-memory"),
             privacy_disposition="allowed",
         )
         core.apply_action(
@@ -1053,6 +1062,7 @@ class DebugImeServiceTests(unittest.TestCase):
         core = VectorAwareFixtureCore()
         service = DebugImeService(
             DebugServerConfig(
+                db_path=Path(self.tmp.name) / "cache-vector-state.sqlite",
                 core=core,
                 predictor=predictor,
                 seed_if_empty=False,
@@ -2095,6 +2105,7 @@ class DebugImeServiceTests(unittest.TestCase):
     def test_debug_service_can_use_injected_shared_core_adapter(self) -> None:
         service = DebugImeService(
             DebugServerConfig(
+                db_path=Path(self.tmp.name) / "fixture-core.sqlite",
                 core=FixtureCoreClient(),
                 seed_if_empty=False,
                 project="wisdom-weasel-rag-ime",

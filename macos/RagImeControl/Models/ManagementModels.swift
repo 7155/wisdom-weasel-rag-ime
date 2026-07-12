@@ -208,6 +208,7 @@ struct KnowledgeWorkbenchResponse: Decodable {
 struct KnowledgeRouteResponse: Decodable {
     let schemaVersion: String
     let deepseekReady: Bool
+    let defaultOrganizationInstruction: String?
     let notion: NotionRouteStatus
 }
 

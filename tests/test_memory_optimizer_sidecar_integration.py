@@ -479,6 +479,28 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 privacy_disposition="allowed",
                 tags=("phrase-memory",),
             )
+            with core._connect() as conn:
+                upsert_memory_item(
+                    conn,
+                    memory_id="phrase:连续预测",
+                    kind="phrase",
+                    text="连续预测",
+                    normalized_text=normalize_text("连续预测"),
+                    summary="DSV4 compiled phrase",
+                    source_event_id=1,
+                    project="wisdom-weasel-rag-ime",
+                    app="",
+                    confidence=0.85,
+                    quality_score=0.85,
+                    status="approved",
+                    privacy_class="local",
+                    created_at_ms=1_900_000_200_000,
+                    updated_at_ms=1_900_000_200_000,
+                    metadata={"direct_candidate_allowed": True, "source": "memory_book_compile"},
+                    tags=("输入法",),
+                    embedding_provider=core.embedding_provider,
+                    tag_source="dsv4",
+                )
             response = build_rime_sidecar_response(
                 payload={
                     "sessionId": "optimizer-trace",
@@ -539,6 +561,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                     metadata={"direct_candidate_allowed": True},
                     tags=("输入法", "候选排序"),
                     embedding_provider=core.embedding_provider,
+                    tag_source="dsv4",
                 )
                 upsert_memory_item(
                     conn,
@@ -559,6 +582,18 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                     metadata={"direct_candidate_allowed": True},
                     tags=("候选排序", "能量传播"),
                     embedding_provider=core.embedding_provider,
+                    tag_source="dsv4",
+                )
+                input_method_tag = int(conn.execute("SELECT id FROM memory_tags WHERE tag = '输入法'").fetchone()[0])
+                ranking_tag = int(conn.execute("SELECT id FROM memory_tags WHERE tag = '候选排序'").fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO memory_tag_edges(
+                        src_tag_id, dst_tag_id, edge_type, weight, direction_bias,
+                        evidence_count, updated_at_ms, metadata_json
+                    ) VALUES (?, ?, 'related', 0.9, 0.0, 2, ?, '{"source":"dsv4"}')
+                    """,
+                    (input_method_tag, ranking_tag, created_at + 2),
                 )
             core.recompute_memory_tags(project="wisdom-weasel-rag-ime")
 

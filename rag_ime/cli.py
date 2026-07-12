@@ -603,6 +603,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     import_codex.add_argument("--sample-size", type=int, default=3)
     import_codex.add_argument("--dry-run", action="store_true", help="Parse and summarize without writing memory")
     import_codex.add_argument("--allow-duplicates", action="store_true", help="Import records even if their stable record tag already exists")
+    import_codex.add_argument(
+        "--curated",
+        action="store_true",
+        help="Treat the import as pre-reviewed retrieval material. Default imports stay raw until DSV4 organizes them.",
+    )
 
     prune_codex = subparsers.add_parser(
         "prune-codex-history-noise",
@@ -2331,7 +2336,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if not args.allow_duplicates and _core_has_event_tag(core, record_tag):
                     duplicate_skipped += 1
                     continue
-                event_ids.append(core.record_event(input_event_from_codex_record(record, project=args.project)))
+                event_ids.append(
+                    core.record_event(
+                        input_event_from_codex_record(
+                            record,
+                            project=args.project,
+                            curated=bool(args.curated),
+                        )
+                    )
+                )
         print(
             json.dumps(
                 {
@@ -2339,6 +2352,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "path": str(Path(args.path)),
                     "project": args.project,
                     "dryRun": args.dry_run,
+                    "retrievalMode": "curated" if args.curated else "raw_pending_dsv4",
                     "roles": "any" if role_filter is None else list(role_filter),
                     "records": len(records),
                     "imported": 0 if args.dry_run else len(event_ids),

@@ -401,6 +401,44 @@ def _seed_case_state(*, core: LocalSqliteCoreClient, case: MemoryOptimizerEvalCa
                 metadata=dict(item.get("metadata") or {"direct_candidate_allowed": True}),
                 tags=tuple(_str_tuple(item.get("tags"))),
                 embedding_provider=None,
+                tag_source="dsv4",
+            )
+            conn.commit()
+    for edge in case.memory_state.get("tagEdges", []):
+        if not isinstance(edge, dict):
+            continue
+        src = normalize_text(str(edge.get("src") or ""))
+        dst = normalize_text(str(edge.get("dst") or ""))
+        if not src or not dst:
+            continue
+        with core._connect() as conn:
+            src_row = conn.execute(
+                "SELECT id FROM memory_tags WHERE normalized_tag = ? AND status = 'active' AND source = 'dsv4'",
+                (src,),
+            ).fetchone()
+            dst_row = conn.execute(
+                "SELECT id FROM memory_tags WHERE normalized_tag = ? AND status = 'active' AND source = 'dsv4'",
+                (dst,),
+            ).fetchone()
+            if src_row is None or dst_row is None:
+                raise ValueError(f"governed eval tag edge references missing tag: {src} -> {dst}")
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO memory_tag_edges(
+                    src_tag_id, dst_tag_id, edge_type, weight, direction_bias,
+                    evidence_count, updated_at_ms, metadata_json
+                )
+                VALUES (?, ?, ?, ?, 0.0, ?, ?, ?)
+                """,
+                (
+                    int(src_row["id"]),
+                    int(dst_row["id"]),
+                    str(edge.get("edgeType") or "related"),
+                    float(edge.get("weight") or 0.8),
+                    max(1, int(edge.get("evidenceCount") or 1)),
+                    now_ms(),
+                    json.dumps({"source": "dsv4", "fixture": True}, ensure_ascii=False, sort_keys=True),
+                ),
             )
             conn.commit()
     for feedback in case.memory_state.get("feedback", []):

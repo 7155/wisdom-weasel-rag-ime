@@ -9,6 +9,7 @@ struct VoiceAgentStatus: Codable, Equatable {
     let accessibilityTrusted: Bool
     let microphoneAuthorization: String
     let credentialsConfigured: Bool
+    let hotkeyMode: String?
     let hotwordsEnabled: Bool
     let hotwordCount: Int
     let hotkeyInstalled: Bool
@@ -64,6 +65,7 @@ enum VoiceAgentStatusStore {
                 accessibilityTrusted: accessibilityTrusted,
                 microphoneAuthorization: microphoneAuthorization,
                 credentialsConfigured: credentialsConfigured,
+                hotkeyMode: nil,
                 hotwordsEnabled: false,
                 hotwordCount: 0,
                 hotkeyInstalled: hotkeyInstalled,

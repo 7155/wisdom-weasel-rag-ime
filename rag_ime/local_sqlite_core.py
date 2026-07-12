@@ -58,6 +58,16 @@ from .text_utils import (
 _IMPORTANT_ASCII_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+#.\-]{2,}")
 _VECTOR_ONLY_MIN_SCORE_DEFAULT = 0.35
 _MS_PER_DAY = 24 * 60 * 60 * 1000
+_CURATED_EVENT_SQL = """
+(
+    e.tags_json LIKE '%"compiled-memory"%'
+    OR e.tags_json LIKE '%"compiled-phrase"%'
+    OR e.tags_json LIKE '%"curated"%'
+    OR e.tags_json LIKE '%"phrase-memory"%'
+    OR e.tags_json LIKE '%"stable-memory"%'
+)
+"""
+_CURATED_EVENT_TAGS = {"compiled-memory", "compiled-phrase", "curated", "phrase-memory", "stable-memory"}
 _PHRASE_FEEDBACK_SELECT_COLUMNS = """
                 COALESCE(pfb.phrase_accepted_count, s.accepted_count) AS phrase_accepted_count,
                 COALESCE(pfb.phrase_skipped_count, s.skipped_count) AS phrase_skipped_count,
@@ -288,21 +298,23 @@ class LocalSqliteCoreClient:
                     """,
                     (text, event.app, created_at, created_at),
                 )
-            document = _event_fts_document(
-                text,
-                event.recent_context,
-                event.project,
-                " ".join(event.tags),
-                event.preedit,
-            )
-            conn.execute(
-                """
-                INSERT INTO memory_fts(rowid, content_text, committed_text, recent_context, project, tags)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (event_id, document, text, event.recent_context, event.project, " ".join(event.tags)),
-            )
-            self._upsert_event_vector(conn, event_id=event_id, document=document, updated_at_ms=created_at)
+            legacy_retrieval_allowed = not self.memory_v2_enabled or _event_has_curated_import_signal(event.tags)
+            if legacy_retrieval_allowed:
+                document = _event_fts_document(
+                    text,
+                    event.recent_context,
+                    event.project,
+                    " ".join(event.tags),
+                    event.preedit,
+                )
+                conn.execute(
+                    """
+                    INSERT INTO memory_fts(rowid, content_text, committed_text, recent_context, project, tags)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (event_id, document, text, event.recent_context, event.project, " ".join(event.tags)),
+                )
+                self._upsert_event_vector(conn, event_id=event_id, document=document, updated_at_ms=created_at)
             if self.memory_v2_enabled:
                 sync_event_to_memory_v2(
                     conn,
@@ -1492,6 +1504,8 @@ class LocalSqliteCoreClient:
             }
         params: list[Any] = []
         where = ["s.deleted = 0"]
+        if self.memory_v2_enabled:
+            where.append(_CURATED_EVENT_SQL)
         if project:
             where.append("(e.project = ? OR e.project = '')")
             params.append(project)
@@ -2144,6 +2158,7 @@ class LocalSqliteCoreClient:
                 SELECT mit.memory_item_id, GROUP_CONCAT(mt.tag, ',') AS tags_joined
                 FROM memory_item_tags mit
                 JOIN memory_tags mt ON mt.id = mit.tag_id
+                WHERE mt.status = 'active' AND mt.source IN ('curated_import', 'dsv4', 'user')
                 GROUP BY mit.memory_item_id
             ) tag_map ON tag_map.memory_item_id = mi.id
             WHERE {' AND '.join(where)}
@@ -2191,6 +2206,7 @@ class LocalSqliteCoreClient:
                 SELECT mit.memory_item_id, GROUP_CONCAT(mt.tag, ',') AS tags_joined
                 FROM memory_item_tags mit
                 JOIN memory_tags mt ON mt.id = mit.tag_id
+                WHERE mt.status = 'active' AND mt.source IN ('curated_import', 'dsv4', 'user')
                 GROUP BY mit.memory_item_id
             ) tag_map ON tag_map.memory_item_id = mi.id
             WHERE {' AND '.join(where)}
@@ -2706,6 +2722,8 @@ class LocalSqliteCoreClient:
     def _search_rows(self, *, fts_query: str, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = [fts_query]
         where = ["memory_fts MATCH ?", "s.deleted = 0"]
+        if self.memory_v2_enabled:
+            where.append(_CURATED_EVENT_SQL)
         if project:
             where.append("(e.project = ? OR e.project = '')")
             where_params.append(project)
@@ -2745,6 +2763,8 @@ class LocalSqliteCoreClient:
             return [], {}
         where_params: list[Any] = [self.embedding_provider.fingerprint]
         where = ["v.provider_fingerprint = ?", "s.deleted = 0"]
+        if self.memory_v2_enabled:
+            where.append(_CURATED_EVENT_SQL)
         if project:
             where.append("(e.project = ? OR e.project = '')")
             where_params.append(project)
@@ -2851,6 +2871,8 @@ class LocalSqliteCoreClient:
     def _recent_rows(self, *, project: str, app: str, limit: int) -> list[sqlite3.Row]:
         where_params: list[Any] = []
         where = ["s.deleted = 0"]
+        if self.memory_v2_enabled:
+            where.append(_CURATED_EVENT_SQL)
         if project:
             where.append("(e.project = ? OR e.project = '')")
             where_params.append(project)
@@ -3443,6 +3465,10 @@ def _split_tags_joined(raw: str) -> tuple[str, ...]:
     if not raw:
         return ()
     return tuple(tag for tag in (compact_whitespace(part) for part in raw.split(",")) if tag)
+
+
+def _event_has_curated_import_signal(tags: tuple[str, ...]) -> bool:
+    return bool({compact_whitespace(tag).lower() for tag in tags} & _CURATED_EVENT_TAGS)
 
 
 def _source_type_from_tags_v2(tags: tuple[str, ...]) -> str:
@@ -4589,12 +4615,15 @@ def _legacy_v2_suggestion_key(suggestion: InputSuggestion) -> str:
 def _suggestion_looks_like_compiled_memory(suggestion: InputSuggestion) -> bool:
     metadata = dict(suggestion.metadata)
     tags = {str(tag).lower() for tag in metadata.get("tags") or []}
+    memory_id = compact_whitespace(str(metadata.get("memory_id") or ""))
     surface = compact_whitespace(suggestion.surface_text)
     if not surface or len(surface) > 24:
         return False
     if tags.intersection({"phrase-memory", "compiled-memory", "compiled-phrase", "curated", "structure", "outline"}):
         return True
     source_type = str(metadata.get("source_type") or "")
+    if memory_id.startswith("phrase:") and source_type in {"memory", "rag"} and suggestion.suggestion_type == "phrase":
+        return True
     return source_type == "memory" and suggestion.suggestion_type in {"phrase", "structure", "continue"}
 
 

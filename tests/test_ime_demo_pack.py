@@ -132,7 +132,7 @@ class ImeFirstDemoPackTests(unittest.TestCase):
         self.assertEqual(read_only_texts(self.db_path), ["用户自己的数据"])
         self.assertEqual(verify_count(self.db_path, "memory_books"), 0)
         self.assertEqual(verify_count(self.db_path, "memory_atoms"), 0)
-        self.assertGreaterEqual(verify_count(self.db_path, "memory_retrieval_docs"), 1)
+        self.assertEqual(verify_count(self.db_path, "memory_retrieval_docs"), 0)
 
     def test_fixture_is_public_safe_and_cli_uses_explicit_temp_path(self) -> None:
         source = DEFAULT_FIXTURE_PATH.read_text(encoding="utf-8")

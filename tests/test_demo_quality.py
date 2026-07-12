@@ -146,7 +146,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
                 project=PROJECT,
                 app="codex",
                 source="codex_history",
-                tags=tags,
+                tags=tuple(dict.fromkeys((*tags, "curated"))),
                 privacy_disposition="allowed",
             )
 
@@ -167,7 +167,7 @@ class RagImeDemoQualityTests(unittest.TestCase):
             project=PROJECT,
             app="codex",
             source="codex_history",
-            tags=("frequency", "quality"),
+            tags=("frequency", "quality", "curated"),
             privacy_disposition="allowed",
         )
         suggestion = self.adapter.suggest(SuggestionRequest(current_input="Codex 用户输入 质量测试", top_k=1))[0]

@@ -212,7 +212,7 @@ new file mode 100644
 index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,600 @@
+@@ -0,0 +1,809 @@
 +import AppKit
 +import QuartzCore
 +
@@ -222,7 +222,12 @@ index 0000000..1111111
 +  private static var activeOwnerGeneration = 0
 +  private let panel: RagImeNonActivatingPanel
 +  private let cardView: RagImeSuggestionCardView
++  private let resultRecallPanel: RagImeNonActivatingPanel
++  private let resultRecallView: RagImeAssistantResultRecallView
 +  private var currentPayload: RagImeAssistantOverlayPayload?
++  private var currentRestore: (() -> Void)?
++  private var pinnedExplicitPayload: RagImeAssistantOverlayPayload?
++  private var pinnedExplicitRestore: (() -> Void)?
 +  private var currentState: RagImeAssistantSurfaceState = .hidden
 +  private var renderedSnapshotId = ""
 +  private var renderedStableIds: [String] = []
@@ -252,6 +257,13 @@ index 0000000..1111111
 +      defer: false
 +    )
 +    cardView = RagImeSuggestionCardView(frame: panel.contentView?.bounds ?? .zero)
++    resultRecallPanel = RagImeNonActivatingPanel(
++      contentRect: NSRect(x: 0, y: 0, width: 126, height: 34),
++      styleMask: [.borderless, .nonactivatingPanel],
++      backing: .buffered,
++      defer: false
++    )
++    resultRecallView = RagImeAssistantResultRecallView(frame: NSRect(x: 0, y: 0, width: 126, height: 34))
 +    panel.isReleasedWhenClosed = false
 +    panel.isFloatingPanel = true
 +    panel.level = .floating
@@ -261,17 +273,29 @@ index 0000000..1111111
 +    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
 +    panel.contentView = cardView
 +    cardView.autoresizingMask = [.width, .height]
++    resultRecallPanel.isReleasedWhenClosed = false
++    resultRecallPanel.isFloatingPanel = true
++    resultRecallPanel.level = .floating
++    resultRecallPanel.backgroundColor = .clear
++    resultRecallPanel.isOpaque = false
++    resultRecallPanel.hasShadow = true
++    resultRecallPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
++    resultRecallPanel.contentView = resultRecallView
++    resultRecallView.autoresizingMask = [.width, .height]
 +    cardView.onSelect = { [weak self] candidate, index, mode in self?.onSelect?(candidate, index, mode) }
 +    cardView.onAction = { [weak self] action in self?.handle(action) }
++    resultRecallView.onRestore = { [weak self] in self?.restorePinnedExplicitResult() }
++    resultRecallView.onClose = { [weak self] in self?.clearPinnedExplicitResult(reason: "recall_close") }
 +  }
 +
-+  var isVisible: Bool { panel.isVisible }
++  var isVisible: Bool { panel.isVisible || resultRecallPanel.isVisible }
 +
 +  deinit {
 +    pendingUpdate?.cancel()
 +    ttlDismissWorkItem?.cancel()
 +    generatingTimer?.invalidate()
 +    panel.orderOut(nil)
++    resultRecallPanel.orderOut(nil)
 +    if Self.activeOwner === self { Self.activeOwner = nil }
 +  }
 +
@@ -280,6 +304,7 @@ index 0000000..1111111
 +    anchor: NSPoint?,
 +    onSelect: ((RagImeDisplayCandidate, Int, RagImeAssistantCommitMode) -> Void)?,
 +    onAction: ((RagImeAssistantAction) -> Void)? = nil,
++    onRestore: (() -> Void)? = nil,
 +    onDismiss: ((String) -> Void)? = nil,
 +    onTrace: TraceHandler? = nil
 +  ) {
@@ -289,7 +314,9 @@ index 0000000..1111111
 +    self.onTrace = onTrace
 +    traceCreationIfNeeded()
 +    pendingUpdate?.cancel()
-+    let work = DispatchWorkItem { [weak self] in self?.apply(payload, anchor: anchor) }
++    let work = DispatchWorkItem { [weak self] in
++      self?.apply(payload, anchor: anchor, incomingRestore: onRestore)
++    }
 +    pendingUpdate = work
 +    DispatchQueue.main.async(execute: work)
 +    trace("assistant_panel_update_coalesced", ["reason": "main_runloop"])
@@ -327,6 +354,16 @@ index 0000000..1111111
 +  }
 +
 +  func dismiss(reason: String) {
++    if currentState == .explicitResult && shouldCollapseExplicitResult(reason: reason) {
++      _ = collapseExplicitResult(reason: reason)
++      return
++    }
++    let currentPayloadIsExplicit = currentPayload.map {
++      $0.phase == "active_rag" || $0.uiMode.contains("active_rag")
++    } ?? false
++    let preservePinnedResult = pinnedExplicitPayload != nil
++      && !currentPayloadIsExplicit
++      && shouldPreservePinnedResult(reason: reason)
 +    let hadPresentation = panel.isVisible || currentPayload != nil
 +    let fadeAnimation = currentPayload.map(fadeAnimationEnabled(for:)) ?? true
 +    pendingUpdate?.cancel()
@@ -335,6 +372,7 @@ index 0000000..1111111
 +    ttlDismissWorkItem = nil
 +    let duration = visibleSince.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
 +    currentPayload = nil
++    currentRestore = nil
 +    currentState = .hidden
 +    renderedSnapshotId = ""
 +    renderedStableIds = []
@@ -342,7 +380,10 @@ index 0000000..1111111
 +    expandedSnapshotId = ""
 +    visibleSince = nil
 +    stopGeneratingAnimation()
-+    if Self.activeOwner === self { Self.activeOwner = nil }
++    if !preservePinnedResult {
++      clearPinnedExplicitResult(reason: reason)
++    }
++    if Self.activeOwner === self && !preservePinnedResult { Self.activeOwner = nil }
 +    presentationGeneration += 1
 +    let generation = presentationGeneration
 +    let reduceMotion = !fadeAnimation || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -373,7 +414,36 @@ index 0000000..1111111
 +    if hadPresentation { onDismiss?(reason) }
 +  }
 +
-+  private func apply(_ payload: RagImeAssistantOverlayPayload?, anchor: NSPoint?) {
++  @discardableResult
++  func collapseExplicitResult(reason: String) -> Bool {
++    guard currentState == .explicitResult, let payload = currentPayload else { return false }
++    pinnedExplicitPayload = payload
++    pinnedExplicitRestore = currentRestore
++    currentPayload = nil
++    currentRestore = nil
++    currentState = .hidden
++    renderedSnapshotId = ""
++    renderedStableIds = []
++    renderedContentSignature = ""
++    expandedSnapshotId = ""
++    ttlDismissWorkItem?.cancel()
++    ttlDismissWorkItem = nil
++    stopGeneratingAnimation()
++    panel.orderOut(nil)
++    showPinnedResultRecall(anchor: lastReliableCaretAnchor)
++    trace("assistant_result_collapsed_to_recall", [
++      "reason": reason,
++      "snapshotId": payload.snapshotId,
++      "restoreAvailable": pinnedExplicitRestore != nil,
++    ])
++    return true
++  }
++
++  private func apply(
++    _ payload: RagImeAssistantOverlayPayload?,
++    anchor: NSPoint?,
++    incomingRestore: (() -> Void)?
++  ) {
 +    let start = CFAbsoluteTimeGetCurrent()
 +    guard let payload, payload.visible else {
 +      dismiss(reason: payload?.dismissReason ?? "hidden")
@@ -384,6 +454,17 @@ index 0000000..1111111
 +      dismiss(reason: payload.phase == "composition" ? "composition" : "passive_pending_or_status_only")
 +      return
 +    }
++    if currentState == .explicitResult && !state.isExplicit, let explicitPayload = currentPayload {
++      pinnedExplicitPayload = explicitPayload
++      pinnedExplicitRestore = currentRestore
++      showPinnedResultRecall(anchor: anchor ?? lastReliableCaretAnchor)
++      trace("assistant_result_collapsed_to_recall", [
++        "reason": "passive_prediction_arrived",
++        "snapshotId": explicitPayload.snapshotId,
++        "restoreAvailable": pinnedExplicitRestore != nil,
++      ])
++    }
++    currentRestore = incomingRestore
 +    if let anchor { lastReliableCaretAnchor = anchor }
 +    if !state.isExplicit && anchor == nil && lastReliableCaretAnchor == nil && !panel.isVisible {
 +      trace("assistant_panel_anchor_missing", ["surfaceState": state.rawValue, "anchorSource": "missing", "reason": "passive_requires_caret"])
@@ -439,6 +520,11 @@ index 0000000..1111111
 +    panel.ignoresMouseEvents = false
 +    panel.setContentSize(contentSize(for: state, payload: payload))
 +    position(state: state, anchor: anchor)
++    if state.isExplicit {
++      resultRecallPanel.orderOut(nil)
++    } else if pinnedExplicitPayload != nil {
++      showPinnedResultRecall(anchor: anchor ?? lastReliableCaretAnchor)
++    }
 +    scheduleTTL(for: payload)
 +    if !wasVisible {
 +      visibleSince = Date()
@@ -572,7 +658,7 @@ index 0000000..1111111
 +        width: width,
 +        height: RagImeSuggestionCardView.predictionHeight(candidateCount: realCandidates.count, hasAction: hasAction)
 +      )
-+    case .explicitGenerating: return NSSize(width: max(300, width), height: RagImeSuggestionCardView.thinkingHeight)
++    case .explicitGenerating: return NSSize(width: 78, height: RagImeSuggestionCardView.thinkingHeight)
 +    case .explicitError: return NSSize(width: max(320, width), height: RagImeSuggestionCardView.errorHeight)
 +    case .explicitResult:
 +      let text = realCandidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
@@ -618,6 +704,9 @@ index 0000000..1111111
 +    origin.x = min(max(origin.x, screen.minX + 8), screen.maxX - size.width - 8)
 +    origin.y = min(max(origin.y, screen.minY + 8), screen.maxY - size.height - 8)
 +    panel.setFrameOrigin(origin)
++    if pinnedExplicitPayload != nil && !state.isExplicit {
++      positionPinnedResultRecall(relativeTo: panel.frame, screen: screen)
++    }
 +    trace("assistant_panel_positioned", [
 +      "surfaceState": state.rawValue,
 +      "anchorSource": source,
@@ -641,6 +730,77 @@ index 0000000..1111111
 +    case .more(let sourceView): showMoreMenu(relativeTo: sourceView)
 +    default: onAction?(action)
 +    }
++  }
++
++  private func restorePinnedExplicitResult() {
++    guard pinnedExplicitPayload != nil, let restore = pinnedExplicitRestore else {
++      clearPinnedExplicitResult(reason: "restore_unavailable")
++      return
++    }
++    resultRecallPanel.orderOut(nil)
++    trace("assistant_result_recall_requested", [
++      "snapshotId": pinnedExplicitPayload?.snapshotId ?? "",
++    ])
++    restore()
++  }
++
++  private func showPinnedResultRecall(anchor: NSPoint?) {
++    guard pinnedExplicitPayload != nil else { return }
++    if panel.isVisible, let screen = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
++      positionPinnedResultRecall(relativeTo: panel.frame, screen: screen)
++    } else if let point = anchor ?? lastReliableCaretAnchor,
++      let screen = (NSScreen.screens.first { $0.visibleFrame.contains(point) } ?? NSScreen.main)?.visibleFrame {
++      let size = resultRecallPanel.frame.size
++      var origin = NSPoint(x: point.x, y: point.y - size.height - 6)
++      origin.x = min(max(origin.x, screen.minX + 8), screen.maxX - size.width - 8)
++      origin.y = min(max(origin.y, screen.minY + 8), screen.maxY - size.height - 8)
++      resultRecallPanel.setFrameOrigin(origin)
++    }
++    resultRecallPanel.orderFront(nil)
++  }
++
++  private func positionPinnedResultRecall(relativeTo hostFrame: NSRect, screen: NSRect) {
++    let size = resultRecallPanel.frame.size
++    var origin = NSPoint(x: hostFrame.maxX - size.width, y: hostFrame.maxY + 6)
++    if origin.y + size.height > screen.maxY - 8 {
++      origin.y = hostFrame.minY - size.height - 6
++    }
++    origin.x = min(max(origin.x, screen.minX + 8), screen.maxX - size.width - 8)
++    origin.y = min(max(origin.y, screen.minY + 8), screen.maxY - size.height - 8)
++    resultRecallPanel.setFrameOrigin(origin)
++  }
++
++  private func clearPinnedExplicitResult(reason: String) {
++    guard pinnedExplicitPayload != nil || resultRecallPanel.isVisible else { return }
++    let snapshotId = pinnedExplicitPayload?.snapshotId ?? ""
++    pinnedExplicitPayload = nil
++    pinnedExplicitRestore = nil
++    resultRecallPanel.orderOut(nil)
++    trace("assistant_result_recall_cleared", ["reason": reason, "snapshotId": snapshotId])
++  }
++
++  private func shouldCollapseExplicitResult(reason: String) -> Bool {
++    [
++      "clear_display_candidates",
++      "composition",
++      "hidden",
++      "passive_pending_or_status_only",
++      "post_commit_overlay_hidden",
++    ].contains(reason)
++  }
++
++  private func shouldPreservePinnedResult(reason: String) -> Bool {
++    [
++      "candidate_accepted",
++      "confirmation_finished",
++      "ttl_expired",
++      "escape",
++      "clear_display_candidates",
++      "composition",
++      "hidden",
++      "passive_pending_or_status_only",
++      "post_commit_overlay_hidden",
++    ].contains(reason)
 +  }
 +
 +  private func showMoreMenu(relativeTo sourceView: NSView) {
@@ -812,6 +972,55 @@ index 0000000..1111111
 +  }
 +
 +  private func trace(_ event: String, _ fields: [String: Any]) { onTrace?(event, fields) }
++}
++
++private final class RagImeAssistantResultRecallView: NSVisualEffectView {
++  var onRestore: (() -> Void)?
++  var onClose: (() -> Void)?
++  private let restoreButton = NSButton(title: "已生成", target: nil, action: nil)
++  private let closeButton = NSButton(title: "", target: nil, action: nil)
++
++  override init(frame frameRect: NSRect) {
++    super.init(frame: frameRect)
++    material = .popover
++    blendingMode = .behindWindow
++    state = .active
++    wantsLayer = true
++    layer?.cornerRadius = 7
++    layer?.borderWidth = 0.5
++    layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.55).cgColor
++
++    restoreButton.target = self
++    restoreButton.action = #selector(restore)
++    restoreButton.isBordered = false
++    restoreButton.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "已生成")
++    restoreButton.imagePosition = .imageLeading
++    restoreButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
++    restoreButton.contentTintColor = .controlAccentColor
++    restoreButton.toolTip = "查看已生成结果"
++
++    closeButton.target = self
++    closeButton.action = #selector(close)
++    closeButton.isBordered = false
++    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭")
++    closeButton.imagePosition = .imageOnly
++    closeButton.contentTintColor = .secondaryLabelColor
++    closeButton.toolTip = "关闭已生成结果"
++    addSubview(restoreButton)
++    addSubview(closeButton)
++  }
++
++  @available(*, unavailable)
++  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
++
++  override func layout() {
++    super.layout()
++    restoreButton.frame = NSRect(x: 6, y: 3, width: max(72, bounds.width - 34), height: 28)
++    closeButton.frame = NSRect(x: bounds.width - 28, y: 5, width: 24, height: 24)
++  }
++
++  @objc private func restore() { onRestore?() }
++  @objc private func close() { onClose?() }
 +}
 diff --git a/sources/RagImeAssistantSurfaceState.swift b/sources/RagImeAssistantSurfaceState.swift
 new file mode 100644
@@ -2824,7 +3033,7 @@ new file mode 100644
 index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeSuggestionCardView.swift
-@@ -0,0 +1,567 @@
+@@ -0,0 +1,618 @@
 +import AppKit
 +import QuartzCore
 +
@@ -2895,6 +3104,8 @@ index 0000000..1111111
 +  private let rows = (0..<RagImeSuggestionCardView.maximumPredictionCandidates).map {
 +    _ in RagImeSuggestionRowView(frame: .zero)
 +  }
++  private let stateTint = NSView()
++  private let accentRail = NSView()
 +  private let actionSeparator = NSView()
 +  private let deepSeekButton = NSButton(title: "生成", target: nil, action: nil)
 +  private let deepSeekShortcutPlate = NSView()
@@ -2939,6 +3150,14 @@ index 0000000..1111111
 +    layer?.borderColor = NSColor.separatorColor.cgColor
 +    layer?.backgroundColor = NSColor.clear.cgColor
 +    layer?.masksToBounds = true
++    stateTint.wantsLayer = true
++    stateTint.layer?.backgroundColor = NSColor.clear.cgColor
++    stateTint.autoresizingMask = [.width, .height]
++    addSubview(stateTint, positioned: .below, relativeTo: nil)
++    accentRail.wantsLayer = true
++    accentRail.layer?.cornerRadius = 1.5
++    accentRail.isHidden = true
++    addSubview(accentRail)
 +    for (index, row) in rows.enumerated() {
 +      row.onSelect = { [weak self] candidate in
 +        guard let self, index < self.candidateIndexes.count else { return }
@@ -3031,10 +3250,13 @@ index 0000000..1111111
 +    layer?.backgroundColor = NSColor.clear.cgColor
 +    deepSeekShortcutPlate.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.58).cgColor
 +    resultShortcutPlate.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.42).cgColor
++    updateThemeChrome(for: surfaceState)
 +  }
 +
 +  override func layout() {
 +    super.layout()
++    stateTint.frame = bounds
++    accentRail.frame = NSRect(x: 0, y: 8, width: 3, height: max(0, bounds.height - 16))
 +    switch surfaceState {
 +    case .pendingPrediction:
 +      statusHalo.frame = NSRect(x: 12, y: 10, width: 24, height: 24)
@@ -3052,27 +3274,27 @@ index 0000000..1111111
 +        )
 +      }
 +      if actionCandidate != nil {
-+        actionSeparator.frame = NSRect(x: 44, y: Self.actionHeight - 1, width: max(0, bounds.width - 56), height: 1)
-+        deepSeekButton.frame = NSRect(x: 12, y: 5, width: max(76, bounds.width - 70), height: 30)
-+        deepSeekShortcutPlate.frame = NSRect(x: bounds.width - 50, y: 8, width: 38, height: 24)
-+        deepSeekShortcutLabel.frame = NSRect(x: bounds.width - 48, y: 10, width: 34, height: 20)
++        actionSeparator.frame = NSRect(x: 60, y: Self.actionHeight - 1, width: max(0, bounds.width - 72), height: 1)
++        deepSeekShortcutPlate.frame = NSRect(x: 12, y: 8, width: 38, height: 24)
++        deepSeekShortcutLabel.frame = NSRect(x: 14, y: 10, width: 34, height: 20)
++        deepSeekButton.frame = NSRect(x: 60, y: 5, width: max(76, bounds.width - 72), height: 30)
 +      }
 +    case .explicitGenerating:
-+      statusIcon.frame = NSRect(x: 12, y: 33, width: 18, height: 18)
-+      statusLabel.frame = NSRect(x: 38, y: 30, width: max(60, bounds.width - 82), height: 24)
-+      diagnosticLabel.frame = NSRect(x: 38, y: 9, width: max(60, bounds.width - 52), height: 18)
-+      stopButton.frame = NSRect(x: bounds.width - 38, y: 17, width: 32, height: 32)
++      statusHalo.frame = NSRect(x: 8, y: 18, width: 28, height: 28)
++      statusIcon.frame = NSRect(x: 13, y: 23, width: 18, height: 18)
++      stopButton.frame = NSRect(x: 41, y: 17, width: 30, height: 30)
 +    case .explicitError:
-+      statusIcon.frame = NSRect(x: 14, y: 47, width: 18, height: 18)
-+      statusLabel.frame = NSRect(x: 40, y: 44, width: max(60, bounds.width - 86), height: 24)
-+      diagnosticLabel.frame = NSRect(x: 40, y: 25, width: max(60, bounds.width - 54), height: 18)
-+      retryButton.frame = NSRect(x: 34, y: 3, width: 60, height: 26)
++      statusHalo.frame = NSRect(x: 12, y: 43, width: 26, height: 26)
++      statusIcon.frame = NSRect(x: 16, y: 47, width: 18, height: 18)
++      statusLabel.frame = NSRect(x: 46, y: 44, width: max(60, bounds.width - 92), height: 24)
++      diagnosticLabel.frame = NSRect(x: 46, y: 24, width: max(60, bounds.width - 60), height: 18)
++      retryButton.frame = NSRect(x: 40, y: 2, width: 64, height: 26)
 +      closeButton.frame = NSRect(x: bounds.width - 38, y: 42, width: 30, height: 30)
 +    case .explicitResult:
-+      let shortcutWidth: CGFloat = isStreamingResult ? 0 : 110
-+      resultHeader.frame = NSRect(x: 14, y: bounds.height - 31, width: bounds.width - 28 - shortcutWidth, height: 19)
-+      resultShortcutPlate.frame = NSRect(x: bounds.width - 120, y: bounds.height - 36, width: 74, height: 24)
-+      resultShortcutLabel.frame = NSRect(x: bounds.width - 116, y: bounds.height - 34, width: 66, height: 20)
++      let headerX: CGFloat = isStreamingResult ? 14 : 98
++      resultHeader.frame = NSRect(x: headerX, y: bounds.height - 31, width: max(80, bounds.width - headerX - 46), height: 19)
++      resultShortcutPlate.frame = NSRect(x: 14, y: bounds.height - 36, width: 74, height: 24)
++      resultShortcutLabel.frame = NSRect(x: 18, y: bounds.height - 34, width: 66, height: 20)
 +      closeButton.frame = NSRect(x: bounds.width - 38, y: bounds.height - 39, width: 30, height: 30)
 +      diagnosticLabel.frame = NSRect(
 +        x: 14,
@@ -3108,6 +3330,7 @@ index 0000000..1111111
 +    animationsEnabled: Bool = true
 +  ) -> Bool {
 +    surfaceState = state
++    updateThemeChrome(for: state)
 +    self.canReplaceSelection = canReplaceSelection
 +    let indexedCandidates = Array(payload.candidates.enumerated())
 +    let realCandidates = indexedCandidates
@@ -3155,14 +3378,17 @@ index 0000000..1111111
 +        [actionSeparator, deepSeekButton, deepSeekShortcutPlate, deepSeekShortcutLabel].forEach { $0.isHidden = false }
 +      }
 +    case .explicitGenerating:
++      statusIcon.stringValue = "✦"
 +      statusIcon.textColor = .systemIndigo
 +      statusLabel.stringValue = payload.statusText.isEmpty ? "正在生成..." : providerNeutralStatus(payload.statusText)
-+      [statusIcon, statusLabel, diagnosticLabel, stopButton].forEach { $0.isHidden = false }
++      [statusHalo, statusIcon, stopButton].forEach { $0.isHidden = false }
++      toolTip = "\(statusLabel.stringValue)；点击停止"
++      setAccessibilityLabel(statusLabel.stringValue)
 +    case .explicitError:
 +      statusIcon.stringValue = "!"
 +      statusIcon.textColor = .systemOrange
 +      statusLabel.stringValue = payload.statusText.isEmpty ? "生成失败，请重试" : providerNeutralStatus(payload.statusText)
-+      [statusIcon, statusLabel, diagnosticLabel, retryButton, closeButton].forEach { $0.isHidden = false }
++      [statusHalo, statusIcon, statusLabel, diagnosticLabel, retryButton, closeButton].forEach { $0.isHidden = false }
 +    case .explicitResult:
 +      let streaming = candidates.first.map { candidate in
 +        if case .bool(let value)? = candidate.metadata["streamingPartial"] { return value }
@@ -3266,6 +3492,32 @@ index 0000000..1111111
 +    [statusHalo, statusIcon, statusLabel, diagnosticLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach { $0.isHidden = true }
 +  }
 +
++  private func updateThemeChrome(for state: RagImeAssistantSurfaceState) {
++    let tint: NSColor
++    let rail: NSColor
++    switch state {
++    case .explicitGenerating:
++      tint = NSColor.systemIndigo.withAlphaComponent(0.035)
++      rail = .systemIndigo
++      statusHalo.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.11).cgColor
++    case .explicitError:
++      tint = NSColor.systemOrange.withAlphaComponent(0.045)
++      rail = .systemOrange
++      statusHalo.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.12).cgColor
++    case .explicitResult:
++      tint = NSColor.systemTeal.withAlphaComponent(0.025)
++      rail = .systemTeal
++      statusHalo.layer?.backgroundColor = NSColor.systemTeal.withAlphaComponent(0.10).cgColor
++    default:
++      tint = .clear
++      rail = .clear
++      statusHalo.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.10).cgColor
++    }
++    stateTint.layer?.backgroundColor = tint.cgColor
++    accentRail.layer?.backgroundColor = rail.withAlphaComponent(0.82).cgColor
++    accentRail.isHidden = !state.isExplicit
++  }
++
 +  private func diagnosticText(for payload: RagImeAssistantOverlayPayload) -> String {
 +    guard payload.phase == "active_rag" || payload.uiMode.contains("active_rag") else { return "" }
 +    let transaction = payload.frontendTransaction ?? [:]
@@ -3295,7 +3547,7 @@ index 0000000..1111111
 +      parts.append("未读取上下文")
 +    }
 +    if let recentInputChars, recentInputChars > 0 {
-+      parts.append(recentInputUsed == true ? "历史补充 \(recentInputChars) 字" : "历史未注入")
++      parts.append(recentInputUsed == true ? "历史补充 \(recentInputChars) 字" : "历史已记录，本次未引用")
 +    }
 +    if let evidenceCount, evidenceCount > 0 {
 +      parts.append("RAG \(evidenceCount) 条")
@@ -3405,7 +3657,7 @@ new file mode 100644
 index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeSuggestionRowView.swift
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,241 @@
 +import AppKit
 +import QuartzCore
 +
@@ -3447,7 +3699,7 @@ index 0000000..1111111
 +    shortcutLabel.font = RagImeAssistantTypography.shortcut
 +    shortcutLabel.textColor = .tertiaryLabelColor
 +    shortcutLabel.lineBreakMode = .byClipping
-+    shortcutLabel.alignment = .right
++    shortcutLabel.alignment = .center
 +    shortcutPlate.wantsLayer = true
 +    shortcutPlate.layer?.cornerRadius = 5
 +    shortcutPlate.layer?.borderWidth = 0.5
@@ -3469,14 +3721,13 @@ index 0000000..1111111
 +  override func layout() {
 +    super.layout()
 +    let centerY = bounds.midY
-+    let shortcutX = bounds.width - 50
 +    sourceBar.frame = NSRect(x: 0, y: centerY - 12, width: 3, height: 24)
-+    sourceIcon.frame = NSRect(x: 14, y: centerY - 8.5, width: 17, height: 17)
++    shortcutPlate.frame = NSRect(x: 12, y: centerY - 12, width: 38, height: 24)
++    shortcutLabel.frame = NSRect(x: 14, y: centerY - 10, width: 34, height: 20)
++    sourceIcon.frame = NSRect(x: 60, y: centerY - 8.5, width: 17, height: 17)
 +    sourceLabel.frame = .zero
-+    shortcutPlate.frame = NSRect(x: shortcutX, y: centerY - 12, width: 38, height: 24)
-+    shortcutLabel.frame = NSRect(x: shortcutX + 2, y: centerY - 10, width: 34, height: 20)
-+    candidateLabel.frame = NSRect(x: 44, y: centerY - 13, width: max(52, shortcutX - 54), height: 26)
-+    separatorView.frame = NSRect(x: 44, y: 0, width: max(0, bounds.width - 56), height: 1)
++    candidateLabel.frame = NSRect(x: 86, y: centerY - 13, width: max(52, bounds.width - 98), height: 26)
++    separatorView.frame = NSRect(x: 86, y: 0, width: max(0, bounds.width - 98), height: 1)
 +    hitButton.frame = bounds
 +  }
 +

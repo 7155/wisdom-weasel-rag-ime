@@ -52,6 +52,18 @@ class ManagementPaginationTests(unittest.TestCase):
         self.assertTrue(first["items"][0]["textHash"].startswith("sha256:"))
 
     def test_memory_groups_are_paginated_human_readable_and_do_not_return_raw_events(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_semantic_groups(
+                    group_id, title, description, project, source_event_ids_json,
+                    confidence, quality_score, created_at_ms, updated_at_ms
+                ) VALUES (
+                    'group:input-method', '输入法', '输入法与个人知识召回',
+                    'wisdom-weasel-rag-ime', '[1]', 0.9, 0.9, 1, 1
+                )
+                """
+            )
         result = self.service.management.memory_page("groups", page_request({"limit": 10}))
 
         self.assertTrue(result["ok"])
@@ -75,15 +87,58 @@ class ManagementPaginationTests(unittest.TestCase):
         self.assertEqual(refreshed["items"][0]["note"], "只汇总这个文档中的输入")
         self.assertEqual(refreshed["items"][0]["color_token"], "teal")
 
+    def test_semantic_groups_can_be_merged_without_losing_members(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_semantic_groups(
+                    group_id, title, description, project, source_event_ids_json,
+                    confidence, quality_score, created_at_ms, updated_at_ms
+                ) VALUES
+                    ('group:input-method', '输入法', '输入法产品与模型', 'wisdom-weasel-rag-ime', '[1]', 0.9, 0.9, 1, 1),
+                    ('group:ime-ui', '候选框', '输入法界面细节', 'wisdom-weasel-rag-ime', '[2]', 0.7, 0.7, 1, 1)
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_semantic_group_members(
+                    group_id, member_type, member_id, weight, source, updated_at_ms
+                ) VALUES ('group:ime-ui', 'atom', 'atom:ui', 0.8, 'dsv4', 1)
+                """
+            )
+
+        merged = self.service.management.memory_edit(
+            {
+                "kind": "groups",
+                "id": "group:ime-ui",
+                "mergeIntoId": "group:input-method",
+            }
+        )
+
+        self.assertTrue(merged["ok"])
+        self.assertTrue(merged["changes"]["merged"])
+        with sqlite3.connect(self.db_path) as conn:
+            source_status = conn.execute(
+                "SELECT status FROM memory_semantic_groups WHERE group_id = 'group:ime-ui'"
+            ).fetchone()[0]
+            target_member = conn.execute(
+                """
+                SELECT source FROM memory_semantic_group_members
+                WHERE group_id = 'group:input-method' AND member_type = 'atom' AND member_id = 'atom:ui'
+                """
+            ).fetchone()
+        self.assertEqual(source_status, "merged")
+        self.assertEqual(target_member[0], "user_merge")
+
     def test_tags_expose_profiles_and_merge_without_losing_relations(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             first = conn.execute(
-                "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms) "
-                "VALUES ('输入法', '输入法', 'topic', 0.9, 1, 1)"
+                "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, source, status) "
+                "VALUES ('输入法', '输入法', 'topic', 0.9, 1, 1, 'user', 'active')"
             ).lastrowid
             second = conn.execute(
-                "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms) "
-                "VALUES ('IME', 'ime', 'alias', 0.8, 1, 1)"
+                "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, source, status) "
+                "VALUES ('IME', 'ime', 'alias', 0.8, 1, 1, 'user', 'active')"
             ).lastrowid
             conn.execute(
                 "INSERT INTO memory_atoms(id, kind, text, source_event_ids_json, source_memory_ids_json, privacy_level, status, created_at_ms, updated_at_ms) "
@@ -121,6 +176,34 @@ class ManagementPaginationTests(unittest.TestCase):
                 ).fetchone()[0],
                 str(first),
             )
+
+    def test_user_can_edit_semantic_tag_description(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            tag_id = conn.execute(
+                """
+                INSERT INTO memory_tags(
+                    tag, normalized_tag, tag_type, quality_score,
+                    created_at_ms, updated_at_ms, source, status
+                ) VALUES ('语音纠错', '语音纠错', 'concept', 0.8, 1, 1, 'dsv4', 'active')
+                """
+            ).lastrowid
+
+        edited = self.service.management.memory_edit(
+            {
+                "kind": "tags",
+                "id": str(tag_id),
+                "title": "语音纠错",
+                "description": "语音转写后的错别字修正与最终稿替换",
+                "type": "concept",
+                "aliases": ["ASR 纠错"],
+            }
+        )
+        page = self.service.management.memory_page("tags", page_request({"limit": 20}))
+        item = next(row for row in page["items"] if row["id"] == str(tag_id))
+
+        self.assertTrue(edited["ok"])
+        self.assertEqual(item["description"], "语音转写后的错别字修正与最终稿替换")
+        self.assertEqual(item["source"], "user")
 
     def test_atom_merge_tombstones_source_and_updates_book_membership(self) -> None:
         with sqlite3.connect(self.db_path) as conn:

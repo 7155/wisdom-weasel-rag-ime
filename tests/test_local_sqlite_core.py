@@ -71,6 +71,15 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(code, 0)
         return json.loads(stdout.getvalue())
 
+    def _commit_curated(self, text: str, **kwargs: object) -> str:
+        """Insert governed retrieval material instead of an ordinary raw event."""
+        tags = tuple(str(item) for item in kwargs.pop("tags", ()))
+        return self.adapter.commit_text(
+            text,
+            tags=tuple(dict.fromkeys((*tags, "curated"))),
+            **kwargs,
+        )
+
     def test_records_events_into_sqlite_and_retrieves_with_fts5(self) -> None:
         self.assertGreaterEqual(self.core.event_count(), 8)
         suggestions = self.adapter.suggest(
@@ -193,7 +202,14 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(explain_payload["recentTrace"]["traceId"], "trace-cli-admin")
 
     def test_cli_memory_cleanup_review_marks_run_reviewed(self) -> None:
-        self.adapter.commit_text(
+        self._commit_curated(
+            "连续预测",
+            recent_context="RAG 输入法需要更好的候选",
+            project="wisdom-weasel-rag-ime",
+            tags=("phrase-memory",),
+            privacy_disposition="allowed",
+        )
+        self._commit_curated(
             "连续预测",
             recent_context="RAG 输入法需要更好的候选",
             project="wisdom-weasel-rag-ime",
@@ -304,13 +320,13 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
     def test_query_expansion_recalls_agent_context_injection_memory(self) -> None:
         self.core.reset()
-        self.adapter.commit_text(
+        self._commit_curated(
             "生成 PROJECT_MEMORY_BLOCK",
             recent_context="Agent 首次运行自动注入背景记忆",
             tags=("agent-hook", "context"),
             privacy_disposition="allowed",
         )
-        self.adapter.commit_text(
+        self._commit_curated(
             "普通 debug page 背景材料",
             recent_context="浏览器调试页面展示 pipeline",
             tags=("debug",),
@@ -329,13 +345,13 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
     def test_squirrel_rime_tags_and_source_boost_side_candidate_memory(self) -> None:
         self.core.reset()
-        self.adapter.commit_text(
+        self._commit_curated(
             "输入法候选需要保持短小",
             recent_context="debug page",
             tags=("debug",),
             privacy_disposition="allowed",
         )
-        self.adapter.commit_text(
+        self._commit_curated(
             "Squirrel side candidates 使用本地记忆作为候选",
             recent_context="Rime sidecar 合并候选 本地记忆",
             source="squirrel_rime_sidecar",
@@ -401,7 +417,12 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             ),
         ]
         for _, target in cases:
-            self.adapter.commit_text(target, recent_context="runtime term mapping", tags=("runtime",), privacy_disposition="allowed")
+            self._commit_curated(
+                target,
+                recent_context="runtime term mapping",
+                tags=("runtime",),
+                privacy_disposition="allowed",
+            )
         self.adapter.commit_text("普通中文候选调试", recent_context="无关记录", privacy_disposition="allowed")
 
         for query, expected in cases:
@@ -413,9 +434,9 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
     def test_suggestions_deduplicate_repeated_memory_surfaces(self) -> None:
         self.core.reset()
-        self.adapter.commit_text("重复候选内容", recent_context="RAG 输入法候选 重复记录", privacy_disposition="allowed")
-        self.adapter.commit_text("重复候选内容", recent_context="RAG 输入法候选 重复记录 第二次", privacy_disposition="allowed")
-        self.adapter.commit_text("新的候选内容", recent_context="RAG 输入法候选 另一条", privacy_disposition="allowed")
+        self._commit_curated("重复候选内容", recent_context="RAG 输入法候选 重复记录", privacy_disposition="allowed")
+        self._commit_curated("重复候选内容", recent_context="RAG 输入法候选 重复记录 第二次", privacy_disposition="allowed")
+        self._commit_curated("新的候选内容", recent_context="RAG 输入法候选 另一条", privacy_disposition="allowed")
 
         suggestions = self.adapter.suggest(SuggestionRequest(current_input="RAG 输入法候选 重复", top_k=3))
         surfaces = [item.surface_text for item in suggestions]
@@ -425,9 +446,9 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
     def test_suggestions_skip_low_value_one_character_memory_surfaces(self) -> None:
         self.core.reset()
-        self.adapter.commit_text("嗯", recent_context="RAG 输入法候选 语气词", privacy_disposition="allowed")
-        self.adapter.commit_text("当", recent_context="RAG 输入法候选 单字噪声", privacy_disposition="allowed")
-        self.adapter.commit_text("高频实时场景里的个人记忆系统", recent_context="RAG 输入法候选 高频记忆", privacy_disposition="allowed")
+        self._commit_curated("嗯", recent_context="RAG 输入法候选 语气词", privacy_disposition="allowed")
+        self._commit_curated("当", recent_context="RAG 输入法候选 单字噪声", privacy_disposition="allowed")
+        self._commit_curated("高频实时场景里的个人记忆系统", recent_context="RAG 输入法候选 高频记忆", privacy_disposition="allowed")
 
         suggestions = self.adapter.suggest(SuggestionRequest(current_input="RAG 输入法候选", top_k=5))
         surfaces = [item.surface_text for item in suggestions]
@@ -513,7 +534,12 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             },
             clear=False,
         ):
-            self.adapter.commit_text("世界设计", recent_context="输入法模糊音候选重排", tags=("pinyin",), privacy_disposition="allowed")
+            self._commit_curated(
+                "世界设计",
+                recent_context="输入法模糊音候选重排",
+                tags=("pinyin",),
+                privacy_disposition="allowed",
+            )
             enabled = self.adapter.suggest(SuggestionRequest(current_input="sijie", top_k=3))
 
         with patch.dict(
@@ -533,8 +559,8 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
     def test_accepted_count_boosts_frequently_selected_memory(self) -> None:
         self.core.reset()
-        frequent_id = self.adapter.commit_text("高频候选方案", recent_context="输入法 频率 候选方案", privacy_disposition="allowed")
-        self.adapter.commit_text("普通候选方案", recent_context="输入法 频率 候选方案", privacy_disposition="allowed")
+        frequent_id = self._commit_curated("高频候选方案", recent_context="输入法 频率 候选方案", privacy_disposition="allowed")
+        self._commit_curated("普通候选方案", recent_context="输入法 频率 候选方案", privacy_disposition="allowed")
 
         for _ in range(4):
             self.core.apply_action(
@@ -554,9 +580,9 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
     def test_repeated_committed_text_boosts_input_frequency(self) -> None:
         self.core.reset()
-        self.adapter.commit_text("高频候选方案", recent_context="输入法 词频 候选方案", privacy_disposition="allowed")
-        self.adapter.commit_text("高频候选方案", recent_context="输入法 词频 候选方案 第二次", privacy_disposition="allowed")
-        self.adapter.commit_text("普通候选方案", recent_context="输入法 词频 候选方案 最新", privacy_disposition="allowed")
+        self._commit_curated("高频候选方案", recent_context="输入法 词频 候选方案", privacy_disposition="allowed")
+        self._commit_curated("高频候选方案", recent_context="输入法 词频 候选方案 第二次", privacy_disposition="allowed")
+        self._commit_curated("普通候选方案", recent_context="输入法 词频 候选方案 最新", privacy_disposition="allowed")
 
         suggestions = self.adapter.suggest(SuggestionRequest(current_input="输入法 词频 候选方案", top_k=2))
 
@@ -566,9 +592,9 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
 
     def test_score_breakdown_explains_frequency_and_acceptance_signals(self) -> None:
         self.core.reset()
-        frequent_id = self.adapter.commit_text("高频候选方案", recent_context="输入法 词频 候选方案", privacy_disposition="allowed")
-        self.adapter.commit_text("高频候选方案", recent_context="输入法 词频 候选方案 第二次", privacy_disposition="allowed")
-        self.adapter.commit_text("普通候选方案", recent_context="输入法 词频 候选方案 最新", privacy_disposition="allowed")
+        frequent_id = self._commit_curated("高频候选方案", recent_context="输入法 词频 候选方案", privacy_disposition="allowed")
+        self._commit_curated("高频候选方案", recent_context="输入法 词频 候选方案 第二次", privacy_disposition="allowed")
+        self._commit_curated("普通候选方案", recent_context="输入法 词频 候选方案 最新", privacy_disposition="allowed")
         self.core.apply_action(
             MemoryAction(
                 action_id=None,
@@ -608,6 +634,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                     privacy_disposition="allowed",
                     recent_context="输入法 词频 候选方案",
                     project="wisdom-weasel-rag-ime",
+                    tags=("curated",),
                 )
             )
         self.core.record_event(
@@ -619,6 +646,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 privacy_disposition="allowed",
                 recent_context="输入法 词频 候选方案",
                 project="wisdom-weasel-rag-ime",
+                tags=("curated",),
             )
         )
 
@@ -1102,6 +1130,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                     recent_context="vibe coding command",
                     app="codex",
                     project="project-b",
+                    tags=("curated",),
                 )
             )
         self.core.record_event(
@@ -1114,6 +1143,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 recent_context="vibe coding command",
                 app="codex",
                 project="project-a",
+                tags=("curated",),
             )
         )
         for index in range(3):
@@ -1127,6 +1157,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                     recent_context="vibe coding command",
                     app="codex",
                     project="project-a",
+                    tags=("curated",),
                 )
             )
 
@@ -1212,6 +1243,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                     recent_context="浏览器 调试 快捷操作",
                     app="browser",
                     project="",
+                    tags=("curated",),
                 )
             )
         self.core.record_event(
@@ -1224,6 +1256,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 recent_context="浏览器 调试 快捷操作",
                 app="codex",
                 project="",
+                tags=("curated",),
             )
         )
         for index in range(3):
@@ -1237,6 +1270,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                     recent_context="codex 调试 快捷操作",
                     app="codex",
                     project="",
+                    tags=("curated",),
                 )
             )
 
@@ -1265,6 +1299,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                     recent_context="vibe coding command",
                     app="codex",
                     project="project-b",
+                    tags=("curated",),
                 )
             )
         self.core.record_event(
@@ -1277,6 +1312,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
                 recent_context="vibe coding command",
                 app="codex",
                 project="project-a",
+                tags=("curated",),
             )
         )
 
@@ -1452,11 +1488,11 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(stats["evictions"], 1)
 
     def test_suggest_for_input_uses_hybrid_core_when_enabled(self) -> None:
-        self.adapter.commit_text(
+        self._commit_curated(
             "多路召回",
             recent_context="RAG 输入法",
             project="wisdom-weasel-rag-ime",
-            tags=("RAG", "检索"),
+            tags=("RAG", "检索", "phrase-memory"),
             privacy_disposition="allowed",
         )
 
@@ -1644,8 +1680,18 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             vector_weight=2.0,
         )
         adapter = InputMethodAdapter(core)
-        adapter.commit_text("赤色星球探索计划", recent_context="航天项目背景", privacy_disposition="allowed")
-        adapter.commit_text("输入法候选调试", recent_context="普通工程记录", privacy_disposition="allowed")
+        adapter.commit_text(
+            "赤色星球探索计划",
+            recent_context="航天项目背景",
+            tags=("curated",),
+            privacy_disposition="allowed",
+        )
+        adapter.commit_text(
+            "输入法候选调试",
+            recent_context="普通工程记录",
+            tags=("curated",),
+            privacy_disposition="allowed",
+        )
 
         suggestions = adapter.suggest(SuggestionRequest(current_input="火星任务", top_k=1))
 
@@ -1673,7 +1719,12 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         db_path = Path(self.tmp.name) / "vector-backfill.sqlite"
         plain_core = LocalSqliteCoreClient(db_path)
         plain_adapter = InputMethodAdapter(plain_core)
-        plain_adapter.commit_text("赤色星球探索计划", recent_context="航天项目背景", privacy_disposition="allowed")
+        plain_adapter.commit_text(
+            "赤色星球探索计划",
+            recent_context="航天项目背景",
+            tags=("curated",),
+            privacy_disposition="allowed",
+        )
 
         vector_core = LocalSqliteCoreClient(
             db_path,
@@ -1712,7 +1763,12 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         db_path = Path(self.tmp.name) / "embedding-query.sqlite"
         core = LocalSqliteCoreClient(db_path, embedding_provider=provider, vector_weight=2.0)
         adapter = InputMethodAdapter(core)
-        adapter.commit_text("embedding 检索应该使用上下文窗口", recent_context="RAG 输入法 query 构造", privacy_disposition="allowed")
+        adapter.commit_text(
+            "embedding 检索应该使用上下文窗口",
+            recent_context="RAG 输入法 query 构造",
+            tags=("curated",),
+            privacy_disposition="allowed",
+        )
         provider.calls.clear()
 
         suggestions = adapter.suggest(
@@ -1744,6 +1800,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
             "embedding 检索应该使用上下文窗口",
             recent_context="RAG 输入法 query 构造",
             project="wisdom-weasel-rag-ime",
+            tags=("curated",),
             privacy_disposition="allowed",
         )
 
