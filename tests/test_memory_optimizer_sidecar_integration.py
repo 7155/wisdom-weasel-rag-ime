@@ -352,15 +352,15 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["insertText"], "连续预测")
 
-    def test_realtime_sidecar_does_not_call_x1top_or_http_when_optimizer_enabled(self) -> None:
+    def test_realtime_sidecar_does_not_call_deepseek_v4_or_http_when_optimizer_enabled(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-no-cloud-realtime-") as tmp:
-            env_path = Path(tmp) / ".rag-ime-x1api.env"
+            env_path = Path(tmp) / "deepseek.env"
             env_path.write_text(
                 "\n".join(
                     [
-                        "X1API_BASE_URL=https://x1api.top/v1",
-                        "X1API_API_KEY=secret-value",
-                        "X1API_MODEL=x1top",
+                        "RAG_IME_DEEPSEEK_BASE_URL=https://api.example.com/v1",
+                        "DEEPSEEK_API_KEY=secret-value",
+                        "RAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash",
                     ]
                 ),
                 encoding="utf-8",
@@ -382,9 +382,9 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                     "RAG_IME_MEMORY_OPTIMIZER": "1",
                     "RAG_IME_MEMORY_OPTIMIZER_TRACE": "1",
                     "RAG_IME_MODEL_ENV": str(env_path),
-                    "X1API_BASE_URL": "https://x1api.top/v1",
-                    "X1API_API_KEY": "secret-value",
-                    "X1API_MODEL": "x1top",
+                    "RAG_IME_DEEPSEEK_BASE_URL": "https://api.example.com/v1",
+                    "DEEPSEEK_API_KEY": "secret-value",
+                    "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
                 },
                 clear=False,
             ), patch(
@@ -392,7 +392,7 @@ class MemoryOptimizerSidecarIntegrationTests(unittest.TestCase):
                 side_effect=AssertionError("/rime-suggest must not make external HTTP calls"),
             ), patch(
                 "rag_ime.memory_generator.VcpRebuildMemoryGenerator.from_env_path",
-                side_effect=AssertionError("/rime-suggest must not load the x1top generator"),
+                side_effect=AssertionError("/rime-suggest must not load the DeepSeek V4 generator"),
             ), patch(
                 "rag_ime.memory_compiler.VcpRebuildMemoryGenerator.from_env_path",
                 side_effect=AssertionError("/rime-suggest must not load the offline compiler"),

@@ -22,6 +22,8 @@ from rag_ime.memory_book_compiler import memory_book_plan_from_compile_output, s
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
 from rag_ime.predictor import OpenAICompatiblePredictionConfig
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
+from rag_ime.rime_lexicon_review import CONFIRM_TEXT
+from rag_ime.rime_rank_export import record_rime_rank_feedback
 
 
 class _ManagementPredictionProvider:
@@ -113,6 +115,8 @@ class DebugManagementApiTests(unittest.TestCase):
                 db_path=self.db_path,
                 seed_if_empty=False,
                 predictor=_ManagementPredictionProvider(),
+                rime_user_dir=Path(self.tmp.name) / "Rime",
+                rime_lexicon_backup_root=Path(self.tmp.name) / "LexiconBackups",
             )
         )
 
@@ -347,6 +351,48 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(pending_attempt["requiredStatus"], "approved")
         self.assertFalse(apply_attempt["ok"])
         self.assertIn("dryRun", apply_attempt["error"])
+
+    def test_native_rime_feedback_lexicon_requires_review_token_and_can_rollback(self) -> None:
+        for index in range(2):
+            record_rime_rank_feedback(
+                self.db_path,
+                preedit="biao qing bao",
+                accepted_text="表情包",
+                action="accepted",
+                candidate_rank=1,
+                context_hash=f"context-{index}",
+                project="wisdom-weasel-rag-ime",
+            )
+
+        review = self.service.rime_lexicon_review({})
+        self.assertEqual(review["entryCount"], 1)
+        self.assertTrue(review["reviewRequired"])
+
+        stale = self.service.rime_lexicon_apply(
+            {
+                "reviewToken": "stale",
+                "selectedKeys": [review["entries"][0]["reviewKey"]],
+                "confirmText": CONFIRM_TEXT,
+            }
+        )
+        self.assertEqual(stale["reason"], "review_token_stale")
+
+        applied = self.service.rime_lexicon_apply(
+            {
+                "reviewToken": review["reviewToken"],
+                "selectedKeys": [review["entries"][0]["reviewKey"]],
+                "confirmText": CONFIRM_TEXT,
+            }
+        )
+        self.assertTrue(applied["applied"])
+        self.assertTrue(applied["requiresRedeploy"])
+        self.assertTrue((Path(self.tmp.name) / "Rime" / "rag_ime_user.dict.yaml").is_file())
+        self.assertEqual(self.service.rime_lexicon_review({})["entryCount"], 0)
+
+        rolled_back = self.service.rime_lexicon_rollback({"rollbackId": applied["rollbackId"]})
+        self.assertTrue(rolled_back["rolledBack"])
+        self.assertFalse((Path(self.tmp.name) / "Rime" / "rag_ime_user.dict.yaml").exists())
+        self.assertEqual(self.service.rime_lexicon_review({})["entryCount"], 1)
 
     def test_cleanup_diff_apply_and_rollback_are_audited(self) -> None:
         self.core.record_event(
@@ -730,6 +776,7 @@ class DebugManagementApiTests(unittest.TestCase):
             },
             clear=False,
         ):
+            self.service.settings_update({"activeRag.allowRemoteModel": False})
             blocked = self.service.active_rag_route_status(local_only=False)
             self.service.settings_update(
                 {

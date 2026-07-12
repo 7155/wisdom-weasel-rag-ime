@@ -40,7 +40,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             "    _ = kAXStringForRangeParameterizedAttribute\n"
             "    _ = kAXValueAttribute\n"
             "  }\n"
-            "  // privacy_unknown_app_bundle_missing privacy_unknown_ax_not_trusted\n"
+            '  // privacy_unknown_app_bundle_missing; isSensitive: false, reason: "privacy_unknown_ax_not_trusted"\n'
             "  // privacy_unknown_focused_element_missing privacy_unknown_metadata_read_failed\n"
             "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle\n"
             "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens\n"
@@ -60,7 +60,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                     "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
                     "  func traceRagImeFrontendEvent() {}",
                     "  // guard ragImeSidecarClient?.frontendTrace == true else { return }",
-                    "  // guard !ragImeSensitiveFieldActive else { return }",
+                    "  // guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }",
                     "  // ragImePrepareFrontendTraceLog .posixPermissions: 0o600 appendingPathExtension(\"1\")",
                     "  // let contextAnchor = ragImeStableTextHash(context)",
                     "  // queryAnchor: contextAnchor displayAnchor: contextAnchor",
@@ -164,7 +164,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             )
         self.assertIn(f"workdir={workdir}", result.stdout)
         self.assertIn("base_ref=2158538", result.stdout)
-        self.assertIn("runtime_profile=v1-proof", result.stdout)
+        self.assertIn("runtime_profile=foreground-rag-proof", result.stdout)
         self.assertIn("latency_budget_ms=900", result.stdout)
         self.assertIn("timeout_ms=1200", result.stdout)
         self.assertIn("max_side_candidates=5", result.stdout)
@@ -264,7 +264,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "    _ = kAXStringForRangeParameterizedAttribute",
                         "    _ = kAXValueAttribute",
                         "  }",
-                        "  // privacy_unknown_app_bundle_missing privacy_unknown_ax_not_trusted",
+                        '  // privacy_unknown_app_bundle_missing; isSensitive: false, reason: "privacy_unknown_ax_not_trusted"',
                         "  // privacy_unknown_focused_element_missing privacy_unknown_metadata_read_failed",
                         "  // privacy_unknown_text_field_metadata_missing sensitive_application_bundle",
                         "  // RAG_IME_SENSITIVE_APP_BUNDLE_IDS RagImeSensitiveAppBundleTokens",
@@ -287,7 +287,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
                         "  func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = \"forceSideCandidates: forceSideCandidates\" }",
                         "  func traceRagImeFrontendEvent() {}",
                         "  // guard ragImeSidecarClient?.frontendTrace == true else { return }",
-                        "  // guard !ragImeSensitiveFieldActive else { return }",
+                        "  // guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }",
                         '  // ragImePrepareFrontendTraceLog .posixPermissions: 0o600 appendingPathExtension("1")',
                         "  // let contextAnchor = ragImeStableTextHash(context)",
                         "  // queryAnchor: contextAnchor displayAnchor: contextAnchor",

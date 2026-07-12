@@ -364,6 +364,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
         self.assertIn("doctor_latency_budget_ms: 2000", result.stdout)
         self.assertTrue(_DoctorSidecarHandler.suggest_payloads)
         self.assertTrue(all(payload.get("latencyBudgetMs") == 2000 for payload in _DoctorSidecarHandler.suggest_payloads))
+        self.assertTrue(
+            all(payload.get("privacyDisposition") == "allowed" for payload in _DoctorSidecarHandler.suggest_payloads),
+            _DoctorSidecarHandler.suggest_payloads,
+        )
         main_probe = _DoctorSidecarHandler.suggest_payloads[0]
         self.assertEqual(main_probe.get("frontendBuild"), "rag-ime.foreground-trace.v2")
         self.assertEqual(main_probe.get("schemaVersion"), "rag-ime.squirrel-frontend-trace.v1")
@@ -494,6 +498,10 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     root=root,
                     model=_DoctorSidecarHandler.model,
                     base_url="http://127.0.0.1:18767",
+                    extra_env={
+                        "RAG_IME_RUNTIME_PROFILE": "foreground-rag-proof",
+                        "RAG_IME_RAG_DIRECT_DISPLAY": "1",
+                    },
                 )
                 mlx_plist = _write_mlx_launch_agent_plist(
                     tmp_path / "mlx.plist",
@@ -1210,7 +1218,7 @@ def _write_sidecar_launch_agent_plist(
             "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
             "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
             "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "180",
-            "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
+            "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "180",
             "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
             "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
             "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",

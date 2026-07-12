@@ -89,17 +89,19 @@ struct ControlReadinessTile: View {
 struct StatusRow: View {
     let status: ComponentStatus
 
+    private var degraded: Bool { status.status == "degraded" }
+
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: status.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(status.ok ? Color.green : Color.red)
+            Image(systemName: status.ok && !degraded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(degraded ? Color.orange : (status.ok ? Color.green : Color.red))
                 .frame(width: 18)
             Text(label).frame(width: 120, alignment: .leading)
             Text(status.detail).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             Spacer()
-            Text(status.ok ? "就绪" : "检查")
+            Text(degraded ? "降级" : (status.ok ? "就绪" : "检查"))
                 .font(.caption.weight(.medium))
-                .foregroundStyle(status.ok ? Color.secondary : Color.red)
+                .foregroundStyle(degraded ? Color.orange : (status.ok ? Color.secondary : Color.red))
         }
         .padding(.vertical, 7)
     }
@@ -131,7 +133,7 @@ struct SourceLaneLabel: View {
     private var normalized: String { source.lowercased() }
 
     private var title: String {
-        if normalized.contains("deepseek") || normalized == "ds" { return "DS" }
+        if normalized.contains("deepseek") || normalized == "ds" { return "生成" }
         if normalized.contains("rag") { return "RAG" }
         if normalized.contains("memory") { return "记忆" }
         return "模型"
@@ -139,7 +141,7 @@ struct SourceLaneLabel: View {
 
     private var symbol: String {
         switch title {
-        case "DS": return "bolt.horizontal.circle"
+        case "生成": return "bolt.horizontal.circle"
         case "RAG": return "doc.text.magnifyingglass"
         case "记忆": return "clock.arrow.circlepath"
         default: return "sparkles"
@@ -148,7 +150,7 @@ struct SourceLaneLabel: View {
 
     private var color: Color {
         switch title {
-        case "DS": return .indigo
+        case "生成": return .indigo
         case "RAG": return .teal
         case "记忆": return .orange
         default: return .blue
@@ -157,10 +159,10 @@ struct SourceLaneLabel: View {
 
     private var helpText: String {
         switch title {
-        case "DS": return "DeepSeek 深度生成"
+        case "生成": return "知识生成"
         case "RAG": return "本地知识召回"
         case "记忆": return "个人记忆候选"
-        default: return "MiniMind 实时补全"
+        default: return "本地实时补全"
         }
     }
 }

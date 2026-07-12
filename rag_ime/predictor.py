@@ -7,7 +7,6 @@ import os
 import re
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass
@@ -934,7 +933,7 @@ class CooldownPredictionProvider:
 def prediction_provider_from_env(env: dict[str, str] | None = None) -> PredictionProvider:
     source = _prediction_env_with_predictor_file(env)
     provider = source.get("RAG_IME_PREDICTOR_PROVIDER", "").strip().lower()
-    base_url = _canonical_x1api_base_url(source.get("RAG_IME_PREDICTOR_BASE_URL", "").strip())
+    base_url = compact_whitespace(source.get("RAG_IME_PREDICTOR_BASE_URL", ""))
     model = (
         source.get("RAG_IME_PREDICTOR_MODEL", "").strip()
         or source.get("RAG_IME_MLX_MODEL", "").strip()
@@ -1025,25 +1024,7 @@ def _prediction_env_with_predictor_file(env: dict[str, str] | None) -> dict[str,
             continue
         key, value = line.split("=", 1)
         file_values[key.strip()] = value.strip().strip('"').strip("'")
-    merged = {**file_values, **source}
-    for key in ("RAG_IME_PREDICTOR_BASE_URL",):
-        if merged.get(key):
-            merged[key] = _canonical_x1api_base_url(str(merged[key]))
-    return merged
-
-
-def _canonical_x1api_base_url(value: str) -> str:
-    cleaned = compact_whitespace(value)
-    if not cleaned:
-        return ""
-    parsed = urllib.parse.urlsplit(cleaned)
-    netloc = parsed.netloc.lower()
-    if netloc not in {"x1api.top", "x2app.top"}:
-        return cleaned
-    path = parsed.path.rstrip("/")
-    if path == "/v1":
-        path = ""
-    return urllib.parse.urlunsplit((parsed.scheme or "https", "x1api.top", path, parsed.query, parsed.fragment))
+    return {**file_values, **source}
 
 
 def _is_loopback_realtime_predictor_url(value: str) -> bool:
@@ -2395,6 +2376,10 @@ def _rime_reorder_tokens_from_json(value: Any) -> list[str]:
 
 
 def _parse_streaming_prediction_candidates(text: str, *, max_candidates: int = 5) -> list[str]:
+    if re.search(r"<\|im_end\|>.*<\|im_start\|>\s*user", text, flags=re.DOTALL):
+        # A tiny decoder can run past its answer and begin echoing the next
+        # prompt turn. Never promote that partial prefix as a candidate.
+        return []
     cleaned = _clean_prediction_output(text)
     if not cleaned:
         return []
@@ -2420,7 +2405,7 @@ def _plain_streaming_candidate_ready(text: str) -> bool:
         return False
     cjk_count = len(re.findall(r"[\u3400-\u9fff]", compacted))
     visible_len = len(re.sub(r"\s+", "", compacted))
-    if cjk_count >= 4:
+    if cjk_count >= 2:
         return True
     if cjk_count == 0:
         return visible_len >= 3

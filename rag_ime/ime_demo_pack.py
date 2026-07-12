@@ -405,26 +405,26 @@ def _verify_tab_chain(fixture: dict[str, Any]) -> dict[str, object]:
             }
         )
 
-    quiet_clock = {"now": 0}
-    quiet_trigger = PredictionTrigger(clock_ms=lambda: quiet_clock["now"])
-    quiet_trigger.record_commit(
-        group_id="demo:quiet",
+    short_clock = {"now": 0}
+    short_trigger = PredictionTrigger(clock_ms=lambda: short_clock["now"])
+    short_trigger.record_commit(
+        group_id="demo:short-responsive",
         text="短",
-        context_hash="demo:quiet:1",
+        context_hash="demo:short:1",
         reliable=True,
         now=0,
     )
-    quiet_clock["now"] = 500
-    quiet = quiet_trigger.poll("demo:quiet", now=500)
-    quiet_ok = not quiet.should_call_predictor and quiet.reason == "minimum_delta_not_reached"
+    short_clock["now"] = 180
+    short = short_trigger.poll("demo:short-responsive", now=180)
+    short_ok = short.should_call_predictor and short.reason == "commit_burst_idle"
     return {
-        "ok": chain_ok and quiet_ok,
+        "ok": chain_ok and short_ok,
         "frames": rendered_frames,
-        "notEveryCommit": {
-            "ok": quiet_ok,
+        "shortChineseResponsive": {
+            "ok": short_ok,
             "shortCommit": "短",
-            "decision": quiet.action,
-            "reason": quiet.reason,
+            "decision": short.action,
+            "reason": short.reason,
         },
     }
 

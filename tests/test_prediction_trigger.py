@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from rag_ime.prediction_trigger import PredictionTrigger
+from rag_ime.prediction_trigger import PredictionTrigger, PredictionTriggerConfig
 
 
 class PredictionTriggerTest(unittest.TestCase):
@@ -60,6 +60,10 @@ class PredictionTriggerTest(unittest.TestCase):
         self.assertTrue(self.trigger.poll("doc:a").should_call_predictor)
 
     def test_accepted_continuations_bypass_normal_limit_but_keep_dedupe_and_chain_cap(self) -> None:
+        self.trigger = PredictionTrigger(
+            PredictionTriggerConfig(max_calls_per_10s=2),
+            clock_ms=lambda: self.now,
+        )
         for index in range(2):
             self.now = index * 1_000
             self.trigger.record_commit(
@@ -113,13 +117,26 @@ class PredictionTriggerTest(unittest.TestCase):
         self.assertEqual(duplicate.reason, "duplicate_context_hash")
 
     def test_empty_result_enters_cooldown(self) -> None:
+        self.trigger = PredictionTrigger(
+            PredictionTriggerConfig(ignore_cooldown_ms=400),
+            clock_ms=lambda: self.now,
+        )
         self.trigger.record_commit(group_id="doc:a", text="已经输入六个字", context_hash="a", reliable=True)
         self.now = 500
         first = self.trigger.poll("doc:a")
         self.trigger.complete(first, result_count=0)
         self.trigger.record_commit(group_id="doc:a", text="继续输入六个字", context_hash="b", reliable=True)
-        self.now = 1_000
+        self.now = 899
         self.assertFalse(self.trigger.poll("doc:a").should_call_predictor)
+        self.now = 900
+        self.assertTrue(self.trigger.poll("doc:a").should_call_predictor)
+
+    def test_single_chinese_commit_triggers_after_idle(self) -> None:
+        self.trigger.record_commit(group_id="doc:a", text="你", context_hash="one", reliable=True)
+        self.now = 179
+        self.assertFalse(self.trigger.poll("doc:a").should_call_predictor)
+        self.now = 180
+        self.assertTrue(self.trigger.poll("doc:a").should_call_predictor)
 
     def test_t0_direct_memory_skips_model_and_remote_provider_is_forbidden(self) -> None:
         self.trigger.record_commit(group_id="doc:a", text="已经输入六个字", context_hash="a", reliable=True)

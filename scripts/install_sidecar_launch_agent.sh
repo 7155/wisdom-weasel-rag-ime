@@ -17,7 +17,13 @@ CORE_MODE="${RAG_IME_CORE_MODE:-local}"
 CORE_COMMAND="${RAG_MEMORY_CORE_COMMAND:-}"
 NO_SEED="${RAG_IME_SIDECAR_NO_SEED:-0}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
-RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-v1-proof}"
+RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-foreground-rag-proof}"
+HEALTH_TIMEOUT_SECONDS="${RAG_IME_SIDECAR_HEALTH_TIMEOUT_SECONDS:-45}"
+
+if [[ ! "$HEALTH_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( HEALTH_TIMEOUT_SECONDS < 1 )); then
+  echo "RAG_IME_SIDECAR_HEALTH_TIMEOUT_SECONDS must be a positive integer" >&2
+  exit 1
+fi
 
 detect_python() {
   local candidate
@@ -114,6 +120,28 @@ rm -rf "$APP_CODE_DIR/rag_ime"
 cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
 cp "$ROOT/scripts/sidecar_launch.py" "$LAUNCH_WRAPPER"
 
+# Keep the explicit high-intelligence route usable after every reinstall. The
+# LaunchAgent cannot inherit an interactive shell's secrets, so install one
+# stable, permission-restricted env file and point the service at it.
+MODEL_ENV_SOURCE="${RAG_IME_DEEPSEEK_ENV:-${RAG_IME_MODEL_ENV:-}}"
+if [[ -z "$MODEL_ENV_SOURCE" ]]; then
+  for candidate in "$APP_SUPPORT_DIR/deepseek.env" "$ROOT/.rag-ime-data/deepseek.env"; do
+    if [[ -f "$candidate" ]]; then
+      MODEL_ENV_SOURCE="$candidate"
+      break
+    fi
+  done
+fi
+if [[ -n "$MODEL_ENV_SOURCE" && -f "$MODEL_ENV_SOURCE" ]]; then
+  INSTALLED_MODEL_ENV="$APP_SUPPORT_DIR/deepseek.env"
+  if [[ "$MODEL_ENV_SOURCE" != "$INSTALLED_MODEL_ENV" ]]; then
+    cp "$MODEL_ENV_SOURCE" "$INSTALLED_MODEL_ENV"
+  fi
+  chmod 600 "$INSTALLED_MODEL_ENV"
+  export RAG_IME_DEEPSEEK_ENV="$INSTALLED_MODEL_ENV"
+  export RAG_IME_DEEPSEEK_ACTIVE_RAG="${RAG_IME_DEEPSEEK_ACTIVE_RAG:-1}"
+fi
+
 ROOT="$ROOT" \
 LABEL="$LABEL" \
 PLIST_PATH="$PLIST_PATH" \
@@ -181,9 +209,13 @@ env_vars = {
     "RAG_IME_SOURCE_ROOT": root,
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],
     "RAG_IME_CORE_MODE": os.environ["CORE_MODE"],
-    "RAG_IME_RUNTIME_PROFILE": os.environ.get("RAG_IME_RUNTIME_PROFILE", "v1-proof"),
+    "RAG_IME_RUNTIME_PROFILE": os.environ.get("RAG_IME_RUNTIME_PROFILE", "foreground-rag-proof"),
     "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
     "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
+    "RAG_IME_LOCAL_MODEL_QUALITY_GATE_MODE": os.environ.get(
+        "RAG_IME_LOCAL_MODEL_QUALITY_GATE_MODE",
+        "observe" if os.environ.get("RAG_IME_RUNTIME_PROFILE") == "foreground-rag-proof" else "strict",
+    ),
     "RAG_IME_ENABLE_COMPOSING_MODEL": os.environ.get("RAG_IME_ENABLE_COMPOSING_MODEL", os.environ["RAG_IME_PROFILE_COMPOSITION_AI"]),
     "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": os.environ.get("RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL", os.environ["RAG_IME_PROFILE_PINYIN_CONSTRAINED_MODEL"]),
     "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": os.environ.get("RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS", "180"),
@@ -233,7 +265,6 @@ preserve_existing_keys = {
     "SSL_CERT_FILE",
     "RAG_IME_MODEL_ENV",
     "RAG_IME_MEMORY_GENERATOR_ENV",
-    "RAG_IME_X1API_ENV",
     "RAG_IME_VCP_REBUILD_ENV",
     "RAG_IME_AI_PROVIDER",
     "RAG_IME_AI_BASE_URL",
@@ -243,9 +274,6 @@ preserve_existing_keys = {
     "RAG_IME_AI_REASONING_EFFORT",
     "RAG_IME_AI_DISABLE_RESPONSE_STORAGE",
     "RAG_IME_AI_API_KEY",
-    "X1API_BASE_URL",
-    "X1API_MODEL",
-    "X1API_API_KEY",
     "RAG_IME_DEEPSEEK_ENV",
     "DEEPSEEK_API_KEY",
     "DEEPSEEK_BASE_URL",
@@ -312,6 +340,7 @@ preserve_existing_keys = {
     "RAG_IME_RIME_CACHE_TTL_MS",
     "RAG_IME_SUGGESTION_CACHE_SIZE",
     "RAG_IME_MODEL_HOLDOVER_MAX_ENTRIES",
+    "RAG_IME_LOCAL_MODEL_QUALITY_GATE_MODE",
     "RAG_IME_PREDICTION_MANAGER_MAX_ENTRIES",
     "RAG_IME_REFRESH_DEBOUNCE_MAX_ENTRIES",
     "RAG_IME_POST_COMMIT_COMPLETION_CACHE_MAX_JOBS",
@@ -348,6 +377,7 @@ for key in (
     "RAG_IME_MODEL_LANE_LEASE_TTL_MS",
     "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION",
     "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL",
+    "RAG_IME_LOCAL_MODEL_QUALITY_GATE_MODE",
     "RAG_IME_ENABLE_COMPOSING_MODEL",
     "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL",
     "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS",
@@ -371,7 +401,6 @@ for key in (
     "SSL_CERT_FILE",
     "RAG_IME_MODEL_ENV",
     "RAG_IME_MEMORY_GENERATOR_ENV",
-    "RAG_IME_X1API_ENV",
     "RAG_IME_VCP_REBUILD_ENV",
     "RAG_IME_AI_PROVIDER",
     "RAG_IME_AI_BASE_URL",
@@ -381,9 +410,6 @@ for key in (
     "RAG_IME_AI_REASONING_EFFORT",
     "RAG_IME_AI_DISABLE_RESPONSE_STORAGE",
     "RAG_IME_AI_API_KEY",
-    "X1API_BASE_URL",
-    "X1API_MODEL",
-    "X1API_API_KEY",
     "RAG_IME_DEEPSEEK_ENV",
     "DEEPSEEK_API_KEY",
     "DEEPSEEK_BASE_URL",
@@ -584,7 +610,8 @@ fi
 echo "http://$DISPLAY_HOST:$PORT/"
 echo "Logs: $LOG_DIR/sidecar.out.log and $LOG_DIR/sidecar.err.log"
 
-for _attempt in {1..20}; do
+health_deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
+while (( SECONDS < health_deadline )); do
   if "$PYTHON_EXECUTABLE" - "$HOST" "$PORT" >/dev/null 2>&1 <<'PY'
 import json
 import sys
@@ -606,5 +633,5 @@ PY
   sleep 0.5
 done
 
-echo "health: not ready; inspect $LOG_DIR/sidecar.err.log" >&2
+echo "health: not ready after ${HEALTH_TIMEOUT_SECONDS}s; inspect $LOG_DIR/sidecar.err.log" >&2
 exit 1

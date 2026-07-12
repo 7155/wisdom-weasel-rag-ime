@@ -50,7 +50,7 @@ class FeatureBridgeTests(unittest.TestCase):
         self.assertIn("offline_tool", statuses)
         self.assertIn("blocked_by_bug", statuses)
         self.assertIn("active-rag-selected-text-bridge", ids)
-        self.assertIn("x1top-cleanup-to-curated-memory", ids)
+        self.assertIn("dsv4-cleanup-to-curated-memory", ids)
         self.assertIn("rime-export-bridge", ids)
         self.assertIn("group-aware-memory-completion", ids)
         self.assertIn("generic-frontend-gateway", ids)
@@ -104,11 +104,11 @@ class FeatureBridgeTests(unittest.TestCase):
         self.assertIn("selected_text_context_captured", SELECTED_TEXT_PROOF_EVENTS)
         self.assertIn("assistant_overlay_candidate_visible", SELECTED_TEXT_PROOF_EVENTS)
 
-        self.assertIn("x1top", OFFLINE_CLEANUP_PROVIDERS)
+        self.assertIn("deepseek-v4", OFFLINE_CLEANUP_PROVIDERS)
         self.assertIn("memory", DOWNSTREAM_SOURCE_TYPES)
         self.assertIn("rag", DOWNSTREAM_SOURCE_TYPES)
         self.assertIn("curated", CURATED_MEMORY_REQUIRED_SIGNALS)
-        self.assertIn("x1top realtime prediction", FORBIDDEN_REALTIME_PROVIDER_HINTS)
+        self.assertIn("deepseek-v4 realtime prediction", FORBIDDEN_REALTIME_PROVIDER_HINTS)
 
         self.assertEqual(RIME_EXPORT_SOURCE_TYPE, "rime")
         self.assertIn("rime_export_applied", RIME_EXPORT_PROOF_EVENTS)

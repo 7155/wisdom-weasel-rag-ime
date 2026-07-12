@@ -220,6 +220,24 @@ class RuntimeLifecycleControlPlaneTests(unittest.TestCase):
         self.assertTrue(healthy["foregroundContext"]["ok"])
         self.assertTrue(healthy["memoryCompiler"]["ok"])
 
+        management.last_prediction_provider = lambda: {
+            "requestId": "foreground-short",
+            "foregroundContext": {
+                "source": "text_input_client",
+                "capturedAtMs": now_ms,
+                "applied": True,
+                "commitTextMatched": True,
+                "selectedTextChars": 0,
+                "surroundingBeforeChars": 4,
+                "surroundingAfterChars": 0,
+            },
+        }
+        degraded = management.overview()["components"]["foregroundContext"]
+
+        self.assertTrue(degraded["ok"])
+        self.assertEqual(degraded["status"], "degraded")
+        self.assertIn("仅采集 4 字", degraded["detail"])
+
 
 class SettingsValidationTests(unittest.TestCase):
     def setUp(self) -> None:

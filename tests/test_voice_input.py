@@ -39,13 +39,15 @@ class VoiceInputTests(unittest.TestCase):
 
         self.assertIn("SecItemCopyMatching", keychain)
         self.assertIn("SecItemUpdate", keychain)
-        self.assertIn("VoiceCredentialFileStore.loadCredentials()", keychain)
+        self.assertIn("VoiceCredentialFileStore.loadCredentials(provider: provider)", keychain)
+        self.assertIn('"voice-credentials-\\(provider.rawValue).json"', keychain)
         self.assertIn("voice-credentials.json", keychain)
         self.assertIn(".posixPermissions: 0o600", keychain)
         self.assertIn("IsSecureEventInputEnabled", insertion)
         for marker in ("securetextfield", "password", "验证码", "账号"):
             self.assertIn(marker, insertion)
-        self.assertNotIn("history", coordinator.lower())
+        self.assertNotIn("HistoryStore", coordinator)
+        self.assertIn("VoiceCommitRecorder.record", coordinator)
         self.assertIn("security add-generic-password", configure)
         self.assertIn('-T "$VOICE_BIN"', configure)
         self.assertIn('-T "$CONTROL_BIN"', configure)
@@ -80,6 +82,49 @@ class VoiceInputTests(unittest.TestCase):
             self.assertIn(marker, status)
         self.assertIn("仅记录状态、数量与时延，不保存音频或转写文本", page)
         self.assertIn("VoiceAgentStatusStore.write", delegate)
+
+    def test_final_voice_commit_enters_recent_context_without_recording_partials(self) -> None:
+        coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
+        recorder = (ROOT / "macos/RagImeVoice/VoiceCommitRecorder.swift").read_text(encoding="utf-8")
+        insertion = (ROOT / "macos/RagImeVoice/VoiceTextInsertion.swift").read_text(encoding="utf-8")
+        build = (ROOT / "scripts/build_voice_input.sh").read_text(encoding="utf-8")
+
+        partial_start = coordinator.index("case .partial(let text):")
+        final_start = coordinator.index("case .final(let text):", partial_start)
+        failure_start = coordinator.index("case .failure(let message):", final_start)
+        self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[partial_start:final_start])
+        self.assertIn("recordCommittedVoiceTextIfNeeded(text)", coordinator[final_start:failure_start])
+        self.assertIn("appBundleIdentifier", insertion)
+        self.assertIn("http://127.0.0.1:8766/api/commit", recorder)
+        self.assertIn('"voice-input"', recorder)
+        self.assertIn('"recent-input"', recorder)
+        self.assertIn('find "$SHARED" "$SRC"', build)
+        failure_start = coordinator.index("case .failure(let message):")
+        failure_end = coordinator.index("case .transport(let networkState):", failure_start)
+        timeout_start = coordinator.index("private func scheduleFinalTimeout()")
+        self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[failure_start:failure_end])
+        self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[timeout_start:])
+        self.assertIn("临时稿未记入历史", coordinator)
+
+    def test_voice_provider_credentials_and_adapters_are_isolated(self) -> None:
+        keychain = (ROOT / "macos/Shared/VoiceKeychainStore.swift").read_text(encoding="utf-8")
+        adapters = (ROOT / "macos/Shared/VoiceStreamingASR.swift").read_text(encoding="utf-8")
+        coordinator = (ROOT / "macos/RagImeVoice/VoiceInputCoordinator.swift").read_text(encoding="utf-8")
+        page = (ROOT / "macos/RagImeControl/Pages/VoiceInputPage.swift").read_text(encoding="utf-8")
+
+        self.assertIn("enum VoiceASRProvider", keychain)
+        self.assertIn('case nativeStreaming = "native_streaming"', keychain)
+        self.assertIn('case realtimeWebSocket = "realtime_websocket"', keychain)
+        self.assertIn('"com.rag-ime.voice.\\(provider.rawValue)"', keychain)
+        self.assertIn("voice-provider.json", keychain)
+        self.assertIn("voice-credentials-\\(provider.rawValue).json", keychain)
+        self.assertIn("VoiceStreamingASRFactory.make", coordinator)
+        self.assertIn("VolcengineStreamingASRClient", adapters)
+        self.assertIn("RealtimeWebSocketASRClient", adapters)
+        self.assertIn('"input_audio_buffer.append"', adapters)
+        self.assertIn('"input_audio_buffer.commit"', adapters)
+        self.assertIn("ForEach(VoiceASRProvider.allCases)", page)
+        self.assertIn("provider.supportsHotwords", page)
 
     def test_middle_mouse_is_default_push_to_talk_and_keyboard_fallbacks_remain_configurable(self) -> None:
         config = (ROOT / "macos/Shared/VoiceHotkeyConfig.swift").read_text(encoding="utf-8")
@@ -222,8 +267,18 @@ enum Harness {
         precondition(done.replacementUTF16Length == 4)
         precondition(done.isFinal)
 
+        var secondPass = VoiceTranscriptReconciler()
+        _ = secondPass.revise(to: "豆包", isFinal: false)!
+        let corrected = secondPass.revise(to: "豆包 API 已修正。", isFinal: true)!
+        precondition(corrected.replacementUTF16Length == 2)
+        precondition(corrected.text == "豆包 API 已修正。")
+
         let json: [String: Any] = ["result": ["utterances": [["text": "边说"], ["text": "边写"]]]]
         precondition(VolcengineStreamingASRClient.transcript(from: json) == "边说边写")
+        let secondPassJSON: [String: Any] = [
+            "result": ["text": "豆包 API 已修正。", "utterances": [["text": "豆包"]]]
+        ]
+        precondition(VolcengineStreamingASRClient.transcript(from: secondPassJSON) == "豆包 API 已修正。")
 
         let hotwords = try! VoiceASRHotwordConfig.validated(
             enabled: true,
@@ -235,6 +290,8 @@ enum Harness {
             hotwordConfig: hotwords
         )
         let request = requestPayload["request"] as! [String: Any]
+        precondition(request["enable_nonstream"] as? Bool == true)
+        precondition(request["result_type"] as? String == "full")
         let context = request["context"] as! String
         let contextData = context.data(using: .utf8)!
         let contextJSON = try! JSONSerialization.jsonObject(with: contextData) as! [String: Any]
@@ -305,6 +362,7 @@ enum Harness {
                     str(ROOT / "macos/Shared/VoiceKeychainStore.swift"),
                     str(ROOT / "macos/Shared/VoiceAgentStatus.swift"),
                     str(ROOT / "macos/Shared/VoiceHotwordConfig.swift"),
+                    str(ROOT / "macos/Shared/VoiceStreamingASR.swift"),
                     str(ROOT / "macos/Shared/VolcengineStreamingASR.swift"),
                     str(ROOT / "macos/RagImeVoice/VoicePrivacyPolicy.swift"),
                     str(harness_path),

@@ -7,6 +7,7 @@ from urllib.error import HTTPError
 
 import rag_ime.deepseek_completion as deepseek_completion_module
 from rag_ime.deepseek_completion import (
+    DeepSeekCompletionError,
     DeepSeekCompletionRequest,
     DeepSeekV4FlashCompletionProvider,
     build_deepseek_completion_messages,
@@ -44,6 +45,40 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertIn("以“候选=”开头", messages[0]["content"])
         self.assertNotIn("你生成的实际候选", messages[0]["content"])
         self.assertNotIn("候选=你的候选", messages[1]["content"])
+        self.assertEqual(user_payload["groundingMode"], "foreground_only")
+        self.assertIn("唯一语义来源", messages[0]["content"])
+
+    def test_active_rag_foreground_only_rejects_unrequested_character_recommendations(self) -> None:
+        provider = _provider(
+            [_sse_delta("候选=推荐初音未来、洛天依或绊爱作为二次元形象。\n"), "data: [DONE]\n"]
+        )
+
+        with self.assertRaisesRegex(DeepSeekCompletionError, "governor_rejected_content"):
+            list(
+                provider.stream_candidates(
+                    DeepSeekCompletionRequest(
+                        scene="active_rag",
+                        current_context="这里是前台上下文测试",
+                        max_chars=120,
+                    )
+                )
+            )
+
+    def test_active_rag_foreground_only_rejects_unsupported_api_credential_diagnosis(self) -> None:
+        provider = _provider(
+            [_sse_delta("候选=可能是 API 密钥配置有误，建议检查认证参数。\n"), "data: [DONE]\n"]
+        )
+
+        with self.assertRaisesRegex(DeepSeekCompletionError, "governor_rejected_content"):
+            list(
+                provider.stream_candidates(
+                    DeepSeekCompletionRequest(
+                        scene="active_rag",
+                        current_context="语音设置要支持不同 API，生成结果也要稳定出现。",
+                        max_chars=120,
+                    )
+                )
+            )
 
     def test_deepseek_completion_parses_streaming_json_lines(self) -> None:
         provider = _provider(
@@ -108,156 +143,205 @@ class DeepSeekCompletionTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(partials, ["流式", "流式内容逐步返回。"])
+        self.assertEqual(partials, ["流式内容逐步返回。"])
         self.assertEqual([item.text for item in deltas], ["流式内容逐步返回"])
 
-    def test_deepseek_completion_falls_back_to_reasoning_candidate_json(self) -> None:
+    def test_active_rag_never_streams_or_returns_thinking_content(self) -> None:
         provider = _provider(
             [
-                _sse_reasoning('推理中。我的回答应该是一行JSON：{"candidate":"优化生成链路","role":"phrase"}。'),
+                _sse_delta("候选=我需要先分析用户的真实意图，"),
+                _sse_delta("再决定如何回答。\n"),
                 "data: [DONE]\n",
             ]
         )
+        partials: list[str] = []
 
-        deltas = list(provider.stream_candidates(DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法")))
-
-        self.assertEqual([item.text for item in deltas], ["优化生成链路"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "reasoning_fallback")
-
-    def test_deepseek_completion_extracts_reasoning_candidate_assignment(self) -> None:
-        provider = _provider([_sse_reasoning("候选=修复DeepSeek输出。"), "data: [DONE]\n"])
-
-        deltas = list(provider.stream_candidates(DeepSeekCompletionRequest(scene="active_rag", current_context="输出修复")))
-
-        self.assertEqual([item.text for item in deltas], ["修复DeepSeek输出"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "reasoning_fallback")
-
-    def test_deepseek_completion_rejects_ascii_placeholder_assignment(self) -> None:
-        provider = _provider([_sse_reasoning("候选=XXX。"), "data: [DONE]\n"])
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="LLM没有输出，现在只要一个框")
+        with self.assertRaisesRegex(DeepSeekCompletionError, "governor_rejected_content"):
+            list(
+                provider.stream_candidates(
+                    DeepSeekCompletionRequest(scene="active_rag", current_context="继续完善输入法", max_chars=120),
+                    on_text_delta=partials.append,
+                )
             )
+
+        self.assertEqual(partials, [])
+
+    def test_active_rag_never_uses_reasoning_channel_as_visible_output(self) -> None:
+        reasoning_values = (
+            '推理中。我的回答应该是一行JSON：{"candidate":"优化生成链路","role":"phrase"}。',
+            "候选=修复生成输出。",
+            "Notebook有三条：1. LLM显示问题。",
+            "- oneRing: 只有一个事件:",
         )
+        for reasoning in reasoning_values:
+            with self.subTest(reasoning=reasoning):
+                provider = _provider([_sse_reasoning(reasoning), "data: [DONE]\n"])
+                with self.assertRaisesRegex(DeepSeekCompletionError, "empty_remote_content"):
+                    list(
+                        provider.stream_candidates(
+                            DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法", max_chars=120)
+                        )
+                    )
 
-        self.assertEqual([item.text for item in deltas], ["修复LLM输出"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
+    def test_active_rag_rejects_placeholder_and_prompt_leak_content(self) -> None:
+        rejected_values = (
+            "候选=<think>We need analyze the user request first.</think>",
+            "候选=XXX。",
+            "候选=你的候选。",
+            "候选=<候选内容>。",
+            "的候选短语",
+            "候选的流式候选",
+            "候选=没有有效内容，请重试。",
+            "候选=未检索到有效内容。",
+            "候选=无有效候选。",
+        )
+        for value in rejected_values:
+            with self.subTest(value=value):
+                provider = _provider([_sse_delta(value + "\n"), "data: [DONE]\n"])
+                with self.assertRaises(DeepSeekCompletionError):
+                    list(
+                        provider.stream_candidates(
+                            DeepSeekCompletionRequest(scene="active_rag", current_context="输入法生成结果", max_chars=120)
+                        )
+                    )
 
-    def test_active_rag_request_fallback_can_return_paragraph(self) -> None:
-        provider = _provider([_sse_reasoning("候选=XXX。"), "data: [DONE]\n"])
+    def test_active_rag_rejects_meta_echo_in_reported_regression(self) -> None:
+        provider = _provider(
+            [
+                _sse_delta(
+                    "候选=我会围绕“豆包 api你看看最后会不会有改正前面流式输出的一步”继续补全当前表达，把上下文里的真实意图整理成一段可放到光标后的中文正文。\n"
+                ),
+                "data: [DONE]\n",
+            ]
+        )
+        partials: list[str] = []
+
+        with self.assertRaisesRegex(DeepSeekCompletionError, "governor_rejected_content"):
+            list(
+                provider.stream_candidates(
+                    DeepSeekCompletionRequest(
+                        scene="active_rag",
+                        current_context="豆包 api你看看最后会不会有改正前面流式输出的一步",
+                        max_chars=160,
+                    ),
+                    on_text_delta=partials.append,
+                )
+            )
+
+        self.assertEqual(partials, [])
+
+    def test_active_rag_valid_direct_answer_is_insertable(self) -> None:
+        provider = _provider(
+            [
+                _sse_delta("候选=会。开启二次识别后，最终完整结果会替换前面的临时转写，而不是继续追加。\n"),
+                "data: [DONE]\n",
+            ]
+        )
 
         deltas = list(
             provider.stream_candidates(
                 DeepSeekCompletionRequest(
                     scene="active_rag",
-                    current_context="Ctrl+Enter不行，DeepSeek没输出，LLM不显示",
-                    selected_text="DeepSeek 输出我希望是一段话",
+                    current_context="豆包 API 最后会不会改正前面流式输出？",
                     max_chars=120,
                 )
             )
         )
 
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
-        self.assertGreaterEqual(len(deltas[0].text), 40)
-        self.assertLessEqual(len(deltas[0].text), 120)
-        self.assertIn("一段完整正文", deltas[0].text)
+        self.assertEqual(len(deltas), 1)
+        self.assertTrue(deltas[0].text.startswith("会。开启二次识别后"))
 
-    def test_deepseek_completion_rejects_chinese_placeholder_assignment(self) -> None:
-        provider = _provider([_sse_reasoning("候选=你的候选。"), "data: [DONE]\n"])
+    def test_active_rag_allows_local_constraint_overlap_in_a_new_answer(self) -> None:
+        provider = _provider(
+            [
+                _sse_delta(
+                    "候选=输入法前台必须保证生成中状态不闪退，生成失败时提供可重试反馈，成功结果需保留到用户主动插入、重试或关闭，确保交互反馈及时且可预测。"
+                ),
+                "data: [DONE]\n",
+            ]
+        )
+        current_context = (
+            "生成中状态不能闪退，生成失败必须给出可重试反馈，"
+            "成功结果必须保留到用户主动插入、重试或关闭。"
+        )
 
         deltas = list(
             provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法需要稳定显示 DeepSeek 生成结果")
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context=current_context,
+                    selected_text="请总结输入法反馈的稳定性要求",
+                    max_chars=180,
+                )
             )
         )
 
-        self.assertEqual([item.text for item in deltas], ["稳定DeepSeek生成"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
+        self.assertEqual(len(deltas), 1)
+        self.assertIn("生成失败时提供可重试反馈", deltas[0].text)
 
-    def test_deepseek_completion_rejects_format_prefix_as_candidate(self) -> None:
-        provider = _provider([_sse_reasoning("最终输出格式是“候选=”。"), "data: [DONE]\n"])
+    def test_active_rag_reuses_last_fully_governed_stream_when_trailing_meta_is_rejected(self) -> None:
+        provider = _provider(
+            [
+                _sse_delta("候选=失败反馈应保持可见，成功结果应保留到用户主动确认。"),
+                _sse_delta(" selectedText"),
+                "data: [DONE]\n",
+            ]
+        )
+        partials: list[str] = []
 
         deltas = list(
             provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法需要稳定显示 DeepSeek 生成结果")
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="正在整理输入法交互要求",
+                    max_chars=120,
+                ),
+                on_text_delta=partials.append,
             )
         )
 
-        self.assertEqual([item.text for item in deltas], ["稳定DeepSeek生成"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
+        self.assertEqual(partials, ["失败反馈应保持可见，成功结果应保留到用户主动确认。"])
+        self.assertEqual([item.text for item in deltas], [partials[-1]])
+        self.assertEqual(deltas[0].metadata["parseMode"], "safe_stream_final")
 
-    def test_deepseek_completion_rejects_angle_placeholder_candidate(self) -> None:
-        provider = _provider([_sse_reasoning("最终输出应为候选=<候选内容>。"), "data: [DONE]\n"])
+    def test_active_rag_keeps_a_useful_safe_stream_without_final_punctuation(self) -> None:
+        safe_prefix = "失败反馈保持可见且支持重试，成功结果等待用户主动确认"
+        provider = _provider(
+            [
+                _sse_delta(f"候选={safe_prefix}"),
+                _sse_delta(" selectedText"),
+                "data: [DONE]\n",
+            ]
+        )
 
         deltas = list(
             provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法需要稳定显示 DeepSeek 生成结果")
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="正在整理输入法交互要求",
+                    max_chars=120,
+                )
             )
         )
 
-        self.assertEqual([item.text for item in deltas], ["稳定DeepSeek生成"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
+        self.assertGreaterEqual(len(safe_prefix), 24)
+        self.assertEqual([item.text for item in deltas], [safe_prefix])
+        self.assertEqual(deltas[0].metadata["parseMode"], "safe_stream_final")
 
-    def test_deepseek_completion_rejects_generic_prompt_candidate_content(self) -> None:
-        provider = _provider([_sse_delta("的候选短语\n"), "data: [DONE]\n"])
+    def test_active_rag_still_rejects_high_ratio_context_copy(self) -> None:
+        echoed = "失败反馈应保持可见，成功结果应保留到用户主动确认。"
+        provider = _provider([_sse_delta(f"候选={echoed}"), "data: [DONE]\n"])
 
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法需要稳定显示 DeepSeek 生成结果")
+        with self.assertRaisesRegex(DeepSeekCompletionError, "governor_rejected_content"):
+            list(
+                provider.stream_candidates(
+                    DeepSeekCompletionRequest(
+                        scene="active_rag",
+                        current_context=f"当前原句是：{echoed}",
+                        max_chars=120,
+                    )
+                )
             )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["稳定DeepSeek生成"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
-
-    def test_deepseek_completion_rejects_repeated_candidate_word_content(self) -> None:
-        provider = _provider([_sse_delta("候选的流式候选\n"), "data: [DONE]\n"])
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法需要稳定显示 DeepSeek 生成结果")
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["稳定DeepSeek生成"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
-
-    def test_deepseek_completion_rejects_reasoning_notebook_list_fragment(self) -> None:
-        provider = _provider([_sse_reasoning("Notebook有三条： 1. LLM显示问题。"), "data: [DONE]\n"])
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法需要稳定显示 DeepSeek 生成结果")
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["稳定DeepSeek生成"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
-
-    def test_deepseek_completion_rejects_reasoning_analysis_sentence(self) -> None:
-        provider = _provider([_sse_reasoning("我在分析，等。所以主题是RAG输入法。用户写了需求。"), "data: [DONE]\n"])
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法需要稳定显示 DeepSeek 生成结果")
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["稳定DeepSeek生成"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
-
-    def test_deepseek_completion_rejects_context_packet_field_leak(self) -> None:
-        provider = _provider([_sse_reasoning("- oneRing: 只有一个事件:"), "data: [DONE]\n"])
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法需要稳定显示 DeepSeek 生成结果")
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["稳定DeepSeek生成"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
 
     def test_deepseek_completion_prompt_can_include_context_packet_for_non_active_scenes(self) -> None:
         messages = build_deepseek_completion_messages(
@@ -297,7 +381,12 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertIn("currentInput", messages[0]["content"])
         self.assertIn("selectedText 在 insert_after_selection/append_at_cursor 场景只是光标前文本锚点", messages[0]["content"])
         self.assertIn("禁止以“例如”“比如”“可以描述”", messages[0]["content"])
+        self.assertIn("问句、关键词命中或 recent_input_context", messages[0]["content"])
+        self.assertIn("RAG 没有相关证据时仍要依据 currentRequest/currentContext", messages[0]["content"])
+        self.assertIn("禁止把“没有有效内容”", messages[0]["content"])
         self.assertIn("不要以“例如/比如/可以描述/当用户输入/系统会”开头", user_payload["task"])
+        self.assertIn("RAG 为空不妨碍完成非事实型请求", user_payload["task"])
+        self.assertIn("给出具体核验动作", user_payload["task"])
         self.assertEqual(user_payload["placement"], "insert_after_selection")
 
     def test_active_rag_rejects_explanatory_example_paragraph(self) -> None:
@@ -313,8 +402,8 @@ class DeepSeekCompletionTests(unittest.TestCase):
         }
         provider = _provider([json.dumps(payload, ensure_ascii=False)])
 
-        deltas = list(
-            provider.stream_candidates(
+        with self.assertRaisesRegex(DeepSeekCompletionError, "governor_rejected_content"):
+            list(provider.stream_candidates(
                 DeepSeekCompletionRequest(
                     scene="active_rag",
                     current_context="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
@@ -323,12 +412,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
                     max_candidates=1,
                     max_chars=120,
                 )
-            )
-        )
-
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
-        self.assertFalse(deltas[0].text.startswith("例如"))
-        self.assertNotIn("可以描述", deltas[0].text)
+            ))
 
     def test_active_rag_strips_example_prefix_from_real_paragraph(self) -> None:
         payload = {
@@ -414,59 +498,100 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual(deltas[0].metadata["parseMode"], "content")
         self.assertIn("流式候选机制", deltas[0].text)
 
-    def test_active_rag_fallback_handles_llm_display_and_rag_context(self) -> None:
-        provider = _provider([_sse_reasoning("候选=XXX。"), "data: [DONE]\n"])
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(
-                    scene="active_rag",
-                    current_context="LLM不显示，RAG能命中，并且DeepSeek需要根据笔记本预测",
-                    selected_text="LLM不显示",
-                    max_candidates=3,
-                )
+    def test_active_rag_prompt_marks_question_as_answer_and_keeps_context_tail(self) -> None:
+        prefix = "旧上下文。" * 220
+        current_request = "豆包 API 你看看最后会不会改正前面流式输出？"
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(
+                scene="active_rag",
+                current_context=prefix + current_request,
+                max_chars=160,
             )
         )
+        payload = json.loads(messages[1]["content"])
 
-        self.assertIn("修复LLM显示", [item.text for item in deltas])
+        self.assertEqual(payload["taskMode"], "answer")
+        self.assertTrue(payload["currentRequest"].endswith(current_request))
+        self.assertTrue(payload["currentContext"].endswith(current_request))
+        self.assertLessEqual(len(payload["currentContext"]), 900)
+        self.assertIn("直接回答 currentRequest", payload["task"])
+        self.assertIn("taskMode 已由客户端确定", messages[0]["content"])
 
-    def test_active_rag_request_fallback_prioritizes_current_context_over_old_evidence(self) -> None:
-        provider = _provider([_sse_delta("的候选短语\n"), "data: [DONE]\n"])
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(
-                    scene="active_rag",
-                    current_context="输入法需要让RAG能命中，并且DeepSeek根据记忆笔记本和当前输入上下文预测",
-                    selected_text="DeepSeek生成",
-                    evidence_pack=(
-                        {
-                            "evidencePreview": "历史问题：LLM不显示、模型没输出。",
-                            "surfaceHints": ["修复LLM显示"],
-                            "tags": ["LLM", "RAG"],
-                        },
-                    ),
-                    max_candidates=1,
-                )
+    def test_active_rag_prompt_prefers_selected_query_and_explicit_answer_intent(self) -> None:
+        selected_request = "豆包 API 最后会不会改正前面的流式输出？"
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(
+                scene="active_rag",
+                current_context="很长的前台正文。" * 80 + selected_request,
+                selected_text=selected_request,
+                context_packet={
+                    "schemaVersion": "rag-ime.smart-context-packet.v1",
+                    "currentInput": {"intent": "answer", "placement": "replace_selection"},
+                    "outputContract": {"intent": "answer", "placement": "replace_selection"},
+                },
+                max_chars=160,
             )
         )
+        payload = json.loads(messages[1]["content"])
 
-        self.assertEqual([item.text for item in deltas], ["接入RAG上下文"])
+        self.assertEqual(payload["taskMode"], "answer")
+        self.assertEqual(payload["currentRequest"], selected_request)
 
-    def test_active_rag_request_fallback_handles_interview_showcase_intent(self) -> None:
-        provider = _provider([_sse_delta("的候选短语\n"), "data: [DONE]\n"])
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(
-                    scene="active_rag",
-                    current_context="输入法 RAG 面试展示怎么讲，候选怎么体现记忆和历史整理",
-                    max_candidates=1,
-                )
+    def test_active_rag_short_anchor_uses_last_complete_context_clause(self) -> None:
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(
+                scene="active_rag",
+                current_context="请把知识生成的上下文、证据和空结果恢复链路全部改正确。改正",
+                selected_text="改正",
+                context_packet={
+                    "schemaVersion": "rag-ime.smart-context-packet.v1",
+                    "currentInput": {"intent": "complete", "placement": "insert_after_selection"},
+                    "outputContract": {"intent": "complete", "placement": "insert_after_selection"},
+                },
+                max_chars=120,
             )
         )
+        payload = json.loads(messages[1]["content"])
 
-        self.assertEqual([item.text for item in deltas], ["RAG 输入法面试展示主线"])
+        self.assertNotEqual(payload["currentRequest"], "改正")
+        self.assertIn("空结果恢复链路", payload["currentRequest"])
+
+    def test_active_rag_recovery_prompt_is_explicit_and_has_no_short_anchor(self) -> None:
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(
+                scene="active_rag",
+                current_context="请完成当前修复并给出可直接插入的结果。",
+                selected_text="",
+                recovery_mode=True,
+                max_chars=120,
+            )
+        )
+        payload = json.loads(messages[1]["content"])
+
+        self.assertTrue(payload["recoveryMode"])
+        self.assertEqual(payload["selectedText"], "")
+        self.assertIn("recoveryMode=true", messages[0]["content"])
+
+    def test_active_rag_prompt_compacts_recalled_packet_text(self) -> None:
+        old_memory = "不相关的旧记忆" * 200
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(
+                scene="active_rag",
+                current_context="当前请求",
+                context_packet={
+                    "schemaVersion": "rag-ime.smart-context-packet.v1",
+                    "currentInput": {"intent": "complete", "placement": "insert_after_selection"},
+                    "oneRing": {"events": [{"text": old_memory}]},
+                    "timeline": {"recentDecisions": [{"summary": old_memory}]},
+                    "notebook": {"items": [{"summary": old_memory}]},
+                },
+                max_chars=160,
+            )
+        )
+        payload = json.loads(messages[1]["content"])
+
+        self.assertNotIn(old_memory, messages[1]["content"])
+        self.assertEqual(payload["contextPacket"]["memoryCounts"], {"oneRing": 1, "timeline": 1, "notebook": 1})
 
     def test_deepseek_completion_filters_generic_filler(self) -> None:
         provider = _provider(
@@ -532,7 +657,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
 
         self.assertEqual([item.text for item in deltas], ["DeepSeek流式补全"])
 
-    def test_deepseek_completion_timeout_keeps_reasoning_fallback_candidate(self) -> None:
+    def test_deepseek_completion_timeout_drops_reasoning_without_fabricating_output(self) -> None:
         provider = _provider(
             [
                 _sse_reasoning('已经想好一行JSON：{"candidate":"修复生成链路","role":"phrase"}。'),
@@ -540,27 +665,21 @@ class DeepSeekCompletionTests(unittest.TestCase):
             ]
         )
 
-        deltas = list(provider.stream_candidates(DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法")))
+        with self.assertRaisesRegex(DeepSeekCompletionError, "timeout"):
+            list(provider.stream_candidates(DeepSeekCompletionRequest(scene="active_rag", current_context="RAG 输入法")))
 
-        self.assertEqual([item.text for item in deltas], ["修复生成链路"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "reasoning_fallback")
-
-    def test_active_rag_empty_remote_content_has_governed_request_fallback(self) -> None:
+    def test_active_rag_empty_remote_content_is_a_retriable_error(self) -> None:
         provider = _provider([])
 
-        deltas = list(
-            provider.stream_candidates(
+        with self.assertRaisesRegex(DeepSeekCompletionError, "empty_remote_content"):
+            list(provider.stream_candidates(
                 DeepSeekCompletionRequest(
                     scene="active_rag",
                     current_context="输入法需要稳定显示 DeepSeek 生成结果",
                     selected_text="生成按钮优化",
                     evidence_pack=({"surfaceHints": ["生成按钮稳定显示"], "tags": ["RAG", "输入法"]},),
                 )
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["稳定生成按钮"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "request_fallback")
+            ))
 
     def test_post_commit_empty_remote_content_has_no_request_fallback(self) -> None:
         provider = _provider([])
@@ -569,7 +688,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
 
         self.assertEqual(deltas, [])
 
-    def test_deepseek_completion_reasoning_fallback_ignores_prompt_placeholder(self) -> None:
+    def test_deepseek_completion_never_uses_reasoning_examples(self) -> None:
         provider = _provider(
             [
                 _sse_reasoning(
@@ -580,76 +699,10 @@ class DeepSeekCompletionTests(unittest.TestCase):
             ]
         )
 
-        deltas = list(
-            provider.stream_candidates(
+        with self.assertRaises(DeepSeekCompletionError):
+            list(provider.stream_candidates(
                 DeepSeekCompletionRequest(scene="active_rag", current_context="按钮不稳定", max_candidates=2)
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["提升按钮稳定性", "生成按钮显示优化"])
-        self.assertTrue(all(item.metadata["parseMode"] == "reasoning_fallback" for item in deltas))
-
-    def test_active_rag_reasoning_fallback_extracts_short_considered_candidate(self) -> None:
-        provider = _provider(
-            [
-                _sse_reasoning('考虑：“生成按钮稳定显示” 是参考中的一部分，但更适合做候选。'),
-                "data: [DONE]\n",
-            ]
-        )
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(
-                    scene="active_rag",
-                    current_context="输入法需要稳定显示 DeepSeek 生成结果",
-                    selected_text="生成按钮优化",
-                    evidence_pack=({"surfaceHints": ["RAG 输入法生成按钮稳定显示"]},),
-                )
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["生成按钮稳定显示"])
-
-    def test_reasoning_fallback_ignores_prompt_json_arrays_before_examples(self) -> None:
-        provider = _provider(
-            [
-                _sse_reasoning(
-                    '输入是 {"evidenceHints":["RAG 输入法生成按钮稳定显示","输入法 RAG"]}。'
-                    '例如：“稳定显示生成按钮”或者“RAG输入法优化”。'
-                ),
-                "data: [DONE]\n",
-            ]
-        )
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(
-                    scene="active_rag",
-                    current_context="输入法需要稳定显示 DeepSeek 生成结果",
-                    selected_text="生成按钮优化",
-                    evidence_pack=({"surfaceHints": ["RAG 输入法生成按钮稳定显示"]},),
-                    max_candidates=2,
-                )
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["稳定显示生成按钮"])
-
-    def test_reasoning_fallback_rejects_prompt_field_name_fragments(self) -> None:
-        provider = _provider(
-            [
-                _sse_reasoning('候选是 selectedText 是。比如“生成按钮稳定显示”。'),
-                "data: [DONE]\n",
-            ]
-        )
-
-        deltas = list(
-            provider.stream_candidates(
-                DeepSeekCompletionRequest(scene="active_rag", current_context="输入法", selected_text="生成按钮优化")
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["生成按钮稳定显示"])
+            ))
 
     def test_deepseek_completion_redacts_evidence_pack_by_default(self) -> None:
         messages = build_deepseek_completion_messages(
@@ -745,14 +798,10 @@ class DeepSeekCompletionTests(unittest.TestCase):
             enforce_runtime_flags=False,
         )
 
-        deltas = list(
-            provider.stream_candidates(
+        with self.assertRaisesRegex(DeepSeekCompletionError, "budget_elapsed"):
+            list(provider.stream_candidates(
                 DeepSeekCompletionRequest(scene="active_rag", current_context="输入法", latency_budget_ms=100)
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["预算内候选"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "reasoning_fallback")
+            ))
 
     def test_deepseek_max_tokens_can_be_limited_for_low_thinking_scene(self) -> None:
         fake = _BodyCaptureOpener()
@@ -830,7 +879,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual(fake.bodies[0]["reasoning_effort"], "low")
         self.assertNotIn("reasoning_effort", fake.bodies[1])
 
-    def test_active_rag_request_fallback_exposes_gateway_error_reason(self) -> None:
+    def test_active_rag_gateway_error_is_exposed_without_fake_candidate(self) -> None:
         fake = _AlwaysHttpErrorOpener()
         provider = DeepSeekV4FlashCompletionProvider(
             DeepSeekConfig(api_base_url="https://api.example.test/v1", api_key="test-key", model="deepseek-v4-flash"),
@@ -838,17 +887,13 @@ class DeepSeekCompletionTests(unittest.TestCase):
             enforce_runtime_flags=False,
         )
 
-        deltas = list(
-            provider.stream_candidates(
+        with self.assertRaisesRegex(DeepSeekCompletionError, "http_403:bad_response_status_code"):
+            list(provider.stream_candidates(
                 DeepSeekCompletionRequest(
                     scene="active_rag",
                     current_context="RAG 输入法需要稳定显示 DeepSeek 生成结果",
                 )
-            )
-        )
-
-        self.assertEqual([item.text for item in deltas], ["稳定DeepSeek生成"])
-        self.assertEqual(deltas[0].metadata["fallbackReason"], "http_403:bad_response_status_code")
+            ))
 
 
 def _provider(chunks: list[object]) -> DeepSeekV4FlashCompletionProvider:

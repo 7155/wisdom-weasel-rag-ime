@@ -327,7 +327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     cleanup_rollback.add_argument("--run-id", required=True)
 
     cleanup_preview = subparsers.add_parser("cleanup-preview", help="Build an offline cleanup diff preview without modifying the DB")
-    cleanup_preview.add_argument("--provider", choices=("local-rule", "x1api", "x1top", "openai-compatible", "model-api"), default="local-rule")
+    cleanup_preview.add_argument("--provider", choices=("local-rule", "deepseek-v4"), default="local-rule")
     cleanup_preview.add_argument("--project", default="wisdom-weasel-rag-ime")
     cleanup_preview.add_argument("--since-days", type=int, default=90)
     cleanup_preview.add_argument("--recent-limit", type=int, default=80)
@@ -340,8 +340,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     cleanup_preview.add_argument("--model", default="")
     cleanup_preview.add_argument(
         "--model-env-path",
-        default=os.environ.get("RAG_IME_MODEL_ENV", "")
-        or os.environ.get("RAG_IME_X1API_ENV", "")
+        default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "")
+        or os.environ.get("RAG_IME_MODEL_ENV", "")
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
     )
     cleanup_preview.add_argument("--allow-private-paths", action="store_true")
@@ -373,12 +373,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     memory_compile.add_argument("--max-memories", type=int, default=4)
     memory_compile.add_argument("--max-lexicon-phrases", type=int, default=8)
     memory_compile.add_argument("--max-hide-suggestions", type=int, default=12)
-    memory_compile.add_argument("--provider", default="")
+    memory_compile.add_argument("--provider", choices=("deepseek-v4",), default="deepseek-v4")
     memory_compile.add_argument("--model", default="")
     memory_compile.add_argument(
         "--model-env-path",
-        default=os.environ.get("RAG_IME_MODEL_ENV", "")
-        or os.environ.get("RAG_IME_X1API_ENV", "")
+        default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "")
+        or os.environ.get("RAG_IME_MODEL_ENV", "")
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
     )
     memory_compile.add_argument("--output", default="", help="Optional JSON path. When set, writes the dry-run diff plan.")
@@ -461,7 +461,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     generate_memory = subparsers.add_parser(
         "generate-memory",
-        help="Distill stable long-term memory from text through x1top/x1api-compatible config",
+        help="Distill stable long-term memory from text through DeepSeek V4",
     )
     generate_memory.add_argument("text")
     generate_memory.add_argument("--recent-context", default="")
@@ -472,16 +472,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     generate_memory.add_argument("--allow-duplicates", action="store_true")
     generate_memory.add_argument(
         "--model-env-path",
-        default=os.environ.get("RAG_IME_MODEL_ENV", "")
-        or os.environ.get("RAG_IME_X1API_ENV", "")
+        default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "")
+        or os.environ.get("RAG_IME_MODEL_ENV", "")
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
-        help="x1top/x1api-compatible env file. Prefer this over the legacy --vcp-env-path.",
+        help="DeepSeek V4 env file. Prefer this over the legacy --vcp-env-path.",
     )
     generate_memory.add_argument("--vcp-env-path", default="", help=argparse.SUPPRESS)
 
     optimize_core = subparsers.add_parser(
         "optimize-core",
-        help="Use x1top/x1api-compatible config to optimize RAG memory and lexicon phrases from local history",
+        help="Use DeepSeek V4 to optimize RAG memory and lexicon phrases from local history",
     )
     optimize_core.add_argument("--project", default="wisdom-weasel-rag-ime")
     optimize_core.add_argument("--app", default="manual")
@@ -494,8 +494,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     optimize_core.add_argument("--allow-duplicates", action="store_true")
     optimize_core.add_argument(
         "--model-env-path",
-        default=os.environ.get("RAG_IME_MODEL_ENV", "")
-        or os.environ.get("RAG_IME_X1API_ENV", "")
+        default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "")
+        or os.environ.get("RAG_IME_MODEL_ENV", "")
         or os.environ.get("RAG_IME_VCP_REBUILD_ENV", ""),
     )
 
@@ -5627,12 +5627,8 @@ def _cleanup_provider_alias(provider: str) -> str:
     normalized = compact_whitespace(provider).lower()
     if normalized in {"", "local-rule"}:
         return "local-rule"
-    if normalized in {"openai-compatible"}:
-        return "openai-compatible"
-    if normalized in {"model-api"}:
-        return "model-api"
-    if normalized in {"x1api", "x1top", "x2app"}:
-        return "x1api"
+    if normalized in {"deepseek", "deepseek-v4", "dsv4"}:
+        return "deepseek-v4"
     return normalized
 
 
@@ -5693,7 +5689,7 @@ def _cleanup_preview_payload(*, core: LocalSqliteCoreClient, args) -> dict[str, 
         }
     generator = compiler_generator_from_env(
         env_path=args.model_env_path or None,
-        provider="" if provider == "openai-compatible" else provider,
+        provider=provider,
         model=args.model,
     )
     bundle = build_memory_compile_bundle(

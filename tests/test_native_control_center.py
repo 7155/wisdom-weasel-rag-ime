@@ -68,11 +68,29 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn("private var profileSelection: Binding<String>", source)
         self.assertNotIn(".onChange(of: selectedProfile)", source)
         self.assertIn("SourceLaneLabel", source)
-        self.assertIn('case "DS": return "bolt.horizontal.circle"', components)
+        self.assertIn('case "生成": return "bolt.horizontal.circle"', components)
         self.assertIn('case "RAG": return "doc.text.magnifyingglass"', components)
-        self.assertIn('default: return "MiniMind 实时补全"', components)
+        self.assertIn('default: return "本地实时补全"', components)
         self.assertIn('value: "\\(memory.retrievalDocCount)"', source)
         self.assertIn('Text("\\(prediction.providerCallCount ?? 0) 次调用")', source)
+
+    def test_input_method_page_has_review_bound_rime_lexicon_apply_and_rollback(self) -> None:
+        root = ROOT / "macos" / "RagImeControl"
+        page = (root / "Pages" / "InputMethodPage.swift").read_text(encoding="utf-8")
+        app_model = (root / "AppModel.swift").read_text(encoding="utf-8")
+        models = (root / "Models" / "ManagementModels.swift").read_text(encoding="utf-8")
+
+        self.assertIn("词库建议", page)
+        self.assertIn(".toggleStyle(.checkbox)", page)
+        self.assertIn("应用已选", page)
+        self.assertIn("confirmationDialog", page)
+        self.assertIn('"api/rime-lexicon/review"', app_model)
+        self.assertIn('"api/rime-lexicon/apply"', app_model)
+        self.assertIn('"api/rime-lexicon/rollback"', app_model)
+        self.assertIn('"reviewToken": .string(review.reviewToken)', app_model)
+        self.assertIn('await run(action: "redeploy_rime")', app_model)
+        self.assertIn("struct RimeLexiconReviewResponse", models)
+        self.assertIn("struct RimeLexiconReviewEntry", models)
 
     def test_native_app_supervises_only_allowlisted_external_commands(self) -> None:
         root = ROOT / "macos" / "RagImeControl"

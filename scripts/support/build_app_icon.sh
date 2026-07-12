@@ -2,51 +2,55 @@
 set -euo pipefail
 
 OUTPUT="${1:?usage: build_app_icon.sh OUTPUT.icns}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SOURCE="${RAG_IME_ICON_SOURCE:-$ROOT/assets/brand/rag-ime-icon.svg}"
 TMP_BASE="${TMPDIR:-/tmp}"
 WORK="$(mktemp -d "$TMP_BASE/rag-ime-app-icon.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+if [[ "${RAG_IME_KEEP_ICON_WORK:-0}" == "1" ]]; then
+  echo "icon workdir: $WORK" >&2
+else
+  trap 'rm -rf "$WORK"' EXIT
+fi
 
-PPM="$WORK/RagImeIcon.ppm"
 ICONSET="$WORK/RagImeIcon.iconset"
-
-python3 - "$PPM" <<'PY'
-import math
-import sys
-
-path = sys.argv[1]
-size = 1024
-with open(path, "wb") as handle:
-    handle.write(f"P6\n{size} {size}\n255\n".encode("ascii"))
-    for y in range(size):
-        for x in range(size):
-            dx = x - size / 2
-            dy = y - size / 2
-            radius = math.sqrt(dx * dx + dy * dy)
-            if radius > size * 0.47:
-                handle.write(bytes((0, 0, 0)))
-                continue
-            teal = int(118 + 88 * (1 - y / size))
-            blue = int(150 + 86 * (x / size))
-            in_mark = (
-                (0.23 <= x / size <= 0.34 and 0.24 <= y / size <= 0.74)
-                or (0.34 <= x / size <= 0.62 and 0.24 <= y / size <= 0.35)
-                or (0.34 <= x / size <= 0.62 and 0.46 <= y / size <= 0.57)
-                or (0.59 <= x / size <= 0.70 and 0.35 <= y / size <= 0.47)
-                or (
-                    0.50 <= x / size <= 0.72
-                    and 0.57 <= y / size <= 0.74
-                    and abs(((y / size) - 0.57) - ((x / size) - 0.50)) <= 0.08
-                )
-            )
-            handle.write(bytes((245, 250, 252) if in_mark else (18, teal, blue)))
-PY
-
+MASTER="$WORK/RagImeIcon-1024.png"
 mkdir -p "$ICONSET" "$(dirname "$OUTPUT")"
+
+if ! command -v rsvg-convert >/dev/null 2>&1; then
+  echo "rsvg-convert is required to build the RAG-IME icon" >&2
+  exit 1
+fi
+rsvg-convert --width 1024 --height 1024 --keep-aspect-ratio "$SOURCE" --output "$MASTER"
+
 for size in 16 32 128 256 512; do
-  sips -s format png -z "$size" "$size" "$PPM" \
+  sips -s format png -z "$size" "$size" "$MASTER" \
     --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
   retina=$((size * 2))
-  sips -s format png -z "$retina" "$retina" "$PPM" \
+  sips -s format png -z "$retina" "$retina" "$MASTER" \
     --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
 done
-iconutil -c icns "$ICONSET" -o "$OUTPUT"
+
+# The macOS 27 beta currently rejects otherwise valid legacy iconsets. Use the
+# standard multi-resolution TIFF fallback there while preserving iconutil on
+# released systems.
+if ! iconutil -c icns "$ICONSET" -o "$OUTPUT" 2>/dev/null; then
+  TIFFS="$WORK/tiffs"
+  mkdir -p "$TIFFS"
+  unique=(
+    icon_16x16.png
+    icon_32x32.png
+    icon_32x32@2x.png
+    icon_128x128.png
+    icon_128x128@2x.png
+    icon_256x256@2x.png
+    icon_512x512@2x.png
+  )
+  for name in "${unique[@]}"; do
+    sips -s format tiff "$ICONSET/$name" --out "$TIFFS/${name%.png}.tiff" >/dev/null
+  done
+  tiffutil -cat "$TIFFS"/*.tiff -out "$WORK/RagImeIcon.tiff" >/dev/null 2>&1
+  # tiff2icns on current macOS mis-parses output paths containing spaces.
+  # Create inside the temporary directory, then copy to the app bundle.
+  tiff2icns "$WORK/RagImeIcon.tiff" "$WORK/RagImeIcon.icns"
+  cp "$WORK/RagImeIcon.icns" "$OUTPUT"
+fi

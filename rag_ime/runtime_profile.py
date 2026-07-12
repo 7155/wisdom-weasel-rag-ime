@@ -82,7 +82,7 @@ PROFILES: dict[str, RuntimeProfile] = {
         post_commit_model_budget_ms=900,
         foreground_context_max_freshness_ms=700,
         strict_foreground_context=True,
-        assistant_pending_preview=False,
+        assistant_pending_preview=True,
         hybrid_rag_core=True,
         rag_direct_display=True,
         composition_ai=False,
@@ -97,7 +97,7 @@ PROFILES: dict[str, RuntimeProfile] = {
         post_commit_model_budget_ms=900,
         foreground_context_max_freshness_ms=700,
         strict_foreground_context=True,
-        assistant_pending_preview=False,
+        assistant_pending_preview=True,
         hybrid_rag_core=True,
         rag_direct_display=False,
         composition_ai=False,
@@ -120,7 +120,7 @@ def _flag(value: bool) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Print the canonical RAG-IME runtime profile.")
-    parser.add_argument("--profile", default="v1-proof", choices=tuple(PROFILES))
+    parser.add_argument("--profile", default="foreground-rag-proof", choices=tuple(PROFILES))
     parser.add_argument("--format", default="json", choices=("json", "shell"))
     args = parser.parse_args()
     profile = get_runtime_profile(args.profile)

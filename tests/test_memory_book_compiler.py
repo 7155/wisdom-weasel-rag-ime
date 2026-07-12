@@ -17,6 +17,7 @@ from rag_ime.memory_book_compiler import (
     memory_book_plan_from_compile_output,
     rollback_memory_book_run,
     store_memory_book_plan,
+    update_stored_memory_book_diff,
 )
 from rag_ime.models import InputEvent
 from rag_ime.text_utils import now_ms
@@ -89,6 +90,10 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertTrue(payload["dryRun"])
         self.assertTrue(payload["validation"]["ok"])
         self.assertTrue(output.exists())
+        plan = json.loads(output.read_text(encoding="utf-8"))
+        phrase = next(item for item in plan["diffs"] if item["op"] == "add_phrase_candidate")
+        self.assertEqual(phrase["payload"]["pinyin"], "duo lu zhao hui")
+        self.assertEqual(phrase["payload"]["reviewSource"], "dsv4")
         with closing(sqlite3.connect(self.db_path)) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_cleanup_runs WHERE run_id LIKE 'memory_book_%'").fetchone()[0], 0)
@@ -183,6 +188,39 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(book["title"], f"本地记忆归档 {book['bookKey']}")
         self.assertEqual(book["queryExpansions"], [])
         self.assertNotIn("真实 Codex 历史", book["summary"])
+
+    def test_memory_book_compile_accepts_stable_topic_books(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["dailyBooks"] = []
+        output["topicBooks"] = [
+            {
+                "bookId": "book:topic:ai-input-method",
+                "bookKey": "ai-input-method",
+                "bookType": "topic",
+                "title": "AI 输入法项目",
+                "summary": "持续开发基于 Squirrel 的本地预测、RAG 记忆和显式知识生成链路。",
+                "tags": ["输入法", "RAG", "Squirrel"],
+                "queryExpansions": ["AI 输入法", "个人记忆输入法"],
+                "sourceEventIds": [self.event_id],
+                "confidence": 0.9,
+                "qualityScore": 0.88,
+            }
+        ]
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        report = inspect_memory_book_plan(plan)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["counts"]["memoryBooks"], 1)
+        book = next(item["payload"] for item in plan["diffs"] if item["op"] == "upsert_memory_book")
+        self.assertEqual(book["bookId"], "book:topic:ai-input-method")
+        self.assertEqual(book["bookType"], "topic")
+        self.assertEqual(book["bookKey"], "ai-input-method")
 
     def test_memory_book_compile_uses_generic_source_archive_when_model_returns_empty(self) -> None:
         bundle = {
@@ -352,6 +390,46 @@ class MemoryBookCompilerTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0], 0)
 
+    def test_stored_workbench_draft_supports_review_edit_and_exclusion(self) -> None:
+        plan = memory_book_plan_from_compile_output(
+            sample_compile_output(self.event_id),
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            draft = store_memory_book_plan(conn, plan)
+            book = next(item for item in draft["diffs"] if item["op"] == "upsert_memory_book")
+            atom = next(item for item in draft["diffs"] if item["op"] == "upsert_memory_atom")
+            edited_payload = dict(book["payload"])
+            edited_payload["title"] = "输入法记忆与召回"
+            reviewed = update_stored_memory_book_diff(
+                conn,
+                run_id=plan["runId"],
+                diff_id=book["diffId"],
+                payload=edited_payload,
+                selected=True,
+            )
+            excluded = update_stored_memory_book_diff(
+                conn,
+                run_id=plan["runId"],
+                diff_id=atom["diffId"],
+                selected=False,
+            )
+            applied = apply_stored_memory_book_run(conn, run_id=plan["runId"])
+
+        reviewed_book = next(item for item in reviewed["diffs"] if item["diffId"] == book["diffId"])
+        excluded_atom = next(item for item in excluded["diffs"] if item["diffId"] == atom["diffId"])
+        self.assertEqual(reviewed_book["payload"]["title"], "输入法记忆与召回")
+        self.assertEqual(reviewed_book["status"], "approved")
+        self.assertEqual(excluded_atom["status"], "rejected")
+        self.assertEqual(next(item for item in applied["diffs"] if item["diffId"] == atom["diffId"])["status"], "rejected")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT title FROM memory_books LIMIT 1").fetchone()
+            self.assertEqual(row["title"], "输入法记忆与召回")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0], 0)
+
     def _write_sample_plan(self) -> Path:
         plan = memory_book_plan_from_compile_output(
             sample_compile_output(self.event_id),
@@ -399,7 +477,14 @@ def sample_compile_output(event_id: int) -> dict[str, object]:
             {"src": "输入法", "dst": "大模型", "edgeType": "related", "weight": 0.72, "evidenceEventIds": [event_id]}
         ],
         "phraseCandidates": [
-            {"text": "多路召回", "tags": ["RAG", "检索"], "sourceEventIds": [event_id], "weight": 0.74}
+            {
+                "text": "多路召回",
+                "pinyin": "duo lu zhao hui",
+                "tags": ["RAG", "检索"],
+                "sourceEventIds": [event_id],
+                "weight": 0.74,
+                "reason": "用户反复讨论的领域术语",
+            }
         ],
         "warnings": [],
     }

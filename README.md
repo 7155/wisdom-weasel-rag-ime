@@ -38,9 +38,14 @@ Post-commit assistance
 
 Explicit Active RAG
   -> user invokes the configured shortcut on selected text
-  -> local retrieval assembles evidence
+  -> the live request is resolved from the newest foreground context
+  -> local lexical + MLX BGE retrieval assembles relevant evidence
+  -> recent input remains a separately counted diagnostic and is not injected
   -> optional configured DeepSeek-compatible provider generates one result
-  -> user reviews before replacement
+  -> streamed and final text pass the same anti-echo and prompt-leak governor
+  -> an empty governed result gets one context-only retry, never a fake answer
+  -> a fully governed streamed clause can finish safely if a later tail is rejected
+  -> the provider-neutral result stays pinned; Tab inserts only final text
 
 Explicit knowledge workbench
   -> user asks for a knowledge answer, long-form draft, recall, or database organization
@@ -65,12 +70,84 @@ Streaming voice input
 | Pinyin | Rime owns composition, sentence generation, fuzzy Pinyin, and native user-dictionary learning. A public-safe 10-case deployed-librime regression currently passes Top-1 at 10/10, including `yon/yong -> 用` and common phrases. The patched post-selection feedback route remains `backend_only` until a fresh foreground selection trace passes. |
 | Local completion | MLX, local Ollama, and loopback OpenAI-compatible runtimes share one validated registry/lifecycle boundary. The current MiniMind-derived checkpoint is fast enough and reliably returns three branches, but its semantic quality gate and retraining signoff have not passed. |
 | Hybrid RAG | Local SQLite retrieval combines lexical, tag, time-book, feedback, and precomputed vector signals. On Apple Silicon, a present MLX Q8 BGE artifact is preferred and warmed before sidecar health becomes ready; an explicit provider still wins and clean machines fall back to `local-hash`. |
-| Memory | Local events, stable memories, feedback, tombstones, anti-echo checks, and reviewed cleanup flows. |
-| Active RAG | Explicit selected-text workflow with local evidence and an optional remote DeepSeek-compatible route. It is never part of passive per-keystroke prediction. |
-| UI | The patched Squirrel native overlay has a v3 working-tree polish pass with compact material, source tints/icons, shortcut plates, hover/accept/streaming motion, bounded TTL, and Reduce Motion handling. Static/build checks are not a real foreground screenshot, so visual acceptance remains pending. `RagImeControl` is the one settings/diagnostics app; the legacy browser console has been removed and the voice agent is headless. |
+| Memory | Keyboard commits and final voice transcripts enter the same local event store. An explicit DeepSeek V4 organizer creates a validated Memory Book/Atom/phrase draft; apply and rollback remain separate local actions. Phrase suggestions need valid Pinyin and still enter the same reviewed Rime proposal queue instead of writing the live dictionary. |
+| Active RAG | Explicit selected-text workflow with live-context request resolution, separately counted grounding evidence, MLX BGE retrieval, and an optional remote compatible route. Recent input and phrase candidates cannot inflate the visible RAG count. It is never part of passive per-keystroke prediction. |
+| UI | The patched Squirrel native overlay now gives deterministic post-commit feedback: a compact companion pulse appears immediately, ready rows replace it in place, Tab acceptance switches directly to `继续联想`, and a terminal empty result reports `这次没有合适建议` instead of silently vanishing. Real rows are icon-first, use one compact shortcut area, remain actionable for at least 12 seconds, and honor Reduce Motion. A TextEdit foreground trace has passed pending -> candidates -> Tab -> next candidates. `RagImeControl` remains the one settings/diagnostics app and the voice agent is headless. |
 | Knowledge workbench | Explicit local-RAG + DeepSeek knowledge answers, long-form writing, recall, and review-only database organization. Optional Notion submission and polling are separate, observable gates. |
 | Voice input | The headless native agent, mode-`600` credential file with Keychain fallback, and a real Doubao PCM probe work. Hold the mouse middle button by default; right Option and `Option+Space` remain configurable fallbacks in the one Control Center. Status reports network state, first-partial/final latency, PCM/revision counts, discarded frames, and only the enabled hotword count without storing audio or transcript text. Foreground behavior stays `backend_only` until a user-authorized microphone run. |
 | Observability | Redacted runtime status, trigger decisions, candidate score explanations, context provenance, and foreground traces. |
+
+### Retrieval Algorithm Truth
+
+`Hybrid RAG` is not a UI label or a single opaque score. The current local
+retriever exposes the implementation of every lane in its debug payload, so a
+disabled or degraded lane cannot be presented as a working algorithm.
+
+| Lane | Actual implementation | Important boundary |
+| --- | --- | --- |
+| Raw lexical | SQLite FTS5 column-scoped `MATCH` with SQLite's `bm25(memory_retrieval_docs_fts)` | If an old/incomplete database lacks the FTS table or index, the only fallback is reported as `lexical_substring_fallback`, never as BM25. |
+| Tag lexical | The same FTS5 BM25 engine over tags, aliases, surface hints, and query expansions | This is a distinct field-scoped query, not a copy of raw-text matching. |
+| TagMemo | Tag/alias/expansion activation followed by the tag FTS5 BM25 lane | Tag expansion is graph/rule based; it is not a learned graph encoder. |
+| Dense vector | Precomputed MLX BGE embeddings and cosine/dot-product scoring | The current corpus uses an exact in-process scan, not an ANN/HNSW/FAISS index. |
+| Vector tag boost | Dense raw/tag/group vectors plus context-group compatibility | It complements lexical rank; it does not replace provenance or scope filters. |
+| Time / Daily Book | Query-term relevance plus a 30-day exponential recency prior | It is a temporal heuristic, not a learned time model. |
+| Feedback | Accepted candidate counts gated by current-query relevance | Unrelated high-frequency feedback is excluded instead of globally boosting a phrase. |
+| Fusion | Per-lane ranking, weighted reciprocal-rank fusion, scope/group compatibility, deduplication, and anti-echo filtering | Raw BM25 scores and cosine scores are not added directly because their scales differ. |
+
+There is deliberately **no learned cross-encoder reranker** and no ANN index in
+the current hot path. Those are valid future scale/quality upgrades, but this
+repository does not claim them as shipped. A normal preview exposes each lane's
+`implementation`, `fts5Bm25`, `lexicalFallback`, count, and skip reason. This
+makes it possible to distinguish an actual FTS5 BM25 run from a compatibility
+fallback on the machine that is serving the query.
+
+## Interaction And Personalization Direction
+
+The product is intended to feel like one quiet desktop companion rather than a
+stack of unrelated model, retrieval, and voice windows. The current native
+surfaces share system typography, material, the circular breathing companion,
+source icons, stable selection semantics, and reduced-motion handling. The
+base theme contract is implemented; optional expressive themes remain a later
+layer with these constraints:
+
+- voice listening, Pinyin candidates, local completion, retrieval, and explicit
+  knowledge generation use the same motion language and compact geometry;
+- a source icon is sufficient in the default candidate view, so repeated
+  provider or model labels do not consume a quarter of each row;
+- `Tab` and `Option+1...4` stay in one compact left-side shortcut rail instead
+  of becoming separate large controls or competing with candidate text;
+- optional companion themes may add a small character, object, or activity
+  metaphor, such as reading a book while retrieval runs, without making an
+  anime style mandatory or obscuring the text being entered;
+- Reduce Motion, high contrast, and a plain professional theme remain
+  first-class alternatives to expressive animation.
+
+Personalization is split into two levels. Rime's native user dictionary learns
+ordinary Pinyin selections immediately. Repeated explicit corrections can be
+opened in the Control Center as a reviewable custom-dictionary proposal with
+provenance and a stable review token. Apply requires explicit row selection and
+the exact confirmation contract, writes the Rime dictionary transactionally,
+and provides manifest-backed rollback. Remote generation never writes directly
+into the live Rime dictionary, and model/RAG candidates are not counted as
+native Pinyin selections. The live review endpoint is verified; no personal
+proposal is auto-applied during tests or installation.
+
+DeepSeek V4 can also organize a bounded local history bundle into a draft of
+Memory Books, atoms, aliases, and high-value phrase proposals. The output is
+schema-validated before it is stored, then exposed as a diff that the user can
+apply or roll back. A phrase can join the Rime review queue only when the draft
+contains lowercase, toneless Pinyin plus its reason and source-event evidence.
+If the first organizer response omits Pinyin, one bounded DeepSeek V4 repair
+request receives only the missing phrase texts; unresolved items remain local
+memory and cannot enter the dictionary queue. This bridge is implemented and
+covered by tests. The current live review queue still contains only two
+usage-derived proposals because no new post-repair draft with valid Pinyin has
+been explicitly generated and approved.
+
+High-intelligence routes accept DeepSeek V4 model identifiers only. Legacy X1
+and X2 proxy hosts are rejected at configuration validation, and the remote
+route is never used for passive per-keystroke completion. The overlay stays
+provider-neutral even when the configured backend is DeepSeek V4.
 
 The current MiniMind runtime is fast enough for the backend latency/count gate,
 but latency and three valid strings are not the same as relevance. The
@@ -123,6 +200,26 @@ as a passive per-keystroke model. `scripts/restart_rag_ime_runtime.sh` starts
 the managed MLX service only for an MLX deployment; for external runtimes it
 first probes the endpoint and refuses to start Sidecar on a dead route.
 
+### Foreground context boundary
+
+The macOS input method can read the current editable field through
+InputMethodKit. It cannot assume that the rest of an application's page, chat
+history, rendered assistant replies, or terminal scrollback belongs to that
+field. Diagnostics therefore keep three facts separate:
+
+1. `foregroundContextChars`: text captured from the current editable field;
+2. `timelineRecentInputChars`: final user input available in local history for
+   diagnostics and explicit recall, but not silently injected into generation;
+3. `fullForegroundDocumentCaptured`: whether the whole visible document was
+   captured. The current InputMethodKit route reports this as `false`.
+
+A short capture is a degraded but usable state, not proof of complete page
+context. Explicit generation keeps that foreground field as its complete
+generation context; recent keyboard or voice input remains visible as a
+separate diagnostic and can only enter an explicit recall/RAG workflow as
+traceable evidence. The control center must not show a green complete-context
+state merely because a two-character field capture was successfully delivered.
+
 ## Privacy Model
 
 - Passive completion and retrieval are local by default.
@@ -133,10 +230,15 @@ first probes the endpoint and refuses to start Sidecar on a dead route.
 - Remote generation is reserved for an explicit Active RAG action and requires
   user configuration. Selected text and assembled context may leave the machine
   only when that action is invoked.
-- Voice input is also explicit. Audio is held in memory and sent to Volcengine
-  only while the
-  user holds the voice shortcut, and is never added to the RAG or typing-history
-  databases. Secure Input, password roles, and detected account fields fail
+- Remote memory organization is also explicit: the Control Center first
+  creates a reviewable draft from a bounded local bundle. Applying that draft
+  and applying any resulting Rime phrase proposal are two independent,
+  confirmable steps.
+- Voice input is also explicit. Audio and unstable partial transcripts stay
+  volatile and are never added to the RAG or typing-history databases. In an
+  ordinary non-sensitive field, only the final transcript committed at the
+  cursor enters the same local recent-input and memory-organization route as
+  typed text. Secure Input, password roles, and detected account fields fail
   closed before the microphone starts. The provider route is governed by
   Volcengine's service terms and data policy.
 - Model weights, local databases, personal input history, API keys, built app
@@ -223,6 +325,14 @@ scripts/verify_squirrel_foreground_trace.sh
 
 Backend health or a predictor benchmark does not prove that candidates are
 visible, selectable, and committed in the foreground application.
+
+When a patched Squirrel build is installed while Microsoft Edge is already
+running, Edge can keep the old InputMethodKit connection and ignore the new
+input method even though Chrome and native applications work. Enter
+`edge://restart` once in Edge to restore the existing windows and reconnect the
+IME client. The frontend also carries the Chromium caret-position compatibility
+path used by current Squirrel work: panel updates are deferred to the next main
+run loop and reuse the first valid caret position during a composition.
 
 Optional voice input is installed separately so microphone/network work never
 enters Squirrel's keystroke path:
@@ -362,7 +472,7 @@ Candidate provenance is a product contract, not just a UI label:
 | `model` | Local post-commit completion. |
 | `rag` | Local retrieval evidence or curated phrase. |
 | `memory` | Stable local memory candidate. |
-| `action` | Explicit Active RAG action, such as DeepSeek generation. |
+| `action` | Provider-neutral explicit knowledge generation action, backed by the configured DeepSeek V4 route. |
 | `raw_english` | Direct code/ASCII input path. |
 
 Rime candidates keep ownership of the composition panel. Model, RAG, and

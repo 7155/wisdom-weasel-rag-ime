@@ -175,9 +175,9 @@ _SIDE_LANE_SCHEDULER = LatestWinsLaneScheduler()
 _AUTO_PREDICTION_TRIGGER = PredictionTrigger(
     PredictionTriggerConfig(
         idle_ms=0,
-        min_delta_chars=max(1, _early_env_int("RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS", 8)),
-        max_calls_per_10s=max(1, _early_env_int("RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S", 2)),
-        ignore_cooldown_ms=max(0, _early_env_int("RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS", 2500)),
+        min_delta_chars=max(1, _early_env_int("RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS", 1)),
+        max_calls_per_10s=max(1, _early_env_int("RAG_IME_AUTO_PREDICT_MAX_CALLS_PER_10S", 10)),
+        ignore_cooldown_ms=max(0, _early_env_int("RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS", 0)),
     )
 )
 _AUTO_PREDICTION_TRIGGER_LOCK = RLock()
@@ -2920,6 +2920,12 @@ def post_commit_auto_model_enabled(env: Mapping[str, str] | None = None) -> bool
     return value not in _FALSEY_ENV_VALUES
 
 
+def local_model_quality_gate_mode(env: Mapping[str, str] | None = None) -> str:
+    source = env if env is not None else os.environ
+    value = str(source.get("RAG_IME_LOCAL_MODEL_QUALITY_GATE_MODE", "strict")).strip().lower()
+    return "observe" if value in {"observe", "report", "audit"} else "strict"
+
+
 def ai_after_commit_only_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
     value = str(source.get("RAG_IME_AI_AFTER_COMMIT_ONLY", "1")).strip().lower()
@@ -3858,7 +3864,10 @@ def filter_post_commit_model_completions(
             prediction,
             context=committed or commit_preview,
         )
-        if not quality_allowed:
+        quality_mode = local_model_quality_gate_mode()
+        if not quality_allowed and (
+            quality_mode == "strict" or quality_meta.get("reason") == "negates_context_hypothesis"
+        ):
             continue
         text = _clean_post_commit_completion_text(prediction.text)
         if _is_bare_completion_prediction(prediction):
@@ -3886,6 +3895,8 @@ def filter_post_commit_model_completions(
         metadata["noPinyinFilter"] = True
         metadata["requestType"] = PREDICTION_REQUEST_POST_COMMIT_COMPLETION
         if quality_meta:
+            quality_meta["mode"] = quality_mode
+            quality_meta["observedOnly"] = not quality_allowed and quality_mode == "observe"
             metadata["qualityGate"] = quality_meta
         quality_confidence = quality_meta.get("seedProbability") if quality_meta else None
         result.append(
@@ -5484,7 +5495,14 @@ def _hash_from_payload(value: object, *, fallback_text: str) -> str:
 
 def choose_semantic_query(snapshot: RimeContextSnapshot, *, foreground_context: str = "") -> tuple[str, str]:
     commit_preview = compact_whitespace(snapshot.commit_text_preview)
-    if commit_preview and semantic_signal_length(commit_preview) >= 2:
+    foreground = compact_whitespace(foreground_context)
+    active_composition = bool(compact_whitespace(snapshot.raw_input or snapshot.preedit) or snapshot.candidates)
+    if foreground and not active_composition:
+        # Rime commonly commits Chinese a word at a time. A two- or three-character
+        # commit is not the completion context when IMK has already supplied the
+        # fresh text field contents; using it alone starves both model and RAG.
+        return foreground[-240:], "foregroundText"
+    if commit_preview and _commit_preview_has_prediction_signal(commit_preview):
         return commit_preview, "commitTextPreview"
     raw_semantic_input = semantic_ascii_input_text(snapshot)
     if raw_semantic_input:
@@ -5492,7 +5510,7 @@ def choose_semantic_query(snapshot: RimeContextSnapshot, *, foreground_context: 
     candidate_text = compact_whitespace(" ".join(item.text for item in snapshot.candidates[:3] if item.text))
     if candidate_text:
         prefix = stable_short_pinyin_prefix(snapshot)
-        context = compact_whitespace(foreground_context or snapshot.committed_context)
+        context = compact_whitespace(foreground or snapshot.committed_context)
         query_parts = tuple(part for part in (context[-160:] if context else "", prefix, candidate_text) if part)
         if context:
             return compact_whitespace(" ".join(query_parts)), "rimeCandidates"
@@ -5503,7 +5521,7 @@ def choose_semantic_query(snapshot: RimeContextSnapshot, *, foreground_context: 
     raw_input = compact_whitespace(snapshot.raw_input)
     if preedit and preedit != raw_input:
         return preedit, "preedit"
-    context = compact_whitespace(foreground_context or snapshot.committed_context)
+    context = compact_whitespace(foreground or snapshot.committed_context)
     if context:
         return context[-240:], "foregroundText" if foreground_context else "committedContext"
     return raw_input, "rawInputFallback"
@@ -5666,13 +5684,16 @@ def foreground_context_for_side_lanes(
         meta["reason"] = "foreground context stale"
         meta["maxFreshnessMs"] = max_freshness
         return "", meta
+    # Post-commit completion continues at the caret. Text after the caret is
+    # useful provenance for explicit rewrite/Active RAG, but feeding it into the
+    # hot completion query makes the model and retriever continue the wrong
+    # paragraph (for example, TextEdit instructions below the insertion point).
     context = compact_whitespace(
         " ".join(
             part
             for part in (
                 foreground.surrounding_before,
                 foreground.selected_text_preview,
-                foreground.surrounding_after,
             )
             if compact_whitespace(part)
         )
@@ -5681,7 +5702,10 @@ def foreground_context_for_side_lanes(
         meta["reason"] = "foreground context empty"
         return "", meta
     meta["applied"] = True
-    meta["reason"] = "foreground context applied"
+    meta["reason"] = ""
+    meta["status"] = "foreground_context_applied"
+    meta["semanticContextMode"] = "before_caret_and_selection"
+    meta["excludedAfterChars"] = len(compact_whitespace(foreground.surrounding_after))
     meta["contextHash"] = stable_text_hash(context)
     meta["contextChars"] = len(context)
     return context[-600:], meta
@@ -5993,7 +6017,7 @@ def decide_side_candidate_refresh(
     if query_basis == "rawSemanticInput":
         return RimeSideCandidateTriggerDecision(True, "refresh: semantic raw input")
 
-    if query_basis == "commitTextPreview" and signal_len >= 2:
+    if query_basis == "commitTextPreview" and _commit_preview_has_prediction_signal(semantic_query):
         return RimeSideCandidateTriggerDecision(True, "refresh: commit preview")
 
     if query_basis == "rimeCandidates":
@@ -6011,13 +6035,13 @@ def decide_side_candidate_refresh(
         return RimeSideCandidateTriggerDecision(False, "skip: preedit not stable enough")
 
     if query_basis == "foregroundText":
-        if signal_len >= 4:
+        if signal_len >= 2 or _commit_preview_has_prediction_signal(semantic_query):
             return RimeSideCandidateTriggerDecision(True, "refresh: foreground accessibility context")
         return RimeSideCandidateTriggerDecision(False, "skip: foreground context too short")
 
     if query_basis == "committedContext":
         no_active_composition = not compact_whitespace(snapshot.raw_input) and not compact_whitespace(snapshot.preedit)
-        if signal_len >= 4:
+        if signal_len >= 2 or _commit_preview_has_prediction_signal(semantic_query):
             if snapshot.idle_ms > _POST_COMMIT_PANEL_TTL_MS:
                 return RimeSideCandidateTriggerDecision(False, "skip: stale post-commit continuation")
             return RimeSideCandidateTriggerDecision(
@@ -6033,6 +6057,22 @@ def decide_side_candidate_refresh(
 
 def semantic_signal_length(text: str) -> int:
     return sum(1 for char in compact_whitespace(text) if not char.isspace())
+
+
+def _commit_preview_has_prediction_signal(text: str) -> bool:
+    """Allow one meaningful CJK commit without treating punctuation as a query."""
+
+    surface = compact_whitespace(text)
+    if not surface:
+        return False
+    cjk = re.findall(r"[\u3400-\u9fff]", surface)
+    if cjk:
+        return any(char not in _LOW_INFORMATION_CJK_TOKENS for char in cjk)
+    lowered = surface.lower()
+    return lowered in _SEMANTIC_ASCII_TERMS or any(
+        term.lower() in _SEMANTIC_ASCII_TERMS
+        for term in re.findall(r"[A-Za-z][A-Za-z0-9_+-]{1,}", surface)
+    )
 
 
 def _committed_context_is_low_information(snapshot: RimeContextSnapshot, semantic_query: str) -> bool:
@@ -6065,7 +6105,7 @@ def _active_rime_candidates_are_low_information(snapshot: RimeContextSnapshot) -
 
 def _forced_refresh_has_side_signal(snapshot: RimeContextSnapshot, query_basis: str, semantic_query: str) -> bool:
     if query_basis == "commitTextPreview":
-        return semantic_signal_length(semantic_query) >= 2
+        return _commit_preview_has_prediction_signal(semantic_query)
     active_input = compact_whitespace(snapshot.preedit or snapshot.raw_input)
     if not active_input:
         return False
@@ -6438,7 +6478,7 @@ def append_post_commit_active_rag_action(
     display_candidates.append(
         SideCandidateDisplayItem(
             label="",
-            text="DeepSeek 生成",
+            text="知识生成",
             insert_text="",
             source_type="action",
             selection_action="start_active_rag_from_context",
@@ -6450,7 +6490,7 @@ def append_post_commit_active_rag_action(
                 "candidate_mode": "post-commit-active-rag-button",
                 "activeRagTrigger": True,
                 "buttonRole": "active_rag_generate",
-                "buttonLabel": "DeepSeek 生成",
+                "buttonLabel": "知识生成",
                 "shortcutHint": "ctrl+.",
                 "numericSelectionDisabled": True,
                 "triggerPolicy": "manual_only",
@@ -7156,13 +7196,15 @@ def _source_stability_from_session(prediction_session_payload: Mapping[str, obje
 
 
 def _candidate_stable_id(item: SideCandidateDisplayItem, *, snapshot_id: str) -> str:
+    # Progressive model output mutates text in place. Identity belongs to the
+    # snapshot lane/slot, otherwise every token delta looks like a new row and
+    # invalidates the user's current keyboard selection.
+    slot_identity = item.selection_action if item.source_type == "action" else str(item.source_index)
     material = "\x1f".join(
         (
             snapshot_id,
             item.source_type,
-            str(item.source_index),
-            compact_whitespace(item.text),
-            compact_whitespace(item.insert_text),
+            slot_identity,
         )
     )
     return f"{item.source_type}:{hashlib.sha1(material.encode('utf-8')).hexdigest()[:16]}"

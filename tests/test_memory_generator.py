@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from rag_ime.memory_compiler import compiler_generator_from_env
 from rag_ime.memory_generator import (
+    MemoryGenerationError,
     VcpRebuildMemoryGenerator,
     _build_openai_url,
     _core_optimization_max_tokens,
@@ -25,8 +26,8 @@ class MemoryGeneratorTests(unittest.TestCase):
             "os.environ",
             {
                 "RAG_IME_MEMORY_GENERATOR_ENV": "",
+                "RAG_IME_DEEPSEEK_ENV": "",
                 "RAG_IME_MODEL_ENV": "",
-                "RAG_IME_X1API_ENV": "",
                 "RAG_IME_VCP_REBUILD_ENV": "",
             },
             clear=False,
@@ -70,7 +71,7 @@ class MemoryGeneratorTests(unittest.TestCase):
                     [
                         "API_BASE_URL=https://example.com/v1",
                         "API_KEY=secret-value",
-                        "MODEL=gpt-test",
+                        "MODEL=deepseek-v4-flash",
                         "UPSTREAM_WIRE_API=responses",
                         "REQUEST_TIMEOUT_SECONDS=12",
                     ]
@@ -80,19 +81,19 @@ class MemoryGeneratorTests(unittest.TestCase):
 
             generator = VcpRebuildMemoryGenerator.from_env_path(env_path)
 
-        self.assertEqual(generator.config.model, "gpt-test")
+        self.assertEqual(generator.config.model, "deepseek-v4-flash")
         self.assertEqual(generator.config.upstream_wire_api, "responses")
         self.assertEqual(generator.config.request_timeout_seconds, 12)
 
-    def test_from_env_path_accepts_x1api_style_settings(self) -> None:
+    def test_from_env_path_accepts_deepseek_v4_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / ".env"
             env_path.write_text(
                 "\n".join(
                     [
-                        "X1API_BASE_URL=https://x1api.top/v1",
-                        "X1API_API_KEY=secret-value",
-                        "X1API_MODEL=deepseek-chat",
+                        "RAG_IME_DEEPSEEK_BASE_URL=https://api.example.com/v1",
+                        "DEEPSEEK_API_KEY=secret-value",
+                        "RAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash",
                         "RAG_IME_AI_WIRE_API=chat_completions",
                         "RAG_IME_AI_THINKING=disabled",
                         "RAG_IME_AI_RESPONSE_FORMAT=json_object",
@@ -103,12 +104,12 @@ class MemoryGeneratorTests(unittest.TestCase):
 
             generator = VcpRebuildMemoryGenerator.from_env_path(env_path)
 
-        self.assertEqual(generator.config.api_base_url, "https://x1api.top/v1")
-        self.assertEqual(generator.config.model, "deepseek-chat")
+        self.assertEqual(generator.config.api_base_url, "https://api.example.com/v1")
+        self.assertEqual(generator.config.model, "deepseek-v4-flash")
         self.assertEqual(generator.config.api_key, "secret-value")
         self.assertEqual(generator.config.chat_thinking_type, "disabled")
         self.assertEqual(generator.config.response_format, "json_object")
-        self.assertEqual(generator.provider_name, "x1api")
+        self.assertEqual(generator.provider_name, "deepseek-v4")
 
     def test_model_request_uses_gateway_friendly_user_agent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -116,9 +117,9 @@ class MemoryGeneratorTests(unittest.TestCase):
             env_path.write_text(
                 "\n".join(
                     [
-                        "X1API_BASE_URL=https://api.example.com/v1",
-                        "X1API_API_KEY=secret-value",
-                        "X1API_MODEL=deepseek-v4-flash",
+                        "RAG_IME_DEEPSEEK_BASE_URL=https://api.example.com/v1",
+                        "DEEPSEEK_API_KEY=secret-value",
+                        "RAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash",
                         "RAG_IME_AI_WIRE_API=chat_completions",
                     ]
                 ),
@@ -145,7 +146,7 @@ class MemoryGeneratorTests(unittest.TestCase):
             with patch("urllib.request.urlopen", side_effect=fake_urlopen):
                 report = generator.generate(text="测试离线整理模型", max_items=1)
 
-        self.assertEqual(report.provider, "model-api")
+        self.assertEqual(report.provider, "deepseek-v4")
         self.assertEqual(captured["user_agent"], "rag-ime/1.0 curl-compatible")
 
     def test_chat_completion_payload_can_disable_thinking_and_force_json(self) -> None:
@@ -154,9 +155,9 @@ class MemoryGeneratorTests(unittest.TestCase):
             env_path.write_text(
                 "\n".join(
                     [
-                        "X1API_BASE_URL=https://api.example.com/v1",
-                        "X1API_API_KEY=secret-value",
-                        "X1API_MODEL=deepseek-v4-flash",
+                        "RAG_IME_DEEPSEEK_BASE_URL=https://api.example.com/v1",
+                        "DEEPSEEK_API_KEY=secret-value",
+                        "RAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash",
                         "RAG_IME_AI_WIRE_API=chat_completions",
                         "RAG_IME_AI_THINKING=disabled",
                         "RAG_IME_AI_RESPONSE_FORMAT=json_object",
@@ -199,9 +200,9 @@ class MemoryGeneratorTests(unittest.TestCase):
             env_path.write_text(
                 "\n".join(
                     [
-                        "X1API_BASE_URL=https://api.example.com/v1",
-                        "X1API_API_KEY=secret-value",
-                        "X1API_MODEL=deepseek-v4-flash",
+                        "RAG_IME_DEEPSEEK_BASE_URL=https://api.example.com/v1",
+                        "DEEPSEEK_API_KEY=secret-value",
+                        "RAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash",
                         "RAG_IME_AI_WIRE_API=chat_completions",
                         "RAG_IME_AI_RESPONSE_FORMAT=json_object",
                     ]
@@ -231,13 +232,13 @@ class MemoryGeneratorTests(unittest.TestCase):
         self.assertEqual(report.metadata["prompt_cache_hit_tokens"], 12)
         self.assertEqual(report.metadata["prompt_cache_miss_tokens"], 34)
 
-    def test_from_env_path_canonicalizes_x2app_to_current_x1api_endpoint(self) -> None:
+    def test_from_env_path_rejects_non_deepseek_v4_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / ".env"
             env_path.write_text(
                 "\n".join(
                     [
-                        "API_BASE_URL=https://x2app.top/v1",
+                        "API_BASE_URL=https://api.example.com/v1",
                         "API_KEY=secret-value",
                         "MODEL=gpt-5.5",
                     ]
@@ -245,20 +246,18 @@ class MemoryGeneratorTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            generator = VcpRebuildMemoryGenerator.from_env_path(env_path)
+            with self.assertRaises(MemoryGenerationError):
+                VcpRebuildMemoryGenerator.from_env_path(env_path)
 
-        self.assertEqual(generator.provider_name, "x1api")
-        self.assertEqual(generator.config.api_base_url, "https://x1api.top/v1")
-
-    def test_compiler_generator_accepts_x1top_alias_for_offline_gpt_provider(self) -> None:
+    def test_compiler_generator_accepts_dsv4_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env_path = Path(tmp) / ".env"
             env_path.write_text(
                 "\n".join(
                     [
-                        "X1API_BASE_URL=https://x1api.top/v1",
-                        "X1API_API_KEY=secret-value",
-                        "X1API_MODEL=gpt-5.5",
+                        "RAG_IME_DEEPSEEK_BASE_URL=https://api.example.com/v1",
+                        "DEEPSEEK_API_KEY=secret-value",
+                        "RAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash",
                     ]
                 ),
                 encoding="utf-8",
@@ -266,11 +265,11 @@ class MemoryGeneratorTests(unittest.TestCase):
 
             generator = compiler_generator_from_env(
                 env_path=env_path,
-                provider="x1top",
+                provider="dsv4",
             )
 
-        self.assertEqual(generator.provider_name, "x1api")
-        self.assertEqual(generator.config.model, "gpt-5.5")
+        self.assertEqual(generator.provider_name, "deepseek-v4")
+        self.assertEqual(generator.config.model, "deepseek-v4-flash")
 
     def test_parse_core_optimization_payload(self) -> None:
         raw = """

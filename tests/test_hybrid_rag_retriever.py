@@ -47,6 +47,11 @@ class HybridRagRetrieverTests(unittest.TestCase):
         texts = [item["text"] for item in payload["candidates"]]
         self.assertTrue(any(text.startswith("多路召回") for text in texts), texts)
         self.assertGreaterEqual(payload["lanes"]["bm25_raw"]["count"], 1)
+        self.assertEqual(payload["lanes"]["bm25_raw"]["implementation"], "sqlite_fts5_bm25")
+        self.assertTrue(payload["lanes"]["bm25_raw"]["fts5Bm25"])
+        raw_hits = [item for item in payload["hits"] if item["source_lane"] == "bm25_raw"]
+        self.assertTrue(raw_hits)
+        self.assertLess(raw_hits[0]["raw_score"], 0.0)
 
     def test_bm25_tags_hits_alias_when_raw_text_misses(self) -> None:
         event_id = self._record_event("本地模型实验", tags=("输入法",))
@@ -57,6 +62,7 @@ class HybridRagRetrieverTests(unittest.TestCase):
 
         self.assertGreaterEqual(payload["lanes"]["bm25_tags"]["count"], 1)
         self.assertIn("Qwen3", payload["query"]["matchedAliases"])
+        self.assertEqual(payload["lanes"]["bm25_tags"]["implementation"], "sqlite_fts5_bm25")
 
     def test_tagmemo_graph_unlocks_related_topic(self) -> None:
         event_id = self._record_event("本地模型实验", tags=("输入法",))
@@ -67,6 +73,23 @@ class HybridRagRetrieverTests(unittest.TestCase):
 
         self.assertIn("大模型", payload["query"]["activatedTags"])
         self.assertGreaterEqual(payload["lanes"]["tagmemo"]["count"], 1)
+        self.assertEqual(payload["lanes"]["tagmemo"]["implementation"], "sqlite_fts5_bm25")
+
+    def test_bm25_reports_substring_fallback_only_when_fts_table_is_unavailable(self) -> None:
+        self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG", "检索"))
+        with self.connect() as conn:
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            conn.execute("DROP TABLE memory_retrieval_docs_fts")
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(query_text="多路召回", project="wisdom-weasel-rag-ime"),
+            )
+
+        lane = payload["lanes"]["bm25_raw"]
+        self.assertGreaterEqual(lane["count"], 1)
+        self.assertEqual(lane["implementation"], "lexical_substring_fallback")
+        self.assertTrue(lane["lexicalFallback"])
+        self.assertFalse(lane["fts5Bm25"])
 
     def test_time_lane_promotes_daily_book_topic(self) -> None:
         event_id = self._record_event("RAG 输入法多路召回方案", tags=("RAG",))
@@ -90,12 +113,30 @@ class HybridRagRetrieverTests(unittest.TestCase):
                 """,
                 (now_ms(),),
             )
-            payload = retrieve_hybrid_rag_candidates(conn, HybridRagQuery(query_text="检索", project="wisdom-weasel-rag-ime"))
+            payload = retrieve_hybrid_rag_candidates(conn, HybridRagQuery(query_text="多路召回", project="wisdom-weasel-rag-ime"))
 
         self.assertGreaterEqual(payload["lanes"]["feedback"]["count"], 1)
         first = payload["candidates"][0]
         self.assertEqual(first["text"], "多路召回")
         self.assertIn("feedback_bonus", first["debug_features"])
+
+    def test_feedback_lane_does_not_promote_unrelated_accepted_memory(self) -> None:
+        self._record_event("多路召回", recent_context="RAG 输入法", tags=("RAG", "检索"))
+        with self.connect() as conn:
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            conn.execute(
+                """
+                INSERT INTO candidate_feedback(created_at_ms, query_hash, candidate_text, source_type, memory_id, action, app, project, metadata_json)
+                VALUES (?, 'q', '多路召回', 'phrase', 'phrase:多路召回', 'accepted', '', 'wisdom-weasel-rag-ime', '{}')
+                """,
+                (now_ms(),),
+            )
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(query_text="语音二遍识别", project="wisdom-weasel-rag-ime"),
+            )
+
+        self.assertEqual(payload["lanes"]["feedback"]["count"], 0)
 
     def test_hybrid_retrieval_does_not_surface_raw_sentence(self) -> None:
         self._record_event("这是一个很长的历史输入句子，不应该直接复读出来", recent_context="RAG 输入法", tags=("RAG",))
@@ -158,11 +199,11 @@ class HybridRagRetrieverTests(unittest.TestCase):
             "embedding_provider_not_wired",
         )
         self.assertTrue(all(item["source_lane"] != "bm25_raw" for item in payload["hits"]))
-        self.assertTrue(payload["lanes"]["bm25_tags"]["lexicalFallback"])
-        self.assertFalse(payload["lanes"]["bm25_tags"]["fts5Bm25"])
+        self.assertFalse(payload["lanes"]["bm25_tags"]["lexicalFallback"])
+        self.assertTrue(payload["lanes"]["bm25_tags"]["fts5Bm25"])
         self.assertEqual(
             payload["lanes"]["bm25_tags"]["implementation"],
-            "lexical_substring_fallback",
+            "sqlite_fts5_bm25",
         )
 
     def test_precomputed_vector_lanes_run_in_parallel(self) -> None:
@@ -245,6 +286,7 @@ class HybridRagRetrieverTests(unittest.TestCase):
         self.assertEqual(compatibility["完成前台闭环"], 1.0)
         self.assertEqual(compatibility["限制模型调用"], 0.75)
         self.assertEqual(compatibility["保持普通拼音稳定"], 0.2)
+        self.assertEqual(payload["lanes"]["bm25_raw"]["implementation"], "lexical_substring_fallback")
 
     def _record_event(self, text: str, *, recent_context: str = "", tags: tuple[str, ...] = ()) -> int:
         memory_id = self.core.record_event(

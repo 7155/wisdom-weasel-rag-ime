@@ -714,7 +714,11 @@ class LocalSqliteCoreClient:
                 continue
             context = compact_whitespace(str(row["recent_context"]))
             preedit = compact_whitespace(str(row["preedit"]))
-            parts = [truncate_text(text, 90)]
+            # The newest event often contains a long voice transcript. Keep
+            # its tail, where the live cursor and the user's latest request
+            # are, instead of preserving only the beginning of the dictation.
+            text_budget = min(max_chars, 420 if not selected else 120)
+            parts = [_tail_chars(text, text_budget)]
             if context and context != text:
                 parts.append(f"context: {truncate_text(context, 90)}")
             if preedit and preedit != text:

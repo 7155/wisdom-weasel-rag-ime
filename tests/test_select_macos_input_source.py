@@ -32,6 +32,15 @@ class SelectMacosInputSourceScriptTests(unittest.TestCase):
         self.assertIn("manualRequired", source)
         self.assertIn("TISSelectInputSource=-50", source)
 
+    def test_select_script_falls_back_to_the_visible_input_menu(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "select_macos_input_source.sh").read_text(encoding="utf-8")
+
+        self.assertIn("select_via_input_menu", source)
+        self.assertIn("TextInputMenuAgent", source)
+        self.assertIn("鼠须管|Squirrel - Simplified|Squirrel", source)
+        self.assertIn('selection_phase="menu-fallback"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

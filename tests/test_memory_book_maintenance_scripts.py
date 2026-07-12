@@ -57,7 +57,37 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_SOURCE_ROOT"], str(root))
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_REASONING_EFFORT"], "low")
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS"], "2048")
+        self.assertTrue(env_vars["RAG_IME_DEEPSEEK_ENV"].endswith("Application Support/RagIme/deepseek.env"))
         self.assertNotIn("RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY", env_vars)
+
+    def test_install_discovers_existing_app_support_model_env(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-memory-book-env-") as tmp:
+            home = Path(tmp) / "home"
+            app_support = home / "Library" / "Application Support" / "RagIme"
+            app_support.mkdir(parents=True)
+            (app_support / "deepseek.env").write_text("DEEPSEEK_API_KEY=fake\n", encoding="utf-8")
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_memory_book_maintenance_launch_agent.sh")],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+                    "RAG_IME_DEEPSEEK_ENV": "",
+                    "RAG_IME_MODEL_ENV": "",
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.memory-book-maintenance.plist"
+            payload = plistlib.loads(plist_path.read_bytes())
+
+        self.assertEqual(
+            payload["EnvironmentVariables"]["RAG_IME_DEEPSEEK_ENV"],
+            str(app_support / "deepseek.env"),
+        )
 
     def test_memory_book_runner_uses_non_overlapping_lock_and_apply_is_opt_in(self) -> None:
         root = Path(__file__).resolve().parents[1]

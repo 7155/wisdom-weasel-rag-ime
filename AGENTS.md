@@ -18,12 +18,14 @@ This repository is being prepared for public inspection at
 - Real foreground behavior matters more than backend JSON. A change is not done
   until the actual input source can show and select the candidates.
 - LLM, RAG/memory, and Rime dictionary candidates must remain distinguishable.
-- Number keys select live side candidates instead of inserting literal digits.
+- Ordinary number keys stay with Rime/the host; Tab and Option+number select
+  assistant candidates.
 - Backspace/Delete and app/context switches must invalidate stale context.
 - Selecting an LLM/RAG side candidate should immediately schedule the next
   prediction opportunity.
-- Realtime prediction uses a local small model. `x1api.top` is only for offline
-  memory, RAG, and lexicon cleanup.
+- Realtime prediction uses a local small model. High-intelligence generation,
+  memory organization, and lexicon cleanup use DeepSeek V4 only on explicit or
+  offline routes.
 
 ## Main Files
 
@@ -34,7 +36,7 @@ This repository is being prepared for public inspection at
 - `rag_ime/rime_sidecar.py`: sidecar API and candidate merge path.
 - `rag_ime/mlx_predictor_server.py`: resident local MLX predictor.
 - `rag_ime/local_sqlite_core.py`: local RAG/memory storage and ranking.
-- `rag_ime/memory_generator.py`: offline x1api-compatible distillation.
+- `rag_ime/memory_generator.py`: offline DeepSeek V4 distillation.
 
 ## Current Priorities
 

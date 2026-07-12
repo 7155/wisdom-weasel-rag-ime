@@ -121,7 +121,7 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
     def test_core_optimization_snapshot_includes_recent_events_and_high_frequency_phrases(self) -> None:
         for _ in range(3):
             self.adapter.commit_text("四川模糊音", project="wisdom-weasel-rag-ime", source="manual", privacy_disposition="allowed")
-        self.adapter.commit_text("x1api 词库优化", project="wisdom-weasel-rag-ime", source="manual", privacy_disposition="allowed")
+        self.adapter.commit_text("DSV4 词库优化", project="wisdom-weasel-rag-ime", source="manual", privacy_disposition="allowed")
 
         snapshot = self.core.core_optimization_snapshot(project="wisdom-weasel-rag-ime", recent_limit=5, phrase_limit=5)
 
@@ -1608,6 +1608,26 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertIn("第二条历史输入", context)
         self.assertLess(context.index("第一条历史输入"), context.index("第二条历史输入"))
         self.assertIn("继续写 RAG 输入法", context)
+
+    def test_recent_input_context_keeps_tail_of_long_voice_commit(self) -> None:
+        suffix = "最后真正的问题是前台上下文能不能完整注入"
+        transcript = ("这是语音输入的较早内容。" * 80) + suffix
+        self.adapter.commit_text(
+            transcript,
+            source="voice_streaming_asr",
+            provider_name="voice_streaming_asr",
+            tags=("voice-input", "recent-input"),
+            privacy_disposition="allowed",
+        )
+
+        context = self.core.recent_input_context(
+            project="wisdom-weasel-rag-ime",
+            limit=1,
+            max_chars=220,
+        )
+
+        self.assertIn(suffix, context)
+        self.assertLessEqual(len(context), 220)
 
     def test_acceptance_can_run_against_local_sqlite_core(self) -> None:
         report = run_acceptance(self.adapter)

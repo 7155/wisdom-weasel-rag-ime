@@ -2,9 +2,12 @@ import AppKit
 import SwiftUI
 
 struct VoiceInputPage: View {
+    @State private var provider = VoiceASRProvider.nativeStreaming
     @State private var appID = ""
     @State private var accessToken = ""
     @State private var resourceID = VoiceKeychainStore.defaultResourceID
+    @State private var endpoint = VoiceKeychainStore.defaultRealtimeEndpoint
+    @State private var modelName = VoiceKeychainStore.defaultRealtimeModel
     @State private var tokenConfigured = false
     @State private var saveMessage = ""
     @State private var hotwordsEnabled = false
@@ -18,7 +21,7 @@ struct VoiceInputPage: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                PageHeader(title: "语音输入", subtitle: "按住鼠标滚轮中键立即听写，松开后由豆包 ASR 2.0 原位定稿")
+                PageHeader(title: "语音输入", subtitle: "按住鼠标滚轮中键立即听写，松开后由流式语音服务原位定稿")
                 Spacer()
             }
             .padding(.horizontal, 30)
@@ -35,8 +38,10 @@ struct VoiceInputPage: View {
                         Divider()
                         telemetrySection(telemetry)
                     }
-                    Divider()
-                    hotwordSection
+                    if provider.supportsHotwords {
+                        Divider()
+                        hotwordSection
+                    }
                     Divider()
                     behaviorSection
                 }
@@ -76,7 +81,7 @@ struct VoiceInputPage: View {
                 .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(nsColor: .separatorColor), lineWidth: 0.7))
             Button(agentRunning ? "停止" : "启动") { toggleAgent() }
                 .buttonStyle(.borderedProminent)
-                .disabled(!tokenConfigured || appID.isEmpty)
+                .disabled(!credentialsReady)
         }
         .padding(20)
         .background(Color(nsColor: .controlBackgroundColor))
@@ -108,7 +113,7 @@ struct VoiceInputPage: View {
             voiceStatusRow("语音代理", ok: agentRunning, detail: agentRunning ? "后台运行中" : "尚未启动")
             voiceStatusRow("辅助功能", ok: voiceAgentStatus?.accessibilityTrusted == true, detail: accessibilityStatus)
             voiceStatusRow("麦克风", ok: voiceAgentStatus?.microphoneAuthorization == "authorized", detail: microphoneStatus)
-            voiceStatusRow("豆包凭据", ok: tokenConfigured && !appID.isEmpty, detail: tokenConfigured ? "已配置，启动时不再询问密码" : "尚未配置")
+            voiceStatusRow("语音服务凭据", ok: credentialsReady, detail: tokenConfigured ? "已按服务隔离保存，启动时不再询问密码" : "尚未配置")
             voiceStatusRow(
                 "请求级热词",
                 ok: voiceAgentStatus?.hotwordsEnabled == true,
@@ -129,24 +134,46 @@ struct VoiceInputPage: View {
                 Button(agentRunning ? "停止语音代理" : "启动语音代理", systemImage: agentRunning ? "stop.fill" : "play.fill") {
                     toggleAgent()
                 }
-                .disabled(!tokenConfigured || appID.isEmpty)
+                .disabled(!credentialsReady)
             }
         }
     }
 
     private var credentialSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("豆包流式语音识别 2.0").font(.headline)
-            LabeledContent("App ID") {
-                TextField("App ID", text: $appID).textFieldStyle(.roundedBorder).frame(width: 330)
+            Text("流式语音识别").font(.headline)
+            LabeledContent("服务") {
+                Picker("服务", selection: $provider) {
+                    ForEach(VoiceASRProvider.allCases) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 330)
+                .onChange(of: provider) { value in loadProvider(value) }
             }
             LabeledContent("Access Token") {
                 SecureField(tokenConfigured ? "已配置，留空则保持不变" : "Access Token", text: $accessToken)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 330)
             }
-            LabeledContent("Resource ID") {
-                TextField("Resource ID", text: $resourceID).textFieldStyle(.roundedBorder).frame(width: 330)
+            if provider == .nativeStreaming {
+                LabeledContent("App ID") {
+                    TextField("App ID", text: $appID).textFieldStyle(.roundedBorder).frame(width: 330)
+                }
+                LabeledContent("Resource ID") {
+                    TextField("Resource ID", text: $resourceID).textFieldStyle(.roundedBorder).frame(width: 330)
+                }
+            } else {
+                LabeledContent("WebSocket") {
+                    TextField("wss://...", text: $endpoint).textFieldStyle(.roundedBorder).frame(width: 330)
+                }
+                LabeledContent("转写模型") {
+                    TextField("transcription model", text: $modelName).textFieldStyle(.roundedBorder).frame(width: 330)
+                }
+                Text("兼容 input_audio_buffer.append/commit 与 transcription delta/completed 事件。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             HStack {
                 Button("保存到本机", systemImage: "key.fill") { save() }
@@ -270,11 +297,8 @@ struct VoiceInputPage: View {
     }
 
     private func load() {
-        if let credentials = VoiceKeychainStore.loadCredentials() {
-            appID = credentials.appID
-            resourceID = credentials.resourceID
-        }
-        tokenConfigured = VoiceKeychainStore.hasAccessToken
+        provider = VoiceProviderConfigStore.read()
+        loadProvider(provider)
         let hotwordConfig = VoiceHotwordConfigStore.read()
         hotwordsEnabled = hotwordConfig.enabled
         hotwordsText = hotwordConfig.words.joined(separator: "\n")
@@ -318,9 +342,12 @@ struct VoiceInputPage: View {
     private func save() {
         do {
             try VoiceKeychainStore.saveLocal(
+                provider: provider,
                 appID: appID,
                 accessToken: accessToken.isEmpty ? nil : accessToken,
-                resourceID: resourceID
+                resourceID: resourceID,
+                endpoint: endpoint,
+                model: modelName
             )
             accessToken = ""
             tokenConfigured = true
@@ -331,6 +358,34 @@ struct VoiceInputPage: View {
             )
         } catch {
             saveMessage = error.localizedDescription
+        }
+    }
+
+    private func loadProvider(_ selected: VoiceASRProvider) {
+        accessToken = ""
+        appID = ""
+        resourceID = VoiceKeychainStore.defaultResourceID
+        endpoint = VoiceKeychainStore.defaultRealtimeEndpoint
+        modelName = VoiceKeychainStore.defaultRealtimeModel
+        if let credentials = VoiceKeychainStore.loadCredentials(provider: selected) {
+            appID = credentials.appID
+            resourceID = credentials.resourceID
+            endpoint = credentials.endpoint.isEmpty ? VoiceKeychainStore.defaultRealtimeEndpoint : credentials.endpoint
+            modelName = credentials.model.isEmpty ? VoiceKeychainStore.defaultRealtimeModel : credentials.model
+        }
+        tokenConfigured = VoiceKeychainStore.hasAccessToken(provider: selected)
+        saveMessage = ""
+    }
+
+    private var credentialsReady: Bool {
+        guard tokenConfigured else { return false }
+        switch provider {
+        case .nativeStreaming:
+            return !appID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !resourceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .realtimeWebSocket:
+            return URL(string: endpoint)?.scheme?.lowercased().hasPrefix("ws") == true
+                && !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 

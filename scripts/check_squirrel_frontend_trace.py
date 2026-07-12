@@ -30,6 +30,13 @@ from rag_ime.contracts.source import (
 
 
 DEFAULT_LOG_PATH = Path.home() / "Library" / "Logs" / "RagIme" / "squirrel-frontend.jsonl"
+ASSISTANT_OVERLAY_VISIBLE_EVENT = "assistant_overlay_candidate_visible"
+ASSISTANT_OVERLAY_COLOR_ALIASES = {
+    "model": {"blue", "modelBlue"},
+    "rag": {"teal", "ragTeal"},
+    "memory": {"orange", "purple", "memoryPurple"},
+    "action": {"blue", "modelBlue"},
+}
 USER_TEXT_TRACE_KEYS = {
     "selectedText",
     "rawSelectedText",
@@ -69,6 +76,11 @@ def main() -> int:
     parser.add_argument("--require-delete-resync", action="store_true")
     parser.add_argument("--require-modern-prediction-session", action="store_true")
     parser.add_argument("--require-rime-composition-mode", action="store_true")
+    parser.add_argument(
+        "--require-native-rime-input",
+        action="store_true",
+        help="Require a real Rime composition -> native commit -> foreground context capture chain.",
+    )
     parser.add_argument("--require-post-commit-pending-status", action="store_true")
     parser.add_argument("--require-prediction-status-visible", action="store_true")
     parser.add_argument("--require-source-badges", action="store_true")
@@ -110,6 +122,7 @@ def main() -> int:
             require_delete_resync=args.require_delete_resync,
             require_modern_prediction_session=args.require_modern_prediction_session,
             require_rime_composition_mode=args.require_rime_composition_mode,
+            require_native_rime_input=args.require_native_rime_input,
             require_post_commit_pending_status=args.require_post_commit_pending_status,
             require_prediction_status_visible=args.require_prediction_status_visible,
             require_source_badges=args.require_source_badges,
@@ -135,6 +148,7 @@ def main() -> int:
         "deleteResync": bool(args.require_delete_resync),
         "modernPredictionSession": bool(args.require_modern_prediction_session),
         "rimeCompositionMode": bool(args.require_rime_composition_mode),
+        "nativeRimeInput": bool(args.require_native_rime_input),
         "postCommitPendingStatus": bool(args.require_post_commit_pending_status),
         "predictionStatusVisible": bool(args.require_prediction_status_visible),
         "sourceBadges": bool(args.require_source_badges),
@@ -156,6 +170,7 @@ def main() -> int:
         require_delete_resync=args.require_delete_resync,
         require_modern_prediction_session=args.require_modern_prediction_session,
         require_rime_composition_mode=args.require_rime_composition_mode,
+        require_native_rime_input=args.require_native_rime_input,
         require_post_commit_pending_status=args.require_post_commit_pending_status,
         require_prediction_status_visible=args.require_prediction_status_visible,
         require_source_badges=args.require_source_badges,
@@ -198,6 +213,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     sidecar_response = latest_matching(events, lambda event: event.get("event") == "sidecar_response_applied")
     balanced_candidate_panel = latest_matching(events, is_balanced_candidate_quota_event)
     rime_composition_mode = latest_matching(events, is_rime_composition_mode_event)
+    native_rime_input = latest_native_rime_input_chain(events)
     post_commit_pending_status = latest_matching(events, is_post_commit_pending_status_event)
     prediction_status_visible = latest_matching(events, is_prediction_status_visible_event)
     source_badge_panel = latest_matching(events, is_source_badges_visible_event)
@@ -226,7 +242,10 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
     number_key_side_commit = latest_number_key_side_commit(events, min_timestamp_ms=side_commit_barrier_ms)
     historical_side_selection_commit = latest_side_selection_commit(events)
     side_selection_commit = latest_side_selection_commit(events, min_timestamp_ms=side_commit_barrier_ms)
-    post_commit_followup = latest_post_commit_followup(events, min_timestamp_ms=side_commit_barrier_ms)
+    # A successful continuation ends by rendering a newer prediction panel, so
+    # using that newest panel as the lower bound would hide the very Tab ->
+    # follow-up chain we are trying to prove.
+    post_commit_followup = latest_post_commit_followup(events)
     return {
         "schemaVersion": "rag-ime.squirrel-frontend-trace-check.v1",
         "logPath": str(log_path),
@@ -234,6 +253,7 @@ def build_report(events: list[dict[str, Any]], *, log_path: Path, print_last: in
         "latestSidecarResponse": summarize_event(sidecar_response),
         "latestBalancedCandidatePanel": summarize_event(balanced_candidate_panel),
         "latestRimeCompositionMode": summarize_event(rime_composition_mode),
+        "latestNativeRimeInput": summarize_native_rime_input(native_rime_input),
         "latestPostCommitPendingStatus": summarize_event(post_commit_pending_status),
         "latestPredictionStatusVisible": summarize_event(prediction_status_visible),
         "latestSourceBadgePanel": summarize_event(source_badge_panel),
@@ -305,6 +325,14 @@ def is_mixed_panel_event(event: dict[str, Any]) -> bool:
 
 
 def is_side_panel_event(event: dict[str, Any]) -> bool:
+    if event.get("event") == ASSISTANT_OVERLAY_VISIBLE_EVENT:
+        candidates = event.get("candidates")
+        return (
+            str(event.get("phase") or "") == "post_commit"
+            and str(event.get("uiMode") or "") == "post_commit_prediction"
+            and isinstance(candidates, list)
+            and assistant_overlay_has_selectable_side(candidates)
+        )
     if event.get("event") != "panel_display_candidates":
         return False
     counts = event.get("candidateCounts")
@@ -388,6 +416,26 @@ def visible_candidates_have_selectable_side(candidates: Any) -> bool:
     if rime_indices and min(rime_indices) < max(side_indices):
         return False
     return True
+
+
+def assistant_overlay_has_selectable_side(candidates: Any) -> bool:
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    has_real_candidate = False
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or is_status_candidate(candidate):
+            return False
+        if candidate_is_real_side_candidate(candidate):
+            has_real_candidate = True
+            continue
+        if (
+            str(candidate.get("sourceType") or "") == "action"
+            and candidate_is_active_rag_action_button(candidate)
+            and candidate_source_visuals_match(candidate)
+        ):
+            continue
+        return False
+    return has_real_candidate
 
 
 def visible_candidates_are_side_first(candidates: Any) -> bool:
@@ -490,6 +538,97 @@ def is_rime_composition_mode_event(event: dict[str, Any]) -> bool:
     return visible_candidates_are_rime_only(candidates)
 
 
+def latest_native_rime_input_chain(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Find a completed native Rime input chain without conflating it with side-candidate commits."""
+    for capture_index in range(len(events) - 1, -1, -1):
+        capture = events[capture_index]
+        if not is_native_foreground_capture_event(capture):
+            continue
+        capture_timestamp = event_timestamp_ms(capture)
+        capture_session = str(capture.get("sessionId") or "")
+        capture_app = str(capture.get("sourceAppBundleId") or "")
+        transaction: dict[str, Any] | None = None
+        transaction_index = -1
+        for index in range(capture_index - 1, -1, -1):
+            candidate = events[index]
+            if event_timestamp_ms(candidate) > capture_timestamp:
+                continue
+            if capture_session and str(candidate.get("sessionId") or "") != capture_session:
+                continue
+            if is_native_rime_commit_transaction(candidate, app_bundle_id=capture_app):
+                transaction = candidate
+                transaction_index = index
+                break
+        if transaction is None:
+            continue
+        transaction_timestamp = event_timestamp_ms(transaction)
+        for index in range(transaction_index - 1, -1, -1):
+            composition = events[index]
+            if event_timestamp_ms(composition) > transaction_timestamp:
+                continue
+            if capture_session and str(composition.get("sessionId") or "") != capture_session:
+                continue
+            if is_native_rime_composition_event(composition):
+                return {
+                    "composition": composition,
+                    "transaction": transaction,
+                    "capture": capture,
+                }
+    return None
+
+
+def is_native_rime_composition_event(event: dict[str, Any]) -> bool:
+    if event.get("event") != "rime_composition_started":
+        return False
+    try:
+        candidate_count = int(event.get("candidateCount") or 0)
+    except (TypeError, ValueError):
+        return False
+    return candidate_count > 0 and bool(event.get("rawInput") or event.get("preedit"))
+
+
+def is_native_rime_commit_transaction(event: dict[str, Any], *, app_bundle_id: str) -> bool:
+    if event.get("event") != "frontend_transaction_created":
+        return False
+    try:
+        committed_chars = int(event.get("committedContextChars") or 0)
+        composition_chars = int(event.get("compositionChars") or 0)
+    except (TypeError, ValueError):
+        return False
+    event_app = str(event.get("frontAppBundleId") or "")
+    return (
+        committed_chars > 0
+        and composition_chars == 0
+        and bool(event.get("foregroundTextAvailable"))
+        and bool(event_app)
+        and (not app_bundle_id or event_app == app_bundle_id)
+    )
+
+
+def is_native_foreground_capture_event(event: dict[str, Any]) -> bool:
+    if event.get("event") != "foreground_context_capture_succeeded":
+        return False
+    try:
+        surrounding_before_chars = int(event.get("surroundingBeforeChars") or 0)
+    except (TypeError, ValueError):
+        return False
+    return (
+        str(event.get("source") or "") == "text_input_client"
+        and bool(event.get("sourceAppBundleId"))
+        and surrounding_before_chars > 0
+    )
+
+
+def summarize_native_rime_input(match: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not match:
+        return None
+    return {
+        "composition": summarize_event(match.get("composition")),
+        "transaction": summarize_event(match.get("transaction")),
+        "capture": summarize_event(match.get("capture")),
+    }
+
+
 def visible_candidates_are_rime_only(candidates: Any) -> bool:
     if not isinstance(candidates, list) or not candidates:
         return False
@@ -512,6 +651,14 @@ def visible_candidates_are_rime_only(candidates: Any) -> bool:
 
 
 def is_post_commit_pending_status_event(event: dict[str, Any]) -> bool:
+    if event.get("event") in {
+        "assistant_overlay_post_commit_pending",
+        "assistant_overlay_feedback_visible",
+    }:
+        return (
+            str(event.get("phase") or "") == "post_commit"
+            and bool(str(event.get("statusText") or "").strip())
+        )
     if event.get("event") == "sidecar_response_applied":
         ui_mode = str(event.get("uiMode") or "")
         if ui_mode == "post_commit_pending":
@@ -532,13 +679,15 @@ def is_post_commit_pending_status_event(event: dict[str, Any]) -> bool:
 
 
 def is_prediction_status_visible_event(event: dict[str, Any]) -> bool:
+    if event.get("event") == "assistant_overlay_post_commit_pending":
+        return bool(str(event.get("statusText") or ""))
     if event.get("event") not in {"panel_display_candidates", "sidecar_response_applied"}:
         return False
     return panel_has_valid_status_row(event)
 
 
 def is_source_badges_visible_event(event: dict[str, Any]) -> bool:
-    if event.get("event") != "panel_display_candidates":
+    if event.get("event") not in {"panel_display_candidates", ASSISTANT_OVERLAY_VISIBLE_EVENT}:
         return False
     candidates = event.get("candidates")
     if not isinstance(candidates, list) or not candidates:
@@ -549,7 +698,13 @@ def is_source_badges_visible_event(event: dict[str, Any]) -> bool:
 
 
 def is_active_rag_action_button_event(event: dict[str, Any]) -> bool:
-    if event.get("event") not in {"panel_display_candidates", "sidecar_response_applied"}:
+    if event.get("event") not in {
+        "panel_display_candidates",
+        "sidecar_response_applied",
+        "assistant_overlay_candidate_visible",
+        "assistant_overlay_updated",
+        "assistant_overlay_post_commit_pending",
+    }:
         return False
     candidates = event.get("candidates")
     if not isinstance(candidates, list):
@@ -664,7 +819,11 @@ def active_rag_trace_violations(events: list[dict[str, Any]]) -> list[dict[str, 
     for event in events:
         if not is_active_rag_trace_event(event):
             continue
-        if str(event.get("event") or "") in {"active_rag_shortcut_triggered", "active_rag_selected_text_capture_failed"}:
+        if str(event.get("event") or "") in {
+            "active_rag_shortcut_triggered",
+            "active_rag_shortcut_action_button_route",
+            "active_rag_selected_text_capture_failed",
+        }:
             continue
         if not active_rag_anchor_fields_present(event):
             violations.append(
@@ -795,9 +954,11 @@ def candidate_source_visuals_match(candidate: dict[str, Any]) -> bool:
     expected_color = SOURCE_COLOR_TOKENS.get(source_type)
     if expected_badge is None or expected_color is None:
         return source_type in {"", "side"}
+    actual_badge = str(candidate.get("badge") or candidate.get("sourceBadge") or "")
+    actual_color = str(candidate.get("colorToken") or "")
     return (
-        str(candidate.get("badge") or "") == expected_badge
-        and str(candidate.get("colorToken") or "") == expected_color
+        actual_badge == expected_badge
+        and actual_color in ASSISTANT_OVERLAY_COLOR_ALIASES.get(source_type, {expected_color})
     )
 
 
@@ -878,6 +1039,21 @@ def optional_int(value: Any) -> int | None:
 
 
 def is_modern_prediction_session_event(event: dict[str, Any]) -> bool:
+    if event.get("event") == ASSISTANT_OVERLAY_VISIBLE_EVENT:
+        key_policy = event.get("keyPolicy")
+        candidates = event.get("candidates")
+        return (
+            str(event.get("phase") or "") == "post_commit"
+            and str(event.get("uiMode") or "") == "post_commit_prediction"
+            and bool(str(event.get("snapshotId") or ""))
+            and bool(str(event.get("panelSessionId") or ""))
+            and isinstance(key_policy, dict)
+            and str(key_policy.get("numberKeys") or "") == "pass_through"
+            and str(key_policy.get("tab") or "") == "accept_top_prediction"
+            and str(key_policy.get("optionNumber") or "") == "select_prediction_by_ordinal"
+            and isinstance(candidates, list)
+            and assistant_overlay_has_selectable_side(candidates)
+        )
     if event.get("event") != "sidecar_response_applied":
         return False
     session = event.get("predictionSession")
@@ -1234,6 +1410,11 @@ def is_post_commit_followup_request(request_event: dict[str, Any], commit_event:
         return False
     commit_text = compact_trace_text(committed_candidate_text(commit_event))
     request_preview = compact_trace_text(str(request_event.get("commitTextPreview") or ""))
+    if not request_preview and request_event.get("traceIncludesText") is False:
+        # Production traces intentionally omit raw committed text. Ordering,
+        # the explicit continuation schedule, and a non-empty committed context
+        # still prove that this request belongs to the accepted candidate.
+        return bool(commit_text)
     return bool(commit_text and request_preview and request_preview == commit_text)
 
 
@@ -1323,6 +1504,11 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "vertical": event.get("vertical"),
         "candidateCounts": event.get("candidateCounts"),
         "uiMode": event.get("uiMode"),
+        "phase": event.get("phase"),
+        "surfaceState": event.get("surfaceState"),
+        "statusText": event.get("statusText"),
+        "candidateCount": event.get("candidateCount"),
+        "keyPolicy": event.get("keyPolicy"),
         "laneStatus": event.get("laneStatus"),
         "separators": event.get("separators"),
         "key": event.get("key"),
@@ -1338,6 +1524,12 @@ def summarize_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
         "displayAnchor": event.get("displayAnchor"),
         "commitTextPreview": event.get("commitTextPreview"),
         "committedContextChars": event.get("committedContextChars"),
+        "compositionChars": event.get("compositionChars"),
+        "foregroundTextAvailable": event.get("foregroundTextAvailable"),
+        "foregroundTextSource": event.get("foregroundTextSource"),
+        "frontAppBundleId": event.get("frontAppBundleId"),
+        "sourceAppBundleId": event.get("sourceAppBundleId"),
+        "surroundingBeforeChars": event.get("surroundingBeforeChars"),
         "displayCount": event.get("displayCount"),
         "visibleCandidateCount": event.get("visibleCandidateCount"),
         "sourceSummary": event.get("sourceSummary"),
@@ -1434,6 +1626,7 @@ def report_passes(
     require_delete_resync: bool,
     require_modern_prediction_session: bool,
     require_rime_composition_mode: bool = False,
+    require_native_rime_input: bool = False,
     require_post_commit_pending_status: bool = False,
     require_prediction_status_visible: bool = False,
     require_source_badges: bool = False,
@@ -1452,7 +1645,13 @@ def report_passes(
     if require_side_panel and not report.get("latestSidePanel"):
         return False
     if require_side_commit and not report.get("latestSideSelectionCommit"):
-        return False
+        completed_chain = (
+            require_post_commit_followup
+            and report.get("latestHistoricalSideSelectionCommit")
+            and report.get("latestPostCommitFollowup")
+        )
+        if not completed_chain:
+            return False
     if require_commit_observed and not report.get("latestCommitObserved"):
         return False
     if require_post_commit_followup and not report.get("latestPostCommitFollowup"):
@@ -1468,6 +1667,8 @@ def report_passes(
     if require_modern_prediction_session and not report.get("latestModernPredictionSession"):
         return False
     if require_rime_composition_mode and not report.get("latestRimeCompositionMode"):
+        return False
+    if require_native_rime_input and not report.get("latestNativeRimeInput"):
         return False
     if require_post_commit_pending_status and not report.get("latestPostCommitPendingStatus"):
         return False

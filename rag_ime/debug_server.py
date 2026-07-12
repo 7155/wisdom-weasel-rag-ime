@@ -52,6 +52,7 @@ from .memory_book_compiler import (
     memory_book_plan_from_compile_output,
     rollback_memory_book_run,
     store_memory_book_plan,
+    update_stored_memory_book_diff,
 )
 from .memory_generator import (
     MemoryGenerationError,
@@ -88,6 +89,12 @@ from .rime_sidecar import (
 from .rag_core_v3 import memory_candidates_v2_to_input_suggestions
 from .retrieval_docs import rebuild_retrieval_docs
 from .rime_native_feedback import record_native_rime_selection
+from .rime_rank_export import record_rime_rank_feedback
+from .rime_lexicon_review import (
+    apply_reviewed_rime_lexicon,
+    review_rime_lexicon,
+    rollback_reviewed_rime_lexicon,
+)
 from .runtime_config import RuntimeConfigResolver, RuntimeConfigSnapshot
 from .runtime_flags import load_hybrid_rag_runtime_flags
 from .settings_models import UserProfile, UserVocabularyItem
@@ -130,6 +137,8 @@ class DebugServerConfig:
     vector_auto_rebuild_limit: int = 0
     include_raw_text: bool = False
     runtime_command_runner: Any | None = None
+    rime_user_dir: Path = Path.home() / "Library" / "Rime"
+    rime_lexicon_backup_root: Path = Path.home() / "Library" / "Application Support" / "RagIme" / "LexiconBackups"
 
 
 @dataclass
@@ -416,7 +425,7 @@ class DebugImeService:
             (
                 frame
                 for frame in reversed(self._prediction_live_trace)
-                if not _string(frame.get("sessionId")).startswith(("native-doctor", "cache-probe"))
+                if not _string(frame.get("sessionId")).startswith(("doctor", "native-doctor", "cache-probe"))
             ),
             None,
         )
@@ -434,7 +443,11 @@ class DebugImeService:
             "foregroundContext": foreground,
             "contextInjection": {
                 "success": foreground.get("applied") is True,
-                "error": foreground.get("captureFailureReason") or foreground.get("reason") or "",
+                "error": (
+                    foreground.get("captureFailureReason") or foreground.get("reason") or ""
+                    if foreground.get("applied") is not True
+                    else ""
+                ),
             },
             "sourceTypes": item.get("sourceTypes", []),
             "visibleCandidate": item.get("visibleCandidate", ""),
@@ -1309,6 +1322,29 @@ class DebugImeService:
             "retrieval": retrieval,
         }
 
+    def knowledge_workbench_database_draft_edit(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {"schemaVersion": "rag-ime.knowledge-database-action.v1", "ok": False, "error": "local SQLite core required"}
+        run_id = _string(payload.get("runId"))
+        diff_id = _bounded_int(payload.get("diffId"), default=0, minimum=1, maximum=2_147_483_647)
+        raw_payload = payload.get("payload")
+        if raw_payload is not None and not isinstance(raw_payload, dict):
+            raise ValueError("draft payload must be an object")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            run = update_stored_memory_book_diff(
+                conn,
+                run_id=run_id,
+                diff_id=diff_id,
+                payload=dict(raw_payload) if isinstance(raw_payload, dict) else None,
+                selected=_bool(payload.get("selected"), default=True),
+            )
+        return {
+            "schemaVersion": "rag-ime.knowledge-database-action.v1",
+            "ok": True,
+            "action": "draft_edit",
+            "run": run,
+        }
+
     def knowledge_workbench_database_rollback(self, payload: dict[str, Any]) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
             return {"schemaVersion": "rag-ime.knowledge-database-action.v1", "ok": False, "error": "local SQLite core required"}
@@ -1381,9 +1417,9 @@ class DebugImeService:
             current = combined.get(source_id)
             lane = _string(item.get("source_lane") or item.get("sourceLane")) or "local"
             rank = max(1, int(item.get("rank") or 1))
-            # Raw BM25-like counts and cosine values are different units. Use
+            # SQLite BM25 values and cosine values are different units. Use
             # weighted reciprocal rank here, just like the foreground fusion,
-            # so a large lexical count cannot drown out semantic evidence.
+            # so either score scale cannot drown out the other evidence.
             lane_score = float(lane_weights.get(lane, 1.0)) / (60.0 + rank)
             if current is None:
                 combined[source_id] = {
@@ -2974,6 +3010,116 @@ class DebugImeService:
             default_project=self.config.project,
         )
 
+    def candidate_edit_feedback(self, payload: dict[str, Any]) -> dict[str, object]:
+        """Record a delete immediately following an accepted candidate.
+
+        Source isolation is intentional: every source can affect local memory
+        ranking, but only native Rime candidates can influence the Pinyin
+        lexicon review queue.
+        """
+
+        privacy_assessment = assess_foreground_write(payload)
+        if privacy_assessment["storeAllowed"] is not True:
+            return {
+                "schemaVersion": "rag-ime.candidate-edit-feedback.v1",
+                "ok": True,
+                "recorded": False,
+                "rimeRecorded": False,
+                "noStore": True,
+                "privacyAssessment": privacy_assessment,
+                "storageReceipt": storage_receipt(privacy_assessment, stored=False),
+            }
+        source_type = compact_whitespace(_string(payload.get("sourceType"))).lower()
+        candidate_text = compact_whitespace(_string(payload.get("candidateText")))
+        candidate_id = compact_whitespace(_string(payload.get("candidateId")))
+        if not source_type:
+            raise ValueError("sourceType is required")
+        if not candidate_text:
+            raise ValueError("candidateText is required")
+        event_name = (
+            "backspace_after_active_rag_accept"
+            if source_type in {"rag", "memory", "active_rag", "deepseek"}
+            else "backspace_after_accept"
+        )
+        project = compact_whitespace(_string(payload.get("project"))) or self.config.project
+        app = compact_whitespace(_string(payload.get("app"))) or "squirrel"
+        context_hash = compact_whitespace(_string(payload.get("contextHash")))
+        self.core.record_memory_feedback(
+            {
+                "event": event_name,
+                "candidateId": candidate_id or f"accepted:{stable_text_hash(candidate_text)}",
+                "candidateText": candidate_text,
+                "sourceType": source_type,
+                "contextHash": context_hash,
+                "frontAppBundleId": app,
+                "project": project,
+                "metadata": {
+                    "source": "patched_squirrel_post_accept_delete",
+                    "deleteCount": max(1, min(32, _optional_int(payload.get("deleteCount")) or 1)),
+                    "acceptedAtMs": _optional_int(payload.get("acceptedAtMs")) or 0,
+                },
+            }
+        )
+        rime_event_id = 0
+        preedit = compact_whitespace(_string(payload.get("preedit")))
+        if source_type == "rime" and preedit:
+            rime_event_id = record_rime_rank_feedback(
+                self.config.db_path,
+                preedit=preedit,
+                accepted_text=candidate_text,
+                rejected_text=candidate_text,
+                action="backspace_downrank",
+                app=app,
+                project=project,
+                context_hash=context_hash,
+                metadata={
+                    "candidateSource": "rime",
+                    "selectionSource": "patched_squirrel_post_accept_delete",
+                },
+            )
+        self._clear_rime_cache()
+        return {
+            "schemaVersion": "rag-ime.candidate-edit-feedback.v1",
+            "ok": True,
+            "recorded": True,
+            "rimeRecorded": rime_event_id > 0,
+            "rimeEventId": rime_event_id,
+            "event": event_name,
+            "sourceType": source_type,
+            "noStore": False,
+            "privacyAssessment": privacy_assessment,
+            "storageReceipt": storage_receipt(privacy_assessment, stored=True),
+        }
+
+    def rime_lexicon_review(self, payload: dict[str, Any]) -> dict[str, object]:
+        return review_rime_lexicon(
+            self.config.db_path,
+            project=_string(payload.get("project")) or self.config.project,
+            limit=max(1, min(500, _optional_int(payload.get("limit")) or 200)),
+            rime_user_dir=self.config.rime_user_dir,
+        )
+
+    def rime_lexicon_apply(self, payload: dict[str, Any]) -> dict[str, object]:
+        selected_keys = payload.get("selectedKeys")
+        if not isinstance(selected_keys, list):
+            selected_keys = []
+        return apply_reviewed_rime_lexicon(
+            self.config.db_path,
+            rime_user_dir=self.config.rime_user_dir,
+            backup_root=self.config.rime_lexicon_backup_root,
+            project=_string(payload.get("project")) or self.config.project,
+            limit=max(1, min(500, _optional_int(payload.get("limit")) or 200)),
+            review_token=_string(payload.get("reviewToken")),
+            selected_keys=[_string(value) for value in selected_keys],
+            confirm_text=_string(payload.get("confirmText")),
+        )
+
+    def rime_lexicon_rollback(self, payload: dict[str, Any]) -> dict[str, object]:
+        return rollback_reviewed_rime_lexicon(
+            rollback_id=_string(payload.get("rollbackId")),
+            backup_root=self.config.rime_lexicon_backup_root,
+        )
+
     def commit(self, payload: dict[str, Any]) -> dict[str, object]:
         text = _string(payload.get("text")).strip()
         if not text:
@@ -3652,6 +3798,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path in {
             "/api/memory/books",
             "/api/memory/atoms",
+            "/api/memory/tags",
             "/api/memory/phrases",
             "/api/memory/groups",
             "/api/memory/negative",
@@ -3869,6 +4016,17 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if parsed.path == "/api/rime-lexicon/review":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.rime_lexicon_review(
+                    {
+                        "limit": _query_first(query, "limit"),
+                        "project": _query_first(query, "project"),
+                    }
+                ),
+            )
+            return
         if parsed.path in ("/api/cleanup-diff",):
             self._write_json(
                 HTTPStatus.OK,
@@ -3977,6 +4135,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.ACCEPTED, self.service.management.start_runtime_action(payload))
             elif path == "/api/memory/action":
                 self._write_json(HTTPStatus.OK, self.service.management.memory_action(payload))
+            elif path == "/api/memory/edit":
+                self._write_json(HTTPStatus.OK, self.service.management.memory_edit(payload))
             elif path in ("/api/settings/update",):
                 self._write_json(HTTPStatus.OK, self.service.settings_update(payload))
             elif path in ("/api/settings/reset-section",):
@@ -4026,6 +4186,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/rime-rank-feedback", "/rime-rank-feedback"):
                 validate_contract(payload, "rime-rank-selection.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.rime_rank_feedback(payload))
+            elif path in ("/api/candidate-edit-feedback", "/candidate-edit-feedback"):
+                self._write_json(HTTPStatus.OK, self.service.candidate_edit_feedback(payload))
+            elif path == "/api/rime-lexicon/apply":
+                self._write_json(HTTPStatus.OK, self.service.rime_lexicon_apply(payload))
+            elif path == "/api/rime-lexicon/rollback":
+                self._write_json(HTTPStatus.OK, self.service.rime_lexicon_rollback(payload))
             elif path in ("/api/predictor-ttfc", "/predictor-ttfc"):
                 self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
             elif path in ("/api/predictor/benchmark",):
@@ -4053,6 +4219,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_cancel(payload))
             elif path in ("/api/knowledge/database/apply",):
                 self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_apply(payload))
+            elif path in ("/api/knowledge/database/draft-edit",):
+                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_draft_edit(payload))
             elif path in ("/api/knowledge/database/rollback",):
                 self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_rollback(payload))
             elif path in ("/api/cache-probe", "/cache-probe"):

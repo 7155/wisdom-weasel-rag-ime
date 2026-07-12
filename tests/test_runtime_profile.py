@@ -14,6 +14,7 @@ class RuntimeProfileTests(unittest.TestCase):
 
         self.assertTrue(profile.hybrid_rag_core)
         self.assertTrue(profile.rag_direct_display)
+        self.assertTrue(profile.assistant_pending_preview)
         self.assertFalse(profile.composition_ai)
         self.assertFalse(profile.pinyin_constrained_model)
 

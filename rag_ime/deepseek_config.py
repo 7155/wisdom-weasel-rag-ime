@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -28,19 +29,22 @@ def load_deepseek_config(env_path: str | Path | None = None, env: Mapping[str, s
     source_values = dict(os.environ if env is None else env)
     default_env_path = (
         str(env_path or "").strip()
-        or _first_value(source_values, "RAG_IME_DEEPSEEK_ENV", "RAG_IME_MODEL_ENV", "RAG_IME_X1API_ENV")
+        or _first_value(source_values, "RAG_IME_DEEPSEEK_ENV", "RAG_IME_MODEL_ENV")
     )
     values: dict[str, str] = {}
     resolved = Path(default_env_path).expanduser() if default_env_path else None
     if resolved is not None and resolved.exists():
         values.update(_read_env_file(resolved))
     values.update(source_values)
+    model = _first_value(values, "RAG_IME_DEEPSEEK_MODEL", "DEEPSEEK_MODEL", default="deepseek-v4-flash")
+    if not _is_deepseek_v4_model(model):
+        raise ValueError("high-intelligence routes require a DeepSeek V4 model")
     return DeepSeekConfig(
         api_base_url=_canonical_deepseek_base_url(
-            _first_value(values, "RAG_IME_DEEPSEEK_BASE_URL", "DEEPSEEK_BASE_URL", "X1API_BASE_URL", default="https://api.deepseek.com")
+            _first_value(values, "RAG_IME_DEEPSEEK_BASE_URL", "DEEPSEEK_BASE_URL", default="https://api.deepseek.com")
         ),
-        api_key=_first_value(values, "DEEPSEEK_API_KEY", "RAG_IME_DEEPSEEK_API_KEY", "X1API_API_KEY", "API_KEY"),
-        model=_first_value(values, "RAG_IME_DEEPSEEK_MODEL", "DEEPSEEK_MODEL", "X1API_MODEL", "MODEL", default="deepseek-v4-flash"),
+        api_key=_first_value(values, "DEEPSEEK_API_KEY", "RAG_IME_DEEPSEEK_API_KEY"),
+        model=model,
         wire_api=_first_value(values, "RAG_IME_DEEPSEEK_WIRE_API", "DEEPSEEK_WIRE_API", default="chat_completions"),
         stream=_bool_value(_first_value(values, "RAG_IME_DEEPSEEK_STREAM", "DEEPSEEK_STREAM"), default=False),
         json_mode=_bool_value(_first_value(values, "RAG_IME_DEEPSEEK_JSON", "DEEPSEEK_JSON"), default=True),
@@ -86,9 +90,15 @@ def load_deepseek_config(env_path: str | Path | None = None, env: Mapping[str, s
 
 def _canonical_deepseek_base_url(value: str) -> str:
     base = value.strip().rstrip("/") or "https://api.deepseek.com"
+    if urlsplit(base).hostname in {"x1api.top", "x2app.top"}:
+        raise ValueError("legacy proxy route is disabled; configure a DeepSeek V4 endpoint")
     if base.endswith("/v1"):
         return base
     return f"{base}/v1"
+
+
+def _is_deepseek_v4_model(value: str) -> bool:
+    return value.strip().lower().replace("_", "-").startswith("deepseek-v4")
 
 
 def _read_env_file(path: Path) -> dict[str, str]:

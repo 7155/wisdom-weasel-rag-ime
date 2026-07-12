@@ -103,6 +103,45 @@ struct PageResponse: Decodable {
     let limit: Int
 }
 
+struct RimeLexiconReviewResponse: Decodable {
+    let schemaVersion: String
+    let ok: Bool
+    let project: String
+    let entryCount: Int
+    let entries: [RimeLexiconReviewEntry]
+    let reviewToken: String
+    let confirmText: String
+    let applySupported: Bool
+    let reviewRequired: Bool
+}
+
+struct RimeLexiconReviewEntry: Decodable, Identifiable {
+    var id: String { reviewKey }
+    let reviewKey: String
+    let text: String
+    let pinyin: String
+    let weight: Int
+    let positiveCount: Int
+    let negativeCount: Int
+    let lastUsedAtMs: Int
+    let reasons: [String]
+    let reviewSource: String?
+    let reviewReason: String?
+    let selected: Bool
+}
+
+struct RimeLexiconMutationResponse: Decodable {
+    let schemaVersion: String
+    let ok: Bool
+    let applied: Bool?
+    let rolledBack: Bool?
+    let entryCount: Int?
+    let rollbackId: String?
+    let requiresRedeploy: Bool?
+    let reason: String?
+    let confirmText: String?
+}
+
 struct QueryLabResponse: Decodable {
     let ok: Bool
     let candidates: [[String: JSONValue]]?

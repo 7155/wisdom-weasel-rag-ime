@@ -54,7 +54,7 @@ class ImeFirstDemoPackTests(unittest.TestCase):
         self.assertEqual(verify_count(self.db_path, "memory_retrieval_docs"), 0)
         self.assertEqual(verify_count(self.db_path, "rime_rank_feedback"), 0)
 
-    def test_demo_covers_pinyin_three_tab_candidates_rag_workbench_and_quiet_short_commit(self) -> None:
+    def test_demo_covers_pinyin_three_tab_candidates_rag_workbench_and_responsive_short_commit(self) -> None:
         seed_demo_database(self.db_path, reset=True)
         report = verify_demo_database(self.db_path)
         checks = report["checks"]
@@ -67,7 +67,7 @@ class ImeFirstDemoPackTests(unittest.TestCase):
         self.assertEqual(checks["ordinaryPinyin"]["canonicalPinyin"], "yong")
         self.assertTrue(all(len(frame["candidates"]) == 3 for frame in checks["continuousTab"]["frames"]))
         self.assertTrue(all(frame["continuationTriggered"] for frame in checks["continuousTab"]["frames"]))
-        self.assertTrue(checks["continuousTab"]["notEveryCommit"]["ok"])
+        self.assertTrue(checks["continuousTab"]["shortChineseResponsive"]["ok"])
         self.assertTrue(checks["ragMemory"]["ok"])
         self.assertTrue(checks["knowledgeWorkbench"]["contextInjected"])
         self.assertGreater(checks["knowledgeWorkbench"]["localEvidenceCount"], 0)

@@ -36,7 +36,7 @@ REQUIRED_FIELDS = {
 DEBUG_OR_OFFLINE_PROJECT_STATUS_ROWS = {
     "Management console": "C",
     "Active RAG preview / selected text assist": "C",
-    "`x1top` / x1api cleanup": "C",
+    "DeepSeek V4 cleanup": "C",
     "Rime export apply/rollback": "C",
     "MLX benchmark/model matrix": "C",
 }
@@ -88,8 +88,8 @@ class FeatureRegistryTests(unittest.TestCase):
 
     def test_remote_or_preview_lanes_are_explicitly_bridged_not_realtime(self) -> None:
         by_id = {feature["featureId"]: feature for feature in _load_registry()}
-        self.assertEqual(by_id["x1top-cleanup-to-curated-memory"]["v1Status"], "offline_tool")
-        self.assertIn("curated", by_id["x1top-cleanup-to-curated-memory"]["dataSource"])
+        self.assertEqual(by_id["dsv4-cleanup-to-curated-memory"]["v1Status"], "offline_tool")
+        self.assertIn("curated", by_id["dsv4-cleanup-to-curated-memory"]["dataSource"])
         self.assertNotIn("ragimemac-debug-harness", by_id)
         self.assertIn("local MLX", by_id["mlx-provider-health"]["dataSource"])
         self.assertIn("remote/OpenAI-compatible providers are offline", by_id["mlx-provider-health"]["dataSource"])

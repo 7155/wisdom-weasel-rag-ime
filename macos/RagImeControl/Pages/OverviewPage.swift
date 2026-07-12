@@ -30,7 +30,7 @@ struct OverviewPage: View {
 
     private var header: some View {
         HStack(spacing: 18) {
-            PageHeader(title: "今日概览", subtitle: "输入法、MiniMind、个人记忆与知识生成的实时状态")
+            PageHeader(title: "今日概览", subtitle: "输入法、本地预测、个人记忆与知识生成的实时状态")
             Spacer()
             Picker("运行模式", selection: profileSelection) {
                 ForEach(["安全模式", "标准模式", "记忆增强", "调试模式"], id: \.self, content: Text.init)
@@ -67,7 +67,7 @@ struct OverviewPage: View {
             )
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 12) {
                 readinessTile(overview, id: "inputMethod", title: "鼠须管", symbol: "keyboard")
-                readinessTile(overview, id: "predictor", title: "MiniMind", symbol: "sparkles")
+                readinessTile(overview, id: "predictor", title: "本地预测", symbol: "sparkles")
                 readinessTile(overview, id: "hybridRag", title: "Hybrid RAG", symbol: "point.3.connected.trianglepath.dotted")
                 readinessTile(overview, id: "foregroundContext", title: "前台上下文", symbol: "text.cursor")
             }
@@ -85,7 +85,7 @@ struct OverviewPage: View {
             title: title,
             detail: status?.detail ?? "等待状态",
             symbol: symbol,
-            ready: status?.ok == true
+            ready: status?.ok == true && status?.status != "degraded"
         )
     }
 

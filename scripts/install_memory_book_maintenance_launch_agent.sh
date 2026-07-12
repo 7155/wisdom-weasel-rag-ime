@@ -28,9 +28,19 @@ cp "$ROOT/scripts/memory_book_maintenance_launch.py" "$LAUNCH_WRAPPER"
 cp "$ROOT/scripts/run_memory_book_maintenance_once.sh" "$INSTALLED_SCRIPT"
 chmod 755 "$LAUNCH_WRAPPER" "$INSTALLED_SCRIPT"
 MODEL_ENV_SOURCE="${RAG_IME_DEEPSEEK_ENV:-${RAG_IME_MODEL_ENV:-}}"
+if [[ -z "$MODEL_ENV_SOURCE" ]]; then
+  for candidate in "$APP_SUPPORT_DIR/deepseek.env" "$ROOT/.rag-ime-data/deepseek.env"; do
+    if [[ -f "$candidate" ]]; then
+      MODEL_ENV_SOURCE="$candidate"
+      break
+    fi
+  done
+fi
 if [[ -n "$MODEL_ENV_SOURCE" && -f "$MODEL_ENV_SOURCE" ]]; then
   INSTALLED_MODEL_ENV="$APP_SUPPORT_DIR/deepseek.env"
-  cp "$MODEL_ENV_SOURCE" "$INSTALLED_MODEL_ENV"
+  if [[ "$MODEL_ENV_SOURCE" != "$INSTALLED_MODEL_ENV" ]]; then
+    cp "$MODEL_ENV_SOURCE" "$INSTALLED_MODEL_ENV"
+  fi
   chmod 600 "$INSTALLED_MODEL_ENV"
   export RAG_IME_DEEPSEEK_ENV="$INSTALLED_MODEL_ENV"
 fi

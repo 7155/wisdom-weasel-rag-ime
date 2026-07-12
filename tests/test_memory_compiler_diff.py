@@ -30,16 +30,16 @@ class FakeCompilerGenerator:
 
     @property
     def provider_name(self) -> str:
-        return "x1api"
+        return "deepseek-v4"
 
     @classmethod
     def from_env_path(cls, env_path=None):
         cls.calls.append({"envPath": str(env_path or "")})
         return cls(
             VcpRebuildConfig(
-                api_base_url="https://x1api.top/v1",
+                api_base_url="https://api.example.com/v1",
                 api_key="fake-key",
-                model="fake-gpt",
+                model="deepseek-v4-flash",
             )
         )
 
@@ -63,7 +63,7 @@ class FakeCompilerGenerator:
             }
         )
         return CoreOptimizationReport(
-            provider="x1api",
+            provider="deepseek-v4",
             model=self.config.model,
             elapsed_ms=23,
             memories=(
@@ -180,9 +180,9 @@ class MemoryCompilerDiffTests(unittest.TestCase):
                 "--model-env-path",
                 str(Path(self.tmp.name) / "fake.env"),
                 "--provider",
-                "x1api",
+                "deepseek-v4",
                 "--model",
-                "fake-gpt-compiler",
+                "deepseek-v4-flash",
                 "--output",
                 str(plan_path),
             )
@@ -194,7 +194,7 @@ class MemoryCompilerDiffTests(unittest.TestCase):
             self.assertEqual(self.core.list_memory_cleanup_runs(limit=10)["items"], [])
             ops = [item["op"] for item in compile_payload["run"]["diffs"]]
             self.assertEqual(ops, ["add_stable_memory", "add_phrase", "tombstone"])
-            self.assertEqual(FakeCompilerGenerator.calls[-1]["model"], "fake-gpt-compiler")
+            self.assertEqual(FakeCompilerGenerator.calls[-1]["model"], "deepseek-v4-flash")
             stable_diff = next(item for item in compile_payload["run"]["diffs"] if item["op"] == "add_stable_memory")
             self.assertEqual(stable_diff["payload"]["evidenceEventIds"], [2])
             self.assertEqual(stable_diff["payload"]["sourceStats"]["strategy"], "auto-backfill")
@@ -283,9 +283,9 @@ class MemoryCompilerDiffTests(unittest.TestCase):
                 "--model-env-path",
                 str(Path(self.tmp.name) / "fake.env"),
                 "--provider",
-                "x1api",
+                "deepseek-v4",
                 "--model",
-                "fake-gpt-compiler",
+                "deepseek-v4-flash",
                 "--save-draft",
             )
             self.assertEqual(code, 0)

@@ -50,7 +50,7 @@ PY
   /usr/libexec/PlistBuddy -c 'Set :CFBundleIconFile RagImeIcon' "$CONTENTS/Info.plist"
 
 codesign --force --deep --sign - "$APP" >/dev/null
-bundle_id="$(defaults read "$CONTENTS/Info" CFBundleIdentifier)"
+bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CONTENTS/Info.plist")"
 [[ "$bundle_id" == "com.rag-ime.control" ]] || { echo "unexpected bundle id: $bundle_id" >&2; exit 1; }
 
 if otool -L "$MACOS/RagImeControl" | grep -Eq 'WebKit|JavaScriptCore'; then

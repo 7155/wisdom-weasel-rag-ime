@@ -7,7 +7,12 @@ final class RagImeAssistantPanelController {
   private static var activeOwnerGeneration = 0
   private let panel: RagImeNonActivatingPanel
   private let cardView: RagImeSuggestionCardView
+  private let resultRecallPanel: RagImeNonActivatingPanel
+  private let resultRecallView: RagImeAssistantResultRecallView
   private var currentPayload: RagImeAssistantOverlayPayload?
+  private var currentRestore: (() -> Void)?
+  private var pinnedExplicitPayload: RagImeAssistantOverlayPayload?
+  private var pinnedExplicitRestore: (() -> Void)?
   private var currentState: RagImeAssistantSurfaceState = .hidden
   private var renderedSnapshotId = ""
   private var renderedStableIds: [String] = []
@@ -37,6 +42,13 @@ final class RagImeAssistantPanelController {
       defer: false
     )
     cardView = RagImeSuggestionCardView(frame: panel.contentView?.bounds ?? .zero)
+    resultRecallPanel = RagImeNonActivatingPanel(
+      contentRect: NSRect(x: 0, y: 0, width: 126, height: 34),
+      styleMask: [.borderless, .nonactivatingPanel],
+      backing: .buffered,
+      defer: false
+    )
+    resultRecallView = RagImeAssistantResultRecallView(frame: NSRect(x: 0, y: 0, width: 126, height: 34))
     panel.isReleasedWhenClosed = false
     panel.isFloatingPanel = true
     panel.level = .floating
@@ -46,17 +58,29 @@ final class RagImeAssistantPanelController {
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
     panel.contentView = cardView
     cardView.autoresizingMask = [.width, .height]
+    resultRecallPanel.isReleasedWhenClosed = false
+    resultRecallPanel.isFloatingPanel = true
+    resultRecallPanel.level = .floating
+    resultRecallPanel.backgroundColor = .clear
+    resultRecallPanel.isOpaque = false
+    resultRecallPanel.hasShadow = true
+    resultRecallPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+    resultRecallPanel.contentView = resultRecallView
+    resultRecallView.autoresizingMask = [.width, .height]
     cardView.onSelect = { [weak self] candidate, index, mode in self?.onSelect?(candidate, index, mode) }
     cardView.onAction = { [weak self] action in self?.handle(action) }
+    resultRecallView.onRestore = { [weak self] in self?.restorePinnedExplicitResult() }
+    resultRecallView.onClose = { [weak self] in self?.clearPinnedExplicitResult(reason: "recall_close") }
   }
 
-  var isVisible: Bool { panel.isVisible }
+  var isVisible: Bool { panel.isVisible || resultRecallPanel.isVisible }
 
   deinit {
     pendingUpdate?.cancel()
     ttlDismissWorkItem?.cancel()
     generatingTimer?.invalidate()
     panel.orderOut(nil)
+    resultRecallPanel.orderOut(nil)
     if Self.activeOwner === self { Self.activeOwner = nil }
   }
 
@@ -65,6 +89,7 @@ final class RagImeAssistantPanelController {
     anchor: NSPoint?,
     onSelect: ((RagImeDisplayCandidate, Int, RagImeAssistantCommitMode) -> Void)?,
     onAction: ((RagImeAssistantAction) -> Void)? = nil,
+    onRestore: (() -> Void)? = nil,
     onDismiss: ((String) -> Void)? = nil,
     onTrace: TraceHandler? = nil
   ) {
@@ -74,7 +99,9 @@ final class RagImeAssistantPanelController {
     self.onTrace = onTrace
     traceCreationIfNeeded()
     pendingUpdate?.cancel()
-    let work = DispatchWorkItem { [weak self] in self?.apply(payload, anchor: anchor) }
+    let work = DispatchWorkItem { [weak self] in
+      self?.apply(payload, anchor: anchor, incomingRestore: onRestore)
+    }
     pendingUpdate = work
     DispatchQueue.main.async(execute: work)
     trace("assistant_panel_update_coalesced", ["reason": "main_runloop"])
@@ -112,6 +139,16 @@ final class RagImeAssistantPanelController {
   }
 
   func dismiss(reason: String) {
+    if currentState == .explicitResult && shouldCollapseExplicitResult(reason: reason) {
+      _ = collapseExplicitResult(reason: reason)
+      return
+    }
+    let currentPayloadIsExplicit = currentPayload.map {
+      $0.phase == "active_rag" || $0.uiMode.contains("active_rag")
+    } ?? false
+    let preservePinnedResult = pinnedExplicitPayload != nil
+      && !currentPayloadIsExplicit
+      && shouldPreservePinnedResult(reason: reason)
     let hadPresentation = panel.isVisible || currentPayload != nil
     let fadeAnimation = currentPayload.map(fadeAnimationEnabled(for:)) ?? true
     pendingUpdate?.cancel()
@@ -120,6 +157,7 @@ final class RagImeAssistantPanelController {
     ttlDismissWorkItem = nil
     let duration = visibleSince.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
     currentPayload = nil
+    currentRestore = nil
     currentState = .hidden
     renderedSnapshotId = ""
     renderedStableIds = []
@@ -127,7 +165,10 @@ final class RagImeAssistantPanelController {
     expandedSnapshotId = ""
     visibleSince = nil
     stopGeneratingAnimation()
-    if Self.activeOwner === self { Self.activeOwner = nil }
+    if !preservePinnedResult {
+      clearPinnedExplicitResult(reason: reason)
+    }
+    if Self.activeOwner === self && !preservePinnedResult { Self.activeOwner = nil }
     presentationGeneration += 1
     let generation = presentationGeneration
     let reduceMotion = !fadeAnimation || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -158,7 +199,36 @@ final class RagImeAssistantPanelController {
     if hadPresentation { onDismiss?(reason) }
   }
 
-  private func apply(_ payload: RagImeAssistantOverlayPayload?, anchor: NSPoint?) {
+  @discardableResult
+  func collapseExplicitResult(reason: String) -> Bool {
+    guard currentState == .explicitResult, let payload = currentPayload else { return false }
+    pinnedExplicitPayload = payload
+    pinnedExplicitRestore = currentRestore
+    currentPayload = nil
+    currentRestore = nil
+    currentState = .hidden
+    renderedSnapshotId = ""
+    renderedStableIds = []
+    renderedContentSignature = ""
+    expandedSnapshotId = ""
+    ttlDismissWorkItem?.cancel()
+    ttlDismissWorkItem = nil
+    stopGeneratingAnimation()
+    panel.orderOut(nil)
+    showPinnedResultRecall(anchor: lastReliableCaretAnchor)
+    trace("assistant_result_collapsed_to_recall", [
+      "reason": reason,
+      "snapshotId": payload.snapshotId,
+      "restoreAvailable": pinnedExplicitRestore != nil,
+    ])
+    return true
+  }
+
+  private func apply(
+    _ payload: RagImeAssistantOverlayPayload?,
+    anchor: NSPoint?,
+    incomingRestore: (() -> Void)?
+  ) {
     let start = CFAbsoluteTimeGetCurrent()
     guard let payload, payload.visible else {
       dismiss(reason: payload?.dismissReason ?? "hidden")
@@ -169,8 +239,19 @@ final class RagImeAssistantPanelController {
       dismiss(reason: payload.phase == "composition" ? "composition" : "passive_pending_or_status_only")
       return
     }
+    if currentState == .explicitResult && !state.isExplicit, let explicitPayload = currentPayload {
+      pinnedExplicitPayload = explicitPayload
+      pinnedExplicitRestore = currentRestore
+      showPinnedResultRecall(anchor: anchor ?? lastReliableCaretAnchor)
+      trace("assistant_result_collapsed_to_recall", [
+        "reason": "passive_prediction_arrived",
+        "snapshotId": explicitPayload.snapshotId,
+        "restoreAvailable": pinnedExplicitRestore != nil,
+      ])
+    }
+    currentRestore = incomingRestore
     if let anchor { lastReliableCaretAnchor = anchor }
-    if !state.isExplicit && anchor == nil {
+    if !state.isExplicit && anchor == nil && lastReliableCaretAnchor == nil && !panel.isVisible {
       trace("assistant_panel_anchor_missing", ["surfaceState": state.rawValue, "anchorSource": "missing", "reason": "passive_requires_caret"])
       dismiss(reason: "passive_anchor_missing")
       return
@@ -220,10 +301,15 @@ final class RagImeAssistantPanelController {
       canReplaceSelection: canReplaceSelection(in: payload),
       animationsEnabled: animationsEnabled
     )
-    updateGeneratingAnimation(for: state)
+    updateGeneratingAnimation(for: state, payload: payload)
     panel.ignoresMouseEvents = false
     panel.setContentSize(contentSize(for: state, payload: payload))
     position(state: state, anchor: anchor)
+    if state.isExplicit {
+      resultRecallPanel.orderOut(nil)
+    } else if pinnedExplicitPayload != nil {
+      showPinnedResultRecall(anchor: anchor ?? lastReliableCaretAnchor)
+    }
     scheduleTTL(for: payload)
     if !wasVisible {
       visibleSince = Date()
@@ -287,14 +373,26 @@ final class RagImeAssistantPanelController {
     let explicit = payload.phase == "active_rag" || payload.uiMode.contains("active_rag")
     let realCandidates = payload.candidates.filter(RagImeSuggestionCardView.isRealCandidate)
     let hasAction = payload.candidates.contains(where: RagImeSuggestionCardView.isActionCandidate)
-    if explicit { return realCandidates.isEmpty ? .explicitGenerating : .explicitResult }
-    guard !realCandidates.isEmpty || hasAction else { return .hidden }
-    if expandedSnapshotId == payload.snapshotId && realCandidates.count > 1 { return .expandedPredictions }
-    return .compactPrediction
+    if explicit {
+      if explicitError(in: payload) { return .explicitError }
+      return realCandidates.isEmpty ? .explicitGenerating : .explicitResult
+    }
+    // A ready completion must win over a still-pending secondary lane. Otherwise
+    // an already usable result collapses back to the 44pt waiting surface.
+    if !realCandidates.isEmpty {
+      if expandedSnapshotId == payload.snapshotId && realCandidates.count > 1 { return .expandedPredictions }
+      return .compactPrediction
+    }
+    if payload.uiMode.contains("pending") || payload.inputMode == "post_commit_predicting" {
+      return .pendingPrediction
+    }
+    return hasAction ? .compactPrediction : .hidden
   }
 
-  private func updateGeneratingAnimation(for state: RagImeAssistantSurfaceState) {
-    guard state == .explicitGenerating else {
+  private func updateGeneratingAnimation(for state: RagImeAssistantSurfaceState, payload: RagImeAssistantOverlayPayload) {
+    let shouldAnimate = state == .explicitGenerating
+      || (state == .pendingPrediction && payload.animation.kind != "none")
+    guard shouldAnimate else {
       stopGeneratingAnimation()
       return
     }
@@ -309,7 +407,8 @@ final class RagImeAssistantPanelController {
     ])
     guard !reduceMotion, generatingTimer == nil else { return }
     let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-      guard let self, self.currentState == .explicitGenerating else { return }
+      guard let self,
+        self.currentState == .explicitGenerating || self.currentState == .pendingPrediction else { return }
       self.generatingFrame = (self.generatingFrame + 1) % 4
       self.cardView.updateGeneratingFrame(self.generatingFrame, reduceMotion: false)
     }
@@ -337,20 +436,21 @@ final class RagImeAssistantPanelController {
       max(RagImeSuggestionCardView.minimumPredictionWidth, RagImeSuggestionCardView.preferredPredictionWidth)
     )
     switch state {
+    case .pendingPrediction:
+      return NSSize(width: width, height: RagImeSuggestionCardView.pendingHeight)
     case .compactPrediction, .expandedPredictions:
       return NSSize(
         width: width,
         height: RagImeSuggestionCardView.predictionHeight(candidateCount: realCandidates.count, hasAction: hasAction)
       )
-    case .explicitGenerating: return NSSize(width: max(300, width), height: RagImeSuggestionCardView.thinkingHeight)
+    case .explicitGenerating: return NSSize(width: 78, height: RagImeSuggestionCardView.thinkingHeight)
+    case .explicitError: return NSSize(width: max(320, width), height: RagImeSuggestionCardView.errorHeight)
     case .explicitResult:
       let text = realCandidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
-      let rect = (text as NSString).boundingRect(
-        with: NSSize(width: max(336, width - 24), height: 1000),
-        options: [.usesLineFragmentOrigin, .usesFontLeading],
-        attributes: [.font: NSFont.systemFont(ofSize: 13.5)]
+      return NSSize(
+        width: max(RagImeSuggestionCardView.minimumPredictionWidth, width),
+        height: RagImeSuggestionCardView.explicitResultHeight(text: text, width: width)
       )
-      return NSSize(width: max(320, width), height: min(220, max(108, ceil(rect.height) + 88)))
     case .transientConfirmation, .hidden:
       return NSSize(width: 224, height: RagImeSuggestionCardView.compactHeight)
     }
@@ -362,8 +462,8 @@ final class RagImeAssistantPanelController {
     if let anchor {
       lastReliableCaretAnchor = anchor
       resolved = (anchor, "caret")
-    } else if state.isExplicit, let lastReliableCaretAnchor {
-      resolved = (lastReliableCaretAnchor, "last_reliable_caret")
+    } else if let lastReliableCaretAnchor {
+      resolved = (lastReliableCaretAnchor, state.isExplicit ? "last_reliable_caret" : "last_passive_caret")
     } else if state.isExplicit {
       let mouse = NSEvent.mouseLocation
       if NSScreen.screens.contains(where: { $0.visibleFrame.contains(mouse) }) {
@@ -389,6 +489,9 @@ final class RagImeAssistantPanelController {
     origin.x = min(max(origin.x, screen.minX + 8), screen.maxX - size.width - 8)
     origin.y = min(max(origin.y, screen.minY + 8), screen.maxY - size.height - 8)
     panel.setFrameOrigin(origin)
+    if pinnedExplicitPayload != nil && !state.isExplicit {
+      positionPinnedResultRecall(relativeTo: panel.frame, screen: screen)
+    }
     trace("assistant_panel_positioned", [
       "surfaceState": state.rawValue,
       "anchorSource": source,
@@ -398,6 +501,8 @@ final class RagImeAssistantPanelController {
 
   private func handle(_ action: RagImeAssistantAction) {
     switch action {
+    case .close:
+      dismiss(reason: "user_close")
     case .insert:
       guard let payload = currentPayload,
         let index = payload.candidates.firstIndex(where: RagImeSuggestionCardView.isRealCandidate) else { return }
@@ -410,6 +515,77 @@ final class RagImeAssistantPanelController {
     case .more(let sourceView): showMoreMenu(relativeTo: sourceView)
     default: onAction?(action)
     }
+  }
+
+  private func restorePinnedExplicitResult() {
+    guard pinnedExplicitPayload != nil, let restore = pinnedExplicitRestore else {
+      clearPinnedExplicitResult(reason: "restore_unavailable")
+      return
+    }
+    resultRecallPanel.orderOut(nil)
+    trace("assistant_result_recall_requested", [
+      "snapshotId": pinnedExplicitPayload?.snapshotId ?? "",
+    ])
+    restore()
+  }
+
+  private func showPinnedResultRecall(anchor: NSPoint?) {
+    guard pinnedExplicitPayload != nil else { return }
+    if panel.isVisible, let screen = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
+      positionPinnedResultRecall(relativeTo: panel.frame, screen: screen)
+    } else if let point = anchor ?? lastReliableCaretAnchor,
+      let screen = (NSScreen.screens.first { $0.visibleFrame.contains(point) } ?? NSScreen.main)?.visibleFrame {
+      let size = resultRecallPanel.frame.size
+      var origin = NSPoint(x: point.x, y: point.y - size.height - 6)
+      origin.x = min(max(origin.x, screen.minX + 8), screen.maxX - size.width - 8)
+      origin.y = min(max(origin.y, screen.minY + 8), screen.maxY - size.height - 8)
+      resultRecallPanel.setFrameOrigin(origin)
+    }
+    resultRecallPanel.orderFront(nil)
+  }
+
+  private func positionPinnedResultRecall(relativeTo hostFrame: NSRect, screen: NSRect) {
+    let size = resultRecallPanel.frame.size
+    var origin = NSPoint(x: hostFrame.maxX - size.width, y: hostFrame.maxY + 6)
+    if origin.y + size.height > screen.maxY - 8 {
+      origin.y = hostFrame.minY - size.height - 6
+    }
+    origin.x = min(max(origin.x, screen.minX + 8), screen.maxX - size.width - 8)
+    origin.y = min(max(origin.y, screen.minY + 8), screen.maxY - size.height - 8)
+    resultRecallPanel.setFrameOrigin(origin)
+  }
+
+  private func clearPinnedExplicitResult(reason: String) {
+    guard pinnedExplicitPayload != nil || resultRecallPanel.isVisible else { return }
+    let snapshotId = pinnedExplicitPayload?.snapshotId ?? ""
+    pinnedExplicitPayload = nil
+    pinnedExplicitRestore = nil
+    resultRecallPanel.orderOut(nil)
+    trace("assistant_result_recall_cleared", ["reason": reason, "snapshotId": snapshotId])
+  }
+
+  private func shouldCollapseExplicitResult(reason: String) -> Bool {
+    [
+      "clear_display_candidates",
+      "composition",
+      "hidden",
+      "passive_pending_or_status_only",
+      "post_commit_overlay_hidden",
+    ].contains(reason)
+  }
+
+  private func shouldPreservePinnedResult(reason: String) -> Bool {
+    [
+      "candidate_accepted",
+      "confirmation_finished",
+      "ttl_expired",
+      "escape",
+      "clear_display_candidates",
+      "composition",
+      "hidden",
+      "passive_pending_or_status_only",
+      "post_commit_overlay_hidden",
+    ].contains(reason)
   }
 
   private func showMoreMenu(relativeTo sourceView: NSView) {
@@ -479,9 +655,25 @@ final class RagImeAssistantPanelController {
   private func scheduleTTL(for payload: RagImeAssistantOverlayPayload) {
     ttlDismissWorkItem?.cancel()
     ttlDismissWorkItem = nil
-    let fallbackMs = currentState.isExplicit ? 20_000 : 8_000
+    if currentState.isExplicit {
+      trace("assistant_explicit_result_pinned", [
+        "snapshotId": payload.snapshotId,
+        "surfaceState": currentState.rawValue,
+        "dismissPolicy": "accept_close_retry_or_focus_change",
+      ])
+      return
+    }
+    let fallbackMs = 8_000
     let requestedMs = Int(payload.overlayConfigNumber("expiresAfterMs") ?? Double(payload.expiresAfterMs))
-    let expiresAfterMs = min(max(requestedMs > 0 ? requestedMs : fallbackMs, 500), 30_000)
+    let hasRealCandidate = payload.candidates.contains(where: RagImeSuggestionCardView.isRealCandidate)
+    let pendingWithoutResult = currentState == .pendingPrediction
+    let isNoResultFeedback = payload.statusText.contains("没有合适")
+    let maximumMs = hasRealCandidate ? 30_000 : (pendingWithoutResult && !isNoResultFeedback ? 12_000 : 2_000)
+    let boundedMs = min(max(requestedMs > 0 ? requestedMs : fallbackMs, 500), maximumMs)
+    // A ready completion should not vanish while the user is deciding whether
+    // to press Tab. New typing, focus changes, Escape, and stale guards still
+    // dismiss it immediately.
+    let expiresAfterMs = hasRealCandidate ? max(12_000, boundedMs) : boundedMs
     let snapshotId = payload.snapshotId
     let generation = ownershipGeneration
     let work = DispatchWorkItem { [weak self] in
@@ -492,7 +684,9 @@ final class RagImeAssistantPanelController {
       self.trace("assistant_overlay_ttl_expired", [
         "snapshotId": snapshotId,
         "expiresAfterMs": expiresAfterMs,
-        "ttlSource": requestedMs > 0 ? "payload" : "fail_safe",
+        "ttlSource": hasRealCandidate
+          ? (requestedMs > 0 ? "payload" : "fail_safe")
+          : (pendingWithoutResult && !isNoResultFeedback ? "pending_feedback_guard" : "no_result_guard"),
       ])
       self.dismiss(reason: "ttl_expired")
     }
@@ -536,6 +730,16 @@ final class RagImeAssistantPanelController {
     return allParts.joined(separator: "\u{1e}")
   }
 
+  private func explicitError(in payload: RagImeAssistantOverlayPayload) -> Bool {
+    if let transaction = payload.frontendTransaction,
+      case .string(let status)? = transaction["diagnosticStatus"],
+      status.contains("error") || status.contains("failed") {
+      return true
+    }
+    let status = payload.statusText.lowercased()
+    return status.contains("失败") || status.contains("error") || status.contains("failed")
+  }
+
   private func candidateFontSize(for payload: RagImeAssistantOverlayPayload) -> CGFloat {
     min(max(CGFloat(payload.overlayConfigNumber("candidateFontSize") ?? 14), 11), 18)
   }
@@ -553,4 +757,53 @@ final class RagImeAssistantPanelController {
   }
 
   private func trace(_ event: String, _ fields: [String: Any]) { onTrace?(event, fields) }
+}
+
+private final class RagImeAssistantResultRecallView: NSVisualEffectView {
+  var onRestore: (() -> Void)?
+  var onClose: (() -> Void)?
+  private let restoreButton = NSButton(title: "已生成", target: nil, action: nil)
+  private let closeButton = NSButton(title: "", target: nil, action: nil)
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    material = .popover
+    blendingMode = .behindWindow
+    state = .active
+    wantsLayer = true
+    layer?.cornerRadius = 7
+    layer?.borderWidth = 0.5
+    layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.55).cgColor
+
+    restoreButton.target = self
+    restoreButton.action = #selector(restore)
+    restoreButton.isBordered = false
+    restoreButton.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "已生成")
+    restoreButton.imagePosition = .imageLeading
+    restoreButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    restoreButton.contentTintColor = .controlAccentColor
+    restoreButton.toolTip = "查看已生成结果"
+
+    closeButton.target = self
+    closeButton.action = #selector(close)
+    closeButton.isBordered = false
+    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭")
+    closeButton.imagePosition = .imageOnly
+    closeButton.contentTintColor = .secondaryLabelColor
+    closeButton.toolTip = "关闭已生成结果"
+    addSubview(restoreButton)
+    addSubview(closeButton)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func layout() {
+    super.layout()
+    restoreButton.frame = NSRect(x: 6, y: 3, width: max(72, bounds.width - 34), height: 28)
+    closeButton.frame = NSRect(x: bounds.width - 28, y: 5, width: 24, height: 24)
+  }
+
+  @objc private func restore() { onRestore?() }
+  @objc private func close() { onClose?() }
 }

@@ -17,8 +17,14 @@ final class AppModel: ObservableObject {
     @Published var memoryKind = "books"
     @Published var memoryRows: [[String: JSONValue]] = []
     @Published var memoryNextCursor = ""
+    @Published var memorySaving = false
     @Published var historyRows: [[String: JSONValue]] = []
     @Published var historyNextCursor = ""
+    @Published var rimeLexiconReview: RimeLexiconReviewResponse?
+    @Published var selectedRimeLexiconKeys: Set<String> = []
+    @Published var rimeLexiconRollbackId = ""
+    @Published var rimeLexiconStatus = ""
+    @Published var rimeLexiconBusy = false
     @Published var queryLabText = ""
     @Published var queryLabResult: QueryLabResponse?
     @Published var knowledgeMode: KnowledgeWorkbenchMode = .knowledgeAnswer
@@ -26,6 +32,7 @@ final class AppModel: ObservableObject {
     @Published var knowledgeContext = ""
     @Published var knowledgeIncludeNotion = false
     @Published var knowledgeResponse: KnowledgeWorkbenchResponse?
+    @Published var knowledgeDraftRun: JSONValue?
     @Published var knowledgeRoute: KnowledgeRouteResponse?
     @Published var knowledgeRunning = false
     @Published var knowledgeDatabaseActionStatus = ""
@@ -190,6 +197,79 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func editMemoryItem(
+        kind: String,
+        id: String,
+        title: String,
+        detail: String,
+        tags: [String],
+        aliases: [String],
+        type: String,
+        color: String,
+        active: Bool,
+        mergeIntoId: String
+    ) async -> Bool {
+        memorySaving = true
+        defer { memorySaving = false }
+        do {
+            let response: MutationResponse = try await api.post(
+                "api/memory/edit",
+                body: [
+                    "kind": .string(kind),
+                    "id": .string(id),
+                    "title": .string(title),
+                    "text": .string(detail),
+                    "summary": .string(detail),
+                    "note": .string(detail),
+                    "tags": .array(tags.map(JSONValue.string)),
+                    "aliases": .array(aliases.map(JSONValue.string)),
+                    "type": .string(type),
+                    "color": .string(color),
+                    "active": .bool(active),
+                    "mergeIntoId": .string(mergeIntoId),
+                ]
+            )
+            guard response.ok else { throw APIClientError.server(400, response.error ?? "记忆保存失败") }
+            await loadMemory()
+            await refreshOverview()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func performMemoryAction(id: String, kind: String, action: String) async -> Bool {
+        memorySaving = true
+        defer { memorySaving = false }
+        do {
+            let itemType: String
+            switch kind {
+            case "books": itemType = "book"
+            case "atoms": itemType = "atom"
+            case "phrases": itemType = "phrase"
+            default: itemType = "memory"
+            }
+            let response: MutationResponse = try await api.post(
+                "api/memory/action",
+                body: [
+                    "memoryId": .string(id),
+                    "itemType": .string(itemType),
+                    "action": .string(action),
+                    "reason": .string("native_control_center_\(action)"),
+                    "updatedBy": .string("native-control-center"),
+                ]
+            )
+            guard response.ok else { throw APIClientError.server(400, response.error ?? "记忆操作失败") }
+            await loadMemory()
+            await refreshOverview()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
     func loadHistory(reset: Bool = true) async {
         do {
             let cursor = reset ? "" : historyNextCursor
@@ -199,6 +279,77 @@ final class AppModel: ObservableObject {
             )
             historyRows = reset ? response.items : historyRows + response.items
             historyNextCursor = response.nextCursor
+        } catch {
+            present(error)
+        }
+    }
+
+    func loadRimeLexiconReview() async {
+        do {
+            let response: RimeLexiconReviewResponse = try await api.get(
+                "api/rime-lexicon/review",
+                query: [URLQueryItem(name: "limit", value: "200")]
+            )
+            rimeLexiconReview = response
+            selectedRimeLexiconKeys = Set(response.entries.filter(\.selected).map(\.reviewKey))
+            rimeLexiconStatus = response.entries.isEmpty ? "暂无待审建议" : "待审 \(response.entryCount) 条"
+        } catch {
+            present(error)
+        }
+    }
+
+    func setRimeLexiconSelection(_ key: String, selected: Bool) {
+        if selected {
+            selectedRimeLexiconKeys.insert(key)
+        } else {
+            selectedRimeLexiconKeys.remove(key)
+        }
+    }
+
+    func applyRimeLexiconReview() async {
+        guard let review = rimeLexiconReview, !selectedRimeLexiconKeys.isEmpty else { return }
+        rimeLexiconBusy = true
+        defer { rimeLexiconBusy = false }
+        do {
+            let response: RimeLexiconMutationResponse = try await api.post(
+                "api/rime-lexicon/apply",
+                body: [
+                    "reviewToken": .string(review.reviewToken),
+                    "selectedKeys": .array(selectedRimeLexiconKeys.sorted().map(JSONValue.string)),
+                    "confirmText": .string(review.confirmText),
+                    "project": .string(review.project),
+                ]
+            )
+            guard response.ok, response.applied == true else {
+                throw APIClientError.server(409, response.reason ?? "词库建议已变化，请刷新后重试")
+            }
+            let appliedCount = response.entryCount ?? selectedRimeLexiconKeys.count
+            rimeLexiconRollbackId = response.rollbackId ?? ""
+            if response.requiresRedeploy == true { await run(action: "redeploy_rime") }
+            await loadRimeLexiconReview()
+            let remainingCount = rimeLexiconReview?.entryCount ?? 0
+            rimeLexiconStatus = "已应用 \(appliedCount) 条 · 剩余 \(remainingCount) 条"
+        } catch {
+            present(error)
+        }
+    }
+
+    func rollbackRimeLexiconReview() async {
+        guard !rimeLexiconRollbackId.isEmpty else { return }
+        rimeLexiconBusy = true
+        defer { rimeLexiconBusy = false }
+        do {
+            let response: RimeLexiconMutationResponse = try await api.post(
+                "api/rime-lexicon/rollback",
+                body: ["rollbackId": .string(rimeLexiconRollbackId)]
+            )
+            guard response.ok, response.rolledBack == true else {
+                throw APIClientError.server(409, response.reason ?? "词库回滚失败")
+            }
+            rimeLexiconRollbackId = ""
+            if response.requiresRedeploy == true { await run(action: "redeploy_rime") }
+            await loadRimeLexiconReview()
+            rimeLexiconStatus = "已回滚 · 待审 \(rimeLexiconReview?.entryCount ?? 0) 条"
         } catch {
             present(error)
         }
@@ -231,7 +382,10 @@ final class AppModel: ObservableObject {
         guard knowledgeMode == .organizeDatabase || !question.isEmpty else { return }
         knowledgeGeneration += 1
         let generation = knowledgeGeneration
-        if knowledgeMode == .organizeDatabase { knowledgeDatabaseActionStatus = "" }
+        if knowledgeMode == .organizeDatabase {
+            knowledgeDatabaseActionStatus = ""
+            knowledgeDraftRun = nil
+        }
         knowledgeRunning = true
         defer {
             if generation == knowledgeGeneration { knowledgeRunning = false }
@@ -253,6 +407,7 @@ final class AppModel: ObservableObject {
                 ]
             )
             knowledgeResponse = started
+            captureKnowledgeDraftRun(from: started)
             guard started.ok, let sessionId = started.sessionId, !sessionId.isEmpty else {
                 throw APIClientError.server(400, started.error ?? "知识任务未启动")
             }
@@ -263,6 +418,7 @@ final class AppModel: ObservableObject {
                     query: [URLQueryItem(name: "sessionId", value: sessionId)]
                 )
                 knowledgeResponse = response
+                captureKnowledgeDraftRun(from: response)
                 if ["ready", "error", "cancelled", "blocked"].contains(response.status) {
                     if response.status == "error" {
                         throw APIClientError.server(500, response.error ?? "知识任务失败")
@@ -307,10 +463,48 @@ final class AppModel: ObservableObject {
                 throw APIClientError.server(400, response.error ?? "数据库草案操作失败")
             }
             knowledgeDatabaseActionStatus = response.run?.objectValue["status"]?.stringValue ?? action
+            knowledgeDraftRun = response.run
             await refreshOverview()
         } catch {
             present(error)
         }
+    }
+
+    func updateKnowledgeDatabaseDraft(
+        diffId: Int,
+        payload: [String: JSONValue]? = nil,
+        selected: Bool
+    ) async -> Bool {
+        guard let runId = knowledgeResponse?.result?.objectValue["plan"]?.objectValue["runId"]?.stringValue,
+              !runId.isEmpty else { return false }
+        do {
+            var body: [String: JSONValue] = [
+                "runId": .string(runId),
+                "diffId": .number(Double(diffId)),
+                "selected": .bool(selected),
+            ]
+            if let payload { body["payload"] = .object(payload) }
+            let response: KnowledgeDatabaseActionResponse = try await api.post(
+                "api/knowledge/database/draft-edit",
+                body: body
+            )
+            guard response.ok else {
+                throw APIClientError.server(400, response.error ?? "整理草案更新失败")
+            }
+            knowledgeDraftRun = response.run
+            knowledgeDatabaseActionStatus = response.run?.objectValue["status"]?.stringValue ?? "draft"
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    private func captureKnowledgeDraftRun(from response: KnowledgeWorkbenchResponse) {
+        guard knowledgeMode == .organizeDatabase,
+              let run = response.result?.objectValue["storedRun"],
+              !run.objectValue.isEmpty else { return }
+        knowledgeDraftRun = run
     }
 
     func openAccessibilitySettings() async {
@@ -319,6 +513,7 @@ final class AppModel: ObservableObject {
 
     private func loadDestination() async {
         switch destination {
+        case .inputMethod: await loadRimeLexiconReview()
         case .memory: await loadMemory()
         case .history: await loadHistory()
         case .ragAndModels: await loadKnowledgeRoute()

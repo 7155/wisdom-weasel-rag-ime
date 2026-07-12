@@ -5,23 +5,26 @@ import Foundation
 
 final class VoiceTextInsertionSession {
     let anchorPoint: NSPoint?
+    let appBundleIdentifier: String
     private let element: AXUIElement
     private let origin: Int
     private let originalSelectionLength: Int
     private var insertedUTF16Length = 0
     private var hasAppliedRevision = false
 
-    private init(element: AXUIElement, range: CFRange, anchorPoint: NSPoint?) {
+    private init(element: AXUIElement, range: CFRange, anchorPoint: NSPoint?, appBundleIdentifier: String) {
         self.element = element
         origin = range.location
         originalSelectionLength = range.length
         self.anchorPoint = anchorPoint
+        self.appBundleIdentifier = appBundleIdentifier
     }
 
     static func capture() throws -> VoiceTextInsertionSession {
         guard AXIsProcessTrusted() else { throw VoiceInsertionError.accessibilityUnavailable }
         let focused = try focusedElement()
         try validatePrivacy(of: focused)
+        let application = try applicationIdentity(for: focused)
         guard let range = selectedRange(focused) else { throw VoiceInsertionError.selectionUnavailable }
         var selectedTextSettable = DarwinBoolean(false)
         var selectedRangeSettable = DarwinBoolean(false)
@@ -33,7 +36,8 @@ final class VoiceTextInsertionSession {
         return VoiceTextInsertionSession(
             element: focused,
             range: range,
-            anchorPoint: caretPoint(focused, range: range)
+            anchorPoint: caretPoint(focused, range: range),
+            appBundleIdentifier: application.bundleIdentifier
         )
     }
 

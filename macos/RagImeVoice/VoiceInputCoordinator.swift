@@ -17,7 +17,7 @@ final class VoiceInputCoordinator {
     private let overlay = VoiceOverlayController()
     private var credentials: VoiceASRCredentials?
     private var hotwordConfig = VoiceASRHotwordConfig.disabled
-    private var asr: VolcengineStreamingASRClient?
+    private var asr: VoiceStreamingASRClient?
     private var insertion: VoiceTextInsertionSession?
     private var reconciler = VoiceTranscriptReconciler()
     private var state: State = .idle
@@ -27,6 +27,7 @@ final class VoiceInputCoordinator {
     private var finalTimeout: DispatchWorkItem?
     private var telemetry = VoiceSessionTelemetry.idle
     private var releasedAtMs: Int?
+    private var committedVoiceTextRecorded = false
 
     init() {
         credentials = VoiceKeychainStore.loadCredentials()
@@ -41,14 +42,14 @@ final class VoiceInputCoordinator {
     }
 
     var statusText: String {
-        if credentials?.isComplete != true { return "未配置豆包 ASR" }
+        if credentials?.isComplete != true { return "未配置语音服务" }
         if !AXIsProcessTrusted() { return "等待辅助功能权限" }
         if !hotkeyInstalled { return "语音快捷键未启动" }
         switch state {
         case .idle: return VoiceAudioRecorder.permissionGranted ? "语音输入已就绪" : "首次使用时申请麦克风权限"
         case .starting: return "正在启动语音输入"
         case .recording: return "正在听写"
-        case .finalizing: return "正在等待豆包定稿"
+        case .finalizing: return "正在等待最终定稿"
         }
     }
 
@@ -102,7 +103,7 @@ final class VoiceInputCoordinator {
         guard state == .idle else { return }
         hotkeyPressed = true
         guard let credentials, credentials.isComplete else {
-            overlay.showError("请先在控制中心配置豆包 App ID 与 Access Token")
+            overlay.showError("请先在控制中心配置语音服务凭据")
             return
         }
         let insertion: VoiceTextInsertionSession
@@ -118,6 +119,7 @@ final class VoiceInputCoordinator {
         self.insertion = insertion
         reconciler = VoiceTranscriptReconciler()
         releasedAtMs = nil
+        committedVoiceTextRecorded = false
         telemetry = VoiceSessionTelemetry(
             networkState: "starting",
             sessionActive: true,
@@ -151,9 +153,9 @@ final class VoiceInputCoordinator {
             abortForUnsafeTarget(error)
             return
         }
-        let client = VolcengineStreamingASRClient(
+        let client = VoiceStreamingASRFactory.make(
             credentials: credentials,
-            hotwordConfig: hotwordConfig
+            hotwordConfig: credentials.provider.supportsHotwords ? hotwordConfig : .disabled
         ) { [weak self] event in
             DispatchQueue.main.async {
                 guard let self, generation == self.sessionGeneration else { return }
@@ -228,6 +230,7 @@ final class VoiceInputCoordinator {
                 finalLatencyMs: releasedAtMs.map { max(0, nowMs - $0) },
                 finalReceived: true
             )
+            recordCommittedVoiceTextIfNeeded(text)
             overlay.showDone(text)
             finishSession()
         case .failure(let message):
@@ -237,7 +240,9 @@ final class VoiceInputCoordinator {
             if reconciler.currentText.isEmpty {
                 fail(message)
             } else {
-                overlay.showError("网络中断，已保留当前转写")
+                // A partial transcript may stay visible for the user to recover,
+                // but it is never promoted into history/memory without a Final.
+                overlay.showError("网络中断，临时稿未记入历史")
                 finishSession()
             }
         case .transport(let networkState):
@@ -267,7 +272,7 @@ final class VoiceInputCoordinator {
 
     private func forwardPCMIfSafe(
         _ data: Data,
-        to client: VolcengineStreamingASRClient,
+        to client: VoiceStreamingASRClient,
         generation: Int
     ) {
         guard generation == sessionGeneration,
@@ -327,14 +332,20 @@ final class VoiceInputCoordinator {
         onStateChanged?()
     }
 
+    private func recordCommittedVoiceTextIfNeeded(_ text: String) {
+        guard !committedVoiceTextRecorded, let insertion else { return }
+        committedVoiceTextRecorded = true
+        VoiceCommitRecorder.record(text: text, appBundleIdentifier: insertion.appBundleIdentifier)
+    }
+
     private func scheduleFinalTimeout() {
         finalTimeout?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.state == .finalizing else { return }
             if self.reconciler.currentText.isEmpty {
-                self.fail("豆包定稿超时")
+                self.fail("语音定稿超时")
             } else {
-                self.overlay.showError("定稿超时，已保留当前转写")
+                self.overlay.showError("定稿超时，临时稿未记入历史")
                 self.finishSession()
             }
         }

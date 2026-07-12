@@ -11,6 +11,8 @@ CHECK_INPUT_SOURCE_SCRIPT="${RAG_IME_CHECK_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/ch
 SELECT_INPUT_SOURCE_SCRIPT="${RAG_IME_SELECT_INPUT_SOURCE_SCRIPT:-$ROOT/scripts/select_macos_input_source.sh}"
 TRACE_CHECK_SCRIPT="${RAG_IME_TRACE_CHECK_SCRIPT:-$ROOT/scripts/check_squirrel_frontend_trace.py}"
 SOAK_CHECK_SCRIPT="${RAG_IME_SOAK_CHECK_SCRIPT:-$ROOT/scripts/check_squirrel_soak_report.py}"
+FOREGROUND_ENV_CHECK_SCRIPT="${RAG_IME_FOREGROUND_ENV_CHECK_SCRIPT:-$ROOT/scripts/check_macos_foreground_environment.py}"
+FOREGROUND_ENV_REPORT="${RAG_IME_FOREGROUND_ENV_REPORT:-/tmp/rag-ime-foreground-environment.json}"
 SOAK_REPORT_PATH="${RAG_IME_SQUIRREL_SOAK_REPORT_PATH:-/tmp/rag-ime-v1-soak-report.json}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
 OPEN_COMMAND="${RAG_IME_OPEN_COMMAND:-open}"
@@ -51,6 +53,8 @@ AUTO_KEY="${RAG_IME_FOREGROUND_TRACE_AUTO_KEY:-6}"
 AUTO_KEY_WAS_SET=0
 AUTO_TYPE_DELAY="${RAG_IME_FOREGROUND_TRACE_AUTO_DELAY_SECONDS:-2.5}"
 AUTO_CHAR_DELAY="${RAG_IME_FOREGROUND_TRACE_AUTO_CHAR_DELAY_SECONDS:-0.04}"
+APP_ACTIVATION_DELAY="${RAG_IME_FOREGROUND_APP_ACTIVATION_DELAY_SECONDS:-0.8}"
+ACTIVE_RAG_PROOF=0
 
 usage() {
   cat <<'USAGE'
@@ -276,6 +280,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --active-rag-proof)
+      ACTIVE_RAG_PROOF=1
       REQUIRE_MIXED_PANEL=0
       REQUIRE_SIDE_PANEL=0
       REQUIRE_SIDE_COMMIT=0
@@ -367,6 +372,18 @@ soak_args=(
   --wait "$WAIT_SECONDS"
   --print-last 8
 )
+if [[ "$ACTIVE_RAG_PROOF" == "1" ]]; then
+  # Explicit-generation proof has its own action/thinking/ready gates. Generic
+  # soak defaults require an accepted passive candidate and follow-up chain,
+  # which are intentionally outside this scenario and made a successful Active
+  # RAG trace report false.
+  soak_args+=(
+    --min-sidecar-applied 0
+    --min-panel-displays 0
+    --min-side-commits 0
+    --min-post-commit-followups 0
+  )
+fi
 if [[ "$REQUIRE_MIXED_PANEL" == "1" ]]; then
   soak_args+=(--require-mixed-panel)
 fi
@@ -464,6 +481,7 @@ max_first_visible_ms=$MAX_FIRST_VISIBLE_MS
 max_stale_apply_count=$MAX_STALE_APPLY_COUNT
 max_context_echo_count=$MAX_CONTEXT_ECHO_COUNT
 gate_mode=$gate_mode
+active_rag_proof=$ACTIVE_RAG_PROOF
 auto_type=$AUTO_TYPE
 auto_query=$AUTO_QUERY
 auto_key=$AUTO_KEY
@@ -474,20 +492,21 @@ select_input_source_script=$SELECT_INPUT_SOURCE_SCRIPT
 trace_check_command=$PYTHON_EXECUTABLE ${trace_args[*]}
 soak_check_command=$PYTHON_EXECUTABLE ${soak_args[*]}
 gate_command=$PYTHON_EXECUTABLE ${gate_args[*]}
+foreground_environment_check_command=$PYTHON_EXECUTABLE $FOREGROUND_ENV_CHECK_SCRIPT --require-ready --report-path $FOREGROUND_ENV_REPORT
 EOF
   exit 0
+fi
+
+if ! "$PYTHON_EXECUTABLE" "$FOREGROUND_ENV_CHECK_SCRIPT" \
+  --require-ready --report-path "$FOREGROUND_ENV_REPORT"; then
+  echo "Foreground acceptance is blocked by the current macOS session; no trace was cleared and no input source was changed." >&2
+  exit 75
 fi
 
 if [[ "$REQUIRE_HITOOLBOX_ENABLED" == "1" ]]; then
   "$CHECK_INPUT_SOURCE_SCRIPT" --require-hitoolbox-enabled "$INPUT_SOURCE_ID"
 else
   "$CHECK_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
-fi
-
-if [[ "$SELECT_INPUT_SOURCE" == "1" ]]; then
-  "$SELECT_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
-else
-  "$CHECK_INPUT_SOURCE_SCRIPT" --require-selected "$INPUT_SOURCE_ID"
 fi
 
 if [[ "$CLEAR_TRACE" == "1" ]]; then
@@ -517,6 +536,19 @@ PY
     echo "warning: failed to open $OPEN_APP with $TEST_FILE" >&2
     echo "Open any normal editor manually and type with Squirrel selected." >&2
   }
+  # `open -a` returns before the application necessarily owns the active text
+  # context. Give macOS time to establish the per-app input-source context
+  # before calling TISSelectInputSource.
+  sleep "$APP_ACTIVATION_DELAY"
+fi
+
+# macOS can remember an input source per application/document. Select only
+# after the target editor is frontmost; selecting while the terminal owns focus
+# can succeed briefly and then revert to ABC as soon as TextEdit activates.
+if [[ "$SELECT_INPUT_SOURCE" == "1" ]]; then
+  "$SELECT_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
+else
+  "$CHECK_INPUT_SOURCE_SCRIPT" --require-selected "$INPUT_SOURCE_ID"
 fi
 
 if [[ "$AUTO_TYPE" == "1" ]]; then
@@ -537,11 +569,19 @@ on run argv
       keystroke (character charIndex of queryText)
       delay charDelaySeconds
     end repeat
+    -- Explicit knowledge generation is a post-commit action. Commit the Rime
+    -- composition first; otherwise Ctrl+. is correctly consumed by the active
+    -- composition and the verifier produces a false negative.
+    if actionKey is "ctrl-period" or actionKey is "control-period" or actionKey is "ctrl-." or actionKey is "control-." then
+      key code 36
+    end if
     delay waitSeconds
     if actionKey is "tab" then
       key code 48
     else if actionKey is "ctrl-period" or actionKey is "control-period" or actionKey is "ctrl-." or actionKey is "control-." then
-      keystroke "." using control down
+      -- Use the physical ANSI period key. `keystroke "."` can be translated
+      -- through the active keyboard layout before IMK sees it.
+      key code 47 using control down
     else if actionKey is "ctrl-enter" or actionKey is "control-enter" then
       key code 36 using control down
     else if actionKey is "ctrl-return" or actionKey is "control-return" then

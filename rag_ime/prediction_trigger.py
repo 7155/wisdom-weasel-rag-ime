@@ -22,10 +22,10 @@ _ACCEPTED_CONTINUATION_CALLS_PER_10S = 8
 
 @dataclass(frozen=True)
 class PredictionTriggerConfig:
-    idle_ms: int = 500
-    min_delta_chars: int = 6
-    max_calls_per_10s: int = 2
-    ignore_cooldown_ms: int = 1500
+    idle_ms: int = 180
+    min_delta_chars: int = 1
+    max_calls_per_10s: int = 10
+    ignore_cooldown_ms: int = 0
     direct_memory_threshold: float = 0.86
 
 
@@ -126,7 +126,10 @@ class PredictionTrigger:
         if state.context_hash and state.context_hash == state.last_called_hash:
             return self._consume_skip(group, state, "duplicate_context_hash")
         if current < state.cooldown_until_ms and not state.accepted_continuation:
-            return self._consume_skip(group, state, "cooldown")
+            # Keep the burst dirty: an empty result may only mean the previous
+            # suffix was incomplete. The next poll or commit must be allowed to
+            # retry instead of silently losing the user's new Chinese input.
+            return self._decision("skip", "cooldown", group, state)
         if not (state.dirty_chars >= self.config.min_delta_chars or state.punctuation or state.accepted_continuation):
             return self._decision("skip", "minimum_delta_not_reached", group, state)
         self._prune_calls(state, current)

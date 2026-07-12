@@ -27,18 +27,19 @@ final class RagImeSuggestionRowView: NSView {
     sourceBar.wantsLayer = true
     sourceBar.layer?.cornerRadius = 1
     sourceIcon.imageScaling = .scaleProportionallyDown
-    sourceIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
-    sourceLabel.font = .systemFont(ofSize: 10.5, weight: .semibold)
+    sourceIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+    sourceLabel.font = RagImeAssistantTypography.source
     sourceLabel.lineBreakMode = .byTruncatingTail
     sourceLabel.maximumNumberOfLines = 1
-    candidateLabel.font = .systemFont(ofSize: 14)
+    sourceLabel.isHidden = true
+    candidateLabel.font = RagImeAssistantTypography.candidate(primary: false)
     candidateLabel.textColor = .labelColor
     candidateLabel.lineBreakMode = .byTruncatingTail
     candidateLabel.maximumNumberOfLines = 1
-    shortcutLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
+    shortcutLabel.font = RagImeAssistantTypography.shortcut
     shortcutLabel.textColor = .tertiaryLabelColor
     shortcutLabel.lineBreakMode = .byClipping
-    shortcutLabel.alignment = .right
+    shortcutLabel.alignment = .center
     shortcutPlate.wantsLayer = true
     shortcutPlate.layer?.cornerRadius = 5
     shortcutPlate.layer?.borderWidth = 0.5
@@ -59,13 +60,14 @@ final class RagImeSuggestionRowView: NSView {
 
   override func layout() {
     super.layout()
-    sourceBar.frame = NSRect(x: 0, y: 8, width: 3, height: 20)
-    sourceIcon.frame = NSRect(x: 12, y: 10, width: 16, height: 16)
-    sourceLabel.frame = NSRect(x: 33, y: 9, width: 34, height: 18)
-    shortcutPlate.frame = NSRect(x: bounds.width - 80, y: 7, width: 68, height: 22)
-    shortcutLabel.frame = NSRect(x: bounds.width - 76, y: 9, width: 60, height: 18)
-    candidateLabel.frame = NSRect(x: 76, y: 7, width: max(52, bounds.width - 164), height: 22)
-    separatorView.frame = NSRect(x: 76, y: 0, width: max(0, bounds.width - 88), height: 1)
+    let centerY = bounds.midY
+    sourceBar.frame = NSRect(x: 0, y: centerY - 12, width: 3, height: 24)
+    shortcutPlate.frame = NSRect(x: 12, y: centerY - 12, width: 38, height: 24)
+    shortcutLabel.frame = NSRect(x: 14, y: centerY - 10, width: 34, height: 20)
+    sourceIcon.frame = NSRect(x: 60, y: centerY - 8.5, width: 17, height: 17)
+    sourceLabel.frame = .zero
+    candidateLabel.frame = NSRect(x: 86, y: centerY - 13, width: max(52, bounds.width - 98), height: 26)
+    separatorView.frame = NSRect(x: 86, y: 0, width: max(0, bounds.width - 98), height: 1)
     hitButton.frame = bounds
   }
 
@@ -110,20 +112,22 @@ final class RagImeSuggestionRowView: NSView {
     shortcutLabel.stringValue = shortcut
     sourceLabel.textColor = sourceTint
     shortcutLabel.textColor = isPrimary ? .controlAccentColor : .secondaryLabelColor
-    candidateLabel.font = .systemFont(ofSize: candidateLabel.font?.pointSize ?? 14, weight: isPrimary ? .medium : .regular)
+    candidateLabel.font = RagImeAssistantTypography.candidate(
+      pointSize: candidateLabel.font?.pointSize ?? RagImeAssistantTypography.defaultCandidateSize,
+      primary: isPrimary
+    )
     let contextHint = modelContextHint(for: candidate)
     toolTip = contextHint ?? (candidate.evidencePreview.isEmpty ? nil : candidate.evidencePreview)
     sourceIcon.toolTip = contextHint ?? sourceLabel.stringValue
-    hitButton.setAccessibilityLabel("\(sourceLabel.stringValue) \(candidateLabel.stringValue), \(shortcut)")
+    let accessibilityShortcut = isPrimary ? "Tab 或 Option+1" : shortcut
+    shortcutLabel.toolTip = accessibilityShortcut
+    hitButton.setAccessibilityLabel("\(sourceLabel.stringValue) \(candidateLabel.stringValue), \(accessibilityShortcut)")
     updateAppearance()
   }
 
   func applyCandidateFontSize(_ pointSize: CGFloat) {
     let clamped = min(max(pointSize, 11), 18)
-    let weight = candidateLabel.font?.fontDescriptor.symbolicTraits.contains(.bold) == true
-      ? NSFont.Weight.medium
-      : NSFont.Weight.regular
-    candidateLabel.font = .systemFont(ofSize: clamped, weight: weight)
+    candidateLabel.font = RagImeAssistantTypography.candidate(pointSize: clamped, primary: isPrimary)
   }
 
   func animateContentIn(delay: TimeInterval, reduceMotion: Bool) {
@@ -168,12 +172,12 @@ final class RagImeSuggestionRowView: NSView {
   private func sourceLabelText(for candidate: RagImeDisplayCandidate) -> String {
     let configured = (candidate.sourceBadge ?? candidate.badge ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     let normalized = configured.lowercased()
-    if normalized.contains("deepseek") || normalized == "ds" || configured.contains("生成") { return "DS" }
+    if normalized.contains("deepseek") || normalized == "ds" || configured.contains("生成") { return "生成" }
     switch candidate.sourceType {
     case "model": return "模型"
     case "rag": return "RAG"
     case "memory": return "记忆"
-    case "deepseek", "ds": return "DS"
+    case "deepseek", "ds": return "生成"
     default:
       if !configured.isEmpty { return String(configured.prefix(2)) }
       return "AI"
@@ -183,7 +187,7 @@ final class RagImeSuggestionRowView: NSView {
   private func modelContextHint(for candidate: RagImeDisplayCandidate) -> String? {
     guard candidate.sourceType == "model" else { return nil }
     guard case .number(let total)? = candidate.metadata["modelContextChars"], total > 0 else {
-      return "MiniMind · 当前输入上下文"
+      return "本地预测 · 当前输入上下文"
     }
     let groupChars: Int
     if case .number(let value)? = candidate.metadata["groupContextChars"] {
@@ -192,14 +196,14 @@ final class RagImeSuggestionRowView: NSView {
       groupChars = 0
     }
     if groupChars > 0 {
-      return "MiniMind · 上下文 \(Int(total)) 字，含连续输入 \(groupChars) 字"
+      return "本地预测 · 上下文 \(Int(total)) 字，含连续输入 \(groupChars) 字"
     }
-    return "MiniMind · 上下文 \(Int(total)) 字"
+    return "本地预测 · 上下文 \(Int(total)) 字"
   }
 
   private func sourceSymbolName(for candidate: RagImeDisplayCandidate) -> String {
     switch sourceLabelText(for: candidate) {
-    case "DS": return "bolt.horizontal.circle"
+    case "生成": return "bolt.horizontal.circle"
     case "RAG": return "doc.text.magnifyingglass"
     case "记忆": return "clock.arrow.circlepath"
     default: return "sparkles"

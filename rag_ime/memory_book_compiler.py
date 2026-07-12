@@ -47,6 +47,7 @@ _IPV4_CANDIDATE_RE = re.compile(r"(?<![0-9A-Za-z_.])(?:\d{1,3}\.){3}\d{1,3}(?![0
 _IPV6_CANDIDATE_RE = re.compile(
     r"(?<![0-9A-Fa-f:])(?=[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:)(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])"
 )
+_RIME_PINYIN_RE = re.compile(r"^[a-zv]+(?: [a-zv]+)*$")
 _PATH_RE = re.compile(
     r"(?:(?:/(?:Users|Volumes|home)/|~/)[^\s\"']+|(?:[A-Za-z]:\\(?:Users\\)?|\\\\[^\\\s]+\\[^\\\s]+\\)[^\s\"']+)",
     re.IGNORECASE,
@@ -199,20 +200,29 @@ def memory_book_plan_from_compile_output(
 ) -> dict[str, object]:
     diffs: list[dict[str, object]] = []
     warnings = list(compile_output.get("warnings") or [])
-    for item in _list_of_dicts(compile_output.get("dailyBooks")):
+    book_items = [
+        *(("daily", item) for item in _list_of_dicts(compile_output.get("dailyBooks"))),
+        *(("topic", item) for item in _list_of_dicts(compile_output.get("topicBooks"))),
+    ]
+    for default_book_type, item in book_items:
         title = compact_whitespace(str(item.get("title") or ""))
         summary = compact_whitespace(str(item.get("summary") or ""))
         if not title and not summary:
             continue
-        book_key = compact_whitespace(str(item.get("bookKey") or "")) or _default_book_key(source_bundle)
-        book_id = compact_whitespace(str(item.get("bookId") or "")) or f"book:daily:{book_key}"
+        if default_book_type == "topic":
+            default_book_key = f"topic-{stable_text_hash(title or summary).removeprefix('sha256:')[:16]}"
+        else:
+            default_book_key = _default_book_key(source_bundle)
+        book_key = compact_whitespace(str(item.get("bookKey") or "")) or default_book_key
+        book_type = compact_whitespace(str(item.get("bookType") or default_book_type)) or default_book_type
+        book_id = compact_whitespace(str(item.get("bookId") or "")) or f"book:{book_type}:{book_key}"
         source_ids = _positive_ints(item.get("sourceEventIds")) or _infer_source_event_ids(
             [book_key, title, summary, *_strings(item.get("tags")), *_strings(item.get("surfaceHints"))],
             source_bundle=source_bundle,
         )
         payload = {
             "bookId": book_id,
-            "bookType": compact_whitespace(str(item.get("bookType") or "daily")) or "daily",
+            "bookType": book_type,
             "bookKey": book_key,
             "title": title,
             "summary": summary,
@@ -298,6 +308,8 @@ def memory_book_plan_from_compile_output(
         text = compact_whitespace(str(item.get("text") or ""))
         if len(text) < 2 or len(text) > 18:
             continue
+        pinyin = _normalized_rime_pinyin(item.get("pinyin"))
+        review_source = "dsv4" if compact_whitespace(provider).lower() in {"deepseek", "deepseek-v4", "dsv4"} else "memory"
         target = f"phrase:{normalize_text(text)}"
         source_ids = _positive_ints(item.get("sourceEventIds")) or _infer_source_event_ids(
             [text, *_strings(item.get("tags"))],
@@ -310,6 +322,9 @@ def memory_book_plan_from_compile_output(
                 "payload": {
                     "memoryId": target,
                     "text": text,
+                    "pinyin": pinyin,
+                    "reviewSource": review_source if pinyin else "memory",
+                    "reviewReason": compact_whitespace(str(item.get("reason") or "")),
                     "tags": _strings(item.get("tags")),
                     "sourceEventIds": source_ids,
                     "weight": _bounded_float(item.get("weight"), default=0.6),
@@ -372,7 +387,10 @@ def memory_book_plan_from_compile_output(
             warnings.append("daily_book_synthesized_from_atoms")
     if _allow_fallback and not diffs and source_bundle:
         fallback_output = _fallback_compile_output_from_source_bundle(source_bundle, project=project)
-        if any(fallback_output.get(key) for key in ("dailyBooks", "memoryAtoms", "tagEdges", "phraseCandidates")):
+        if any(
+            fallback_output.get(key)
+            for key in ("dailyBooks", "topicBooks", "memoryAtoms", "tagEdges", "phraseCandidates")
+        ):
             fallback_warnings = list(fallback_output.get("warnings") or [])
             fallback_output["warnings"] = [*warnings, *fallback_warnings]
             fallback_output["elapsedMs"] = int(compile_output.get("elapsedMs") or 0)
@@ -462,6 +480,9 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
             text = compact_whitespace(str(payload.get("text") or ""))
             if len(text) < 2 or len(text) > 18:
                 errors.append(_issue(index, op, "text", "phrase_text_length_out_of_range", value=len(text), preview=truncate_text(text, 80)))
+            pinyin = compact_whitespace(str(payload.get("pinyin") or ""))
+            if pinyin and not _RIME_PINYIN_RE.fullmatch(pinyin):
+                errors.append(_issue(index, op, "pinyin", "invalid_rime_pinyin", preview=truncate_text(pinyin, 80)))
             _validate_secret_free(errors, index, op, payload, ("text", "tags"))
         elif op == "add_negative_phrase":
             counts["negativePhrases"] += 1
@@ -543,6 +564,81 @@ def store_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
         raise ValueError("memory book runId is required")
     with conn:
         _persist_memory_book_run(conn, plan)
+    return memory_book_run_payload(conn, run_id=run_id)
+
+
+def update_stored_memory_book_diff(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    diff_id: int,
+    payload: dict[str, object] | None = None,
+    selected: bool = True,
+) -> dict[str, object]:
+    """Edit or include/exclude one draft operation before the atomic apply step."""
+    current = memory_book_run_payload(conn, run_id=run_id)
+    if not current.get("provider"):
+        raise ValueError(f"memory book run not found: {run_id}")
+    if str(current.get("status") or "") != "draft":
+        raise ValueError("only draft memory book runs can be edited")
+    row = conn.execute(
+        """
+        SELECT id, op, target_memory_id, payload_json, status
+        FROM memory_cleanup_diffs
+        WHERE run_id = ? AND id = ?
+        LIMIT 1
+        """,
+        (run_id, int(diff_id)),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"memory book diff not found: {diff_id}")
+    if str(row["status"] or "") not in {"pending", "approved", "rejected"}:
+        raise ValueError("applied memory book diffs cannot be edited")
+
+    next_payload = dict(payload) if payload is not None else json.loads(row["payload_json"] or "{}")
+    next_status = "approved" if selected else "rejected"
+    if selected:
+        metadata = dict(current.get("metadata") or {})
+        selected_diffs: list[dict[str, object]] = []
+        for item in current.get("diffs") or []:
+            if not isinstance(item, dict):
+                continue
+            item_id = int(item.get("diffId") or 0)
+            item_status = next_status if item_id == int(diff_id) else str(item.get("status") or "pending")
+            if item_status == "rejected":
+                continue
+            selected_diffs.append(
+                {
+                    "op": str(item.get("op") or ""),
+                    "targetId": str(item.get("targetId") or ""),
+                    "payload": next_payload if item_id == int(diff_id) else dict(item.get("payload") or {}),
+                    "status": item_status,
+                }
+            )
+        validation = inspect_memory_book_plan(
+            {
+                "schemaVersion": MEMORY_BOOK_RUN_SCHEMA_VERSION,
+                "runId": run_id,
+                "provider": str(current.get("provider") or ""),
+                "model": str(current.get("model") or ""),
+                "summary": str(current.get("summary") or ""),
+                "metadata": metadata,
+                "diffs": selected_diffs,
+            }
+        )
+        if not validation.get("ok"):
+            first_error = next(iter(validation.get("errors") or []), {})
+            raise ValueError(f"draft edit failed validation: {first_error.get('reason') or 'invalid payload'}")
+
+    with conn:
+        conn.execute(
+            """
+            UPDATE memory_cleanup_diffs
+            SET payload_json = ?, status = ?
+            WHERE run_id = ? AND id = ?
+            """,
+            (json.dumps(next_payload, ensure_ascii=False, sort_keys=True), next_status, run_id, int(diff_id)),
+        )
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -1495,6 +1591,11 @@ def _group_for_source_ids(source_ids: list[int], *, source_bundle: dict[str, obj
         if event_id in wanted and group_id:
             return group_id
     return ""
+
+
+def _normalized_rime_pinyin(value: object) -> str:
+    pinyin = " ".join(compact_whitespace(str(value or "")).lower().split())
+    return pinyin if _RIME_PINYIN_RE.fullmatch(pinyin) else ""
 
 
 def _validate_required_text(errors: list[dict[str, object]], index: int, op: str, payload: dict[str, object], field: str) -> None:

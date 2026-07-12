@@ -3,11 +3,19 @@ from __future__ import annotations
 import sqlite3
 
 from .active_rag_models import ActiveRagEvidence, ActiveRagFrame
+from .embeddings import EmbeddingProvider
 from .hybrid_rag_models import HybridRagCandidate, HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidate_objects
 from .local_sqlite_core import LocalSqliteCoreClient
 from .retrieval_docs import rebuild_retrieval_docs
-from .text_utils import compact_whitespace
+from .text_utils import compact_whitespace, token_terms
+
+
+_GENERIC_CONTEXT_TERMS = {
+    "这里", "当前", "前台", "上下文", "测试", "输入", "生成", "内容", "这个", "那个",
+    "目前", "应该", "需要", "没有", "可以", "进行", "一个", "一下", "问题", "功能",
+}
+_TEMPORAL_RECALL_TERMS = {"今天", "昨天", "最近", "本周", "上周", "上午", "下午", "晚上", "回忆"}
 
 
 def retrieve_active_rag_evidence(
@@ -25,18 +33,28 @@ def retrieve_active_rag_evidence(
         lane_weights=lane_weights,
     )
     with core._connect() as conn:
-        candidates = _retrieve_candidates_with_rebuild(conn, query)
+        candidates = _retrieve_candidates_with_rebuild(
+            conn,
+            query,
+            embedding_provider=core.embedding_provider,
+        )
+    candidates = _relevant_active_rag_candidates(candidates, frame=frame)
     return tuple(_evidence_from_candidate(candidate) for candidate in candidates)
 
 
-def _retrieve_candidates_with_rebuild(conn: sqlite3.Connection, query: HybridRagQuery) -> list[HybridRagCandidate]:
+def _retrieve_candidates_with_rebuild(
+    conn: sqlite3.Connection,
+    query: HybridRagQuery,
+    *,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> list[HybridRagCandidate]:
     try:
-        candidates = retrieve_hybrid_rag_candidate_objects(conn, query)
+        candidates = retrieve_hybrid_rag_candidate_objects(conn, query, embedding_provider)
     except sqlite3.OperationalError as exc:
         if "memory_retrieval_docs" not in str(exc):
             raise
         rebuild_retrieval_docs(conn, project=query.project)
-        candidates = retrieve_hybrid_rag_candidate_objects(conn, query)
+        candidates = retrieve_hybrid_rag_candidate_objects(conn, query, embedding_provider)
     if candidates:
         return candidates
     try:
@@ -45,7 +63,7 @@ def _retrieve_candidates_with_rebuild(conn: sqlite3.Connection, query: HybridRag
         return []
     if int(report.get("docCount") or 0) <= 0:
         return []
-    return retrieve_hybrid_rag_candidate_objects(conn, query)
+    return retrieve_hybrid_rag_candidate_objects(conn, query, embedding_provider)
 
 
 def _query_from_frame(
@@ -62,17 +80,20 @@ def _query_from_frame(
         "summarize": "总结 压缩 重点",
         "debug": "排错 原因 修复",
     }
-    query_text = compact_whitespace(" ".join(item for item in (selected, intent_terms.get(frame.intent, frame.intent), context) if item))
+    intent_term = intent_terms.get(frame.intent, "")
+    query_text = compact_whitespace(" ".join(item for item in (selected, intent_term) if item))
     return HybridRagQuery(
-        query_text=query_text or selected,
+        query_text=query_text or context[-240:],
         raw_input=selected,
         preedit=selected[:80],
-        committed_tail=context,
+        committed_tail=context[-400:],
         rime_candidates=(),
         project=frame.project,
         app=frame.app or frame.front_app_bundle_id,
         input_mode="active_rag_assist",
-        top_k=max(1, min(12, int(frame.max_candidates) * 3)),
+        # Explicit knowledge generation needs enough evidence to rerank even
+        # when only one final text candidate is requested.
+        top_k=12,
         latency_budget_ms=2500,
         enabled_lanes=enabled_lanes,
         lane_weights=lane_weights,
@@ -80,9 +101,14 @@ def _query_from_frame(
 
 
 def _evidence_from_candidate(candidate: HybridRagCandidate) -> ActiveRagEvidence:
+    text = candidate.text
+    preview_prefix = compact_whitespace(candidate.evidence_preview).split("：", 1)[0].split(":", 1)[0]
+    if candidate.source_type not in {"phrase", "surface_phrase"} and len(compact_whitespace(text)) < 4:
+        if 4 <= len(preview_prefix) <= 40:
+            text = preview_prefix
     return ActiveRagEvidence(
         evidence_id=candidate.candidate_id,
-        text=candidate.text,
+        text=text,
         source_type=candidate.source_type,
         source_lane=candidate.source_lane,
         score=candidate.score,
@@ -95,3 +121,48 @@ def _evidence_from_candidate(candidate: HybridRagCandidate) -> ActiveRagEvidence
         preview=candidate.evidence_preview,
         metadata={**dict(candidate.metadata), "activeRagEvidence": True},
     )
+
+
+def _relevant_active_rag_candidates(
+    candidates: list[HybridRagCandidate],
+    *,
+    frame: ActiveRagFrame,
+) -> list[HybridRagCandidate]:
+    """Drop retrieval hits that have rank support but no semantic evidence for this field.
+
+    Project/app/group priors help order relevant documents, but they must never
+    manufacture relevance on their own. This gate keeps generic foreground
+    text from surfacing a fixed top-k memory count.
+    """
+    basis = compact_whitespace(
+        " ".join(
+            value
+            for value in (
+                frame.selected_text,
+                frame.surrounding_before[-600:],
+                frame.surrounding_after[:120],
+            )
+            if value
+        )
+    )
+    terms = [term for term in token_terms(basis, max_terms=64) if len(term) >= 2 and term not in _GENERIC_CONTEXT_TERMS]
+    temporal_recall = any(term in basis for term in _TEMPORAL_RECALL_TERMS)
+    accepted: list[HybridRagCandidate] = []
+    for candidate in candidates:
+        metadata = dict(candidate.metadata)
+        lanes = {str(value) for value in metadata.get("lanes") or []}
+        haystack = compact_whitespace(
+            " ".join((candidate.text, candidate.evidence_preview, " ".join(candidate.tags)))
+        ).lower()
+        overlap = {term for term in terms if term.lower() in haystack}
+        raw_scores = metadata.get("rawScores") if isinstance(metadata.get("rawScores"), dict) else {}
+        vector_score = max(
+            (float(raw_scores.get(lane) or 0.0) for lane in ("vector_raw", "vector_tag_boost")),
+            default=0.0,
+        )
+        lexical_support = bool(overlap) and bool(lanes & {"bm25_raw", "bm25_tags", "tagmemo", "feedback"})
+        strong_vector_support = len(terms) >= 2 and vector_score >= 0.72 and candidate.confidence >= 0.65
+        temporal_support = temporal_recall and "time" in lanes
+        if lexical_support or strong_vector_support or temporal_support:
+            accepted.append(candidate)
+    return accepted

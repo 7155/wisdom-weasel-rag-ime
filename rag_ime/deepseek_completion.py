@@ -29,6 +29,7 @@ class DeepSeekCompletionRequest:
     max_chars: int = 24
     stream: bool = True
     latency_budget_ms: int = 2500
+    recovery_mode: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,10 @@ class DeepSeekV4FlashCompletionProvider:
         body = {
             "model": self.config.model,
             "messages": build_deepseek_completion_messages(request),
-            "temperature": 0.2,
+            # With no grounded evidence, the editable foreground is the only
+            # semantic source.  Deterministic decoding reduces unrelated names
+            # and speculative diagnosis while preserving streaming delivery.
+            "temperature": 0.0 if request.scene == "active_rag" and not request.evidence_pack else 0.2,
             "max_tokens": min(_completion_token_budget(request), _configured_completion_token_cap(self.config, request)),
             # Active RAG is an explicit user action and always benefits from
             # first-token delivery. Passive post-commit completion keeps the
@@ -89,8 +93,9 @@ class DeepSeekV4FlashCompletionProvider:
         started = time.perf_counter()
         seen: set[str] = set()
         content_buffer = ""
-        reasoning_buffer = ""
         yielded_count = 0
+        had_content = False
+        last_safe_partial = ""
         fallback_reason = "empty_remote_content"
         deadline = started + max(0.1, request.latency_budget_ms / 1000)
         for attempt_body in _completion_body_attempts(body):
@@ -100,18 +105,20 @@ class DeepSeekV4FlashCompletionProvider:
                 with self.urlopen(http_request, timeout=max(0.1, request.latency_budget_ms / 1000)) as response:
                     for kind, delta in _iter_model_deltas(response):
                         if kind == "reasoning":
-                            reasoning_buffer += delta
                             if time.perf_counter() >= deadline:
                                 fallback_reason = "budget_elapsed"
                                 budget_elapsed = True
                                 break
                             continue
                         content_buffer += delta
+                        had_content = True
                         content_buffer = content_buffer.replace("\\n", "\n").replace("\\r", "\r")
-                        if on_text_delta is not None and request.scene == "active_rag":
-                            partial_text = _active_rag_partial_candidate_text(content_buffer)
+                        if request.scene == "active_rag":
+                            partial_text = _active_rag_partial_candidate_text(content_buffer, request=request)
                             if partial_text:
-                                on_text_delta(partial_text)
+                                last_safe_partial = partial_text
+                                if on_text_delta is not None:
+                                    on_text_delta(partial_text)
                         lines = content_buffer.splitlines(keepends=True)
                         content_buffer = ""
                         for line in lines:
@@ -148,39 +155,30 @@ class DeepSeekV4FlashCompletionProvider:
                 yield item
                 if yielded_count >= max(1, int(request.max_candidates)):
                     return
-        if yielded_count == 0 and _reasoning_fallback_enabled(request):
-            for item in _candidates_from_reasoning(reasoning_buffer, request=request, seen=seen, started=started):
-                yielded_count += 1
-                yield item
-                if yielded_count >= max(1, int(request.max_candidates)):
-                    return
-        if yielded_count == 0 and request.scene == "active_rag":
-            for item in _candidates_from_request_fallback(
-                request=request,
-                seen=seen,
-                started=started,
-                fallback_reason=fallback_reason,
-            ):
-                yielded_count += 1
-                yield item
-                if yielded_count >= max(1, int(request.max_candidates)):
-                    return
-
-
-def fallback_deepseek_completion_candidates(
-    request: DeepSeekCompletionRequest,
-    *,
-    fallback_reason: str = "visible_timeout",
-) -> tuple[CompletionCandidateDelta, ...]:
-    """Build a governed Active RAG candidate when the remote lane is unavailable."""
-    return tuple(
-        _candidates_from_request_fallback(
+        # reasoning_content is never user-visible. More importantly, an
+        # explicit, paid generation must never be replaced by a locally
+        # fabricated paragraph: the user would otherwise see a request echo as
+        # if it came from the remote model. Surface a retriable error instead.
+        if yielded_count == 0 and request.scene == "active_rag" and _stable_partial_can_finish(
+            last_safe_partial,
             request=request,
-            seen=set(),
-            started=time.perf_counter(),
-            fallback_reason=fallback_reason,
-        )
-    )
+        ):
+            yield CompletionCandidateDelta(
+                text=last_safe_partial,
+                insert_text=last_safe_partial,
+                done=True,
+                metadata={
+                    "scene": request.scene,
+                    "elapsedMs": int((time.perf_counter() - started) * 1000),
+                    "model": "deepseek_v4_flash",
+                    "parseMode": "safe_stream_final",
+                    "fallbackReason": "final_content_rejected_after_safe_stream",
+                },
+            )
+            return
+        if yielded_count == 0 and request.scene == "active_rag":
+            reason = "governor_rejected_content" if had_content else fallback_reason
+            raise DeepSeekCompletionError(f"active_rag_no_insertable_content:{reason}")
 
 
 def build_deepseek_completion_messages(request: DeepSeekCompletionRequest) -> list[dict[str, str]]:
@@ -231,9 +229,18 @@ def build_deepseek_completion_messages(request: DeepSeekCompletionRequest) -> li
 
 def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) -> list[dict[str, str]]:
     evidence = _redacted_evidence_pack(request.evidence_pack)
-    context_packet = _redacted_context_packet(request.context_packet)
+    foreground_only = not evidence
+    context_packet = _compact_active_rag_context_packet(request.context_packet)
     max_chars = max(4, int(request.max_chars))
     min_chars = 40 if max_chars >= 80 else 4
+    task_mode = _active_rag_task_mode(request)
+    task_instruction = {
+        "answer": "直接回答 currentRequest 中的问题或请求，只给答案正文，不重复问题。",
+        "rewrite": "只改写选中文本，不解释改写过程。",
+        "continue": "正文要像用户正在继续输入的新内容，能直接接在当前输入后。",
+    }[task_mode]
+    current_context = _tail_text(request.current_context, 900)
+    current_request = _active_rag_current_request(request, current_context=current_context)
     hints: list[str] = []
     for item in evidence[:6]:
         hints.extend(str(value) for value in item.get("surfaceHints", []) if compact_whitespace(str(value)))
@@ -248,13 +255,29 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
             "role": "system",
             "content": (
                 "你是 macOS 输入法的主动 RAG 预测器。你拿到光标上下文、最近输入、RAG 证据和 Notebook 记忆。"
-                "任务是预测用户光标处最可能继续输入的一段自然中文正文，只生成 1 个候选。"
+                "只生成 1 个可以直接插入或替换的中文结果。taskMode 已由客户端确定，不要再次判断或描述任务："
+                "taskMode=answer 时直接回答 currentRequest 里的问题或请求；"
+                "taskMode=continue 时只续写光标后的新内容；taskMode=rewrite 时只改写 selectedText。"
                 "如果 placement 是 insert_after_selection/append_at_cursor，就输出能接在 currentContext 后面的续写段落；"
                 "如果 placement 是 replace_selection，才输出对 selectedText 的改写。"
                 "selectedText 在 insert_after_selection/append_at_cursor 场景只是光标前文本锚点，不是示例，不要引用它来讲解。"
                 "第一句必须以“候选=”开头，等号后直接写候选内容。"
                 "不要解释，不要总结，不要 Markdown，不要输出任务标题，不要举例。"
                 "候选必须是一段完整的话，具体、可直接插入；不要复述 selectedText/currentContext/Notebook 原句。"
+                "禁止写元话语：不要说你将如何回答、补全、整理或围绕什么生成。"
+                "禁止出现“我会”“我将”“围绕”“继续补全当前表达”“把上下文”“真实意图”“整理成”“放到光标后”等措辞。"
+                "evidenceHints 可能包含用户刚输入的问题、短词或历史片段，它们只用于理解语境，不自动代表事实。"
+                "禁止把问句、关键词命中或 recent_input_context 当作答案依据。"
+                "回答 API、版本、数值、行为等可核验事实时，只有证据里出现明确结论才能据此断言；"
+                "RAG 没有相关证据时仍要依据 currentRequest/currentContext 完成写作、分析或排错请求，不能输出空结果提示。"
+                "当 groundingMode=foreground_only 时，currentRequest/currentContext 是唯一语义来源："
+                "不得使用最近输入、记忆或模型常识补出无关主题，不得添加上下文未出现的具体人物名、产品名、版本号、数字或故障原因。"
+                "没有推荐意图时禁止擅自推荐人物或作品；没有密钥、端点、认证或参数线索时禁止猜测 API 配置错误。"
+                "如果上下文不足以支持具体事实，只能围绕当前主题给出保守的下一句或明确需要补充的那一项。"
+                "只有 API、版本、数值、账号状态等可核验事实缺少明确证据时，才说明尚需核验，并给出一条具体核验动作。"
+                "禁止把“没有有效内容”“无有效候选”“未检索到内容”当作候选正文。"
+                "recoveryMode=true 时，说明上一版正文未通过候选治理；必须换一种更直接、更有新信息的表达，"
+                "只依据 currentRequest/currentContext 重新完成，不解释重试原因。"
                 "优先使用 currentInput，其次用 oneRing/timeline/notebook/RAG evidence 补全语义。"
                 "等号后的正文不要把“候选=”或输出格式当正文；如果用户正在讨论输入法候选质量，可以自然使用“候选”一词。"
                 "正文仍禁止出现“短语”“格式”“真实候选”“Notebook”“evidence”“oneRing”等提示词或字段名。"
@@ -265,18 +288,26 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
             "role": "user",
             "content": json.dumps(
                 {
-                    "currentContext": truncate_text(_redact_text(request.current_context), 300),
+                    "currentContext": _redact_text(current_context),
+                    "currentRequest": _redact_text(current_request),
                     "selectedText": truncate_text(_redact_text(request.selected_text), 160),
                     "maxCandidates": max(1, int(request.max_candidates)),
                     "maxChars": max_chars,
                     "intent": _context_packet_string(context_packet, "intent") or request.scene,
                     "placement": _context_packet_string(context_packet, "placement") or "insert_after_selection",
+                    "taskMode": task_mode,
+                    "recoveryMode": bool(request.recovery_mode),
+                    "groundingMode": "foreground_only" if foreground_only else "rag_grounded",
                     "contextPacket": context_packet,
                     "evidenceHints": _unique_candidates([truncate_text(item, 80) for item in hints])[:12],
                     "task": (
-                        f"写出光标处下一段 {min_chars} 到 {max_chars} 个中文字正文。"
-                        "正文要像用户正在继续输入的一段话，能直接接在当前输入后；"
+                        f"输出 {min_chars} 到 {max_chars} 个中文字。"
+                        f"{task_instruction}"
                         "禁止写“下一步/接下来/可以继续/根据上述/短语/格式/Notebook/evidence/oneRing”。"
+                        "禁止写“我会/我将/围绕/继续补全/把上下文/真实意图/整理成/放到光标后”；"
+                        "问句或关键词命中不是事实证据；RAG 为空不妨碍完成非事实型请求；"
+                        "groundingMode=foreground_only 时只能依赖 currentRequest/currentContext，禁止引入其中没有的人名、产品、数字和错误原因；"
+                        "可核验事实没有明确证据时要指出待核验项并给出具体核验动作，禁止猜测或只说没有有效内容；"
                         "如果当前语境就是输入法候选质量，可以自然写“候选”；"
                         "禁止写教学示例或产品说明，尤其不要以“例如/比如/可以描述/当用户输入/系统会”开头；"
                         "不要把 RAG 证据或 Notebook 标题原样显示。"
@@ -288,6 +319,67 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
             ),
         },
     ]
+
+
+def _active_rag_task_mode(request: DeepSeekCompletionRequest) -> str:
+    intent = _context_packet_string(request.context_packet or {}, "intent").lower()
+    if intent in {"answer", "query", "qa", "question"}:
+        return "answer"
+    if intent in {"rewrite", "polish", "replace"}:
+        return "rewrite"
+    placement = _context_packet_string(request.context_packet or {}, "placement")
+    if placement == "replace_selection" and not intent:
+        return "rewrite"
+    context = compact_whitespace(request.current_context)
+    tail = context[-180:]
+    if any(mark in tail for mark in ("?", "？")):
+        return "answer"
+    request_markers = (
+        "为什么",
+        "怎么",
+        "如何",
+        "是否",
+        "能不能",
+        "会不会",
+        "是什么",
+        "有哪些",
+        "帮我",
+        "请帮",
+        "解释",
+        "描述一下",
+        "看看",
+        "分析一下",
+        "告诉我",
+    )
+    return "answer" if any(marker in tail for marker in request_markers) else "continue"
+
+
+def _active_rag_current_request(request: DeepSeekCompletionRequest, *, current_context: str) -> str:
+    selected = compact_whitespace(request.selected_text)
+    placement = _context_packet_string(request.context_packet or {}, "placement")
+    selected_is_complete = len(selected) >= 8 or len(compact_whitespace(current_context)) <= len(selected) + 12
+    if selected and selected_is_complete and (
+        placement == "replace_selection" or not current_context or selected in current_context
+    ):
+        return _tail_text(selected, 240)
+    clauses = [compact_whitespace(item) for item in re.split(r"(?<=[。！？!?])", current_context)]
+    clauses = [item for item in clauses if item]
+    meaningful = [item for item in clauses if len(item) >= 8 and item != selected]
+    return _tail_text(meaningful[-1] if meaningful else (clauses[-1] if clauses else current_context), 240)
+
+
+def resolved_active_rag_current_request(request: DeepSeekCompletionRequest) -> str:
+    """Return the exact request text that the Active RAG prompt will use."""
+
+    current_context = _tail_text(request.current_context, 900)
+    return _active_rag_current_request(request, current_context=current_context)
+
+
+def _tail_text(text: str, max_chars: int) -> str:
+    value = compact_whitespace(text)
+    if len(value) <= max_chars:
+        return value
+    return "…" + value[-max(1, max_chars - 1) :].lstrip()
 
 
 def _context_packet_string(packet: dict[str, object], key: str) -> str:
@@ -408,14 +500,22 @@ def _chat_delta_text(payload: dict[str, Any]) -> str:
     return text if isinstance(text, str) else ""
 
 
-def _active_rag_partial_candidate_text(content: str) -> str:
+def _active_rag_partial_candidate_text(content: str, *, request: DeepSeekCompletionRequest) -> str:
     value = content.replace("\\n", "\n").replace("\\r", "\r")
     marker = "候选="
     if marker not in value:
         return ""
     value = value.split(marker, 1)[1]
     value = value.replace("```", "").strip().strip('"`')
-    return compact_whitespace(value)
+    value = _normalize_candidate_for_request(value, request=request)
+    if not value:
+        return ""
+    # A streamed preview must pass the same governor as the final candidate.
+    # Otherwise the UI can show a plausible fragment and then flip to an error
+    # when the completed response is rejected.
+    if not _candidate_allowed(value, request=request, seen=set()):
+        return ""
+    return value
 
 
 def _chat_delta_reasoning_text(payload: dict[str, Any]) -> str:
@@ -522,62 +622,6 @@ def _plain_candidate_texts(text: str) -> list[str]:
     return [stripped]
 
 
-def _candidates_from_reasoning(
-    reasoning: str,
-    *,
-    request: DeepSeekCompletionRequest,
-    seen: set[str],
-    started: float,
-) -> Iterator[CompletionCandidateDelta]:
-    for candidate in _candidate_texts_from_reasoning(reasoning):
-        candidate = _normalize_candidate_for_request(candidate, request=request)
-        if not _candidate_allowed(candidate, request=request, seen=seen):
-            continue
-        seen.add(candidate)
-        yield CompletionCandidateDelta(
-            text=candidate,
-            insert_text=candidate,
-            metadata={
-                "scene": request.scene,
-                "elapsedMs": int((time.perf_counter() - started) * 1000),
-                "model": "deepseek_v4_flash",
-                "parseMode": "reasoning_fallback",
-            },
-        )
-
-
-def _candidates_from_request_fallback(
-    *,
-    request: DeepSeekCompletionRequest,
-    seen: set[str],
-    started: float,
-    fallback_reason: str = "empty_remote_content",
-) -> Iterator[CompletionCandidateDelta]:
-    limit = max(1, int(request.max_candidates))
-    yielded = 0
-    for candidate in _request_fallback_candidate_texts(request):
-        candidate = _normalize_candidate_for_request(candidate, request=request)
-        if repeat_norm(candidate) == repeat_norm(request.selected_text):
-            continue
-        if not _candidate_allowed(candidate, request=request, seen=seen):
-            continue
-        seen.add(candidate)
-        yielded += 1
-        yield CompletionCandidateDelta(
-            text=candidate,
-            insert_text=candidate,
-            metadata={
-                "scene": request.scene,
-                "elapsedMs": int((time.perf_counter() - started) * 1000),
-                "model": "deepseek_v4_flash",
-                "parseMode": "request_fallback",
-                "fallbackReason": fallback_reason or "empty_remote_content",
-            },
-        )
-        if yielded >= limit:
-            break
-
-
 def _normalize_candidate_for_request(candidate: str, *, request: DeepSeekCompletionRequest) -> str:
     text = compact_whitespace(candidate)
     if _active_rag_paragraph_output(request):
@@ -585,130 +629,8 @@ def _normalize_candidate_for_request(candidate: str, *, request: DeepSeekComplet
     return compact_whitespace(text)
 
 
-def _request_fallback_candidate_texts(request: DeepSeekCompletionRequest) -> list[str]:
-    max_chars = max(4, int(request.max_chars))
-    selected = compact_whitespace(request.selected_text)
-    request_text = compact_whitespace(" ".join([request.current_context, selected]))
-    evidence_text = compact_whitespace(" ".join(_evidence_hint_texts(request.evidence_pack)))
-    haystack = compact_whitespace(" ".join([request_text, evidence_text]))
-    candidates: list[str] = []
-    if _active_rag_paragraph_output(request):
-        paragraph = _request_fallback_paragraph(request_text=request_text, evidence_text=evidence_text, selected=selected, max_chars=max_chars)
-        if paragraph:
-            candidates.append(paragraph)
-    else:
-        if "DeepSeek" in request_text and ("无输出" in request_text or "没输出" in request_text or "输出" in request_text):
-            candidates.append("修复DeepSeek输出")
-        if ("LLM" in request_text or "模型" in request_text) and (
-            "无输出" in request_text or "没输出" in request_text or "输出" in request_text
-        ):
-            candidates.append("修复LLM输出")
-        if ("LLM" in request_text or "模型" in request_text) and (
-            "不显示" in request_text or "没显示" in request_text or "消失" in request_text
-        ):
-            candidates.append("修复LLM显示")
-        if "RAG" in request_text and ("命中" in request_text or "检索" in request_text) and (
-            "DeepSeek" in request_text or "DS" in request_text
-        ):
-            candidates.append("接入RAG上下文")
-        if ("笔记本" in request_text or "Notebook" in request_text) and ("DeepSeek" in request_text or "DS" in request_text):
-            candidates.append("接入记忆笔记本")
-        if ("只有一个框" in request_text or "单框" in request_text) and ("候选" in request_text or "输出" in request_text):
-            candidates.append("修复候选显示")
-        if "记忆" in request_text and "笔记本" in request_text and ("初始化" in request_text or "整理" in request_text):
-            candidates.append("初始化记忆笔记本")
-        if "按钮" in request_text and "生成" in request_text and ("稳定" in request_text or "显示" in request_text):
-            candidates.append("稳定生成按钮")
-        if "DeepSeek" in request_text and "生成" in request_text and ("稳定" in request_text or "显示" in request_text):
-            candidates.append("稳定DeepSeek生成")
-        if "RAG" in request_text and "输入法" in request_text and ("面试" in request_text or "展示" in request_text):
-            candidates.append("RAG 输入法面试展示主线")
-        if "RAG" in request_text and "输入法" in request_text:
-            candidates.append("RAG输入法优化")
-        if selected:
-            if selected.endswith("优化") and len(selected) > 2:
-                candidates.append(f"{selected[:-2]}稳定化")
-            for suffix in ("方案", "处理", "优化"):
-                if not selected.endswith(suffix):
-                    candidates.append(f"{selected}{suffix}")
-    return [item for item in _unique_candidates(candidates) if 2 <= len(item) <= max_chars]
-
-
 def _active_rag_paragraph_output(request: DeepSeekCompletionRequest) -> bool:
     return request.scene == "active_rag" and int(request.max_chars or 0) >= 80
-
-
-def _request_fallback_paragraph(*, request_text: str, evidence_text: str, selected: str, max_chars: int) -> str:
-    if "RAG" in request_text and "输入法" in request_text and ("面试" in request_text or "展示" in request_text):
-        text = (
-            "RAG 输入法面试展示主线可以讲成本地优先、多路召回和记忆笔记本补上下文，"
-            "再由 DeepSeek 主动生成一段需要用户确认的正文。"
-        )
-    elif ("DeepSeek" in request_text or "DS" in request_text) and ("LLM" in request_text or "模型" in request_text):
-        text = (
-            "我会把 DeepSeek 主动生成和 LLM 预测显示拆成两条稳定链路，数字候选只保留模型预测，"
-            "主动生成通过快捷键触发，并根据当前输入、RAG 命中和记忆笔记本输出一段完整正文。"
-        )
-    elif "RAG" in request_text and ("记忆" in request_text or "笔记本" in request_text or "Notebook" in request_text):
-        text = (
-            "我会先用当前输入构造检索上下文，再把 RAG 证据、最近输入时间线和记忆笔记本合并给 DeepSeek，"
-            "让它生成一段能直接接在光标后的自然表达。"
-        )
-    elif "输入法" in request_text and ("展示" in request_text or "面试" in request_text):
-        text = "这个输入法项目可以重点展示本地预测、RAG 检索、记忆笔记本和显式生成四条链路，交互上保持数字候选稳定。"
-    elif selected:
-        text = f"我会围绕“{truncate_text(selected, 24)}”继续补全当前表达，把上下文里的真实意图整理成一段可放到光标后的中文正文。"
-    elif evidence_text:
-        text = f"我会结合当前输入和已命中的记忆线索，把“{truncate_text(evidence_text, 28)}”整理成一段自然、可直接续写的正文。"
-    else:
-        text = "我会根据当前输入、RAG 证据和记忆笔记本生成一段更完整的中文正文，避免只给短标题或泛化词。"
-    return _fit_request_fallback_paragraph(text, max_chars=max_chars)
-
-
-def _fit_request_fallback_paragraph(text: str, *, max_chars: int) -> str:
-    value = compact_whitespace(text)
-    if len(value) <= max_chars:
-        return value
-    return truncate_text(value, max_chars).rstrip("，；：、,.!?！？;:")
-
-
-def _evidence_hint_texts(evidence_pack: tuple[dict[str, object], ...]) -> list[str]:
-    hints: list[str] = []
-    for item in evidence_pack[:8]:
-        for key in ("surfaceHints", "surface_hints", "tags"):
-            raw_list = item.get(key)
-            if isinstance(raw_list, (list, tuple)):
-                hints.extend(compact_whitespace(str(value)) for value in raw_list if compact_whitespace(str(value)))
-        for key in ("preview", "summary", "evidencePreview", "evidence_preview", "title"):
-            value = compact_whitespace(str(item.get(key) or ""))
-            if value:
-                hints.append(value)
-    return hints
-
-
-def _candidate_texts_from_reasoning(reasoning: str) -> list[str]:
-    text = compact_whitespace(reasoning)
-    if not text:
-        return []
-    result: list[str] = []
-    for payload in _json_values_in_text(text):
-        result.extend(_candidate_texts_from_reasoning_payload(payload))
-    result = [item for item in result if not _placeholder_candidate(item)]
-    if result:
-        return _unique_candidates(result)
-    patterns = (
-        r"(?:候选\s*[=＝]\s*)(?P<text>[^\"“”\n。；;，,]{2,40})",
-        r"(?:我决定(?:生成|输出)|最终(?:选择|输出)|决定(?:生成|输出))\s*[\"“](?P<text>[^\"”]{2,40})[\"”]",
-        r"(?:可能(?:的)?候选|候选(?:词)?|例如|比如|考虑用|考虑|可以是)[^\"“”]{0,24}[\"“](?P<text>[^\"”]{2,40})[\"”]",
-        r"(?:候选(?:应该|可以)?(?:是|为|：|:)\s*[\"“]?)(?P<text>[^\"“”\n。；;，,]{2,40})",
-        r"[\"“](?P<text>[^\"”]{2,40})[\"”]\s*(?:更好|符合|作为|是一个|本身|这个候选|是参考|比较合适)",
-    )
-    for pattern in patterns:
-        for match in re.finditer(pattern, text):
-            value = compact_whitespace(match.group("text"))
-            if value and not _placeholder_candidate(value):
-                result.append(value)
-    return _unique_candidates(result)
 
 
 def _placeholder_candidate(text: str) -> bool:
@@ -746,21 +668,6 @@ def _generic_prompt_candidate(text: str, *, paragraph_mode: bool = False) -> boo
     if not paragraph_mode and (value.count("候选") >= 2 or "候选的" in value):
         return True
     return value.startswith("的") and any(marker in value for marker in ("候选", "短语", "内容", "文本"))
-
-
-def _candidate_texts_from_reasoning_payload(payload: object) -> list[str]:
-    if isinstance(payload, list):
-        result: list[str] = []
-        for item in payload:
-            if isinstance(item, (dict, list)):
-                result.extend(_candidate_texts_from_reasoning_payload(item))
-        return result
-    if not isinstance(payload, dict):
-        return []
-    candidate_keys = ("candidate", "surfaceText", "surface_text", "text", "insertText", "insert_text")
-    if "candidates" in payload or any(key in payload for key in candidate_keys):
-        return _candidate_texts_from_payload(payload)
-    return []
 
 
 def _candidate_texts_from_payload(payload: object) -> list[str]:
@@ -856,10 +763,6 @@ def _configured_completion_token_cap(config: DeepSeekConfig, request: DeepSeekCo
     return max(16, int(config.max_tokens))
 
 
-def _reasoning_fallback_enabled(request: DeepSeekCompletionRequest) -> bool:
-    return request.scene in {"active_rag", "post_commit"}
-
-
 def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, seen: set[str]) -> bool:
     text = compact_whitespace(candidate)
     if not text or text in seen:
@@ -877,6 +780,10 @@ def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, se
         return False
     if paragraph_mode:
         if _bad_active_rag_paragraph_candidate(text):
+            return False
+        if not request.evidence_pack and _unsupported_foreground_only_candidate(text, request=request):
+            return False
+        if _candidate_repeats_context_fragment(text, f"{request.current_context} {request.selected_text}"):
             return False
     elif _bad_reasoning_fragment(text):
         return False
@@ -909,6 +816,45 @@ def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, se
         ):
             return False
     return True
+
+
+def _unsupported_foreground_only_candidate(text: str, *, request: DeepSeekCompletionRequest) -> bool:
+    """Reject common hallucination shapes when no external evidence exists.
+
+    This is deliberately narrower than a semantic judge. It blocks unsupported
+    recommendations and configuration diagnoses seen in the foreground path,
+    while still allowing ordinary writing and direct answers.
+    """
+
+    context = compact_whitespace(f"{request.current_context} {request.selected_text}").lower()
+    candidate = compact_whitespace(text).lower()
+    recommendation_intent = any(
+        marker in context
+        for marker in ("推荐", "建议几个", "有哪些", "选哪个", "选择", "角色", "形象", "作品", "名字")
+    )
+    if not recommendation_intent and (
+        candidate.startswith(("推荐", "可以选择", "建议选择"))
+        or ("、" in candidate and any(marker in candidate for marker in ("推荐", "选择", "形象", "角色")))
+    ):
+        return True
+
+    unsupported_claims = (
+        (("密钥", "token", "认证", "凭据"), ("密钥", "token", "key", "认证", "凭据")),
+        (("端点", "endpoint"), ("端点", "endpoint", "url")),
+        (("模型名称",), ("模型", "model")),
+        (("请求格式",), ("请求", "格式")),
+        (("参数错误", "参数有误"), ("参数", "报错", "错误")),
+    )
+    for candidate_markers, context_markers in unsupported_claims:
+        if any(marker in candidate for marker in candidate_markers) and not any(
+            marker in context for marker in context_markers
+        ):
+            return True
+    if any(marker in candidate for marker in ("配置有误", "配置错误", "不兼容")) and not any(
+        marker in context for marker in ("配置", "错误", "报错", "失败", "不兼容")
+    ):
+        return True
+    return False
 
 
 def _bad_reasoning_fragment(text: str) -> bool:
@@ -974,8 +920,35 @@ def _bad_active_rag_paragraph_candidate(text: str) -> bool:
         "这个功能",
         "该功能",
         "这段内容",
+        "我会",
+        "我将",
+        "围绕",
+        "结合当前输入",
+        "继续补全",
+        "把上下文",
+        "把当前表达",
     )
     if value.startswith(explanation_prefixes):
+        return True
+    reasoning_prefixes = (
+        "我需要",
+        "我需要分析",
+        "我需要先",
+        "需要先分析",
+        "先分析",
+        "先来分析",
+        "先梳理",
+        "先理解",
+        "让我分析",
+        "让我先",
+        "我们需要",
+        "用户希望",
+        "用户想要",
+        "根据上下文",
+        "根据提供",
+        "从上下文",
+    )
+    if value.startswith(reasoning_prefixes):
         return True
     lowered = value.lower()
     if any(
@@ -991,6 +964,32 @@ def _bad_active_rag_paragraph_candidate(text: str) -> bool:
         return True
     if any(marker in lowered for marker in ("json", "markdown")):
         return True
+    if any(marker in value for marker in ("推理过程", "思考过程", "内部思考")):
+        return True
+    if any(
+        marker in value
+        for marker in (
+            "没有有效内容",
+            "无有效内容",
+            "未检索到有效内容",
+            "没有有效候选",
+            "无有效候选",
+            "无法生成有效内容",
+        )
+    ):
+        return True
+    if any(
+        marker in value
+        for marker in (
+            "继续补全当前表达",
+            "上下文里的真实意图",
+            "整理成一段",
+            "放到光标后",
+            "可直接续写的正文",
+            "生成一段更完整",
+        )
+    ):
+        return True
     if any(marker in value for marker in ("{", "}", "[", "]", "```")):
         return True
     if value.startswith(("-", "•", "*")):
@@ -999,6 +998,56 @@ def _bad_active_rag_paragraph_candidate(text: str) -> bool:
         return True
     normalized = repeat_norm(value)
     return len(normalized) < 8
+
+
+def _candidate_repeats_context_fragment(
+    candidate: str,
+    context: str,
+    *,
+    min_fragment_chars: int = 14,
+    max_shared_ratio: float = 0.6,
+) -> bool:
+    candidate_norm = repeat_norm(candidate)
+    context_norm = repeat_norm(context)
+    if not candidate_norm or not context_norm:
+        return False
+    if candidate_norm in context_norm:
+        return True
+    if len(context_norm) < min_fragment_chars:
+        return len(context_norm) >= 8 and context_norm in candidate_norm
+    longest = _longest_shared_contiguous_chars(candidate_norm, context_norm)
+    if longest < min_fragment_chars:
+        return False
+    # Explicit answer/rewrite requests naturally reuse product terms and parts
+    # of the user's constraints. Reject high-ratio copying, not every necessary
+    # 14-character overlap inside an otherwise new paragraph.
+    return longest / max(1, len(candidate_norm)) >= max_shared_ratio
+
+
+def _longest_shared_contiguous_chars(left: str, right: str) -> int:
+    if not left or not right:
+        return 0
+    previous = [0] * (len(right) + 1)
+    longest = 0
+    for left_char in left:
+        current = [0] * (len(right) + 1)
+        for index, right_char in enumerate(right, start=1):
+            if left_char == right_char:
+                current[index] = previous[index - 1] + 1
+                longest = max(longest, current[index])
+        previous = current
+    return longest
+
+
+def _stable_partial_can_finish(text: str, *, request: DeepSeekCompletionRequest) -> bool:
+    value = compact_whitespace(text)
+    if not value or not _candidate_allowed(value, request=request, seen=set()):
+        return False
+    if not _active_rag_paragraph_output(request):
+        return True
+    # Do not promote a tiny mid-token fragment into a paid generation result.
+    # A complete sentence can finish early; otherwise require a useful clause.
+    return value.endswith(("。", "！", "？", "!", "?", "；", ";")) or len(value) >= 24
 
 
 def _has_unapproved_ascii_word(text: str) -> bool:
@@ -1068,6 +1117,59 @@ def _redacted_context_packet(packet: dict[str, object] | None) -> dict[str, obje
     if not isinstance(packet, dict):
         return {}
     return _redact_json_value(packet, max_depth=5)
+
+
+def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict[str, object]:
+    """Keep routing metadata, while sending recalled text through evidenceHints.
+
+    The full packet can contain several kilobytes of OneRing, Timeline and
+    Notebook text. Repeating that material here competes with currentRequest
+    and duplicates the already ranked evidence pack.
+    """
+    if not isinstance(packet, dict):
+        return {}
+    current_input = packet.get("currentInput") if isinstance(packet.get("currentInput"), dict) else {}
+    output_contract = packet.get("outputContract") if isinstance(packet.get("outputContract"), dict) else {}
+    one_ring = packet.get("oneRing") if isinstance(packet.get("oneRing"), dict) else {}
+    timeline = packet.get("timeline") if isinstance(packet.get("timeline"), dict) else {}
+    notebook = packet.get("notebook") if isinstance(packet.get("notebook"), dict) else {}
+    return _redact_json_value(
+        {
+            "schemaVersion": packet.get("schemaVersion"),
+            "scene": packet.get("scene"),
+            "priority": packet.get("priority"),
+            "currentInput": {
+                key: current_input.get(key)
+                for key in (
+                    "committedTail",
+                    "selectedText",
+                    "intent",
+                    "placement",
+                    "app",
+                    "project",
+                )
+                if current_input.get(key) not in (None, "")
+            },
+            "outputContract": {
+                key: output_contract.get(key)
+                for key in (
+                    "intent",
+                    "placement",
+                    "minCandidateChars",
+                    "maxCandidateChars",
+                )
+                if output_contract.get(key) not in (None, "")
+            },
+            "memoryCounts": {
+                "oneRing": len(one_ring.get("events", [])) if isinstance(one_ring.get("events"), list) else 0,
+                "timeline": len(timeline.get("recentDecisions", []))
+                if isinstance(timeline.get("recentDecisions"), list)
+                else 0,
+                "notebook": len(notebook.get("items", [])) if isinstance(notebook.get("items"), list) else 0,
+            },
+        },
+        max_depth=4,
+    )
 
 
 def _redact_json_value(value: object, *, max_depth: int) -> object:

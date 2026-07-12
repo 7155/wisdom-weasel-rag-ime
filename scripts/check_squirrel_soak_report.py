@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from check_squirrel_frontend_trace import (
+    ASSISTANT_OVERLAY_COLOR_ALIASES,
     DEFAULT_LOG_PATH,
     SOURCE_BADGES,
     SOURCE_COLOR_TOKENS,
@@ -842,7 +843,9 @@ def summarize_v1_foreground(
     post_commit_followup_count: int,
     stale_applied_count: int,
 ) -> dict[str, Any]:
-    first_visible_ms = first_post_commit_visible_latency_ms(events)
+    first_candidate_ms = first_post_commit_visible_latency_ms(events)
+    first_feedback_ms = first_post_commit_feedback_latency_ms(events)
+    first_visible_ms = first_feedback_ms if first_feedback_ms >= 0 else first_candidate_ms
     context_echoes = collect_context_echo_candidates(events)
     source_counts = summarize_visible_source_counts(events)
     source_badge_coverage = summarize_source_badge_coverage(events)
@@ -869,7 +872,8 @@ def summarize_v1_foreground(
         and int(selection_quality.get("feedbackRecordedCount") or 0) > 0,
         "firstPostCommitVisibleMs": first_visible_ms,
         "firstVisibleMs": first_visible_ms,
-        "firstUsefulCandidateMs": first_visible_ms,
+        "firstFeedbackVisibleMs": first_feedback_ms,
+        "firstUsefulCandidateMs": first_candidate_ms,
         "modelCandidateCount": source_counts["modelCandidateCount"],
         "ragMemoryCandidateCount": source_counts["ragMemoryCandidateCount"],
         "rimeCandidateCount": source_counts["rimeCandidateCount"],
@@ -999,11 +1003,49 @@ def first_post_commit_visible_latency_ms(events: list[dict[str, Any]]) -> int:
             "side_candidate_commit_observed",
             "post_commit_prediction_scheduled",
             "side_candidate_continuation_scheduled",
+            "prediction_trigger_fired",
         }:
             timestamp = event_timestamp_ms(event)
             if timestamp > 0 and (anchor_ms < 0 or name != "post_commit_prediction_scheduled"):
                 anchor_ms = timestamp
         if not event_is_visible_post_commit_surface(event) or anchor_ms < 0:
+            continue
+        latency = max(0, event_timestamp_ms(event) - anchor_ms)
+        best_ms = latency if best_ms is None else min(best_ms, latency)
+    return -1 if best_ms is None else best_ms
+
+
+def first_post_commit_feedback_latency_ms(events: list[dict[str, Any]]) -> int:
+    """Measure the first visible acknowledgement, not only the first final row.
+
+    The product deliberately renders a pending companion before model/RAG work
+    completes. Treating that state as invisible made a responsive UI look eight
+    seconds late whenever an explicit generation was triggered afterwards.
+    Candidate readiness remains a separate metric below.
+    """
+    anchor_ms = -1
+    best_ms: int | None = None
+    for event in events:
+        name = str(event.get("event") or "")
+        if name in {
+            "commit_observed",
+            "side_candidate_commit",
+            "side_candidate_commit_observed",
+            "post_commit_prediction_scheduled",
+            "side_candidate_continuation_scheduled",
+            "prediction_trigger_fired",
+        }:
+            timestamp = event_timestamp_ms(event)
+            if timestamp > 0 and (anchor_ms < 0 or name != "post_commit_prediction_scheduled"):
+                anchor_ms = timestamp
+        if anchor_ms < 0:
+            continue
+        pending_visible = (
+            name == "assistant_overlay_post_commit_pending"
+            and str(event.get("phase") or "") == "post_commit"
+            and bool(str(event.get("statusText") or "").strip())
+        )
+        if not pending_visible and not event_is_visible_post_commit_surface(event):
             continue
         latency = max(0, event_timestamp_ms(event) - anchor_ms)
         best_ms = latency if best_ms is None else min(best_ms, latency)
@@ -1495,7 +1537,8 @@ def source_visual_violation(candidate: dict[str, Any]) -> bool:
         return False
     observed_badge = str(candidate.get("sourceBadge") or candidate.get("badge") or "")
     observed_color = str(candidate.get("colorToken") or "")
-    return observed_badge != expected_badge or observed_color != expected_color
+    accepted_colors = ASSISTANT_OVERLAY_COLOR_ALIASES.get(source_type, {expected_color})
+    return observed_badge != expected_badge or observed_color not in accepted_colors
 
 
 def long_candidate_violation_for(candidate: dict[str, Any]) -> bool:

@@ -63,6 +63,7 @@ class ActiveRagDebugServerTests(unittest.TestCase):
                     "selectionEpoch": 1,
                     "panelSessionId": "panel-1",
                     "frontAppBundleId": "app.test",
+                    "evidencePack": [{"surfaceHints": ["显式 RAG 候选"], "tags": ["RAG"]}],
                 }
             )
             ready = _wait_ready(service, str(started["sessionId"]))
@@ -71,7 +72,7 @@ class ActiveRagDebugServerTests(unittest.TestCase):
             self.assertEqual(started["status"], "pending")
             self.assertGreater(started["pollAfterMs"], 0)
             self.assertEqual(started["candidates"][0]["sourceType"], "status")
-            self.assertIn("DeepSeek 思考中", started["candidates"][0]["text"])
+            self.assertIn("正在生成", started["candidates"][0]["text"])
             self.assertTrue(started["candidates"][0]["metadata"]["animated"])
             self.assertEqual(ready["status"], "ready")
             self.assertEqual(ready["pollAfterMs"], 0)

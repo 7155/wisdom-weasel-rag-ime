@@ -426,35 +426,46 @@ else:
         if not errors
         else "drift: " + "; ".join(errors[:6]),
     )
+    runtime_profile = str(env.get("RAG_IME_RUNTIME_PROFILE") or "")
+    supported_foreground_profiles = {
+        "v1-proof": "0",
+        "foreground-rag-proof": "1",
+        "production": "0",
+    }
+    expected_rag_direct_display = supported_foreground_profiles.get(runtime_profile)
     v1_defaults = {
-        "RAG_IME_RUNTIME_PROFILE": "v1-proof",
         "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
         "RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL": "1",
         "RAG_IME_ENABLE_COMPOSING_MODEL": "0",
         "RAG_IME_ENABLE_PINYIN_CONSTRAINED_MODEL": "0",
         "RAG_IME_POST_COMMIT_FIRST_RESPONSE_MS": "180",
-        "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "250",
+        "RAG_IME_PROGRESSIVE_FOLLOW_UP_RETRY_MS": "180",
         "RAG_IME_POST_COMMIT_COMPLETION_TTL_MS": "12000",
         "RAG_IME_POST_COMMIT_MODEL_HARD_TIMEOUT_MS": "12000",
         "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "900",
         "RAG_IME_REQUIRE_FOREGROUND_CONTEXT_FOR_POST_COMMIT": "1",
         "RAG_IME_FOREGROUND_CONTEXT_MAX_FRESHNESS_MS": "700",
         "RAG_IME_HYBRID_RAG_CORE": "1",
-        "RAG_IME_RAG_DIRECT_DISPLAY": "0",
+        "RAG_IME_RAG_DIRECT_DISPLAY": expected_rag_direct_display or "0",
         "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
         "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "0",
         "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "0",
     }
-    v1_errors = [
+    v1_errors = []
+    if expected_rag_direct_display is None:
+        v1_errors.append(
+            f"RAG_IME_RUNTIME_PROFILE={runtime_profile!r}, expected one of {sorted(supported_foreground_profiles)}"
+        )
+    v1_errors.extend(
         f"{key}={str(env.get(key) or '')!r}, expected {expected!r}"
         for key, expected in v1_defaults.items()
         if str(env.get(key) or "") != expected
-    ]
+    )
     emit(
         "sidecar LaunchAgent v1 foreground defaults",
         not v1_errors,
         require_plist,
-        "match post-commit 180/250ms and model UX budget 900ms"
+        f"match {runtime_profile} post-commit 180/180ms and model UX budget 900ms"
         if not v1_errors
         else "drift: " + "; ".join(v1_errors[:6]),
     )
@@ -892,6 +903,7 @@ def doctor_model_validation_payload(*, session_id="doctor-model-validation", req
     return {
         "sessionId": session_id,
         "requestSeq": request_seq,
+        "privacyDisposition": "allowed",
         "frontendBuild": "rag-ime.foreground-trace.v2",
         "schemaVersion": "rag-ime.squirrel-frontend-trace.v1",
         "rawInput": "",
@@ -991,6 +1003,7 @@ def validate_raw_pinyin_guard():
     dirty = post_rime_suggest({
         "sessionId": "doctor-raw-pinyin",
         "requestSeq": 2,
+        "privacyDisposition": "allowed",
         "rawInput": "jiubiruwopinshishur",
         "preedit": "jiubiruwopinshishur",
         "maxVisibleCandidates": 6,
@@ -1001,6 +1014,7 @@ def validate_raw_pinyin_guard():
     fallback = post_rime_suggest({
         "sessionId": "doctor-raw-context",
         "requestSeq": 3,
+        "privacyDisposition": "allowed",
         "rawInput": "asdioj",
         "preedit": "asdioj",
         "committedContext": "我想设计一个候选展示方式",
@@ -1378,7 +1392,12 @@ PY
     require_or_warn "$REQUIRE_PREDICTOR" "$predictor_message"
   fi
 else
-  require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; run scripts/install_sidecar_launch_agent.sh"
+  sidecar_error_detail="$(tail -n 3 "$sidecar_err" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]$//')"
+  if [[ -n "$sidecar_error_detail" ]]; then
+    require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; integration probe: $sidecar_error_detail"
+  else
+    require_or_warn "$REQUIRE_SIDECAR" "HTTP sidecar is not healthy at $SIDECAR_BASE_URL; integration probe produced no diagnostic output"
+  fi
 fi
 check_launch_agent_plist_drift "$sidecar_out" "$sidecar_status"
 rm -f "$sidecar_out" "$sidecar_err"

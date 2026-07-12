@@ -105,7 +105,7 @@ class BlockingPredictionProvider:
         ][:max_candidates]
 
 
-class FakeX1ApiMemoryGenerator:
+class FakeDeepSeekV4MemoryGenerator:
     calls: list[dict[str, object]] = []
 
     @classmethod
@@ -122,8 +122,8 @@ class FakeX1ApiMemoryGenerator:
             }
         )
         return GeneratedMemoryReport(
-            provider="x1api",
-            model="fake-gpt",
+            provider="deepseek-v4",
+            model="deepseek-v4-flash",
             elapsed_ms=12,
             items=(
                 GeneratedMemoryItem(
@@ -328,8 +328,8 @@ class DebugImeServiceTests(unittest.TestCase):
             "API 整理后的输入历史记忆",
             recent_context="历史治理",
             source="api_memory_generator",
-            provider_name="x1api:fake",
-            tags=("generated-memory", "x1api"),
+            provider_name="deepseek-v4:fake",
+            tags=("generated-memory", "deepseek-v4"),
             privacy_disposition="allowed",
         )
 
@@ -454,10 +454,10 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(tombstone["metadata"]["source"], "debug-test")
         self.assertNotIn("连续预测", [item["text"] for item in after["candidates"]])
 
-    def test_generate_memory_endpoint_uses_x1api_generator_and_records_rows(self) -> None:
+    def test_generate_memory_endpoint_uses_deepseek_v4_generator_and_records_rows(self) -> None:
         original = debug_server_module.VcpRebuildMemoryGenerator
-        FakeX1ApiMemoryGenerator.calls = []
-        debug_server_module.VcpRebuildMemoryGenerator = FakeX1ApiMemoryGenerator
+        FakeDeepSeekV4MemoryGenerator.calls = []
+        debug_server_module.VcpRebuildMemoryGenerator = FakeDeepSeekV4MemoryGenerator
         try:
             payload = self.service.generate_memory(
                 {
@@ -471,7 +471,7 @@ class DebugImeServiceTests(unittest.TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["recorded"], 1)
-        self.assertEqual(FakeX1ApiMemoryGenerator.calls[0]["maxItems"], 2)
+        self.assertEqual(FakeDeepSeekV4MemoryGenerator.calls[0]["maxItems"], 2)
         history = self.service.memory_history({"generatedOnly": True, "query": "API 蒸馏"})
         self.assertEqual(history["items"][0]["text"], "用户希望输入历史先经 API 蒸馏后再进入长期记忆")
 
@@ -750,6 +750,45 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(frame["committedContext"]["length"], len("我想输入真实内容"))
         self.assertGreaterEqual(frame["display"]["sourceCounts"]["model"], 1)
         self.assertTrue(frame["traceEvents"])
+
+    def test_management_context_ignores_all_doctor_probe_sessions(self) -> None:
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=Path(self.tmp.name) / "management-context-doctor-filter.sqlite",
+                static_dir=Path("debug"),
+                seed_if_empty=False,
+                core=PrefixFixtureCore(),
+                predictor=PrefixPredictionProvider(),
+            )
+        )
+        service._prediction_live_trace = [
+            {
+                "sessionId": "real-foreground-session",
+                "requestId": "real-request",
+                "foregroundContext": {
+                    "source": "text_input_client",
+                    "applied": True,
+                    "commitTextMatched": True,
+                    "capturedAtMs": 123,
+                    "surroundingBeforeChars": 18,
+                },
+            },
+            {
+                "sessionId": "doctor-raw-context",
+                "requestId": "synthetic-request",
+                "foregroundContext": {
+                    "source": "missing",
+                    "applied": False,
+                    "captureFailureReason": "foregroundText payload missing",
+                },
+            },
+        ]
+
+        latest = service._last_management_prediction()
+
+        self.assertEqual(latest["requestId"], "real-request")
+        self.assertEqual(latest["contextSource"], "text_input_client")
+        self.assertTrue(latest["foregroundContext"]["applied"])
 
     def test_prediction_live_trace_http_endpoint(self) -> None:
         service = DebugImeService(
@@ -1285,6 +1324,48 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(selection["commitAction"]["memoryId"], selection["eventId"])
         self.assertEqual(selection["commitAction"]["actionType"], "accepted")
         self.assertEqual(self.service.core.action_count(), before_actions + 1)
+
+    def test_candidate_edit_feedback_downranks_all_sources_but_only_rime_updates_lexicon(self) -> None:
+        model_feedback = self.service.candidate_edit_feedback(
+            {
+                "privacyDisposition": "allowed",
+                "sourceType": "model",
+                "candidateId": "model:accepted",
+                "candidateText": "错误模型候选",
+                "contextHash": "ctx:model",
+                "app": "app.test",
+            }
+        )
+        rime_feedback = self.service.candidate_edit_feedback(
+            {
+                "privacyDisposition": "allowed",
+                "sourceType": "rime",
+                "candidateId": "rime:accepted",
+                "candidateText": "错误词语",
+                "preedit": "cuowu",
+                "contextHash": "ctx:rime",
+                "app": "app.test",
+            }
+        )
+
+        with self.service.core._connect() as conn:
+            memory_rows = conn.execute(
+                "SELECT candidate_source, action FROM memory_feedback_events "
+                "WHERE candidate_id IN ('model:accepted', 'rime:accepted') ORDER BY candidate_id"
+            ).fetchall()
+            rank_rows = conn.execute(
+                "SELECT accepted_text, action FROM rime_rank_feedback ORDER BY id"
+            ).fetchall()
+
+        self.assertTrue(model_feedback["recorded"])
+        self.assertFalse(model_feedback["rimeRecorded"])
+        self.assertTrue(rime_feedback["recorded"])
+        self.assertTrue(rime_feedback["rimeRecorded"])
+        self.assertEqual(
+            [(str(row[0]), str(row[1])) for row in memory_rows],
+            [("model", "backspace_after_accept"), ("rime", "backspace_after_accept")],
+        )
+        self.assertEqual([(str(row[0]), str(row[1])) for row in rank_rows], [("错误词语", "backspace_downrank")])
 
     def test_rime_select_records_memory_candidate_action(self) -> None:
         committed = self.service.commit(

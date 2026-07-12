@@ -13,8 +13,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .memory_actions import execute_memory_action
+from .memory_ingest import normalize_text
 from .management_events import ManagementEventHub
 from .management_models import MANAGEMENT_SCHEMA_VERSION, ManagementRevision, PageRequest, RuntimeJob
+from .retrieval_docs import rebuild_retrieval_docs
 from .runtime_config import RuntimeConfigSnapshot
 from .settings_store import ManagementSettingsStore, record_management_audit
 
@@ -184,6 +186,7 @@ class ManagementService:
         handlers = {
             "books": self._memory_books,
             "atoms": self._memory_atoms,
+            "tags": self._memory_tags,
             "phrases": self._memory_phrases,
             "groups": self._memory_groups,
             "negative": self._negative_memory,
@@ -199,7 +202,7 @@ class ManagementService:
             "items": items,
             "nextCursor": next_cursor,
             "limit": request.limit,
-            "rawTextVisible": False,
+            "rawTextVisible": kind in {"books", "atoms", "phrases", "tags", "groups", "negative"},
         }
 
     def history_page(self, request: PageRequest) -> dict[str, object]:
@@ -275,6 +278,190 @@ class ManagementService:
             "itemId": item_id,
             "memoryId": item_id,
         }
+
+    def memory_edit(self, payload: Mapping[str, object]) -> dict[str, object]:
+        kind = str(payload.get("kind") or payload.get("itemType") or "").strip().lower()
+        item_id = str(payload.get("id") or payload.get("memoryId") or "").strip()
+        merge_into_id = str(payload.get("mergeIntoId") or "").strip()
+        if not kind or not item_id:
+            raise ValueError("kind and id are required")
+        if kind in {"phrase", "phrases"}:
+            return self.memory_action(
+                {
+                    "memoryId": item_id,
+                    "itemType": "phrase",
+                    "action": "update_phrase",
+                    "newPhrase": str(payload.get("text") or payload.get("title") or ""),
+                    "reason": "native_control_center_edit",
+                    "updatedBy": "native-control-center",
+                }
+            )
+
+        timestamp = _now_ms()
+        changes: dict[str, object] = {}
+        with self._connect() as conn:
+            if kind in {"book", "books"}:
+                title = " ".join(str(payload.get("title") or "").split())
+                summary = " ".join(str(payload.get("summary") or "").split())
+                tags = _string_list_value(payload.get("tags"))
+                if not title:
+                    raise ValueError("book title is required")
+                cursor = conn.execute(
+                    "UPDATE memory_books SET title = ?, summary = ?, tags_json = ?, updated_at_ms = ? WHERE book_id = ?",
+                    (title, summary, json.dumps(tags, ensure_ascii=False), timestamp, item_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError(f"memory book not found: {item_id}")
+                changes = {"title": title, "summary": summary, "tags": tags}
+            elif kind in {"atom", "atoms"}:
+                if merge_into_id:
+                    changes = _merge_memory_atoms(
+                        conn,
+                        source_id=item_id,
+                        target_id=merge_into_id,
+                        changed_at_ms=timestamp,
+                    )
+                else:
+                    text = " ".join(str(payload.get("text") or payload.get("summary") or "").split())
+                    tags = _string_list_value(payload.get("tags"))
+                    if not text:
+                        raise ValueError("memory atom text is required")
+                    row = conn.execute(
+                        "SELECT privacy_level FROM memory_atoms WHERE id = ?",
+                        (item_id,),
+                    ).fetchone()
+                    if row is None:
+                        raise ValueError(f"memory atom not found: {item_id}")
+                    if str(row[0] or "") == "sensitive":
+                        raise ValueError("sensitive memory cannot be edited in the control center")
+                    conn.execute(
+                        "UPDATE memory_atoms SET text = ?, canonical_text = ?, updated_at_ms = ? WHERE id = ?",
+                        (text, text, timestamp, item_id),
+                    )
+                    conn.execute("DELETE FROM memory_atom_tags WHERE memory_atom_id = ?", (item_id,))
+                    for position, tag in enumerate(tags):
+                        row = conn.execute("SELECT id FROM memory_tags WHERE tag = ?", (tag,)).fetchone()
+                        if row is None:
+                            cursor = conn.execute(
+                                "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms) "
+                                "VALUES (?, ?, 'user', 0.9, ?, ?)",
+                                (tag, normalize_text(tag), timestamp, timestamp),
+                            )
+                            tag_id = int(cursor.lastrowid)
+                        else:
+                            tag_id = int(row[0])
+                        conn.execute(
+                            "INSERT INTO memory_atom_tags(memory_atom_id, tag_id, weight, source) VALUES (?, ?, ?, 'user_edit')",
+                            (item_id, str(tag_id), max(0.5, 1.0 - position * 0.05)),
+                        )
+                    changes = {"text": text, "tags": tags}
+            elif kind in {"tag", "tags"}:
+                tag = " ".join(str(payload.get("title") or payload.get("tag") or "").split())
+                tag_type = " ".join(str(payload.get("type") or "concept").split()) or "concept"
+                aliases = _string_list_value(payload.get("aliases"))
+                color = str(payload.get("color") or "blue").strip().lower()
+                if color not in {"blue", "teal", "green", "orange", "pink", "purple", "gray"}:
+                    color = "blue"
+                if merge_into_id:
+                    changes = _merge_memory_tags(
+                        conn,
+                        source_id=item_id,
+                        target_id=merge_into_id,
+                        aliases=aliases,
+                        color=color,
+                        changed_at_ms=timestamp,
+                    )
+                else:
+                    if not tag:
+                        raise ValueError("tag name is required")
+                    duplicate = conn.execute(
+                        "SELECT id FROM memory_tags WHERE tag = ? AND CAST(id AS TEXT) != ?",
+                        (tag, item_id),
+                    ).fetchone()
+                    if duplicate is not None:
+                        raise ValueError("tag already exists; use merge instead of rename")
+                    cursor = conn.execute(
+                        "UPDATE memory_tags SET tag = ?, normalized_tag = ?, tag_type = ?, updated_at_ms = ? WHERE CAST(id AS TEXT) = ?",
+                        (tag, normalize_text(tag), tag_type, timestamp, item_id),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ValueError(f"memory tag not found: {item_id}")
+                    conn.execute(
+                        """
+                        INSERT INTO memory_tag_profiles(tag_id, color_token, aliases_json, updated_at_ms)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(tag_id) DO UPDATE SET
+                            color_token = excluded.color_token,
+                            aliases_json = excluded.aliases_json,
+                            updated_at_ms = excluded.updated_at_ms
+                        """,
+                        (int(item_id), color, json.dumps(aliases, ensure_ascii=False), timestamp),
+                    )
+                    changes = {"tag": tag, "type": tag_type, "aliases": aliases, "color": color}
+            elif kind in {"group", "groups"}:
+                title = " ".join(str(payload.get("title") or "").split())
+                note = " ".join(str(payload.get("note") or payload.get("summary") or "").split())
+                color = str(payload.get("color") or "blue").strip().lower()
+                if color not in {"blue", "teal", "green", "orange", "pink", "purple", "gray"}:
+                    color = "blue"
+                conn.execute(
+                    """
+                    INSERT INTO memory_group_overrides(context_group_id, title, note, color_token, updated_at_ms)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(context_group_id) DO UPDATE SET
+                        title = excluded.title,
+                        note = excluded.note,
+                        color_token = excluded.color_token,
+                        updated_at_ms = excluded.updated_at_ms
+                    """,
+                    (item_id, title, note, color, timestamp),
+                )
+                changes = {"title": title, "note": note, "color": color}
+            elif kind in {"negative", "tombstone"}:
+                reason = " ".join(str(payload.get("reason") or "user_edit").split())
+                active = 1 if bool(payload.get("active", True)) else 0
+                cursor = conn.execute(
+                    "UPDATE memory_tombstones SET reason = ?, active = ? WHERE CAST(id AS TEXT) = ?",
+                    (reason, active, item_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError(f"negative memory not found: {item_id}")
+                changes = {"reason": reason, "active": bool(active)}
+            else:
+                raise ValueError(f"unsupported memory edit kind: {kind}")
+            retrieval_report = rebuild_retrieval_docs(conn, project="")
+
+        return self._finish_memory_edit(
+            kind=kind,
+            item_id=item_id,
+            payload=payload,
+            changes=changes,
+            retrieval_report=retrieval_report,
+        )
+
+    def _finish_memory_edit(
+        self,
+        *,
+        kind: str,
+        item_id: str,
+        payload: Mapping[str, object],
+        changes: Mapping[str, object],
+        retrieval_report: Mapping[str, object],
+    ) -> dict[str, object]:
+        if self.cache_invalidator is not None:
+            self.cache_invalidator()
+        result = {
+            "schemaVersion": "rag-ime.memory-edit.v1",
+            "ok": True,
+            "kind": kind,
+            "id": item_id,
+            "changes": changes,
+            "retrievalDocs": retrieval_report,
+        }
+        audit_id = self._audit("memory_edit", kind, item_id, dict(payload), result)
+        self._bump_runtime_revision()
+        self.events.publish("memory_changed", {"kind": kind, "id": item_id, "changes": changes})
+        return {**result, **self.revision(audit_id=audit_id).payload()}
 
     def _components(
         self,
@@ -390,26 +577,139 @@ class ManagementService:
         return result
 
     def _memory_books(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
-        return self._rowid_page(
-            "memory_books",
-            request,
-            columns="book_id AS id, title, book_type AS type, project, app, status, confidence, quality_score, updated_at_ms",
-            search_columns=("title", "project", "app", "book_type"),
-        )
+        limit = request.limit
+        cursor = _cursor_int(request.cursor)
+        like = f"%{request.query}%"
+        event_ranges: dict[str, tuple[int, int]] = {}
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT rowid AS row_cursor, book_id AS id, title, summary,
+                       book_type AS type, project, app, tags_json,
+                       source_event_ids_json, memory_atom_ids_json,
+                       status, confidence, quality_score, created_at_ms, updated_at_ms
+                FROM memory_books
+                WHERE (? = 0 OR rowid < ?)
+                  AND (? = '' OR title LIKE ? OR summary LIKE ? OR project LIKE ? OR app LIKE ? OR book_type LIKE ?)
+                  AND (? = '' OR status = ?)
+                ORDER BY rowid DESC LIMIT ?
+                """,
+                (
+                    cursor, cursor, request.query, like, like, like, like, like,
+                    request.status, request.status, limit + 1,
+                ),
+            ).fetchall()
+            for row in rows:
+                event_ids = [int(value) for value in _json_list(row["source_event_ids_json"]) if str(value).isdigit()]
+                if not event_ids:
+                    continue
+                placeholders = ",".join("?" for _ in event_ids)
+                range_row = conn.execute(
+                    f"SELECT MIN(created_at_ms), MAX(created_at_ms) FROM input_events WHERE id IN ({placeholders})",
+                    event_ids,
+                ).fetchone()
+                if range_row is not None and range_row[0] is not None:
+                    event_ranges[str(row["id"])] = (int(range_row[0]), int(range_row[1]))
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items: list[dict[str, object]] = []
+        for row in rows:
+            item = dict(row)
+            item.pop("row_cursor", None)
+            item["tags"] = _json_list(item.pop("tags_json", "[]"))
+            item["sourceEventCount"] = len(_json_list(item.pop("source_event_ids_json", "[]")))
+            item["atomCount"] = len(_json_list(item.pop("memory_atom_ids_json", "[]")))
+            source_range = event_ranges.get(str(item["id"]))
+            item["sourceStartMs"] = source_range[0] if source_range else 0
+            item["sourceEndMs"] = source_range[1] if source_range else 0
+            items.append(item)
+        next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
+        return items, next_cursor
 
     def _memory_atoms(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
-        items, cursor = self._rowid_page(
-            "memory_atoms",
-            request,
-            columns="id, kind AS type, text, scope_project AS project, scope_app AS app, status, confidence, quality_score, updated_at_ms",
-            search_columns=("text", "kind", "scope_project", "scope_app"),
-        )
-        for item in items:
-            text = str(item.pop("text", ""))
+        limit = request.limit
+        cursor = _cursor_int(request.cursor)
+        like = f"%{request.query}%"
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT rowid AS row_cursor, id, kind AS type,
+                       COALESCE(NULLIF(canonical_text, ''), text) AS text,
+                       source_event_ids_json, scope_project AS project,
+                       scope_app AS app, status, confidence, quality_score,
+                       created_at_ms, last_used_at_ms, updated_at_ms
+                FROM memory_atoms
+                WHERE privacy_level != 'sensitive'
+                  AND (? = 0 OR rowid < ?)
+                  AND (? = '' OR text LIKE ? OR canonical_text LIKE ? OR kind LIKE ? OR scope_project LIKE ? OR scope_app LIKE ?)
+                  AND (? = '' OR status = ?)
+                ORDER BY rowid DESC LIMIT ?
+                """,
+                (
+                    cursor, cursor, request.query, like, like, like, like, like,
+                    request.status, request.status, limit + 1,
+                ),
+            ).fetchall()
+            tag_rows = conn.execute(
+                """
+                SELECT mat.memory_atom_id, mt.tag
+                FROM memory_atom_tags mat
+                JOIN memory_tags mt ON CAST(mt.id AS TEXT) = CAST(mat.tag_id AS TEXT)
+                """
+            ).fetchall()
+        tags_by_atom: dict[str, list[str]] = {}
+        for atom_id, tag in tag_rows:
+            tags_by_atom.setdefault(str(atom_id), []).append(str(tag))
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items: list[dict[str, object]] = []
+        for row in rows:
+            item = dict(row)
+            item.pop("row_cursor", None)
+            text = str(item.get("text") or "")
             item["textHash"] = _text_hash(text)
             item["textChars"] = len(text)
-            item["textPreview"] = _redacted_preview(text)
-        return items, cursor
+            item["textPreview"] = text
+            item["sourceEventCount"] = len(_json_list(item.pop("source_event_ids_json", "[]")))
+            item["tags"] = tags_by_atom.get(str(item["id"]), [])
+            items.append(item)
+        next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
+        return items, next_cursor
+
+    def _memory_tags(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
+        limit = request.limit
+        cursor = _cursor_int(request.cursor)
+        like = f"%{request.query}%"
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT mt.id AS row_cursor, CAST(mt.id AS TEXT) AS id, mt.tag,
+                       mt.tag_type AS type, mt.quality_score, mt.updated_at_ms,
+                       COALESCE(mtp.color_token, 'blue') AS color_token,
+                       COALESCE(mtp.aliases_json, '[]') AS aliases_json,
+                       COUNT(DISTINCT mit.memory_item_id) + COUNT(DISTINCT mat.memory_atom_id) AS item_count,
+                       (SELECT COUNT(*) FROM memory_tag_edges e WHERE e.src_tag_id = mt.id OR e.dst_tag_id = mt.id) AS edge_count
+                FROM memory_tags mt
+                LEFT JOIN memory_tag_profiles mtp ON mtp.tag_id = mt.id
+                LEFT JOIN memory_item_tags mit ON mit.tag_id = mt.id
+                LEFT JOIN memory_atom_tags mat ON CAST(mat.tag_id AS TEXT) = CAST(mt.id AS TEXT)
+                WHERE (? = 0 OR mt.id < ?)
+                  AND (? = '' OR mt.tag LIKE ? OR mt.tag_type LIKE ?)
+                GROUP BY mt.id
+                ORDER BY mt.quality_score DESC, mt.id DESC LIMIT ?
+                """,
+                (cursor, cursor, request.query, like, like, limit + 1),
+            ).fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = []
+        for row in rows:
+            item = dict(row)
+            item.pop("row_cursor", None)
+            item["aliases"] = _json_list(item.pop("aliases_json", "[]"))
+            items.append(item)
+        next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
+        return items, next_cursor
 
     def _memory_phrases(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
         limit = request.limit
@@ -472,7 +772,8 @@ class ManagementService:
                     "textHash": text_hash,
                     "originalTextHash": text_hash,
                     "textChars": len(text),
-                    "textPreview": _redacted_preview(text),
+                    "textPreview": text,
+                    "text": text,
                     "project": str(row["project"] or ""),
                     "app": str(row["app"] or ""),
                     "status": str(row["status"]),
@@ -494,19 +795,41 @@ class ManagementService:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT MAX(id) AS row_cursor, context_group_id AS id, context_group_level AS level,
-                       project, app, COUNT(*) AS event_count, MAX(created_at_ms) AS updated_at_ms
-                FROM input_events
-                WHERE context_group_id != '' AND (? = '' OR context_group_id LIKE ? OR project LIKE ? OR app LIKE ?)
-                GROUP BY context_group_id, context_group_level, project, app
-                HAVING (? = 0 OR MAX(id) < ?)
+                SELECT MAX(ie.id) AS row_cursor, ie.context_group_id AS id,
+                       ie.context_group_level AS level, ie.project, ie.app,
+                       COUNT(*) AS event_count, MAX(ie.created_at_ms) AS updated_at_ms,
+                       COALESCE(mgo.title, '') AS title,
+                       COALESCE(mgo.note, '') AS note,
+                       COALESCE(mgo.color_token, 'blue') AS color_token
+                FROM input_events ie
+                LEFT JOIN memory_group_overrides mgo ON mgo.context_group_id = ie.context_group_id
+                WHERE ie.context_group_id != '' AND (? = '' OR ie.context_group_id LIKE ? OR ie.project LIKE ? OR ie.app LIKE ? OR mgo.title LIKE ?)
+                GROUP BY ie.context_group_id, ie.context_group_level, ie.project, ie.app,
+                         mgo.title, mgo.note, mgo.color_token
+                HAVING (? = 0 OR MAX(ie.id) < ?)
                 ORDER BY row_cursor DESC LIMIT ?
                 """,
-                (request.query, query, query, query, cursor, cursor, limit + 1),
+                (request.query, query, query, query, query, cursor, cursor, limit + 1),
             ).fetchall()
         has_more = len(rows) > limit
         rows = rows[:limit]
-        return [dict(row) for row in rows], str(rows[-1]["row_cursor"]) if has_more and rows else ""
+        items: list[dict[str, object]] = []
+        for row in rows:
+            item = dict(row)
+            item.pop("row_cursor", None)
+            level = str(item.get("level") or "app")
+            project = str(item.get("project") or "")
+            app = str(item.get("app") or "")
+            if level == "project" and project:
+                rule = f"同一项目：{project}"
+            elif app:
+                rule = f"同一应用：{app}"
+            else:
+                rule = f"分组级别：{level}"
+            item["ruleDescription"] = rule
+            item["latestAtMs"] = int(item.get("updated_at_ms") or 0)
+            items.append(item)
+        return items, str(rows[-1]["row_cursor"]) if has_more and rows else ""
 
     def _negative_memory(self, request: PageRequest) -> tuple[list[dict[str, object]], str]:
         return self._rowid_page(
@@ -842,6 +1165,11 @@ def _foreground_context_component(
         or evidence.get("error")
         or injection.get("error")
     )
+    selected_chars = _integer_value(evidence.get("selectedTextChars"), default=0)
+    before_chars = _integer_value(evidence.get("surroundingBeforeChars"), default=0)
+    after_chars = _integer_value(evidence.get("surroundingAfterChars"), default=0)
+    captured_chars = max(selected_chars, before_chars + after_chars)
+    char_counts_reported = any(key in evidence for key in ("selectedTextChars", "surroundingBeforeChars", "surroundingAfterChars"))
     metadata = {
         "source": source,
         "capturedAtMs": created_at_ms,
@@ -851,6 +1179,10 @@ def _foreground_context_component(
         "commitTextMatched": commit_text_matched,
         "failureReason": failure,
         "requestId": _string_value(last_prediction.get("requestId")),
+        "selectedTextChars": selected_chars,
+        "surroundingBeforeChars": before_chars,
+        "surroundingAfterChars": after_chars,
+        "capturedContextChars": captured_chars,
     }
     if not sidecar_ok:
         return _component("foregroundContext", False, "Sidecar 不可用", metadata)
@@ -864,6 +1196,15 @@ def _foreground_context_component(
         return _component("foregroundContext", False, "尚无上下文成功注入证据", metadata)
     if commit_text_matched is not True:
         return _component("foregroundContext", False, "尚无提交文本匹配证据", metadata)
+    if char_counts_reported and captured_chars < 8:
+        component = _component(
+            "foregroundContext",
+            True,
+            f"仅采集 {captured_chars} 字；生成仍只使用当前前台内容",
+            metadata,
+        )
+        component["status"] = "degraded"
+        return component
     return _component("foregroundContext", True, "最近前台上下文已采集并注入", metadata)
 
 
@@ -920,6 +1261,304 @@ def _redacted_preview(value: str) -> str:
     if not compact:
         return ""
     return f"{compact[:8]}...（{len(compact)} 字）" if len(compact) > 8 else f"{len(compact)} 字内容"
+
+
+def _json_list(value: object) -> list[object]:
+    if isinstance(value, list):
+        return list(value)
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return list(parsed) if isinstance(parsed, list) else []
+
+
+def _string_list_value(value: object) -> list[str]:
+    if isinstance(value, str):
+        raw = value.replace("，", ",").split(",")
+    elif isinstance(value, (list, tuple)):
+        raw = list(value)
+    else:
+        raw = []
+    result: list[str] = []
+    for item in raw:
+        text = " ".join(str(item or "").split())[:48]
+        if text and text not in result:
+            result.append(text)
+    return result[:24]
+
+
+def _merge_memory_atoms(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    target_id: str,
+    changed_at_ms: int,
+) -> dict[str, object]:
+    if source_id == target_id:
+        raise ValueError("memory atom cannot merge into itself")
+    rows = conn.execute(
+        """
+        SELECT id, text, source_event_ids_json, source_memory_ids_json,
+               privacy_level, confidence, quality_score
+        FROM memory_atoms WHERE id IN (?, ?)
+        """,
+        (source_id, target_id),
+    ).fetchall()
+    by_id = {str(row["id"]): row for row in rows}
+    source = by_id.get(source_id)
+    target = by_id.get(target_id)
+    if source is None or target is None:
+        raise ValueError("source or target memory atom was not found")
+    if "sensitive" in {str(source["privacy_level"] or ""), str(target["privacy_level"] or "")}:
+        raise ValueError("sensitive memory cannot be merged in the control center")
+
+    source_events = _deduplicated_values(
+        [*_json_list(target["source_event_ids_json"]), *_json_list(source["source_event_ids_json"])]
+    )
+    source_memories = _deduplicated_values(
+        [
+            *_json_list(target["source_memory_ids_json"]),
+            *_json_list(source["source_memory_ids_json"]),
+            source_id,
+        ]
+    )
+    conn.execute(
+        """
+        UPDATE memory_atoms
+        SET source_event_ids_json = ?, source_memory_ids_json = ?,
+            confidence = MAX(confidence, ?), quality_score = MAX(quality_score, ?),
+            updated_at_ms = ?
+        WHERE id = ?
+        """,
+        (
+            json.dumps(source_events, ensure_ascii=False),
+            json.dumps(source_memories, ensure_ascii=False),
+            float(source["confidence"] or 0),
+            float(source["quality_score"] or 0),
+            changed_at_ms,
+            target_id,
+        ),
+    )
+    for tag_id, weight, tag_source in conn.execute(
+        "SELECT tag_id, weight, source FROM memory_atom_tags WHERE memory_atom_id = ?",
+        (source_id,),
+    ).fetchall():
+        existing = conn.execute(
+            "SELECT weight FROM memory_atom_tags WHERE memory_atom_id = ? AND tag_id = ?",
+            (target_id, tag_id),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO memory_atom_tags(memory_atom_id, tag_id, weight, source) VALUES (?, ?, ?, ?)",
+                (target_id, tag_id, weight, tag_source),
+            )
+        else:
+            conn.execute(
+                "UPDATE memory_atom_tags SET weight = MAX(weight, ?), source = 'user_merge' "
+                "WHERE memory_atom_id = ? AND tag_id = ?",
+                (weight, target_id, tag_id),
+            )
+    conn.execute("DELETE FROM memory_atom_tags WHERE memory_atom_id = ?", (source_id,))
+    conn.execute("UPDATE memory_aliases SET memory_atom_id = ? WHERE memory_atom_id = ?", (target_id, source_id))
+
+    for book_id, raw_ids in conn.execute("SELECT book_id, memory_atom_ids_json FROM memory_books").fetchall():
+        atom_ids = [str(value) for value in _json_list(raw_ids)]
+        if source_id not in atom_ids:
+            continue
+        replaced = _deduplicated_values(target_id if value == source_id else value for value in atom_ids)
+        conn.execute(
+            "UPDATE memory_books SET memory_atom_ids_json = ?, updated_at_ms = ? WHERE book_id = ?",
+            (json.dumps(replaced, ensure_ascii=False), changed_at_ms, book_id),
+        )
+
+    conn.execute(
+        "UPDATE memory_atoms SET status = 'tombstoned', updated_at_ms = ? WHERE id = ?",
+        (changed_at_ms, source_id),
+    )
+    conn.execute(
+        """
+        INSERT INTO memory_tombstones(
+            created_at_ms, target_type, target_value, reason, active, metadata_json
+        ) VALUES (?, 'memory_id', ?, ?, 1, ?)
+        """,
+        (
+            changed_at_ms,
+            source_id,
+            f"merged_into:{target_id}",
+            json.dumps({"source": "native_control_center_merge", "targetId": target_id}, sort_keys=True),
+        ),
+    )
+    return {
+        "merged": True,
+        "mergedIntoId": target_id,
+        "sourceStatus": "tombstoned",
+        "sourceEventCount": len(source_events),
+    }
+
+
+def _merge_memory_tags(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    target_id: str,
+    aliases: list[str],
+    color: str,
+    changed_at_ms: int,
+) -> dict[str, object]:
+    if source_id == target_id:
+        raise ValueError("memory tag cannot merge into itself")
+    rows = conn.execute(
+        "SELECT id, tag FROM memory_tags WHERE CAST(id AS TEXT) IN (?, ?)",
+        (source_id, target_id),
+    ).fetchall()
+    by_id = {str(row["id"]): row for row in rows}
+    source = by_id.get(source_id)
+    target = by_id.get(target_id)
+    if source is None or target is None:
+        raise ValueError("source or target memory tag was not found")
+    source_numeric = int(source_id)
+    target_numeric = int(target_id)
+
+    for memory_item_id, weight, position, evidence in conn.execute(
+        "SELECT memory_item_id, weight, position, evidence FROM memory_item_tags WHERE tag_id = ?",
+        (source_numeric,),
+    ).fetchall():
+        existing = conn.execute(
+            "SELECT weight, position, evidence FROM memory_item_tags WHERE memory_item_id = ? AND tag_id = ?",
+            (memory_item_id, target_numeric),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO memory_item_tags(memory_item_id, tag_id, weight, position, evidence) VALUES (?, ?, ?, ?, ?)",
+                (memory_item_id, target_numeric, weight, position, evidence),
+            )
+        else:
+            conn.execute(
+                "UPDATE memory_item_tags SET weight = MAX(weight, ?), position = MIN(position, ?), evidence = ? "
+                "WHERE memory_item_id = ? AND tag_id = ?",
+                (weight, position, str(existing[2] or evidence or ""), memory_item_id, target_numeric),
+            )
+    conn.execute("DELETE FROM memory_item_tags WHERE tag_id = ?", (source_numeric,))
+
+    for atom_id, weight, tag_source in conn.execute(
+        "SELECT memory_atom_id, weight, source FROM memory_atom_tags WHERE CAST(tag_id AS TEXT) = ?",
+        (source_id,),
+    ).fetchall():
+        existing = conn.execute(
+            "SELECT weight FROM memory_atom_tags WHERE memory_atom_id = ? AND CAST(tag_id AS TEXT) = ?",
+            (atom_id, target_id),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO memory_atom_tags(memory_atom_id, tag_id, weight, source) VALUES (?, ?, ?, ?)",
+                (atom_id, target_id, weight, tag_source),
+            )
+        else:
+            conn.execute(
+                "UPDATE memory_atom_tags SET weight = MAX(weight, ?), source = 'user_merge' "
+                "WHERE memory_atom_id = ? AND CAST(tag_id AS TEXT) = ?",
+                (weight, atom_id, target_id),
+            )
+    conn.execute("DELETE FROM memory_atom_tags WHERE CAST(tag_id AS TEXT) = ?", (source_id,))
+
+    edge_rows = conn.execute(
+        """
+        SELECT src_tag_id, dst_tag_id, edge_type, weight, direction_bias,
+               evidence_count, metadata_json
+        FROM memory_tag_edges WHERE src_tag_id = ? OR dst_tag_id = ?
+        """,
+        (source_numeric, source_numeric),
+    ).fetchall()
+    for edge in edge_rows:
+        src = target_numeric if int(edge[0]) == source_numeric else int(edge[0])
+        dst = target_numeric if int(edge[1]) == source_numeric else int(edge[1])
+        if src == dst:
+            continue
+        existing = conn.execute(
+            "SELECT weight, evidence_count FROM memory_tag_edges WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = ?",
+            (src, dst, edge[2]),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                """
+                INSERT INTO memory_tag_edges(
+                    src_tag_id, dst_tag_id, edge_type, weight, direction_bias,
+                    evidence_count, updated_at_ms, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (src, dst, edge[2], edge[3], edge[4], edge[5], changed_at_ms, edge[6]),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE memory_tag_edges
+                SET weight = MAX(weight, ?), evidence_count = evidence_count + ?, updated_at_ms = ?
+                WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = ?
+                """,
+                (edge[3], edge[5], changed_at_ms, src, dst, edge[2]),
+            )
+    conn.execute("DELETE FROM memory_tag_edges WHERE src_tag_id = ? OR dst_tag_id = ?", (source_numeric, source_numeric))
+
+    profile_rows = conn.execute(
+        "SELECT tag_id, color_token, aliases_json FROM memory_tag_profiles WHERE tag_id IN (?, ?)",
+        (source_numeric, target_numeric),
+    ).fetchall()
+    profiles = {int(row[0]): row for row in profile_rows}
+    target_profile = profiles.get(target_numeric)
+    source_profile = profiles.get(source_numeric)
+    merged_aliases = _string_list_value(
+        [
+            *(_json_list(target_profile[2]) if target_profile is not None else []),
+            str(source["tag"]),
+            *(_json_list(source_profile[2]) if source_profile is not None else []),
+            *aliases,
+        ]
+    )
+    resolved_color = color
+    if resolved_color == "blue" and target_profile is not None and str(target_profile[1] or ""):
+        resolved_color = str(target_profile[1])
+    conn.execute(
+        """
+        INSERT INTO memory_tag_profiles(tag_id, color_token, aliases_json, updated_at_ms)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(tag_id) DO UPDATE SET
+            color_token = excluded.color_token,
+            aliases_json = excluded.aliases_json,
+            updated_at_ms = excluded.updated_at_ms
+        """,
+        (target_numeric, resolved_color, json.dumps(merged_aliases, ensure_ascii=False), changed_at_ms),
+    )
+    conn.execute("DELETE FROM memory_tag_profiles WHERE tag_id = ?", (source_numeric,))
+
+    source_label = str(source["tag"])
+    target_label = str(target["tag"])
+    for book_id, tags_json in conn.execute("SELECT book_id, tags_json FROM memory_books").fetchall():
+        tags = [str(value) for value in _json_list(tags_json)]
+        if source_label not in tags:
+            continue
+        replaced = _deduplicated_values(target_label if value == source_label else value for value in tags)
+        conn.execute(
+            "UPDATE memory_books SET tags_json = ?, updated_at_ms = ? WHERE book_id = ?",
+            (json.dumps(replaced, ensure_ascii=False), changed_at_ms, book_id),
+        )
+    conn.execute("DELETE FROM memory_tags WHERE id = ?", (source_numeric,))
+    return {
+        "merged": True,
+        "mergedIntoId": target_id,
+        "mergedIntoTag": target_label,
+        "aliases": merged_aliases,
+        "color": resolved_color,
+    }
+
+
+def _deduplicated_values(values: object) -> list[object]:
+    result: list[object] = []
+    for value in values:  # type: ignore[union-attr]
+        if value in (None, "") or value in result:
+            continue
+        result.append(value)
+    return result
 
 
 def _now_ms() -> int:

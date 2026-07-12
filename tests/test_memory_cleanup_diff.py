@@ -120,7 +120,7 @@ class MemoryCleanupDiffTests(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO memory_cleanup_runs(run_id, created_at_ms, provider, model, status, summary, metadata_json)
-                VALUES ('cleanup_invalid_apply', 1, 'x1top', 'fake-gpt', 'draft', 'stable=1', '{}')
+                VALUES ('cleanup_invalid_apply', 1, 'deepseek-v4', 'deepseek-v4-flash', 'draft', 'stable=1', '{}')
                 """
             )
             conn.execute(

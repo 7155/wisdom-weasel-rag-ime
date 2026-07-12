@@ -160,9 +160,8 @@ ensure_assistant_overlay_v2_sources() {
     RagImeSuggestionRowView.swift \
     RagImeNonActivatingPanel.swift \
     RagImeAssistantPanelController.swift; do
-    if [[ ! -f "$SQUIRREL_WORKDIR/sources/$file" && -f "$source_dir/$file" ]]; then
-      cp "$source_dir/$file" "$SQUIRREL_WORKDIR/sources/$file"
-    fi
+    [[ -f "$source_dir/$file" ]] || continue
+    cp "$source_dir/$file" "$SQUIRREL_WORKDIR/sources/$file"
   done
 }
 
@@ -190,6 +189,7 @@ write_rag_ime_build_marker() {
   local git_branch="unknown"
   local git_dirty="unknown"
   local patch_sha256="missing"
+  local overlay_sha256="missing"
   local generated_at
 
   mkdir -p "$(dirname "$marker_path")"
@@ -206,6 +206,32 @@ write_rag_ime_build_marker() {
   if [[ -f "$patch_path" ]]; then
     patch_sha256="$(sha256_file "$patch_path")"
   fi
+  overlay_sha256="$($PYTHON_BIN - "$ROOT/squirrel-patches/sources" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+names = (
+    "RagImeAssistantSurfaceState.swift",
+    "RagImeSuggestionCardView.swift",
+    "RagImeSuggestionRowView.swift",
+    "RagImeNonActivatingPanel.swift",
+    "RagImeAssistantPanelController.swift",
+)
+digest = hashlib.sha256()
+for name in names:
+    path = root / name
+    if not path.is_file():
+        print("missing")
+        raise SystemExit(0)
+    digest.update(name.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+)"
 
   "$PYTHON_BIN" - "$marker_path" <<PY
 import json
@@ -213,7 +239,7 @@ import sys
 from pathlib import Path
 
 payload = {
-    "schemaVersion": "rag-ime.squirrel-build-marker.v1",
+    "schemaVersion": "rag-ime.squirrel-build-marker.v2",
     "generatedAt": "$generated_at",
     "repoRoot": "$ROOT",
     "gitCommit": "$git_commit",
@@ -221,6 +247,7 @@ payload = {
     "gitDirty": "$git_dirty",
     "patchPath": "squirrel-patches/0001-add-rag-ime-sidecar.patch",
     "patchSha256": "$patch_sha256",
+    "overlaySha256": "$overlay_sha256",
     "installAppName": "$INSTALL_APP_NAME",
     "bundleId": "$BUNDLE_ID",
     "inputSourceId": "$INPUT_SOURCE_ID",
@@ -306,7 +333,7 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePa
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePanelUsesSideDisplay" "RAG-IME side-display panel marker"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "traceRagImeFrontendEvent" "foreground frontend trace hook"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard ragImeSidecarClient?.frontendTrace == true else { return }" "frontend trace configuration gate"
-require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard !ragImeSensitiveFieldActive else { return }" "sensitive-field trace suppression"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }" "sensitive-field trace suppression"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePrepareFrontendTraceLog" "bounded frontend trace log"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" ".posixPermissions: 0o600" "private frontend trace permissions"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "appendingPathExtension(\"1\")" "frontend trace rotation"
@@ -338,7 +365,7 @@ require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "kAXSe
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "kAXStringForRangeParameterizedAttribute" "focused text surrounding range accessibility capture"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "RagImeForegroundContextResolver" "delayed IMK to Accessibility foreground context resolver"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_app_bundle_missing" "missing app identity privacy fail-closed guard"
-require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_ax_not_trusted" "accessibility authorization privacy fail-closed guard"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "isSensitive: false, reason: \"privacy_unknown_ax_not_trusted\"" "optional accessibility metadata fallback"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_focused_element_missing" "missing focused element privacy fail-closed guard"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_metadata_read_failed" "accessibility metadata privacy fail-closed guard"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSelectedTextProvider.swift" "privacy_unknown_text_field_metadata_missing" "empty text-field metadata privacy fail-closed guard"
@@ -623,6 +650,9 @@ install_squirrel_app() {
   rm -rf "$TARGET_APP"
   cp -R "$PRODUCT_APP" "$TARGET_APP"
   /usr/libexec/PlistBuddy -c "Delete :LSRegisterProhibited" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || true
+  "$ROOT/scripts/support/build_app_icon.sh" "$TARGET_APP/Contents/Resources/RagImeIcon.icns"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile RagImeIcon" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || \
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string RagImeIcon" "$TARGET_APP/Contents/Info.plist"
   printf '[OK] installed patched Squirrel.app: %s\n' "$TARGET_APP"
 
   if should_brand_app; then

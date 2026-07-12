@@ -205,7 +205,7 @@ class PredictionFirstTests(unittest.TestCase):
                 ModelPrediction(
                     text="继续优化候选展示",
                     rank=1,
-                    provider_name="x1api",
+                    provider_name="deepseek-v4",
                     latency_ms=1200,
                     metadata={"initials": "jx yhhxzs"},
                 )

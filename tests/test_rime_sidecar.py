@@ -110,6 +110,48 @@ def _memory(
 
 
 class RimeSidecarV1ContractTests(unittest.TestCase):
+    def test_progressive_candidate_text_keeps_the_same_snapshot_slot_identity(self) -> None:
+        partial = SimpleNamespace(
+            source_type="model",
+            source_index=0,
+            text="继续",
+            insert_text="继续",
+        )
+        final = SimpleNamespace(
+            source_type="model",
+            source_index=0,
+            text="继续完成整个前台验收",
+            insert_text="继续完成整个前台验收",
+        )
+
+        partial_id = rime_sidecar_module._candidate_stable_id(partial, snapshot_id="snap:stream")
+        final_id = rime_sidecar_module._candidate_stable_id(final, snapshot_id="snap:stream")
+
+        self.assertEqual(partial_id, final_id)
+        self.assertNotEqual(
+            final_id,
+            rime_sidecar_module._candidate_stable_id(final, snapshot_id="snap:next"),
+        )
+
+        action_before_expansion = SimpleNamespace(
+            source_type="action",
+            source_index=1,
+            selection_action="start_active_rag_from_context",
+            text="知识生成",
+            insert_text="",
+        )
+        action_after_expansion = SimpleNamespace(
+            source_type="action",
+            source_index=3,
+            selection_action="start_active_rag_from_context",
+            text="知识生成",
+            insert_text="",
+        )
+        self.assertEqual(
+            rime_sidecar_module._candidate_stable_id(action_before_expansion, snapshot_id="snap:stream"),
+            rime_sidecar_module._candidate_stable_id(action_after_expansion, snapshot_id="snap:stream"),
+        )
+
     def setUp(self) -> None:
         self.assertTrue(wait_for_model_prediction_lane_idle(timeout_s=1.0))
         clear_model_prediction_holdover_cache()
@@ -406,7 +448,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
             "confidence": 0.78,
             "freshnessMs": 0,
             "surroundingBefore": "真实输入框上下文来自 IMKTextInput",
-            "surroundingAfter": "",
+            "surroundingAfter": "光标后的说明文字不能进入补全查询",
             "wholeValueHash": "",
             "wholeValueChars": 0,
             "canReplaceSelection": False,
@@ -419,23 +461,32 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(response["queryBasis"], "foregroundText")
         self.assertTrue(response["triggerDecision"]["foregroundContextGate"]["allowed"])
         self.assertEqual(response["ragLane"]["foregroundContext"]["source"], "text_input_client")
+        self.assertEqual(
+            response["ragLane"]["foregroundContext"]["semanticContextMode"],
+            "before_caret_and_selection",
+        )
+        self.assertEqual(
+            response["ragLane"]["foregroundContext"]["excludedAfterChars"],
+            len("光标后的说明文字不能进入补全查询"),
+        )
         self.assertEqual(core.last_current_input, "真实输入框上下文来自 IMKTextInput")
         self.assertEqual(core.last_recent_context, "真实输入框上下文来自 IMKTextInput")
 
-    def test_v1_short_commit_preview_falls_back_to_foreground_context(self) -> None:
+    def test_v1_word_commit_preview_uses_complete_foreground_context(self) -> None:
         predictor = RecordingPredictionProvider(["继续把候选栏稳定下来"])
         core = CuratedMemoryCore()
         first = self._response(
             self._post_commit_payload(
                 request_seq=15,
-                context="这个输入法目前最影响体验的是",
-                commit_preview="是",
+                context="这个输入法目前最影响体验的是弹窗一直不出现，而且",
+                commit_preview="而且",
             ),
             core=core,
             predictor=predictor,
         )
 
         self.assertEqual(first["queryBasis"], "foregroundText")
+        self.assertEqual(first["semanticQuery"], "这个输入法目前最影响体验的是弹窗一直不出现，而且")
         self.assertTrue(first["triggerDecision"]["shouldRefresh"])
         self.assertTrue(first["modelLane"]["called"])
         self.assertTrue(first["progressive"]["shouldFollowUp"])
@@ -444,8 +495,8 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         follow_up = self._response(
             self._post_commit_payload(
                 request_seq=16,
-                context="这个输入法目前最影响体验的是",
-                commit_preview="是",
+                context="这个输入法目前最影响体验的是弹窗一直不出现，而且",
+                commit_preview="而且",
                 progressive_follow_up=True,
             ),
             core=core,
@@ -967,7 +1018,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         surfaces = [item["text"] for item in follow_up["displayCandidates"]]
         rag_surfaces = [item["surfaceText"] for item in follow_up["ragCandidates"]]
 
-        self.assertEqual(actual_core.last_current_input, "先把")
+        self.assertEqual(actual_core.last_current_input, "我想彻底整理项目，先把")
         self.assertNotIn("我想彻底整理项目，先把", surfaces)
         self.assertNotIn("我想彻底整理项目，先把", rag_surfaces)
         self.assertIn("真实输入链路跑通", rag_surfaces)
@@ -1038,7 +1089,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(action_candidates[0]["selectionRank"], 0)
         self.assertEqual(action_candidates[0]["candidateOrdinal"], 0)
         self.assertTrue(action_candidates[0]["isSelectable"])
-        self.assertEqual(action_candidates[0]["text"], "DeepSeek 生成")
+        self.assertEqual(action_candidates[0]["text"], "知识生成")
         self.assertEqual(action_candidates[0]["sourceBadge"], "生成")
         self.assertEqual(action_candidates[0]["colorToken"], "modelBlue")
         self.assertEqual(action_candidates[0]["selectionAction"], "start_active_rag_from_context")
@@ -1088,7 +1139,7 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
         self.assertEqual(core.calls, 0)
         self.assertEqual(predictor.calls, 0)
-        self.assertEqual([item["text"] for item in action_candidates], ["DeepSeek 生成"])
+        self.assertEqual([item["text"] for item in action_candidates], ["知识生成"])
         self.assertEqual(action_candidates[0]["label"], "")
         self.assertIsNone(action_candidates[0]["selectionKey"])
         self.assertEqual(action_candidates[0]["candidateOrdinal"], 0)
@@ -1376,6 +1427,37 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         )
         self.assertEqual(display[0].text, "需要重新训练模型")
         self.assertEqual(display[0].insert_text, "，需要重新训练模型")
+
+    def test_v1_minimind_quality_gate_observe_mode_keeps_visible_candidates(self) -> None:
+        from rag_ime.rime_sidecar import parse_rime_context_payload
+
+        snapshot = parse_rime_context_payload(
+            self._post_commit_payload(
+                context="RAG要好好测试，还有rime的重排和优化",
+                commit_preview="重排和优化",
+            ),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        metadata = {
+            "candidate_mode": "base-completion-branches",
+            "candidate_scores": [
+                {"text": "不要再临时加新内容", "probability": 0.22},
+                {"text": "等跑完再看结果", "probability": 0.04},
+            ],
+        }
+        with patch.dict(os.environ, {"RAG_IME_LOCAL_MODEL_QUALITY_GATE_MODE": "observe"}):
+            kept = filter_post_commit_model_completions(
+                [
+                    ModelPrediction("不要再临时加新内容", 1, "local-mlx", 80, 0.9, metadata),
+                    ModelPrediction("等跑完再看结果", 2, "local-mlx", 80, 0.8, metadata),
+                ],
+                snapshot=snapshot,
+                max_candidates=3,
+            )
+
+        self.assertEqual([item.text for item in kept], ["，不要再临时加新内容", "，等跑完再看结果"])
+        self.assertTrue(all(item.metadata["qualityGate"]["observedOnly"] for item in kept))
+        self.assertTrue(all(item.metadata["qualityGate"]["mode"] == "observe" for item in kept))
 
     def test_v1_minimind_quality_gate_rejects_hypothesis_negation(self) -> None:
         from rag_ime.rime_sidecar import parse_rime_context_payload

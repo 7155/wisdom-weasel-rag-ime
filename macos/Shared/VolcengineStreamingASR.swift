@@ -140,7 +140,7 @@ struct VoiceTranscriptReconciler {
     }
 }
 
-final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
+final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate, VoiceStreamingASRClient, @unchecked Sendable {
     static let endpoint = URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async")!
     static let audioChunkBytes = 6_400
 
@@ -254,6 +254,10 @@ final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate,
             "model_name": "bigmodel",
             "enable_itn": true,
             "enable_punc": true,
+            // Full snapshots let the final second-pass result replace earlier
+            // text instead of being appended to it.
+            "enable_nonstream": true,
+            "result_type": "full",
             "show_utterances": true,
         ]
         if let context = hotwordConfig.requestContextJSONString() {
@@ -399,11 +403,14 @@ final class VolcengineStreamingASRClient: NSObject, URLSessionWebSocketDelegate,
             result = nil
         }
         guard let result else { return "" }
+        if let text = result["text"] as? String, !text.isEmpty {
+            return text
+        }
         if let utterances = result["utterances"] as? [[String: Any]] {
             let joined = utterances.compactMap { $0["text"] as? String }.joined()
             if !joined.isEmpty { return joined }
         }
-        return result["text"] as? String ?? ""
+        return ""
     }
 
     private func fail(_ message: String) {
