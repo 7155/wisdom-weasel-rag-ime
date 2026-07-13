@@ -43,8 +43,6 @@ the user dictionary. Wisdom Weasel adds a source-aware assistant surface rather
 than replacing Rime's decoder. Ordinary number keys stay with Rime/the host;
 `Tab` and `Option+number` select assistant candidates.
 
-![RAG-IME Control Center overview](docs/assets/screenshots/control-center-overview.png)
-
 ### Local LLM Prediction
 
 **Status: in development; runtime integration and automated tests are present,
@@ -193,7 +191,7 @@ metadata back if any step fails. The backup itself is not password encrypted.
 
 ### Screenshot Checklist
 
-The four screenshots already referenced above are tracked. The remaining
+The three screenshots already referenced above are tracked. The remaining
 named slots are intentionally stable so project screenshots can be added later
 without rewriting the feature layout:
 
