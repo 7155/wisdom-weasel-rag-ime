@@ -391,10 +391,6 @@ applicable notices and exact corresponding source; see
 
 ## Acknowledgements
 
-This is an independent project. The names below acknowledge upstream software,
-optional providers, and design references only; no affiliation, sponsorship, or
-official partnership is implied.
-
 - [Squirrel](https://github.com/rime/squirrel) and
   [librime](https://github.com/rime/librime) provide the macOS frontend and
   Rime engine foundations.
