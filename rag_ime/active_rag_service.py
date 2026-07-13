@@ -26,6 +26,7 @@ from .deepseek_completion import (
     CompletionCandidateDelta,
     DeepSeekCompletionError,
     DeepSeekCompletionRequest,
+    active_rag_text_is_complete,
     build_deepseek_completion_messages,
     resolved_active_rag_current_request,
 )
@@ -515,12 +516,7 @@ class ActiveRagService:
                         else "local_rag_returned_no_insertable_content"
                     )
                     if not self._recover_streamed_partial_locked(current, reason=empty_reason):
-                        if remote_model_enabled:
-                            self._mark_no_suitable_suggestion_locked(current, reason=empty_reason)
-                        else:
-                            current.candidates = ()
-                            current.status = "error"
-                            current.error = empty_reason
+                        self._mark_no_suitable_suggestion_locked(current, reason=empty_reason)
                 current.diagnostics["generation"] = {
                     **dict(current.diagnostics.get("generation") or {}),
                     "displayedCandidateCount": len(current.candidates),
@@ -895,6 +891,7 @@ class ActiveRagService:
                     )
                 )
             raise
+        completion_transport = _completion_delta_diagnostics(raw_deltas, provider=provider)
         if diagnostics is not None:
             diagnostics["modelRequest"] = {
                 **dict(diagnostics.get("modelRequest") or {}),
@@ -913,6 +910,7 @@ class ActiveRagService:
                         if item.metadata.get("fallbackReason")
                     }
                 ),
+                **completion_transport,
             }
             diagnostics["remoteModel"] = {
                 **dict(diagnostics.get("remoteModel") or {}),
@@ -925,6 +923,7 @@ class ActiveRagService:
                     "deepseek_request_completed",
                     rawCandidateCount=len(raw_deltas),
                     governedCandidateCount=len(candidates),
+                    **completion_transport,
                 )
             )
             trace_events.append(
@@ -996,25 +995,29 @@ class ActiveRagService:
             return
         evidence = session.evidence or _evidence_from_pack(session.request.evidence_pack)
         session.evidence = evidence
-        session.candidates = ()
-        session.status = "error"
-        session.error = f"active_rag_generation_failed:{compact_whitespace(reason) or 'unknown'}"
-        session.updated_at_ms = now_ms()
+        # Keep the explicit generation surface alive and retriable. Transport,
+        # timeout and provider errors remain available in diagnostics, but the
+        # foreground must not collapse into the alarming generic "生成失败"
+        # card after the user has already waited for a paid request.
+        self._mark_no_suitable_suggestion_locked(
+            session,
+            reason=compact_whitespace(reason) or "generation_not_completed",
+        )
 
     def _recover_streamed_partial_locked(self, session: ActiveRagSession, *, reason: str) -> bool:
-        """Turn an already-visible safe stream into a stable result on interruption.
+        """Keep only a complete sentence after an interrupted visible stream.
 
-        Once the user has seen generated text, replacing it with a generic
-        failure card is both lossy and visually jarring. Partial text reaches
-        this method only after the normal candidate governor accepted it, so
-        it is safer to keep that text reviewable and mark the interruption in
-        metadata than to erase it.
+        The candidate governor validates content but cannot prove that a stream
+        reached a semantic boundary. A clause such as ``...同时避免`` must stay
+        non-final and non-insertable even when it was briefly visible while the
+        provider was streaming.
         """
 
         visible_partials = tuple(
             candidate
             for candidate in session.candidates
             if bool(candidate.metadata.get("streamingPartial")) and compact_whitespace(candidate.text)
+            and _streamed_partial_is_complete(candidate.text)
         )
         if not visible_partials:
             return False
@@ -1417,17 +1420,6 @@ def _retryable_empty_generation_error(exc: DeepSeekCompletionError) -> bool:
     return reason.startswith("active_rag_no_insertable_content:")
 
 
-_NO_SUITABLE_GENERATION_REASONS = {
-    "empty_remote_content",
-    "governor_rejected_content",
-}
-_NON_FAILURE_TRANSPORT_REASONS = {
-    "",
-    "empty_remote_content",
-    "stream_completed",
-}
-
-
 def _no_suitable_generation_reason(error: BaseException) -> str:
     details = dict(getattr(error, "diagnostics", {}) or {})
     terminal = compact_whitespace(str(details.get("terminalReason") or "")).lower()
@@ -1439,31 +1431,10 @@ def _no_suitable_generation_reason(error: BaseException) -> str:
 
 
 def _no_suitable_generation_error(error: BaseException, *, diagnostics: dict[str, object]) -> bool:
-    """Separate an unusable model answer from a network or provider failure."""
+    """Keep provider failures observable without turning them into a dead UI."""
 
-    if not isinstance(error, DeepSeekCompletionError):
-        return False
-    details = dict(getattr(error, "diagnostics", {}) or {})
-    terminal = _no_suitable_generation_reason(error)
-    transport = compact_whitespace(str(details.get("transportReason") or "")).lower()
-    if terminal not in _NO_SUITABLE_GENERATION_REASONS:
-        return False
-    if transport not in _NON_FAILURE_TRANSPORT_REASONS:
-        return False
-    model_request = diagnostics.get("modelRequest")
-    initial = model_request.get("initialAttemptTransport") if isinstance(model_request, dict) else None
-    if not isinstance(initial, dict) or not initial:
-        return True
-    initial_reason = compact_whitespace(str(initial.get("terminalReason") or "")).lower()
-    if not initial_reason:
-        failure = compact_whitespace(str(initial.get("failureReason") or "")).lower()
-        prefix = "active_rag_no_insertable_content:"
-        initial_reason = failure[len(prefix) :] if failure.startswith(prefix) else failure
-    initial_transport = compact_whitespace(str(initial.get("transportReason") or "")).lower()
-    return (
-        initial_reason in _NO_SUITABLE_GENERATION_REASONS
-        and initial_transport in _NON_FAILURE_TRANSPORT_REASONS
-    )
+    _ = diagnostics
+    return isinstance(error, DeepSeekCompletionError)
 
 
 def _timeline_evidence_from_core(core: LocalSqliteCoreClient, request: ActiveRagStartRequest) -> tuple[ActiveRagEvidence, ...]:
@@ -1733,13 +1704,11 @@ def _session_payload(session: ActiveRagSession) -> dict[str, object]:
 def _active_rag_poll_after_ms(*, status: str, elapsed_ms: int) -> int:
     if status != "pending":
         return 0
-    if elapsed_ms < 1_000:
-        return 180
-    if elapsed_ms < 6_000:
-        return 360
-    if elapsed_ms < 15_000:
-        return 700
-    return 1_000
+    # The status payload is local and lightweight. Poll at UI-frame-friendly
+    # cadence so streamed text does not arrive in two-to-three-second jumps.
+    if elapsed_ms < 30_000:
+        return 100
+    return 160
 
 
 def _should_force_visible_fallback(session: ActiveRagSession) -> bool:
@@ -2104,6 +2073,46 @@ def _provider_name(provider: object | None) -> str:
     return compact_whitespace(str(value)) or ("custom" if provider is not None else "")
 
 
+def _completion_delta_diagnostics(
+    deltas: tuple[CompletionCandidateDelta, ...],
+    *,
+    provider: object | None,
+) -> dict[str, object]:
+    metadata = [dict(item.metadata or {}) for item in deltas]
+    summary: dict[str, object] = {
+        "parseModes": sorted(
+            {compact_whitespace(str(item.get("parseMode") or "")) for item in metadata}
+            - {""}
+        ),
+        "finishReasons": sorted(
+            {compact_whitespace(str(item.get("finishReason") or "")) for item in metadata}
+            - {""}
+        ),
+        "doneMarkerSeen": any(bool(item.get("doneMarkerSeen")) for item in metadata),
+        "streamInterrupted": any(bool(item.get("streamInterrupted")) for item in metadata),
+        "continuationAttempted": any(bool(item.get("continuationAttempted")) for item in metadata),
+        "continuationAdvanced": any(bool(item.get("continuationAdvanced")) for item in metadata),
+        "continuationCompleted": any(bool(item.get("continuationCompleted")) for item in metadata),
+        "continuationRounds": max((int(item.get("continuationRounds") or 0) for item in metadata), default=0),
+    }
+    transport_modes = sorted(
+        {compact_whitespace(str(item.get("transportMode") or "")) for item in metadata}
+        - {""}
+    )
+    if transport_modes:
+        summary["transportModes"] = transport_modes
+    proxy_values = [bool(item.get("proxyBypassed")) for item in metadata if "proxyBypassed" in item]
+    if proxy_values:
+        summary["proxyBypassed"] = all(proxy_values)
+    elif hasattr(provider, "proxy_bypassed"):
+        summary["proxyBypassed"] = bool(getattr(provider, "proxy_bypassed"))
+    return summary
+
+
+def _streamed_partial_is_complete(text: str) -> bool:
+    return active_rag_text_is_complete(text)
+
+
 def _provider_credentials_configured(provider: object | None) -> bool:
     if provider is None:
         return False
@@ -2220,7 +2229,7 @@ def _active_rag_error_candidate_payload(session: ActiveRagSession) -> dict[str, 
         "candidateStableId": f"{session.session_id}:error",
         "snapshotId": session.session_id,
         "snapshotGeneration": 1,
-        "text": "生成失败，请重试",
+        "text": "暂未完成，可以重试",
         "insertText": "",
         "sourceType": "status",
         "sourceLane": "active_rag_status",
@@ -2253,6 +2262,19 @@ def _active_rag_error_candidate_payload(session: ActiveRagSession) -> dict[str, 
 
 
 def _active_rag_no_suggestion_candidate_payload(session: ActiveRagSession) -> dict[str, object]:
+    reason = str((session.diagnostics.get("generation") or {}).get("noSuitableReason") or "")
+    status_text = (
+        "这次没有合适建议"
+        if reason
+        in {
+            "empty_remote_content",
+            "governor_rejected_content",
+            "no_insertable_content",
+            "remote_generation_returned_no_insertable_content",
+            "local_rag_returned_no_insertable_content",
+        }
+        else "暂未完成，可以重试"
+    )
     metadata = {
         "activeRag": True,
         "activeRagNoSuggestion": True,
@@ -2264,7 +2286,7 @@ def _active_rag_no_suggestion_candidate_payload(session: ActiveRagSession) -> di
         "frontAppBundleId": session.request.front_app_bundle_id,
         "candidateOrdinal": 0,
         "visibleLabel": "",
-        "reason": str((session.diagnostics.get("generation") or {}).get("noSuitableReason") or ""),
+        "reason": reason,
     }
     return {
         "candidateId": f"{session.session_id}:no-suggestion",
@@ -2276,7 +2298,7 @@ def _active_rag_no_suggestion_candidate_payload(session: ActiveRagSession) -> di
         "candidateStableId": f"{session.session_id}:no-suggestion",
         "snapshotId": session.session_id,
         "snapshotGeneration": 1,
-        "text": "这次没有合适建议",
+        "text": status_text,
         "insertText": "",
         "sourceType": "status",
         "sourceLane": "active_rag_status",
@@ -2314,7 +2336,8 @@ def _active_rag_display_candidate_payload(
     session: ActiveRagSession,
     index: int,
 ) -> dict[str, object]:
-    label = str(index % 10 or 0)
+    streaming_partial = bool(item.metadata.get("streamingPartial")) or session.status == "pending"
+    label = "" if streaming_partial else str(index % 10 or 0)
     metadata = {
         **dict(item.metadata),
         "activeRag": True,
@@ -2341,8 +2364,8 @@ def _active_rag_display_candidate_payload(
         "candidateId": item.candidate_id,
         "label": label,
         "visibleLabel": label,
-        "selectionKey": label,
-        "selectionRank": index,
+        "selectionKey": None if streaming_partial else label,
+        "selectionRank": 0 if streaming_partial else index,
         "candidateOrdinal": index,
         "candidateStableId": metadata["candidateStableId"],
         "snapshotId": session.session_id,
@@ -2351,7 +2374,7 @@ def _active_rag_display_candidate_payload(
         "insertText": item.insert_text,
         "sourceType": item.source_type,
         "sourceLane": item.source_lane,
-        "selectionAction": "commit_side_candidate",
+        "selectionAction": "none" if streaming_partial else "commit_side_candidate",
         "sourceIndex": index - 1,
         "comment": item.source_lane,
         "badge": metadata["sourceBadge"],
@@ -2373,7 +2396,10 @@ def _active_rag_display_candidate_payload(
         "displayLane": item.source_lane or "active_rag",
         "group": "prediction",
         "groupLabel": "预测",
-        "isSelectable": True,
+        # Streaming text is feedback, not a commit-ready answer. Its stable row
+        # may update smoothly while pending, but Tab becomes active only after
+        # the provider and semantic-boundary governor finalize the document.
+        "isSelectable": not streaming_partial,
         "isStatus": False,
         "metadata": metadata,
     }

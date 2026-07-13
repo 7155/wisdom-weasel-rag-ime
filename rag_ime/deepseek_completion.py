@@ -71,6 +71,7 @@ class DeepSeekV4FlashCompletionProvider:
     ):
         self.config = config
         self.urlopen = urlopen or _direct_deepseek_urlopen
+        self.proxy_bypassed = urlopen is None
         self.enforce_runtime_flags = bool(enforce_runtime_flags)
 
     def stream_candidates(
@@ -97,9 +98,9 @@ class DeepSeekV4FlashCompletionProvider:
         }
         configured_token_cap = _configured_completion_token_cap(self.config, request)
         if request.scene == "active_rag":
-            # Long-form generation is user-triggered. A zero cap deliberately
-            # omits max_tokens so the provider/model owns its native output
-            # limit instead of the input method truncating the document.
+            # This is a transport budget, not a UI character limit. Sending a
+            # large explicit value prevents compatible gateways from applying
+            # a tiny default that closes a paragraph in the middle of a clause.
             if configured_token_cap > 0:
                 body["max_tokens"] = configured_token_cap
         else:
@@ -117,8 +118,29 @@ class DeepSeekV4FlashCompletionProvider:
         reasoning_chars = 0
         attempt_count = 0
         last_safe_partial = ""
+        last_published_partial = ""
         fallback_reason = "empty_remote_content"
+        finish_reason = ""
+        done_marker_seen = False
+        continuation_attempted = False
+        continuation_completed = False
+        continuation_advanced = False
+        continuation_rounds = 0
+        continuation_mode = ""
+        transport_metadata = {
+            "proxyBypassed": self.proxy_bypassed,
+            "transportMode": "direct_no_proxy" if self.proxy_bypassed else "custom_transport",
+        }
         deadline = started + max(0.1, request.latency_budget_ms / 1000)
+
+        def publish_partial(value: str) -> None:
+            nonlocal last_published_partial
+            if not value or value == last_published_partial:
+                return
+            last_published_partial = value
+            if on_text_delta is not None:
+                on_text_delta(value)
+
         for attempt_body in _completion_body_attempts(body):
             attempt_count += 1
             http_request = _build_completion_http_request(self.config, attempt_body)
@@ -126,6 +148,12 @@ class DeepSeekV4FlashCompletionProvider:
             try:
                 with self.urlopen(http_request, timeout=max(0.1, request.latency_budget_ms / 1000)) as response:
                     for kind, delta in _iter_model_deltas(response):
+                        if kind == "finish":
+                            finish_reason = compact_whitespace(delta)
+                            continue
+                        if kind == "done":
+                            done_marker_seen = True
+                            continue
                         if kind == "reasoning":
                             reasoning_chars += len(delta)
                             if time.perf_counter() >= deadline:
@@ -138,11 +166,16 @@ class DeepSeekV4FlashCompletionProvider:
                         had_content = True
                         content_buffer = content_buffer.replace("\\n", "\n").replace("\\r", "\r")
                         if request.scene == "active_rag":
+                            stream_candidate = _active_rag_stream_candidate_text(content_buffer, request=request)
+                            if stream_candidate:
+                                # Keep the full governed stream as the repair
+                                # seed and publish its latest draft immediately.
+                                # Final insertion still requires a complete
+                                # semantic boundary after the stream ends.
+                                last_safe_partial = stream_candidate
                             partial_text = _active_rag_partial_candidate_text(content_buffer, request=request)
                             if partial_text:
-                                last_safe_partial = partial_text
-                                if on_text_delta is not None:
-                                    on_text_delta(partial_text)
+                                publish_partial(partial_text)
                             if time.perf_counter() >= deadline:
                                 fallback_reason = "budget_elapsed"
                                 budget_elapsed = True
@@ -156,7 +189,13 @@ class DeepSeekV4FlashCompletionProvider:
                         content_buffer = ""
                         for line in lines:
                             if line.endswith("\n") or line.endswith("\r"):
-                                for item in _candidates_from_text(line, request=request, seen=seen, started=started):
+                                for item in _candidates_from_text(
+                                    line,
+                                    request=request,
+                                    seen=seen,
+                                    started=started,
+                                    extra_metadata=transport_metadata,
+                                ):
                                     yielded_count += 1
                                     yield item
                                     if yielded_count >= max(1, int(request.max_candidates)):
@@ -169,7 +208,11 @@ class DeepSeekV4FlashCompletionProvider:
                             break
                 if budget_elapsed:
                     break
-                fallback_reason = "stream_completed" if had_content else "empty_remote_content"
+                fallback_reason = (
+                    f"finish_{finish_reason}"
+                    if finish_reason
+                    else ("stream_completed" if had_content else "empty_remote_content")
+                )
                 break
             except urllib.error.HTTPError as exc:
                 fallback_reason = _http_error_fallback_reason(exc)
@@ -183,36 +226,139 @@ class DeepSeekV4FlashCompletionProvider:
             except (TimeoutError, urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
                 fallback_reason = _exception_fallback_reason(exc)
                 break
-        if content_buffer and (
-            not _active_rag_paragraph_output(request)
-            or _stable_partial_can_finish(content_buffer, request=request)
+        while (
+            continuation_rounds < 2
+            and request.scene == "active_rag"
+            and _active_rag_paragraph_output(request)
+            and last_safe_partial
+            and not _stable_partial_can_finish(last_safe_partial, request=request)
+            and fallback_reason != "budget_elapsed"
+            and time.perf_counter() < deadline
         ):
-            for item in _candidates_from_text(content_buffer, request=request, seen=seen, started=started):
+            continuation_attempted = True
+            continuation_rounds += 1
+            replace_output = _active_rag_requires_full_rewrite(last_safe_partial)
+            continuation_mode = "rewrite" if replace_output else "suffix"
+            (
+                continued_buffer,
+                continuation_finish_reason,
+                continuation_done_seen,
+                continuation_fallback_reason,
+                continuation_content_chars,
+                continuation_reasoning_chars,
+                continuation_attempt_count,
+            ) = self._continue_active_rag_stream(
+                body=body,
+                request=request,
+                safe_partial=last_safe_partial,
+                deadline=deadline,
+                on_text_delta=publish_partial,
+                replace_output=replace_output,
+            )
+            content_chars += continuation_content_chars
+            reasoning_chars += continuation_reasoning_chars
+            attempt_count += continuation_attempt_count
+            round_advanced = compact_whitespace(continued_buffer) != compact_whitespace(last_safe_partial)
+            continuation_advanced = continuation_advanced or round_advanced
+            if round_advanced:
+                content_buffer = continued_buffer
+                finish_reason = continuation_finish_reason or finish_reason
+                done_marker_seen = done_marker_seen or continuation_done_seen
+                fallback_reason = continuation_fallback_reason or fallback_reason
+                continued_candidate = _active_rag_stream_candidate_text(content_buffer, request=request)
+                if continued_candidate:
+                    last_safe_partial = continued_candidate
+                continuation_completed = _stable_partial_can_finish(content_buffer, request=request)
+            else:
+                break
+        final_content = content_buffer
+        final_content_complete = _stable_partial_can_finish(final_content, request=request)
+        truncated_to_complete_prefix = False
+        if (
+            final_content
+            and _active_rag_paragraph_output(request)
+            and not final_content_complete
+        ):
+            # Continuation/rewrite was already attempted above. If the gateway
+            # still closes after a half sentence, prefer the longest complete
+            # prefix. A draft with no complete sentence may stay visible while
+            # streaming, but it must never become an insertable final result.
+            complete_prefix = _complete_active_rag_prefix(final_content)
+            if complete_prefix:
+                final_content = complete_prefix
+                final_content_complete = True
+                truncated_to_complete_prefix = True
+            else:
+                final_content = ""
+
+        if final_content:
+            for item in _candidates_from_text(
+                final_content,
+                request=request,
+                seen=seen,
+                started=started,
+                extra_metadata={
+                    "finishReason": finish_reason,
+                    "doneMarkerSeen": done_marker_seen,
+                    "continuationAttempted": continuation_attempted,
+                    "continuationCompleted": continuation_completed,
+                    "continuationAdvanced": continuation_advanced,
+                    "continuationRounds": continuation_rounds,
+                    "continuationMode": continuation_mode,
+                    "outputComplete": final_content_complete,
+                    "truncatedToCompletePrefix": truncated_to_complete_prefix,
+                    **transport_metadata,
+                },
+            ):
                 yielded_count += 1
                 yield item
                 if yielded_count >= max(1, int(request.max_candidates)):
                     return
-        # reasoning_content is never user-visible. More importantly, an
-        # explicit, paid generation must never be replaced by a locally
-        # fabricated paragraph: the user would otherwise see a request echo as
-        # if it came from the remote model. Surface a retriable error instead.
-        if yielded_count == 0 and request.scene == "active_rag" and last_safe_partial:
-            yield CompletionCandidateDelta(
-                text=last_safe_partial,
-                insert_text=last_safe_partial,
-                done=True,
-                metadata={
-                    "scene": request.scene,
-                    "elapsedMs": int((time.perf_counter() - started) * 1000),
-                    "model": self.config.model,
-                    "parseMode": "stream_partial_recovered",
-                    "streamInterrupted": True,
-                    "fallbackReason": fallback_reason or "final_content_rejected_after_visible_stream",
-                },
+        # reasoning_content is never user-visible. Recover only a complete
+        # sentence from the visible stream; incomplete drafts remain
+        # non-insertable and the service converts this into a stable retry row.
+        if (
+            yielded_count == 0
+            and request.scene == "active_rag"
+            and last_safe_partial
+        ):
+            recovered_complete = _stable_partial_can_finish(last_safe_partial, request=request)
+            recovered_text = (
+                _complete_active_rag_prefix(last_safe_partial)
+                if not recovered_complete
+                else last_safe_partial
             )
-            return
+            if recovered_text:
+                yield CompletionCandidateDelta(
+                    text=recovered_text,
+                    insert_text=recovered_text,
+                    done=True,
+                    metadata={
+                        "scene": request.scene,
+                        "elapsedMs": int((time.perf_counter() - started) * 1000),
+                        "model": self.config.model,
+                        "parseMode": "stream_partial_recovered",
+                        "streamInterrupted": True,
+                        "fallbackReason": fallback_reason or "final_content_rejected_after_visible_stream",
+                        "finishReason": finish_reason,
+                        "doneMarkerSeen": done_marker_seen,
+                        "continuationAttempted": continuation_attempted,
+                        "continuationCompleted": continuation_completed,
+                        "continuationAdvanced": continuation_advanced,
+                        "continuationRounds": continuation_rounds,
+                        "continuationMode": continuation_mode,
+                        "outputComplete": True,
+                        **transport_metadata,
+                    },
+                )
+                return
         if yielded_count == 0 and request.scene == "active_rag":
             reason = "governor_rejected_content" if had_content else fallback_reason
+            governor_rejection_reason = (
+                _active_rag_stream_rejection_reason(content_buffer, request=request)
+                if had_content
+                else ""
+            )
             raise DeepSeekCompletionError(
                 f"active_rag_no_insertable_content:{reason}",
                 diagnostics={
@@ -224,9 +370,110 @@ class DeepSeekV4FlashCompletionProvider:
                     "reasoningChars": reasoning_chars,
                     "safePartialChars": len(last_safe_partial),
                     "stream": bool(body.get("stream")),
+                    "finishReason": finish_reason,
+                    "doneMarkerSeen": done_marker_seen,
+                    "continuationAttempted": continuation_attempted,
+                    "continuationCompleted": continuation_completed,
+                    "continuationAdvanced": continuation_advanced,
+                    "continuationRounds": continuation_rounds,
+                    "continuationMode": continuation_mode,
+                    "governorRejectionReason": governor_rejection_reason,
+                    "proxyBypassed": self.proxy_bypassed,
                     "responsePreview": truncate_text(content_buffer, 320),
                 },
             )
+
+    def _continue_active_rag_stream(
+        self,
+        *,
+        body: dict[str, object],
+        request: DeepSeekCompletionRequest,
+        safe_partial: str,
+        deadline: float,
+        on_text_delta: Callable[[str], None] | None,
+        replace_output: bool,
+    ) -> tuple[str, str, bool, str, int, int, int]:
+        continuation_body = _active_rag_continuation_body(
+            body,
+            safe_partial=safe_partial,
+            replace_output=replace_output,
+        )
+        continuation_buffer = ""
+        finish_reason = ""
+        done_marker_seen = False
+        fallback_reason = "continuation_empty_remote_content"
+        content_chars = 0
+        reasoning_chars = 0
+        attempt_count = 0
+        for attempt_body in _completion_body_attempts(continuation_body):
+            attempt_count += 1
+            http_request = _build_completion_http_request(self.config, attempt_body)
+            try:
+                remaining = max(0.1, deadline - time.perf_counter())
+                with self.urlopen(http_request, timeout=remaining) as response:
+                    for kind, delta in _iter_model_deltas(response):
+                        if kind == "finish":
+                            finish_reason = compact_whitespace(delta)
+                            continue
+                        if kind == "done":
+                            done_marker_seen = True
+                            continue
+                        if kind == "reasoning":
+                            reasoning_chars += len(delta)
+                            if time.perf_counter() >= deadline:
+                                fallback_reason = "continuation_budget_elapsed"
+                                break
+                            continue
+                        continuation_buffer += delta
+                        content_chars += len(delta)
+                        merged = _merge_active_rag_continuation(
+                            safe_partial,
+                            continuation_buffer,
+                            replace_output=replace_output,
+                        )
+                        partial_text = _active_rag_partial_candidate_text(merged, request=request)
+                        if partial_text and on_text_delta is not None:
+                            on_text_delta(partial_text)
+                        if time.perf_counter() >= deadline:
+                            fallback_reason = "continuation_budget_elapsed"
+                            break
+                if fallback_reason == "continuation_budget_elapsed":
+                    break
+                fallback_reason = (
+                    f"continuation_finish_{finish_reason}"
+                    if finish_reason
+                    else (
+                        "continuation_stream_completed"
+                        if continuation_buffer
+                        else "continuation_empty_remote_content"
+                    )
+                )
+                break
+            except urllib.error.HTTPError as exc:
+                fallback_reason = f"continuation_{_http_error_fallback_reason(exc)}"
+                try:
+                    exc.close()
+                except Exception:
+                    pass
+                if attempt_body is not continuation_body:
+                    break
+                continue
+            except (TimeoutError, urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+                fallback_reason = f"continuation_{_exception_fallback_reason(exc)}"
+                break
+        return (
+            _merge_active_rag_continuation(
+                safe_partial,
+                continuation_buffer,
+                replace_output=replace_output,
+            ),
+            finish_reason,
+            done_marker_seen,
+            fallback_reason,
+            content_chars,
+            reasoning_chars,
+            attempt_count,
+        )
 
 
 def build_deepseek_completion_messages(request: DeepSeekCompletionRequest) -> list[dict[str, str]]:
@@ -510,6 +757,58 @@ def _completion_body_attempts(body: dict[str, object]) -> tuple[dict[str, object
     return (body, retry_body)
 
 
+def _active_rag_continuation_body(
+    body: dict[str, object],
+    *,
+    safe_partial: str,
+    replace_output: bool,
+) -> dict[str, object]:
+    continuation_body = dict(body)
+    messages = [dict(item) for item in body.get("messages", []) if isinstance(item, dict)]
+    repair_instruction = (
+        "上一次正文虽然出现了句末标点，但句内仍有断裂或悬空成分。"
+        "请从头输出修正后的完整正文，替换上一次全部内容；保留原有事实和约束，"
+        "不要解释原因，不要输出候选=前缀，每一句都要语法完整并以句末标点结束。"
+        if replace_output
+        else (
+            "上一次流式输出在句子中间中断。只续写缺失的后半段，不要重复前文，"
+            "不要解释原因，不要输出候选=前缀；完成正文并以完整句末标点结束。"
+        )
+    )
+    messages.extend(
+        (
+            {"role": "assistant", "content": f"候选={safe_partial}"},
+            {"role": "user", "content": repair_instruction},
+        )
+    )
+    continuation_body["messages"] = messages
+    continuation_body["stream"] = True
+    return continuation_body
+
+
+def _merge_active_rag_continuation(
+    prefix: str,
+    continuation: str,
+    *,
+    replace_output: bool = False,
+) -> str:
+    left = _preserve_paragraph_layout(prefix)
+    right = _active_rag_full_candidate_text(continuation)
+    if not right:
+        return left
+    if replace_output:
+        return right
+    if right.startswith(left):
+        return right
+    if left.endswith(right):
+        return left
+    max_overlap = min(len(left), len(right), 96)
+    for overlap in range(max_overlap, 1, -1):
+        if left[-overlap:] == right[:overlap]:
+            return _preserve_paragraph_layout(left + right[overlap:])
+    return _preserve_paragraph_layout(left + right)
+
+
 def _http_error_fallback_reason(exc: urllib.error.HTTPError) -> str:
     detail = ""
     try:
@@ -543,6 +842,7 @@ def _iter_model_deltas(response) -> Iterator[tuple[str, str]]:
         if stripped.startswith("data:"):
             data = stripped[5:].strip()
             if data == "[DONE]":
+                yield ("done", "")
                 break
             payload = json.loads(data)
             text = _chat_delta_text(payload)
@@ -551,6 +851,9 @@ def _iter_model_deltas(response) -> Iterator[tuple[str, str]]:
                 yield ("content", text)
             if reasoning:
                 yield ("reasoning", reasoning)
+            finish_reason = _chat_finish_reason(payload)
+            if finish_reason:
+                yield ("finish", finish_reason)
         else:
             payload = _json_loads_or_none(stripped)
             if isinstance(payload, dict):
@@ -560,6 +863,9 @@ def _iter_model_deltas(response) -> Iterator[tuple[str, str]]:
                     yield ("content", content)
                 if reasoning:
                     yield ("reasoning", reasoning)
+                finish_reason = _chat_finish_reason(payload)
+                if finish_reason:
+                    yield ("finish", finish_reason)
             else:
                 yield ("content", line)
 
@@ -581,27 +887,54 @@ def _chat_delta_text(payload: dict[str, Any]) -> str:
     return text if isinstance(text, str) else ""
 
 
+def _chat_finish_reason(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    value = first.get("finish_reason")
+    return compact_whitespace(str(value)) if value is not None else ""
+
+
 def _active_rag_partial_candidate_text(content: str, *, request: DeepSeekCompletionRequest) -> str:
     # Some OpenAI-compatible gateways do not preserve the requested
     # ``候选=`` protocol prefix while streaming. The completed parser already
     # accepts a plain content channel, so partial parsing must follow the same
     # contract; otherwise useful text can be visible for a moment and then be
     # discarded when the connection closes before a sentence terminator.
+    value = _active_rag_stream_candidate_text(content, request=request)
+    if not value:
+        return ""
+    # A visible streaming draft and an insertable final candidate are different
+    # contracts. Publish the governed draft continuously so the panel feels
+    # responsive; ``_stable_partial_can_finish`` remains the only gate that may
+    # promote it to a final result after the stream ends.
+    return value
+
+
+def _active_rag_stream_candidate_text(content: str, *, request: DeepSeekCompletionRequest) -> str:
+    value = _active_rag_full_candidate_text(content)
+    value = _normalize_candidate_for_request(value, request=request)
+    if not value or not _candidate_allowed(value, request=request, seen=set()):
+        return ""
+    return value
+
+
+def _active_rag_stream_rejection_reason(content: str, *, request: DeepSeekCompletionRequest) -> str:
     value = _active_rag_full_candidate_text(content)
     value = _normalize_candidate_for_request(value, request=request)
     if not value:
-        return ""
-    # A streamed preview must pass the same governor as the final candidate.
-    # Otherwise the UI can show a plausible fragment and then flip to an error
-    # when the completed response is rejected.
-    if not _candidate_allowed(value, request=request, seen=set()):
-        return ""
-    # Do not flash two or three characters and then replace them with an error
-    # if the remote stream is interrupted. Once a paragraph preview becomes
-    # visible it is long enough to preserve as a reviewable result.
+        return "parser_returned_no_candidate"
+    reason = _candidate_rejection_reason(value, request=request, seen=set())
+    if reason:
+        return reason
     if _active_rag_paragraph_output(request) and len(compact_whitespace(value)) < 8:
-        return ""
-    return value
+        return "active_rag_paragraph_too_short"
+    if _active_rag_paragraph_output(request) and not active_rag_text_is_complete(value):
+        return "incomplete_sentence_boundary"
+    return "final_candidate_not_emitted"
 
 
 def _chat_delta_reasoning_text(payload: dict[str, Any]) -> str:
@@ -649,6 +982,7 @@ def _candidates_from_text(
     request: DeepSeekCompletionRequest,
     seen: set[str],
     started: float,
+    extra_metadata: dict[str, object] | None = None,
 ) -> Iterator[CompletionCandidateDelta]:
     parsed_candidates = (
         [_active_rag_full_candidate_text(text)]
@@ -668,6 +1002,7 @@ def _candidates_from_text(
                 "elapsedMs": int((time.perf_counter() - started) * 1000),
                 "model": "deepseek_v4_flash",
                 "parseMode": "content",
+                **dict(extra_metadata or {}),
             },
         )
 
@@ -718,9 +1053,50 @@ def _normalize_candidate_for_request(candidate: str, *, request: DeepSeekComplet
         text = _preserve_paragraph_layout(candidate)
         if _active_rag_paragraph_output(request):
             text = re.sub(r"^(?:例如|比如)[，,、\s]*", "", text)
-            return _preserve_paragraph_layout(text)
+            return _sanitize_active_rag_visible_text(text)
         return compact_whitespace(text).strip("\"'“”‘’").strip("。；;，, ")
     return compact_whitespace(candidate)
+
+
+_ACTIVE_RAG_PROTOCOL_MARKERS = (
+    "<think",
+    "</think",
+    "selectedText",
+    "currentContext",
+    "evidenceHints",
+    "maxCandidates",
+    "maxChars",
+    "contextPacket",
+    "currentInput",
+    "outputContract",
+    "surfaceHint",
+)
+
+
+def _sanitize_active_rag_visible_text(text: str) -> str:
+    """Remove a trailing protocol leak without censoring ordinary prose.
+
+    Active RAG is an explicit writing surface, so product names, paths, code,
+    numbers and workflow language are all valid output. Only transport fields
+    and hidden-thinking tags are not user text. If one appears after a valid
+    sentence, preserve the sentence instead of rejecting the whole response.
+    """
+
+    value = _preserve_paragraph_layout(text)
+    if not value:
+        return ""
+    lowered = value.lower()
+    marker_positions = [
+        lowered.find(marker.lower())
+        for marker in _ACTIVE_RAG_PROTOCOL_MARKERS
+        if lowered.find(marker.lower()) >= 0
+    ]
+    if marker_positions:
+        first_marker = min(marker_positions)
+        if first_marker == 0:
+            return ""
+        value = value[:first_marker].rstrip(" ，,;；:：")
+    return _preserve_paragraph_layout(value)
 
 
 def _active_rag_paragraph_output(request: DeepSeekCompletionRequest) -> bool:
@@ -785,6 +1161,63 @@ def _placeholder_candidate(text: str) -> bool:
         "XXX",
         "xxx",
     }
+
+
+def _active_rag_structural_rejection_reason(text: str) -> str:
+    """Reject only protocol artifacts that can never be insertable prose."""
+
+    value = compact_whitespace(text)
+    if not value:
+        return "empty_candidate"
+    lowered = value.lower()
+    if any(marker.lower() in lowered for marker in _ACTIVE_RAG_PROTOCOL_MARKERS):
+        return "prompt_or_reasoning_protocol_leak"
+    bare_value = value.strip("\"'“”‘’").rstrip("。；;，, ")
+    if _placeholder_candidate(bare_value) or bare_value in {
+        "的候选短语",
+        "候选的流式候选",
+    }:
+        return "placeholder_content"
+    if bare_value in {
+        "没有有效内容，请重试。",
+        "没有有效内容，请重试",
+        "没有有效内容",
+        "无有效内容",
+        "未检索到有效内容",
+        "没有有效候选",
+        "无有效候选",
+    }:
+        return "empty_model_placeholder"
+    reasoning_prefixes = (
+        "我需要先分析",
+        "我需要分析用户",
+        "我会先分析",
+        "我将先分析",
+        "需要先分析",
+        "先分析用户",
+        "先来分析用户",
+        "让我先分析",
+    )
+    if value.startswith(reasoning_prefixes):
+        return "reasoning_fragment"
+    return ""
+
+
+def _active_rag_meta_echo(text: str) -> bool:
+    """Detect model narration about the task, not ordinary workflow prose."""
+
+    value = compact_whitespace(text)
+    if value.startswith(("我会围绕", "我将围绕", "我会结合当前输入", "我将结合当前输入")):
+        return True
+    return any(
+        marker in value
+        for marker in (
+            "继续补全当前表达",
+            "上下文里的真实意图",
+            "放到光标后的中文正文",
+            "可直接续写的正文",
+        )
+    )
 
 
 def _generic_prompt_candidate(text: str, *, paragraph_mode: bool = False) -> bool:
@@ -890,41 +1323,78 @@ def _configured_completion_token_cap(config: DeepSeekConfig, request: DeepSeekCo
 
 
 def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, seen: set[str]) -> bool:
+    return not _candidate_rejection_reason(candidate, request=request, seen=seen)
+
+
+def _candidate_rejection_reason(
+    candidate: str,
+    *,
+    request: DeepSeekCompletionRequest,
+    seen: set[str],
+) -> str:
     text = compact_whitespace(candidate)
-    if not text or text in seen:
-        return False
+    if not text:
+        return "empty_candidate"
+    if text in seen:
+        return "duplicate_candidate"
     paragraph_mode = _active_rag_paragraph_output(request)
     max_chars = max(0, int(request.max_chars or 0))
     if len(text) < 2 or (max_chars > 0 and len(candidate) > max(4, max_chars)):
-        return False
+        return "length_out_of_bounds"
+
+    # Active RAG is an explicit, user-triggered writing action. Its remote
+    # response is prose, not an untrusted passive per-key candidate. Applying
+    # the hot-path blacklist here used to discard entire paid responses for
+    # harmless terms such as Git, Pi, MCP, OpenAI, paths, numbers, or phrases
+    # like "下一步". Keep protocol/thinking placeholders out, but do not apply
+    # semantic censorship to otherwise valid document text.
+    if paragraph_mode:
+        structural_reason = _active_rag_structural_rejection_reason(text)
+        if structural_reason:
+            return structural_reason
+        if not request.evidence_pack and _unsupported_foreground_only_candidate(text, request=request):
+            return "unsupported_foreground_claim"
+        candidate_norm = repeat_norm(text)
+        context_norm = repeat_norm(f"{request.current_context} {request.selected_text}")
+        if len(candidate_norm) >= 8 and candidate_norm in context_norm:
+            return "direct_context_echo"
+        if _active_rag_meta_echo(text):
+            return "generation_meta_echo"
+        return ""
+
     if _placeholder_candidate(text):
-        return False
+        return "placeholder_or_protocol_leak"
     if _generic_prompt_candidate(text, paragraph_mode=paragraph_mode):
-        return False
-    if _has_unapproved_ascii_word(text):
-        return False
+        return "generic_prompt_content"
+    # The strict ASCII allow-list protects passive, per-keystroke completions
+    # from prompt/tool leakage. It is incorrect for explicit long-form writing:
+    # valid user text routinely contains Pi, MCP, OpenAI, WebSocket, model names,
+    # paths, or code identifiers. Rejecting one unknown term discarded the
+    # entire paid response even when retrieval and transport both succeeded.
+    if _has_unapproved_ascii_word(text) and not paragraph_mode:
+        return "unapproved_ascii_word"
     if text.isascii() and any(char.isalpha() for char in text):
-        return False
+        return "ascii_only_candidate"
     if paragraph_mode:
         if _bad_active_rag_paragraph_candidate(text):
-            return False
+            return "invalid_active_rag_paragraph"
         if not request.evidence_pack and _unsupported_foreground_only_candidate(text, request=request):
-            return False
+            return "unsupported_foreground_claim"
         if _candidate_repeats_context_fragment(text, f"{request.current_context} {request.selected_text}"):
-            return False
+            return "high_ratio_context_copy"
     elif _bad_reasoning_fragment(text):
-        return False
+        return "reasoning_fragment"
     if candidate_has_self_repetition(text):
-        return False
+        return "self_repetition"
     if candidate_has_keyword_echo(text):
-        return False
+        return "keyword_echo"
     lowered = text.lower()
     if any(marker in text for marker in ("selectedText", "currentContext", "evidenceHints", "maxCandidates", "maxChars")):
-        return False
+        return "prompt_field_leak"
     if any(marker in text for marker in ("下一步", "接下来", "根据上述", "可以进行", "可以继续")):
-        return False
+        return "workflow_meta_language"
     if "json" in lowered or "markdown" in lowered or "输入法候选生成器" in text:
-        return False
+        return "format_or_role_leak"
     active_rag_allows_keyword_reuse = request.scene == "active_rag"
     context = compact_whitespace(f"{request.current_context} {request.selected_text}")
     if candidate_echoes_text(
@@ -933,7 +1403,7 @@ def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, se
         reject_tail=not active_rag_allows_keyword_reuse,
         reject_single_occurrence=not active_rag_allows_keyword_reuse,
     ):
-        return False
+        return "context_echo"
     for item in request.evidence_pack:
         if _candidate_echoes_evidence_item(
             text,
@@ -941,8 +1411,8 @@ def _candidate_allowed(candidate: str, *, request: DeepSeekCompletionRequest, se
             reject_tail=not active_rag_allows_keyword_reuse,
             reject_single_occurrence=not active_rag_allows_keyword_reuse,
         ):
-            return False
-    return True
+            return "evidence_echo"
+    return ""
 
 
 def _unsupported_foreground_only_candidate(text: str, *, request: DeepSeekCompletionRequest) -> bool:
@@ -1166,16 +1636,89 @@ def _longest_shared_contiguous_chars(left: str, right: str) -> int:
     return longest
 
 
+_ACTIVE_RAG_SENTENCE_ENDINGS = ("。", "！", "？", "!", "?", "；", ";")
+_ACTIVE_RAG_DANGLING_ENDINGS = (
+    "并",
+    "但",
+    "而",
+    "和",
+    "与",
+    "或",
+    "及",
+    "的",
+    "地",
+    "得",
+    "因为",
+    "所以",
+    "因此",
+    "从而",
+    "以及",
+    "或者",
+    "并且",
+    "同时",
+    "然后",
+    "例如",
+    "包括",
+    "如下",
+    "通过",
+    "根据",
+    "避免",
+    "确保",
+)
+_ACTIVE_RAG_INTERNAL_FRACTURE = re.compile(
+    r"(?:的|地|得)[，,]\s*(?:并|但|而|确保|避免|需要|应该|必须|建议|同时|以及|或者|从而|因此|所以)"
+)
+
+
+def active_rag_text_is_complete(text: str) -> bool:
+    """Return true only for a syntactically closed Active RAG paragraph.
+
+    A terminal punctuation mark is necessary but not sufficient. Remote
+    continuation can append a valid sentence after an already broken clause,
+    producing text such as ``准确命中输入法定义的，确保……。``. That text must
+    be repaired as a whole instead of being offered as an insertable result.
+    """
+
+    value = compact_whitespace(text)
+    if not value or not value.endswith(_ACTIVE_RAG_SENTENCE_ENDINGS):
+        return False
+    without_terminal = value.rstrip("。！？!?；; ")
+    if not without_terminal or without_terminal.endswith(_ACTIVE_RAG_DANGLING_ENDINGS):
+        return False
+    if _ACTIVE_RAG_INTERNAL_FRACTURE.search(value):
+        return False
+    return True
+
+
+def _complete_active_rag_prefix(text: str) -> str:
+    value = _preserve_paragraph_layout(text)
+    terminal_positions = [
+        index + 1
+        for index, char in enumerate(value)
+        if char in _ACTIVE_RAG_SENTENCE_ENDINGS
+    ]
+    for end in reversed(terminal_positions):
+        candidate = value[:end].rstrip()
+        if active_rag_text_is_complete(candidate):
+            return candidate
+    return ""
+
+
+def _active_rag_requires_full_rewrite(text: str) -> bool:
+    value = compact_whitespace(text)
+    return bool(value.endswith(_ACTIVE_RAG_SENTENCE_ENDINGS) and not active_rag_text_is_complete(value))
+
+
 def _stable_partial_can_finish(text: str, *, request: DeepSeekCompletionRequest) -> bool:
     value = _normalize_candidate_for_request(text, request=request)
     if not value or not _candidate_allowed(value, request=request, seen=set()):
         return False
     if not _active_rag_paragraph_output(request):
         return True
-    # Explicit prose must end at a real sentence boundary. A long clause can
-    # still be a truncated stream and must never become an insertable result.
-    compact = compact_whitespace(value)
-    return compact.endswith(("。", "！", "？", "!", "?", "；", ";"))
+    # Explicit prose must end at a real sentence boundary and may not contain a
+    # dangling internal clause. A long or punctuated fragment can still be a
+    # truncated stream and must never become an insertable result.
+    return active_rag_text_is_complete(value)
 
 
 def _has_unapproved_ascii_word(text: str) -> bool:

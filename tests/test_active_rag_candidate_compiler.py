@@ -33,6 +33,32 @@ class ActiveRagCandidateCompilerTests(unittest.TestCase):
         self.assertLessEqual(len(candidates[0].text), 6)
         self.assertTrue(candidates[0].metadata["lengthGoverned"])
 
+    def test_explicit_generation_keeps_normal_technical_prose(self) -> None:
+        text = (
+            "下一步先检查 Git、Pi、MCP、OpenAI WebSocket 和 127.0.0.1 的运行链路，"
+            "再根据日志确认失败发生在检索、传输还是内容解析阶段。"
+        )
+
+        candidates = compile_active_rag_candidates(
+            (CompletionCandidateDelta(text=text, insert_text=text),),
+            selected_text="请分析输入法为什么生成失败",
+            max_chars=0,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].text, text)
+
+    def test_selected_request_prefix_is_not_committed_as_an_answer(self) -> None:
+        selected = "请分析输入法为什么生成失败，并给出完整修复方案。"
+
+        candidates = compile_active_rag_candidates(
+            (CompletionCandidateDelta(text="请分析输入法为什么生成失败", insert_text=""),),
+            selected_text=selected,
+            max_chars=0,
+        )
+
+        self.assertEqual(candidates, ())
+
 
 if __name__ == "__main__":
     unittest.main()

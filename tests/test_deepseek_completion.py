@@ -154,7 +154,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(partials, ["流式内容逐步返回。"])
+        self.assertEqual(partials, ["流式", "流式内容逐步返回。"])
         self.assertEqual([item.text for item in deltas], ["流式内容逐步返回。"])
 
     def test_active_rag_preserves_unlimited_multi_paragraph_stream(self) -> None:
@@ -338,10 +338,10 @@ class DeepSeekCompletionTests(unittest.TestCase):
 
         self.assertEqual(partials, ["失败反馈应保持可见，成功结果应保留到用户主动确认。"])
         self.assertEqual([item.text for item in deltas], [partials[-1]])
-        self.assertEqual(deltas[0].metadata["parseMode"], "stream_partial_recovered")
-        self.assertTrue(deltas[0].metadata["streamInterrupted"])
+        self.assertEqual(deltas[0].metadata["parseMode"], "content")
+        self.assertNotIn("selectedText", deltas[0].text)
 
-    def test_active_rag_preserves_governed_truncated_stream_without_final_punctuation(self) -> None:
+    def test_active_rag_never_promotes_truncated_stream_without_final_punctuation(self) -> None:
         safe_prefix = "失败反馈保持可见且支持重试，成功结果等待用户主动确认"
         provider = _provider(
             [
@@ -352,22 +352,22 @@ class DeepSeekCompletionTests(unittest.TestCase):
         )
 
         partials: list[str] = []
-        deltas = list(provider.stream_candidates(
-                DeepSeekCompletionRequest(
-                    scene="active_rag",
-                    current_context="正在整理输入法交互要求",
-                    max_chars=120,
-                ),
-                on_text_delta=partials.append,
-            ))
+        with self.assertRaises(DeepSeekCompletionError) as raised:
+            list(provider.stream_candidates(
+                    DeepSeekCompletionRequest(
+                        scene="active_rag",
+                        current_context="正在整理输入法交互要求",
+                        max_chars=120,
+                    ),
+                    on_text_delta=partials.append,
+                ))
 
         self.assertGreaterEqual(len(safe_prefix), 24)
         self.assertEqual(partials, [safe_prefix])
-        self.assertEqual([item.text for item in deltas], [safe_prefix])
-        self.assertTrue(deltas[0].metadata["streamInterrupted"])
-        self.assertEqual(deltas[0].metadata["parseMode"], "stream_partial_recovered")
+        self.assertEqual(raised.exception.diagnostics["safePartialChars"], len(safe_prefix))
+        self.assertTrue(raised.exception.diagnostics["continuationAttempted"])
 
-    def test_active_rag_preserves_plain_stream_when_gateway_omits_protocol_marker(self) -> None:
+    def test_active_rag_rejects_incomplete_plain_stream_when_gateway_omits_protocol_marker(self) -> None:
         safe_prefix = "远程正文已经开始返回，连接中断后仍应保留给用户确认"
         provider = _provider(
             [
@@ -377,22 +377,58 @@ class DeepSeekCompletionTests(unittest.TestCase):
         )
         partials: list[str] = []
 
+        with self.assertRaises(DeepSeekCompletionError) as raised:
+            list(
+                provider.stream_candidates(
+                    DeepSeekCompletionRequest(
+                        scene="active_rag",
+                        current_context="请生成一段可以直接插入的说明",
+                        max_chars=0,
+                    ),
+                    on_text_delta=partials.append,
+                )
+            )
+
+        self.assertEqual(partials, [safe_prefix])
+        self.assertEqual(raised.exception.diagnostics["safePartialChars"], len(safe_prefix))
+        self.assertTrue(raised.exception.diagnostics["continuationAttempted"])
+
+    def test_active_rag_continues_interrupted_paragraph_to_sentence_boundary(self) -> None:
+        prefix = "先检查模型请求日志，确认卡点位于远程生成还是检索阶段。如果检索正常但模型一直"
+        suffix = "没有结束，就保留已返回正文并发起一次续写，直到得到完整句号。"
+        opener = _SequenceOpener(
+            [
+                [_sse_delta(f"候选={prefix}"), _sse_finish("length"), "data: [DONE]\n"],
+                [_sse_delta(suffix), _sse_finish("stop"), "data: [DONE]\n"],
+            ]
+        )
+        provider = DeepSeekV4FlashCompletionProvider(
+            DeepSeekConfig(api_base_url="https://api.example.test/v1", api_key="test-key"),
+            urlopen=opener.open,
+            enforce_runtime_flags=False,
+        )
+        partials: list[str] = []
+
         deltas = list(
             provider.stream_candidates(
                 DeepSeekCompletionRequest(
                     scene="active_rag",
-                    current_context="请生成一段可以直接插入的说明",
+                    current_context="请检查为什么远程生成只返回半句",
                     max_chars=0,
+                    latency_budget_ms=5000,
                 ),
                 on_text_delta=partials.append,
             )
         )
 
-        self.assertEqual(partials, [safe_prefix])
-        self.assertEqual([item.text for item in deltas], [safe_prefix])
-        self.assertEqual(deltas[0].metadata["parseMode"], "stream_partial_recovered")
-        self.assertTrue(deltas[0].metadata["streamInterrupted"])
-        self.assertEqual(deltas[0].metadata["fallbackReason"], "timeout")
+        expected = f"{prefix}{suffix}"
+        self.assertEqual(partials, [prefix, expected])
+        self.assertEqual([item.text for item in deltas], [expected])
+        self.assertEqual(len(opener.bodies), 2)
+        self.assertEqual(deltas[0].metadata["finishReason"], "stop")
+        self.assertTrue(deltas[0].metadata["continuationAttempted"])
+        self.assertTrue(deltas[0].metadata["continuationAdvanced"])
+        self.assertTrue(deltas[0].metadata["continuationCompleted"])
 
     def test_active_rag_does_not_publish_tiny_plain_stream_fragment(self) -> None:
         provider = _provider([_sse_delta("先处理"), TimeoutError("stream closed")])
@@ -410,11 +446,12 @@ class DeepSeekCompletionTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(partials, [])
+        self.assertEqual(partials, ["先处理"])
         self.assertEqual(caught.exception.diagnostics["terminalReason"], "governor_rejected_content")
         self.assertEqual(caught.exception.diagnostics["transportReason"], "timeout")
-        self.assertEqual(caught.exception.diagnostics["contentChars"], 3)
-        self.assertEqual(caught.exception.diagnostics["safePartialChars"], 0)
+        self.assertGreaterEqual(caught.exception.diagnostics["contentChars"], 3)
+        self.assertEqual(caught.exception.diagnostics["safePartialChars"], 3)
+        self.assertTrue(caught.exception.diagnostics["continuationAttempted"])
 
     def test_active_rag_still_rejects_high_ratio_context_copy(self) -> None:
         echoed = "失败反馈应保持可见，成功结果应保留到用户主动确认。"
@@ -508,7 +545,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertFalse(user_payload["contextPacket"]["recentInputPolicy"]["maySupportFacts"])
         self.assertIn("当前输入优先且历史不能充当事实证据", user_payload["task"])
 
-    def test_active_rag_rejects_explanatory_example_paragraph(self) -> None:
+    def test_active_rag_keeps_explanatory_technical_paragraph(self) -> None:
         payload = {
             "choices": [
                 {
@@ -521,8 +558,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         }
         provider = _provider([json.dumps(payload, ensure_ascii=False)])
 
-        with self.assertRaisesRegex(DeepSeekCompletionError, "governor_rejected_content"):
-            list(provider.stream_candidates(
+        deltas = list(provider.stream_candidates(
                 DeepSeekCompletionRequest(
                     scene="active_rag",
                     current_context="我现在测试输入法，想让 DeepSeek 根据 RAG 记忆生成一段自然的后续说明",
@@ -532,6 +568,9 @@ class DeepSeekCompletionTests(unittest.TestCase):
                     max_chars=120,
                 )
             ))
+
+        self.assertEqual(len(deltas), 1)
+        self.assertIn("DeepSeek 结果通过流式候选机制", deltas[0].text)
 
     def test_active_rag_strips_example_prefix_from_real_paragraph(self) -> None:
         payload = {
@@ -588,6 +627,85 @@ class DeepSeekCompletionTests(unittest.TestCase):
 
         self.assertEqual(deltas[0].metadata["parseMode"], "content")
         self.assertIn("Squirrel/Rime 链路", deltas[0].text)
+
+    def test_active_rag_long_form_allows_user_technical_terms_outside_short_allowlist(self) -> None:
+        provider = _provider(
+            [
+                _sse_delta(
+                    "候选=这条链路会让 Pi、MCP、OpenAI 和 WebSocket 保持可配置，"
+                    "同时由当前上下文决定实际使用方式。"
+                ),
+                _sse_finish("stop"),
+                "data: [DONE]\n",
+            ]
+        )
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="请说明兼容服务的配置边界",
+                    max_chars=0,
+                )
+            )
+        )
+
+        self.assertEqual(len(deltas), 1)
+        self.assertIn("Pi、MCP、OpenAI 和 WebSocket", deltas[0].text)
+
+    def test_active_rag_failure_names_the_governor_rule(self) -> None:
+        provider = _provider(
+            [_sse_delta("候选=我会先分析用户需要什么，再给出答案。"), _sse_finish("stop"), "data: [DONE]\n"]
+        )
+
+        with self.assertRaises(DeepSeekCompletionError) as raised:
+            list(
+                provider.stream_candidates(
+                    DeepSeekCompletionRequest(
+                        scene="active_rag",
+                        current_context="请直接回答，不要描述过程",
+                        max_chars=120,
+                    )
+                )
+            )
+
+        self.assertEqual(
+            raised.exception.diagnostics["governorRejectionReason"],
+            "reasoning_fragment",
+        )
+
+    def test_active_rag_rewrites_internally_broken_sentence_instead_of_appending(self) -> None:
+        broken = "RAG 检索需要准确命中输入法定义的，确保最终结果完整。"
+        repaired = "RAG 检索需要准确命中输入法相关记忆，并保证最终结果语义完整。"
+        opener = _SequenceOpener(
+            [
+                [_sse_delta(f"候选={broken}"), _sse_finish("stop"), "data: [DONE]\n"],
+                [_sse_delta(repaired), _sse_finish("stop"), "data: [DONE]\n"],
+            ]
+        )
+        provider = DeepSeekV4FlashCompletionProvider(
+            DeepSeekConfig(api_base_url="https://api.example.test/v1", api_key="test-key"),
+            urlopen=opener.open,
+            enforce_runtime_flags=False,
+        )
+        partials: list[str] = []
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="修复生成正文里断裂的句子",
+                    max_chars=0,
+                    latency_budget_ms=5000,
+                ),
+                on_text_delta=partials.append,
+            )
+        )
+
+        self.assertEqual([item.text for item in deltas], [repaired])
+        self.assertEqual(partials, [broken, repaired])
+        self.assertEqual(deltas[0].metadata["continuationMode"], "rewrite")
+        self.assertTrue(deltas[0].metadata["continuationCompleted"])
 
     def test_active_rag_paragraph_allows_candidate_quality_terms(self) -> None:
         payload = {
@@ -879,10 +997,12 @@ class DeepSeekCompletionTests(unittest.TestCase):
 
         self.assertEqual([item.text for item in deltas], ["直连低延迟"])
         self.assertEqual(len(fake.calls), 1)
-        self.assertNotIn("max_tokens", fake.body)
+        self.assertEqual(fake.body["max_tokens"], 4096)
         self.assertEqual(fake.body["reasoning_effort"], "low")
         self.assertTrue(fake.body["stream"])
         self.assertEqual(fake.calls[0][1], 1.234)
+        self.assertTrue(deltas[0].metadata["proxyBypassed"])
+        self.assertEqual(deltas[0].metadata["transportMode"], "direct_no_proxy")
 
     def test_deepseek_stream_body_respects_config_stream_flag(self) -> None:
         fake = _BodyCaptureOpener()
@@ -967,7 +1087,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual(int(fake.body["max_tokens"]), 1024)
         self.assertEqual(fake.body["reasoning_effort"], "low")
 
-    def test_active_rag_default_omits_application_token_cap(self) -> None:
+    def test_active_rag_default_sends_large_transport_token_budget(self) -> None:
         fake = _BodyCaptureOpener()
         provider = DeepSeekV4FlashCompletionProvider(
             DeepSeekConfig(
@@ -986,7 +1106,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         )
 
         self.assertEqual([item.text for item in deltas], ["直连低延迟"])
-        self.assertNotIn("max_tokens", fake.body)
+        self.assertEqual(fake.body["max_tokens"], 4096)
 
     def test_active_rag_completion_can_be_explicitly_limited_without_touching_hot_path_cap(self) -> None:
         fake = _BodyCaptureOpener()
@@ -1057,6 +1177,11 @@ def _sse_reasoning(content: str) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n"
 
 
+def _sse_finish(reason: str) -> str:
+    payload = {"choices": [{"delta": {}, "finish_reason": reason}]}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n"
+
+
 class _FakeResponse:
     def __init__(self, chunks: list[object]):
         self.chunks = chunks
@@ -1085,6 +1210,19 @@ class _SlowReasoningResponse(_FakeResponse):
             if isinstance(chunk, BaseException):
                 raise chunk
             yield str(chunk).encode("utf-8")
+
+
+class _SequenceOpener:
+    def __init__(self, responses: list[list[object]]) -> None:
+        self.responses = list(responses)
+        self.bodies: list[dict[str, object]] = []
+
+    def open(self, request, timeout=None):
+        _ = timeout
+        self.bodies.append(json.loads(request.data.decode("utf-8")))
+        if not self.responses:
+            raise AssertionError("unexpected extra DeepSeek request")
+        return _FakeResponse(self.responses.pop(0))
 
 
 class _BodyCaptureOpener:

@@ -5,7 +5,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from .anti_echo import candidate_has_keyword_echo, candidate_has_self_repetition, repeat_norm
 from .deepseek_completion import CompletionCandidateDelta
 from .active_rag_models import ActiveRagEvidence, ActiveRagFrame
 from .text_utils import compact_whitespace
@@ -119,23 +118,21 @@ def _active_rag_candidate_allowed(text: str, *, selected_text: str, seen: set[st
     char_limit = _candidate_char_limit(max_chars)
     if char_limit > 0 and len(text) > char_limit:
         return False
-    if compact.isascii() and any(char.isalpha() for char in compact) and len(compact) <= 12:
-        return False
-    if not _contains_cjk(compact):
-        return False
-    if candidate_has_self_repetition(compact):
-        return False
-    if candidate_has_keyword_echo(compact):
-        return False
+
+    # Explicit Active RAG output is a user-requested document. Do not reuse the
+    # passive IME candidate blacklist here: it rejected valid technical prose,
+    # numbers and English identifiers after the remote model had already
+    # returned successfully. The provider layer owns protocol parsing; this
+    # compiler only enforces structural identity and the optional UI length.
     if selected_text:
-        if repeat_norm(compact) == repeat_norm(selected_text):
+        selected = compact_whitespace(selected_text)
+        if compact == selected:
             return False
-        if len(compact) >= 8 and compact in selected_text:
+        # A model occasionally returns only the first clause of the selected
+        # request. Treat that as input echo, while still allowing normal term
+        # overlap in a genuinely new answer.
+        if len(compact) >= 8 and selected.startswith(compact):
             return False
-    if any(marker in compact for marker in ("下一步", "接下来", "根据上述", "可以进行", "可以继续")):
-        return False
-    if _looks_sensitive(compact):
-        return False
     return True
 
 
@@ -172,10 +169,6 @@ def _context_only_evidence(evidence: ActiveRagEvidence) -> bool:
 def _generic_evidence_title(text: str) -> bool:
     value = compact_whitespace(text)
     return value in {"最近输入上下文", "记忆笔记本", "Memory Book", "Daily Book"}
-
-
-def _contains_cjk(text: str) -> bool:
-    return bool(re.search(r"[\u3400-\u9fff]", text))
 
 
 def _fit_active_rag_candidate_text(text: str, *, max_chars: int) -> str:
@@ -264,14 +257,6 @@ def _badge(evidence: ActiveRagEvidence) -> str:
     if evidence.source_type == "phrase":
         return "Phrase"
     return "RAG"
-
-
-def _looks_sensitive(text: str) -> bool:
-    lowered = text.lower()
-    if any(marker in lowered for marker in ("sk-", "api_key", "apikey", "token=", "password", "cookie")):
-        return True
-    digits = sum(1 for char in text if char.isdigit())
-    return digits >= 12
 
 
 def _unique_texts(values: Iterable[str]) -> list[str]:

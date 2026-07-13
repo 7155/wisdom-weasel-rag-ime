@@ -23,9 +23,10 @@ class DeepSeekConfig:
     thinking: str = ""
     reasoning_effort: str = "low"
     max_tokens: int = 96
-    # Zero means no application-side cap. Providers still enforce their own
-    # context/output limits, while users can opt into an explicit positive cap.
-    active_rag_max_tokens: int = 0
+    # The explicit generation lane has no UI character limit, but it still
+    # sends a large transport budget. Omitting max_tokens lets some compatible
+    # gateways apply a tiny default and close a valid paragraph mid-sentence.
+    active_rag_max_tokens: int = 4096
     memory_book_max_tokens: int = 3072
     knowledge_max_tokens: int = 4096
     extra_headers: dict[str, str] = field(default_factory=dict)
@@ -94,7 +95,7 @@ def load_deepseek_config(env_path: str | Path | None = None, env: Mapping[str, s
                 "RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS",
                 "DEEPSEEK_ACTIVE_RAG_MAX_TOKENS",
             ),
-            default=0,
+            default=4096,
         ),
         memory_book_max_tokens=_int_value(
             _first_value(values, "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS", "DEEPSEEK_MEMORY_BOOK_MAX_TOKENS"),

@@ -3235,7 +3235,7 @@ index 0000000..1111111
 +      [statusHalo, statusIcon, statusLabel, diagnosticLabel, retryButton, closeButton].forEach { $0.isHidden = false }
 +    case .explicitError:
 +      statusIcon.image = companionImage(named: "RagImeCompanionWarning")
-+      statusLabel.stringValue = payload.statusText.isEmpty ? "生成失败，请重试" : providerNeutralStatus(payload.statusText)
++      statusLabel.stringValue = payload.statusText.isEmpty ? "暂未完成，可以重试" : providerNeutralStatus(payload.statusText)
 +      [statusHalo, statusIcon, statusLabel, diagnosticLabel, retryButton, closeButton].forEach { $0.isHidden = false }
 +    case .explicitResult:
 +      let streaming = candidates.first.map { candidate in
@@ -5937,7 +5937,7 @@ index c2adf74..b6e3973 100644
 +      uiMode: response.uiMode,
 +      phase: "active_rag",
 +      inputMode: "active_rag_assist",
-+      statusText: activeStatusText ?? (response.thinkingRow ? "正在生成..." : (response.status == "error" ? "生成失败，请重试" : "")),
++      statusText: activeStatusText ?? (response.thinkingRow ? "正在生成..." : (response.status == "error" ? "暂未完成，可以重试" : "")),
 +      animation: RagImeAssistantOverlayAnimation(kind: response.thinkingRow ? "thinking_dots" : "none", frame: max(0, response.elapsedMs ?? 0) / 250 % 3),
 +      candidates: activeOverlayCandidates,
 +      sourceCards: activeSourceCards,
@@ -6002,11 +6002,11 @@ index c2adf74..b6e3973 100644
 +    attempt: Int,
 +    generation: Int
 +  ) {
-+    guard attempt <= 180 else { return }
++    guard attempt <= 1200 else { return }
 +    guard response.status == "pending" || response.thinkingRow else { return }
 +    guard let sidecarClient = ragImeSidecarClient else { return }
 +    let serverDelayMs = response.pollAfterMs ?? 0
-+    let delayMs = serverDelayMs > 0 ? min(max(serverDelayMs, 500), 1200) : (attempt <= 3 ? 500 : 650)
++    let delayMs = serverDelayMs > 0 ? min(max(serverDelayMs, 80), 180) : 100
 +    traceRagImeFrontendEvent("active_rag_status_poll_scheduled", fields: [
 +      "sessionId": response.sessionId,
 +      "attempt": attempt,

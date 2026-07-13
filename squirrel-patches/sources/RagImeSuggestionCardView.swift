@@ -336,7 +336,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       [statusHalo, statusIcon, statusLabel, diagnosticLabel, retryButton, closeButton].forEach { $0.isHidden = false }
     case .explicitError:
       statusIcon.image = companionImage(named: "RagImeCompanionWarning")
-      statusLabel.stringValue = payload.statusText.isEmpty ? "生成失败，请重试" : providerNeutralStatus(payload.statusText)
+      statusLabel.stringValue = payload.statusText.isEmpty ? "暂未完成，可以重试" : providerNeutralStatus(payload.statusText)
       [statusHalo, statusIcon, statusLabel, diagnosticLabel, retryButton, closeButton].forEach { $0.isHidden = false }
     case .explicitResult:
       let streaming = candidates.first.map { candidate in
