@@ -16,3 +16,6 @@ __pycache__/
 .DS_Store
 **/.DS_Store
 installation.yaml
+
+# Local-only design notes, agent logs, screenshots, and acceptance records.
+/docs/
