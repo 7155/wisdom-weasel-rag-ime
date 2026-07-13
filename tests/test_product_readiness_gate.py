@@ -149,7 +149,7 @@ class ProductReadinessGateScriptTests(unittest.TestCase):
                 "--db-path",
                 "/tmp/rag-ime-product-gate.sqlite",
                 "--cases-file",
-                "docs/eval/codex-history-cases.example.jsonl",
+                "eval/codex-history-cases.example.jsonl",
             ],
             cwd=root,
             env=self._gate_env(),

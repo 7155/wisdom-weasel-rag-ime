@@ -252,12 +252,11 @@ class PublicReleaseAuditTests(unittest.TestCase):
             (root / name).write_text("public metadata\n", encoding="utf-8")
         if include_license:
             (root / "LICENSE").write_text("test license\n", encoding="utf-8")
-        docs = root / "docs"
-        docs.mkdir()
-        (docs / "feature-registry.md").write_text("public registry\n", encoding="utf-8")
-        (docs / "license-decision.md").write_text("owner decision pending\n", encoding="utf-8")
-        (docs / "release-manifest.example.json").write_text("{}\n", encoding="utf-8")
-        (docs / "product-status.json").write_text(
+        release = root / "release"
+        release.mkdir()
+        (release / "feature-registry.json").write_text("[]\n", encoding="utf-8")
+        (release / "release-manifest.example.json").write_text("{}\n", encoding="utf-8")
+        (release / "product-status.json").write_text(
             json.dumps(
                 {
                     "schemaVersion": "rag-ime.product-status.v1",
@@ -275,10 +274,9 @@ class PublicReleaseAuditTests(unittest.TestCase):
             "README.md",
             "THIRD_PARTY_NOTICES.md",
             "pyproject.toml",
-            "docs/feature-registry.md",
-            "docs/license-decision.md",
-            "docs/product-status.json",
-            "docs/release-manifest.example.json",
+            "release/feature-registry.json",
+            "release/product-status.json",
+            "release/release-manifest.example.json",
         ]
         if include_license:
             tracked.append("LICENSE")

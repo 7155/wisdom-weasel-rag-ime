@@ -725,7 +725,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Run the IME model inference acceleration benchmark and write a gate report",
     )
     benchmark_predictor.add_argument("--profile", default=os.environ.get("RAG_IME_PREDICTOR_PROFILE", "qwen3_06b_ime_hot"))
-    benchmark_predictor.add_argument("--cases", default="docs/eval/predictor_latency_cases.jsonl")
+    benchmark_predictor.add_argument("--cases", default="eval/predictor_latency_cases.jsonl")
     benchmark_predictor.add_argument("--repeat", type=int, default=20)
     benchmark_predictor.add_argument("--max-candidates", type=int, default=3)
     benchmark_predictor.add_argument("--report", default="/tmp/rag-ime-predictor-bench.json")
@@ -870,7 +870,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "quality-gate",
         help="Run the local acceptance, RAG eval, Rime sidecar eval, and cache-hit gates",
     )
-    quality_gate.add_argument("--cases-file", default="docs/eval/codex-history-cases.example.jsonl")
+    quality_gate.add_argument("--cases-file", default="eval/codex-history-cases.example.jsonl")
     quality_gate.add_argument("--project", default="wisdom-weasel-rag-ime")
     quality_gate.add_argument("--top-k", type=int, default=5)
     quality_gate.add_argument("--match", choices=("any", "all"), default="any")
@@ -887,7 +887,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     quality_gate.add_argument("--max-sidecar-model-timeout-rate", type=float, default=1.0)
     quality_gate.add_argument("--max-old-input-echo-rate", type=float, default=1.0)
     quality_gate.add_argument("--require-model-ttfc", action="store_true")
-    quality_gate.add_argument("--model-ttfc-cases-file", default="docs/eval/ime-ttfc-cases.example.jsonl")
+    quality_gate.add_argument("--model-ttfc-cases-file", default="eval/ime-ttfc-cases.example.jsonl")
     quality_gate.add_argument(
         "--model-ttfc-provider",
         default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "ollama"),
@@ -970,7 +970,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "squirrel-tryout-gate",
         help="Run the real macOS Squirrel tryout readiness gate and quality gate",
     )
-    squirrel_tryout_gate.add_argument("--cases-file", default="docs/eval/codex-history-cases.example.jsonl")
+    squirrel_tryout_gate.add_argument("--cases-file", default="eval/codex-history-cases.example.jsonl")
     squirrel_tryout_gate.add_argument(
         "--quality-db-path",
         default="",
@@ -1051,7 +1051,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     squirrel_tryout_gate.add_argument("--skip-launch-agent", action="store_true")
     squirrel_tryout_gate.add_argument("--skip-sidecar-health", action="store_true")
     squirrel_tryout_gate.add_argument("--require-model-ttfc", action="store_true")
-    squirrel_tryout_gate.add_argument("--model-ttfc-cases-file", default="docs/eval/ime-ttfc-cases.example.jsonl")
+    squirrel_tryout_gate.add_argument("--model-ttfc-cases-file", default="eval/ime-ttfc-cases.example.jsonl")
     squirrel_tryout_gate.add_argument("--model-ttfc-provider", default=os.environ.get("RAG_IME_PREDICTOR_PROVIDER", "ollama"))
     squirrel_tryout_gate.add_argument("--model-ttfc-base-url", default=os.environ.get("RAG_IME_PREDICTOR_BASE_URL", "http://127.0.0.1:11434"))
     squirrel_tryout_gate.add_argument("--model-ttfc-models", default=os.environ.get("RAG_IME_PREDICTOR_MODEL", "qwen3.5:0.8b-mlx"))

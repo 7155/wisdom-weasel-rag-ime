@@ -1081,7 +1081,7 @@ class DebugImeService:
         )
 
     def predictor_benchmark(self, payload: dict[str, Any]) -> dict[str, object]:
-        cases_path = Path(_string(payload.get("cases")) or "docs/eval/predictor_latency_cases.jsonl")
+        cases_path = Path(_string(payload.get("cases")) or "eval/predictor_latency_cases.jsonl")
         cases = load_predictor_latency_cases(cases_path)
         return benchmark_predictor_latency(
             self.predictor,

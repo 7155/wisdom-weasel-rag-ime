@@ -26,12 +26,12 @@ REQUIRED_FILES = (
     "README.md",
     "THIRD_PARTY_NOTICES.md",
     "pyproject.toml",
-    "docs/feature-registry.md",
-    "docs/license-decision.md",
-    "docs/product-status.json",
-    "docs/release-manifest.example.json",
+    "release/feature-registry.json",
+    "release/product-status.json",
+    "release/release-manifest.example.json",
 )
 FORBIDDEN_PREFIXES = (
+    "docs/",
     "debug/",
     "macos/RagImeMac/",
     "scripts/build_macos_frontend.sh",
@@ -47,9 +47,6 @@ FORBIDDEN_PREFIXES = (
     "output/",
     "dataset/quarantine/",
     "scripts/quarantine/",
-    "docs/archive/",
-    "docs/codex_next_step_stability_ui_plan.md",
-    "docs/agent/requirements-reset-audit-20260707.md",
 )
 FORBIDDEN_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}
 FORBIDDEN_NAMES = {".DS_Store", "installation.yaml"}
@@ -80,7 +77,7 @@ MACHINE_PATH_PATTERNS = (
     ("macos_home", re.compile(r"/Users/(?!example(?:/|\b)|Shared(?:/|\b))[A-Za-z0-9._ -]+/")),
     ("external_volume", re.compile(r"/Volumes/(?!Example(?:/|\b))[A-Za-z0-9._ -]+/")),
 )
-MACHINE_PATH_SCAN_EXCLUDED_PREFIXES = ("tests/", "docs/agent/")
+MACHINE_PATH_SCAN_EXCLUDED_PREFIXES = ("tests/",)
 TEXT_SUFFIXES = {
     ".c",
     ".h",
@@ -498,15 +495,15 @@ def _git_head(root: Path) -> str:
 
 
 def _load_product_status(root: Path) -> tuple[dict[str, object], str]:
-    path = root / "docs" / "product-status.json"
+    path = root / "release" / "product-status.json"
     if not path.is_file():
         return {}, ""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return {}, f"docs/product-status.json could not be read: {type(exc).__name__}"
+        return {}, f"release/product-status.json could not be read: {type(exc).__name__}"
     if not isinstance(payload, dict) or payload.get("schemaVersion") != "rag-ime.product-status.v1":
-        return {}, "docs/product-status.json has an unsupported schema"
+        return {}, "release/product-status.json has an unsupported schema"
     return payload, ""
 
 

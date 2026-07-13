@@ -42,13 +42,16 @@ class FeatureRegistryError(ValueError):
 
 def load_feature_registry(path: str | Path) -> list[dict[str, Any]]:
     text = Path(path).read_text(encoding="utf-8")
-    match = re.search(r"```json\s*(.*?)\s*```", text, flags=re.DOTALL)
-    if not match:
-        raise FeatureRegistryError("feature registry must contain a JSON code block")
     try:
-        payload = json.loads(match.group(1))
+        payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise FeatureRegistryError(f"feature registry JSON is invalid: {exc}") from exc
+        match = re.search(r"```json\s*(.*?)\s*```", text, flags=re.DOTALL)
+        if not match:
+            raise FeatureRegistryError("feature registry must be JSON or contain a JSON code block") from exc
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError as nested_exc:
+            raise FeatureRegistryError(f"feature registry JSON is invalid: {nested_exc}") from nested_exc
     return validate_feature_registry(payload)
 
 

@@ -157,7 +157,7 @@ def benchmark(name: str, spec: tuple[str, str, str], documents: list[dict[str, s
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cases", type=Path, default=Path("docs/eval/embedding-ime-cases.jsonl"))
+    parser.add_argument("--cases", type=Path, default=Path("eval/embedding-ime-cases.jsonl"))
     parser.add_argument("--models", default=",".join(MODELS))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--batch-size", type=int, default=16)

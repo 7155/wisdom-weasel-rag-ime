@@ -65,7 +65,7 @@ def validate_product_status(payload: dict[str, object], *, repo_root: Path | Non
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate the machine-readable RAG-IME product status.")
-    parser.add_argument("--status", default="docs/product-status.json")
+    parser.add_argument("--status", default="release/product-status.json")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     status_path = Path(args.status).resolve()

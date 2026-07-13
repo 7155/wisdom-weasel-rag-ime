@@ -248,7 +248,7 @@ class DebugManagementApiTests(unittest.TestCase):
     def test_predictor_benchmark_runs_as_job(self) -> None:
         report = self.service.predictor_benchmark(
             {
-                "cases": "docs/eval/predictor_latency_cases.jsonl",
+                "cases": "eval/predictor_latency_cases.jsonl",
                 "profile": "qwen3_06b_ime_hot",
                 "repeat": 1,
             }

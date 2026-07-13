@@ -40,3 +40,6 @@ dataset/quarantine/
 rag-ime.config.yaml
 config/rag-ime.config.yaml
 config/rag-ime.config.local.yaml
+
+# Local-only design notes, agent logs, screenshots, and acceptance records.
+/docs/

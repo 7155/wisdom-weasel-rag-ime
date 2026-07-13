@@ -10,7 +10,7 @@ from scripts.check_product_status import validate_product_status
 class ProductStatusTests(unittest.TestCase):
     def test_repository_status_is_valid_and_does_not_overclaim_foreground(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        payload = json.loads((root / "docs" / "product-status.json").read_text(encoding="utf-8"))
+        payload = json.loads((root / "release" / "product-status.json").read_text(encoding="utf-8"))
 
         errors = validate_product_status(payload, repo_root=root)
 

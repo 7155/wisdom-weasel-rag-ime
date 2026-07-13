@@ -168,7 +168,7 @@ def _sum_metrics(metrics: list[dict[str, int]]) -> dict[str, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Replay grouped post-commit prediction bursts.")
-    parser.add_argument("--cases", default="docs/eval/group_memory_completion_cases.jsonl")
+    parser.add_argument("--cases", default="eval/group_memory_completion_cases.jsonl")
     args = parser.parse_args()
     report = replay_cases(load_cases(args.cases))
     print(json.dumps(report, ensure_ascii=False, indent=2))

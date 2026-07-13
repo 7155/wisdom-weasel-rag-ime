@@ -15,4 +15,6 @@ ntn workers deploy
 ntn workers webhooks list
 ```
 
-The webhook only acknowledges with HTTP 202. It cannot serve query status. Configure either a separate status relay or a local read-only Notion API token for Sidecar polling; see `docs/notion-personal-knowledge.md`.
+The webhook only acknowledges with HTTP 202. It cannot serve query status.
+Configure either a separate status relay or a local read-only Notion API token
+for Sidecar polling through the native Control Center.

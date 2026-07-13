@@ -29,9 +29,9 @@ This repository is being prepared for public inspection at
 
 ## Main Files
 
-- `docs/project-status.md`: current goal, user feedback, remaining work.
-- `docs/design-decisions.md`: stable architecture choices.
-- `docs/runtime-and-debug.md`: run, install, doctor, and evaluation commands.
+- `README.md`: public product boundary, setup, and validation entry points.
+- `release/`: public-safe machine-readable feature and release metadata.
+- `eval/`: synthetic public evaluation fixtures; never copy private input here.
 - `squirrel-patches/0001-add-rag-ime-sidecar.patch`: product frontend patch.
 - `rag_ime/rime_sidecar.py`: sidecar API and candidate merge path.
 - `rag_ime/mlx_predictor_server.py`: resident local MLX predictor.
@@ -46,12 +46,15 @@ This repository is being prepared for public inspection at
 3. Deduplicate and reorganize RAG memory so old input does not dominate.
 4. Improve local multi-word prediction toward top-3 logits seed branching with
    prompt/KV-cache reuse.
-5. Keep docs short: update existing root docs before adding new long notes.
+5. Keep public guidance concise in root files; `docs/` is local-only and must
+   never be committed.
 
 ## Safety
 
 - Do not commit API keys, local databases, model weights, built apps, logs, or
   personal input history.
+- `docs/` contains private local notes and screenshots and is intentionally
+  ignored in its entirety.
 - `.rag-ime-data/`, `.env*`, SQLite files, model files, build outputs, and
   archives are intentionally ignored.
 - Tests may use fake fixture keys such as `secret-value`; do not replace them

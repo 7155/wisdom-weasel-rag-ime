@@ -57,7 +57,7 @@ class MemoryOptimizerEvalTests(unittest.TestCase):
         self.assertEqual(cases["repeated-skip-cooldown"]["ragCandidateCount"], 0)
 
     def test_repository_memory_optimizer_eval_covers_plan_cases(self) -> None:
-        cases_path = Path("docs/eval/memory_optimizer_cases.jsonl")
+        cases_path = Path("eval/memory_optimizer_cases.jsonl")
 
         report = run_memory_optimizer_eval(
             cases_file=cases_path,
@@ -81,7 +81,7 @@ class MemoryOptimizerEvalTests(unittest.TestCase):
         self.assertEqual(cases["rollback-cleanup-diff"]["cleanup"]["applyRollback"]["rollbackStatus"], "rolled_back")
 
     def test_eval_ignores_installed_post_commit_only_policy(self) -> None:
-        cases_path = Path("docs/eval/memory_optimizer_cases.jsonl")
+        cases_path = Path("eval/memory_optimizer_cases.jsonl")
         os.environ["RAG_IME_AI_AFTER_COMMIT_ONLY"] = "1"
 
         report = run_memory_optimizer_eval(

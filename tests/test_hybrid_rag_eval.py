@@ -115,17 +115,17 @@ class HybridRagEvalTests(unittest.TestCase):
         script = (self.root / "scripts" / "run_hybrid_rag_gate.sh").read_text(encoding="utf-8")
 
         self.assertIn("eval-hybrid-rag-core", script)
-        self.assertIn("docs/eval/hybrid_rag_core_cases.jsonl", script)
-        self.assertIn("docs/eval/v1_post_commit_memory_cases.jsonl", script)
+        self.assertIn("eval/hybrid_rag_core_cases.jsonl", script)
+        self.assertIn("eval/v1_post_commit_memory_cases.jsonl", script)
         self.assertIn("RAG_IME_HYBRID_RAG_CORE=1", script)
         self.assertIn("RAG_IME_AI_AFTER_COMMIT_ONLY=1", script)
         self.assertNotIn("--skip-latency-check", script)
-        self.assertNotIn("docs/eval/memory_optimizer_cases.jsonl", script)
+        self.assertNotIn("eval/memory_optimizer_cases.jsonl", script)
 
         algorithm_script = (self.root / "scripts" / "run_memory_optimizer_algorithm_gate.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn("docs/eval/memory_optimizer_cases.jsonl", algorithm_script)
+        self.assertIn("eval/memory_optimizer_cases.jsonl", algorithm_script)
         self.assertIn("RAG_IME_AI_AFTER_COMMIT_ONLY=0", algorithm_script)
 
 

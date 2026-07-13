@@ -38,8 +38,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FeatureBridgeTests(unittest.TestCase):
-    def test_load_feature_registry_from_docs(self) -> None:
-        features = load_feature_registry(ROOT / "docs" / "feature-registry.md")
+    def test_load_public_feature_registry(self) -> None:
+        features = load_feature_registry(ROOT / "release" / "feature-registry.json")
         statuses = {feature["v1Status"] for feature in features}
         ids = {feature["featureId"] for feature in features}
 
@@ -58,7 +58,7 @@ class FeatureBridgeTests(unittest.TestCase):
         self.assertIn("minimind-retraining-quality-gate", ids)
 
     def test_validate_feature_registry_rejects_bad_status_and_duplicate_id(self) -> None:
-        features = load_feature_registry(ROOT / "docs" / "feature-registry.md")
+        features = load_feature_registry(ROOT / "release" / "feature-registry.json")
 
         bad_status = copy.deepcopy(features)
         bad_status[0]["v1Status"] = "complete_because_backend_works"

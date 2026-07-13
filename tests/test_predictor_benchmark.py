@@ -60,14 +60,14 @@ class _BranchProvider:
 
 class PredictorBenchmarkTests(unittest.TestCase):
     def test_load_predictor_latency_cases(self) -> None:
-        cases = load_predictor_latency_cases(Path("docs/eval/predictor_latency_cases.jsonl"))
+        cases = load_predictor_latency_cases(Path("eval/predictor_latency_cases.jsonl"))
 
         self.assertGreaterEqual(len(cases), 1)
         self.assertEqual(cases[0].case_id, "post-commit-short")
         self.assertEqual(getattr(cases[0], "request_type"), "ime_post_commit")
 
     def test_benchmark_predictor_reports_gate(self) -> None:
-        cases = load_predictor_latency_cases(Path("docs/eval/predictor_latency_cases.jsonl"))
+        cases = load_predictor_latency_cases(Path("eval/predictor_latency_cases.jsonl"))
         report = benchmark_predictor_latency(_FastProvider(), cases[:1], profile="qwen3_06b_ime_hot", repeat=2)
 
         self.assertTrue(report["gatePassed"])
@@ -75,7 +75,7 @@ class PredictorBenchmarkTests(unittest.TestCase):
         self.assertLessEqual(report["summary"]["firstCandidateP95Ms"], 500)
 
     def test_branch_benchmark_uses_full_response_not_seed_logits(self) -> None:
-        cases = load_predictor_latency_cases(Path("docs/eval/predictor_latency_cases.jsonl"))
+        cases = load_predictor_latency_cases(Path("eval/predictor_latency_cases.jsonl"))
         report = benchmark_predictor_latency(
             _BranchProvider(),
             cases[:1],

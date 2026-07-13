@@ -13,9 +13,8 @@ never used for passive per-keystroke prediction.
 > [!WARNING]
 > This repository is licensed under GPL-3.0-only, but it is **not a
 > release-ready IME**. The foreground acceptance, completion-quality, signing,
-> notarization, and final release-manifest gates remain open. See
-> [project status](docs/project-status.md) before installing it as a daily
-> input method.
+> notarization, and final release-manifest gates remain open. Do not install it
+> as a daily input method until those gates have been completed.
 
 ## What It Does
 
@@ -66,8 +65,6 @@ Hardware, model, quantization, cache state, input length, and runtime all affect
 the result. In particular, this README does **not** claim that prediction is
 "finished in 50 ms".
 
-> Screenshot slot: `docs/assets/screenshots/local-llm-candidates.png`
-
 ### Hybrid RAG
 
 **Status: implemented in the local core and sidecar; foreground relevance still
@@ -84,8 +81,6 @@ Explicit queries such as "yesterday", "last week", "before", or "the original
 requirement" can retrieve the corresponding time window and bypass ordinary
 age decay. Old material is preserved, not silently treated as current truth.
 
-> Screenshot slot: `docs/assets/screenshots/hybrid-rag-trace.png`
-
 ### AI Memory
 
 **Status: in development; draft generation, replacement links, decay, and
@@ -98,8 +93,6 @@ preferences, decisions, and requirements may supersede older memory without
 deleting its source. Temporary plans decay quickly, project state decays at a
 medium rate, and stable preferences decay slowly.
 
-![Memory details and provenance](docs/assets/screenshots/memory-details.png)
-
 ### Personal Knowledge Base
 
 **Status: in development; local review workflow is implemented.**
@@ -108,8 +101,6 @@ The knowledge workbench combines local memory with optional explicit knowledge
 generation. AI organization produces an editable draft first. Only an explicit
 review action applies selected changes to formal memory, indexes, or the Rime
 lexicon. It is not a background remote upload path.
-
-![Knowledge workbench draft review](docs/assets/screenshots/knowledge-workbench-draft.png)
 
 ### Memory And Knowledge Management
 
@@ -124,8 +115,6 @@ created after every organization run; after a configurable inactive period
 searchable with lower ordinary weight and can reactivate when an old project is
 explicitly requested or relevant content appears again.
 
-> Screenshot slot: `docs/assets/screenshots/tag-relationship-graph.png`
-
 ### Voice Input
 
 **Status: in development; recording, streaming ASR, overlay, and insertion are
@@ -137,8 +126,6 @@ inserts the final text at the active cursor. It runs outside Squirrel's
 keystroke path so a microphone/network failure cannot block ordinary typing.
 Microphone and Accessibility permissions belong to the stable installed app,
 not a temporary derived-build identity.
-
-![Voice input status and configuration](docs/assets/screenshots/voice-input.png)
 
 ### Daily Planning And Assistant
 
@@ -153,8 +140,6 @@ ambiguous language only creates a confirmation suggestion. Open tasks, goals,
 and daily notes are eligible for the model context under the shared token
 budget.
 
-> Screenshot slot: `docs/assets/screenshots/daily-planning.png`
-
 ### Diagnostics And Repair
 
 **Status: implemented; doctor output is necessary but not sufficient evidence.**
@@ -164,8 +149,6 @@ permissions, context capture, and final model injection. It records the exact
 source counts and token estimates used by a request, while raw trace text stays
 behind an explicit debug option. Repair commands cover the sidecar, launch
 agents, patched Squirrel registration, voice agent, and local model runtime.
-
-> Screenshot slot: `docs/assets/screenshots/diagnostics.png`
 
 ### Configuration, Backup, And Restore
 
@@ -185,23 +168,6 @@ tokens, model weights, caches, logs/traces, and Rime binary user databases.
 Restore validates every manifest entry, previews counts, snapshots current
 state, applies migrations, and rolls the database, Rime files, and provider
 metadata back if any step fails. The backup itself is not password encrypted.
-
-> Screenshot slots: `docs/assets/screenshots/configuration-import.png` and
-> `docs/assets/screenshots/backup-restore.png`
-
-### Screenshot Checklist
-
-The three screenshots already referenced above are tracked. The remaining
-named slots are intentionally stable so project screenshots can be added later
-without rewriting the feature layout:
-
-- `local-llm-candidates.png`
-- `hybrid-rag-trace.png`
-- `tag-relationship-graph.png`
-- `daily-planning.png`
-- `diagnostics.png`
-- `configuration-import.png`
-- `backup-restore.png`
 
 ## Architecture
 
@@ -244,8 +210,8 @@ project does not claim a Linux, Fcitx5, IBus, or second InputMethodKit runtime.
 - Model weights, local databases, personal input history, API keys, build
   artifacts, and machine-local configuration must never be committed.
 
-Read the source and [runtime/privacy guidance](docs/runtime-and-debug.md)
-before using the project with sensitive material.
+Review the source and the native Control Center privacy settings before using
+the project with sensitive material.
 
 ## Quick Start
 
@@ -290,9 +256,9 @@ scripts/prepare_squirrel_workspace.sh
 scripts/build_patched_squirrel.sh build
 ```
 
-Installing an input method changes user-level macOS state. Use the attended
-foreground path in [runtime and debug](docs/runtime-and-debug.md), then verify
-the actual UI rather than trusting an HTTP response:
+Installing an input method changes user-level macOS state. Use an attended
+foreground session and verify the actual UI rather than trusting an HTTP
+response:
 
 ```bash
 scripts/doctor_squirrel_integration.sh
@@ -300,10 +266,8 @@ scripts/verify_squirrel_foreground_trace.sh
 ```
 
 The optional voice lane, Active RAG provider, and Notion Worker each have
-separate setup steps. They are documented in
-[runtime and debug](docs/runtime-and-debug.md),
-[personal knowledge](docs/notion-personal-knowledge.md), and the native
-Control Center; none is required for the local core.
+separate setup in the native Control Center; none is required for the local
+core.
 
 ## Validation And Release Gates
 
@@ -325,8 +289,7 @@ prototype is unfinished. A real release additionally needs a clean source
 commit, foreground acceptance, Developer ID signing, notarization, stapling,
 and a hash-bound `rag-ime.release-manifest.v2` that verifies the project
 `LICENSE`, third-party notices, and exact patched Squirrel corresponding source.
-See [release staging](docs/release-staging.md) and the
-[release-manifest template](docs/release-manifest.example.json).
+See the [release-manifest template](release/release-manifest.example.json).
 
 ## Repository Map
 
@@ -339,19 +302,9 @@ See [release staging](docs/release-staging.md) and the
 | `macos/Shared/` | Shared native Keychain and streaming-ASR protocol code. |
 | `scripts/` | Build, install, runtime, evaluation, release, and foreground-verification commands. |
 | `tests/` | Unit, contract, privacy, patch, release, and integration-style tests. |
-| `docs/` | Current architecture, runtime, acceptance, release, and model documentation. |
+| `eval/` | Synthetic public evaluation fixtures with no personal input history. |
+| `release/` | Public-safe feature registry, product status, and release-manifest template. |
 | `dataset/` | Public-safe demonstration and regression fixtures, not a production training corpus. |
-
-## Documentation
-
-| Topic | Read |
-| --- | --- |
-| Current product and release state | [project status](docs/project-status.md) and [machine-readable status](docs/product-status.json) |
-| What is truly connected to the foreground IME | [feature registry](docs/feature-registry.md) |
-| Runtime, install, recovery, and diagnostics | [runtime and debug](docs/runtime-and-debug.md) |
-| Architecture and frontend boundary | [design decisions](docs/design-decisions.md) and [frontend adapter boundary](docs/frontend-adapter-boundary.md) |
-| Completion data and model qualification | [personal IME completion requirements](docs/personal-ime-completion-requirements.md) and [MiniMind interface](docs/minimind-retraining-interface.md) |
-| Release evidence and distribution | [release staging](docs/release-staging.md), [license decision](docs/license-decision.md), and [third-party notices](THIRD_PARTY_NOTICES.md) |
 
 ## Scope And Non-Goals
 
@@ -386,8 +339,7 @@ Squirrel app.
 Third-party code, model weights, datasets, and remote services retain their own
 terms. A patched Squirrel binary or source distribution must include the
 applicable notices and exact corresponding source; see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the
-[license decision](docs/license-decision.md).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Acknowledgements
 

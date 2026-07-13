@@ -16,9 +16,7 @@ from typing import Iterable, Mapping
 SCHEMA_VERSION = "rag-ime.release-candidate-staging.v1"
 SOURCE_EXCLUDED_PARTS = {".git", "__pycache__", "build", "download", "Frameworks", "lib", "node_modules"}
 PROJECT_EXCLUDED_PREFIXES = (
-    "docs/agent/",
-    "docs/archive/",
-    "docs/codex_next_step_stability_ui_plan.md",
+    "docs/",
     ".github/",
     "macos/RagImeMac/",
     "scripts/build_macos_frontend.sh",

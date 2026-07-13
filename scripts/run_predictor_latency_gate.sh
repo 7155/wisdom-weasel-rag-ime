@@ -12,7 +12,7 @@ python3 -m unittest \
 
 python3 -m rag_ime.cli benchmark-predictor \
   --profile "${RAG_IME_PREDICTOR_PROFILE:-qwen3_06b_ime_hot}" \
-  --cases docs/eval/predictor_latency_cases.jsonl \
+  --cases eval/predictor_latency_cases.jsonl \
   --repeat "${RAG_IME_PREDICTOR_BENCH_REPEAT:-20}" \
   --report "$REPORT"
 
