@@ -33,3 +33,6 @@ __pycache__/
 **/.DS_Store
 installation.yaml
 rag-ime-handoff-for-debug-model-*.txt
+
+# Local-only design notes, agent logs, screenshots, and acceptance records.
+/docs/
