@@ -244,6 +244,16 @@ class KnowledgeWorkbenchTests(unittest.TestCase):
         self.assertNotIn("book:missing", result.answer)
         self.assertEqual(result.prompt_diagnostics["removedInvalidCitationCount"], 3)
 
+    def test_prompt_anchors_relative_dates_to_the_current_local_date(self) -> None:
+        messages = build_knowledge_workbench_messages(
+            KnowledgeWorkbenchRequest(question="今天我干了哪些", mode="knowledge_answer"),
+            evidence=(),
+        )
+
+        self.assertIn("当前本地日期是", messages[0]["content"])
+        self.assertIn("没有当天证据就明确说未找到", messages[0]["content"])
+        self.assertIn('"currentLocalDate":', messages[1]["content"])
+
     def test_deepseek_provider_corrects_number_key_claims_that_violate_the_product_contract(self) -> None:
         def fake_urlopen(_request, timeout):
             _ = timeout

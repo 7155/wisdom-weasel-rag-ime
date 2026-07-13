@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .models import ModelPrediction
-from .model_registry import is_loopback_endpoint
+from .model_registry import is_local_network_endpoint
 from .model_profiles import profile_by_id
 from .pinyin_index import build_pinyin_metadata
 from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
+from .keychain_secrets import MODEL_INSTANT_ACCOUNT, MODEL_KEYCHAIN_SERVICE, read_keychain_secret
 from .text_utils import compact_whitespace
 
 
@@ -983,11 +984,14 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
             )
         )
     else:
+        predictor_api_key = source.get("RAG_IME_PREDICTOR_API_KEY", "").strip()
+        if not predictor_api_key and env is None:
+            predictor_api_key = read_keychain_secret(MODEL_KEYCHAIN_SERVICE, MODEL_INSTANT_ACCOUNT)
         configured_provider = OpenAICompatiblePredictionProvider(
             OpenAICompatiblePredictionConfig(
             base_url=_openai_base_url(base_url),
             model=model,
-            api_key=source.get("RAG_IME_PREDICTOR_API_KEY", "").strip(),
+            api_key=predictor_api_key,
             profile=profile,
             prompt_mode=source.get("RAG_IME_PREDICTOR_PROMPT_MODE", defaults.prompt_mode).strip(),
             timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", defaults.timeout_ms) / 1000,
@@ -1013,6 +1017,9 @@ def _prediction_env_with_predictor_file(env: dict[str, str] | None) -> dict[str,
     source = dict(os.environ if env is None else env)
     env_path = source.get("RAG_IME_PREDICTOR_ENV", "").strip()
     if not env_path:
+        default_path = Path.home() / "Library" / "Application Support" / "RagIme" / "predictor.env"
+        env_path = str(default_path) if default_path.exists() else ""
+    if not env_path:
         return source
     path = Path(env_path).expanduser()
     if not path.exists():
@@ -1024,11 +1031,11 @@ def _prediction_env_with_predictor_file(env: dict[str, str] | None) -> dict[str,
             continue
         key, value = line.split("=", 1)
         file_values[key.strip()] = value.strip().strip('"').strip("'")
-    return {**file_values, **source}
+    return {**source, **file_values} if env is None else {**file_values, **source}
 
 
 def _is_loopback_realtime_predictor_url(value: str) -> bool:
-    return is_loopback_endpoint(compact_whitespace(value))
+    return is_local_network_endpoint(compact_whitespace(value))
 
 
 def prediction_provider_status(provider: PredictionProvider, *, probe_capabilities: bool = False) -> dict[str, object]:

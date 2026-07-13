@@ -945,6 +945,81 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual([item["sourceId"] for item in evidence[:2]], ["book:demo", "atom:demo"])
         self.assertEqual(retrieve.call_args.args[1].app, "")
 
+    def test_knowledge_workbench_today_query_drops_old_evidence(self) -> None:
+        old_timestamp_ms = 1_735_689_600_000
+        event_token = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=old_timestamp_ms,
+                source="manual",
+                committed_text="很久以前完成的输入法工作",
+                privacy_disposition="allowed",
+                recent_context="旧记录",
+                project="wisdom-weasel-rag-ime",
+                tags=("old",),
+            )
+        )
+        hits = [{
+            "doc_id": "atom:old",
+            "doc_type": "atom",
+            "source_id": "atom:old",
+            "text": "很久以前完成的输入法工作",
+            "source_lane": "bm25_raw",
+            "rank": 1,
+            "tags": ["old"],
+            "metadata": {"sourceEventIds": [int(event_token.removeprefix("event:"))]},
+        }]
+        with patch("rag_ime.debug_server.retrieve_hybrid_rag_candidates", return_value={"candidates": [], "hits": hits}):
+            evidence = self.service._knowledge_workbench_evidence(
+                KnowledgeWorkbenchRequest(question="今天我干了哪些", mode="knowledge_answer")
+            )
+
+        self.assertEqual(evidence, ())
+
+    def test_knowledge_workbench_today_query_reads_today_timeline_without_keyword_match(self) -> None:
+        event_token = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=int(time.time() * 1000),
+                source="manual",
+                committed_text="完成了输入法知识引用界面的可读性修复",
+                privacy_disposition="allowed",
+                recent_context="",
+                project="wisdom-weasel-rag-ime",
+                tags=("today",),
+            )
+        )
+        with patch("rag_ime.debug_server.retrieve_hybrid_rag_candidates") as retrieve:
+            evidence = self.service._knowledge_workbench_evidence(
+                KnowledgeWorkbenchRequest(question="今天我干了哪些", mode="recall")
+            )
+
+        self.assertIn(event_token, [item["sourceId"] for item in evidence])
+        self.assertTrue(all(item["sourceLane"] == "temporal_timeline" for item in evidence))
+        retrieve.assert_not_called()
+
+    def test_knowledge_workbench_yesterday_query_uses_yesterday_only(self) -> None:
+        timestamp_ms = int(time.time() * 1000) - 24 * 60 * 60 * 1000
+        token = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=timestamp_ms,
+                source="manual",
+                committed_text="昨天完成了时间范围解析器的设计",
+                privacy_disposition="allowed",
+                recent_context="",
+                project="wisdom-weasel-rag-ime",
+                tags=("yesterday",),
+            )
+        )
+
+        evidence = self.service._knowledge_workbench_evidence(
+            KnowledgeWorkbenchRequest(question="昨天做了什么", mode="recall")
+        )
+
+        self.assertIn(token, [item["sourceId"] for item in evidence])
+        self.assertTrue(all(item["sourceLane"] == "temporal_timeline" for item in evidence))
+
     def test_knowledge_workbench_blocks_sensitive_text_before_retrieval(self) -> None:
         response = self.service.knowledge_workbench_start(
             {
@@ -1085,6 +1160,64 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(payload["schemaVersion"], "rag-ime.management-history.v1")
         self.assertFalse(payload["rawTextVisible"])
         self.assertNotIn("text", payload["items"][0])
+
+    def test_planning_and_yaml_configuration_http_routes_are_operational(self) -> None:
+        config_path = Path(self.tmp.name) / "rag-ime.config.yaml"
+        config_path.write_text(
+            "schemaVersion: rag-ime.user-config.v1\n"
+            "settings:\n"
+            "  context:\n"
+            "    tokenBudget: 4096\n"
+            "    reservedOutputTokens: 1024\n",
+            encoding="utf-8",
+        )
+        config_path.chmod(0o644)
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            task_request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/planning/task/save",
+                data=json.dumps(
+                    {"date": "2026-07-13", "title": "完成配置与规划联调", "priority": "high"}
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(task_request, timeout=5) as response:
+                task_payload = json.loads(response.read().decode("utf-8"))
+
+            config_request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/configuration/import-preview",
+                data=json.dumps({"path": str(config_path)}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(config_request, timeout=5) as response:
+                config_payload = json.loads(response.read().decode("utf-8"))
+
+            with urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/planning/dashboard?date=2026-07-13",
+                timeout=5,
+            ) as response:
+                dashboard_payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertTrue(task_payload["ok"])
+        self.assertEqual(task_payload["task"]["title"], "完成配置与规划联调")
+        self.assertTrue(config_payload["valid"])
+        self.assertTrue(config_payload["source"]["permissionsHardened"])
+        self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(dashboard_payload["tasks"][0]["title"], "完成配置与规划联调")
 
     def test_management_cleanup_diff_http_requires_confirmation(self) -> None:
         event_ref = self.core.record_event(

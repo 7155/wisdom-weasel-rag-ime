@@ -242,7 +242,7 @@ export RAG_IME_AUTO_PREDICT_IGNORE_COOLDOWN_MS="${RAG_IME_AUTO_PREDICT_IGNORE_CO
 export RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON="${RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON:-1}"
 export RAG_IME_T0_DIRECT_MEMORY_THRESHOLD="${RAG_IME_T0_DIRECT_MEMORY_THRESHOLD:-0.86}"
 export RAG_IME_DEEPSEEK_THINKING="${RAG_IME_DEEPSEEK_THINKING:-disabled}"
-export RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS="${RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS:-4096}"
+export RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS="${RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS:-0}"
 
 existing_sidecar_environment() {
   local key="$1"
@@ -379,4 +379,8 @@ if [[ "${RAG_IME_ENABLE_FRONTEND_ON_RESTART:-$FRONTEND_ON_RESTART_DEFAULT}" != "
 fi
 
 "$ROOT/scripts/set_rag_ime_frontend_enabled.py" true
+if [[ "${RAG_IME_SKIP_INPUT_SOURCE_READINESS:-0}" == "1" ]]; then
+  echo "RAG-IME runtime repaired; Squirrel remains enabled and may be selected when needed."
+  exit 0
+fi
 "$ROOT/scripts/wait_squirrel_typing_ready.sh"

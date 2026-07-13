@@ -6,6 +6,19 @@ struct RagAndModelsPage: View {
     @State private var confirmingDatabaseRollback = false
     @State private var editingDatabaseDiff: [String: JSONValue] = [:]
     @State private var databaseEditorPresented = false
+    @State private var instantProvider = InstantCompletionProvider.mlx
+    @State private var instantEndpoint = "http://127.0.0.1:8767"
+    @State private var instantModel = ""
+    @State private var instantAPIKey = ""
+    @State private var instantHeaders = ""
+    @State private var instantKeyConfigured = false
+    @State private var knowledgeProvider = KnowledgeProviderPreset.defaultRemote
+    @State private var knowledgeEndpoint = "https://api.deepseek.com"
+    @State private var knowledgeModel = "deepseek-v4-flash"
+    @State private var knowledgeAPIKey = ""
+    @State private var knowledgeHeaders = ""
+    @State private var knowledgeKeyConfigured = false
+    @State private var providerSaveMessage = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,6 +28,7 @@ struct RagAndModelsPage: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     modePicker
+                    providerSlots
                     composer
                     if model.knowledgeResponse != nil {
                         resultSurface
@@ -33,7 +47,10 @@ struct RagAndModelsPage: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
-        .task { await model.loadKnowledgeRoute() }
+        .task {
+            loadProviderSlots()
+            await model.loadKnowledgeRoute()
+        }
         .confirmationDialog(
             "应用这份数据库整理草案？",
             isPresented: $confirmingDatabaseApply,
@@ -100,6 +117,173 @@ struct RagAndModelsPage: View {
             }
         }
         .pickerStyle(.segmented)
+    }
+
+    private var providerSlots: some View {
+        DisclosureGroup("服务与模型") {
+            VStack(alignment: .leading, spacing: 0) {
+                providerSlotHeader(
+                    title: "语音服务",
+                    subtitle: VoiceProviderConfigStore.read().title,
+                    symbol: "waveform.and.mic"
+                ) {
+                    model.destination = .voiceInput
+                }
+                Divider()
+                instantCompletionEditor
+                Divider()
+                knowledgeProviderEditor
+                if !providerSaveMessage.isEmpty {
+                    Text(providerSaveMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 10)
+                }
+                Text("保存后重启 Sidecar 生效。即时补全仅允许本机或局域网地址；知识整理只在用户显式触发时访问远程服务。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 8)
+            }
+            .padding(.top, 14)
+        }
+    }
+
+    private func providerSlotHeader(
+        title: String,
+        subtitle: String,
+        symbol: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol).foregroundStyle(.blue).frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("设置", systemImage: "slider.horizontal.3", action: action)
+        }
+        .padding(.vertical, 12)
+    }
+
+    private var instantCompletionEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("即时补全", systemImage: "bolt.fill").font(.headline)
+            Text("默认使用内置小模型，也可连接本机或局域网的兼容服务。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            providerGrid {
+                GridRow {
+                    Text("服务")
+                    Picker("服务", selection: $instantProvider) {
+                        ForEach(InstantCompletionProvider.allCases) { Text($0.title).tag($0) }
+                    }.labelsHidden()
+                }
+                GridRow { Text("地址"); TextField("http://127.0.0.1:8767", text: $instantEndpoint).textFieldStyle(.roundedBorder) }
+                GridRow { Text("模型"); TextField("模型名或本地模型路径", text: $instantModel).textFieldStyle(.roundedBorder) }
+                GridRow {
+                    Text("Key")
+                    SecureField(instantKeyConfigured ? "已配置，留空保持不变" : "可选", text: $instantAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                GridRow { Text("请求头"); TextField("JSON，可选", text: $instantHeaders).textFieldStyle(.roundedBorder) }
+            }
+            HStack {
+                Spacer()
+                Button("保存即时补全", systemImage: "internaldrive") { saveInstantSlot() }
+                    .disabled(instantEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || instantModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(.vertical, 14)
+    }
+
+    private var knowledgeProviderEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("知识整理", systemImage: "sparkles").font(.headline)
+            Text("默认使用当前远程服务，也可切换到 OpenAI 兼容接口。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            providerGrid {
+                GridRow {
+                    Text("服务")
+                    Picker("服务", selection: $knowledgeProvider) {
+                        ForEach(KnowledgeProviderPreset.allCases) { Text($0.title).tag($0) }
+                    }.labelsHidden()
+                }
+                GridRow { Text("地址"); TextField("https://...", text: $knowledgeEndpoint).textFieldStyle(.roundedBorder) }
+                GridRow { Text("模型"); TextField("模型名", text: $knowledgeModel).textFieldStyle(.roundedBorder) }
+                GridRow {
+                    Text("Key")
+                    SecureField(knowledgeKeyConfigured ? "已配置，留空保持不变" : "API Key", text: $knowledgeAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                GridRow { Text("请求头"); TextField("JSON，可选", text: $knowledgeHeaders).textFieldStyle(.roundedBorder) }
+            }
+            HStack {
+                Spacer()
+                Button("保存知识整理", systemImage: "key.fill") { saveKnowledgeSlot() }
+                    .disabled(knowledgeEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || knowledgeModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(.vertical, 14)
+    }
+
+    private func providerGrid<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 9) {
+            content()
+        }
+        .frame(maxWidth: 720, alignment: .leading)
+    }
+
+    private func loadProviderSlots() {
+        let instant = ModelProviderConfigStore.loadInstant()
+        instantProvider = instant.provider
+        instantEndpoint = instant.endpoint
+        instantModel = instant.model
+        instantHeaders = instant.headersJSON
+        instantKeyConfigured = !instant.apiKey.isEmpty
+        instantAPIKey = ""
+        let knowledge = ModelProviderConfigStore.loadKnowledge()
+        knowledgeProvider = knowledge.provider
+        knowledgeEndpoint = knowledge.endpoint
+        knowledgeModel = knowledge.model
+        knowledgeHeaders = knowledge.headersJSON
+        knowledgeKeyConfigured = !knowledge.apiKey.isEmpty
+        knowledgeAPIKey = ""
+    }
+
+    private func saveInstantSlot() {
+        do {
+            try ModelProviderConfigStore.saveInstant(.init(
+                provider: instantProvider,
+                endpoint: instantEndpoint,
+                model: instantModel,
+                apiKey: instantAPIKey,
+                headersJSON: instantHeaders
+            ))
+            instantAPIKey = ""
+            instantKeyConfigured = ModelProviderConfigStore.loadInstant().apiKey.isEmpty == false
+            providerSaveMessage = "即时补全设置已保存；重启 Sidecar 后生效"
+        } catch {
+            providerSaveMessage = error.localizedDescription
+        }
+    }
+
+    private func saveKnowledgeSlot() {
+        do {
+            try ModelProviderConfigStore.saveKnowledge(.init(
+                provider: knowledgeProvider,
+                endpoint: knowledgeEndpoint,
+                model: knowledgeModel,
+                apiKey: knowledgeAPIKey,
+                headersJSON: knowledgeHeaders
+            ))
+            knowledgeAPIKey = ""
+            knowledgeKeyConfigured = ModelProviderConfigStore.loadKnowledge().apiKey.isEmpty == false
+            providerSaveMessage = "知识整理设置已保存；重启 Sidecar 后生效"
+        } catch {
+            providerSaveMessage = error.localizedDescription
+        }
     }
 
     private var composer: some View {
@@ -246,7 +430,7 @@ struct RagAndModelsPage: View {
                     .padding(16)
                     .textSelection(.enabled)
             } else if let answer = model.knowledgeResponse?.answer, !answer.isEmpty {
-                renderedAnswer(answer + (model.knowledgeRunning ? " ▍" : ""))
+                renderedAnswer(displayAnswer(answer) + (model.knowledgeRunning ? " ▍" : ""))
                     .font(.system(size: 14.5))
                     .lineSpacing(5)
                     .textSelection(.enabled)
@@ -326,23 +510,36 @@ struct RagAndModelsPage: View {
                 Spacer()
                 Text("\(sources.count) 个可追溯来源").font(.caption).foregroundStyle(.secondary)
             }
-            ForEach(Array(evidence.prefix(6).enumerated()), id: \.offset) { index, item in
-                HStack(spacing: 10) {
+            ForEach(Array(evidence.prefix(12).enumerated()), id: \.offset) { index, item in
+                HStack(alignment: .top, spacing: 10) {
                     Text("L\(index + 1)")
                         .font(.caption.monospaced().weight(.semibold))
                         .foregroundStyle(.blue)
                         .frame(width: 24, alignment: .leading)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item["title"]?.stringValue.isEmpty == false ? item["title"]!.stringValue : item["sourceId"]?.stringValue ?? "本地记忆")
-                            .lineLimit(1)
-                        Text(item["sourceLane"]?.stringValue ?? "local")
-                            .font(.caption)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(evidenceTitle(item))
+                            .font(.subheadline.weight(.medium))
+                        Text(evidenceExcerpt(item))
+                            .font(.callout)
                             .foregroundStyle(.secondary)
+                            .lineLimit(4)
+                            .textSelection(.enabled)
+                        HStack(spacing: 8) {
+                            Label(evidenceKind(item), systemImage: evidenceSymbol(item))
+                            if let date = evidenceDate(item) {
+                                Text(date.formatted(date: .abbreviated, time: .shortened))
+                            }
+                            if model.expertMode, let sourceId = item["sourceId"]?.stringValue, !sourceId.isEmpty {
+                                Text(sourceId).textSelection(.enabled)
+                            }
+                        }
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
                     Spacer()
                 }
                 .padding(.vertical, 5)
-                if index < min(evidence.count, 6) - 1 { Divider() }
+                if index < min(evidence.count, 12) - 1 { Divider() }
             }
             ForEach(Array(notionSources.enumerated()), id: \.offset) { _, item in
                 HStack(spacing: 10) {
@@ -511,6 +708,51 @@ struct RagAndModelsPage: View {
         return Text(answer)
     }
 
+    private func displayAnswer(_ answer: String) -> String {
+        var display = answer
+        for (index, item) in evidence.enumerated() {
+            guard let sourceId = item["sourceId"]?.stringValue, !sourceId.isEmpty else { continue }
+            display = display.replacingOccurrences(of: "[L:\(sourceId)]", with: "[\(index + 1)]")
+        }
+        return display.replacingOccurrences(of: "[N]", with: "[Notion]")
+    }
+
+    private func evidenceTitle(_ item: [String: JSONValue]) -> String {
+        let title = item["title"]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if item["docType"]?.stringValue == "book", !title.isEmpty { return title }
+        return evidenceKind(item)
+    }
+
+    private func evidenceExcerpt(_ item: [String: JSONValue]) -> String {
+        let text = item["text"]?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? "这条来源没有可展示的原文片段。" : text
+    }
+
+    private func evidenceKind(_ item: [String: JSONValue]) -> String {
+        switch item["docType"]?.stringValue {
+        case "book": return "主题记忆"
+        case "atom": return "记忆条目"
+        case "phrase": return "常用短语"
+        case "event": return "历史输入"
+        default: return "本地知识"
+        }
+    }
+
+    private func evidenceSymbol(_ item: [String: JSONValue]) -> String {
+        switch item["docType"]?.stringValue {
+        case "book": return "book.closed"
+        case "atom": return "brain.head.profile"
+        case "phrase": return "text.quote"
+        case "event": return "clock.arrow.circlepath"
+        default: return "doc.text.magnifyingglass"
+        }
+    }
+
+    private func evidenceDate(_ item: [String: JSONValue]) -> Date? {
+        guard let timestampMs = item["sourceCreatedAtMs"]?.numberValue, timestampMs > 0 else { return nil }
+        return Date(timeIntervalSince1970: timestampMs / 1_000)
+    }
+
     private var questionPlaceholder: String {
         switch model.knowledgeMode {
         case .knowledgeAnswer: return "询问项目、笔记或个人知识中的具体问题"
@@ -665,6 +907,7 @@ struct RagAndModelsPage: View {
         switch operation {
         case "upsert_semantic_group": return "square.grid.2x2"
         case "upsert_semantic_tag": return "tag.fill"
+        case "merge_semantic_tag": return "arrow.triangle.merge"
         case "upsert_memory_book": return "book.closed"
         case "upsert_memory_atom": return "circle.hexagongrid"
         case "upsert_tag_edge": return "point.3.connected.trianglepath.dotted"
@@ -695,6 +938,7 @@ private struct DatabaseDraftDiff: Identifiable {
         switch operation {
         case "upsert_semantic_group": return "groups"
         case "upsert_semantic_tag": return "semanticTags"
+        case "merge_semantic_tag": return "tags"
         case "upsert_memory_book": return "books"
         case "upsert_memory_atom": return "atoms"
         case "upsert_tag_edge": return "tags"
@@ -710,6 +954,7 @@ private struct DatabaseDraftDiff: Identifiable {
         case "upsert_memory_book": return value("title", fallback: "未命名主题书")
         case "upsert_memory_atom": return value("canonicalText", fallback: "未命名记忆")
         case "upsert_tag_edge": return "\(value("src", fallback: "标签")) → \(value("dst", fallback: "标签"))"
+        case "merge_semantic_tag": return "合并 \(value("source", fallback: "旧标签")) → \(value("target", fallback: "规范标签"))"
         case "add_phrase_candidate": return value("text", fallback: "未命名短语")
         case "add_negative_phrase": return value("text", fallback: "未命名屏蔽项")
         case "supersede_memory": return "用新记忆替代旧版本"
@@ -724,6 +969,7 @@ private struct DatabaseDraftDiff: Identifiable {
         case "upsert_memory_book": return value("summary")
         case "upsert_memory_atom": return value("summary")
         case "upsert_tag_edge": return "关系：\(value("edgeType", fallback: "相关"))"
+        case "merge_semantic_tag": return value("reason", fallback: "同义标签规范化")
         case "add_phrase_candidate": return value("reason")
         case "add_negative_phrase": return value("reason")
         case "supersede_memory": return "只保留更新后的事实，旧版本可通过回滚恢复。"
@@ -828,6 +1074,10 @@ private struct DatabaseDraftEditorSheet: View {
             labeledField("来源标签", text: $first)
             labeledField("关联标签", text: $second)
             labeledField("关系类型", text: $third)
+        case "merge_semantic_tag":
+            labeledField("待合并标签", text: $first)
+            labeledField("保留的规范标签", text: $second)
+            labeledEditor("合并原因", text: $third)
         case "add_phrase_candidate":
             labeledField("短语", text: $first)
             labeledField("拼音", text: $second)
@@ -869,6 +1119,7 @@ private struct DatabaseDraftEditorSheet: View {
         case "upsert_memory_book": return "编辑主题书"
         case "upsert_memory_atom": return "编辑记忆条目"
         case "upsert_tag_edge": return "编辑标签关系"
+        case "merge_semantic_tag": return "审阅标签合并"
         case "add_phrase_candidate": return "编辑可用短语"
         case "add_negative_phrase": return "编辑屏蔽规则"
         default: return "审阅变更"
@@ -902,6 +1153,10 @@ private struct DatabaseDraftEditorSheet: View {
             payload["src"] = .string(first)
             payload["dst"] = .string(second)
             payload["edgeType"] = .string(third)
+        case "merge_semantic_tag":
+            payload["source"] = .string(first)
+            payload["target"] = .string(second)
+            payload["reason"] = .string(third)
         case "add_phrase_candidate":
             payload["text"] = .string(first)
             payload["pinyin"] = .string(second)
@@ -926,6 +1181,7 @@ private struct DatabaseDraftEditorSheet: View {
         case "upsert_memory_book": return (payload["title"]?.stringValue ?? "", payload["summary"]?.stringValue ?? "", tags, "")
         case "upsert_memory_atom": return (payload["canonicalText"]?.stringValue ?? "", payload["summary"]?.stringValue ?? "", tags, "")
         case "upsert_tag_edge": return (payload["src"]?.stringValue ?? "", payload["dst"]?.stringValue ?? "", "", payload["edgeType"]?.stringValue ?? "related")
+        case "merge_semantic_tag": return (payload["source"]?.stringValue ?? "", payload["target"]?.stringValue ?? "", "", payload["reason"]?.stringValue ?? "")
         case "add_phrase_candidate": return (payload["text"]?.stringValue ?? "", payload["pinyin"]?.stringValue ?? "", tags, payload["reason"]?.stringValue ?? "")
         case "add_negative_phrase": return (payload["text"]?.stringValue ?? "", payload["reason"]?.stringValue ?? "", "", "")
         default: return ("不可编辑", "", "", "")

@@ -4,13 +4,15 @@ import Security
 enum VoiceASRProvider: String, Codable, CaseIterable, Identifiable {
     case nativeStreaming = "native_streaming"
     case realtimeWebSocket = "realtime_websocket"
+    case httpTranscription = "http_transcription"
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .nativeStreaming: return "默认流式服务"
-        case .realtimeWebSocket: return "Realtime WebSocket 兼容服务"
+        case .nativeStreaming: return "预设流式服务"
+        case .realtimeWebSocket: return "自定义 Realtime WebSocket"
+        case .httpTranscription: return "兼容 HTTP 转写"
         }
     }
 
@@ -24,6 +26,7 @@ struct VoiceASRCredentials: Codable, Equatable {
     let resourceID: String
     let endpoint: String
     let model: String
+    let headersJSON: String
 
     init(
         provider: VoiceASRProvider = .nativeStreaming,
@@ -31,7 +34,8 @@ struct VoiceASRCredentials: Codable, Equatable {
         accessToken: String,
         resourceID: String,
         endpoint: String = "",
-        model: String = ""
+        model: String = "",
+        headersJSON: String = ""
     ) {
         self.provider = provider
         self.appID = appID
@@ -39,10 +43,12 @@ struct VoiceASRCredentials: Codable, Equatable {
         self.resourceID = resourceID
         self.endpoint = endpoint
         self.model = model
+        self.headersJSON = headersJSON
     }
 
     var isComplete: Bool {
         let tokenReady = !accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard headersAreValid else { return false }
         switch provider {
         case .nativeStreaming:
             return tokenReady
@@ -53,7 +59,30 @@ struct VoiceASRCredentials: Codable, Equatable {
                   let url = URL(string: endpoint),
                   ["wss", "ws"].contains(url.scheme?.lowercased() ?? "") else { return false }
             return !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .httpTranscription:
+            guard tokenReady,
+                  let url = URL(string: endpoint),
+                  ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return false }
+            return !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+    }
+
+    var extraHeaders: [String: String] {
+        guard let data = headersJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        return object.reduce(into: [:]) { result, item in
+            let key = item.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = String(describing: item.value).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty, !value.isEmpty { result[key] = value }
+        }
+    }
+
+    private var headersAreValid: Bool {
+        let raw = headersJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return true }
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return false }
+        return object is [String: Any]
     }
 }
 
@@ -92,6 +121,7 @@ enum VoiceKeychainStore {
     static let defaultResourceID = "volc.seedasr.sauc.duration"
     static let defaultRealtimeEndpoint = "wss://api.openai.com/v1/realtime?intent=transcription"
     static let defaultRealtimeModel = "gpt-4o-mini-transcribe"
+    static let defaultHTTPEndpoint = "https://api.openai.com/v1/audio/transcriptions"
 
     private enum Account: String {
         case appID = "app-id"
@@ -99,6 +129,7 @@ enum VoiceKeychainStore {
         case resourceID = "resource-id"
         case endpoint
         case model
+        case headersJSON = "headers-json"
     }
 
     static func loadCredentials() -> VoiceASRCredentials? {
@@ -114,7 +145,8 @@ enum VoiceKeychainStore {
             accessToken: accessToken,
             resourceID: read(.resourceID, provider: provider) ?? defaultResourceID,
             endpoint: read(.endpoint, provider: provider) ?? defaultRealtimeEndpoint,
-            model: read(.model, provider: provider) ?? defaultRealtimeModel
+            model: read(.model, provider: provider) ?? defaultRealtimeModel,
+            headersJSON: read(.headersJSON, provider: provider) ?? ""
         )
         return credentials.isComplete ? credentials : nil
     }
@@ -136,7 +168,8 @@ enum VoiceKeychainStore {
         accessToken: String?,
         resourceID: String,
         endpoint: String,
-        model: String
+        model: String,
+        headersJSON: String = ""
     ) throws {
         let previous = loadCredentials(provider: provider)
         let token = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -146,13 +179,15 @@ enum VoiceKeychainStore {
             accessToken: token?.isEmpty == false ? token! : (previous?.accessToken ?? ""),
             resourceID: resourceID.trimmingCharacters(in: .whitespacesAndNewlines),
             endpoint: endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
-            model: model.trimmingCharacters(in: .whitespacesAndNewlines)
+            model: model.trimmingCharacters(in: .whitespacesAndNewlines),
+            headersJSON: headersJSON.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         guard credentials.isComplete else { throw VoiceKeychainError.invalidValue }
         try write(credentials.appID, account: .appID, provider: provider)
         try write(credentials.resourceID, account: .resourceID, provider: provider)
         try write(credentials.endpoint, account: .endpoint, provider: provider)
         try write(credentials.model, account: .model, provider: provider)
+        try write(credentials.headersJSON, account: .headersJSON, provider: provider)
         try write(credentials.accessToken, account: .accessToken, provider: provider)
         try VoiceProviderConfigStore.write(provider)
     }
@@ -174,7 +209,8 @@ enum VoiceKeychainStore {
         accessToken: String?,
         resourceID: String,
         endpoint: String,
-        model: String
+        model: String,
+        headersJSON: String = ""
     ) throws {
         let previous = VoiceCredentialFileStore.loadCredentials(provider: provider)
         let token = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -184,7 +220,8 @@ enum VoiceKeychainStore {
             accessToken: token?.isEmpty == false ? token! : (previous?.accessToken ?? ""),
             resourceID: resourceID.trimmingCharacters(in: .whitespacesAndNewlines),
             endpoint: endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
-            model: model.trimmingCharacters(in: .whitespacesAndNewlines)
+            model: model.trimmingCharacters(in: .whitespacesAndNewlines),
+            headersJSON: headersJSON.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         guard credentials.isComplete else { throw VoiceKeychainError.invalidValue }
         try VoiceCredentialFileStore.save(credentials)
@@ -240,7 +277,7 @@ enum VoiceKeychainStore {
 
 enum VoiceCredentialFileStore {
     private struct Payload: Codable {
-        static let schemaVersion = "rag-ime.voice-credentials.v2"
+        static let schemaVersion = "rag-ime.voice-credentials.v3"
         let schemaVersion: String
         let provider: VoiceASRProvider?
         let appID: String
@@ -248,6 +285,7 @@ enum VoiceCredentialFileStore {
         let resourceID: String
         let endpoint: String?
         let model: String?
+        let headersJSON: String?
     }
 
     static var configURL: URL { configURL(provider: .nativeStreaming) }
@@ -274,7 +312,8 @@ enum VoiceCredentialFileStore {
             accessToken: object["accessToken"] as? String ?? "",
             resourceID: object["resourceID"] as? String ?? VoiceKeychainStore.defaultResourceID,
             endpoint: object["endpoint"] as? String ?? VoiceKeychainStore.defaultRealtimeEndpoint,
-            model: object["model"] as? String ?? VoiceKeychainStore.defaultRealtimeModel
+            model: object["model"] as? String ?? VoiceKeychainStore.defaultRealtimeModel,
+            headersJSON: object["headersJSON"] as? String ?? ""
         )
         return credentials.isComplete ? credentials : nil
     }
@@ -291,7 +330,8 @@ enum VoiceCredentialFileStore {
             accessToken: credentials.accessToken,
             resourceID: credentials.resourceID,
             endpoint: credentials.endpoint,
-            model: credentials.model
+            model: credentials.model,
+            headersJSON: credentials.headersJSON
         )
         let data = try JSONEncoder().encode(payload)
         try data.write(to: url, options: .atomic)

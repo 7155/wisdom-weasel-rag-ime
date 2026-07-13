@@ -9,7 +9,7 @@ from typing import Iterable
 
 
 SCHEMA_VERSION = "rag-ime.public-release-audit.v2"
-RELEASE_MANIFEST_SCHEMA_VERSION = "rag-ime.release-manifest.v1"
+RELEASE_MANIFEST_SCHEMA_VERSION = "rag-ime.release-manifest.v2"
 DEFAULT_RELEASE_MANIFEST_PATH = "output/release/release-manifest.json"
 REQUIRED_ARTIFACT_KINDS = {"macos_release", "corresponding_source"}
 REQUIRED_RELEASE_EVIDENCE = {
@@ -17,6 +17,7 @@ REQUIRED_RELEASE_EVIDENCE = {
     "notarization": ("accepted", "macos_release"),
     "stapling": ("valid", "macos_release"),
     "correspondingSource": ("verified", "corresponding_source"),
+    "projectLicense": ("verified", None),
     "thirdPartyNotices": ("verified", None),
     "foregroundAcceptance": ("passed", "macos_release"),
 }

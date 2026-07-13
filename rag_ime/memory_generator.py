@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from .keychain_secrets import MODEL_KEYCHAIN_SERVICE, MODEL_KNOWLEDGE_ACCOUNT, read_keychain_secret
 from .text_utils import compact_whitespace, truncate_text
 
 
@@ -114,9 +115,16 @@ class VcpRebuildMemoryGenerator:
                 default="https://api.deepseek.com/v1",
             )
         )
+        api_key = _first_env_value(
+            values,
+            "DEEPSEEK_API_KEY",
+            "RAG_IME_DEEPSEEK_API_KEY",
+            "RAG_IME_AI_API_KEY",
+            "API_KEY",
+        ) or read_keychain_secret(MODEL_KEYCHAIN_SERVICE, MODEL_KNOWLEDGE_ACCOUNT)
         config = VcpRebuildConfig(
             api_base_url=api_base_url,
-            api_key=_first_env_value(values, "DEEPSEEK_API_KEY", "RAG_IME_DEEPSEEK_API_KEY", "RAG_IME_AI_API_KEY", "API_KEY"),
+            api_key=api_key,
             model=_first_env_value(values, "RAG_IME_DEEPSEEK_MODEL", "DEEPSEEK_MODEL", "RAG_IME_AI_MODEL", "MODEL", default="deepseek-v4-flash"),
             upstream_wire_api=_wire_api(
                 _first_env_value(values, "RAG_IME_DEEPSEEK_WIRE_API", "DEEPSEEK_WIRE_API", "RAG_IME_AI_WIRE_API", "UPSTREAM_WIRE_API", default="chat_completions")

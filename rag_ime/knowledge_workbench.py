@@ -9,12 +9,14 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable
 
 from .deepseek_completion import _direct_deepseek_urlopen, _iter_model_deltas
 from .deepseek_config import DeepSeekConfig
 from .deepseek_memory_organizer import DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION
 from .notion_knowledge import NotionAsyncKnowledgeClient, NotionKnowledgeError, NotionStaleResultError
+from .temporal_query import parse_temporal_query
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
 
 
@@ -100,7 +102,7 @@ class DeepSeekKnowledgeProvider:
         should_cancel: Callable[[], bool] | None = None,
     ) -> KnowledgeGenerationResult:
         if not self.config.api_key:
-            raise KnowledgeWorkbenchError("DeepSeek credentials are not configured")
+            raise KnowledgeWorkbenchError("knowledge provider credentials are not configured")
         messages = build_knowledge_workbench_messages(
             request,
             evidence=evidence,
@@ -184,14 +186,16 @@ class DeepSeekKnowledgeProvider:
             first_token_ms = 0
             chunk_count = 0
             started = time.perf_counter()
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.config.api_key}",
+                "User-Agent": "rag-ime/1.0 knowledge-workbench",
+                **dict(self.config.extra_headers),
+            }
             request = urllib.request.Request(
                 f"{self.config.api_base_url.rstrip('/')}/chat/completions",
                 data=json.dumps(attempt, ensure_ascii=False).encode("utf-8"),
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "User-Agent": "rag-ime/1.0 knowledge-workbench",
-                },
+                headers=headers,
                 method="POST",
             )
             try:
@@ -230,7 +234,7 @@ class DeepSeekKnowledgeProvider:
                 if content:
                     return content, first_token_ms, chunk_count
                 break
-        raise KnowledgeWorkbenchError(f"DeepSeek knowledge request failed: {last_error}") from last_error
+        raise KnowledgeWorkbenchError(f"knowledge provider request failed: {last_error}") from last_error
 
 
 class KnowledgeWorkbenchService:
@@ -258,9 +262,22 @@ class KnowledgeWorkbenchService:
             "pollMode": "none",
             "missing": ["worker_url", "status_channel"],
         }
+        generator_config = getattr(self.generator, "config", None)
+        provider_name = compact_whitespace(
+            str(
+                getattr(generator_config, "provider_name", "")
+                or getattr(self.generator, "provider_name", "")
+                or "custom"
+            )
+        )
+        model_name = compact_whitespace(
+            str(getattr(generator_config, "model", "") or getattr(self.generator, "model", ""))
+        )
         return {
             "schemaVersion": "rag-ime.knowledge-route-status.v1",
-            "deepseekReady": self.generator.ready,
+            "deepseekReady": bool(getattr(self.generator, "ready", False)),
+            "provider": provider_name,
+            "model": model_name,
             "notion": notion,
             "modes": sorted(KNOWLEDGE_MODES),
             "defaultOrganizationInstruction": DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION,
@@ -591,6 +608,8 @@ def build_knowledge_workbench_messages(
     notion_answer: str = "",
     notion_sources: list[object] | None = None,
 ) -> list[dict[str, str]]:
+    current_local_date = datetime.now().astimezone().date().isoformat()
+    temporal_query = parse_temporal_query(request.question)
     mode_rules = {
         "long_form": (
             "生成可直接使用的高质量长文。先形成清楚主线，再写成自然的多段正文；"
@@ -628,6 +647,8 @@ def build_knowledge_workbench_messages(
                 + "user payload 中的 productContract 是当前代码的已验证职责边界，优先级高于可能过时的历史记忆。"
                 + "productContract 不是检索来源，禁止生成 [L:productContract]、[productContract: ...] 或任何类似引用。"
                 + "只引用 localEvidence 中真实存在的 id；证据与当前合同冲突时，应视为历史信息并忽略或明确标旧。"
+                + f"当前本地日期是 {current_local_date}。用户说‘今天’或‘今日’时只能依据该日期的证据；没有当天证据就明确说未找到，禁止改用旧日期或猜测。"
+                + "如果 requestedTimeRanges 非空，只能把这些时间范围内的证据说成对应时期的活动；范围内没有证据就明确说明。"
                 + "当前提交后候选的普通数字键必须透传；第一候选用 Tab 接受，其他候选用 Option+1/2/3。"
                 + "这是硬约束：禁止声称数字键、1/2/3 或普通数字键可以直接提交、选择、接受任何模型或 RAG 候选。"
                 + "本地证据使用 [L:source_id] 标注，Notion 证据使用 [N] 标注。"
@@ -644,6 +665,8 @@ def build_knowledge_workbench_messages(
                     "question": request.question,
                     "context": truncate_text(request.context, 2000),
                     "project": request.project,
+                    "currentLocalDate": current_local_date,
+                    "requestedTimeRanges": [item.payload() for item in temporal_query.ranges],
                     "maxChars": _output_char_limit(request.max_chars),
                     "productContract": {
                         "candidateSelection": "提交后的第一候选用 Tab 接受，其他候选用 Option+1/2/3；普通数字键透传；接受后基于更新后的上下文立即生成下一组三候选",

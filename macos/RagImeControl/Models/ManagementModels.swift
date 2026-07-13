@@ -35,6 +35,151 @@ struct MemorySummary: Decodable {
     let pendingCompileEvents: Int
 }
 
+struct PlanningDashboardResponse: Decodable {
+    let schemaVersion: String
+    let ok: Bool
+    let date: String
+    let plan: PlanningPlanItem
+    let tasks: [PlanningTaskItem]
+    let goals: [PlanningGoalItem]
+    let pendingCompletionSuggestions: [PlanningCompletionSuggestion]
+    let recentDetectedCompletion: PlanningDetectedCompletion?
+    let conversation: [PlanningConversationMessage]
+    let summary: PlanningSummary
+    let assistant: PlanningAssistantSummary
+}
+
+struct PlanningDetectedCompletion: Decodable {
+    let eventId: String
+    let sourceEventId: Int
+    let createdAtMs: Int
+    let task: PlanningTaskItem
+    let message: String
+    let undoAvailable: Bool
+}
+
+struct PlanningPlanItem: Decodable {
+    let id: String
+    let date: String
+    let project: String
+    let intention: String
+    let notes: String
+    let reflection: String
+    let assistantSummary: String
+}
+
+struct PlanningTaskItem: Decodable, Identifiable {
+    let id: String
+    let date: String
+    let title: String
+    let detail: String
+    let status: String
+    let priority: Int
+    let dueAtMs: Int?
+    let project: String
+    let goalId: String
+    let source: String
+    let confidence: Double
+    let completedAtMs: Int?
+}
+
+struct PlanningGoalItem: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let horizon: String
+    let status: String
+    let priority: Int
+    let targetDate: String
+    let project: String
+    let completedAtMs: Int?
+}
+
+struct PlanningCompletionSuggestion: Decodable, Identifiable {
+    let id: String
+    let sourceEventId: Int?
+    let candidateTasks: [PlanningTaskItem]
+    let createdAtMs: Int
+}
+
+struct PlanningConversationMessage: Decodable, Identifiable {
+    let id: String
+    let role: String
+    let content: String
+    let createdAtMs: Int
+}
+
+struct PlanningSummary: Decodable {
+    let taskCount: Int
+    let openTaskCount: Int
+    let completedTaskCount: Int
+    let goalCount: Int
+    let progress: Double
+}
+
+struct PlanningAssistantSummary: Decodable {
+    let message: String
+    let tone: String
+}
+
+struct PlanningMutationResponse: Decodable {
+    let ok: Bool
+    let task: PlanningTaskItem?
+    let goal: PlanningGoalItem?
+    let eventId: String?
+    let undoAvailable: Bool?
+    let error: String?
+}
+
+struct PlanningAssistantResponse: Decodable {
+    let ok: Bool
+    let reply: String
+    let dashboard: PlanningDashboardResponse
+    let modelUsed: Bool
+}
+
+struct ConfigurationPreviewResponse: Decodable {
+    let ok: Bool
+    let valid: Bool
+    let errors: [String]
+    let warnings: [String]
+    let settingCount: Int
+    let providers: [String: JSONValue]
+    let requiresRemoteModelConfirmation: Bool
+    let secretsEchoed: Bool
+}
+
+struct PortableBackupResponse: Decodable {
+    let ok: Bool
+    let path: String
+    let sizeBytes: Int
+    let rimeFileCount: Int
+    let secretsIncluded: Bool
+}
+
+struct PortableRestorePreviewResponse: Decodable {
+    let ok: Bool
+    let valid: Bool
+    let path: String
+    let restoreToken: String
+    let createdAtMs: Int
+    let databaseCounts: [String: Int]
+    let databaseMigrationVersion: Int
+    let rimeFileCount: Int
+    let exclusions: [String]
+    let requiresConfirmation: String
+    let requiresRestart: Bool
+}
+
+struct PortableRestoreApplyResponse: Decodable {
+    let ok: Bool
+    let path: String
+    let rollbackPath: String
+    let databaseCounts: [String: Int]
+    let requiresRestart: Bool
+    let secretsChanged: Bool
+}
+
 struct LastPrediction: Decodable {
     var triggerReason: String?
     var contextSource: String?

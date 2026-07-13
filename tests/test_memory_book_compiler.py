@@ -346,6 +346,53 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(book["bookType"], "topic")
         self.assertEqual(book["bookKey"], "ai-input-method")
 
+    def test_similar_topic_book_reuses_existing_id_even_when_model_invents_a_new_one(self) -> None:
+        output = sample_compile_output(self.event_id)
+        output["dailyBooks"] = []
+        output["topicBooks"] = [
+            {
+                "bookId": "book:topic:new-invented-id",
+                "bookKey": "new-invented-key",
+                "bookType": "topic",
+                "title": "AI 输入法项目优化",
+                "summary": "继续优化 Squirrel 输入法、RAG 记忆与本地预测。",
+                "tags": ["输入法", "RAG"],
+                "sourceEventIds": [self.event_id],
+            }
+        ]
+        bundle = {
+            "recentEvents": [{"eventId": self.event_id, "text": "继续优化 AI 输入法项目"}],
+            "existingMemoryBooks": [
+                {
+                    "bookId": "book:topic:ai-input-method",
+                    "bookKey": "ai-input-method",
+                    "bookType": "topic",
+                    "title": "AI 输入法项目",
+                    "summary": "Squirrel 输入法、RAG 记忆与本地预测的长期主题。",
+                    "tags": ["Squirrel", "RAG"],
+                    "sourceEventIds": [self.event_id + 100],
+                    "memoryAtomIds": ["atom:existing"],
+                    "status": "archived",
+                }
+            ],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        book = next(item["payload"] for item in plan["diffs"] if item["op"] == "upsert_memory_book")
+
+        self.assertEqual(book["bookId"], "book:topic:ai-input-method")
+        self.assertEqual(book["bookKey"], "ai-input-method")
+        self.assertEqual(book["reusedExistingBookId"], "book:topic:ai-input-method")
+        self.assertEqual(book["previousStatus"], "archived")
+        self.assertEqual(set(book["sourceEventIds"]), {self.event_id, self.event_id + 100})
+        self.assertIn("atom:existing", book["memoryAtomIds"])
+
     def test_memory_book_compile_keeps_raw_history_pending_when_model_returns_empty(self) -> None:
         bundle = {
             "bundleHash": "sha256:test-empty-organizer",
@@ -666,6 +713,240 @@ class MemoryBookCompilerTests(unittest.TestCase):
         for op in ("upsert_semantic_tag", "upsert_memory_book", "upsert_memory_atom", "add_phrase_candidate"):
             payload = next(item["payload"] for item in plan["diffs"] if item["op"] == op)
             self.assertEqual(payload["semanticGroupIds"], ["group:input-method"])
+
+    def test_source_bundle_exposes_existing_tag_graph_to_dsv4(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            first = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('BM25', 'bm25', 'tech', 0.9, 1, 1, "
+                    "'词法召回', 'dsv4', 'active', '{}')"
+                ).lastrowid
+            )
+            second = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('混合召回', '混合召回', 'concept', 0.85, 1, 1, "
+                    "'多路融合', 'dsv4', 'active', '{}')"
+                ).lastrowid
+            )
+            conn.execute(
+                "INSERT INTO memory_tag_edges(src_tag_id, dst_tag_id, edge_type, weight, direction_bias, evidence_count, "
+                "updated_at_ms, metadata_json) VALUES (?, ?, 'part_of', 0.88, 0, 3, 1, '{}')",
+                (first, second),
+            )
+            bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime")
+
+        self.assertEqual(len(bundle["existingTagEdges"]), 1)
+        self.assertEqual(bundle["existingTagEdges"][0]["src"], "BM25")
+        self.assertEqual(bundle["existingTagEdges"][0]["dst"], "混合召回")
+        bm25 = next(item for item in bundle["existingSemanticTags"] if item["name"] == "BM25")
+        self.assertEqual(bm25["degree"], 1)
+
+    def test_reviewed_tag_merge_moves_graph_and_rolls_back(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            canonical_id = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('BM25', 'bm25', 'tech', 0.9, 1, 1, "
+                    "'词法召回', 'dsv4', 'active', '{}')"
+                ).lastrowid
+            )
+            duplicate_id = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('BM25算法', 'bm25算法', 'tech', 0.8, 1, 1, "
+                    "'BM25 别名', 'dsv4', 'active', '{}')"
+                ).lastrowid
+            )
+            related_id = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('混合召回', '混合召回', 'concept', 0.85, 1, 1, "
+                    "'多路融合', 'dsv4', 'active', '{}')"
+                ).lastrowid
+            )
+            conn.execute(
+                "INSERT INTO memory_tag_profiles(tag_id, color_token, aliases_json, updated_at_ms) VALUES (?, 'blue', '[\"BM25算法\"]', 1)",
+                (canonical_id,),
+            )
+            conn.execute(
+                "INSERT INTO memory_tag_edges(src_tag_id, dst_tag_id, edge_type, weight, direction_bias, evidence_count, "
+                "updated_at_ms, metadata_json) VALUES (?, ?, 'part_of', 0.8, 0, 2, 1, '{}')",
+                (duplicate_id, related_id),
+            )
+            bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime")
+
+        output = {
+            "schemaVersion": "rag-ime.memory-book-compile.v1",
+            "semanticGroups": [],
+            "semanticTags": [],
+            "tagMerges": [
+                {
+                    "source": "BM25算法",
+                    "target": "BM25",
+                    "reason": "同义术语",
+                    "evidenceEventIds": [self.event_id],
+                    "confidence": 0.98,
+                }
+            ],
+            "tagEdges": [],
+        }
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        report = inspect_memory_book_plan(plan)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["counts"]["tagMerges"], 1)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            applied = apply_memory_book_plan(conn, plan)
+            self.assertEqual(applied["status"], "applied")
+            self.assertIsNone(conn.execute("SELECT id FROM memory_tags WHERE id = ?", (duplicate_id,)).fetchone())
+            moved = conn.execute(
+                "SELECT 1 FROM memory_tag_edges WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = 'part_of'",
+                (canonical_id, related_id),
+            ).fetchone()
+            self.assertIsNotNone(moved)
+            aliases = json.loads(
+                conn.execute("SELECT aliases_json FROM memory_tag_profiles WHERE tag_id = ?", (canonical_id,)).fetchone()[0]
+            )
+            self.assertIn("BM25算法", aliases)
+            rollback_memory_book_run(conn, run_id=plan["runId"])
+            self.assertIsNotNone(conn.execute("SELECT id FROM memory_tags WHERE id = ?", (duplicate_id,)).fetchone())
+            restored = conn.execute(
+                "SELECT 1 FROM memory_tag_edges WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = 'part_of'",
+                (duplicate_id, related_id),
+            ).fetchone()
+            self.assertIsNotNone(restored)
+
+    def test_virtual_tag_merge_canonicalizes_without_creating_an_unapplicable_diff(self) -> None:
+        output = {
+            "schemaVersion": "rag-ime.memory-book-compile.v1",
+            "semanticGroups": [],
+            "semanticTags": [
+                {
+                    "name": "BM25算法",
+                    "description": "SQLite FTS5 的词法相关性算法。",
+                    "sourceEventIds": [self.event_id],
+                }
+            ],
+            "tagMerges": [
+                {
+                    "source": "BM25",
+                    "target": "BM25算法",
+                    "reason": "本批术语规范化",
+                    "evidenceEventIds": [self.event_id],
+                }
+            ],
+        }
+        source_bundle = {
+            "recentEvents": [{"eventId": self.event_id, "sourceEventIds": [self.event_id], "text": "BM25 算法"}],
+            "existingSemanticGroups": [],
+            "existingSemanticTags": [],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=source_bundle,
+        )
+
+        self.assertFalse(any(item["op"] == "merge_semantic_tag" for item in plan["diffs"]))
+        tag = next(item for item in plan["diffs"] if item["op"] == "upsert_semantic_tag")
+        self.assertEqual(tag["payload"]["name"], "BM25算法")
+        self.assertIn("virtual_tag_merge_canonicalized:BM25->BM25算法", plan["metadata"]["warnings"])
+
+    def test_tag_merge_plan_drops_reverse_cycles(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                "description, source, status, metadata_json) VALUES ('BM25', 'bm25', 'tech', 0.9, 1, 1, "
+                "'词法召回', 'dsv4', 'active', '{}')"
+            )
+            conn.execute(
+                "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                "description, source, status, metadata_json) VALUES ('BM25算法', 'bm25算法', 'tech', 0.8, 1, 1, "
+                "'BM25 别名', 'dsv4', 'active', '{}')"
+            )
+            bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime")
+        output = {
+            "schemaVersion": "rag-ime.memory-book-compile.v1",
+            "tagMerges": [
+                {"source": "BM25算法", "target": "BM25", "reason": "规范到短名称"},
+                {"source": "BM25", "target": "BM25算法", "reason": "反向循环"},
+            ],
+        }
+
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        merges = [item for item in plan["diffs"] if item["op"] == "merge_semantic_tag"]
+
+        self.assertEqual(len(merges), 1)
+        self.assertEqual(merges[0]["payload"]["source"], "BM25算法")
+        self.assertEqual(merges[0]["payload"]["target"], "BM25")
+
+    def test_legacy_stored_draft_skips_a_missing_merge_source_instead_of_aborting(self) -> None:
+        output = {
+            "schemaVersion": "rag-ime.memory-book-compile.v1",
+            "semanticGroups": [],
+            "semanticTags": [
+                {
+                    "name": "BM25算法",
+                    "description": "SQLite FTS5 的词法相关性算法。",
+                    "sourceEventIds": [self.event_id],
+                }
+            ],
+        }
+        plan = memory_book_plan_from_compile_output(
+            output,
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        plan["diffs"].append(
+            {
+                "op": "merge_semantic_tag",
+                "targetId": "tag-merge:BM25->BM25算法",
+                "payload": {
+                    "source": "BM25",
+                    "target": "BM25算法",
+                    "reason": "旧版草案留下的虚拟合并",
+                    "evidenceEventIds": [self.event_id],
+                },
+                "status": "pending",
+            }
+        )
+
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            store_memory_book_plan(conn, plan)
+            applied = apply_stored_memory_book_run(conn, run_id=plan["runId"])
+            merge = next(item for item in applied["diffs"] if item["op"] == "merge_semantic_tag")
+            rollback = json.loads(
+                conn.execute(
+                    "SELECT rollback_json FROM memory_cleanup_diffs WHERE id = ?",
+                    (merge["diffId"],),
+                ).fetchone()[0]
+            )
+
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(merge["status"], "applied")
+        self.assertTrue(rollback["noOp"])
+        self.assertEqual(rollback["reason"], "missing_source")
 
     def _write_sample_plan(self) -> Path:
         plan = memory_book_plan_from_compile_output(

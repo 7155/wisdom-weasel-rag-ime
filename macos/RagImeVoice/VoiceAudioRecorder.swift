@@ -101,8 +101,13 @@ final class VoiceAudioRecorder {
             let value = samples[index]
             sum += value * value
         }
-        let rms = sqrt(sum / Float(buffer.frameLength))
-        return min(1, max(0.08, Double(rms) * 8))
+        let rms = max(Double(sqrt(sum / Float(buffer.frameLength))), 0.000_001)
+        let decibels = 20 * log10(rms)
+        let normalized = min(1, max(0, (decibels + 55) / 45))
+        // Human speech usually lives around -35...-15 dB. A logarithmic curve
+        // makes that range visibly expressive without letting room noise pin
+        // the waveform open.
+        return min(1, max(0.04, pow(normalized, 0.68)))
     }
 }
 

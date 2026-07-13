@@ -37,3 +37,6 @@ __pycache__/
 installation.yaml
 rag-ime-handoff-for-debug-model-*.txt
 dataset/quarantine/
+rag-ime.config.yaml
+config/rag-ime.config.yaml
+config/rag-ime.config.local.yaml

@@ -1099,6 +1099,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=int(os.environ.get("RAG_IME_VECTOR_AUTO_REBUILD_LIMIT", "0")),
         help="Backfill this many recent vectors at startup when an embedding provider is enabled and no active vectors exist.",
     )
+    debug_server.add_argument(
+        "--active-rag-trace-log",
+        default=os.environ.get(
+            "RAG_IME_ACTIVE_RAG_CHAIN_TRACE_LOG",
+            str(Path.home() / "Library" / "Logs" / "RagIme" / "active-rag-chain.jsonl"),
+        ),
+        help="Persistent JSONL journal for explicit Active RAG request chains. Empty disables it.",
+    )
 
     sidecar_server = subparsers.add_parser("sidecar-server", help="Run the local HTTP sidecar for Squirrel/Rime")
     sidecar_server.add_argument("--host", default=os.environ.get("RAG_IME_SIDECAR_HOST", "127.0.0.1"))
@@ -1116,6 +1124,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=int,
         default=int(os.environ.get("RAG_IME_VECTOR_AUTO_REBUILD_LIMIT", "0")),
         help="Backfill this many recent vectors at startup when an embedding provider is enabled and no active vectors exist.",
+    )
+    sidecar_server.add_argument(
+        "--active-rag-trace-log",
+        default=os.environ.get(
+            "RAG_IME_ACTIVE_RAG_CHAIN_TRACE_LOG",
+            str(Path.home() / "Library" / "Logs" / "RagIme" / "active-rag-chain.jsonl"),
+        ),
+        help="Persistent JSONL journal for explicit Active RAG request chains. Empty disables it.",
     )
 
     mlx_predictor_server = subparsers.add_parser(
@@ -2970,6 +2986,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 core=core,
                 rime_cache_ttl_ms=args.rime_cache_ttl_ms,
                 vector_auto_rebuild_limit=args.vector_auto_rebuild_limit,
+                active_rag_trace_path=Path(args.active_rag_trace_log) if args.active_rag_trace_log else None,
             )
         )
         return 0
@@ -2989,6 +3006,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 server_name="sidecar server",
                 rime_cache_ttl_ms=args.rime_cache_ttl_ms,
                 vector_auto_rebuild_limit=args.vector_auto_rebuild_limit,
+                active_rag_trace_path=Path(args.active_rag_trace_log) if args.active_rag_trace_log else None,
             )
         )
         return 0

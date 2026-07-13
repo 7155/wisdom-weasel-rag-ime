@@ -6,7 +6,7 @@ struct RagImeControlApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("RAG-IME 控制中心") {
+        WindowGroup("智鼬") {
             ControlRootView()
                 .environmentObject(model)
                 .frame(minWidth: 1080, minHeight: 720)

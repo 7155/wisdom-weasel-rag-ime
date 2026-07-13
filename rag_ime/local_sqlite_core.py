@@ -14,6 +14,7 @@ from threading import RLock
 from typing import Any, Iterator
 
 from .core_client import CoreMemory
+from .daily_planner import detect_task_completion
 from .embeddings import EmbeddingProvider, NullEmbeddingProvider, cosine_similarity, embed_query
 from .memory_cleanup import (
     apply_cleanup_diff,
@@ -332,6 +333,21 @@ class LocalSqliteCoreClient:
                     context_group_level=event.context_group_level,
                     embedding_provider=self.embedding_provider,
                 )
+            # Explicit phrases such as "完成了模型优化" may close an
+            # unambiguous open task. The detector returns before touching SQL
+            # for ordinary input, so it does not add work to the hot path.
+            # Planning must never make a foreground commit fail: ambiguous
+            # matches are stored for confirmation and planner errors are
+            # isolated from the immutable input ledger.
+            try:
+                detect_task_completion(
+                    conn,
+                    text=text,
+                    source_event_id=event_id,
+                    project=event.project,
+                )
+            except (sqlite3.Error, ValueError):
+                pass
         self._clear_suggestion_cache()
         return f"event:{event_id}"
 

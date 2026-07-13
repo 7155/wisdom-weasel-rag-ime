@@ -6,8 +6,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.check_macos_foreground_environment import parse_session_state
+from scripts.check_macos_foreground_environment import parse_session_state, read_ioreg
 
 
 class MacosForegroundEnvironmentTests(unittest.TestCase):
@@ -35,6 +36,21 @@ class MacosForegroundEnvironmentTests(unittest.TestCase):
         self.assertEqual(state["screenLocked"], None)
         self.assertEqual(state["blockers"], [])
         self.assertEqual(state["warnings"], ["screen_lock_state_unavailable"])
+
+    def test_ioreg_invalid_utf8_does_not_abort_foreground_check(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["ioreg"],
+            returncode=0,
+            stdout=b'"CGSSessionScreenIsLocked"=No\xff',
+            stderr=b"",
+        )
+
+        with patch("scripts.check_macos_foreground_environment.subprocess.run", return_value=completed):
+            raw, source = read_ioreg("")
+
+        self.assertEqual(source, "ioreg")
+        self.assertIn('"CGSSessionScreenIsLocked"=No', raw)
+        self.assertIn("\ufffd", raw)
 
     def test_cli_fails_closed_and_writes_report(self) -> None:
         root = Path(__file__).resolve().parents[1]

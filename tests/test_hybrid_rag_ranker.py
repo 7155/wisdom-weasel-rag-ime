@@ -87,6 +87,75 @@ class HybridRagRankerTests(unittest.TestCase):
             configured_order[1].debug_features["tagmemo"],
         )
 
+    def test_type_specific_decay_favors_stable_preference_over_old_temporary_fact(self) -> None:
+        current_ms = 2_000_000_000_000
+        sixty_days_ago = current_ms - 60 * 86_400_000
+        temporary = HybridRagHit(
+            doc_id="doc:temporary",
+            doc_type="atom",
+            source_id="atom:temporary",
+            text="临时任务",
+            surface_hints=("临时任务",),
+            tags=(),
+            source_lane="bm25_raw",
+            rank=1,
+            raw_score=1.0,
+            metadata={"kind": "temporary_task", "sourceUpdatedAtMs": sixty_days_ago},
+        )
+        stable = HybridRagHit(
+            doc_id="doc:stable",
+            doc_type="atom",
+            source_id="atom:stable",
+            text="稳定偏好",
+            surface_hints=("稳定偏好",),
+            tags=(),
+            source_lane="bm25_raw",
+            rank=1,
+            raw_score=1.0,
+            metadata={"kind": "stable_preference", "sourceUpdatedAtMs": sixty_days_ago},
+        )
+
+        candidates = rank_hybrid_hits(
+            [temporary, stable],
+            current_ms=current_ms,
+            top_k=2,
+            decay_settings={"temporaryHalfLifeDays": 14, "stablePreferenceHalfLifeDays": 365},
+        )
+
+        self.assertEqual(candidates[0].text, "稳定偏好")
+        by_text = {item.text: item for item in candidates}
+        self.assertLess(by_text["临时任务"].metadata["timeDecayFactor"], by_text["稳定偏好"].metadata["timeDecayFactor"])
+
+    def test_explicit_historical_query_bypasses_age_and_archive_decay(self) -> None:
+        current_ms = 2_000_000_000_000
+        old_archived = HybridRagHit(
+            doc_id="doc:archived",
+            doc_type="book",
+            source_id="book:archived",
+            text="旧项目归档",
+            surface_hints=("旧项目方向",),
+            tags=(),
+            source_lane="time",
+            rank=1,
+            raw_score=1.0,
+            metadata={
+                "bookType": "topic",
+                "sourceUpdatedAtMs": current_ms - 500 * 86_400_000,
+                "archived": True,
+            },
+        )
+
+        ordinary = rank_hybrid_hits([old_archived], current_ms=current_ms, query_text="项目方向")
+        historical = rank_hybrid_hits([old_archived], current_ms=current_ms, query_text="去年项目方向")
+        initial_requirement = rank_hybrid_hits(
+            [old_archived], current_ms=current_ms, query_text="最初需求是什么"
+        )
+
+        self.assertLess(ordinary[0].metadata["timeDecayFactor"], 0.1)
+        self.assertEqual(historical[0].metadata["timeDecayFactor"], 1.0)
+        self.assertEqual(initial_requirement[0].metadata["timeDecayFactor"], 1.0)
+        self.assertGreater(historical[0].score, ordinary[0].score)
+
 
 if __name__ == "__main__":
     unittest.main()

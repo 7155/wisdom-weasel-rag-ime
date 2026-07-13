@@ -18,7 +18,9 @@ DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION = (
     "按本项目默认策略整理：先把连续键盘与语音碎片重建为完整表达，结合上下文修正有证据的错别字和语音误识别，"
     "删除口头重复、残句与运行探针；优先复用并合并现有分组，只保留输入法、个人知识库等少量长期主题，不按应用、"
     "日期、状态或一次动作拆组；区分事实、偏好、决定、计划、问题和条件，绝不把未完成计划写成事实；为有效记忆生成"
-    "少量语义标签、别名和有来源的标签关系；依据接受、退格与替换反馈提出词库新增、提权、降权或屏蔽项。所有变更只"
+    "少量语义标签、别名和有来源的标签关系；先把同义、缩写、大小写或新旧叫法合并到已有规范标签，不建立平行标签；"
+    "让同一长期主题中有证据的标签形成可遍历关系图，而不是每条记忆各自长出一组孤立标签；依据接受、退格与替换反馈"
+    "提出词库新增、提权、降权或屏蔽项。所有变更只"
     "生成可编辑草稿，不直接写入正式记忆、RAG 索引或 Rime 词库。"
 )
 _RIME_PINYIN_RE = re.compile(r"^[a-zv]+(?: [a-zv]+)*$")
@@ -35,7 +37,7 @@ class DeepSeekMemoryOrganizer:
 
     @property
     def provider_name(self) -> str:
-        return "deepseek"
+        return self.config.provider_name
 
     def compile_memory_book(
         self,
@@ -98,6 +100,7 @@ class DeepSeekMemoryOrganizer:
         payload.setdefault("topicBooks", [])
         payload.setdefault("semanticGroups", [])
         payload.setdefault("semanticTags", [])
+        payload.setdefault("tagMerges", [])
         payload.setdefault("memoryAtoms", [])
         payload.setdefault("tagEdges", [])
         payload.setdefault("phraseCandidates", [])
@@ -118,6 +121,7 @@ class DeepSeekMemoryOrganizer:
             "existingBookCount": len(model_bundle.get("existingMemoryBooks") or []),
             "existingGroupCount": len(model_bundle.get("existingSemanticGroups") or []),
             "existingTagCount": len(model_bundle.get("existingSemanticTags") or []),
+            "existingTagEdgeCount": len(model_bundle.get("existingTagEdges") or []),
         }
         payload["elapsedMs"] = int((time.perf_counter() - started) * 1000)
         return payload
@@ -220,23 +224,25 @@ class DeepSeekMemoryOrganizer:
             body["thinking"] = {"type": self.config.thinking}
         if self.config.reasoning_effort and self.config.thinking != "disabled":
             body["reasoning_effort"] = self.config.reasoning_effort
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.config.api_key}",
+            "User-Agent": "rag-ime/1.0 curl-compatible",
+            **dict(self.config.extra_headers),
+        }
         request = urllib.request.Request(
             f"{self.config.api_base_url.rstrip('/')}/chat/completions",
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.config.api_key}",
-                "User-Agent": "rag-ime/1.0 curl-compatible",
-            },
+            headers=headers,
             method="POST",
         )
         try:
             with self.urlopen(request, timeout=self.config.request_timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
-            raise DeepSeekMemoryOrganizerError(f"DeepSeek memory book request failed: {exc}") from exc
+            raise DeepSeekMemoryOrganizerError(f"knowledge organizer request failed: {exc}") from exc
         if not isinstance(payload, dict):
-            raise DeepSeekMemoryOrganizerError("DeepSeek memory book response payload was not an object")
+            raise DeepSeekMemoryOrganizerError("knowledge organizer response payload was not an object")
         return payload
 
 
@@ -295,6 +301,7 @@ def _has_governed_memory(payload: dict[str, object]) -> bool:
             "topicBooks",
             "semanticGroups",
             "semanticTags",
+            "tagMerges",
             "memoryAtoms",
             "tagEdges",
             "phraseCandidates",
@@ -370,8 +377,13 @@ def _model_facing_bundle(bundle: dict[str, object]) -> dict[str, object]:
         ),
         "existingSemanticTags": compact_collection(
             "existingSemanticTags",
-            24,
-            ("name", "description", "type", "aliases"),
+            160,
+            ("tagId", "name", "description", "type", "aliases", "semanticGroupIds", "degree"),
+        ),
+        "existingTagEdges": compact_collection(
+            "existingTagEdges",
+            240,
+            ("src", "dst", "edgeType", "weight", "evidenceCount"),
         ),
         "cursor": dict(bundle.get("cursor") or {}),
         "reconstruction": dict(bundle.get("reconstruction") or {}),
@@ -391,10 +403,11 @@ def _memory_book_recovery_prompt() -> str:
         每个 semanticTag 和 memoryAtom 的 semanticGroupIds 都必须引用上面输出的 groupId。
         memoryAtoms 字段为 canonicalText/summary/tags/semanticGroupIds/sourceEventIds/confidence/qualityScore/
         directCandidateAllowed(false)；tagEdges 字段为 src/dst/edgeType/weight/evidenceEventIds；
+        tagMerges 字段为 source/target/reason/evidenceEventIds/confidence，只有确定同义、缩写、大小写或新旧叫法时才合并；
         phraseCandidates 仅在有接受、退格或纠错证据时输出 text/pinyin/tags/weight/sourceEventIds。
         修正口语重复和明显错别字；问题、条件句、计划不能被改写成已完成事实。不得生成应用名、窗口名、
         来源字段、测试步骤、中文碎片或无证据事实。
-        同时返回 dailyBooks/topicBooks/negativePhrases/supersedes 数组，允许为空。
+        同时返回 dailyBooks/topicBooks/tagMerges/negativePhrases/supersedes 数组，允许为空。
         """
     )
 
@@ -422,9 +435,14 @@ def _memory_book_system_prompt() -> str:
         状态或细节各拆成组。每个 Book、Atom、Tag、phraseCandidate 必须用 semanticGroupIds 归入一个或少量组。
         semanticTags 必须是稳定概念、领域术语、偏好或实体，不得输出中文二元/三元切片、停用词、
         UI 状态词和一次性动作。每个 Tag 包含 name、description、aliases、semanticGroupIds、
-        sourceEventIds、confidence、qualityScore；优先复用 bundle.existingSemanticTags。Tag Edge 只连接
-        semanticTags 中已有或本批输出的标签，字段固定为 src、dst、edgeType、weight、evidenceEventIds，
-        并给出真实 evidenceEventIds。
+        sourceEventIds、confidence、qualityScore；必须先检查 bundle.existingSemanticTags：同义词、英文缩写、
+        大小写差异和新旧叫法必须复用其中一个规范 name，把其他写进 aliases，并在 tagMerges 中提出可审阅合并，
+        不得建立平行标签。bundle.existingTagEdges 是当前正式关系图。Tag Edge 只连接现有或本批输出的规范标签，
+        字段固定为 src、dst、edgeType、weight、evidenceEventIds，并给出真实 evidenceEventIds。关系类型优先使用
+        broader、narrower、part_of、requires、enables、supports、conflicts_with、related_to；同一主题中确有语义关系
+        的本批标签应连接到已有核心标签，避免形成一次整理一个中心、其余全是叶子的星型结构，但不得为追求稠密而虚构关系。
+        tagMerges 字段固定为 source、target、reason、evidenceEventIds、confidence；target 必须是保留的规范标签，
+        source 必须是待合并标签。只有语义等价时才合并，上下位、组成、依赖或相关关系必须写 tagEdges，不能合并。
         dailyBooks 只记录按时间发生的近期变化；topicBooks 用于长期、跨时间的语义主题，例如项目、研究方向、
         模型训练偏好、工作习惯和稳定目标。每个 topicBook 必须包含 bookType="topic"、稳定的英文或拼音 bookKey、
         bookId="book:topic:<bookKey>"、清晰的中文 title、80 到 300 字 summary、tags、queryExpansions、
@@ -435,7 +453,7 @@ def _memory_book_system_prompt() -> str:
         例如 {"text":"表情包","pinyin":"biao qing bao"}。不确定拼音时不要输出该词库候选。
         canonicalText 和 summary 必须是清洗改正后的事实表达，而不是原始口语转录；无法由多条证据确认时
         降低 confidence 或不输出。canonicalText 只用于检索证据，不能直接作为输入法候选；
-        directCandidateAllowed 默认 false。同时输出 negativePhrases 和 supersedes 数组。
+        directCandidateAllowed 默认 false。同时输出 tagMerges、negativePhrases 和 supersedes 数组。
         “是否实现”“以后再做”“等完成后”等问题、条件句和未来计划不是已经完成的事实；只在能抽取出稳定偏好
         或要求时改写为 requirement/preference，否则不输出，绝不能把条件句改成已完成状态。
         只要 recentEvents 中存在至少两条可理解且围绕同一主题的用户输入，就至少输出一个

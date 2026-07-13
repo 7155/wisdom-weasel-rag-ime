@@ -24,23 +24,10 @@ _BANKING_TOKENS = ("bank", "banking", "mobilebank", "netbank", "网银", "银行
 _PRIVATE_MODE_TOKENS = ("incognito", "inprivate", "privatebrowsing", "privatebrowser")
 _BROWSER_TOKENS = ("browser", "chrome", "chromium", "edge", "firefox", "safari")
 _CREDENTIAL_FIELD_KINDS = {
-    "account",
-    "account-name",
-    "api-key",
-    "credential",
     "current-password",
-    "email",
-    "login",
     "new-password",
-    "one-time-code",
-    "otp",
     "passcode",
     "password",
-    "pin",
-    "secret",
-    "token",
-    "user-name",
-    "username",
 }
 
 

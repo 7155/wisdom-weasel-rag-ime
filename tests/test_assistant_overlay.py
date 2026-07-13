@@ -52,7 +52,7 @@ class AssistantOverlayTests(unittest.TestCase):
         self.assertEqual(payload["animation"]["kind"], "thinking_dots")
         self.assertEqual(payload["statusText"], "AI 正在想...")
 
-    def test_post_commit_pending_without_result_is_hidden_by_default(self) -> None:
+    def test_post_commit_generation_action_remains_visible_without_model_result(self) -> None:
         payload = build_assistant_overlay_payload(
             ui_mode="post_commit_prediction",
             input_mode="post_commit_predicting",
@@ -70,8 +70,9 @@ class AssistantOverlayTests(unittest.TestCase):
             frontend_transaction={},
         )
 
-        self.assertFalse(payload["visible"])
-        self.assertEqual(payload["dismissReason"], "pending_overlay_disabled")
+        self.assertTrue(payload["visible"])
+        self.assertEqual(payload["dismissReason"], "")
+        self.assertEqual([item["sourceType"] for item in payload["candidates"]], ["action"])
 
     def test_deepseek_action_is_visible_beside_real_model_candidates(self) -> None:
         payload = build_assistant_overlay_payload(

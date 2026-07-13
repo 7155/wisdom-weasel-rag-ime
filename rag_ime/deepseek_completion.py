@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Literal
 
 from .anti_echo import candidate_echoes_text, candidate_has_keyword_echo, candidate_has_self_repetition, repeat_norm
+from .input_event_assembly import tail_for_token_budget
 from .deepseek_config import DeepSeekConfig
 from .runtime_flags import assert_deepseek_scene_allowed
 from .text_utils import compact_whitespace, truncate_text
@@ -43,7 +44,16 @@ class CompletionCandidateDelta:
 
 
 class DeepSeekCompletionError(RuntimeError):
-    pass
+    """Completion failure with transport/parser evidence for local diagnostics.
+
+    The public message stays compact and secret-safe. Structured diagnostics
+    are consumed by Active RAG's local trace journal, where raw model text is
+    still gated by the explicit debug-text setting.
+    """
+
+    def __init__(self, message: str, *, diagnostics: dict[str, object] | None = None):
+        super().__init__(message)
+        self.diagnostics = dict(diagnostics or {})
 
 
 Urlopen = Callable[..., Any]
@@ -80,12 +90,20 @@ class DeepSeekV4FlashCompletionProvider:
             # semantic source.  Deterministic decoding reduces unrelated names
             # and speculative diagnosis while preserving streaming delivery.
             "temperature": 0.0 if request.scene == "active_rag" and not request.evidence_pack else 0.2,
-            "max_tokens": min(_completion_token_budget(request), _configured_completion_token_cap(self.config, request)),
             # Active RAG is an explicit user action and always benefits from
             # first-token delivery. Passive post-commit completion keeps the
             # configured all-at-once behavior to avoid flashing fragments.
             "stream": bool(request.stream and (self.config.stream or request.scene == "active_rag")),
         }
+        configured_token_cap = _configured_completion_token_cap(self.config, request)
+        if request.scene == "active_rag":
+            # Long-form generation is user-triggered. A zero cap deliberately
+            # omits max_tokens so the provider/model owns its native output
+            # limit instead of the input method truncating the document.
+            if configured_token_cap > 0:
+                body["max_tokens"] = configured_token_cap
+        else:
+            body["max_tokens"] = min(_completion_token_budget(request), configured_token_cap)
         if self.config.thinking:
             body["thinking"] = {"type": self.config.thinking}
         if self.config.reasoning_effort and self.config.thinking != "disabled":
@@ -95,22 +113,28 @@ class DeepSeekV4FlashCompletionProvider:
         content_buffer = ""
         yielded_count = 0
         had_content = False
+        content_chars = 0
+        reasoning_chars = 0
+        attempt_count = 0
         last_safe_partial = ""
         fallback_reason = "empty_remote_content"
         deadline = started + max(0.1, request.latency_budget_ms / 1000)
         for attempt_body in _completion_body_attempts(body):
+            attempt_count += 1
             http_request = _build_completion_http_request(self.config, attempt_body)
             budget_elapsed = False
             try:
                 with self.urlopen(http_request, timeout=max(0.1, request.latency_budget_ms / 1000)) as response:
                     for kind, delta in _iter_model_deltas(response):
                         if kind == "reasoning":
+                            reasoning_chars += len(delta)
                             if time.perf_counter() >= deadline:
                                 fallback_reason = "budget_elapsed"
                                 budget_elapsed = True
                                 break
                             continue
                         content_buffer += delta
+                        content_chars += len(delta)
                         had_content = True
                         content_buffer = content_buffer.replace("\\n", "\n").replace("\\r", "\r")
                         if request.scene == "active_rag":
@@ -145,6 +169,7 @@ class DeepSeekV4FlashCompletionProvider:
                             break
                 if budget_elapsed:
                     break
+                fallback_reason = "stream_completed" if had_content else "empty_remote_content"
                 break
             except urllib.error.HTTPError as exc:
                 fallback_reason = _http_error_fallback_reason(exc)
@@ -158,7 +183,10 @@ class DeepSeekV4FlashCompletionProvider:
             except (TimeoutError, urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
                 fallback_reason = _exception_fallback_reason(exc)
                 break
-        if content_buffer:
+        if content_buffer and (
+            not _active_rag_paragraph_output(request)
+            or _stable_partial_can_finish(content_buffer, request=request)
+        ):
             for item in _candidates_from_text(content_buffer, request=request, seen=seen, started=started):
                 yielded_count += 1
                 yield item
@@ -168,10 +196,7 @@ class DeepSeekV4FlashCompletionProvider:
         # explicit, paid generation must never be replaced by a locally
         # fabricated paragraph: the user would otherwise see a request echo as
         # if it came from the remote model. Surface a retriable error instead.
-        if yielded_count == 0 and request.scene == "active_rag" and _stable_partial_can_finish(
-            last_safe_partial,
-            request=request,
-        ):
+        if yielded_count == 0 and request.scene == "active_rag" and last_safe_partial:
             yield CompletionCandidateDelta(
                 text=last_safe_partial,
                 insert_text=last_safe_partial,
@@ -179,15 +204,29 @@ class DeepSeekV4FlashCompletionProvider:
                 metadata={
                     "scene": request.scene,
                     "elapsedMs": int((time.perf_counter() - started) * 1000),
-                    "model": "deepseek_v4_flash",
-                    "parseMode": "safe_stream_final",
-                    "fallbackReason": "final_content_rejected_after_safe_stream",
+                    "model": self.config.model,
+                    "parseMode": "stream_partial_recovered",
+                    "streamInterrupted": True,
+                    "fallbackReason": fallback_reason or "final_content_rejected_after_visible_stream",
                 },
             )
             return
         if yielded_count == 0 and request.scene == "active_rag":
             reason = "governor_rejected_content" if had_content else fallback_reason
-            raise DeepSeekCompletionError(f"active_rag_no_insertable_content:{reason}")
+            raise DeepSeekCompletionError(
+                f"active_rag_no_insertable_content:{reason}",
+                diagnostics={
+                    "terminalReason": reason,
+                    "transportReason": fallback_reason,
+                    "attemptCount": attempt_count,
+                    "hadContent": had_content,
+                    "contentChars": content_chars,
+                    "reasoningChars": reasoning_chars,
+                    "safePartialChars": len(last_safe_partial),
+                    "stream": bool(body.get("stream")),
+                    "responsePreview": truncate_text(content_buffer, 320),
+                },
+            )
 
 
 def build_deepseek_completion_messages(request: DeepSeekCompletionRequest) -> list[dict[str, str]]:
@@ -238,8 +277,14 @@ def build_deepseek_completion_messages(request: DeepSeekCompletionRequest) -> li
 
 def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) -> list[dict[str, str]]:
     evidence = _redacted_evidence_pack(request.evidence_pack)
-    foreground_only = not evidence
     context_packet = _compact_active_rag_context_packet(request.context_packet)
+    recent_complete_inputs = context_packet.get("recentCompleteInputs")
+    has_recent_history = isinstance(recent_complete_inputs, list) and bool(recent_complete_inputs)
+    grounding_mode = (
+        "rag_grounded"
+        if evidence
+        else ("foreground_with_history" if has_recent_history else "foreground_only")
+    )
     max_chars = max(0, int(request.max_chars or 0))
     min_chars = 40 if max_chars == 0 or max_chars >= 80 else 4
     output_length_rule = (
@@ -258,17 +303,29 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
         "rewrite": "只改写选中文本，不解释改写过程。",
         "continue": "正文要像用户正在继续输入的新内容，能直接接在当前输入后。",
     }[task_mode]
-    current_context = _tail_text(request.current_context, 900)
+    budget_trace = context_packet.get("contextBudget") if isinstance(context_packet.get("contextBudget"), dict) else {}
+    available_context_tokens = max(256, int(budget_trace.get("availableContextTokens") or 3072))
+    current_context = tail_for_token_budget(request.current_context, available_context_tokens)
     current_request = _active_rag_current_request(request, current_context=current_context)
     hints: list[str] = []
-    for item in evidence[:6]:
-        hints.extend(str(value) for value in item.get("surfaceHints", []) if compact_whitespace(str(value)))
-        preview = compact_whitespace(str(item.get("preview") or ""))
-        if preview:
-            hints.append(preview)
-        tags = item.get("tags")
-        if isinstance(tags, list) and tags:
-            hints.append(" ".join(str(tag) for tag in tags[:4]))
+    packet_hints = context_packet.get("ragEvidenceHints")
+    if isinstance(packet_hints, list):
+        for item in packet_hints:
+            if isinstance(item, dict):
+                text = compact_whitespace(str(item.get("text") or ""))
+            else:
+                text = compact_whitespace(str(item))
+            if text:
+                hints.append(text)
+    else:
+        for item in evidence[:6]:
+            hints.extend(str(value) for value in item.get("surfaceHints", []) if compact_whitespace(str(value)))
+            preview = compact_whitespace(str(item.get("preview") or ""))
+            if preview:
+                hints.append(preview)
+            tags = item.get("tags")
+            if isinstance(tags, list) and tags:
+                hints.append(" ".join(str(tag) for tag in tags[:4]))
     return [
         {
             "role": "system",
@@ -291,13 +348,15 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                 "RAG 没有相关证据时仍要依据 currentRequest/currentContext 完成写作、分析或排错请求，不能输出空结果提示。"
                 "当 groundingMode=foreground_only 时，currentRequest/currentContext 是唯一语义来源："
                 "不得使用最近输入、记忆或模型常识补出无关主题，不得添加上下文未出现的具体人物名、产品名、版本号、数字或故障原因。"
+                "当 groundingMode=foreground_with_history 时，currentRequest/currentContext 仍是第一优先级；"
+                "recentCompleteInputs 只用于恢复代词、承接关系和用户正在讨论的主题，不能覆盖当前输入，也不能作为事实证据。"
                 "没有推荐意图时禁止擅自推荐人物或作品；没有密钥、端点、认证或参数线索时禁止猜测 API 配置错误。"
                 "如果上下文不足以支持具体事实，只能围绕当前主题给出保守的下一句或明确需要补充的那一项。"
                 "只有 API、版本、数值、账号状态等可核验事实缺少明确证据时，才说明尚需核验，并给出一条具体核验动作。"
                 "禁止把“没有有效内容”“无有效候选”“未检索到内容”当作候选正文。"
                 "recoveryMode=true 时，说明上一版正文未通过候选治理；必须换一种更直接、更有新信息的表达，"
-                "只依据 currentRequest/currentContext 重新完成，不解释重试原因。"
-                "优先使用 currentInput，其次用 oneRing/timeline/notebook/RAG evidence 补全语义。"
+                "只依据 currentRequest/currentContext 和允许的 recentCompleteInputs 重新完成，不解释重试原因。"
+                "优先使用 currentInput，其次用最近完整输入、今日计划与 Todo、显式时间窗口、RAG evidence 和 Notebook。"
                 "等号后的正文不要把“候选=”或输出格式当正文；如果用户正在讨论输入法候选质量，可以自然使用“候选”一词。"
                 "正文仍禁止出现“短语”“格式”“真实候选”“Notebook”“evidence”“oneRing”等提示词或字段名。"
                 "等号后的正文禁止以“例如”“比如”“可以描述”“当用户输入”“如果用户输入”“系统会”开头。"
@@ -316,9 +375,9 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                     "placement": _context_packet_string(context_packet, "placement") or "insert_after_selection",
                     "taskMode": task_mode,
                     "recoveryMode": bool(request.recovery_mode),
-                    "groundingMode": "foreground_only" if foreground_only else "rag_grounded",
+                    "groundingMode": grounding_mode,
                     "contextPacket": context_packet,
-                    "evidenceHints": _unique_candidates([truncate_text(item, 80) for item in hints])[:12],
+                    "evidenceHints": _unique_candidates(hints)[:24],
                     "task": (
                         f"{output_length_rule}"
                         f"{task_instruction}"
@@ -326,6 +385,7 @@ def _build_active_rag_completion_messages(request: DeepSeekCompletionRequest) ->
                         "禁止写“我会/我将/围绕/继续补全/把上下文/真实意图/整理成/放到光标后”；"
                         "问句或关键词命中不是事实证据；RAG 为空不妨碍完成非事实型请求；"
                         "groundingMode=foreground_only 时只能依赖 currentRequest/currentContext，禁止引入其中没有的人名、产品、数字和错误原因；"
+                        "groundingMode=foreground_with_history 时可用 recentCompleteInputs 恢复对话连续性，但当前输入优先且历史不能充当事实证据；"
                         "可核验事实没有明确证据时要指出待核验项并给出具体核验动作，禁止猜测或只说没有有效内容；"
                         "如果当前语境就是输入法候选质量，可以自然写“候选”；"
                         "禁止写教学示例或产品说明，尤其不要以“例如/比如/可以描述/当用户输入/系统会”开头；"
@@ -428,14 +488,16 @@ def _direct_deepseek_urlopen(request: urllib.request.Request, timeout: float | N
 
 
 def _build_completion_http_request(config: DeepSeekConfig, body: dict[str, object]) -> urllib.request.Request:
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {config.api_key}",
+        "User-Agent": "rag-ime/1.0 knowledge-completion",
+        **dict(config.extra_headers),
+    }
     return urllib.request.Request(
         f"{config.api_base_url.rstrip('/')}/chat/completions",
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config.api_key}",
-            "User-Agent": "rag-ime/1.0 deepseek-completion",
-        },
+        headers=headers,
         method="POST",
     )
 
@@ -520,12 +582,12 @@ def _chat_delta_text(payload: dict[str, Any]) -> str:
 
 
 def _active_rag_partial_candidate_text(content: str, *, request: DeepSeekCompletionRequest) -> str:
-    value = content.replace("\\n", "\n").replace("\\r", "\r")
-    marker = "候选="
-    if marker not in value:
-        return ""
-    value = value.split(marker, 1)[1]
-    value = value.replace("```", "").strip().strip('"`')
+    # Some OpenAI-compatible gateways do not preserve the requested
+    # ``候选=`` protocol prefix while streaming. The completed parser already
+    # accepts a plain content channel, so partial parsing must follow the same
+    # contract; otherwise useful text can be visible for a moment and then be
+    # discarded when the connection closes before a sentence terminator.
+    value = _active_rag_full_candidate_text(content)
     value = _normalize_candidate_for_request(value, request=request)
     if not value:
         return ""
@@ -533,6 +595,11 @@ def _active_rag_partial_candidate_text(content: str, *, request: DeepSeekComplet
     # Otherwise the UI can show a plausible fragment and then flip to an error
     # when the completed response is rejected.
     if not _candidate_allowed(value, request=request, seen=set()):
+        return ""
+    # Do not flash two or three characters and then replace them with an error
+    # if the remote stream is interrupted. Once a paragraph preview becomes
+    # visible it is long enough to preserve as a reviewable result.
+    if _active_rag_paragraph_output(request) and len(compact_whitespace(value)) < 8:
         return ""
     return value
 
@@ -818,7 +885,7 @@ def _completion_token_budget(request: DeepSeekCompletionRequest) -> int:
 
 def _configured_completion_token_cap(config: DeepSeekConfig, request: DeepSeekCompletionRequest) -> int:
     if request.scene == "active_rag":
-        return max(128, int(getattr(config, "active_rag_max_tokens", 4096) or 4096))
+        return max(0, int(getattr(config, "active_rag_max_tokens", 0) or 0))
     return max(16, int(config.max_tokens))
 
 
@@ -1105,10 +1172,10 @@ def _stable_partial_can_finish(text: str, *, request: DeepSeekCompletionRequest)
         return False
     if not _active_rag_paragraph_output(request):
         return True
-    # Do not promote a tiny mid-token fragment into a paid generation result.
-    # A complete sentence can finish early; otherwise require a useful clause.
+    # Explicit prose must end at a real sentence boundary. A long clause can
+    # still be a truncated stream and must never become an insertable result.
     compact = compact_whitespace(value)
-    return compact.endswith(("。", "！", "？", "!", "?", "；", ";")) or len(compact) >= 24
+    return compact.endswith(("。", "！", "？", "!", "?", "；", ";"))
 
 
 def _has_unapproved_ascii_word(text: str) -> bool:
@@ -1192,8 +1259,11 @@ def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict
     current_input = packet.get("currentInput") if isinstance(packet.get("currentInput"), dict) else {}
     output_contract = packet.get("outputContract") if isinstance(packet.get("outputContract"), dict) else {}
     one_ring = packet.get("oneRing") if isinstance(packet.get("oneRing"), dict) else {}
+    planning = packet.get("planning") if isinstance(packet.get("planning"), dict) else {}
     timeline = packet.get("timeline") if isinstance(packet.get("timeline"), dict) else {}
     notebook = packet.get("notebook") if isinstance(packet.get("notebook"), dict) else {}
+    trace = packet.get("trace") if isinstance(packet.get("trace"), dict) else {}
+    rag_evidence_hints = packet.get("ragEvidenceHints") if isinstance(packet.get("ragEvidenceHints"), list) else None
     return _redact_json_value(
         {
             "schemaVersion": packet.get("schemaVersion"),
@@ -1202,7 +1272,6 @@ def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict
             "currentInput": {
                 key: current_input.get(key)
                 for key in (
-                    "committedTail",
                     "selectedText",
                     "intent",
                     "placement",
@@ -1221,34 +1290,85 @@ def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict
                 )
                 if output_contract.get(key) not in (None, "")
             },
+            "recentCompleteInputs": one_ring.get("events", [])[:80]
+            if isinstance(one_ring.get("events"), list)
+            else [],
+            "recentInputPolicy": {
+                "role": one_ring.get("role") or "continuity_context",
+                "maySupportIntent": bool(one_ring.get("maySupportIntent", True)),
+                "maySupportFacts": bool(one_ring.get("maySupportFacts", False)),
+            },
+            "planning": {
+                "items": planning.get("items", [])[:24]
+                if isinstance(planning.get("items"), list)
+                else [],
+            },
+            "ragEvidenceHints": rag_evidence_hints if rag_evidence_hints is not None else None,
+            "contextBudget": {
+                key: trace.get(key)
+                for key in (
+                    "tokenBudget",
+                    "reservedOutputTokens",
+                    "availableContextTokens",
+                    "estimatedContextTokens",
+                    "remainingContextTokens",
+                    "withinSoftBudget",
+                    "contextSourceCounts",
+                    "contextSourceTokens",
+                    "trimmedSourceCounts",
+                )
+                if trace.get(key) is not None
+            },
             "memoryCounts": {
                 "oneRing": len(one_ring.get("events", [])) if isinstance(one_ring.get("events"), list) else 0,
                 "timeline": len(timeline.get("recentDecisions", []))
                 if isinstance(timeline.get("recentDecisions"), list)
                 else 0,
                 "notebook": len(notebook.get("items", [])) if isinstance(notebook.get("items"), list) else 0,
+                "planning": len(planning.get("items", [])) if isinstance(planning.get("items"), list) else 0,
             },
         },
-        max_depth=4,
+        max_depth=6,
+        max_string_chars=800,
+        max_list_items=80,
     )
 
 
-def _redact_json_value(value: object, *, max_depth: int) -> object:
+def _redact_json_value(
+    value: object,
+    *,
+    max_depth: int,
+    max_string_chars: int = 240,
+    max_list_items: int = 12,
+) -> object:
     if max_depth <= 0:
         return "[TRUNCATED]"
     if isinstance(value, str):
-        return truncate_text(_redact_text(value), 240)
+        return truncate_text(_redact_text(value), max(1, int(max_string_chars)))
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     if isinstance(value, (list, tuple)):
-        return [_redact_json_value(item, max_depth=max_depth - 1) for item in value[:12]]
+        return [
+            _redact_json_value(
+                item,
+                max_depth=max_depth - 1,
+                max_string_chars=max_string_chars,
+                max_list_items=max_list_items,
+            )
+            for item in value[: max(1, int(max_list_items))]
+        ]
     if isinstance(value, dict):
         result: dict[str, object] = {}
         for key, item in list(value.items())[:32]:
             key_text = compact_whitespace(str(key))
             if key_text in {"rawText", "raw_text", "wholeValue", "whole_value"}:
                 continue
-            result[key_text] = _redact_json_value(item, max_depth=max_depth - 1)
+            result[key_text] = _redact_json_value(
+                item,
+                max_depth=max_depth - 1,
+                max_string_chars=max_string_chars,
+                max_list_items=max_list_items,
+            )
         return result
     return truncate_text(_redact_text(str(value)), 120)
 

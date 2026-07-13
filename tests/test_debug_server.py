@@ -205,6 +205,15 @@ class PrefixFixtureCore(FixtureCoreClient):
 
 
 class DebugImeServiceTests(unittest.TestCase):
+    def test_expected_client_disconnect_does_not_dump_server_traceback(self) -> None:
+        server = object.__new__(debug_server_module.QuietThreadingHTTPServer)
+        with patch.object(ThreadingHTTPServer, "handle_error") as parent_handler:
+            try:
+                raise ConnectionResetError("client cancelled stale request")
+            except ConnectionResetError:
+                server.handle_error(object(), ("127.0.0.1", 12345))
+        parent_handler.assert_not_called()
+
     def setUp(self) -> None:
         self._optimizer_env = {
             "RAG_IME_MEMORY_OPTIMIZER": os.environ.get("RAG_IME_MEMORY_OPTIMIZER"),

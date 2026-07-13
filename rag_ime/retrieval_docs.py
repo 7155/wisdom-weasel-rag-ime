@@ -126,7 +126,8 @@ def rebuild_retrieval_docs(
 def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dict[str, set[str]]) -> list[dict[str, object]]:
     rows = conn.execute(
         """
-        SELECT id, memory_id, kind, text, normalized_text, summary, source_event_id, project, app, status, privacy_class, metadata_json
+        SELECT id, memory_id, kind, text, normalized_text, summary, source_event_id,
+               project, app, status, privacy_class, metadata_json, updated_at_ms
         FROM memory_items
         WHERE status IN ('active', 'approved')
           AND privacy_class != 'sensitive'
@@ -169,6 +170,7 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "memoryId": memory_id,
                     "source": "memory_items",
                     "contextGroupId": context_group_id,
+                    "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
                 },
             }
         )
@@ -178,7 +180,8 @@ def _memory_item_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
 def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dict[str, set[str]]) -> list[dict[str, object]]:
     rows = conn.execute(
         """
-        SELECT id, kind, text, canonical_text, source_event_ids_json, scope_project, scope_app, status, quality_score, confidence
+        SELECT id, kind, text, canonical_text, source_event_ids_json, scope_project,
+               scope_app, status, quality_score, confidence, updated_at_ms
         FROM memory_atoms
         WHERE status IN ('active', 'approved')
           AND privacy_level != 'sensitive'
@@ -214,6 +217,7 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "sourceEventIds": source_event_ids,
                     "source": "memory_atoms",
                     "contextGroupId": _first_event_context_group(conn, source_event_ids),
+                    "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
                 },
             }
         )
@@ -225,9 +229,10 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         """
         SELECT book_id, book_type, book_key, title, summary, project, app, tags_json,
                surface_hints_json, query_expansions_json, source_event_ids_json, memory_atom_ids_json,
-               status, confidence, quality_score, metadata_json
+               status, confidence, quality_score, metadata_json, updated_at_ms,
+               archived_at_ms, last_active_at_ms, archive_reason
         FROM memory_books
-        WHERE status IN ('active', 'approved')
+        WHERE status IN ('active', 'approved', 'archived')
           AND (? = '' OR project = ? OR project = '')
         ORDER BY updated_at_ms DESC
         """,
@@ -264,6 +269,12 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "sourceEventIds": source_event_ids,
                     "memoryAtomIds": _json_list(row["memory_atom_ids_json"]),
                     "source": "memory_books",
+                    "bookStatus": str(row["status"] or "active"),
+                    "archived": str(row["status"] or "") == "archived",
+                    "archivedAtMs": int(row["archived_at_ms"] or 0),
+                    "lastActiveAtMs": int(row["last_active_at_ms"] or 0),
+                    "archiveReason": str(row["archive_reason"] or ""),
+                    "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
                     "contextGroupId": compact_whitespace(str(stored_metadata.get("contextGroupId") or ""))
                     or _first_event_context_group(conn, source_event_ids),
                 },

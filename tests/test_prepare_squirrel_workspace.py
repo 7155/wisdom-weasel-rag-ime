@@ -168,7 +168,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
         self.assertIn("latency_budget_ms=900", result.stdout)
         self.assertIn("timeout_ms=1200", result.stdout)
         self.assertIn("max_side_candidates=5", result.stdout)
-        self.assertIn("post_commit_idle_ms=180", result.stdout)
+        self.assertIn("post_commit_idle_ms=420", result.stdout)
         self.assertIn("sidecar_url=http://127.0.0.1:18766/api", result.stdout)
         self.assertIn(f"repo_root={root}", result.stdout)
         self.assertIn(
@@ -440,7 +440,7 @@ class PrepareSquirrelWorkspaceScriptTests(unittest.TestCase):
             config = (workdir / "rag-ime.squirrel.custom.yaml").read_text(encoding="utf-8")
             self.assertIn("sidecar_url: http://127.0.0.1:19866/api", config)
             self.assertIn("project: offline-test", config)
-            self.assertIn("frontend_trace: true", config)
+            self.assertIn("frontend_trace: false", config)
 
 
 if __name__ == "__main__":

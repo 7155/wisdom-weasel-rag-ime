@@ -18,6 +18,7 @@ DEFAULT_FALLBACK_SCHEMAS="${RAG_IME_RIME_FALLBACK_SCHEMAS:-luna_pinyin,bopomofo,
 DEFAULT_PAGE_SIZE="${RAG_IME_RIME_PAGE_SIZE:-8}"
 SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 DEPLOY="${RAG_IME_SQUIRREL_DEPLOY:-0}"
+DEPLOY_WAIT_SECONDS="${RAG_IME_SQUIRREL_DEPLOY_WAIT_SECONDS:-20}"
 DRY_RUN="${RAG_IME_SQUIRREL_CONFIG_DRY_RUN:-0}"
 
 if [[ ! -f "$SNIPPET_PATH" ]]; then
@@ -205,8 +206,27 @@ fi
 
 if [[ "$DEPLOY" == "1" || "$DEPLOY" == "true" || "$DEPLOY" == "TRUE" ]]; then
   if [[ -x "$SQUIRREL_APP/Contents/MacOS/Squirrel" ]]; then
-    "$SQUIRREL_APP/Contents/MacOS/Squirrel" --build
-    "$SQUIRREL_APP/Contents/MacOS/Squirrel" --reload
+    # Squirrel resolves the user-data directory from its working directory for
+    # command-line deploys. Running these from the repository can return zero
+    # while leaving build/squirrel.yaml unchanged.
+    (cd "$RIME_USER_DIR" && "$SQUIRREL_APP/Contents/MacOS/Squirrel" --build)
+    (cd "$RIME_USER_DIR" && "$SQUIRREL_APP/Contents/MacOS/Squirrel" --reload)
+    build_config="$RIME_USER_DIR/build/squirrel.yaml"
+    build_default="$RIME_USER_DIR/build/default.yaml"
+    deploy_ready=0
+    for ((attempt = 0; attempt < DEPLOY_WAIT_SECONDS * 4; attempt++)); do
+      if [[ -f "$build_config" && -f "$build_default" \
+        && ! "$CONFIG_PATH" -nt "$build_config" \
+        && ! "$DEFAULT_CONFIG_PATH" -nt "$build_default" ]]; then
+        deploy_ready=1
+        break
+      fi
+      sleep 0.25
+    done
+    if [[ "$deploy_ready" != "1" ]]; then
+      echo "Squirrel reload did not compile the updated user config within ${DEPLOY_WAIT_SECONDS}s" >&2
+      exit 1
+    fi
     echo "deployed Squirrel config with: $SQUIRREL_APP"
   else
     echo "Squirrel app executable not found, skipped deploy: $SQUIRREL_APP" >&2

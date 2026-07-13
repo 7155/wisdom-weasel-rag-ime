@@ -72,8 +72,6 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private let accentRail = NSView()
   private let actionSeparator = NSView()
   private let deepSeekButton = NSButton(title: "生成", target: nil, action: nil)
-  private let deepSeekShortcutPlate = NSView()
-  private let deepSeekShortcutLabel = NSTextField(labelWithString: "⌃.")
   private let statusHalo = NSView()
   private let statusIcon = NSImageView()
   private let statusLabel = NSTextField(labelWithString: "正在生成...")
@@ -105,14 +103,14 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
-    material = .popover
-    blendingMode = .behindWindow
-    state = .active
+    material = .contentBackground
+    blendingMode = .withinWindow
+    state = .inactive
     wantsLayer = true
     layer?.cornerRadius = 8
     layer?.borderWidth = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
     layer?.borderColor = NSColor.separatorColor.cgColor
-    layer?.backgroundColor = NSColor.clear.cgColor
+    layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.98).cgColor
     layer?.masksToBounds = true
     stateTint.wantsLayer = true
     stateTint.layer?.backgroundColor = NSColor.clear.cgColor
@@ -140,17 +138,9 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     deepSeekButton.contentTintColor = .systemIndigo
     deepSeekButton.target = self
     deepSeekButton.action = #selector(startActiveRag)
-    deepSeekButton.toolTip = "用当前上下文和检索证据生成内容"
+    deepSeekButton.toolTip = "生成内容（⌃.）"
     deepSeekButton.setAccessibilityLabel("生成长文本")
-    deepSeekShortcutLabel.font = RagImeAssistantTypography.shortcut
-    deepSeekShortcutLabel.textColor = .tertiaryLabelColor
-    deepSeekShortcutLabel.alignment = .right
-    deepSeekShortcutPlate.wantsLayer = true
-    deepSeekShortcutPlate.layer?.cornerRadius = 5
-    deepSeekShortcutPlate.layer?.borderWidth = 0.5
-    deepSeekShortcutPlate.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.58).cgColor
-    deepSeekShortcutPlate.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.05).cgColor
-    [actionSeparator, deepSeekButton, deepSeekShortcutPlate, deepSeekShortcutLabel].forEach(addSubview)
+    [actionSeparator, deepSeekButton].forEach(addSubview)
     statusHalo.wantsLayer = true
     statusHalo.layer?.backgroundColor = NSColor.clear.cgColor
     statusIcon.imageScaling = .scaleProportionallyDown
@@ -209,7 +199,6 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     super.viewDidChangeEffectiveAppearance()
     layer?.borderColor = NSColor.separatorColor.cgColor
     layer?.backgroundColor = NSColor.clear.cgColor
-    deepSeekShortcutPlate.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.58).cgColor
     resultShortcutPlate.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.42).cgColor
     updateThemeChrome(for: surfaceState)
   }
@@ -235,16 +224,14 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         )
       }
       if actionCandidate != nil {
-        actionSeparator.frame = NSRect(x: 60, y: Self.actionHeight - 1, width: max(0, bounds.width - 72), height: 1)
-        deepSeekShortcutPlate.frame = NSRect(x: 12, y: 8, width: 38, height: 24)
-        deepSeekShortcutLabel.frame = NSRect(x: 14, y: 10, width: 34, height: 20)
-        deepSeekButton.frame = NSRect(x: 60, y: 5, width: max(76, bounds.width - 72), height: 30)
+        actionSeparator.frame = NSRect(x: 12, y: Self.actionHeight - 1, width: max(0, bounds.width - 24), height: 1)
+        deepSeekButton.frame = NSRect(x: 12, y: 5, width: 96, height: 30)
       }
     case .explicitGenerating:
       statusHalo.frame = NSRect(x: 4, y: 7, width: 46, height: 50)
       statusIcon.frame = statusHalo.frame
       stopButton.frame = NSRect(x: 48, y: 17, width: 26, height: 30)
-    case .explicitError:
+    case .explicitNoSuggestion, .explicitError:
       statusHalo.frame = NSRect(x: 7, y: 34, width: 44, height: 42)
       statusIcon.frame = statusHalo.frame
       statusLabel.frame = NSRect(x: 57, y: 44, width: max(60, bounds.width - 103), height: 24)
@@ -335,7 +322,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         }
       }
       if actionCandidate != nil {
-        [actionSeparator, deepSeekButton, deepSeekShortcutPlate, deepSeekShortcutLabel].forEach { $0.isHidden = false }
+        [actionSeparator, deepSeekButton].forEach { $0.isHidden = false }
       }
     case .explicitGenerating:
       statusIcon.image = companionImage(named: "RagImeCompanionThinking")
@@ -343,6 +330,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       [statusHalo, statusIcon, stopButton].forEach { $0.isHidden = false }
       toolTip = "\(statusLabel.stringValue)；点击停止"
       setAccessibilityLabel(statusLabel.stringValue)
+    case .explicitNoSuggestion:
+      statusIcon.image = companionImage(named: "RagImeCompanionIdle")
+      statusLabel.stringValue = payload.statusText.isEmpty ? "这次没有合适建议" : providerNeutralStatus(payload.statusText)
+      [statusHalo, statusIcon, statusLabel, diagnosticLabel, retryButton, closeButton].forEach { $0.isHidden = false }
     case .explicitError:
       statusIcon.image = companionImage(named: "RagImeCompanionWarning")
       statusLabel.stringValue = payload.statusText.isEmpty ? "生成失败，请重试" : providerNeutralStatus(payload.statusText)
@@ -361,7 +352,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         replaceButton.isHidden = !canReplaceSelection
         replaceButton.isEnabled = canReplaceSelection
       }
-      resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦ 已生成"
+      resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦"
       let result = candidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
       resultText.textStorage?.setAttributedString(
         NSAttributedString(string: result, attributes: RagImeAssistantTypography.resultAttributes())
@@ -445,7 +436,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       $0.isHidden = true
       $0.showsSeparator = false
     }
-    [actionSeparator, deepSeekButton, deepSeekShortcutPlate, deepSeekShortcutLabel].forEach { $0.isHidden = true }
+    [actionSeparator, deepSeekButton].forEach { $0.isHidden = true }
     [statusHalo, statusIcon, statusLabel, diagnosticLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach { $0.isHidden = true }
   }
 
@@ -456,6 +447,9 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     case .explicitGenerating:
       tint = NSColor.systemIndigo.withAlphaComponent(0.035)
       rail = .systemIndigo
+    case .explicitNoSuggestion:
+      tint = NSColor.systemTeal.withAlphaComponent(0.02)
+      rail = .systemTeal
     case .explicitError:
       tint = NSColor.systemOrange.withAlphaComponent(0.045)
       rail = .systemOrange
@@ -483,12 +477,11 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     let transaction = payload.frontendTransaction ?? [:]
     let metadata = candidates.first?.metadata ?? [:]
     let status = stringValue(in: [transaction, metadata], keys: ["diagnosticStatus", "captureFailureReason", "remoteModelReason"])
-    if status.contains("remote_model_disabled") || status.contains("credentials_missing") || status.contains("provider_unavailable") {
-      return "远程模型未启用"
-    }
-    if status.contains("context_missing") || status.contains("capture_failed") {
-      return "未读取上下文"
-    }
+    let remoteUnavailable = status.contains("remote_model_disabled")
+      || status.contains("credentials_missing")
+      || status.contains("provider_unavailable")
+    let contextUnavailable = status.contains("context_missing")
+      || status.contains("capture_failed")
 
     let contextChars = intValue(in: [transaction, metadata], keys: ["effectiveContextChars", "contextChars", "selectedTextChars"])
     let foregroundChars = intValue(in: [transaction, metadata], keys: ["foregroundContextChars"])
@@ -503,7 +496,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       parts.append("当前输入 \(foregroundChars) 字")
     } else if let contextChars, contextChars > 0 {
       parts.append("上下文 \(contextChars) 字")
-    } else if boolValue(in: [transaction, metadata], keys: ["contextCaptured"]) == false {
+    } else if contextUnavailable || boolValue(in: [transaction, metadata], keys: ["contextCaptured"]) == false {
       parts.append("未读取上下文")
     }
     if let recentInputChars, recentInputChars > 0 {
@@ -514,7 +507,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     } else if retrievalAttempted == true {
       parts.append("未检索到证据")
     }
-    if remoteReady == false {
+    if remoteUnavailable || remoteReady == false {
       parts.append("远程模型未启用")
     } else {
       parts.append("知识生成")

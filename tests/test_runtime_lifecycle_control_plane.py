@@ -110,6 +110,7 @@ class RuntimeLifecycleControlPlaneTests(unittest.TestCase):
         helper = (ROOT / "scripts" / "repair_rag_ime_launch_agents.sh").read_text(encoding="utf-8")
 
         self.assertIn("RAG_IME_ENABLE_FRONTEND_ON_RESTART=1", helper)
+        self.assertIn("RAG_IME_SKIP_INPUT_SOURCE_READINESS=1", helper)
         self.assertIn('RAG_IME_RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-foreground-rag-proof}"', helper)
         self.assertIn('exec "$ROOT/scripts/restart_rag_ime_runtime.sh"', helper)
 

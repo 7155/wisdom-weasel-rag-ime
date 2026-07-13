@@ -22,6 +22,8 @@ enum VoiceStreamingASRFactory {
             )
         case .realtimeWebSocket:
             return RealtimeWebSocketASRClient(credentials: credentials, callback: callback)
+        case .httpTranscription:
+            return HTTPTranscriptionASRClient(credentials: credentials, callback: callback)
         }
     }
 }
@@ -97,6 +99,7 @@ final class RealtimeWebSocketASRClient: NSObject, URLSessionWebSocketDelegate, V
         request.timeoutInterval = 8
         request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
+        credentials.extraHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
         let socket = session.webSocketTask(with: request)
         self.session = session
@@ -200,5 +203,141 @@ final class RealtimeWebSocketASRClient: NSObject, URLSessionWebSocketDelegate, V
         socket = nil
         session?.invalidateAndCancel()
         session = nil
+    }
+}
+
+final class HTTPTranscriptionASRClient: VoiceStreamingASRClient, @unchecked Sendable {
+    private let credentials: VoiceASRCredentials
+    private let callback: @Sendable (VoiceASREvent) -> Void
+    private let queue = DispatchQueue(label: "com.rag-ime.voice.http-transcription")
+    private var pcm = Data()
+    private var task: URLSessionDataTask?
+    private var terminated = false
+
+    init(credentials: VoiceASRCredentials, callback: @escaping @Sendable (VoiceASREvent) -> Void) {
+        self.credentials = credentials
+        self.callback = callback
+    }
+
+    func start() { callback(.transport("buffering")) }
+
+    func appendPCM(_ data: Data) {
+        guard !data.isEmpty else { return }
+        queue.async { [weak self] in
+            guard let self, !self.terminated else { return }
+            self.pcm.append(data)
+        }
+    }
+
+    func finish() { queue.async { [weak self] in self?.sendOnQueue() } }
+
+    func cancel() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.terminated = true
+            self.task?.cancel()
+            self.task = nil
+            self.pcm.removeAll(keepingCapacity: false)
+        }
+    }
+
+    private func sendOnQueue() {
+        guard !terminated, task == nil, !pcm.isEmpty,
+              let endpoint = URL(string: credentials.endpoint),
+              ["https", "http"].contains(endpoint.scheme?.lowercased() ?? "") else {
+            fail("语音 HTTP 服务配置无效或没有收到音频")
+            return
+        }
+        let boundary = "rag-ime-\(UUID().uuidString)"
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        credentials.extraHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        request.httpBody = Self.multipartBody(
+            wav: Self.wavData(from: pcm),
+            model: credentials.model,
+            boundary: boundary
+        )
+        callback(.transport("uploading"))
+        let session = URLSession(configuration: .ephemeral)
+        task = session.dataTask(with: request) { [weak self] data, response, error in
+            guard let self else { return }
+            self.queue.async {
+                guard !self.terminated else { return }
+                defer {
+                    self.terminated = true
+                    self.task = nil
+                    self.pcm.removeAll(keepingCapacity: false)
+                    session.invalidateAndCancel()
+                }
+                if error != nil {
+                    self.callback(.failure("语音 HTTP 服务连接失败"))
+                    return
+                }
+                if let status = (response as? HTTPURLResponse)?.statusCode, !(200..<300).contains(status) {
+                    self.callback(.failure("语音 HTTP 服务返回 \(status)"))
+                    return
+                }
+                guard let data,
+                      let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let text = Self.transcript(from: payload), !text.isEmpty else {
+                    self.callback(.failure("语音 HTTP 服务没有返回转写文本"))
+                    return
+                }
+                self.callback(.final(text))
+            }
+        }
+        task?.resume()
+    }
+
+    private func fail(_ message: String) {
+        guard !terminated else { return }
+        terminated = true
+        callback(.failure(message))
+    }
+
+    private static func transcript(from payload: [String: Any]) -> String? {
+        if let text = payload["text"] as? String { return text }
+        if let transcript = payload["transcript"] as? String { return transcript }
+        if let result = payload["result"] as? [String: Any] {
+            return (result["text"] as? String) ?? (result["transcript"] as? String)
+        }
+        return nil
+    }
+
+    private static func multipartBody(wav: Data, model: String, boundary: String) -> Data {
+        var body = Data()
+        func append(_ value: String) { body.append(Data(value.utf8)) }
+        append("--\(boundary)\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n\(model)\r\n")
+        append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\n")
+        append("Content-Type: audio/wav\r\n\r\n")
+        body.append(wav)
+        append("\r\n--\(boundary)--\r\n")
+        return body
+    }
+
+    private static func wavData(from pcm: Data) -> Data {
+        var output = Data()
+        func appendASCII(_ value: String) { output.append(Data(value.utf8)) }
+        func appendLE<T: FixedWidthInteger>(_ value: T) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { output.append(contentsOf: $0) }
+        }
+        appendASCII("RIFF")
+        appendLE(UInt32(36 + pcm.count))
+        appendASCII("WAVEfmt ")
+        appendLE(UInt32(16))
+        appendLE(UInt16(1))
+        appendLE(UInt16(1))
+        appendLE(UInt32(16_000))
+        appendLE(UInt32(32_000))
+        appendLE(UInt16(2))
+        appendLE(UInt16(16))
+        appendASCII("data")
+        appendLE(UInt32(pcm.count))
+        output.append(pcm)
+        return output
     }
 }

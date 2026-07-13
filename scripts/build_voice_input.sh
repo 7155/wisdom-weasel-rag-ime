@@ -9,6 +9,7 @@ CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 ACTION="${1:-build}"
+CODESIGN_IDENTITY="${RAG_IME_CODESIGN_IDENTITY:--}"
 
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
@@ -34,7 +35,15 @@ xcrun swiftc \
 /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string RagImeIcon' "$CONTENTS/Info.plist" 2>/dev/null || \
   /usr/libexec/PlistBuddy -c 'Set :CFBundleIconFile RagImeIcon' "$CONTENTS/Info.plist"
 
-codesign --force --deep --sign - "$APP" >/dev/null
+if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+  # The default ad-hoc requirement is a changing cdhash, which makes macOS
+  # forget Accessibility and Microphone grants after every local rebuild.
+  codesign --force --deep --sign - \
+    --requirements '=designated => identifier "com.rag-ime.voice"' \
+    "$APP" >/dev/null
+else
+  codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP" >/dev/null
+fi
 
 if [[ "$ACTION" == "install" ]]; then
   DEST="$HOME/Applications/RagImeVoice.app"

@@ -11,7 +11,7 @@ struct ControlRootView: View {
                     HStack(spacing: 11) {
                         RagImeAnimeCompanion(state: .idle, size: 48)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("RAG-IME").font(.headline)
+                            Text("智鼬").font(.headline)
                             Text("个人输入工作台").font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -23,11 +23,15 @@ struct ControlRootView: View {
                     destinationRow(.inputMethod)
                     destinationRow(.voiceInput)
                 }
-                Section("知识与系统") {
+                Section("个人节奏") {
+                    destinationRow(.planning)
                     destinationRow(.memory)
+                }
+                Section("知识与系统") {
                     destinationRow(.ragAndModels)
                     destinationRow(.history)
                     destinationRow(.diagnostics)
+                    destinationRow(.configuration)
                 }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 232, max: 252)
@@ -49,7 +53,7 @@ struct ControlRootView: View {
                     )
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                if model.showingRuntimeActionReport {
+                else if model.showingRuntimeActionReport {
                     ControlNoticeBanner(
                         kind: .report,
                         title: "运行组件已更新",
@@ -63,10 +67,12 @@ struct ControlRootView: View {
                     case .overview: OverviewPage()
                     case .inputMethod: InputMethodPage()
                     case .voiceInput: VoiceInputPage()
+                    case .planning: PlanningPage()
                     case .memory: MemoryPage()
                     case .ragAndModels: RagAndModelsPage()
                     case .history: HistoryPage()
                     case .diagnostics: DiagnosticsPage()
+                    case .configuration: ConfigurationPage()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -1,323 +1,268 @@
 # Wisdom Weasel RAG IME
 
-An experimental, local-first intelligent input method for macOS. It keeps
-normal Pinyin composition inside Rime/Squirrel, then adds local completion,
-retrieval-backed memory, and an explicit Active RAG action after text is
-committed.
+> A local-first macOS input-method research project built on Rime/Squirrel.
 
-> [!IMPORTANT]
-> This is a research prototype, not a packaged production IME. The repository
-> is public for inspection and collaboration, but the release gate is still
-> blocked by foreground acceptance and completion-quality work.
+**Platform:** macOS 14+ | **Python:** 3.10+ | **License:** [GPL-3.0-only](LICENSE) | **Status:** research prototype
 
-## Product Route
+Wisdom Weasel RAG IME preserves ordinary Pinyin composition in Rime and adds
+post-commit local completion, curated local retrieval and memory, and optional
+explicit knowledge workflows. It is intentionally conservative about the
+typing path: ordinary composition remains Rime's job, and remote generation is
+never used for passive per-keystroke prediction.
 
-The supported product route is the macOS Rime/Squirrel candidate-layer adapter
-plus the Python sidecar. The adapter is delivered as a pinned Squirrel patch.
-The obsolete independent InputMethodKit prototype has been removed so there is
-one input-method frontend and one source of truth for foreground behavior.
+> [!WARNING]
+> This repository is licensed under GPL-3.0-only, but it is **not a
+> release-ready IME**. The foreground acceptance, completion-quality, signing,
+> notarization, and final release-manifest gates remain open. See
+> [project status](docs/project-status.md) before installing it as a daily
+> input method.
 
-Squirrel is also no longer the owner of model, RAG, memory, or feedback logic.
-The versioned [Generic Frontend Gateway](docs/frontend-adapter-boundary.md)
-isolates those shared backend contracts behind engine-neutral frontend,
-session, privacy, input-engine, and native-candidate fields. Squirrel remains
-the only real frontend in this repository today; no Fcitx5, IBus, Linux, or
-other frontend runtime is claimed.
+## What It Does
+
+| Capability | Current boundary |
+| --- | --- |
+| Pinyin composition | Rime/librime owns schemas, fuzzy Pinyin, paging, native candidates, and user-dictionary ranking. The sidecar must never replace its composition path. |
+| Local completion | After a commit, a local MLX, Ollama, or loopback OpenAI-compatible runtime may offer short, source-marked continuations. `Tab` accepts the first suggestion and `Option+number` selects an ordinal; ordinary number keys stay with Rime or the host. |
+| Hybrid RAG and memory | Local SQLite FTS5 BM25, precomputed vector scoring, tags, time, feedback, and weighted reciprocal-rank fusion produce traceable local evidence. The current vector lane is an exact scan, not ANN/HNSW/FAISS or a learned cross-encoder reranker. |
+| Explicit knowledge work | Selected-text assistance, long-form answers, memory organization, and optional DeepSeek-compatible generation are explicit Control Center workflows, not background typing behavior. |
+| Voice input | An optional headless macOS agent provides push-to-talk streaming ASR. It is isolated from Squirrel's keystroke path and requires explicit permissions and provider configuration. |
+
+## Core Features
+
+The status labels below deliberately distinguish code presence from real macOS
+foreground acceptance. "Implemented" does not mean that signing, notarization,
+or every host application's text field has passed manual testing.
+
+### Rime Input
+
+**Status: implemented; real foreground acceptance remains required.**
+
+The product frontend is a single patched Squirrel/InputMethodKit route. Rime
+continues to own Pinyin parsing, fuzzy Pinyin, paging, native candidates, and
+the user dictionary. Wisdom Weasel adds a source-aware assistant surface rather
+than replacing Rime's decoder. Ordinary number keys stay with Rime/the host;
+`Tab` and `Option+number` select assistant candidates.
+
+![RAG-IME Control Center overview](docs/assets/screenshots/control-center-overview.png)
+
+### Local LLM Prediction
+
+**Status: in development; runtime integration and automated tests are present,
+but candidate quality and foreground stability are still release gates.**
+
+Passive post-commit prediction uses a local runtime such as MLX, Ollama, or a
+loopback OpenAI-compatible server. It emits short continuations without sending
+every keystroke to a remote model. The final prompt prioritizes the live input,
+today's plan, complete recent inputs, and then budgeted RAG evidence; it asks for
+bare continuation instead of an explanation or a copy of retrieved text.
+
+Current development-machine timing is split into two different measurements:
+
+| Measurement | Current observation |
+| --- | ---: |
+| Prefill / first token | about **54 ms** |
+| Three complete candidates | about **206 ms** |
+
+These are one local development measurement, not a service-level guarantee.
+Hardware, model, quantization, cache state, input length, and runtime all affect
+the result. In particular, this README does **not** claim that prediction is
+"finished in 50 ms".
+
+> Screenshot slot: `docs/assets/screenshots/local-llm-candidates.png`
+
+### Hybrid RAG
+
+**Status: implemented in the local core and sidecar; foreground relevance still
+needs continued evaluation.**
+
+Retrieval combines SQLite FTS5 BM25, vector similarity, tags and tag relations,
+time, feedback, and weighted reciprocal-rank fusion. A configurable soft
+context budget defaults to 4096 tokens with 1024 tokens reserved for output.
+Recent input starts from a 10-20 complete-event baseline and can exceed 20 when
+the budget allows. Diagnostics report the number and estimated tokens actually
+injected for recent inputs, plans/Todos, timeline notes, and RAG evidence.
+
+Explicit queries such as "yesterday", "last week", "before", or "the original
+requirement" can retrieve the corresponding time window and bypass ordinary
+age decay. Old material is preserved, not silently treated as current truth.
+
+> Screenshot slot: `docs/assets/screenshots/hybrid-rag-trace.png`
+
+### AI Memory
+
+**Status: in development; draft generation, replacement links, decay, and
+rollback contracts are implemented and await prolonged real-data validation.**
+
+Short one- or two-character commits do not automatically become facts. Nearby
+Rime fragments are assembled using punctuation, pauses, focus changes, and
+context groups before they receive normal memory weight. New explicit facts,
+preferences, decisions, and requirements may supersede older memory without
+deleting its source. Temporary plans decay quickly, project state decays at a
+medium rate, and stable preferences decay slowly.
+
+![Memory details and provenance](docs/assets/screenshots/memory-details.png)
+
+### Personal Knowledge Base
+
+**Status: in development; local review workflow is implemented.**
+
+The knowledge workbench combines local memory with optional explicit knowledge
+generation. AI organization produces an editable draft first. Only an explicit
+review action applies selected changes to formal memory, indexes, or the Rime
+lexicon. It is not a background remote upload path.
+
+![Knowledge workbench draft review](docs/assets/screenshots/knowledge-workbench-draft.png)
+
+### Memory And Knowledge Management
+
+**Status: in development; management APIs and native views are implemented.**
+
+The Control Center can inspect full content, source events, tags, relationships,
+timestamps, confidence, and supersession state. Management operations include
+edit, merge, archive, suppress, restore, and rollback. Tag exploration supports
+both a list and a relationship graph. Topic books are reused instead of being
+created after every organization run; after a configurable inactive period
+(60 days by default) they become archive candidates. Archived books remain
+searchable with lower ordinary weight and can reactivate when an old project is
+explicitly requested or relevant content appears again.
+
+> Screenshot slot: `docs/assets/screenshots/tag-relationship-graph.png`
+
+### Voice Input
+
+**Status: in development; recording, streaming ASR, overlay, and insertion are
+implemented, while host-specific focus behavior still requires manual tests.**
+
+The optional `RagImeVoice.app` agent shows a foreground recording overlay and
+an audio-reactive waveform, streams speech to the configured ASR provider, and
+inserts the final text at the active cursor. It runs outside Squirrel's
+keystroke path so a microphone/network failure cannot block ordinary typing.
+Microphone and Accessibility permissions belong to the stable installed app,
+not a temporary derived-build identity.
+
+![Voice input status and configuration](docs/assets/screenshots/voice-input.png)
+
+### Daily Planning And Assistant
+
+**Status: in development; database, API, context injection, completion-event
+recognition, undo, and the native page are implemented.**
+
+The Planning page keeps long-term goals, today's plan, prioritized Todos,
+deadlines, completion state, and daily notes together. The assistant summarizes
+what was completed, what remains, and a sensible next action. Explicit phrases
+such as "completed task X" can complete a matching Todo and provide undo;
+ambiguous language only creates a confirmation suggestion. Open tasks, goals,
+and daily notes are eligible for the model context under the shared token
+budget.
+
+> Screenshot slot: `docs/assets/screenshots/daily-planning.png`
+
+### Diagnostics And Repair
+
+**Status: implemented; doctor output is necessary but not sufficient evidence.**
+
+The diagnostics surface separates process health, model readiness, retrieval,
+permissions, context capture, and final model injection. It records the exact
+source counts and token estimates used by a request, while raw trace text stays
+behind an explicit debug option. Repair commands cover the sidecar, launch
+agents, patched Squirrel registration, voice agent, and local model runtime.
+
+> Screenshot slot: `docs/assets/screenshots/diagnostics.png`
+
+### Configuration, Backup, And Restore
+
+**Status: in development; YAML preview/apply and portable backup/rollback are
+implemented and tested.**
+
+`config/rag-ime.config.example.yaml` documents every importable setting and the
+instant, knowledge, and voice provider slots. A user may create the ignored
+`config/rag-ime.config.yaml`; import changes it to mode `0600`, previews all
+changes, and moves supplied secrets into macOS Keychain without echoing them in
+the response. Existing keys are preserved when a slot omits its secret.
+
+A portable backup contains management settings, provider metadata without
+secrets, the SQLite database (including memory, knowledge, plans, and Todos),
+and safe Rime YAML/dictionary files. It deliberately excludes API keys, access
+tokens, model weights, caches, logs/traces, and Rime binary user databases.
+Restore validates every manifest entry, previews counts, snapshots current
+state, applies migrations, and rolls the database, Rime files, and provider
+metadata back if any step fails. The backup itself is not password encrypted.
+
+> Screenshot slots: `docs/assets/screenshots/configuration-import.png` and
+> `docs/assets/screenshots/backup-restore.png`
+
+### Screenshot Checklist
+
+The four screenshots already referenced above are tracked. The remaining
+named slots are intentionally stable so project screenshots can be added later
+without rewriting the feature layout:
+
+- `local-llm-candidates.png`
+- `hybrid-rag-trace.png`
+- `tag-relationship-graph.png`
+- `daily-planning.png`
+- `diagnostics.png`
+- `configuration-import.png`
+- `backup-restore.png`
+
+## Architecture
 
 ```text
 Pinyin composition
-  -> Rime/librime candidates and native user-dictionary ranking
-  -> Squirrel commits selected text
+  -> Rime/librime
+  -> patched Squirrel
+  -> native composition panel and native commit
 
 Post-commit assistance
-  -> trusted foreground-context snapshot
-  -> local MiniMind completion (up to three alternatives)
-  -> local Hybrid RAG and curated memory (one separately marked row)
-  -> source-aware overlay (up to four candidate rows plus the DeepSeek action)
-  -> Tab or Option+number acceptance
+  -> trusted foreground snapshot
+  -> Python sidecar (/rime-suggest)
+  -> local completion + local Hybrid RAG / memory
+  -> source-aware Squirrel overlay
+  -> Tab or Option+number
+  -> feedback (/rime-select)
 
-Explicit Active RAG
-  -> user invokes the configured shortcut on selected text
-  -> the live request is resolved from the newest foreground context
-  -> local lexical + MLX BGE retrieval assembles relevant evidence
-  -> recent input remains a separately counted diagnostic and is not injected
-  -> optional configured DeepSeek-compatible provider generates one result
-  -> streamed and final text keep paragraph layout and pass the same anti-echo and prompt-leak governor
-  -> no local character cap truncates the explicit result; model tokens, timeout, and safety governors remain bounded
-  -> an empty governed result gets one context-only retry, never a fake answer
-  -> a fully governed streamed clause can finish safely if a later tail is rejected
-  -> the provider-neutral result stays pinned; Tab inserts only final text
-
-Explicit knowledge workbench
-  -> user asks for a knowledge answer, long-form draft, recall, or database organization
-  -> local SQLite RAG returns traceable evidence
-  -> DeepSeek generates a complete multi-paragraph answer outside the keystroke path without local character truncation
-  -> optional Notion Worker + Custom Agent adds authorized workspace knowledge
-  -> stale remote results are rejected before local/remote synthesis
-
-Streaming voice input
-  -> hold the mouse middle button (wheel click) in any supported text field
-  -> a separate native agent captures 16 kHz mono PCM in memory
-  -> optional bounded hotwords come only from the user's explicit Control Center list
-  -> the configured streaming ASR adapter returns cumulative partial transcripts
-  -> the volatile transcript is replaced in place at the current cursor
-  -> releasing the shortcut sends the final frame and commits the provider's corrected final text
+Explicit workflows
+  -> RagImeControl.app
+  -> local evidence and optional configured remote provider
+  -> reviewed result, draft, or explicit insertion
 ```
 
-## Current Capabilities
+Squirrel is the only real input-method frontend in this repository. The
+versioned frontend gateway exists to isolate shared backend contracts, but this
+project does not claim a Linux, Fcitx5, IBus, or second InputMethodKit runtime.
+`RagImeControl.app` is the supported settings and diagnostics surface;
+`RagImeVoice.app` is a headless voice agent rather than a second control center.
 
-| Area | Current behavior |
-| --- | --- |
-| Pinyin | Rime owns composition, sentence generation, fuzzy Pinyin, and native user-dictionary learning. A public-safe 10-case deployed-librime regression currently passes Top-1 at 10/10, including `yon/yong -> 用` and common phrases. The patched post-selection feedback route remains `backend_only` until a fresh foreground selection trace passes. |
-| Local completion | MLX, local Ollama, and loopback OpenAI-compatible runtimes share one validated registry/lifecycle boundary. The current MiniMind-derived checkpoint is fast enough and reliably returns three branches, but its semantic quality gate and retraining signoff have not passed. |
-| Hybrid RAG | Local SQLite retrieval combines lexical, tag, time-book, feedback, and precomputed vector signals. On Apple Silicon, a present MLX Q8 BGE artifact is preferred and warmed before sidecar health becomes ready; an explicit provider still wins and clean machines fall back to `local-hash`. |
-| Memory | Keyboard commits and final voice transcripts enter the same raw local ledger, but raw history is not searchable memory. The user can describe an organization goal in ordinary Chinese or run the project default; DeepSeek V4 then reconstructs fragments, cleans text, maintains coarse Groups/semantic Tags/tag edges, and creates a validated Memory Book/Atom/phrase draft. Apply and rollback remain separate local actions. |
-| Active RAG | Explicit selected-text workflow with live-context request resolution, separately counted grounding evidence, MLX BGE retrieval, and an optional remote compatible route. The default remote result has no local character cap, preserves multiple paragraphs, and can remain pending for up to 120 seconds; the model token ceiling, timeout, anti-echo, privacy, and prompt-leak governors still apply. Recent input and phrase candidates cannot inflate the visible RAG count. It is never part of passive per-keystroke prediction. |
-| UI | The patched Squirrel native overlay now gives deterministic post-commit feedback: a compact companion pulse appears immediately, ready rows replace it in place, Tab acceptance switches directly to `继续联想`, and a terminal empty result reports `这次没有合适建议` instead of silently vanishing. Real rows are icon-first, use one compact shortcut area, remain actionable for at least 12 seconds, and honor Reduce Motion. A TextEdit foreground trace has passed pending -> candidates -> Tab -> next candidates. `RagImeControl` remains the one settings/diagnostics app and the voice agent is headless. |
-| Knowledge workbench | Explicit local-RAG + DeepSeek knowledge answers, long-form writing, recall, and review-only database organization. The native client sends `maxChars=0`, so full streamed paragraphs are kept instead of being cut at the former per-mode character limits; generation is still bounded by the configured token and request budgets. Optional Notion submission and polling are separate, observable gates. |
-| Voice input | The headless native agent supports isolated provider adapters, mode-`600` credentials with Keychain fallback, and a real streaming PCM probe. Hold the mouse middle button by default; right Option and `Option+Space` remain configurable fallbacks. A project-owned book-companion pulse expands into the same compact material/rail language as the IME overlay. Mouse monitoring gives immediate feedback even before Accessibility is authorized; cursor insertion still fails closed until that permission and microphone access are granted. |
-| Observability | Redacted runtime status, trigger decisions, candidate score explanations, context provenance, and foreground traces. |
-
-### Retrieval Algorithm Truth
-
-`Hybrid RAG` is not a UI label or a single opaque score. The current local
-retriever exposes the implementation of every lane in its debug payload, so a
-disabled or degraded lane cannot be presented as a working algorithm.
-
-| Lane | Actual implementation | Important boundary |
-| --- | --- | --- |
-| Raw lexical | SQLite FTS5 column-scoped `MATCH` with SQLite's `bm25(memory_retrieval_docs_fts)` | If an old/incomplete database lacks the FTS table or index, the only fallback is reported as `lexical_substring_fallback`, never as BM25. |
-| Tag lexical | The same FTS5 BM25 engine over tags, aliases, surface hints, and query expansions | This is a distinct field-scoped query, not a copy of raw-text matching. |
-| TagMemo | Tag/alias/expansion activation followed by the tag FTS5 BM25 lane | Tag expansion is graph/rule based; it is not a learned graph encoder. |
-| Dense vector | Precomputed MLX BGE embeddings and cosine/dot-product scoring | The current corpus uses an exact in-process scan, not an ANN/HNSW/FAISS index. |
-| Vector tag boost | Dense raw/tag/group vectors plus context-group compatibility | It complements lexical rank; it does not replace provenance or scope filters. |
-| Time / Daily Book | Query-term relevance plus a 30-day exponential recency prior | It is a temporal heuristic, not a learned time model. |
-| Feedback | Accepted candidate counts gated by current-query relevance | Unrelated high-frequency feedback is excluded instead of globally boosting a phrase. |
-| Fusion | Per-lane ranking, weighted reciprocal-rank fusion, scope/group compatibility, deduplication, and anti-echo filtering | Raw BM25 scores and cosine scores are not added directly because their scales differ. |
-
-There is deliberately **no learned cross-encoder reranker** and no ANN index in
-the current hot path. Those are valid future scale/quality upgrades, but this
-repository does not claim them as shipped. A normal preview exposes each lane's
-`implementation`, `fts5Bm25`, `lexicalFallback`, count, and skip reason. This
-makes it possible to distinguish an actual FTS5 BM25 run from a compatibility
-fallback on the machine that is serving the query.
-
-## Interaction And Personalization Direction
-
-The product is intended to feel like one quiet desktop companion rather than a
-stack of unrelated model, retrieval, and voice windows. The current native
-surfaces share system typography, material, the circular breathing companion,
-source icons, stable selection semantics, and reduced-motion handling. The
-base theme contract is implemented; optional expressive themes remain a later
-layer with these constraints:
-
-- voice listening, Pinyin candidates, local completion, retrieval, and explicit
-  knowledge generation use the same motion language and compact geometry;
-- a source icon is sufficient in the default candidate view, so repeated
-  provider or model labels do not consume a quarter of each row;
-- `Tab` and `Option+1...4` stay in one compact left-side shortcut rail instead
-  of becoming separate large controls or competing with candidate text;
-- optional companion themes may add a small character, object, or activity
-  metaphor, such as reading a book while retrieval runs, without making an
-  anime style mandatory or obscuring the text being entered;
-- Reduce Motion, high contrast, and a plain professional theme remain
-  first-class alternatives to expressive animation.
-
-Personalization is split into two levels. Rime's native user dictionary learns
-ordinary Pinyin selections immediately. Repeated explicit corrections can be
-opened in the Control Center as a reviewable custom-dictionary proposal with
-provenance and a stable review token. Apply requires explicit row selection and
-the exact confirmation contract, writes the Rime dictionary transactionally,
-and provides manifest-backed rollback. Remote generation never writes directly
-into the live Rime dictionary, and model/RAG candidates are not counted as
-native Pinyin selections. The live review endpoint is verified; no personal
-proposal is auto-applied during tests or installation.
-
-DeepSeek V4 can also organize a bounded local history bundle into a draft of
-Memory Books, atoms, aliases, and high-value phrase proposals. The output is
-schema-validated before it is stored, then exposed as a diff that the user can
-apply or roll back. A phrase can join the Rime review queue only when the draft
-contains lowercase, toneless Pinyin plus its reason and source-event evidence.
-If the first organizer response omits Pinyin, one bounded DeepSeek V4 repair
-request receives only the missing phrase texts; unresolved items remain local
-memory and cannot enter the dictionary queue. This bridge is implemented and
-covered by tests. Generated phrases remain proposals until the user selects and
-applies them; a successful model response never writes the live dictionary by
-itself.
-
-### Natural-language memory organization
-
-The organizer is intentionally not a configuration-language feature. In the
-Control Center, `整理数据库` accepts plain goals such as `把输入法内容合并成一个组，修正语音错字，标签不要太碎`.
-Leaving the field unchanged runs the repository's default policy:
-
-1. rebuild adjacent Rime commits and final voice transcripts into coherent
-   utterances, then remove probes, filler repetitions, fragments, and only
-   context-supported ASR/typing errors;
-2. reuse and merge existing semantic Groups, keeping a few stable themes rather
-   than splitting by app, date, status, or one-off action;
-3. keep facts, preferences, decisions, plans, questions, and conditions
-   distinct so an unfinished request cannot become a completed fact;
-4. create a small set of semantic Tags, aliases, and evidence-backed tag edges,
-   then attach Books, Atoms, Tags, and phrase proposals to their Groups;
-5. interpret acceptance, backspace, replacement, and correction feedback as
-   reviewable phrase add/boost/demote/suppress proposals.
-
-The data boundary is strict:
-
-```text
-typed commits + final voice transcripts + correction feedback
-  -> immutable raw event ledger (not in BM25/BGE)
-  -> local reconstruction, redaction, noise filtering, and bounded compaction
-  -> DeepSeek V4 semantic organizer
-  -> editable draft: Groups + Tags + tag edges + Books + Atoms + phrase proposals
-  -> schema/evidence validation
-  -> explicit review and apply
-  -> curated retrieval documents
-  -> SQLite FTS5 BM25 + MLX BGE + tag/time/feedback fusion
-```
-
-If generation is empty, truncated, or invalid, one compact retry is allowed and
-the raw cursor remains pending. There is no fallback that silently indexes
-uncleaned history. The final workbench status reports reconstructed source-event
-count and bundle hash so users can see that history was actually supplied.
-
-High-intelligence routes accept DeepSeek V4 model identifiers only. Legacy X1
-and X2 proxy hosts are rejected at configuration validation, and the remote
-route is never used for passive per-keystroke completion. The overlay stays
-provider-neutral even when the configured backend is DeepSeek V4.
-
-The current MiniMind runtime is fast enough for the backend latency/count gate,
-but latency and three valid strings are not the same as relevance. The
-checkpoint still produces generic or weak continuations in real contexts, so
-the semantic gate, real single-user typing evaluation, and retraining decision
-remain open. The runtime abstains on uncertain branches rather than forcing
-three suggestions after every commit.
-
-When both local lanes are useful, the post-commit surface keeps three model
-branches and one separately tinted RAG row; the DeepSeek entry is a fifth,
-explicit action rather than a passive remote candidate. Ordinary number keys
-continue typing, Tab accepts the first row, and Option+number selects an ordinal.
-
-Machine-readable release status lives in
-[`docs/product-status.json`](docs/product-status.json). It intentionally keeps
-backend readiness separate from real foreground proof.
-
-### Model runtimes
-
-The model registry records two different facts explicitly: the artifact format
-(`mlx`, `safetensors`, `gguf`, or `remote`) and the process that can actually
-serve it (`mlx`, `ollama`, or local `openai-compatible`). Registering a GGUF no
-longer causes the restart script to silently try to load it through MLX.
-Registry v3 writes a full content fingerprint for new local artifacts. The MLX
-server computes the same fingerprint once at startup, and health/readiness
-checks reject a resident model that does not match the selected registry entry.
-Legacy v1/v2 short fingerprints remain readable and are reported as
-`legacy-unverified` rather than silently rewritten.
-
-```bash
-python3 -m rag_ime.model_registry list
-python3 -m rag_ime.model_runtime --lane hot --probe
-```
-
-- `mlx`: a project-managed resident LaunchAgent on `127.0.0.1:8767`, with
-  server timing, seeded branch replay, and batch-candidate capability probing;
-- `ollama`: an externally managed local Ollama service and native streaming
-  prediction provider;
-- `openai-compatible`: an externally managed local endpoint, suitable for
-  llama.cpp or another server implementing the local OpenAI contract.
-
-All three runtime choices use the same normalized health, capability, lifecycle,
-model-identity, loopback, no-proxy, rollback, and semantic-readiness checks. This is an
-engineered serving boundary, not a claim that every registered checkpoint has
-passed the product quality gate.
-
-The realtime hot lane is loopback-only for every runtime. Remote providers stay
-in explicit Active RAG or offline knowledge workflows and cannot be activated
-as a passive per-keystroke model. `scripts/restart_rag_ime_runtime.sh` starts
-the managed MLX service only for an MLX deployment; for external runtimes it
-first probes the endpoint and refuses to start Sidecar on a dead route.
-
-### Foreground context boundary
-
-The macOS input method can read the current editable field through
-InputMethodKit. It cannot assume that the rest of an application's page, chat
-history, rendered assistant replies, or terminal scrollback belongs to that
-field. Diagnostics therefore keep three facts separate:
-
-1. `foregroundContextChars`: text captured from the current editable field;
-2. `timelineRecentInputChars`: final user input available in local history for
-   diagnostics and explicit recall, but not silently injected into generation;
-3. `fullForegroundDocumentCaptured`: whether the whole visible document was
-   captured. The current InputMethodKit route reports this as `false`.
-
-A short capture is a degraded but usable state, not proof of complete page
-context. Explicit generation keeps that foreground field as its complete
-generation context; recent keyboard or voice input remains visible as a
-separate diagnostic and can only enter an explicit recall/RAG workflow as
-traceable evidence. The control center must not show a green complete-context
-state merely because a two-character field capture was successfully delivered.
-
-## Privacy Model
+## Privacy And Safety
 
 - Passive completion and retrieval are local by default.
-- Detected Secure/password fields fail closed before text recording, retrieval, or model
-  inference.
-- Raw input text is excluded from default traces and diagnostics.
-- App or context-group changes invalidate buffered foreground context.
-- Remote generation is reserved for an explicit Active RAG action and requires
-  user configuration. Selected text and assembled context may leave the machine
-  only when that action is invoked.
-- Remote memory organization is also explicit: the Control Center first
-  creates a reviewable draft from a bounded local bundle. Applying that draft
-  and applying any resulting Rime phrase proposal are two independent,
-  confirmable steps.
-- Voice input is also explicit. Audio and unstable partial transcripts stay
-  volatile and are never added to the RAG or typing-history databases. In an
-  ordinary non-sensitive field, only the final transcript committed at the
-  cursor enters the same local recent-input and memory-organization route as
-  typed text. Secure Input, password roles, and detected account fields fail
-  closed before the microphone starts. The provider route is governed by
-  Volcengine's service terms and data policy.
-- Model weights, local databases, personal input history, API keys, built app
-  bundles, and machine-specific configuration must not be committed.
+- Secure Input, password fields, account-like fields, unknown privacy state,
+  and stale focus fail closed before recording, retrieval, or model inference.
+- Remote generation is limited to explicit workflows. Selected text or context
+  leaves the Mac only after a user-configured action invokes that provider.
+- Raw typing history is not silently promoted into searchable memory. Memory
+  organization creates a validated draft that the user reviews, applies, or
+  rolls back.
+- Model weights, local databases, personal input history, API keys, build
+  artifacts, and machine-local configuration must never be committed.
 
-This project handles text from every application in which the input method is
-enabled. Review the privacy settings and source before using it with sensitive
-material.
-
-## Repository Layout
-
-| Path | Purpose |
-| --- | --- |
-| `rag_ime/` | Python sidecar, runtime config, local memory/RAG core, predictor clients, management API, and CLI. |
-| `squirrel-patches/` | Pinned patch pack and Swift overlay sources for Squirrel. |
-| `macos/RagImeControl/` | Native control center and diagnostics UI. |
-| `macos/RagImeVoice/` | Headless native voice agent, global push-to-talk hotkey, microphone capture, and cursor insertion. It has no second control surface. |
-| `macos/Shared/` | Shared Keychain and Doubao streaming-ASR protocol code used by the native apps. |
-| `integrations/notion-worker/` | Signed Notion Worker webhook template and matching Custom Agent instructions. |
-| `scripts/` | Build, install, health, evaluation, and foreground-verification scripts. |
-| `tests/` | Unit, integration-style, contract, privacy, and patch regression tests. |
-| `docs/` | Architecture, operations, acceptance criteria, status, and evaluation cases. |
-| `dataset/ime_first_demo_pack.v1.json` | Isolated, deterministic input-method demonstration fixture. |
-| `dataset/minimind_completion_v3_public/` | Small public-safe completion contract and semantic regression set; not a production-scale training corpus. |
-
-## Requirements
-
-- macOS 14 or newer for the current native build and verification path.
-- Python 3.10 or newer.
-- Xcode command-line tools; full Xcode is required to build patched Squirrel.
-- Apple Silicon and `mlx`/`mlx-lm` for the resident local predictor.
-- A separately obtained local checkpoint. Model weights are not included.
-- A Volcengine application with Doubao streaming speech recognition 2.0 enabled
-  is optional and required only for voice input.
-
-The Python core intentionally has no mandatory third-party package dependency.
-MLX and remote-provider support are optional runtime layers.
+Read the source and [runtime/privacy guidance](docs/runtime-and-debug.md)
+before using the project with sensitive material.
 
 ## Quick Start
 
-Run the complete cross-platform test suite:
+### Requirements
+
+- macOS 14 or newer for the native build and foreground verification route.
+- Python 3.10 or newer.
+- Xcode command-line tools; full Xcode is required to build patched Squirrel.
+- Apple Silicon plus `mlx` / `mlx-lm` only when using the resident MLX
+  predictor.
+- A separately obtained local model checkpoint. Model weights are not included.
+
+### Run The Core Locally
+
+Run the test suite first:
 
 ```bash
 python3 -m unittest discover -s tests
@@ -330,8 +275,7 @@ python3 -m rag_ime.cli init-db
 python3 -m rag_ime.cli sidecar-server --host 127.0.0.1 --port 8766
 ```
 
-For a deterministic input-method-first demonstration, use the isolated demo
-database rather than seeding personal history:
+For a deterministic demonstration that does not touch personal history:
 
 ```bash
 python3 scripts/ime_first_demo.py seed --reset
@@ -339,291 +283,35 @@ python3 scripts/ime_first_demo.py verify --report output/ime-first-demo-report.j
 python3 scripts/ime_first_demo.py reset
 ```
 
-The default `.rag-ime-demo/` route refuses `.rag-ime-data/`, performs no model
-or network call during verification, and removes only rows owned by its fixed
-fixture. See [the demo-data contract](docs/ime-first-demo-data.md).
+### Build The macOS Frontend
 
-Prepare and build the pinned Squirrel source with the patch pack:
+Prepare the pinned Squirrel checkout and build it with the project patch:
 
 ```bash
 scripts/prepare_squirrel_workspace.sh
 scripts/build_patched_squirrel.sh build
 ```
 
-Installing an input method changes user-level macOS state. Read
-[`docs/runtime-and-debug.md`](docs/runtime-and-debug.md) before running the
-install or restart scripts.
-
-After a controlled installation, use the real foreground checks:
+Installing an input method changes user-level macOS state. Use the attended
+foreground path in [runtime and debug](docs/runtime-and-debug.md), then verify
+the actual UI rather than trusting an HTTP response:
 
 ```bash
 scripts/doctor_squirrel_integration.sh
 scripts/verify_squirrel_foreground_trace.sh
 ```
 
-Backend health or a predictor benchmark does not prove that candidates are
-visible, selectable, and committed in the foreground application.
+The optional voice lane, Active RAG provider, and Notion Worker each have
+separate setup steps. They are documented in
+[runtime and debug](docs/runtime-and-debug.md),
+[personal knowledge](docs/notion-personal-knowledge.md), and the native
+Control Center; none is required for the local core.
 
-When a patched Squirrel build is installed while Microsoft Edge is already
-running, Edge can keep the old InputMethodKit connection and ignore the new
-input method even though Chrome and native applications work. Enter
-`edge://restart` once in Edge to restore the existing windows and reconnect the
-IME client. The frontend also carries the Chromium caret-position compatibility
-path used by current Squirrel work: panel updates are deferred to the next main
-run loop and reuse the first valid caret position during a composition.
+## Validation And Release Gates
 
-Optional voice input is installed separately so microphone/network work never
-enters Squirrel's keystroke path:
-
-```bash
-scripts/build_control_center.sh install
-scripts/install_voice_input_launch_agent.sh
-scripts/configure_volcengine_asr.sh \
-  --app-id YOUR_APP_ID \
-  --access-token-file /path/to/access-token-file
-scripts/configure_voice_hotkey.sh middle_mouse
-launchctl kickstart -k "gui/$(id -u)/com.rag-ime.voice"
-```
-
-Credentials can be stored once in the Control Center's private mode-`600`
-configuration file, with macOS Keychain retained as a fallback for existing
-installs. Neither route is committed to Git.
-The background agent never opens an Accessibility prompt on its own; microphone
-access is requested only after the user presses the voice shortcut. The Control
-Center reads the agent's local status file and does not inspect or request its
-own microphone/Accessibility permissions. Grant the two permissions to
-`RagImeVoice` explicitly when convenient, then hold the mouse wheel down to
-speak and release it to finalize. Without Accessibility, the middle-button
-observer still opens the companion with a precise permission error instead of
-failing silently, but it cannot write text. Local development builds are ad-hoc
-signed, so rebuilding the app changes its designated code identity and macOS
-may require `RagImeVoice` to be disabled and enabled once again in Accessibility;
-a signed release must use a stable signing identity. The shortcut can be changed to right Option
-or `Option+Space` in the Control Center, or with
-`scripts/configure_voice_hotkey.sh right_option` or
-`scripts/configure_voice_hotkey.sh option_space`. See
-[`docs/runtime-and-debug.md`](docs/runtime-and-debug.md#streaming-voice-input).
-Optional request-level hotwords are configured only in the Control Center. The
-agent sends at most 32 validated entries in the provider's `request.context`
-field; disabled or empty configuration omits the field entirely. RAG-IME never
-exports the Rime user dictionary for this purpose.
-Every uninstall entry point is dry-run by default. Remove only the voice agent
-with `scripts/uninstall_voice_input.sh --apply`; add `--purge-credentials` to
-remove its Keychain entries and private hotword file as well. The legacy
-sidecar-only entry point now delegates to the same planner and also requires
-`scripts/uninstall_sidecar_launch_agent.sh --apply`.
-
-For a complete user-scoped inventory, run:
-
-```bash
-python3 scripts/uninstall_rag_ime.py
-```
-
-The default apply scope removes only LaunchAgents whose plist `Label` still
-matches a known RAG-IME service and native apps whose bundle identifiers still
-match. It preserves local databases/models/settings, logs, all Rime user data,
-patched Squirrel, Keychain credentials, and macOS privacy-list entries. Inspect
-the JSON plan, then repeat the same options with `--apply`. Optional flags
-separately govern `--remove-patched-squirrel`,
-`--remove-rime-managed-config`, `--purge-local-data`,
-`--purge-credentials`, and `--purge-voice-config`. Squirrel is removable only
-with its RAG-IME build marker; Rime edits require exactly one paired managed
-block and create backups. Apply rechecks ownership, rejects path/symlink escape,
-and accepts only fixed user-scoped targets. System-level paths under
-`/Library/Input Methods` are never removed automatically.
-
-## Evaluation
-
-The repository includes deterministic quality gates for each independent lane:
-
-```bash
-python3 -m rag_ime.cli eval-hybrid-rag-core \
-  --cases-file docs/eval/hybrid_rag_core_cases.jsonl
-
-python3 -m rag_ime.cli eval-memory-optimizer \
-  docs/eval/memory_optimizer_cases.jsonl
-
-python3 -m rag_ime.cli eval-active-rag \
-  --cases-file docs/eval/active_rag_cases.jsonl
-```
-
-Hybrid RAG enforces each fixture's wall-clock latency by default; the public
-gate script never disables it. `--skip-latency-check` exists only for
-correctness/schema tests on uncalibrated hosted runners and must not be used as
-release or performance evidence.
-
-Use `scripts/check_product_status.py --json` for product evidence and
-`scripts/check_public_release.py --allow-blocked` for the tracked-file,
-license, secret-shape, foreground, and artifact-evidence release gate. The
-latter exits non-zero without `--allow-blocked` while release blockers remain.
-It does not treat `releaseStatus: ready` or a boolean signing claim as proof. See
-[`docs/v1-foreground-acceptance.md`](docs/v1-foreground-acceptance.md) for the
-foreground behavior matrix.
-
-## Release Evidence Gate
-
-The generated release manifest is separate from the product-status declaration.
-Its schema is `rag-ime.release-manifest.v1`; a non-runnable field template lives
-at [`docs/release-manifest.example.json`](docs/release-manifest.example.json).
-The real manifest defaults to the ignored build path
-`output/release/release-manifest.json` and must describe the exact release
-commit and two hash-pinned artifact kinds: `macos_release` and
-`corresponding_source`.
-
-The gate recalculates every artifact and evidence-file SHA-256 and byte size,
-rejects paths outside the repository, and requires evidence records for
-codesigning, notarization, stapling, patched-Squirrel corresponding source,
-third-party notices, and foreground acceptance. Each evidence record points to
-a real hash-pinned file, and target-specific records repeat the exact artifact
-digest so stale evidence cannot be attached to a different package. Status
-booleans in `docs/product-status.json` cannot bypass a missing file or digest
-mismatch.
-
-```bash
-python3 scripts/check_public_release.py \
-  --manifest output/release/release-manifest.json \
-  --allow-blocked
-```
-
-No real manifest or public package exists yet, so the current audit honestly
-reports `release_manifest_missing` in addition to the foreground, license, and
-clean-tree blockers.
-
-An unsigned deterministic engineering staging path now exists so packaging can
-be tested before those external gates:
-
-```bash
-bash scripts/build_patched_squirrel.sh
-bash scripts/build_voice_input.sh
-bash scripts/build_control_center.sh
-python3 scripts/prepare_release_candidate.py --release-id v0.1.0-engineering
-```
-
-It creates an unsigned native-app archive, a corresponding-source archive, and
-`staging-manifest.json` under the ignored `output/release-candidate/` directory.
-The staging schema is intentionally different from the final release manifest,
-always reports `releaseEligible: false`, and cannot satisfy the release audit.
-See [release-candidate staging](docs/release-staging.md).
-
-## Candidate Sources
-
-Candidate provenance is a product contract, not just a UI label:
-
-| Source | Meaning |
-| --- | --- |
-| `rime` | Native Rime composition candidate. |
-| `model` | Local post-commit completion. |
-| `rag` | Local retrieval evidence or curated phrase. |
-| `memory` | Stable local memory candidate. |
-| `action` | Provider-neutral explicit knowledge generation action, backed by the configured DeepSeek V4 route. |
-| `raw_english` | Direct code/ASCII input path. |
-
-Rime candidates keep ownership of the composition panel. Model, RAG, and
-memory candidates must not silently replace or reorder ordinary Pinyin results.
-
-## Training and Models
-
-The checked-in MiniMind integration uses a bare `prefix -> completion`
-contract rather than a chat prompt. The local checkpoint is a project-specific
-fine-tune and is not an official MiniMind release.
-
-The public v3 seed set and gate make model work reproducible without pretending
-that a tiny fixture is enough to train the final network:
-
-```bash
-python3 scripts/minimind_retraining.py audit
-python3 scripts/minimind_retraining.py export \
-  --output /tmp/minimind-completion-v3-pairs
-
-# Requires an explicitly configured, already-running loopback predictor.
-python3 scripts/minimind_retraining.py evaluate \
-  --stage production_candidate \
-  --provider env \
-  --split test \
-  --semantic-judgments \
-    dataset/minimind_completion_v3_public/baselines/minimind-ime-v2-q8-production-20260711.judgments.json \
-  --report output/minimind-quality.json
-```
-
-The set contains 19 contexts, 57 positive suffixes, 57 context-specific hard
-negatives, and six continuous-Tab chains. It audits split leakage, prompt/chat
-fields, prefix echo, broken word boundaries, three-candidate diversity, and
-real rollout drift. A reviewed `production_candidate` run of the current Q8
-checkpoint passes latency, bare-output, anti-echo, hard-negative, and
-three-candidate checks, but scores semantic Top-1/Top-3 `0.0`, boundary validity
-`0.833333`, and continuous Tab `0.0`. This run evaluates candidates after the
-production provider's parser/filter; raw checkpoint output has a separate
-`raw_model_output` contract. The reviewed raw Q8 baseline captures pre-parser
-branches directly: p50 `40 ms`, p95 `150 ms`, while semantic Top-1/Top-3 and
-continuous Tab remain `0.0`. See
-[`docs/minimind-retraining-interface.md`](docs/minimind-retraining-interface.md).
-
-For further training:
-
-- Prefer consented, sanitized, real single-user typing continuations.
-- Keep completions append-only and do not repeat the input prefix.
-- Quarantine synthetic template corpora from the primary training mix.
-- Evaluate abstention, semantic relevance, echo rate, and three-alternative
-  diversity separately from inference latency.
-- Keep authorized causal text, suffix-only SFT, and chosen/rejected ranking as
-  separate phases. `prepare-experiment` emits a fingerprint-bound A0/A1 plan
-  and refuses to mark the public regression seed as production training data.
-- Onboard a finished export with `scripts/qualify_model_candidate.py prepare`.
-  It creates an inactive, fingerprint-bound raw/product/continuous-Tab/latency
-  evidence plan and never overwrites or activates the current model. Finalization
-  still requires separately bound foreground evidence before activation can be
-  reviewed.
-
-See [`docs/personal-ime-completion-requirements.md`](docs/personal-ime-completion-requirements.md)
-for the data and acceptance contract.
-
-The optional Notion personal-knowledge lane is documented in
-[`docs/notion-personal-knowledge.md`](docs/notion-personal-knowledge.md). It is
-an explicit asynchronous workflow, not a passive input-method candidate source.
-
-## Acknowledgements
-
-This project is independent and is not endorsed by the projects below.
-
-- [Wisdom-Weasel](https://github.com/Felix3322/Wisdom-Weasel) informed the
-  prediction lifecycle and candidate-panel integration route.
-- [VCPToolBox](https://github.com/lioensky/VCPToolBox) informed parts of the
-  memory/RAG design study, especially persistent memory, TagMemo-style signals,
-  and context injection. No VCP service is required at runtime.
-- [MiniMind](https://github.com/jingyaogong/minimind) provided the small-model
-  architecture and training baseline used to produce the custom local
-  completion checkpoint. Upstream MiniMind weights are not redistributed here.
-- [Squirrel](https://github.com/rime/squirrel) and
-  [librime](https://github.com/rime/librime) provide the macOS frontend and Rime
-  engine foundations.
-- [MLX](https://github.com/ml-explore/mlx) and
-  [MLX-LM](https://github.com/ml-explore/mlx-lm) provide the Apple Silicon
-  inference runtime.
-- [Ollama](https://github.com/ollama/ollama) and
-  [llama.cpp](https://github.com/ggml-org/llama.cpp) are supported as optional
-  local serving boundaries through the native Ollama or OpenAI-compatible
-  provider contracts; neither is required for the default MLX deployment.
-- [OpenLess](https://github.com/Open-Less/openless) informed the isolated voice
-  coordinator, ordered PCM/WebSocket pipeline, push-to-talk lifecycle, and
-  insertion fallback design. No OpenLess code or service is required at runtime.
-- [LazyTyper](https://github.com/oldcai/LazyTyper-releases) informed the global
-  voice-input interaction and low-friction cursor-insertion expectations. The
-  referenced repository is a binary release channel; this project does not
-  claim that its code is available under an open-source license.
-- [Volcengine Doubao streaming ASR 2.0](https://docs.volcengine.com/docs/6561/1354869?lang=zh)
-  is the optional remote speech-recognition provider for the voice lane.
-
-All names and trademarks belong to their respective owners. Each dependency or
-reference project remains governed by its own license.
-
-## Contributing
-
-Keep changes narrow and add tests for behavior, privacy, contracts, or patch
-application. For frontend work, verify the real Squirrel foreground path rather
-than relying only on preview fixtures. Do not submit personal typing history,
-credentials, private model artifacts, or generated app bundles.
-
-Before opening a pull request, run:
+The project distinguishes backend evidence from real foreground behavior.
+Passing tests or a health probe does not prove a visible, selectable candidate
+in a foreground application.
 
 ```bash
 python3 -m compileall -q rag_ime scripts tests
@@ -632,37 +320,94 @@ python3 scripts/check_product_status.py --json
 python3 scripts/check_public_release.py --allow-blocked
 python3 scripts/evaluate_deployed_rime_lexicon.py
 python3 -m unittest discover -s tests
-find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
 ```
 
-The public-release audit scans both tracked files and non-ignored untracked
-candidate files. It blocks generated artifacts, credential-shaped strings, and
-machine-specific production defaults before they can enter a clean commit.
-Test fixtures and local agent notes are not treated as deployable defaults, but
-they remain subject to the normal secret-shape guard unless explicitly marked
-as audit fixtures. Superseded public archives are rejected entirely.
+`check_public_release.py --allow-blocked` is intentionally a report while the
+prototype is unfinished. A real release additionally needs a clean source
+commit, foreground acceptance, Developer ID signing, notarization, stapling,
+and a hash-bound `rag-ime.release-manifest.v2` that verifies the project
+`LICENSE`, third-party notices, and exact patched Squirrel corresponding source.
+See [release staging](docs/release-staging.md) and the
+[release-manifest template](docs/release-manifest.example.json).
+
+## Repository Map
+
+| Path | Purpose |
+| --- | --- |
+| `rag_ime/` | Python sidecar, local RAG/memory core, model runtime adapters, management API, and release audit. |
+| `squirrel-patches/` | Pinned Squirrel patch, Swift overlay, and patch application checks. |
+| `macos/RagImeControl/` | Native settings, diagnostics, knowledge, and review UI. |
+| `macos/RagImeVoice/` | Headless push-to-talk agent, microphone pipeline, and cursor insertion. |
+| `macos/Shared/` | Shared native Keychain and streaming-ASR protocol code. |
+| `scripts/` | Build, install, runtime, evaluation, release, and foreground-verification commands. |
+| `tests/` | Unit, contract, privacy, patch, release, and integration-style tests. |
+| `docs/` | Current architecture, runtime, acceptance, release, and model documentation. |
+| `dataset/` | Public-safe demonstration and regression fixtures, not a production training corpus. |
+
+## Documentation
+
+| Topic | Read |
+| --- | --- |
+| Current product and release state | [project status](docs/project-status.md) and [machine-readable status](docs/product-status.json) |
+| What is truly connected to the foreground IME | [feature registry](docs/feature-registry.md) |
+| Runtime, install, recovery, and diagnostics | [runtime and debug](docs/runtime-and-debug.md) |
+| Architecture and frontend boundary | [design decisions](docs/design-decisions.md) and [frontend adapter boundary](docs/frontend-adapter-boundary.md) |
+| Completion data and model qualification | [personal IME completion requirements](docs/personal-ime-completion-requirements.md) and [MiniMind interface](docs/minimind-retraining-interface.md) |
+| Release evidence and distribution | [release staging](docs/release-staging.md), [license decision](docs/license-decision.md), and [third-party notices](THIRD_PARTY_NOTICES.md) |
+
+## Scope And Non-Goals
+
+- This is a macOS Rime/Squirrel experiment, not a general cross-platform IME.
+- Rime remains authoritative during Pinyin composition; model and RAG output
+  does not reorder native candidates or train the Rime user dictionary.
+- Remote models are not permitted in passive per-keystroke completion.
+- The repository does not redistribute trained model weights, personal typing
+  history, or a production-scale training corpus.
+- A public source repository and an unsigned engineering build are not proof of
+  a distributable production input method.
+
+## Contributing
+
+Keep changes narrow, preserve the Rime/Squirrel foreground boundary, and add
+tests for behavior, privacy, contracts, or patch application. Do not submit
+credentials, personal typing history, local databases, model weights, generated
+app bundles, or machine-specific defaults.
+
+Before opening a pull request, run the validation commands above and verify UI
+changes through the real Squirrel foreground path, not only preview fixtures.
+When a change distributes or packages patched Squirrel, preserve the required
+notices and corresponding source.
 
 ## License
 
-This repository does not currently include a top-level project license. Public
-visibility does not by itself grant permission to copy, modify, or redistribute
-the project. The evidence-backed [license decision](docs/license-decision.md)
-recommends GPL-3.0-only for the lowest-ambiguity single-license release and
-documents a more complex Apache-2.0/GPL-3.0 split alternative. The owner still
-has to approve the choice and copyright identity before `LICENSE` is created.
+Unless a file says otherwise, project-authored source is Copyright (C) 2026 7155 and
+licensed under [GPL-3.0-only](LICENSE). GPL is a deliberate choice for
+this project because its distributable macOS route includes a modified GPL-3.0
+Squirrel app.
 
-The old 20k template corpora, their generators, and obsolete handoff artifacts
-have been removed from the working tree. The repository is still not
-release-ready: the tree is dirty, strict foreground/screenshot acceptance is
-incomplete, and the signed/notarized release package plus patched-Squirrel
-source-compliance bundle has not been assembled. There is also no hash-verified
-`output/release/release-manifest.json`; product-status flags alone cannot satisfy
-the gate. `scripts/check_public_release.py` reports these conditions; it does
-not delete files or choose a project license.
+Third-party code, model weights, datasets, and remote services retain their own
+terms. A patched Squirrel binary or source distribution must include the
+applicable notices and exact corresponding source; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the
+[license decision](docs/license-decision.md).
 
-Third-party projects and dependencies retain their own licenses. In particular,
-VCPToolBox is referenced as a design study under its CC BY-NC-SA 4.0 terms, and
-MiniMind is distributed upstream under Apache License 2.0. Patched Squirrel is
-derived from a GPL-3.0 project, so distributing patched Squirrel binaries or
-source requires satisfying the corresponding GPL obligations. See
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) before publishing artifacts.
+## Acknowledgements
+
+This independent project is not endorsed by the projects or providers below.
+
+- [Squirrel](https://github.com/rime/squirrel) and
+  [librime](https://github.com/rime/librime) provide the macOS frontend and
+  Rime engine foundations.
+- [Felix3322/Wisdom-Weasel](https://github.com/Felix3322/Wisdom-Weasel)
+  informed the prediction lifecycle and candidate-panel direction; its
+  implementation source is not copied into this repository without a separate
+  provenance review.
+- [MiniMind](https://github.com/jingyaogong/minimind),
+  [MLX](https://github.com/ml-explore/mlx),
+  [Ollama](https://github.com/ollama/ollama), and
+  [llama.cpp](https://github.com/ggml-org/llama.cpp) inform or provide optional
+  local model runtime boundaries.
+- [OpenLess](https://github.com/Open-Less/openless) and
+  [LazyTyper](https://github.com/oldcai/LazyTyper-releases) informed the voice
+  interaction study. [Volcengine Doubao streaming ASR 2.0](https://docs.volcengine.com/docs/6561/1354869?lang=zh)
+  is an optional configured provider.

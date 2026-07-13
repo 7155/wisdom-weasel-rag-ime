@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .keychain_secrets import MODEL_INSTANT_ACCOUNT, MODEL_KEYCHAIN_SERVICE, read_keychain_secret
+
 from .model_registry import (
     ModelDeployment,
     ModelRegistry,
@@ -180,6 +182,8 @@ def probe_runtime_endpoint(plan: ModelRuntimePlan, *, timeout_s: float = 0.5) ->
     headers: dict[str, str] = {}
     if plan.runtime == "openai-compatible":
         api_key = probe_env.get("RAG_IME_PREDICTOR_API_KEY", "").strip()
+        if not api_key:
+            api_key = read_keychain_secret(MODEL_KEYCHAIN_SERVICE, MODEL_INSTANT_ACCOUNT)
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:

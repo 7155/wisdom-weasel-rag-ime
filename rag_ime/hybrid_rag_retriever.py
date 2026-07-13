@@ -13,6 +13,7 @@ from .context_group import ContextGroup, context_group_compatibility
 from .embeddings import EmbeddingProvider, cosine_similarity, embed_query
 from .hybrid_rag_models import HybridRagCandidate, HybridRagHit, HybridRagQuery
 from .hybrid_rag_ranker import rank_hybrid_hits
+from .memory_book_lifecycle import set_memory_book_archive_status
 from .memory_ingest import normalize_text
 from .query_expansion import build_query_expansion
 from .retrieval_vector_index import load_retrieval_doc_vectors
@@ -20,6 +21,11 @@ from .text_utils import compact_whitespace, token_terms
 
 
 HYBRID_RAG_RETRIEVAL_SCHEMA_VERSION = "rag-ime.hybrid-rag-retrieval.v1"
+_EXPLICIT_HISTORY_RE = re.compile(
+    r"(?:之前|以前|最初|初版|旧版|旧项目|归档|历史|当时|过去|去年|上周|上月|"
+    r"\d{4}[年./-]\d{1,2}(?:[月./-]\d{1,2}日?)?)",
+    re.IGNORECASE,
+)
 
 
 def retrieve_hybrid_rag_candidates(
@@ -137,6 +143,17 @@ def retrieve_hybrid_rag_candidates(
         committed_tail=query.committed_tail,
         top_k=query.top_k,
         lane_weights=lane_weights,
+        decay_settings=_memory_decay_settings(conn),
+    )
+    reactivated_book_ids = _reactivate_archived_books_for_explicit_history(
+        conn,
+        hits=hits,
+        candidates=candidates,
+        query_text=" ".join(
+            item
+            for item in (query.query_text, query.raw_input, query.committed_tail)
+            if compact_whitespace(item)
+        ),
     )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {
@@ -185,6 +202,7 @@ def retrieve_hybrid_rag_candidates(
         "overBudget": elapsed_ms > max(1, int(query.latency_budget_ms)),
         "hits": [hit.__dict__ for hit in hits],
         "candidates": [candidate.__dict__ for candidate in candidates],
+        "reactivatedBookIds": reactivated_book_ids,
     }
 
 
@@ -210,6 +228,98 @@ def _resolved_lane_enabled(values: tuple[tuple[str, bool], ...], *, vector_avail
 def _resolved_lane_weights(values: tuple[tuple[str, float], ...]) -> dict[str, float]:
     configured = {str(key): max(0.0, float(value)) for key, value in values}
     return {lane: configured.get(lane, default) for lane, default in _DEFAULT_LANE_WEIGHTS.items()}
+
+
+def _reactivate_archived_books_for_explicit_history(
+    conn: sqlite3.Connection,
+    *,
+    hits: list[HybridRagHit],
+    candidates: list[HybridRagCandidate],
+    query_text: str,
+) -> list[str]:
+    """Restore only archived topic books reached by an explicit history query.
+
+    Ordinary background completion keeps archived books down-weighted and read-only.
+    A deliberate request such as "最初需求" or "旧项目" is a user action, so a
+    strongly retrieved book may become active again. Related new input also
+    reactivates a reused book in the offline Memory Book compiler.
+    """
+
+    if _EXPLICIT_HISTORY_RE.search(compact_whitespace(query_text)) is None:
+        return []
+    restored: list[str] = []
+    eligible_book_ids: list[str] = []
+    for hit in hits:
+        if hit.doc_type != "book" or not bool(hit.metadata.get("archived")):
+            continue
+        # Time-only recall can contain unrelated old books. A lexical, vector,
+        # tag, or feedback lane is the evidence that this archived topic is
+        # actually related to the user's explicit historical request.
+        if hit.source_lane == "time" or hit.source_id in eligible_book_ids:
+            continue
+        eligible_book_ids.append(hit.source_id)
+    for book_id in eligible_book_ids:
+        row = conn.execute(
+            "SELECT status, book_type FROM memory_books WHERE book_id = ?",
+            (book_id,),
+        ).fetchone()
+        if (
+            row is None
+            or str(row["status"] or "") != "archived"
+            or str(row["book_type"] or "") != "topic"
+        ):
+            continue
+        result = set_memory_book_archive_status(
+            conn,
+            book_id=book_id,
+            archived=False,
+            reason="explicit_historical_retrieval",
+            actor="hybrid_rag_retriever",
+        )
+        updated = result.get("book") if isinstance(result.get("book"), dict) else {}
+        _refresh_retrieval_book_lifecycle_metadata(
+            conn,
+            book_id=book_id,
+            updated_at_ms=int(updated.get("updatedAtMs") or 0),
+            last_active_at_ms=int(updated.get("lastActiveAtMs") or 0),
+        )
+        for candidate in candidates:
+            if book_id in candidate.book_ids:
+                candidate.metadata["archived"] = False
+                candidate.metadata["reactivated"] = True
+        restored.append(book_id)
+        if len(restored) >= 2:
+            return restored
+    return restored
+
+
+def _refresh_retrieval_book_lifecycle_metadata(
+    conn: sqlite3.Connection,
+    *,
+    book_id: str,
+    updated_at_ms: int,
+    last_active_at_ms: int,
+) -> None:
+    rows = conn.execute(
+        "SELECT doc_id, metadata_json FROM memory_retrieval_docs WHERE doc_type = 'book' AND source_id = ?",
+        (book_id,),
+    ).fetchall()
+    for row in rows:
+        metadata = _metadata(row["metadata_json"])
+        metadata.update(
+            {
+                "bookStatus": "active",
+                "archived": False,
+                "archivedAtMs": 0,
+                "archiveReason": "",
+                "lastActiveAtMs": last_active_at_ms,
+                "sourceUpdatedAtMs": updated_at_ms,
+            }
+        )
+        conn.execute(
+            "UPDATE memory_retrieval_docs SET metadata_json = ?, updated_at_ms = ? WHERE doc_id = ?",
+            (json.dumps(metadata, ensure_ascii=False, sort_keys=True), updated_at_ms, str(row["doc_id"])),
+        )
 
 
 def _lane_implementation(
@@ -681,6 +791,20 @@ def _metadata(raw: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _memory_decay_settings(conn: sqlite3.Connection) -> dict[str, object]:
+    try:
+        row = conn.execute(
+            "SELECT value_json FROM management_settings WHERE key = 'memory' LIMIT 1"
+        ).fetchone()
+    except sqlite3.Error:
+        return {}
+    if row is None:
+        return {}
+    payload = _metadata(row[0])
+    value = payload.get("timeDecay")
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _book_title(raw_text: str) -> str:

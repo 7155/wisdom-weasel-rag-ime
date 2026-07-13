@@ -18,6 +18,15 @@ final class AppModel: ObservableObject {
     @Published var memoryRows: [[String: JSONValue]] = []
     @Published var memoryNextCursor = ""
     @Published var memorySaving = false
+    @Published var planning: PlanningDashboardResponse?
+    @Published var planningDate = ""
+    @Published var planningBusy = false
+    @Published var planningAssistantDraft = ""
+    @Published var configurationPath = ""
+    @Published var configurationPreview: ConfigurationPreviewResponse?
+    @Published var configurationStatus = ""
+    @Published var configurationBusy = false
+    @Published var restorePreview: PortableRestorePreviewResponse?
     @Published var historyRows: [[String: JSONValue]] = []
     @Published var historyNextCursor = ""
     @Published var rimeLexiconReview: RimeLexiconReviewResponse?
@@ -45,6 +54,7 @@ final class AppModel: ObservableObject {
     let api = ManagementAPIClient()
     private lazy var schemaClient = SettingsSchemaClient(api: api)
     private var eventTask: Task<Void, Never>?
+    private var overviewRefreshTask: Task<Void, Never>?
     private var knowledgeGeneration = 0
 
     func start() async {
@@ -55,7 +65,7 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 do {
                     try await api.streamEvents { [weak self] _ in
-                        await self?.refreshOverview()
+                        await self?.scheduleOverviewRefresh()
                     }
                 } catch is CancellationError {
                     return
@@ -69,7 +79,27 @@ final class AppModel: ObservableObject {
     func stop() {
         eventTask?.cancel()
         eventTask = nil
+        overviewRefreshTask?.cancel()
+        overviewRefreshTask = nil
         Task { await api.invalidate() }
+    }
+
+    private func scheduleOverviewRefresh() {
+        guard overviewRefreshTask == nil else { return }
+
+        // A single keystroke emits several trace events. Do not redraw the
+        // entire control center once per event while the input method is active.
+        overviewRefreshTask = Task { @MainActor [weak self] in
+            defer { self?.overviewRefreshTask = nil }
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            await self.refreshOverview()
+            if self.destination == .planning { await self.loadPlanning() }
+        }
     }
 
     func refreshAll() async {
@@ -83,6 +113,7 @@ final class AppModel: ObservableObject {
             self.schemaSections = loadedSchema.0.sections
             self.settings = loadedSchema.1.settings
             connected = true
+            clearTransientConnectionError()
             await loadDestination()
         } catch {
             connected = false
@@ -95,6 +126,7 @@ final class AppModel: ObservableObject {
             let response: OverviewResponse = try await api.get("api/overview")
             overview = response
             connected = true
+            clearTransientConnectionError()
         } catch {
             connected = false
         }
@@ -244,6 +276,21 @@ final class AppModel: ObservableObject {
         memorySaving = true
         defer { memorySaving = false }
         do {
+            if kind == "books", ["archive", "restore"].contains(action) {
+                let response: MutationResponse = try await api.post(
+                    "api/memory/book/archive-status",
+                    body: [
+                        "bookId": .string(id),
+                        "archived": .bool(action == "archive"),
+                        "reason": .string("native_control_center_\(action)"),
+                        "updatedBy": .string("native-control-center"),
+                    ]
+                )
+                guard response.ok else { throw APIClientError.server(400, response.error ?? "主题书状态更新失败") }
+                await loadMemory()
+                await refreshOverview()
+                return true
+            }
             let itemType: String
             switch kind {
             case "books": itemType = "book"
@@ -280,6 +327,284 @@ final class AppModel: ObservableObject {
             )
             historyRows = reset ? response.items : historyRows + response.items
             historyNextCursor = response.nextCursor
+        } catch {
+            present(error)
+        }
+    }
+
+    func loadPlanning(date: String? = nil) async {
+        do {
+            let requestedDate = date ?? planningDate
+            let query = requestedDate.isEmpty
+                ? []
+                : [URLQueryItem(name: "date", value: requestedDate)]
+            let response: PlanningDashboardResponse = try await api.get(
+                "api/planning/dashboard",
+                query: query
+            )
+            planning = response
+            planningDate = response.date
+        } catch {
+            present(error)
+        }
+    }
+
+    func changePlanningDay(by offset: Int) async {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let base = formatter.date(from: planningDate.isEmpty ? (planning?.date ?? "") : planningDate) ?? Date()
+        guard let shifted = Calendar.current.date(byAdding: .day, value: offset, to: base) else { return }
+        await loadPlanning(date: formatter.string(from: shifted))
+    }
+
+    func loadTodayPlanning() async {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        await loadPlanning(date: formatter.string(from: Date()))
+    }
+
+    func saveDailyPlan(intention: String, notes: String, reflection: String) async -> Bool {
+        planningBusy = true
+        defer { planningBusy = false }
+        do {
+            let response: PlanningDashboardResponse = try await api.post(
+                "api/planning/plan/save",
+                body: [
+                    "date": .string(planning?.date ?? ""),
+                    "intention": .string(intention),
+                    "notes": .string(notes),
+                    "reflection": .string(reflection),
+                ]
+            )
+            planning = response
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func savePlanningTask(
+        id: String = "",
+        title: String,
+        detail: String,
+        priority: Int,
+        status: String = "todo",
+        dueAtMs: Int? = nil,
+        goalId: String = ""
+    ) async -> Bool {
+        planningBusy = true
+        defer { planningBusy = false }
+        do {
+            var body: [String: JSONValue] = [
+                "taskId": .string(id),
+                "date": .string(planning?.date ?? ""),
+                "title": .string(title),
+                "detail": .string(detail),
+                "priority": .number(Double(priority)),
+                "status": .string(status),
+                "goalId": .string(goalId),
+            ]
+            if let dueAtMs { body["dueAtMs"] = .number(Double(dueAtMs)) }
+            let response: PlanningMutationResponse = try await api.post("api/planning/task/save", body: body)
+            guard response.ok else { throw APIClientError.server(400, response.error ?? "任务保存失败") }
+            await loadPlanning()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func performPlanningTaskAction(id: String, action: String) async -> Bool {
+        planningBusy = true
+        defer { planningBusy = false }
+        do {
+            let response: PlanningMutationResponse = try await api.post(
+                "api/planning/task/action",
+                body: ["taskId": .string(id), "action": .string(action)]
+            )
+            guard response.ok else { throw APIClientError.server(400, response.error ?? "任务状态更新失败") }
+            await loadPlanning()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func savePlanningGoal(
+        id: String = "",
+        title: String,
+        detail: String,
+        priority: Int,
+        targetDate: String = "",
+        status: String = "active"
+    ) async -> Bool {
+        planningBusy = true
+        defer { planningBusy = false }
+        do {
+            let response: PlanningMutationResponse = try await api.post(
+                "api/planning/goal/save",
+                body: [
+                    "goalId": .string(id),
+                    "title": .string(title),
+                    "detail": .string(detail),
+                    "priority": .number(Double(priority)),
+                    "targetDate": .string(targetDate),
+                    "status": .string(status),
+                ]
+            )
+            guard response.ok else { throw APIClientError.server(400, response.error ?? "目标保存失败") }
+            await loadPlanning()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func resolvePlanningSuggestion(id: String, taskId: String = "", dismiss: Bool = false) async {
+        planningBusy = true
+        defer { planningBusy = false }
+        do {
+            let response: PlanningMutationResponse = try await api.post(
+                "api/planning/completion/resolve",
+                body: [
+                    "suggestionId": .string(id),
+                    "taskId": .string(taskId),
+                    "dismiss": .bool(dismiss),
+                ]
+            )
+            guard response.ok else { throw APIClientError.server(400, response.error ?? "任务确认失败") }
+            await loadPlanning()
+        } catch {
+            present(error)
+        }
+    }
+
+    func undoPlanningTaskEvent(id: String) async {
+        planningBusy = true
+        defer { planningBusy = false }
+        do {
+            let response: PlanningMutationResponse = try await api.post(
+                "api/planning/task-event/undo",
+                body: ["eventId": .string(id)]
+            )
+            guard response.ok else { throw APIClientError.server(400, response.error ?? "任务撤销失败") }
+            await loadPlanning()
+        } catch {
+            present(error)
+        }
+    }
+
+    func sendPlanningAssistantMessage() async {
+        let message = planningAssistantDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return }
+        planningBusy = true
+        defer { planningBusy = false }
+        do {
+            let response: PlanningAssistantResponse = try await api.post(
+                "api/planning/assistant",
+                body: ["message": .string(message), "date": .string(planning?.date ?? "")]
+            )
+            guard response.ok else { throw APIClientError.server(400, "规划助手没有返回结果") }
+            planningAssistantDraft = ""
+            planning = response.dashboard
+        } catch {
+            present(error)
+        }
+    }
+
+    func previewConfiguration(at path: String) async {
+        configurationBusy = true
+        defer { configurationBusy = false }
+        do {
+            let response: ConfigurationPreviewResponse = try await api.post(
+                "api/configuration/import-preview",
+                body: ["path": .string(path)]
+            )
+            configurationPath = path
+            configurationPreview = response
+            configurationStatus = response.valid ? "配置校验通过" : response.errors.joined(separator: "\n")
+        } catch {
+            present(error)
+        }
+    }
+
+    func applyConfiguration() async {
+        guard !configurationPath.isEmpty, configurationPreview?.valid == true else { return }
+        configurationBusy = true
+        defer { configurationBusy = false }
+        do {
+            let response: MutationResponse = try await api.post(
+                "api/configuration/import-apply",
+                body: [
+                    "path": .string(configurationPath),
+                    "confirmRemoteModel": .string(
+                        configurationPreview?.requiresRemoteModelConfirmation == true ? "ALLOW REMOTE MODEL" : ""
+                    ),
+                ]
+            )
+            guard response.ok else { throw APIClientError.server(400, response.error ?? "配置导入失败") }
+            configurationStatus = "配置已导入，需要重启的组件会在诊断页提示"
+            await refreshAll()
+        } catch {
+            present(error)
+        }
+    }
+
+    func exportPortableBackup(to path: String) async {
+        configurationBusy = true
+        defer { configurationBusy = false }
+        do {
+            let response: PortableBackupResponse = try await api.post(
+                "api/configuration/backup-export",
+                body: ["destination": .string(path)]
+            )
+            guard response.ok else { throw APIClientError.server(400, "备份导出失败") }
+            configurationStatus = "备份已导出：\(response.path) · 不含 API Key"
+        } catch {
+            present(error)
+        }
+    }
+
+    func previewPortableRestore(from path: String) async {
+        configurationBusy = true
+        defer { configurationBusy = false }
+        do {
+            let response: PortableRestorePreviewResponse = try await api.post(
+                "api/configuration/restore-preview",
+                body: ["path": .string(path)]
+            )
+            restorePreview = response
+            configurationStatus = response.valid ? "备份校验通过，恢复前会自动生成回滚包" : "备份校验失败"
+        } catch {
+            present(error)
+        }
+    }
+
+    func applyPortableRestore() async {
+        guard let preview = restorePreview, preview.valid else { return }
+        configurationBusy = true
+        defer { configurationBusy = false }
+        do {
+            let response: PortableRestoreApplyResponse = try await api.post(
+                "api/configuration/restore-apply",
+                body: [
+                    "path": .string(preview.path),
+                    "restoreToken": .string(preview.restoreToken),
+                    "confirmText": .string("RESTORE RAG-IME"),
+                ]
+            )
+            guard response.ok else { throw APIClientError.server(400, "备份恢复失败") }
+            configurationStatus = "数据已恢复；回滚包：\(response.rollbackPath)"
+            restorePreview = nil
+            await refreshAll()
         } catch {
             present(error)
         }
@@ -521,11 +846,13 @@ final class AppModel: ObservableObject {
     private func loadDestination() async {
         switch destination {
         case .inputMethod: await loadRimeLexiconReview()
+        case .planning: await loadPlanning()
         case .memory: await loadMemory()
         case .history: await loadHistory()
         case .ragAndModels: await loadKnowledgeRoute()
         case .diagnostics:
             do { runtime = try await api.get("api/runtime/status") } catch { present(error) }
+        case .configuration: break
         default: break
         }
     }
@@ -555,6 +882,8 @@ final class AppModel: ObservableObject {
                     )
                 }
                 try await waitForSidecarRecovery(jobId: jobId)
+                showingError = false
+                errorMessage = ""
                 showingRuntimeActionReport = true
                 return
             case "failed", "timed_out", "cancelled", "rejected":
@@ -609,8 +938,15 @@ final class AppModel: ObservableObject {
     }
 
     private func present(_ error: Error) {
+        showingRuntimeActionReport = false
         errorMessage = error.localizedDescription
         showingError = true
+    }
+
+    private func clearTransientConnectionError() {
+        guard showingError, errorMessage == URLError(.cannotConnectToHost).localizedDescription else { return }
+        showingError = false
+        errorMessage = ""
     }
 }
 

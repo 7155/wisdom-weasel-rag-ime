@@ -338,9 +338,10 @@ class DeepSeekCompletionTests(unittest.TestCase):
 
         self.assertEqual(partials, ["失败反馈应保持可见，成功结果应保留到用户主动确认。"])
         self.assertEqual([item.text for item in deltas], [partials[-1]])
-        self.assertEqual(deltas[0].metadata["parseMode"], "safe_stream_final")
+        self.assertEqual(deltas[0].metadata["parseMode"], "stream_partial_recovered")
+        self.assertTrue(deltas[0].metadata["streamInterrupted"])
 
-    def test_active_rag_keeps_a_useful_safe_stream_without_final_punctuation(self) -> None:
+    def test_active_rag_preserves_governed_truncated_stream_without_final_punctuation(self) -> None:
         safe_prefix = "失败反馈保持可见且支持重试，成功结果等待用户主动确认"
         provider = _provider(
             [
@@ -350,19 +351,70 @@ class DeepSeekCompletionTests(unittest.TestCase):
             ]
         )
 
-        deltas = list(
-            provider.stream_candidates(
+        partials: list[str] = []
+        deltas = list(provider.stream_candidates(
                 DeepSeekCompletionRequest(
                     scene="active_rag",
                     current_context="正在整理输入法交互要求",
                     max_chars=120,
-                )
+                ),
+                on_text_delta=partials.append,
+            ))
+
+        self.assertGreaterEqual(len(safe_prefix), 24)
+        self.assertEqual(partials, [safe_prefix])
+        self.assertEqual([item.text for item in deltas], [safe_prefix])
+        self.assertTrue(deltas[0].metadata["streamInterrupted"])
+        self.assertEqual(deltas[0].metadata["parseMode"], "stream_partial_recovered")
+
+    def test_active_rag_preserves_plain_stream_when_gateway_omits_protocol_marker(self) -> None:
+        safe_prefix = "远程正文已经开始返回，连接中断后仍应保留给用户确认"
+        provider = _provider(
+            [
+                _sse_delta(safe_prefix),
+                TimeoutError("stream closed after content"),
+            ]
+        )
+        partials: list[str] = []
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="请生成一段可以直接插入的说明",
+                    max_chars=0,
+                ),
+                on_text_delta=partials.append,
             )
         )
 
-        self.assertGreaterEqual(len(safe_prefix), 24)
+        self.assertEqual(partials, [safe_prefix])
         self.assertEqual([item.text for item in deltas], [safe_prefix])
-        self.assertEqual(deltas[0].metadata["parseMode"], "safe_stream_final")
+        self.assertEqual(deltas[0].metadata["parseMode"], "stream_partial_recovered")
+        self.assertTrue(deltas[0].metadata["streamInterrupted"])
+        self.assertEqual(deltas[0].metadata["fallbackReason"], "timeout")
+
+    def test_active_rag_does_not_publish_tiny_plain_stream_fragment(self) -> None:
+        provider = _provider([_sse_delta("先处理"), TimeoutError("stream closed")])
+        partials: list[str] = []
+
+        with self.assertRaisesRegex(DeepSeekCompletionError, "governor_rejected_content") as caught:
+            list(
+                provider.stream_candidates(
+                    DeepSeekCompletionRequest(
+                        scene="active_rag",
+                        current_context="请生成完整说明",
+                        max_chars=0,
+                    ),
+                    on_text_delta=partials.append,
+                )
+            )
+
+        self.assertEqual(partials, [])
+        self.assertEqual(caught.exception.diagnostics["terminalReason"], "governor_rejected_content")
+        self.assertEqual(caught.exception.diagnostics["transportReason"], "timeout")
+        self.assertEqual(caught.exception.diagnostics["contentChars"], 3)
+        self.assertEqual(caught.exception.diagnostics["safePartialChars"], 0)
 
     def test_active_rag_still_rejects_high_ratio_context_copy(self) -> None:
         echoed = "失败反馈应保持可见，成功结果应保留到用户主动确认。"
@@ -424,6 +476,37 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertIn("RAG 为空不妨碍完成非事实型请求", user_payload["task"])
         self.assertIn("给出具体核验动作", user_payload["task"])
         self.assertEqual(user_payload["placement"], "insert_after_selection")
+
+    def test_active_rag_prompt_keeps_recent_inputs_as_secondary_context(self) -> None:
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(
+                scene="active_rag",
+                current_context="这个如何继续",
+                context_packet={
+                    "schemaVersion": "rag-ime.smart-context-packet.v1",
+                    "currentInput": {"committedTail": "这个如何继续"},
+                    "oneRing": {
+                        "role": "continuity_context",
+                        "maySupportIntent": True,
+                        "maySupportFacts": False,
+                        "events": [
+                            {"textPreview": "刚才在讨论输入法如何稳定获取前台上下文"},
+                            {"textPreview": "还需要把历史输入作为次级连续性信息"},
+                        ],
+                    },
+                },
+            )
+        )
+        user_payload = json.loads(messages[1]["content"])
+
+        self.assertEqual(user_payload["groundingMode"], "foreground_with_history")
+        self.assertEqual(
+            [item["textPreview"] for item in user_payload["contextPacket"]["recentCompleteInputs"]],
+            ["刚才在讨论输入法如何稳定获取前台上下文", "还需要把历史输入作为次级连续性信息"],
+        )
+        self.assertTrue(user_payload["contextPacket"]["recentInputPolicy"]["maySupportIntent"])
+        self.assertFalse(user_payload["contextPacket"]["recentInputPolicy"]["maySupportFacts"])
+        self.assertIn("当前输入优先且历史不能充当事实证据", user_payload["task"])
 
     def test_active_rag_rejects_explanatory_example_paragraph(self) -> None:
         payload = {
@@ -549,7 +632,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual(payload["taskMode"], "answer")
         self.assertTrue(payload["currentRequest"].endswith(current_request))
         self.assertTrue(payload["currentContext"].endswith(current_request))
-        self.assertLessEqual(len(payload["currentContext"]), 900)
+        self.assertLessEqual(len(payload["currentContext"]), 4000)
         self.assertIn("直接回答 currentRequest", payload["task"])
         self.assertIn("taskMode 已由客户端确定", messages[0]["content"])
 
@@ -627,7 +710,10 @@ class DeepSeekCompletionTests(unittest.TestCase):
         payload = json.loads(messages[1]["content"])
 
         self.assertNotIn(old_memory, messages[1]["content"])
-        self.assertEqual(payload["contextPacket"]["memoryCounts"], {"oneRing": 1, "timeline": 1, "notebook": 1})
+        self.assertEqual(
+            payload["contextPacket"]["memoryCounts"],
+            {"oneRing": 1, "timeline": 1, "notebook": 1, "planning": 0},
+        )
 
     def test_deepseek_completion_filters_generic_filler(self) -> None:
         provider = _provider(
@@ -793,7 +879,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
 
         self.assertEqual([item.text for item in deltas], ["直连低延迟"])
         self.assertEqual(len(fake.calls), 1)
-        self.assertEqual(int(fake.body["max_tokens"]), 4096)
+        self.assertNotIn("max_tokens", fake.body)
         self.assertEqual(fake.body["reasoning_effort"], "low")
         self.assertTrue(fake.body["stream"])
         self.assertEqual(fake.calls[0][1], 1.234)
@@ -880,6 +966,27 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual([item.text for item in deltas], ["直连低延迟"])
         self.assertEqual(int(fake.body["max_tokens"]), 1024)
         self.assertEqual(fake.body["reasoning_effort"], "low")
+
+    def test_active_rag_default_omits_application_token_cap(self) -> None:
+        fake = _BodyCaptureOpener()
+        provider = DeepSeekV4FlashCompletionProvider(
+            DeepSeekConfig(
+                api_base_url="https://api.example.test/v1",
+                api_key="test-key",
+                model="deepseek-v4-flash",
+            ),
+            urlopen=fake.open,
+            enforce_runtime_flags=False,
+        )
+
+        deltas = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(scene="active_rag", current_context="输入法", max_chars=24)
+            )
+        )
+
+        self.assertEqual([item.text for item in deltas], ["直连低延迟"])
+        self.assertNotIn("max_tokens", fake.body)
 
     def test_active_rag_completion_can_be_explicitly_limited_without_touching_hot_path_cap(self) -> None:
         fake = _BodyCaptureOpener()

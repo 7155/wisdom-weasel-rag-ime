@@ -6,54 +6,95 @@ import Foundation
 final class VoiceTextInsertionSession {
     let anchorPoint: NSPoint?
     let appBundleIdentifier: String
-    private let element: AXUIElement
+    private enum InsertionMode {
+        case accessibility
+        case finalPaste
+    }
+
+    private let element: AXUIElement?
     private let origin: Int
     private let originalSelectionLength: Int
+    private let insertionMode: InsertionMode
     private var insertedUTF16Length = 0
     private var hasAppliedRevision = false
 
-    private init(element: AXUIElement, range: CFRange, anchorPoint: NSPoint?, appBundleIdentifier: String) {
+    private init(
+        element: AXUIElement?,
+        range: CFRange?,
+        anchorPoint: NSPoint?,
+        appBundleIdentifier: String,
+        insertionMode: InsertionMode
+    ) {
         self.element = element
-        origin = range.location
-        originalSelectionLength = range.length
+        origin = range?.location ?? 0
+        originalSelectionLength = range?.length ?? 0
         self.anchorPoint = anchorPoint
         self.appBundleIdentifier = appBundleIdentifier
+        self.insertionMode = insertionMode
     }
 
     static func capture() throws -> VoiceTextInsertionSession {
         guard AXIsProcessTrusted() else { throw VoiceInsertionError.accessibilityUnavailable }
-        let focused = try focusedElement()
-        try validatePrivacy(of: focused)
-        let application = try applicationIdentity(for: focused)
-        guard let range = selectedRange(focused) else { throw VoiceInsertionError.selectionUnavailable }
+        if IsSecureEventInputEnabled() { throw VoiceInsertionError.sensitiveField }
+        let application = frontmostApplicationIdentity()
+        if VoicePrivacyPolicy.denies(
+            bundleIdentifier: application.bundleIdentifier,
+            applicationName: application.name,
+            metadata: ""
+        ) {
+            throw VoiceInsertionError.sensitiveField
+        }
+        guard let focused = focusedElement() else {
+            return finalPasteSession(application: application)
+        }
+        try validatePrivacy(of: focused, fallbackApplication: application)
+        let range = selectedRange(focused)
+        if prefersFinalPaste(bundleIdentifier: application.bundleIdentifier) {
+            return finalPasteSession(
+                application: application,
+                anchorPoint: range.flatMap { caretPoint(focused, range: $0) }
+            )
+        }
+        guard let range else {
+            return finalPasteSession(application: application)
+        }
         var selectedTextSettable = DarwinBoolean(false)
         var selectedRangeSettable = DarwinBoolean(false)
         AXUIElementIsAttributeSettable(focused, kAXSelectedTextAttribute as CFString, &selectedTextSettable)
         AXUIElementIsAttributeSettable(focused, kAXSelectedTextRangeAttribute as CFString, &selectedRangeSettable)
         guard selectedTextSettable.boolValue, selectedRangeSettable.boolValue else {
-            throw VoiceInsertionError.selectionUnavailable
+            return finalPasteSession(
+                application: application,
+                anchorPoint: caretPoint(focused, range: range)
+            )
         }
         return VoiceTextInsertionSession(
             element: focused,
             range: range,
             anchorPoint: caretPoint(focused, range: range),
-            appBundleIdentifier: application.bundleIdentifier
+            appBundleIdentifier: application.bundleIdentifier,
+            insertionMode: .accessibility
         )
     }
 
     func validateForAudioTransmission() throws {
         if IsSecureEventInputEnabled() { throw VoiceInsertionError.sensitiveField }
         guard AXIsProcessTrusted() else { throw VoiceInsertionError.accessibilityUnavailable }
-        let focused = try Self.focusedElement()
-        try Self.validatePrivacy(of: focused)
-        guard CFEqual(focused, element) else { throw VoiceInsertionError.focusChanged }
     }
 
     func apply(_ revision: VoiceTranscriptRevision) throws {
         try validateForAudioTransmission()
+        if insertionMode == .finalPaste {
+            guard revision.isFinal, !revision.text.isEmpty else { return }
+            try validateFinalPasteTarget()
+            try Self.pasteFinalText(revision.text)
+            hasAppliedRevision = true
+            return
+        }
+        guard let element else { throw VoiceInsertionError.writeFailed }
         if hasAppliedRevision {
             guard let current = Self.selectedRange(element) else {
-                throw VoiceInsertionError.privacyStateUnknown
+                throw VoiceInsertionError.cursorMoved
             }
             let expected = origin + insertedUTF16Length
             guard current.location == expected, current.length == 0 else {
@@ -71,7 +112,36 @@ final class VoiceTextInsertionSession {
         hasAppliedRevision = true
     }
 
-    private static func focusedElement() throws -> AXUIElement {
+    private static func finalPasteSession(
+        application: (bundleIdentifier: String, name: String),
+        anchorPoint: NSPoint? = nil
+    ) -> VoiceTextInsertionSession {
+        VoiceTextInsertionSession(
+            element: nil,
+            range: nil,
+            anchorPoint: anchorPoint,
+            appBundleIdentifier: application.bundleIdentifier,
+            insertionMode: .finalPaste
+        )
+    }
+
+    private static func prefersFinalPaste(bundleIdentifier: String) -> Bool {
+        let bundle = bundleIdentifier.lowercased()
+        let webEditorPrefixes = [
+            "com.openai.codex",
+            "com.openai.chat",
+            "com.google.chrome",
+            "com.microsoft.edgemac",
+            "com.apple.safari",
+            "com.brave.browser",
+            "com.vivaldi.vivaldi",
+            "company.thebrowser.browser",
+            "org.mozilla.firefox",
+        ]
+        return webEditorPrefixes.contains { bundle == $0 || bundle.hasPrefix($0 + ".") }
+    }
+
+    private static func focusedElement() -> AXUIElement? {
         let system = AXUIElementCreateSystemWide()
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(
@@ -81,7 +151,7 @@ final class VoiceTextInsertionSession {
         ) == .success,
               let value,
               CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            throw VoiceInsertionError.privacyStateUnknown
+            return nil
         }
         return (value as! AXUIElement)
     }
@@ -97,50 +167,48 @@ final class VoiceTextInsertionSession {
         return range
     }
 
-    private static func stringAttribute(
-        _ name: CFString,
-        element: AXUIElement,
-        required: Bool = false
-    ) throws -> String {
+    private static func stringAttribute(_ name: CFString, element: AXUIElement) -> String {
         var value: AnyObject?
         let result = AXUIElementCopyAttributeValue(element, name, &value)
-        switch result {
-        case .success:
-            guard let text = value as? String else { throw VoiceInsertionError.privacyStateUnknown }
-            let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if required, normalized.isEmpty { throw VoiceInsertionError.privacyStateUnknown }
-            return normalized
-        case .attributeUnsupported, .noValue:
-            if required { throw VoiceInsertionError.privacyStateUnknown }
+        guard result == .success else { return "" }
+        let text: String
+        if let string = value as? String {
+            text = string
+        } else if let url = value as? URL {
+            text = url.absoluteString
+        } else {
+            // WebView-backed editors often omit attributes or expose values in
+            // private types. Under a denylist policy, unreadable metadata is
+            // not itself a reason to reject ordinary voice input.
             return ""
-        default:
-            throw VoiceInsertionError.privacyStateUnknown
         }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func validatePrivacy(of element: AXUIElement) throws {
+    private static func validatePrivacy(
+        of element: AXUIElement,
+        fallbackApplication: (bundleIdentifier: String, name: String)
+    ) throws {
         if IsSecureEventInputEnabled() { throw VoiceInsertionError.sensitiveField }
-        let application = try applicationIdentity(for: element)
-        let role = try stringAttribute(kAXRoleAttribute as CFString, element: element, required: true)
-        let subrole = try stringAttribute(kAXSubroleAttribute as CFString, element: element)
+        let application = applicationIdentity(for: element, fallback: fallbackApplication)
+        let role = stringAttribute(kAXRoleAttribute as CFString, element: element)
+        let subrole = stringAttribute(kAXSubroleAttribute as CFString, element: element)
         let fieldMetadata = [
             role,
             subrole,
-            try stringAttribute(kAXTitleAttribute as CFString, element: element),
-            try stringAttribute(kAXDescriptionAttribute as CFString, element: element),
-            try stringAttribute(kAXHelpAttribute as CFString, element: element),
-            try stringAttribute("AXPlaceholderValue" as CFString, element: element),
-            try stringAttribute("AXIdentifier" as CFString, element: element),
-        ].joined(separator: " ")
-        let metadata = [fieldMetadata, try windowMetadata(for: element)]
+            stringAttribute(kAXTitleAttribute as CFString, element: element),
+            stringAttribute(kAXDescriptionAttribute as CFString, element: element),
+            stringAttribute(kAXHelpAttribute as CFString, element: element),
+            stringAttribute("AXPlaceholderValue" as CFString, element: element),
+            stringAttribute("AXIdentifier" as CFString, element: element),
+        ].joined(separator: " ").lowercased()
+        let tokens = [
+            "securetextfield", "secure text", "password", "passcode", "密码", "口令",
+        ]
+        if tokens.contains(where: fieldMetadata.contains) { throw VoiceInsertionError.sensitiveField }
+        let metadata = [fieldMetadata, windowMetadata(for: element)]
             .joined(separator: " ")
             .lowercased()
-        let tokens = [
-            "securetextfield", "secure text", "password", "passcode", "one-time", "one time",
-            "verification code", "username", "user name", "account", "login", "sign in", "pin",
-            "密码", "验证码", "账号", "帐号", "账户", "登录", "用户名", "口令",
-        ]
-        if tokens.contains(where: metadata.contains) { throw VoiceInsertionError.sensitiveField }
         if VoicePrivacyPolicy.denies(
             bundleIdentifier: application.bundleIdentifier,
             applicationName: application.name,
@@ -150,21 +218,30 @@ final class VoiceTextInsertionSession {
         }
     }
 
+    private static func frontmostApplicationIdentity() -> (bundleIdentifier: String, name: String) {
+        guard let application = NSWorkspace.shared.frontmostApplication else { return ("", "") }
+        return (
+            application.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            application.localizedName ?? ""
+        )
+    }
+
     private static func applicationIdentity(
-        for element: AXUIElement
-    ) throws -> (bundleIdentifier: String, name: String) {
+        for element: AXUIElement,
+        fallback: (bundleIdentifier: String, name: String)
+    ) -> (bundleIdentifier: String, name: String) {
         var processID: pid_t = 0
         guard AXUIElementGetPid(element, &processID) == .success,
               processID > 0,
               let application = NSRunningApplication(processIdentifier: processID),
               let bundleIdentifier = application.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
               !bundleIdentifier.isEmpty else {
-            throw VoiceInsertionError.privacyStateUnknown
+            return fallback
         }
         return (bundleIdentifier, application.localizedName ?? "")
     }
 
-    private static func windowMetadata(for element: AXUIElement) throws -> String {
+    private static func windowMetadata(for element: AXUIElement) -> String {
         var value: AnyObject?
         let result = AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &value)
         switch result {
@@ -172,10 +249,10 @@ final class VoiceTextInsertionSession {
             return ""
         case .success:
             guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
-                throw VoiceInsertionError.privacyStateUnknown
+                return ""
             }
             let window = value as! AXUIElement
-            return try [
+            return [
                 stringAttribute(kAXTitleAttribute as CFString, element: window),
                 stringAttribute(kAXDescriptionAttribute as CFString, element: window),
                 stringAttribute(kAXHelpAttribute as CFString, element: window),
@@ -183,7 +260,59 @@ final class VoiceTextInsertionSession {
                 stringAttribute("AXIdentifier" as CFString, element: window),
             ].joined(separator: " ")
         default:
-            throw VoiceInsertionError.privacyStateUnknown
+            return ""
+        }
+    }
+
+    private func validateFinalPasteTarget() throws {
+        let currentApplication = Self.frontmostApplicationIdentity()
+        if !appBundleIdentifier.isEmpty,
+           !currentApplication.bundleIdentifier.isEmpty,
+           currentApplication.bundleIdentifier != appBundleIdentifier {
+            throw VoiceInsertionError.focusChanged
+        }
+        if let focused = Self.focusedElement() {
+            try Self.validatePrivacy(of: focused, fallbackApplication: currentApplication)
+        }
+    }
+
+    private static func pasteFinalText(_ text: String) throws {
+        let pasteboard = NSPasteboard.general
+        let snapshot = pasteboard.pasteboardItems?.map { item in
+            item.types.reduce(into: [NSPasteboard.PasteboardType: Data]()) { values, type in
+                values[type] = item.data(forType: type)
+            }
+        } ?? []
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else {
+            throw VoiceInsertionError.writeFailed
+        }
+        let writtenChangeCount = pasteboard.changeCount
+        guard let keyDown = CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: CGKeyCode(kVK_ANSI_V),
+            keyDown: true
+        ), let keyUp = CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: CGKeyCode(kVK_ANSI_V),
+            keyDown: false
+        ) else {
+            throw VoiceInsertionError.writeFailed
+        }
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            guard pasteboard.changeCount == writtenChangeCount else { return }
+            pasteboard.clearContents()
+            let restored = snapshot.map { values -> NSPasteboardItem in
+                let item = NSPasteboardItem()
+                for (type, data) in values { item.setData(data, forType: type) }
+                return item
+            }
+            if !restored.isEmpty { pasteboard.writeObjects(restored) }
         }
     }
 
@@ -217,9 +346,9 @@ enum VoiceInsertionError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .sensitiveField: return "账号、密码或 Secure Input 场景已阻止语音记录"
+        case .sensitiveField: return "密码框、隐私模式或黑名单应用已阻止语音输入"
         case .accessibilityUnavailable: return "需要辅助功能权限才能写入当前光标"
-        case .privacyStateUnknown: return "无法确认当前输入框是否安全，本次语音已停止"
+        case .privacyStateUnknown: return "语音输入会话状态异常，请重试"
         case .selectionUnavailable: return "当前输入框不支持流式替换"
         case .focusChanged: return "输入焦点已改变，本次语音已停止"
         case .cursorMoved: return "检测到光标移动，本次语音已停止"

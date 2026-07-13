@@ -6,13 +6,15 @@ enum RagImeAssistantSurfaceState: String {
   case compactPrediction
   case expandedPredictions
   case explicitGenerating
+  case explicitNoSuggestion
   case explicitError
   case explicitResult
   case transientConfirmation
 
   var isExplicit: Bool {
     switch self {
-    case .explicitGenerating, .explicitError, .explicitResult, .transientConfirmation: return true
+    case .explicitGenerating, .explicitNoSuggestion, .explicitError, .explicitResult, .transientConfirmation:
+      return true
     default: return false
     }
   }

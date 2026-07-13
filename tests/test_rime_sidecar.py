@@ -741,6 +741,15 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
         self.assertNotEqual(response["predictionSession"]["clearReason"], "sensitive_field")
 
+    def test_non_password_browser_field_metadata_does_not_disable_ai(self) -> None:
+        for field_type in ("username", "email", "login", "one-time-code", "otp"):
+            with self.subTest(field_type=field_type):
+                payload = self._post_commit_payload(context="普通输入", commit_preview="输入")
+                payload["fieldType"] = field_type
+                response = self._response(payload, predictor=RecordingPredictionProvider(["继续"]))
+
+                self.assertNotEqual(response["predictionSession"]["clearReason"], "sensitive_field")
+
     def test_v1_post_commit_async_first_response_under_250ms(self) -> None:
         predictor = RecordingPredictionProvider(sleep_s=0.35)
         started = time.perf_counter()
@@ -756,10 +765,16 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertTrue(response["progressive"]["shouldFollowUp"])
         self.assertFalse(response["predictionSession"]["shouldClearPredictionPanel"])
         self.assertEqual(response["candidatePanel"]["candidates"], [])
-        self.assertFalse(response["assistantOverlay"]["visible"])
+        self.assertTrue(response["assistantOverlay"]["visible"])
         self.assertEqual(response["assistantOverlay"]["phase"], "post_commit")
         self.assertEqual(response["assistantOverlay"]["animation"]["kind"], "none")
-        self.assertEqual(response["assistantOverlay"]["dismissReason"], "pending_overlay_disabled")
+        self.assertEqual(response["assistantOverlay"]["dismissReason"], "")
+        self.assertTrue(
+            any(
+                item["selectionAction"] == "start_active_rag_from_context"
+                for item in response["assistantOverlay"]["candidates"]
+            )
+        )
 
     def test_v1_fast_local_model_returns_three_candidates_in_first_response(self) -> None:
         predictor = RecordingPredictionProvider(["结果", "速度", "方式"], sleep_s=0.03)
@@ -1060,8 +1075,12 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertFalse(response["showDecision"]["hardClear"])
         self.assertTrue(response["progressive"]["shouldFollowUp"])
 
-    def test_v1_post_commit_panel_hides_active_rag_action_by_default(self) -> None:
-        response = self._response(self._post_commit_payload(), predictor=RecordingPredictionProvider(sleep_s=0.4))
+    def test_v1_post_commit_panel_can_disable_active_rag_action(self) -> None:
+        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "0"}):
+            response = self._response(
+                self._post_commit_payload(),
+                predictor=RecordingPredictionProvider(sleep_s=0.4),
+            )
         action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
 
         self.assertEqual(response["uiMode"], "post_commit_pending")
@@ -1714,20 +1733,21 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         finally:
             rime_sidecar_module._GROUP_SHORT_BUFFER.clear()
 
-    def test_group_aware_model_context_focuses_long_foreground_on_latest_sentence(self) -> None:
+    def test_group_aware_model_context_keeps_long_foreground_up_to_model_budget(self) -> None:
+        foreground = (
+            "LLM 要立即弹出并稳定显示三个连续候选。"
+            "RAG 和 DeepSeek 上下文需要可验证注入。"
+            "模型好像上下文有问题，预测的不合理"
+        )
         context, meta = rime_sidecar_module._group_aware_model_context(
             context_group_id="app:context-focus-test",
-            explicit_recent_context=(
-                "LLM 要立即弹出并稳定显示三个连续候选。"
-                "RAG 和 DeepSeek 上下文需要可验证注入。"
-                "模型好像上下文有问题，预测的不合理"
-            ),
+            explicit_recent_context=foreground,
         )
 
-        self.assertEqual(context, "模型好像上下文有问题，预测的不合理")
-        self.assertTrue(meta["contextWindowTrimmed"])
-        self.assertGreater(meta["assembledContextChars"], meta["modelContextChars"])
-        self.assertEqual(meta["contextWindowChars"], 64)
+        self.assertEqual(context, foreground)
+        self.assertFalse(meta["contextWindowTrimmed"])
+        self.assertEqual(meta["assembledContextChars"], meta["modelContextChars"])
+        self.assertEqual(meta["contextWindowChars"], 256)
 
     def test_group_aware_model_context_keeps_group_tail_for_short_foreground(self) -> None:
         group_id = "app:context-short-fragment-test"

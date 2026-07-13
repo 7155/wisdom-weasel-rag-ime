@@ -44,7 +44,9 @@ enum VoicePrivacyPolicy {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
         let bundle = normalize(bundleIdentifier)
-        guard !bundle.isEmpty else { return true }
+        // This is deliberately a denylist: missing browser/AX metadata must
+        // not turn every custom web editor into a false positive.
+        guard !bundle.isEmpty else { return false }
         let configured = configuredBundlePrefixes(environment: environment)
         if (deniedBundlePrefixes + configured).contains(where: { matches(bundle: bundle, prefix: $0) }) {
             return true

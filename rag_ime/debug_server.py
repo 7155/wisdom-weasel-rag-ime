@@ -7,8 +7,10 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -99,6 +101,7 @@ from .runtime_config import RuntimeConfigResolver, RuntimeConfigSnapshot
 from .runtime_flags import load_hybrid_rag_runtime_flags
 from .settings_models import UserProfile, UserVocabularyItem
 from .settings_store import ManagementSettingsStore, ensure_management_tables, settings_response
+from .temporal_query import TemporalQuery, parse_temporal_query
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
 
 
@@ -139,6 +142,7 @@ class DebugServerConfig:
     runtime_command_runner: Any | None = None
     rime_user_dir: Path = Path.home() / "Library" / "Rime"
     rime_lexicon_backup_root: Path = Path.home() / "Library" / "Application Support" / "RagIme" / "LexiconBackups"
+    active_rag_trace_path: Path | None = None
 
 
 @dataclass
@@ -167,6 +171,8 @@ class DebugImeService:
 
     def __init__(self, config: DebugServerConfig):
         self.config = config
+        self.settings_store = ManagementSettingsStore(config.db_path)
+        self.settings_store.initialize()
         self.core = config.core or LocalSqliteCoreClient(
             config.db_path,
             embedding_provider=embedding_provider_from_env(),
@@ -180,6 +186,8 @@ class DebugImeService:
         self.active_rag = ActiveRagService(
             core=self.core if isinstance(self.core, LocalSqliteCoreClient) else None,
             completion_provider=self.deepseek_completion_provider,
+            trace_path=config.active_rag_trace_path,
+            trace_include_text=self._include_active_rag_trace_text,
         )
         self.knowledge_workbench = KnowledgeWorkbenchService(
             evidence_retriever=self._knowledge_workbench_evidence,
@@ -187,7 +195,6 @@ class DebugImeService:
             database_organizer=self._knowledge_workbench_database_organizer,
             notion_client=NotionAsyncKnowledgeClient(load_notion_knowledge_config()),
         )
-        self.settings_store = ManagementSettingsStore(config.db_path)
         self._runtime_command_runner = config.runtime_command_runner or subprocess.run
         self._rime_cache: dict[str, _RimeSuggestCacheEntry] = {}
         self._rime_inflight: dict[str, _RimeSuggestInflightEntry] = {}
@@ -202,7 +209,6 @@ class DebugImeService:
         if isinstance(self.core, LocalSqliteCoreClient):
             self.core.initialize()
         self._embedding_warmup_report = self._warm_embedding_provider()
-        self.settings_store.initialize()
         self.runtime_config_resolver = RuntimeConfigResolver(self.settings_store, environ=os.environ)
         self.management = ManagementService(
             db_path=config.db_path,
@@ -561,9 +567,9 @@ class DebugImeService:
                     "enabled": True,
                 },
                 {
-                    "id": "deepseek_v4_flash_active_rag",
-                    "label": "DeepSeek V4 Flash Active RAG",
-                    "provider": "deepseek",
+                    "id": "knowledge_provider_active_rag",
+                    "label": "Knowledge Provider Active RAG",
+                    "provider": active_rag_route["provider"],
                     "lane": "active_rag",
                     "enabled": bool(active_rag_route["remoteReady"]),
                     "requiresExplicitOptIn": True,
@@ -644,11 +650,11 @@ class DebugImeService:
                 break
         return {
             "schemaVersion": "rag-ime.active-rag-route-status.v1",
-            "route": "explicit_active_rag_deepseek",
+            "route": "explicit_active_rag_knowledge_provider",
             "explicitOnly": True,
             "localOnly": resolved_local_only,
             "remoteReady": all(gates.values()),
-            "provider": "deepseek",
+            "provider": config.provider_name,
             "model": config.model,
             "selectedModel": _string(models.get("activeRag")) or "local",
             "shortcut": runtime_config.active_rag.shortcut,
@@ -1051,6 +1057,12 @@ class DebugImeService:
             }
         return self.active_rag.diagnostics(session_id)
 
+    def active_rag_traces(self, payload: dict[str, Any]) -> dict[str, object]:
+        return self.active_rag.trace_records(
+            limit=_bounded_int(payload.get("limit"), default=50, minimum=1, maximum=500),
+            session_id=_string(payload.get("sessionId") or payload.get("id")),
+        )
+
     def active_rag_cancel(self, payload: dict[str, Any]) -> dict[str, object]:
         session_id = _string(payload.get("sessionId") or payload.get("id"))
         if not session_id:
@@ -1387,6 +1399,9 @@ class DebugImeService:
         runtime_config = self.runtime_config_snapshot()
         if not runtime_config.hybrid_rag.enabled or not runtime_config.memory.enabled:
             return ()
+        temporal_query = parse_temporal_query(request.question)
+        if temporal_query.matched:
+            return self._temporal_knowledge_evidence(request, temporal_query)
         # The native workbench is a global knowledge surface rather than the
         # app that originally produced a memory. Keeping com.rag-ime.control
         # here would hide memories captured in Codex, TextEdit, terminals, and
@@ -1444,6 +1459,7 @@ class DebugImeService:
                     "score": lane_score,
                     "rank": rank,
                     "fusedRank": fused_ranks.get(doc_id, 0),
+                    "metadata": metadata,
                 }
                 continue
             lanes = list(current.get("lanes") or [])
@@ -1488,7 +1504,106 @@ class DebugImeService:
             selected.append(item)
             if len(selected) >= 12:
                 break
-        return tuple(selected[:12])
+        return tuple(self._annotate_knowledge_evidence_times(selected[:12]))
+
+    def _temporal_knowledge_evidence(
+        self,
+        request: KnowledgeWorkbenchRequest,
+        temporal_query: TemporalQuery,
+    ) -> tuple[dict[str, object], ...]:
+        range_clauses = " OR ".join("(e.created_at_ms >= ? AND e.created_at_ms < ?)" for _ in temporal_query.ranges)
+        range_params = [value for item in temporal_query.ranges for value in (item.start_ms, item.end_ms)]
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                f"""
+                SELECT e.id, e.created_at_ms, e.source, e.committed_text,
+                       e.app, e.project, e.tags_json
+                FROM input_events e
+                JOIN memory_state s ON s.event_id = e.id
+                WHERE s.deleted = 0
+                  AND ({range_clauses})
+                  AND (? = '' OR e.project = ? OR e.project = '')
+                ORDER BY e.created_at_ms DESC, e.id DESC
+                LIMIT 1200
+                """,
+                (*range_params, request.project, request.project),
+            ).fetchall()
+
+        candidates: list[dict[str, object]] = []
+        seen_text: set[str] = set()
+        query_terms = set(re.sub(r"[^\w\u4e00-\u9fff]+", "", temporal_query.cleaned_query).lower())
+        for row in rows:
+            text = compact_whitespace(str(row["committed_text"] or ""))
+            normalized = re.sub(r"[\W_]+", "", text).lower()
+            if len(normalized) < 6 or normalized in seen_text:
+                continue
+            seen_text.add(normalized)
+            timestamp_ms = int(row["created_at_ms"] or 0)
+            local_time = datetime.fromtimestamp(timestamp_ms / 1000).astimezone().strftime("%H:%M")
+            matching_range = next(
+                (item for item in temporal_query.ranges if item.start_ms <= timestamp_ms < item.end_ms),
+                temporal_query.ranges[0],
+            )
+            try:
+                tags = list(json.loads(str(row["tags_json"] or "[]")))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                tags = []
+            candidates.append(
+                {
+                    "sourceId": f"event:{int(row['id'])}",
+                    "docId": f"event:{int(row['id'])}",
+                    "docType": "event",
+                    "sourceLane": "temporal_timeline",
+                    "lanes": ["temporal_timeline"],
+                    "title": f"{matching_range.label} {local_time}",
+                    "text": text,
+                    "tags": tags[:8],
+                    "score": (min(len(text), 240) / 240.0) + (len(query_terms & set(normalized)) / max(1, len(query_terms))),
+                    "rank": len(candidates) + 1,
+                    "fusedRank": len(candidates) + 1,
+                    "sourceCreatedAtMs": timestamp_ms,
+                    "app": str(row["app"] or ""),
+                    "project": str(row["project"] or ""),
+                    "source": str(row["source"] or ""),
+                }
+            )
+
+        # Like VCP's Time path, rank only inside the explicit range. Semantic
+        # terms may reorder the time lane, but cannot leak an old memory into it.
+        selected = sorted(candidates, key=lambda item: (float(item["score"]), int(item["sourceCreatedAtMs"])), reverse=True)[:12]
+        selected.sort(key=lambda item: int(item["sourceCreatedAtMs"]))
+        return tuple(selected)
+
+    def _annotate_knowledge_evidence_times(
+        self,
+        evidence: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        event_ids: set[int] = set()
+        item_event_ids: dict[int, list[int]] = {}
+        for index, item in enumerate(evidence):
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            raw_ids = list(metadata.get("sourceEventIds") or [])
+            raw_single_id = str(metadata.get("sourceEventId") or "")
+            single_id = int(raw_single_id) if raw_single_id.isdigit() else 0
+            ids = [int(value) for value in raw_ids if str(value).isdigit() and int(value) > 0]
+            if single_id > 0:
+                ids.append(single_id)
+            item_event_ids[index] = ids
+            event_ids.update(ids)
+        if not event_ids:
+            return evidence
+        placeholders = ",".join("?" for _ in event_ids)
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                f"SELECT id, created_at_ms FROM input_events WHERE id IN ({placeholders})",
+                tuple(sorted(event_ids)),
+            ).fetchall()
+        timestamps = {int(row["id"]): int(row["created_at_ms"] or 0) for row in rows}
+        for index, item in enumerate(evidence):
+            matched = [timestamps[event_id] for event_id in item_event_ids[index] if event_id in timestamps]
+            if matched:
+                item["sourceCreatedAtMs"] = max(matched)
+        return evidence
 
     def _knowledge_workbench_database_organizer(
         self,
@@ -2402,6 +2517,15 @@ class DebugImeService:
             or privacy.get("debugIncludeText") is True
             or os.environ.get("RAG_IME_TRACE_INCLUDE_TEXT") == "1"
             or os.environ.get("RAG_IME_DEBUG_INCLUDE_TEXT") == "1"
+        )
+
+    def _include_active_rag_trace_text(self) -> bool:
+        settings = self.settings_store.get_settings(include_sensitive=True)
+        privacy = settings.get("privacy") if isinstance(settings.get("privacy"), dict) else {}
+        return bool(
+            self.config.include_raw_text
+            or privacy.get("traceIncludeText") is True
+            or os.environ.get("RAG_IME_TRACE_INCLUDE_TEXT") == "1"
         )
 
     def _record_management_audit(
@@ -3813,6 +3937,15 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/memory/summary":
             self._write_json(HTTPStatus.OK, self.service.management.memory_summary())
             return
+        if parsed.path == "/api/planning/dashboard":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.management.planning_dashboard(
+                    plan_date=_query_first(query, "date"),
+                    project=_query_first(query, "project"),
+                ),
+            )
+            return
         if parsed.path in {
             "/api/memory/books",
             "/api/memory/atoms",
@@ -3940,6 +4073,17 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.OK,
                 self.service.active_rag_diagnostics(
                     {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
+                ),
+            )
+            return
+        if parsed.path in ("/api/active-rag/traces", "/api/active-rag/chain-trace"):
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.active_rag_traces(
+                    {
+                        "sessionId": _query_first(query, "sessionId") or _query_first(query, "id"),
+                        "limit": _query_first(query, "limit"),
+                    }
                 ),
             )
             return
@@ -4155,10 +4299,38 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.management.memory_action(payload))
             elif path == "/api/memory/edit":
                 self._write_json(HTTPStatus.OK, self.service.management.memory_edit(payload))
+            elif path == "/api/memory/book/archive-status":
+                self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_status(payload))
+            elif path == "/api/memory/book/archive-maintenance":
+                self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_maintenance(payload))
+            elif path == "/api/planning/plan/save":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_save_plan(payload))
+            elif path == "/api/planning/goal/save":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_save_goal(payload))
+            elif path == "/api/planning/task/save":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_save_task(payload))
+            elif path == "/api/planning/task/action":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_task_action(payload))
+            elif path == "/api/planning/task-event/undo":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_undo_task_event(payload))
+            elif path == "/api/planning/completion/resolve":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_resolve_completion(payload))
+            elif path == "/api/planning/assistant":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_assistant(payload))
             elif path in ("/api/settings/update",):
                 self._write_json(HTTPStatus.OK, self.service.settings_update(payload))
             elif path in ("/api/settings/reset-section",):
                 self._write_json(HTTPStatus.OK, self.service.settings_reset_section(payload))
+            elif path == "/api/configuration/import-preview":
+                self._write_json(HTTPStatus.OK, self.service.management.configuration_import_preview(payload))
+            elif path == "/api/configuration/import-apply":
+                self._write_json(HTTPStatus.OK, self.service.management.configuration_import_apply(payload))
+            elif path == "/api/configuration/backup-export":
+                self._write_json(HTTPStatus.OK, self.service.management.portable_backup_export(payload))
+            elif path == "/api/configuration/restore-preview":
+                self._write_json(HTTPStatus.OK, self.service.management.portable_restore_preview(payload))
+            elif path == "/api/configuration/restore-apply":
+                self._write_json(HTTPStatus.OK, self.service.management.portable_restore_apply(payload))
             elif path in ("/api/profiles/save",):
                 self._write_json(HTTPStatus.OK, self.service.profile_save(payload))
             elif path in ("/api/profiles/activate-dry-run",):
@@ -4361,6 +4533,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """Ignore normal client disconnects without dumping multi-line tracebacks."""
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        error = sys.exc_info()[1]
+        if isinstance(error, (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def run_debug_server(config: DebugServerConfig) -> None:
     service = DebugImeService(config)
 
@@ -4368,7 +4550,7 @@ def run_debug_server(config: DebugServerConfig) -> None:
         pass
 
     Handler.service = service
-    server = ThreadingHTTPServer((config.host, config.port), Handler)
+    server = QuietThreadingHTTPServer((config.host, config.port), Handler)
     url = f"http://{config.host}:{config.port}/api/health"
     print(f"RAG IME {config.server_name} API: {url}")
     print(f"DB: {config.db_path}")

@@ -28,6 +28,8 @@ class VoiceInputTests(unittest.TestCase):
             self.assertIn(f"-framework {framework}", build)
         self.assertIn("scripts/support/build_app_icon.sh", build)
         self.assertIn("CompanionStates", build)
+        self.assertIn('designated => identifier "com.rag-ime.voice"', build)
+        self.assertIn("forget Accessibility and Microphone grants", build)
         self.assertNotIn("RagImeMac.app", build)
         self.assertIn("RunAtLoad bool true", launch)
         self.assertIn("KeepAlive:SuccessfulExit bool false", launch)
@@ -45,7 +47,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("voice-credentials.json", keychain)
         self.assertIn(".posixPermissions: 0o600", keychain)
         self.assertIn("IsSecureEventInputEnabled", insertion)
-        for marker in ("securetextfield", "password", "验证码", "账号"):
+        for marker in ("securetextfield", "password", "密码", "口令"):
             self.assertIn(marker, insertion)
         self.assertNotIn("HistoryStore", coordinator)
         self.assertIn("VoiceCommitRecorder.record", coordinator)
@@ -54,12 +56,15 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn('-T "$CONTROL_BIN"', configure)
 
         delegate = (ROOT / "macos/RagImeVoice/VoiceApplicationDelegate.swift").read_text(encoding="utf-8")
-        self.assertNotIn("AXIsProcessTrustedWithOptions", delegate)
+        self.assertIn("AXIsProcessTrustedWithOptions", delegate)
+        self.assertIn("com.rag-ime.voice.request-accessibility-permission", delegate)
+        self.assertLess(delegate.index("startHotkeyWhenTrusted()"), delegate.index("requestAccessibilityPermission()"))
         self.assertIn("Never trigger a TCC prompt", delegate)
         self.assertNotIn("NSStatusItem", delegate)
         self.assertNotIn("NSStatusBar", delegate)
 
         page = (ROOT / "macos/RagImeControl/Pages/VoiceInputPage.swift").read_text(encoding="utf-8")
+        self.assertIn("com.rag-ime.voice.request-accessibility-permission", page)
         self.assertIn("停止语音代理", page)
         self.assertIn("启动语音代理", page)
         self.assertIn("VoiceAgentStatusStore.read()", page)
@@ -166,6 +171,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertLess(delegate.index("coordinator?.startHotkeyMonitor()"), delegate.index("if AXIsProcessTrusted()"))
 
         overlay = (ROOT / "macos/RagImeVoice/VoiceOverlay.swift").read_text(encoding="utf-8")
+        recorder = (ROOT / "macos/RagImeVoice/VoiceAudioRecorder.swift").read_text(encoding="utf-8")
         companion = (ROOT / "macos/Shared/RagImeCompanionMark.swift").read_text(encoding="utf-8")
         state_assets = ROOT / "macos/Shared/Assets/CompanionStates"
         self.assertIn("RagImeAnimeCompanion", overlay)
@@ -178,11 +184,26 @@ class VoiceInputTests(unittest.TestCase):
             self.assertEqual(asset.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
         self.assertNotIn("Circle()\n                .fill(state.accent.opacity(0.09))", companion)
         self.assertIn("RagImeCompanionState", companion)
-        self.assertIn('model.message = "听着呢"', overlay)
-        self.assertIn("请关闭后重新开启 RagImeVoice", overlay)
-        self.assertIn("VoiceOverlayMetrics.compactWidth", overlay)
-        self.assertIn("panel.animator().setFrame", overlay)
-        self.assertIn("scheduleDismiss(after: 2.2)", overlay)
+        self.assertIn('model.message = "正在听写"', overlay)
+        self.assertIn("请关闭后重新开启智鼬语音", overlay)
+        self.assertIn("VoiceLevelWaveform", overlay)
+        self.assertIn("levelHistory", overlay)
+        self.assertIn("guard now - lastLevelUpdateAt >= 0.08", overlay)
+        self.assertIn("let response = level > model.level ? 0.78 : 0.28", overlay)
+        self.assertIn("linearGradient", overlay)
+        self.assertIn("layer.addFilter(.blur(radius: 2.5))", overlay)
+        self.assertIn("let decibels = 20 * log10(rms)", recorder)
+        self.assertIn("pow(normalized, 0.68)", recorder)
+        self.assertIn("VoiceOverlayMetrics.width", overlay)
+        self.assertIn("NSWindow.Level.screenSaver.rawValue + 1", overlay)
+        self.assertIn("panel.hidesOnDeactivate = false", overlay)
+        self.assertNotIn(".fullScreenAuxiliary, .transient", overlay)
+        self.assertIn(".stationary, .ignoresCycle", overlay)
+        self.assertIn("panel.isReleasedWhenClosed = false", overlay)
+        self.assertGreaterEqual(overlay.count("ensureVisible()"), 4)
+        self.assertIn("Color(nsColor: .windowBackgroundColor).opacity(0.98)", overlay)
+        self.assertIn("scheduleDismiss(after: 1.4)", overlay)
+        self.assertIn("overlay.showRecording()", coordinator)
         self.assertIn('credentialLabel("Access Token")', page)
         self.assertIn("Grid(alignment: .leading", page)
         self.assertIn('.help("打开辅助功能设置")', page)
@@ -239,13 +260,30 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("abortForUnsafeTarget(error)", coordinator)
 
         self.assertIn("func validateForAudioTransmission() throws", insertion)
-        self.assertIn("VoiceInsertionError.privacyStateUnknown", insertion)
+        self.assertIn("case privacyStateUnknown", insertion)
         self.assertIn("value as? URL", insertion)
         self.assertIn("url.absoluteString", insertion)
-        self.assertIn("Unknown optional metadata types", insertion)
+        self.assertIn("unreadable metadata is", insertion)
+        self.assertNotIn("kAXFocusedAttribute", insertion)
+        self.assertNotIn("无法确认当前输入框是否安全", insertion)
+        validation_start = insertion.index("func validateForAudioTransmission()")
+        validation_end = insertion.index("func apply(_ revision", validation_start)
+        self.assertNotIn("validatePrivacy", insertion[validation_start:validation_end])
+        self.assertNotIn("privacyUnknownSinceMs", coordinator)
+        self.assertIn('"securetextfield", "secure text", "password", "passcode", "密码", "口令"', insertion)
         self.assertIn("AXUIElementGetPid", insertion)
         self.assertIn("VoicePrivacyPolicy.denies", insertion)
         self.assertIn("case .attributeUnsupported, .noValue", insertion)
+        self.assertIn("case finalPaste", insertion)
+        self.assertIn('"com.openai.codex"', insertion)
+        self.assertIn("prefersFinalPaste", insertion)
+        self.assertIn("guard let focused = focusedElement() else", insertion)
+        self.assertIn("guard revision.isFinal, !revision.text.isEmpty else", insertion)
+        self.assertIn("pasteFinalText", insertion)
+        self.assertIn("keyDown.post(tap: .cghidEventTap)", insertion)
+        self.assertIn("pasteboard.changeCount == writtenChangeCount", insertion)
+        self.assertNotIn("无法读取当前输入框", insertion)
+        self.assertIn("guard !bundle.isEmpty else { return false }", policy)
 
         for marker in ("com.1password", "com.icbc", "org.torproject.torbrowser", "incognito", "无痕"):
             self.assertIn(marker, policy.lower())
@@ -368,6 +406,12 @@ enum Harness {
             bundleIdentifier: "com.example.editor",
             applicationName: "Editor",
             metadata: "document",
+            environment: [:]
+        ))
+        precondition(!VoicePrivacyPolicy.denies(
+            bundleIdentifier: "",
+            applicationName: "Unknown Web Editor",
+            metadata: "",
             environment: [:]
         ))
 

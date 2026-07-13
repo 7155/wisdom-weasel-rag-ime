@@ -12,13 +12,32 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .config_portability import (
+    apply_user_configuration,
+    export_portable_backup,
+    preview_portable_restore,
+    preview_user_configuration,
+    restore_portable_backup,
+)
+from .daily_planner import (
+    planning_assistant_reply,
+    planning_dashboard,
+    resolve_completion_suggestion,
+    save_daily_plan,
+    save_goal,
+    save_task,
+    task_action,
+    undo_task_event,
+)
 from .memory_actions import execute_memory_action
+from .memory_book_lifecycle import archive_inactive_memory_books, set_memory_book_archive_status
 from .memory_ingest import normalize_text
 from .management_events import ManagementEventHub
 from .management_models import MANAGEMENT_SCHEMA_VERSION, ManagementRevision, PageRequest, RuntimeJob
 from .retrieval_docs import rebuild_retrieval_docs
 from .runtime_config import RuntimeConfigSnapshot
 from .settings_store import ManagementSettingsStore, record_management_audit
+from .text_utils import compact_whitespace
 
 
 class ManagementService:
@@ -90,6 +109,58 @@ class ManagementService:
             {**revision.payload(), "changedKeys": changed_keys, "runtimeConfig": snapshot.payload()},
         )
         return {**revision.payload(), "runtimeConfig": snapshot.payload()}
+
+    def configuration_import_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
+        return {
+            **self.revision().payload(),
+            **preview_user_configuration(payload, settings_store=self.settings_store),
+        }
+
+    def configuration_import_apply(self, payload: Mapping[str, object]) -> dict[str, object]:
+        result = apply_user_configuration(payload, settings_store=self.settings_store)
+        audit_id = int(result.get("auditId") or 0)
+        changed_keys = [str(item) for item in result.get("changedKeys", [])]
+        snapshot = self.runtime_config_provider()
+        if changed_keys:
+            self.settings_changed(audit_id=audit_id, changed_keys=changed_keys, snapshot=snapshot)
+        self.events.publish("configuration_imported", {"changedKeys": changed_keys})
+        return {**self.revision(audit_id=audit_id or None, snapshot=snapshot).payload(), **result}
+
+    def portable_backup_export(self, payload: Mapping[str, object]) -> dict[str, object]:
+        destination = compact_whitespace(str(payload.get("destination") or payload.get("path") or ""))
+        if not destination:
+            raise ValueError("backup destination is required")
+        result = export_portable_backup(
+            db_path=self.db_path,
+            settings_store=self.settings_store,
+            destination=destination,
+        )
+        audit_id = self._audit("portable_backup_export", "backup", str(result.get("path") or ""), payload, result)
+        return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def portable_restore_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
+        source = compact_whitespace(str(payload.get("path") or payload.get("archivePath") or ""))
+        if not source:
+            raise ValueError("backup path is required")
+        return {**self.revision().payload(), **preview_portable_restore(archive_path=source)}
+
+    def portable_restore_apply(self, payload: Mapping[str, object]) -> dict[str, object]:
+        source = compact_whitespace(str(payload.get("path") or payload.get("archivePath") or ""))
+        if not source:
+            raise ValueError("backup path is required")
+        result = restore_portable_backup(
+            archive_path=source,
+            db_path=self.db_path,
+            settings_store=self.settings_store,
+            restore_token=compact_whitespace(str(payload.get("restoreToken") or "")),
+            confirm_text=compact_whitespace(str(payload.get("confirmText") or "")),
+        )
+        if self.cache_invalidator is not None:
+            self.cache_invalidator()
+        snapshot = self.runtime_config_provider()
+        audit_id = self._audit("portable_restore_apply", "backup", source, payload, result)
+        self.events.publish("portable_restore_applied", {"path": source, "requiresRestart": True})
+        return {**self.revision(audit_id=audit_id, snapshot=snapshot).payload(), **result}
 
     def overview(self) -> dict[str, object]:
         health = _safe_mapping(self.health_provider)
@@ -249,6 +320,153 @@ class ManagementService:
             "limit": request.limit,
             "rawTextVisible": False,
         }
+
+    def planning_dashboard(self, *, plan_date: str = "", project: str = "") -> dict[str, object]:
+        with self._connect() as conn:
+            payload = planning_dashboard(
+                conn,
+                plan_date=plan_date,
+                project=compact_whitespace(project) or self.project,
+            )
+        return {**self.revision().payload(), **payload}
+
+    def planning_save_plan(self, payload: Mapping[str, object]) -> dict[str, object]:
+        project = compact_whitespace(str(payload.get("project") or self.project))
+        with self._connect() as conn:
+            result = save_daily_plan(conn, payload, project=project)
+        audit_id = self._audit("planning_plan_save", "daily_plan", str(result.get("date") or ""), payload, result)
+        self.events.publish("planning_changed", {"kind": "daily_plan", "date": result.get("date")})
+        return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def planning_save_goal(self, payload: Mapping[str, object]) -> dict[str, object]:
+        project = compact_whitespace(str(payload.get("project") or self.project))
+        with self._connect() as conn:
+            result = save_goal(conn, payload, project=project)
+        goal = result.get("goal") if isinstance(result.get("goal"), dict) else {}
+        audit_id = self._audit("planning_goal_save", "goal", str(goal.get("id") or ""), payload, result)
+        self.events.publish("planning_changed", {"kind": "goal", "id": goal.get("id")})
+        return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def planning_save_task(self, payload: Mapping[str, object]) -> dict[str, object]:
+        project = compact_whitespace(str(payload.get("project") or self.project))
+        with self._connect() as conn:
+            result = save_task(conn, payload, project=project)
+        task = result.get("task") if isinstance(result.get("task"), dict) else {}
+        audit_id = self._audit("planning_task_save", "task", str(task.get("id") or ""), payload, result)
+        self.events.publish("planning_changed", {"kind": "task", "id": task.get("id")})
+        return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def planning_task_action(self, payload: Mapping[str, object]) -> dict[str, object]:
+        task_id = compact_whitespace(str(payload.get("taskId") or payload.get("id") or ""))
+        if not task_id:
+            raise ValueError("taskId is required")
+        action = compact_whitespace(str(payload.get("action") or ""))
+        with self._connect() as conn:
+            result = task_action(
+                conn,
+                task_id=task_id,
+                action=action,
+                metadata={"source": "native-control-center"},
+            )
+        audit_id = self._audit(f"planning_task_{action}", "task", task_id, payload, result)
+        self.events.publish("planning_changed", {"kind": "task", "id": task_id, "action": action})
+        return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def planning_undo_task_event(self, payload: Mapping[str, object]) -> dict[str, object]:
+        event_id = compact_whitespace(str(payload.get("eventId") or ""))
+        if not event_id:
+            raise ValueError("eventId is required")
+        with self._connect() as conn:
+            result = undo_task_event(conn, event_id=event_id)
+        task = result.get("task") if isinstance(result.get("task"), dict) else {}
+        audit_id = self._audit("planning_task_event_undo", "task", str(task.get("id") or ""), payload, result)
+        self.events.publish("planning_changed", {"kind": "task", "id": task.get("id"), "action": "undo"})
+        return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def planning_resolve_completion(self, payload: Mapping[str, object]) -> dict[str, object]:
+        suggestion_id = compact_whitespace(str(payload.get("suggestionId") or ""))
+        if not suggestion_id:
+            raise ValueError("suggestionId is required")
+        with self._connect() as conn:
+            result = resolve_completion_suggestion(
+                conn,
+                suggestion_id=suggestion_id,
+                task_id=compact_whitespace(str(payload.get("taskId") or "")),
+                dismiss=bool(payload.get("dismiss")),
+            )
+        audit_id = self._audit("planning_completion_resolve", "completion_suggestion", suggestion_id, payload, result)
+        self.events.publish("planning_changed", {"kind": "completion_suggestion", "id": suggestion_id})
+        return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def planning_assistant(self, payload: Mapping[str, object]) -> dict[str, object]:
+        message = compact_whitespace(str(payload.get("message") or payload.get("text") or ""))
+        project = compact_whitespace(str(payload.get("project") or self.project))
+        with self._connect() as conn:
+            result = planning_assistant_reply(
+                conn,
+                message=message,
+                project=project,
+                plan_date=compact_whitespace(str(payload.get("date") or "")),
+            )
+        audit_id = self._audit("planning_assistant_message", "daily_plan", str(result.get("date") or ""), {"messageChars": len(message)}, {"ok": True})
+        self.events.publish("planning_changed", {"kind": "assistant", "date": result.get("date")})
+        return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def memory_book_archive_status(self, payload: Mapping[str, object]) -> dict[str, object]:
+        book_id = compact_whitespace(str(payload.get("bookId") or payload.get("id") or ""))
+        if not book_id:
+            raise ValueError("bookId is required")
+        archived = bool(payload.get("archived", True))
+        with self._connect() as conn:
+            result = set_memory_book_archive_status(
+                conn,
+                book_id=book_id,
+                archived=archived,
+                reason=compact_whitespace(str(payload.get("reason") or "")),
+                actor=compact_whitespace(str(payload.get("updatedBy") or "native-control-center")),
+            )
+            retrieval = rebuild_retrieval_docs(conn, project="")
+        result["retrievalDocs"] = retrieval
+        audit_id = self._audit(
+            "memory_book_archive" if archived else "memory_book_restore",
+            "memory_book",
+            book_id,
+            payload,
+            result,
+        )
+        if self.cache_invalidator is not None:
+            self.cache_invalidator()
+        self.events.publish(
+            "memory_changed",
+            {"kind": "book", "id": book_id, "action": "archive" if archived else "restore"},
+        )
+        return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def memory_book_archive_maintenance(self, payload: Mapping[str, object]) -> dict[str, object]:
+        apply_changes = bool(payload.get("apply", False))
+        inactive_days = _bounded_int(payload.get("inactiveDays"), default=60, minimum=7, maximum=3650)
+        project = compact_whitespace(str(payload.get("project") or self.project))
+        with self._connect() as conn:
+            result = archive_inactive_memory_books(
+                conn,
+                project=project,
+                inactive_days=inactive_days,
+                dry_run=not apply_changes,
+            )
+            if apply_changes:
+                result["retrievalDocs"] = rebuild_retrieval_docs(conn, project="")
+        audit_id = self._audit(
+            "memory_book_archive_maintenance_apply" if apply_changes else "memory_book_archive_maintenance_preview",
+            "memory_book",
+            project or "global",
+            payload,
+            result,
+        )
+        if apply_changes and self.cache_invalidator is not None:
+            self.cache_invalidator()
+        if apply_changes:
+            self.events.publish("memory_changed", {"kind": "book", "action": "archive_maintenance"})
+        return {**self.revision(audit_id=audit_id).payload(), **result}
 
     def memory_action(self, payload: Mapping[str, object]) -> dict[str, object]:
         mutation = execute_memory_action(
@@ -613,13 +831,15 @@ class ManagementService:
         cursor = _cursor_int(request.cursor)
         like = f"%{request.query}%"
         event_ranges: dict[str, tuple[int, int]] = {}
+        atoms_by_book: dict[str, list[dict[str, object]]] = {}
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT rowid AS row_cursor, book_id AS id, title, summary,
                        book_type AS type, project, app, tags_json,
                        source_event_ids_json, memory_atom_ids_json,
-                       status, confidence, quality_score, created_at_ms, updated_at_ms
+                       status, confidence, quality_score, created_at_ms, updated_at_ms,
+                       archived_at_ms, last_active_at_ms, archive_reason
                 FROM memory_books
                 WHERE (? = 0 OR rowid < ?)
                   AND (? = '' OR title LIKE ? OR summary LIKE ? OR project LIKE ? OR app LIKE ? OR book_type LIKE ?)
@@ -633,15 +853,28 @@ class ManagementService:
             ).fetchall()
             for row in rows:
                 event_ids = [int(value) for value in _json_list(row["source_event_ids_json"]) if str(value).isdigit()]
-                if not event_ids:
-                    continue
-                placeholders = ",".join("?" for _ in event_ids)
-                range_row = conn.execute(
-                    f"SELECT MIN(created_at_ms), MAX(created_at_ms) FROM input_events WHERE id IN ({placeholders})",
-                    event_ids,
-                ).fetchone()
-                if range_row is not None and range_row[0] is not None:
-                    event_ranges[str(row["id"])] = (int(range_row[0]), int(range_row[1]))
+                if event_ids:
+                    placeholders = ",".join("?" for _ in event_ids)
+                    range_row = conn.execute(
+                        f"SELECT MIN(created_at_ms), MAX(created_at_ms) FROM input_events WHERE id IN ({placeholders})",
+                        event_ids,
+                    ).fetchone()
+                    if range_row is not None and range_row[0] is not None:
+                        event_ranges[str(row["id"])] = (int(range_row[0]), int(range_row[1]))
+                atom_ids = [str(value) for value in _json_list(row["memory_atom_ids_json"]) if str(value)]
+                if atom_ids:
+                    atom_placeholders = ",".join("?" for _ in atom_ids)
+                    atom_rows = conn.execute(
+                        f"""
+                        SELECT id, kind AS type, COALESCE(NULLIF(canonical_text, ''), text) AS text,
+                               status, confidence, updated_at_ms AS updatedAtMs
+                        FROM memory_atoms
+                        WHERE id IN ({atom_placeholders}) AND privacy_level != 'sensitive'
+                        ORDER BY updated_at_ms DESC
+                        """,
+                        atom_ids,
+                    ).fetchall()
+                    atoms_by_book[str(row["id"])] = [dict(atom) for atom in atom_rows]
         has_more = len(rows) > limit
         rows = rows[:limit]
         items: list[dict[str, object]] = []
@@ -651,9 +884,13 @@ class ManagementService:
             item["tags"] = _json_list(item.pop("tags_json", "[]"))
             item["sourceEventCount"] = len(_json_list(item.pop("source_event_ids_json", "[]")))
             item["atomCount"] = len(_json_list(item.pop("memory_atom_ids_json", "[]")))
+            item["memories"] = atoms_by_book.get(str(item["id"]), [])
             source_range = event_ranges.get(str(item["id"]))
             item["sourceStartMs"] = source_range[0] if source_range else 0
             item["sourceEndMs"] = source_range[1] if source_range else 0
+            item["archivedAtMs"] = int(item.pop("archived_at_ms", 0) or 0)
+            item["lastActiveAtMs"] = int(item.pop("last_active_at_ms", 0) or 0)
+            item["archiveReason"] = str(item.pop("archive_reason", "") or "")
             items.append(item)
         next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
         return items, next_cursor
@@ -713,6 +950,8 @@ class ManagementService:
         limit = request.limit
         cursor = _cursor_int(request.cursor)
         like = f"%{request.query}%"
+        memories_by_tag: dict[str, list[dict[str, object]]] = {}
+        connections_by_tag: dict[str, list[dict[str, object]]] = {}
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -735,6 +974,36 @@ class ManagementService:
                 """,
                 (cursor, cursor, request.query, like, like, limit + 1),
             ).fetchall()
+            for row in rows:
+                tag_id = str(row["id"])
+                atom_rows = conn.execute(
+                    """
+                    SELECT ma.id, ma.kind AS type,
+                           COALESCE(NULLIF(ma.canonical_text, ''), ma.text) AS text,
+                           ma.status, ma.confidence, ma.updated_at_ms AS updatedAtMs
+                    FROM memory_atom_tags mat
+                    JOIN memory_atoms ma ON ma.id = mat.memory_atom_id
+                    WHERE CAST(mat.tag_id AS TEXT) = ? AND ma.privacy_level != 'sensitive'
+                    ORDER BY mat.weight DESC, ma.updated_at_ms DESC
+                    LIMIT 30
+                    """,
+                    (tag_id,),
+                ).fetchall()
+                memories_by_tag[tag_id] = [dict(atom) for atom in atom_rows]
+                edge_rows = conn.execute(
+                    """
+                    SELECT CAST(other.id AS TEXT) AS id, other.tag,
+                           e.edge_type AS type, e.weight, e.evidence_count AS evidenceCount
+                    FROM memory_tag_edges e
+                    JOIN memory_tags other
+                      ON other.id = CASE WHEN CAST(e.src_tag_id AS TEXT) = ? THEN e.dst_tag_id ELSE e.src_tag_id END
+                    WHERE CAST(e.src_tag_id AS TEXT) = ? OR CAST(e.dst_tag_id AS TEXT) = ?
+                    ORDER BY e.weight DESC, e.evidence_count DESC
+                    LIMIT 20
+                    """,
+                    (tag_id, tag_id, tag_id),
+                ).fetchall()
+                connections_by_tag[tag_id] = [dict(edge) for edge in edge_rows]
         has_more = len(rows) > limit
         rows = rows[:limit]
         items = []
@@ -742,6 +1011,8 @@ class ManagementService:
             item = dict(row)
             item.pop("row_cursor", None)
             item["aliases"] = _json_list(item.pop("aliases_json", "[]"))
+            item["memories"] = memories_by_tag.get(str(item["id"]), [])
+            item["connections"] = connections_by_tag.get(str(item["id"]), [])
             items.append(item)
         next_cursor = str(rows[-1]["row_cursor"]) if has_more and rows else ""
         return items, next_cursor
@@ -1680,6 +1951,14 @@ def _deduplicated_values(values: object) -> list[object]:
             continue
         result.append(value)
     return result
+
+
+def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
 
 
 def _now_ms() -> int:

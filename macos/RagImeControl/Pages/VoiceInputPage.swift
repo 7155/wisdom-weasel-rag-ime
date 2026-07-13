@@ -8,6 +8,7 @@ struct VoiceInputPage: View {
     @State private var resourceID = VoiceKeychainStore.defaultResourceID
     @State private var endpoint = VoiceKeychainStore.defaultRealtimeEndpoint
     @State private var modelName = VoiceKeychainStore.defaultRealtimeModel
+    @State private var headersJSON = ""
     @State private var tokenConfigured = false
     @State private var saveMessage = ""
     @State private var hotwordsEnabled = false
@@ -72,7 +73,7 @@ struct VoiceInputPage: View {
                 granted: voiceAgentStatus?.accessibilityTrusted == true
             ) {
                 Button("打开辅助功能设置", systemImage: "hand.raised.fill") {
-                    openPrivacyPane("Privacy_Accessibility")
+                    requestAccessibilityPermission()
                 }
                 .buttonStyle(.borderedProminent)
                 .help("打开辅助功能设置")
@@ -228,14 +229,26 @@ struct VoiceInputPage: View {
                     }
                 } else {
                     GridRow {
-                        credentialLabel("WebSocket")
-                        TextField("wss://...", text: $endpoint).textFieldStyle(.roundedBorder).frame(width: 330)
+                        credentialLabel(provider == .realtimeWebSocket ? "WebSocket" : "HTTP 地址")
+                        TextField(provider == .realtimeWebSocket ? "wss://..." : "https://.../audio/transcriptions", text: $endpoint)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 330)
                     }
                     GridRow {
                         credentialLabel("转写模型")
                         TextField("transcription model", text: $modelName).textFieldStyle(.roundedBorder).frame(width: 330)
                     }
-                    Text("兼容 input_audio_buffer.append/commit 与 transcription delta/completed 事件。")
+                }
+                if provider != .nativeStreaming {
+                    GridRow {
+                        credentialLabel("请求头 JSON")
+                        TextField("{\"X-Project\":\"...\"}", text: $headersJSON)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 330)
+                    }
+                    Text(provider == .realtimeWebSocket
+                         ? "边说边返回；兼容 Realtime 音频 append/commit 与转写 delta/completed 事件。"
+                         : "松开后上传 16 kHz WAV；兼容 multipart file + model 的转写接口。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .gridCellColumns(2)
@@ -429,7 +442,8 @@ struct VoiceInputPage: View {
                 accessToken: accessToken.isEmpty ? nil : accessToken,
                 resourceID: resourceID,
                 endpoint: endpoint,
-                model: modelName
+                model: modelName,
+                headersJSON: headersJSON
             )
             accessToken = ""
             tokenConfigured = true
@@ -449,11 +463,16 @@ struct VoiceInputPage: View {
         resourceID = VoiceKeychainStore.defaultResourceID
         endpoint = VoiceKeychainStore.defaultRealtimeEndpoint
         modelName = VoiceKeychainStore.defaultRealtimeModel
+        headersJSON = ""
+        if selected == .httpTranscription {
+            endpoint = VoiceKeychainStore.defaultHTTPEndpoint
+        }
         if let credentials = VoiceKeychainStore.loadCredentials(provider: selected) {
             appID = credentials.appID
             resourceID = credentials.resourceID
             endpoint = credentials.endpoint.isEmpty ? VoiceKeychainStore.defaultRealtimeEndpoint : credentials.endpoint
             modelName = credentials.model.isEmpty ? VoiceKeychainStore.defaultRealtimeModel : credentials.model
+            headersJSON = credentials.headersJSON
         }
         tokenConfigured = VoiceKeychainStore.hasAccessToken(provider: selected)
         saveMessage = ""
@@ -467,6 +486,9 @@ struct VoiceInputPage: View {
                 && !resourceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .realtimeWebSocket:
             return URL(string: endpoint)?.scheme?.lowercased().hasPrefix("ws") == true
+                && !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .httpTranscription:
+            return ["http", "https"].contains(URL(string: endpoint)?.scheme?.lowercased() ?? "")
                 && !modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -514,6 +536,21 @@ struct VoiceInputPage: View {
         )
         saveMessage = "已向语音代理请求麦克风授权"
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { refreshAgentState() }
+    }
+
+    private func requestAccessibilityPermission() {
+        guard agentRunning else {
+            saveMessage = "请先启动语音代理"
+            return
+        }
+        DistributedNotificationCenter.default().post(
+            name: Notification.Name("com.rag-ime.voice.request-accessibility-permission"),
+            object: nil
+        )
+        saveMessage = "已由语音代理请求辅助功能授权"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            openPrivacyPane("Privacy_Accessibility")
+        }
     }
 
     private func refreshAgentState() {

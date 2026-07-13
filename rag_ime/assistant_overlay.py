@@ -75,9 +75,11 @@ def build_assistant_overlay_payload(
         for candidate in display_candidates
         if str(candidate.get("sourceType") or "") == "action"
     ]
-    overlay_candidates = primary_candidates + (
-        action_candidates if primary_candidates or _pending_overlay_auto_enabled() else []
-    )
+    # The explicit generation affordance is user feedback, not a model result.
+    # Keep it visible even when the hot model has no suitable completion so the
+    # UI never looks broken or forces the user to guess whether generation is
+    # available.
+    overlay_candidates = primary_candidates + action_candidates
     actual_candidates = [
         candidate
         for candidate in overlay_candidates

@@ -11,6 +11,13 @@ from pathlib import Path
 
 
 class BuildPatchedSquirrelScriptTests(unittest.TestCase):
+    def test_local_adhoc_signing_uses_a_stable_designated_requirement(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "scripts" / "build_patched_squirrel.sh").read_text(encoding="utf-8")
+
+        self.assertIn('designated => identifier \\"$BUNDLE_ID\\"', script)
+        self.assertIn("Accessibility authorization is not tied to a changing cdhash", script)
+
     def test_squirrel_patch_contains_side_first_mixed_layout_hooks(self) -> None:
         root = Path(__file__).resolve().parents[1]
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
@@ -83,6 +90,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('traceRagImeFrontendEvent("input_client_identity_resolved"', patch_text)
         self.assertIn('refreshRagImeInputClient(sender, reason: "activate_server")', patch_text)
         self.assertIn('refreshRagImeInputClient(sender, reason: "key_event")', patch_text)
+        handle_start = patch_text.index("override func handle(_ event: NSEvent!, client sender: Any!) -> Bool")
+        handle_end = patch_text.index("func selectCandidate(_ index: Int) -> Bool", handle_start)
+        handle_text = patch_text[handle_start:handle_end]
+        self.assertNotIn("enforceRagImeSensitiveFieldGuard()", handle_text)
+        self.assertIn("ragImeNativeCompositionActive()", handle_text)
+        self.assertIn('"assistant_overlay_tab_passed_through"', handle_text)
         self.assertNotIn("\n+    self.client ?= sender as? IMKTextInput", patch_text)
         self.assertIn("private var ragImePanelUpdateGeneration: UInt = 0", patch_text)
         self.assertIn("ragImePanelUpdateGeneration &+= 1", patch_text)
@@ -90,6 +103,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("generation == ragImePanelUpdateGeneration", patch_text)
         self.assertIn('currentApp == "com.google.Chrome"', patch_text)
         self.assertIn('currentApp == "com.microsoft.edgemac"', patch_text)
+        self.assertIn('currentApp == "com.openai.codex"', patch_text)
         self.assertIn("ragImeReuseChromiumPanelPosition", patch_text)
         self.assertIn("ragImeChromiumAssistantAnchor", patch_text)
         self.assertIn('ragImeBoolEnvEnabled("RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING", default: true)', patch_text)
@@ -111,6 +125,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         panel_text = (overlay_sources / "RagImeNonActivatingPanel.swift").read_text(encoding="utf-8")
         combined_overlay_text = "\n".join([controller_text, card_text, row_text, state_text, panel_text])
         self.assertIn("if currentState.isExplicit {", controller_text)
+        self.assertNotIn("currentState != .explicitError", controller_text)
         self.assertIn("assistant_explicit_result_pinned", controller_text)
         self.assertIn("let maximumMs = hasRealCandidate ? 30_000 : (pendingWithoutResult && !isNoResultFeedback ? 12_000 : 2_000)", controller_text)
         self.assertIn('"no_result_guard"', controller_text)
@@ -130,10 +145,11 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("same_snapshot_stable_ids", controller_text)
         self.assertIn("assistant_panel_created", controller_text)
         self.assertIn("assistant_panel_update_coalesced", controller_text)
-        self.assertIn("assistant_result_collapsed_to_recall", controller_text)
-        self.assertIn("assistant_result_recall_requested", controller_text)
-        self.assertIn("RagImeAssistantResultRecallView", controller_text)
-        self.assertIn('systemSymbolName: "sparkles"', controller_text)
+        self.assertIn("assistant_passive_update_suppressed_while_explicit", controller_text)
+        self.assertIn("assistant_explicit_dismiss_suppressed", controller_text)
+        self.assertIn("shouldKeepExplicitSurface", controller_text)
+        self.assertNotIn("assistant_result_collapsed_to_recall", controller_text)
+        self.assertNotIn("RagImeAssistantResultRecallView", controller_text)
         self.assertIn("onRestore: { [weak self] in", patch_text)
         self.assertIn("RagImeSuggestionCardView.minimumPredictionWidth", controller_text)
         self.assertIn("RagImeSuggestionCardView.maximumPredictionWidth", controller_text)
@@ -162,7 +178,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("replaceButton.isHidden = !canReplaceSelection", card_text)
         self.assertIn("DispatchQueue.main.async", controller_text)
         self.assertIn("final class RagImeSuggestionCardView: NSVisualEffectView", card_text)
-        self.assertIn("material = .popover", card_text)
+        self.assertIn("material = .contentBackground", card_text)
+        self.assertIn("blendingMode = .withinWindow", card_text)
+        self.assertIn("state = .inactive", card_text)
+        self.assertNotIn("blendingMode = .behindWindow", combined_overlay_text)
         self.assertIn("layer?.backgroundColor = NSColor.clear.cgColor", card_text)
         self.assertIn("NSColor.separatorColor", card_text)
         self.assertIn("accessibilityDisplayShouldReduceMotion", controller_text)
@@ -193,7 +212,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("resultText.textStorage?.setAttributedString", card_text)
         self.assertIn("RagImeAssistantTypography.resultAttributes()", card_text)
         self.assertIn("RagImeSuggestionCardView.explicitResultHeight", controller_text)
-        self.assertIn("[actionSeparator, deepSeekButton, deepSeekShortcutPlate, deepSeekShortcutLabel]", card_text)
+        self.assertIn("[actionSeparator, deepSeekButton].forEach", card_text)
+        self.assertNotIn("deepSeekShortcutPlate", card_text)
         self.assertIn("ragImePrivacyDisposition == \"allowed\"", patch_text)
         self.assertIn("let privacyDisposition: String", patch_text)
         self.assertIn("request.privacyDisposition == \"allowed\"", patch_text)
@@ -212,8 +232,13 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("private let stateTint = NSView()", card_text)
         self.assertIn("private let accentRail = NSView()", card_text)
         self.assertIn("updateThemeChrome(for: state)", card_text)
-        self.assertIn('resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦ 已生成"', card_text)
-        self.assertIn("deepSeekShortcutPlate.frame = NSRect(x: 12", card_text)
+        self.assertIn('resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦"', card_text)
+        self.assertIn("deepSeekButton.frame = NSRect(x: 12, y: 5, width: 96", card_text)
+        self.assertIn('keys: ["timelineRecentInputChars"]', card_text)
+        self.assertIn('"历史补充 \\(recentInputChars) 字"', card_text)
+        self.assertIn('"历史已记录，本次未引用"', card_text)
+        self.assertIn("let remoteUnavailable = status.contains", card_text)
+        self.assertNotIn('return "远程模型未启用"', card_text)
         self.assertIn("assistant_panel_present_animation_started", controller_text)
         self.assertIn("assistant_candidate_content_transition_started", controller_text)
         self.assertIn("assistant_candidate_group_exit_animation_started", controller_text)
@@ -282,8 +307,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('"RAG_IME_SENSITIVE_APP_BUNDLE_TOKENS"', patch_text)
         self.assertIn('"RagImeSensitiveAppBundleIds"', patch_text)
         self.assertIn('"RagImeSensitiveAppBundleTokens"', patch_text)
-        self.assertIn('"password", "passcode", "one-time"', patch_text)
-        self.assertIn('"密码", "验证码", "账号"', patch_text)
+        self.assertIn('"password", "passcode", "密码", "口令"', patch_text)
+        self.assertNotIn('"username", "user name"', patch_text)
+        self.assertNotIn('"one-time", "one time", "otp"', patch_text)
         self.assertIn("func enforceRagImeSensitiveFieldGuard() -> Bool", patch_text)
         self.assertIn(
             'RagImeSensitiveFieldStatus(isSensitive: false, reason: "privacy_unknown_ax_not_trusted")',
@@ -396,12 +422,19 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("guard !displayCandidatesToApply.isEmpty else {", patch_text)
         self.assertIn("committedContext: ragImeCommittedContext", patch_text)
         self.assertIn("removeLastRagImeCommittedContextCharacterIfNoComposition()", patch_text)
+        self.assertIn(
+            "cancelRagImeCommitBurstAfterDelete()\n+        removeLastRagImeCommittedContextCharacterIfNoComposition()",
+            patch_text,
+        )
         self.assertIn("func removeLastRagImeCommittedContextCharacter()", patch_text)
         self.assertIn("func boundedRagImeCommittedContext(_ text: String) -> String", patch_text)
         self.assertIn("func syncRagImeCommittedContextFromClient(excludingMarkedText markedText: String = \"\") -> String", patch_text)
         self.assertIn("client.attributedSubstring(from: range)", patch_text)
         self.assertIn("func invalidateRagImeDisplayForInputChange(reason: String, keyCode: UInt16)", patch_text)
-        self.assertIn("committed_context_resynced_after_delete", patch_text)
+        self.assertIn("boundedFallback.hasSuffix(capturedContext)", patch_text)
+        self.assertIn('traceRagImeFrontendEvent("text_input_client_short_suffix_preserved"', patch_text)
+        self.assertIn("committed_context_trimmed_after_delete", patch_text)
+        self.assertNotIn("committed_context_invalidated_after_delete", patch_text)
         self.assertIn('traceRagImeFrontendEvent("sidecar_response_dropped_stale"', patch_text)
         self.assertIn('"input_generation_changed"', patch_text)
         self.assertIn('"response_too_late_for_foreground"', patch_text)
@@ -490,6 +523,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('ragImeOverlayTabPolicy == "accept_top_when_ready"', patch_text)
         self.assertIn('selectRagImeOverlayCandidate(atOrdinal: 1, route: "tab", key: "tab")', patch_text)
         self.assertIn('"assistant_overlay_tab_waiting_for_result"', patch_text)
+        self.assertIn('"assistant_overlay_unchanged_skipped"', patch_text)
+        self.assertIn("min(max(serverDelayMs, 500), 1200)", patch_text)
         self.assertIn('candidate.metadata["streamingPartial"]', patch_text)
         self.assertIn('ragImeOverlayOptionNumberPolicy == "select_prediction_by_ordinal"', patch_text)
         self.assertIn('selectRagImeOverlayCandidate(forKey: String(char), route: "option_number")', patch_text)
@@ -738,7 +773,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("same_snapshot_stable_ids", controller_text)
         self.assertIn("RagImeSuggestionCardView.preferredPredictionWidth", controller_text)
         self.assertNotIn("let longest = realCandidates.map", controller_text)
-        self.assertIn('resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦ 已生成"', card_text)
+        self.assertIn('resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦"', card_text)
         self.assertIn('NSTextField(labelWithString: "Tab 插入")', card_text)
         self.assertIn('resultShortcutLabel.toolTip = "结果就绪后按 Tab 插入"', card_text)
         self.assertIn("isStreamingResult = streaming", card_text)
@@ -824,6 +859,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('candidateOrdinal: 1', patch_text)
         self.assertIn('"active_rag_shortcut_action_button_route"', patch_text)
         self.assertIn("active_rag_context_button_triggered", patch_text)
+        self.assertIn("let accessibilityForeground =", patch_text)
+        self.assertIn("let imkForeground = ragImeForegroundContextResolver.captureFromTextInputClient", patch_text)
+        self.assertIn("let useClientContext = clientContext.count > capturedBefore.count", patch_text)
+        self.assertIn("context.isEmpty ? semanticQuery : context", patch_text)
         self.assertIn("postActiveRagStatus", patch_text)
         self.assertIn("active_rag_status_poll_scheduled", patch_text)
         self.assertIn("response.pollAfterMs", patch_text)
@@ -1028,6 +1067,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
                 "RAG_IME_RIME_USER_DIR": str(rime_dir),
                 "RAG_IME_SQUIRREL_SKIP_CODESIGN": "1",
                 "RAG_IME_SQUIRREL_SKIP_POSTINSTALL": "1",
+                "RAG_IME_SQUIRREL_DISPLAY_NAME": "Squirrel",
             }
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "build_patched_squirrel.sh"), "install"],
@@ -1039,9 +1079,19 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             )
 
             self.assertIn("[OK] installed patched Squirrel.app", result.stdout)
-            self.assertIn("quarantined noncanonical input method app", result.stdout)
+            self.assertIn("archived noncanonical input method app", result.stdout)
             self.assertIn("canonical input method bundle enforced", result.stdout)
             self.assertTrue((install_dir / "Squirrel.app" / "Contents" / "MacOS" / "Squirrel").is_file())
+            menu_icon = install_dir / "Squirrel.app" / "Contents" / "Resources" / "RagImeInputMenuIcon.png"
+            self.assertTrue(menu_icon.is_file())
+            menu_icon_info = subprocess.run(
+                ["sips", "-g", "pixelWidth", "-g", "pixelHeight", str(menu_icon)],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout
+            self.assertIn("pixelWidth: 18", menu_icon_info)
+            self.assertIn("pixelHeight: 18", menu_icon_info)
             self.assertFalse((install_dir / "RAG-IME.app").exists())
             self.assertFalse((install_dir / "RagIme.app").exists())
             self.assertIn(str(quarantine_root), result.stdout)

@@ -13,11 +13,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NativeControlCenterTests(unittest.TestCase):
-    def test_native_app_has_seven_pages_and_no_web_runtime(self) -> None:
+    def test_native_app_has_all_workspace_pages_and_no_web_runtime(self) -> None:
         root = ROOT / "macos" / "RagImeControl"
         text = "\n".join(path.read_text(encoding="utf-8") for path in root.rglob("*.swift"))
 
-        for page in ("OverviewPage", "InputMethodPage", "VoiceInputPage", "MemoryPage", "RagAndModelsPage", "HistoryPage", "DiagnosticsPage"):
+        for page in (
+            "OverviewPage", "InputMethodPage", "VoiceInputPage", "PlanningPage",
+            "MemoryPage", "RagAndModelsPage", "HistoryPage", "ConfigurationPage",
+            "DiagnosticsPage",
+        ):
             self.assertIn(page, text)
         for forbidden in ("WKWebView", "Electron", "Tauri", "node_modules"):
             self.assertNotIn(forbidden, text)
@@ -103,9 +107,22 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn('Section("输入体验")', root)
         self.assertIn('Section("知识与系统")', root)
         self.assertIn("ControlNoticeBanner", root)
+        self.assertIn("else if model.showingRuntimeActionReport", root)
         self.assertNotIn('.alert("操作失败"', root)
         self.assertIn("RagImeAnimeCompanion", root)
         self.assertIn(".fixedSize(horizontal: true, vertical: false)", components)
+
+    def test_knowledge_workbench_hides_internal_source_ids_and_shows_evidence_text(self) -> None:
+        page = (ROOT / "macos" / "RagImeControl" / "Pages" / "RagAndModelsPage.swift").read_text(encoding="utf-8")
+        model = (ROOT / "macos" / "RagImeControl" / "AppModel.swift").read_text(encoding="utf-8")
+
+        self.assertIn("displayAnswer(answer)", page)
+        self.assertIn('with: "[\\(index + 1)]"', page)
+        self.assertIn("evidenceExcerpt(item)", page)
+        self.assertIn('case "phrase": return "常用短语"', page)
+        self.assertIn("if model.expertMode, let sourceId", page)
+        self.assertIn("clearTransientConnectionError()", model)
+        self.assertIn("showingRuntimeActionReport = false", model)
 
     def test_control_center_coalesces_input_events_and_keeps_idle_artwork_static(self) -> None:
         app_model = (ROOT / "macos" / "RagImeControl" / "AppModel.swift").read_text(encoding="utf-8")
@@ -127,12 +144,37 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn('detailSection("完整内容")', page)
         self.assertIn('detailSection("标签")', page)
         self.assertIn('detailSection("包含的记忆")', page)
-        self.assertIn("MemoryTagBubble", page)
-        self.assertIn('Label("泡泡"', page)
+        self.assertIn("MemoryTagNetwork", page)
+        self.assertIn('Label("关系图"', page)
         self.assertIn('Label("列表"', page)
+        self.assertIn("个已联网", page)
+        self.assertIn("个待整理", page)
+        self.assertIn("Canvas", page)
         self.assertIn('detailSection("关联标签")', page)
         self.assertIn('detailSection("记录信息")', page)
         self.assertIn(".textSelection(.enabled)", page)
+
+    def test_planning_and_configuration_pages_cover_daily_flow_and_safe_migration(self) -> None:
+        root = ROOT / "macos" / "RagImeControl"
+        planning = (root / "Pages" / "PlanningPage.swift").read_text(encoding="utf-8")
+        configuration = (root / "Pages" / "ConfigurationPage.swift").read_text(encoding="utf-8")
+        app_model = (root / "AppModel.swift").read_text(encoding="utf-8")
+
+        for text in ("长期目标", "今日计划", "规划助手", "前一天", "回到今天", "后一天"):
+            self.assertIn(text, planning)
+        self.assertIn("recentDetectedCompletion", planning)
+        self.assertIn("undoPlanningTaskEvent", planning)
+        self.assertIn("pendingCompletionSuggestions", planning)
+        self.assertIn('"api/planning/task-event/undo"', app_model)
+        self.assertIn("planningDate", app_model)
+
+        self.assertIn("rag-ime.config.yaml", configuration)
+        self.assertIn('UTType(filenameExtension: "yaml")', configuration)
+        self.assertIn("自动收紧为 0600", configuration)
+        self.assertIn("不包含 API Key", configuration)
+        self.assertIn("恢复前自动生成回滚包", configuration)
+        self.assertIn('body: ["path": .string(path)]', app_model)
+        self.assertIn('"api/configuration/restore-apply"', app_model)
 
     def test_input_method_page_has_review_bound_rime_lexicon_apply_and_rollback(self) -> None:
         root = ROOT / "macos" / "RagImeControl"

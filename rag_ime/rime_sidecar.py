@@ -153,8 +153,8 @@ _POST_COMMIT_COMPLETION_CACHE_MAX_JOBS = 8
 _POST_COMMIT_PRESENTATION_STREAM_MAX_ENTRIES = 32
 _FOREGROUND_CONTEXT_MAX_FRESHNESS_MS = 700
 _MODEL_GROUP_CONTEXT_TTL_MS = 120_000
-_MODEL_GROUP_CONTEXT_MAX_CHARS = 360
-_MODEL_COMPLETION_CONTEXT_MAX_CHARS = 64
+_MODEL_GROUP_CONTEXT_MAX_CHARS = 2048
+_MODEL_COMPLETION_CONTEXT_MAX_CHARS = 256
 _MODEL_LANE_LOCK = RLock()
 _MODEL_LANE_ACTIVE_TOKEN: str | None = None
 _MODEL_LANE_ACTIVE_STARTED_AT = 0.0
@@ -1474,14 +1474,6 @@ def sensitive_input_requested(payload: Mapping[str, object]) -> bool:
         "current-password",
         "new-password",
         "passcode",
-        "pin",
-        "otp",
-        "one-time-code",
-        "token",
-        "api-key",
-        "api_key",
-        "secret",
-        "credential",
     }
     for mapping in (payload, rime_mapping, foreground_mapping):
         for key in ("fieldType", "inputPurpose", "autocomplete", "textContentType", "fieldRole"):
@@ -2071,20 +2063,17 @@ def _group_aware_model_context(
 
 
 def _focus_model_completion_context(*, assembled: str, foreground: str) -> str:
-    """Match the short-prefix distribution used by the MiniMind checkpoint."""
+    """Keep the current field plus enough same-group history to disambiguate it."""
 
     combined = compact_whitespace(assembled)
     current = compact_whitespace(foreground)
     if not combined:
         return ""
 
-    # A meaningful current field is a stronger signal than older app-level
-    # events. Very short chat-composer fragments still borrow the recent Group
-    # tail so a newly submitted message does not erase all continuity.
+    # A meaningful current field is still the strongest signal. Very short
+    # fragments borrow the same-group buffer, while a complete current field
+    # keeps its whole tail instead of being collapsed to the last few words.
     source = current if len(current) >= 8 else combined
-    sentence_tail = re.split(r"[。！？!?\n\r]+", source)[-1].strip()
-    if len(sentence_tail) >= 8:
-        source = sentence_tail
     return compact_whitespace(source)[-_MODEL_COMPLETION_CONTEXT_MAX_CHARS:]
 
 
@@ -3044,7 +3033,10 @@ def rag_direct_display_enabled(env: Mapping[str, str] | None = None) -> bool:
 
 def post_commit_active_rag_button_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
-    value = str(source.get("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON", "0")).strip().lower()
+    # Explicit generation is the stable fallback when the hot model has no
+    # suitable completion. Keep the affordance present by default; users can
+    # still disable it explicitly for a minimal passive-only surface.
+    value = str(source.get("RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON", "1")).strip().lower()
     return bool(value) and value not in _FALSEY_ENV_VALUES
 
 

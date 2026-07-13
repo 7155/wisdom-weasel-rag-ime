@@ -82,18 +82,22 @@ PY
 while IFS= read -r stale_path; do
   [[ -n "$stale_path" ]] || continue
   quarantine_path=""
-  if bool_true "$QUARANTINE_STALE_APPS" && [[ -d "$stale_path" ]]; then
+  archive_stale=false
+  if bool_true "$QUARANTINE_STALE_APPS" || [[ "$stale_path" == "$QUARANTINE_ROOT/"* ]]; then
+    archive_stale=true
+  fi
+  "$LSREGISTER" -u "$stale_path" >/dev/null 2>&1 || true
+  if [[ "$archive_stale" == true && -d "$stale_path" ]]; then
     mkdir -p "$QUARANTINE_ROOT"
-    quarantine_path="$QUARANTINE_ROOT/$(basename "$stale_path").disabled-bundle-$timestamp"
-    if mv "$stale_path" "$quarantine_path" 2>/dev/null; then
-      echo "quarantined stale input method bundle path: $stale_path -> $quarantine_path"
+    quarantine_path="$QUARANTINE_ROOT/$(basename "$stale_path").disabled-bundle-$timestamp.zip"
+    if /usr/bin/ditto -c -k --keepParent "$stale_path" "$quarantine_path" 2>/dev/null; then
+      rm -rf "$stale_path"
+      echo "archived stale input method bundle path: $stale_path -> $quarantine_path"
     else
-      echo "warning: could not quarantine stale input method bundle path: $stale_path" >&2
-      echo "warning: manual cleanup command: sudo mv \"${stale_path}\" \"${quarantine_path}\"" >&2
+      echo "warning: could not archive stale input method bundle path: $stale_path" >&2
       quarantine_path=""
     fi
   fi
-  "$LSREGISTER" -u "$stale_path" >/dev/null 2>&1 || true
   if [[ -n "$quarantine_path" ]]; then
     "$LSREGISTER" -u "$quarantine_path" >/dev/null 2>&1 || true
   fi

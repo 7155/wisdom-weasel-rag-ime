@@ -20,9 +20,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             second = apply_database_migrations(conn, applied_at_ms=456)
             status = migration_status(conn)
 
-            self.assertEqual(first.applied_versions, (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
+            self.assertEqual(first.applied_versions, (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15))
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 13)
+            self.assertEqual(status["currentVersion"], 15)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -38,6 +38,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("memory_tag_profiles", tables)
             self.assertIn("memory_semantic_groups", tables)
             self.assertIn("memory_semantic_group_members", tables)
+            self.assertIn("planning_daily", tables)
+            self.assertIn("planning_assistant_messages", tables)
+            self.assertIn("memory_supersessions", tables)
 
     def test_legacy_feedback_table_is_rebuilt_without_losing_rows(self) -> None:
         with closing(sqlite3.connect(":memory:")) as conn, conn:

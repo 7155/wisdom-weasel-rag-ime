@@ -79,6 +79,20 @@ class PublicReleaseAuditTests(unittest.TestCase):
         self.assertIn("release_path_outside_root", issue_ids)
         self.assertIn("evidence_result_invalid", issue_ids)
 
+    def test_manifest_requires_project_license_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-public-release-") as tmp:
+            root = Path(tmp)
+            tracked = self._write_public_metadata(root, ready=True, include_license=True)
+            manifest_path = self._write_valid_manifest(root)
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            del payload["evidence"]["projectLicense"]
+            manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            report = audit_public_release(root, tracked_files=tracked, dirty=False)
+
+        issue_ids = {item["id"] for item in report["releaseManifest"]["issues"]}
+        self.assertIn("required_evidence_missing", issue_ids)
+
     def test_generated_artifacts_license_and_secret_shapes_block_release(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-public-release-") as tmp:
             root = Path(tmp)
@@ -310,6 +324,12 @@ class PublicReleaseAuditTests(unittest.TestCase):
                 "sha256": cls._sha256(path),
             }
         notices = root / "THIRD_PARTY_NOTICES.md"
+        license_file = root / "LICENSE"
+        evidence["projectLicense"] = {
+            "result": "verified",
+            "path": "LICENSE",
+            "sha256": cls._sha256(license_file),
+        }
         evidence["thirdPartyNotices"] = {
             "result": "verified",
             "path": "THIRD_PARTY_NOTICES.md",

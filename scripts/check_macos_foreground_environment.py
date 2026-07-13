@@ -58,13 +58,14 @@ def read_ioreg(path: str) -> tuple[str, str]:
     result = subprocess.run(
         ["ioreg", "-l", "-w", "0", "-c", "IOHIDSystem"],
         check=False,
-        text=True,
         capture_output=True,
         timeout=5,
     )
     if result.returncode != 0:
         return "", f"ioreg_exit:{result.returncode}"
-    return result.stdout, "ioreg"
+    # Some HID registry properties contain arbitrary bytes. They are unrelated
+    # to the two ASCII session keys below and must not abort foreground checks.
+    return result.stdout.decode("utf-8", errors="replace"), "ioreg"
 
 
 def main() -> int:

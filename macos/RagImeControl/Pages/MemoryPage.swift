@@ -5,6 +5,8 @@ struct MemoryPage: View {
     @State private var editingItem: [String: JSONValue] = [:]
     @State private var editorPresented = false
     @State private var pendingAction: PendingMemoryAction?
+    @State private var detailSelection: MemoryDetailSelection?
+    @State private var tagPresentation = "network"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,6 +41,11 @@ struct MemoryPage: View {
                     }
                 }
             )
+        }
+        .sheet(item: $detailSelection) { selection in
+            MemoryDetailSheet(kind: selection.kind, item: selection.item) {
+                detailSelection = nil
+            }
         }
         .alert(item: $pendingAction) { pending in
             Alert(
@@ -95,7 +102,7 @@ struct MemoryPage: View {
             ScrollView {
                 Group {
                     switch model.memoryKind {
-                    case "tags": tagGrid
+                    case "tags": tagContent
                     case "groups": groupGrid
                     default: itemList
                     }
@@ -121,6 +128,7 @@ struct MemoryPage: View {
                 MemoryRecordRow(
                     kind: model.memoryKind,
                     item: item,
+                    view: { openDetail(item) },
                     edit: { openEditor(item) },
                     action: { requestAction($0, for: item) }
                 )
@@ -131,15 +139,49 @@ struct MemoryPage: View {
     private var tagGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 12)], spacing: 12) {
             ForEach(Array(model.memoryRows.enumerated()), id: \.offset) { _, item in
-                MemoryTagTile(item: item) { openEditor(item) }
+                MemoryTagTile(item: item, view: { openDetail(item) }, edit: { openEditor(item) })
             }
         }
+    }
+
+    private var tagContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Picker("标签视图", selection: $tagPresentation) {
+                Label("关系图", systemImage: "point.3.connected.trianglepath.dotted").tag("network")
+                Label("列表", systemImage: "list.bullet").tag("list")
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+            HStack(spacing: 16) {
+                Label("\(connectedTagCount) 个已联网", systemImage: "link")
+                    .foregroundStyle(.teal)
+                Label("\(isolatedTagCount) 个待整理", systemImage: "circle.dashed")
+                    .foregroundStyle(isolatedTagCount > 0 ? .orange : .secondary)
+                Spacer()
+                Text("关系由审阅后的模型草案或用户编辑产生")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            if tagPresentation == "network" {
+                MemoryTagNetwork(items: model.memoryRows, view: openDetail)
+            } else {
+                tagGrid
+            }
+        }
+    }
+
+    private var connectedTagCount: Int {
+        model.memoryRows.filter { Int($0["edge_count"]?.numberValue ?? 0) > 0 }.count
+    }
+
+    private var isolatedTagCount: Int {
+        max(0, model.memoryRows.count - connectedTagCount)
     }
 
     private var groupGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 12)], spacing: 12) {
             ForEach(Array(model.memoryRows.enumerated()), id: \.offset) { _, item in
-                MemoryGroupTile(item: item) { openEditor(item) }
+                MemoryGroupTile(item: item, view: { openDetail(item) }, edit: { openEditor(item) })
             }
         }
     }
@@ -160,6 +202,10 @@ struct MemoryPage: View {
         editorPresented = true
     }
 
+    private func openDetail(_ item: [String: JSONValue]) {
+        detailSelection = MemoryDetailSelection(kind: model.memoryKind, item: item)
+    }
+
     private func requestAction(_ action: String, for item: [String: JSONValue]) {
         let id = item["id"]?.stringValue ?? item["memoryId"]?.stringValue ?? ""
         guard !id.isEmpty else { return }
@@ -167,6 +213,28 @@ struct MemoryPage: View {
             ?? item["text"]?.stringValue
             ?? item["textPreview"]?.stringValue
             ?? "这条记忆"
+        if model.memoryKind == "books", action == "restore" {
+            pendingAction = PendingMemoryAction(
+                memoryId: id,
+                kind: model.memoryKind,
+                action: "restore",
+                title: "恢复这本主题书？",
+                message: "恢复后会重新以正常权重参与检索。\n\(title)",
+                confirmLabel: "恢复"
+            )
+            return
+        }
+        if model.memoryKind == "books", action == "archive" {
+            pendingAction = PendingMemoryAction(
+                memoryId: id,
+                kind: model.memoryKind,
+                action: "archive",
+                title: "归档这本主题书？",
+                message: "内容仍可查看和按时间检索，普通检索权重会降低。\n\(title)",
+                confirmLabel: "归档"
+            )
+            return
+        }
         switch action {
         case "enable":
             pendingAction = PendingMemoryAction(
@@ -211,6 +279,12 @@ struct MemoryPage: View {
     }
 }
 
+private struct MemoryDetailSelection: Identifiable {
+    let id = UUID()
+    let kind: String
+    let item: [String: JSONValue]
+}
+
 private struct PendingMemoryAction: Identifiable {
     let id = UUID()
     let memoryId: String
@@ -224,6 +298,7 @@ private struct PendingMemoryAction: Identifiable {
 private struct MemoryRecordRow: View {
     let kind: String
     let item: [String: JSONValue]
+    let view: () -> Void
     let edit: () -> Void
     let action: (String) -> Void
 
@@ -268,13 +343,15 @@ private struct MemoryRecordRow: View {
             }
 
             HStack(spacing: 10) {
+                Button("查看详情", systemImage: "doc.text.magnifyingglass", action: view)
+                    .buttonStyle(.borderless)
                 Button(action: edit) { Image(systemName: "pencil") }
                     .buttonStyle(.borderless)
                     .help("编辑")
                 if ["books", "atoms", "phrases"].contains(kind) {
                     Menu {
-                        Button(statusIsInactive ? "恢复" : "标记过期") {
-                            action(statusIsInactive ? "enable" : "disable")
+                        Button(statusIsInactive ? "恢复" : (kind == "books" ? "归档" : "标记过期")) {
+                            action(statusIsInactive ? (kind == "books" ? "restore" : "enable") : (kind == "books" ? "archive" : "disable"))
                         }
                         Divider()
                         Button("忘记", role: .destructive) { action("forget") }
@@ -361,12 +438,160 @@ private struct MemoryRecordRow: View {
     }
 
     private var statusIsInactive: Bool {
-        ["disabled", "tombstoned", "expired"].contains(item["status"]?.stringValue ?? "")
+        ["archived", "disabled", "tombstoned", "expired"].contains(item["status"]?.stringValue ?? "")
     }
+}
+
+private struct MemoryTagNetwork: View {
+    let items: [[String: JSONValue]]
+    let view: ([String: JSONValue]) -> Void
+
+    var body: some View {
+        Group {
+            if nodes.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.secondary)
+                    Text("还没有可展示的标签关系")
+                        .font(.headline)
+                    Text("下一次模型整理会先提出合并与关系草案，审阅应用后在这里形成网络。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 300)
+            } else {
+                GeometryReader { proxy in
+                    let points = positions(in: proxy.size)
+                    ZStack {
+                        Canvas { context, _ in
+                            for edge in edges {
+                                guard let start = points[edge.source], let end = points[edge.target] else { continue }
+                                var path = Path()
+                                path.move(to: start)
+                                path.addLine(to: end)
+                                context.stroke(
+                                    path,
+                                    with: .color(.teal.opacity(0.22 + min(0.30, edge.weight * 0.24))),
+                                    lineWidth: 0.8 + edge.weight
+                                )
+                            }
+                        }
+                        ForEach(nodes) { node in
+                            if let point = points[node.id] {
+                                Button { view(node.item) } label: {
+                                    VStack(spacing: 2) {
+                                        Text(node.title)
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .lineLimit(1)
+                                        Text("\(node.degree) 连接 · \(node.itemCount) 记忆")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .frame(width: 112, height: 42)
+                                    .background(.regularMaterial)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(node.degree >= 3 ? Color.teal.opacity(0.72) : Color.blue.opacity(0.34), lineWidth: node.degree >= 3 ? 1.5 : 0.8)
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                                .buttonStyle(.plain)
+                                .position(point)
+                                .help("查看 \(node.title) 的记忆与关系")
+                            }
+                        }
+                    }
+                }
+                .frame(minHeight: 500)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.42))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor), lineWidth: 0.6))
+            }
+        }
+    }
+
+    private var nodes: [MemoryTagGraphNode] {
+        let mapped: [MemoryTagGraphNode] = items.map { MemoryTagGraphNode($0) }
+        let connected = mapped.filter { $0.degree > 0 }
+        let sorted = connected.sorted { lhs, rhs in
+            if lhs.degree == rhs.degree { return lhs.itemCount > rhs.itemCount }
+            return lhs.degree > rhs.degree
+        }
+        return Array(sorted.prefix(20))
+    }
+
+    private var edges: [MemoryTagGraphEdge] {
+        let visible = Set(nodes.map(\.id))
+        var seen: Set<String> = []
+        var result: [MemoryTagGraphEdge] = []
+        for node in nodes {
+            let connections = node.item["connections"]?.arrayValue.map(\.objectValue) ?? []
+            for connection in connections {
+                let target = connection["id"]?.stringValue ?? ""
+                guard visible.contains(target), target != node.id else { continue }
+                let relation = connection["type"]?.stringValue ?? "related_to"
+                let endpoints = [node.id, target].sorted()
+                let key = "\(endpoints[0])|\(endpoints[1])|\(relation)"
+                guard seen.insert(key).inserted else { continue }
+                result.append(
+                    MemoryTagGraphEdge(
+                        source: node.id,
+                        target: target,
+                        weight: connection["weight"]?.numberValue ?? 0.5
+                    )
+                )
+            }
+        }
+        return result
+    }
+
+    private func positions(in size: CGSize) -> [String: CGPoint] {
+        guard !nodes.isEmpty else { return [:] }
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        let maxRadiusX = max(80, size.width / 2 - 76)
+        let maxRadiusY = max(80, size.height / 2 - 48)
+        var result: [String: CGPoint] = [nodes[0].id: center]
+        let goldenAngle = CGFloat.pi * (3 - sqrt(5.0))
+        for (index, node) in nodes.dropFirst().enumerated() {
+            let step = CGFloat(index + 1)
+            let ratio = sqrt(step / CGFloat(max(1, nodes.count - 1)))
+            let angle = step * goldenAngle
+            result[node.id] = CGPoint(
+                x: center.x + cos(angle) * maxRadiusX * ratio,
+                y: center.y + sin(angle) * maxRadiusY * ratio
+            )
+        }
+        return result
+    }
+}
+
+private struct MemoryTagGraphNode: Identifiable {
+    let item: [String: JSONValue]
+    let id: String
+    let title: String
+    let degree: Int
+    let itemCount: Int
+
+    init(_ item: [String: JSONValue]) {
+        self.item = item
+        id = item["id"]?.stringValue ?? UUID().uuidString
+        title = item["tag"]?.stringValue ?? "未命名"
+        degree = Int(item["edge_count"]?.numberValue ?? 0)
+        itemCount = Int(item["item_count"]?.numberValue ?? 0)
+    }
+}
+
+private struct MemoryTagGraphEdge {
+    let source: String
+    let target: String
+    let weight: Double
 }
 
 private struct MemoryTagTile: View {
     let item: [String: JSONValue]
+    let view: () -> Void
     let edit: () -> Void
 
     var body: some View {
@@ -390,6 +615,7 @@ private struct MemoryTagTile: View {
                 }
             }
             Spacer()
+            Button("查看", systemImage: "doc.text.magnifyingglass", action: view).buttonStyle(.borderless)
             Button(action: edit) { Image(systemName: "pencil") }.buttonStyle(.borderless).help("编辑")
         }
         .padding(13)
@@ -410,6 +636,7 @@ private struct MemoryTagTile: View {
 
 private struct MemoryGroupTile: View {
     let item: [String: JSONValue]
+    let view: () -> Void
     let edit: () -> Void
 
     var body: some View {
@@ -418,6 +645,7 @@ private struct MemoryGroupTile: View {
                 Image(systemName: "square.grid.2x2.fill").foregroundStyle(groupColor)
                 Text(displayTitle).font(.headline).lineLimit(1)
                 Spacer()
+                Button("查看", systemImage: "doc.text.magnifyingglass", action: view).buttonStyle(.borderless)
                 Button(action: edit) { Image(systemName: "pencil") }.buttonStyle(.borderless).help("编辑")
             }
             if let note = item["note"]?.stringValue, !note.isEmpty {
@@ -452,6 +680,195 @@ private struct MemoryGroupTile: View {
 
     private var groupColor: Color {
         memoryColor(item["color_token"]?.stringValue ?? "blue")
+    }
+}
+
+private struct MemoryDetailSheet: View {
+    let kind: String
+    let item: [String: JSONValue]
+    let close: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(detailTitle).font(.title2.weight(.semibold)).textSelection(.enabled)
+                    Text(kindLabel).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("关闭", systemImage: "xmark", action: close)
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(22)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if !primaryText.isEmpty {
+                        detailSection("完整内容") {
+                            Text(primaryText)
+                                .font(.body)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    if !tags.isEmpty {
+                        detailSection("标签") {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 6)], alignment: .leading, spacing: 6) {
+                                ForEach(tags, id: \.self) { tag in
+                                    Text(tag)
+                                        .font(.caption)
+                                        .foregroundStyle(.blue)
+                                        .padding(.horizontal, 8)
+                                        .frame(height: 24)
+                                        .background(Color.blue.opacity(0.08))
+                                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                                }
+                            }
+                        }
+                    }
+                    if !relatedConnections.isEmpty {
+                        detailSection("关联标签") {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
+                                ForEach(Array(relatedConnections.enumerated()), id: \.offset) { _, connection in
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                                        Text(connection["tag"]?.stringValue ?? "未命名")
+                                        Spacer()
+                                        Text(connection["weight"]?.stringValue ?? "")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .font(.caption)
+                                    .padding(.horizontal, 9)
+                                    .frame(height: 30)
+                                    .background(Color.teal.opacity(0.08))
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                            }
+                        }
+                    }
+                    if !includedMemories.isEmpty {
+                        detailSection("包含的记忆") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(Array(includedMemories.enumerated()), id: \.offset) { index, memory in
+                                    HStack(alignment: .top, spacing: 10) {
+                                        Text("\(index + 1)")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 22, height: 22)
+                                            .background(Color.secondary.opacity(0.08))
+                                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                                        Text(memory["text"]?.stringValue ?? "空记忆")
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    detailSection("记录信息") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(displayFields, id: \.0) { key, value in
+                                LabeledContent(key) {
+                                    Text(value)
+                                        .textSelection(.enabled)
+                                        .multilineTextAlignment(.trailing)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(22)
+            }
+        }
+        .frame(minWidth: 680, idealWidth: 760, minHeight: 520, idealHeight: 640)
+    }
+
+    private func detailSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.headline)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var detailTitle: String {
+        item["title"]?.stringValue
+            ?? item["text"]?.stringValue
+            ?? item["textPreview"]?.stringValue
+            ?? item["tag"]?.stringValue
+            ?? item["value"]?.stringValue
+            ?? "记忆详情"
+    }
+
+    private var primaryText: String {
+        item["summary"]?.stringValue
+            ?? item["text"]?.stringValue
+            ?? item["textPreview"]?.stringValue
+            ?? item["description"]?.stringValue
+            ?? item["note"]?.stringValue
+            ?? item["reason"]?.stringValue
+            ?? ""
+    }
+
+    private var tags: [String] {
+        let tagValues = item["tags"]?.arrayValue.map(\.stringValue) ?? []
+        let aliases = item["aliases"]?.arrayValue.map(\.stringValue) ?? []
+        return (tagValues + aliases).filter { !$0.isEmpty }
+    }
+
+    private var includedMemories: [[String: JSONValue]] {
+        item["memories"]?.arrayValue.map(\.objectValue).filter { !$0.isEmpty } ?? []
+    }
+
+    private var relatedConnections: [[String: JSONValue]] {
+        item["connections"]?.arrayValue.map(\.objectValue).filter { !$0.isEmpty } ?? []
+    }
+
+    private var displayFields: [(String, String)] {
+        let hidden = Set(["title", "summary", "text", "textPreview", "description", "note", "reason", "tags", "aliases", "memories", "connections"])
+        return item.keys.sorted().compactMap { key in
+            guard !hidden.contains(key), let value = item[key] else { return nil }
+            let rendered = memoryDetailValue(value, key: key)
+            guard !rendered.isEmpty else { return nil }
+            return (memoryFieldLabel(key), rendered)
+        }
+    }
+
+    private var kindLabel: String {
+        ["books": "主题书", "atoms": "记忆", "tags": "标签", "phrases": "短语", "groups": "分组", "negative": "屏蔽记录"][kind] ?? kind
+    }
+}
+
+private func memoryFieldLabel(_ key: String) -> String {
+    [
+        "id": "记录 ID", "type": "类型", "project": "项目", "app": "应用",
+        "status": "状态", "active": "启用", "confidence": "可信度",
+        "quality_score": "质量评分", "sourceEventCount": "来源事件",
+        "atomCount": "包含记忆", "item_count": "关联项目", "edge_count": "标签连接",
+        "event_count": "知识数量", "useCount": "使用次数", "created_at_ms": "创建时间",
+        "updated_at_ms": "更新时间", "updatedAtMs": "更新时间", "sourceStartMs": "来源开始",
+        "sourceEndMs": "来源结束", "latestAtMs": "最近命中", "last_used_at_ms": "最近使用"
+    ][key] ?? key
+}
+
+private func memoryDetailValue(_ value: JSONValue, key: String) -> String {
+    if key.lowercased().contains("_at_ms") || key.hasSuffix("AtMs") || ["sourceStartMs", "sourceEndMs"].contains(key) {
+        let date = memoryDate(value.numberValue)
+        if !date.isEmpty { return date }
+    }
+    switch value {
+    case .string(let text): return text
+    case .number(let number):
+        if ["confidence", "quality_score"].contains(key) { return "\(Int(number * 100))%" }
+        return number.rounded() == number ? String(Int(number)) : String(format: "%.2f", number)
+    case .bool(let enabled): return enabled ? "是" : "否"
+    case .array(let values): return values.map { memoryDetailValue($0, key: key) }.filter { !$0.isEmpty }.joined(separator: "、")
+    case .object(let object):
+        return object.keys.sorted().compactMap { childKey in
+            let child = memoryDetailValue(object[childKey] ?? .null, key: childKey)
+            return child.isEmpty ? nil : "\(childKey): \(child)"
+        }.joined(separator: "\n")
+    case .null: return ""
     }
 }
 

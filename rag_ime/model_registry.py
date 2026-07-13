@@ -488,6 +488,31 @@ def is_loopback_endpoint(endpoint: str) -> bool:
         return False
 
 
+def is_local_network_endpoint(endpoint: str) -> bool:
+    """Accept loopback and explicit LAN endpoints for the hot-model slot.
+
+    Arbitrary public hosts stay rejected because per-keystroke traffic has a
+    different privacy and latency contract from the explicit knowledge slot.
+    """
+
+    try:
+        parsed = urllib.parse.urlsplit(str(endpoint or "").strip())
+        host = (parsed.hostname or "").lower()
+    except (TypeError, ValueError):
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+        return False
+    if host in {"localhost", "localhost."} or host.endswith(".local"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private or address.is_link_local
+
+
 def normalize_model_endpoint(runtime: str, endpoint: str) -> str:
     normalized = str(endpoint or "").strip().rstrip("/")
     if not normalized:

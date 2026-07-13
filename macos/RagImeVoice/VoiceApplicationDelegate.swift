@@ -25,6 +25,18 @@ final class VoiceApplicationDelegate: NSObject, NSApplicationDelegate {
             name: Notification.Name("com.rag-ime.voice.configuration-changed"),
             object: nil
         )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(requestMicrophonePermission),
+            name: Notification.Name("com.rag-ime.voice.request-microphone-permission"),
+            object: nil
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(requestAccessibilityPermission),
+            name: Notification.Name("com.rag-ime.voice.request-accessibility-permission"),
+            object: nil
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -36,6 +48,18 @@ final class VoiceApplicationDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func configurationChanged() {
         coordinator?.reloadConfiguration()
+    }
+
+    @objc private func requestMicrophonePermission() {
+        VoiceAudioRecorder.requestPermission { [weak self] _ in
+            DispatchQueue.main.async { self?.publishStatus() }
+        }
+    }
+
+    @objc private func requestAccessibilityPermission() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        publishStatus()
     }
 
     private func startHotkeyWhenTrusted() {

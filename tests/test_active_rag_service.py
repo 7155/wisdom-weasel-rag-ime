@@ -108,6 +108,97 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["pollAfterMs"], 0)
 
+    def test_active_rag_persists_redacted_full_chain_across_terminal_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trace_path = Path(tmpdir) / "active-rag-chain.jsonl"
+            provider = FakeActiveRagProvider(("诊断链路最终候选",))
+            service = ActiveRagService(completion_provider=provider, trace_path=trace_path)
+            request = _request(
+                selected_text="红色轨道上下文测试",
+                max_chars=120,
+                evidence_pack=(
+                    {
+                        "text": "默认日志不应保存的证据正文",
+                        "title": "默认日志不应保存的证据标题",
+                        "summary": "默认日志不应保存的证据摘要",
+                        "tags": ["默认日志不应保存的标签"],
+                    },
+                ),
+            )
+
+            with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+                started = service.start(request)
+                ready = _wait_ready(service, str(started["sessionId"]))
+            journal = service.trace_records(session_id=str(started["sessionId"]), limit=20)
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertTrue(journal["enabled"])
+        self.assertFalse(journal["rawTextIncluded"])
+        self.assertEqual(
+            [record["phase"] for record in journal["records"]],
+            ["started", "retrieval_complete", "ready"],
+        )
+        terminal = journal["records"][-1]
+        self.assertEqual(terminal["retrieval"]["evidenceCount"], 1)
+        self.assertEqual(terminal["generation"]["candidateCount"], 1)
+        self.assertTrue(terminal["model"]["modelInput"]["resolvedRequest"]["hash"])
+        blob = json.dumps(journal, ensure_ascii=False)
+        self.assertNotIn("红色轨道上下文测试", blob)
+        self.assertNotIn("诊断链路最终候选", blob)
+        self.assertNotIn("默认日志不应保存的证据正文", blob)
+        self.assertNotIn("默认日志不应保存的证据标题", blob)
+        self.assertNotIn("默认日志不应保存的证据摘要", blob)
+        self.assertNotIn("默认日志不应保存的标签", blob)
+        metadata = terminal["retrieval"]["evidence"][0]["metadata"]
+        self.assertTrue(metadata["summary"]["hash"])
+
+    def test_active_rag_trace_can_include_exact_context_evidence_and_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trace_path = Path(tmpdir) / "active-rag-chain.jsonl"
+            provider = FakeActiveRagProvider(("完整链路候选正文",))
+            service = ActiveRagService(
+                completion_provider=provider,
+                trace_path=trace_path,
+                trace_include_text=True,
+            )
+            request = _request(
+                selected_text="完整链路前台选区",
+                max_chars=120,
+                evidence_pack=({"text": "完整链路证据片段", "sourceLane": "bm25_raw"},),
+            )
+
+            with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+                started = service.start(request)
+                _wait_ready(service, str(started["sessionId"]))
+            terminal = service.trace_records(session_id=str(started["sessionId"]))["records"][-1]
+
+        blob = json.dumps(terminal, ensure_ascii=False)
+        self.assertTrue(terminal["privacy"]["rawTextIncluded"])
+        self.assertIn("完整链路前台选区", blob)
+        self.assertIn("完整链路证据片段", blob)
+        self.assertIn("完整链路候选正文", blob)
+        self.assertIn("messages", terminal["model"]["modelInput"])
+
+    def test_active_rag_failure_trace_keeps_structured_transport_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trace_path = Path(tmpdir) / "active-rag-chain.jsonl"
+            service = ActiveRagService(
+                completion_provider=DiagnosticFailingActiveRagProvider(),
+                trace_path=trace_path,
+            )
+            request = _request(selected_text="失败链路诊断", max_chars=120)
+
+            with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+                started = service.start(request)
+                failed = _wait_ready(service, str(started["sessionId"]))
+            terminal = service.trace_records(session_id=str(started["sessionId"]))["records"][-1]
+
+        self.assertEqual(failed["status"], "error")
+        transport = terminal["model"]["request"]["transport"]
+        self.assertEqual(transport["terminalReason"], "upstream_stream_closed")
+        self.assertEqual(transport["contentChars"], 7)
+        self.assertNotIn("responsePreview", transport)
+
     def test_active_rag_publishes_unselectable_partial_stream_before_ready(self) -> None:
         provider = StreamingActiveRagProvider()
         service = ActiveRagService(completion_provider=provider)
@@ -131,6 +222,44 @@ class ActiveRagServiceTests(unittest.TestCase):
             pending["candidates"][0]["candidateStableId"],
             ready["candidates"][0]["candidateStableId"],
         )
+
+    def test_active_rag_preserves_visible_partial_when_stream_then_fails(self) -> None:
+        provider = InterruptedStreamingActiveRagProvider()
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="检查生成稳定性", max_chars=120)
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            self.assertTrue(provider.emitted.wait(timeout=1))
+            pending = service.status(str(started["sessionId"]))
+            provider.release.set()
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(pending["status"], "pending")
+        self.assertEqual(pending["candidates"][0]["text"], "已经生成的正文必须保留给用户确认")
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["candidates"][0]["text"], "已经生成的正文必须保留给用户确认")
+        self.assertFalse(ready["candidates"][0]["metadata"]["streamingPartial"])
+        self.assertTrue(ready["candidates"][0]["metadata"]["partialRecovered"])
+        self.assertTrue(ready["diagnostics"]["modelRequest"]["partialRecovered"])
+        self.assertIn(
+            "active_rag_partial_recovered",
+            [item["name"] for item in ready["traceEvents"]],
+        )
+
+    def test_active_rag_preserves_visible_partial_when_provider_finishes_empty(self) -> None:
+        provider = EmptyAfterPartialActiveRagProvider()
+        service = ActiveRagService(completion_provider=provider)
+        request = _request(selected_text="检查空结束恢复", max_chars=120)
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["candidates"][0]["text"], "流已经安全显示，空结束也不能把它清掉")
+        self.assertTrue(ready["candidates"][0]["metadata"]["partialRecovered"])
+        self.assertEqual(ready["diagnostics"]["generation"]["displayedCandidateCount"], 1)
 
     def test_active_rag_uses_deepseek_when_enabled(self) -> None:
         provider = FakeActiveRagProvider(("这是原始选区长句", "DeepSeek主动候选"))
@@ -251,7 +380,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(ready["status"], "ready")
         self.assertEqual([item["text"] for item in ready["candidates"]], ["生成按钮优化"])
 
-    def test_active_rag_deepseek_empty_result_returns_retriable_error_without_fake_candidate(self) -> None:
+    def test_active_rag_deepseek_empty_result_returns_stable_no_suggestion_status(self) -> None:
         provider = FakeActiveRagProvider(())
         service = ActiveRagService(completion_provider=provider)
         request = _request(selected_text="选区", max_candidates=2)
@@ -260,15 +389,17 @@ class ActiveRagServiceTests(unittest.TestCase):
             started = service.start(request)
             ready = _wait_ready(service, str(started["sessionId"]))
 
-        self.assertEqual(ready["status"], "error")
+        self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["candidateCount"], 0)
         self.assertEqual(ready["candidates"][0]["sourceType"], "status")
-        self.assertEqual(ready["candidates"][0]["text"], "生成失败，请重试")
+        self.assertEqual(ready["candidates"][0]["text"], "这次没有合适建议")
         self.assertEqual(ready["candidates"][0]["insertText"], "")
+        self.assertTrue(ready["candidates"][0]["metadata"]["activeRagNoSuggestion"])
         self.assertNotIn("request_fallback", json.dumps(ready, ensure_ascii=False))
         self.assertEqual(len(provider.calls), 2)
         self.assertTrue(ready["diagnostics"]["modelRequest"]["contentRetryAttempted"])
         self.assertFalse(ready["diagnostics"]["modelRequest"]["contentRetryCompleted"])
+        self.assertTrue(ready["diagnostics"]["generation"]["noSuitableSuggestion"])
 
     def test_active_rag_retries_once_without_rag_when_first_result_is_empty(self) -> None:
         provider = SequencedActiveRagProvider(((), ("重新依据当前请求生成可用正文",)))
@@ -288,7 +419,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(provider.calls[1].selected_text, request.selected_text)
         self.assertTrue(ready["diagnostics"]["modelRequest"]["contentRetryCompleted"])
 
-    def test_active_rag_failed_recovery_keeps_retry_diagnostics(self) -> None:
+    def test_active_rag_governed_recovery_finishes_as_no_suggestion_with_diagnostics(self) -> None:
         provider = FailingActiveRagProvider()
         service = ActiveRagService(completion_provider=provider)
         request = _request(selected_text="改正", max_chars=120)
@@ -298,7 +429,8 @@ class ActiveRagServiceTests(unittest.TestCase):
             ready = _wait_ready(service, str(started["sessionId"]))
 
         model_request = ready["diagnostics"]["modelRequest"]
-        self.assertEqual(ready["status"], "error")
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["candidates"][0]["text"], "这次没有合适建议")
         self.assertEqual(len(provider.calls), 2)
         self.assertTrue(provider.calls[1].recovery_mode)
         self.assertEqual(provider.calls[1].selected_text, "")
@@ -306,6 +438,10 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertFalse(model_request["contentRetryCompleted"])
         self.assertIn(
             "deepseek_context_only_retry_started",
+            [item["name"] for item in ready["traceEvents"]],
+        )
+        self.assertIn(
+            "active_rag_no_suitable_suggestion",
             [item["name"] for item in ready["traceEvents"]],
         )
 
@@ -388,6 +524,10 @@ class ActiveRagServiceTests(unittest.TestCase):
         )
         self.assertEqual(context_packet["schemaVersion"], "rag-ime.smart-context-packet.v1")
         self.assertEqual(context_packet["currentInput"]["mode"], "active_rag")
+        self.assertTrue(context_packet["oneRing"]["events"])
+        self.assertFalse(context_packet["oneRing"]["maySupportFacts"])
+        self.assertEqual(context_packet["oneRing"]["baselineEvents"], 20)
+        self.assertIn("recentCompleteInputs", context_packet["trace"]["contextSourceTokens"])
         self.assertTrue(context_packet["notebook"]["items"])
         diagnostics = ready["diagnostics"]
         self.assertTrue(diagnostics["contextInjection"]["applied"])
@@ -397,7 +537,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertGreaterEqual(diagnostics["retrieval"]["contextEvidenceCount"], 1)
         self.assertTrue(diagnostics["retrieval"]["lanes"])
         self.assertTrue(diagnostics["remoteModel"]["allowed"])
-        self.assertEqual(diagnostics["remoteModel"]["provider"], "deepseek")
+        self.assertEqual(diagnostics["remoteModel"]["provider"], "custom")
         self.assertGreaterEqual(diagnostics["remoteModel"]["elapsedMs"], 0)
         trace_names = [item["name"] for item in ready["traceEvents"]]
         self.assertIn("deepseek_request_context_built", trace_names)
@@ -435,10 +575,14 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(injection["foregroundContextChars"], len(foreground))
         self.assertEqual(injection["effectiveContextChars"], injection["foregroundContextChars"])
         self.assertFalse(injection["augmentedWithTimelineRecentInput"])
-        self.assertFalse(injection["timelineRecentInputUsedForGeneration"])
-        self.assertEqual(injection["contextPolicy"], "foreground_first")
+        self.assertTrue(injection["timelineRecentInputUsedForGeneration"])
+        self.assertEqual(injection["contextPolicy"], "foreground_primary_history_secondary")
         self.assertNotIn("timeline_recent_input", injection["source"])
         self.assertNotIn("recent_input_context", [item.get("sourceType") for item in provider.calls[0].evidence_pack])
+        payload = json.loads(build_deepseek_completion_messages(provider.calls[0])[1]["content"])
+        self.assertEqual(payload["groundingMode"], "foreground_with_history")
+        self.assertTrue(payload["contextPacket"]["recentCompleteInputs"])
+        self.assertIn("这是一次很长的语音输入", str(payload["contextPacket"]["recentCompleteInputs"]))
 
     def test_active_rag_short_unmatched_foreground_does_not_promote_recent_request(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-short-context-") as tmp:
@@ -474,7 +618,9 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertFalse(injection["fullForegroundDocumentCaptured"])
         self.assertEqual(injection["resolvedRequestChars"], len("改正"))
         self.assertGreater(injection["timelineRecentInputChars"], len("改正"))
-        self.assertFalse(injection["timelineRecentInputUsedForGeneration"])
+        self.assertTrue(injection["timelineRecentInputUsedForGeneration"])
+        self.assertEqual(payload["groundingMode"], "foreground_with_history")
+        self.assertIn(recent, str(payload["contextPacket"]["recentCompleteInputs"]))
 
     def test_generic_foreground_terms_do_not_turn_timeline_book_into_rag_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-generic-timeline-") as tmp:
@@ -518,7 +664,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["diagnostics"]["retrieval"]["evidenceCount"], 0)
         self.assertEqual(provider.calls[0].evidence_pack, ())
-        self.assertFalse(ready["diagnostics"]["contextInjection"]["timelineRecentInputUsedForGeneration"])
+        self.assertTrue(ready["diagnostics"]["contextInjection"]["timelineRecentInputUsedForGeneration"])
 
     def test_active_rag_short_commit_observes_but_does_not_inject_recent_field_context(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-short-commit-") as tmp:
@@ -562,7 +708,9 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(payload["currentRequest"], "改正")
         self.assertGreater(injection["timelineRecentInputChars"], len("改正"))
         self.assertEqual(injection["resolvedRequestChars"], len("改正"))
-        self.assertFalse(injection["timelineRecentInputUsedForGeneration"])
+        self.assertTrue(injection["timelineRecentInputUsedForGeneration"])
+        self.assertEqual(payload["groundingMode"], "foreground_with_history")
+        self.assertIn(recent, str(payload["contextPacket"]["recentCompleteInputs"]))
 
     def test_active_rag_local_timeline_candidate_does_not_show_generic_recent_title(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-local-timeline-") as tmp:
@@ -586,6 +734,12 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(ready["status"], "ready")
         self.assertGreaterEqual(ready["evidenceCount"], 1)
         self.assertNotEqual(ready["candidates"][0]["text"], "最近输入上下文")
+        injection = ready["diagnostics"]["contextInjection"]
+        self.assertGreater(injection["timelineRecentInputChars"], 0)
+        self.assertGreater(injection["timelineRecentInputRecordCount"], 0)
+        self.assertFalse(injection["timelineRecentInputUsedForGeneration"])
+        self.assertEqual(injection["contextPolicy"], "foreground_primary_history_secondary")
+        self.assertIn("recent_input_history_available_not_injected", injection["warnings"])
 
     def test_active_rag_local_issue_request_never_impersonates_remote_model(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-local-fallback-") as tmp:
@@ -611,6 +765,67 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertTrue(ready["candidates"][0]["text"])
         self.assertNotEqual(ready["candidates"][0]["text"], "修复LLM显示")
         self.assertNotIn("request_fallback", json.dumps(ready, ensure_ascii=False))
+
+    def test_active_rag_keeps_foreground_beyond_old_1200_character_limit(self) -> None:
+        foreground = "这段前台输入用于验证模型能收到完整工程上下文，而不是只留下固定长度的尾部。" * 45
+        self.assertGreater(len(foreground), 1200)
+        provider = FakeActiveRagProvider(("完整上下文已经进入最终模型请求",))
+        service = ActiveRagService(completion_provider=provider)
+        request = ActiveRagStartRequest(
+            selected_text="完整上下文",
+            selected_text_hash=stable_text_hash("完整上下文"),
+            frontend_revision=21,
+            selection_epoch=4,
+            context=foreground,
+            project="wisdom-weasel-rag-ime",
+            max_candidates=1,
+            max_chars=120,
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(provider.calls[0].current_context, foreground)
+        self.assertFalse(ready["diagnostics"]["contextInjection"]["contextTruncatedToBudget"])
+
+    def test_active_rag_final_packet_can_use_more_than_twenty_recent_inputs_within_budget(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-active-rag-context-budget-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "active-rag-context-budget.sqlite")
+            for index in range(1, 41):
+                _record_timeline_event(core, f"最近完整输入记录{index}包含足够语义用于连续上下文")
+            provider = FakeActiveRagProvider(("动态预算已经完成最终上下文选择",))
+            service = ActiveRagService(core=core, completion_provider=provider)
+            request = ActiveRagStartRequest(
+                selected_text="继续处理上下文",
+                selected_text_hash=stable_text_hash("继续处理上下文"),
+                frontend_revision=22,
+                selection_epoch=5,
+                context="请结合最近完整输入继续处理上下文预算。",
+                project="wisdom-weasel-rag-ime",
+                max_candidates=1,
+                max_chars=120,
+            )
+
+            with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+                started = service.start(request)
+                ready = _wait_ready(service, str(started["sessionId"]))
+
+        trace = provider.calls[0].context_packet["trace"]
+        payload = json.loads(build_deepseek_completion_messages(provider.calls[0])[1]["content"])
+        self.assertEqual(ready["status"], "ready")
+        self.assertGreater(trace["contextSourceCounts"]["recentInputs"], 20)
+        self.assertLessEqual(trace["estimatedContextTokens"], trace["availableContextTokens"])
+        self.assertTrue(trace["withinSoftBudget"])
+        self.assertEqual(
+            len(payload["contextPacket"]["recentCompleteInputs"]),
+            trace["contextSourceCounts"]["recentInputs"],
+        )
+        self.assertEqual(
+            payload["contextPacket"]["contextBudget"]["contextSourceCounts"],
+            trace["contextSourceCounts"],
+        )
 
     def test_active_rag_accept_validates_selection_anchor(self) -> None:
         provider = FakeActiveRagProvider(("DeepSeek主动候选",))
@@ -782,6 +997,25 @@ class FailingActiveRagProvider:
         yield
 
 
+class DiagnosticFailingActiveRagProvider:
+    def stream_candidates(self, request):
+        _ = request
+        raise DeepSeekCompletionError(
+            "active_rag_no_insertable_content:upstream_stream_closed",
+            diagnostics={
+                "terminalReason": "upstream_stream_closed",
+                "transportReason": "url_error:ConnectionResetError",
+                "attemptCount": 1,
+                "hadContent": True,
+                "contentChars": 7,
+                "reasoningChars": 0,
+                "safePartialChars": 0,
+                "responsePreview": "不应写入默认日志",
+            },
+        )
+        yield
+
+
 class BlockingActiveRagProvider:
     def __init__(self, gate: threading.Event):
         self.gate = gate
@@ -809,6 +1043,34 @@ class StreamingActiveRagProvider:
         self.emitted.set()
         self.release.wait(timeout=2)
         yield CompletionCandidateDelta(text="第一段已经完整返回", insert_text="第一段已经完整返回")
+
+
+class InterruptedStreamingActiveRagProvider:
+    supports_text_delta_callback = True
+
+    def __init__(self):
+        self.emitted = threading.Event()
+        self.release = threading.Event()
+
+    def stream_candidates(self, request, *, on_text_delta=None):
+        _ = request
+        if on_text_delta is not None:
+            on_text_delta("已经生成的正文必须保留给用户确认")
+        self.emitted.set()
+        self.release.wait(timeout=2)
+        raise DeepSeekCompletionError("active_rag_no_insertable_content:stream_interrupted")
+        yield
+
+
+class EmptyAfterPartialActiveRagProvider:
+    supports_text_delta_callback = True
+
+    def stream_candidates(self, request, *, on_text_delta=None):
+        _ = request
+        if on_text_delta is not None:
+            on_text_delta("流已经安全显示，空结束也不能把它清掉")
+        return
+        yield
 
 
 def _record_timeline_event(core: LocalSqliteCoreClient, text: str) -> int:

@@ -30,15 +30,19 @@ BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
 HANT_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID:-$BUNDLE_ID.Hant}"
 if [[ "$BUNDLE_ID" == "$DEFAULT_BUNDLE_ID" && "$INSTALL_APP_NAME" == "Squirrel" ]]; then
-  DEFAULT_DISPLAY_NAME="Squirrel"
+  DEFAULT_DISPLAY_NAME="智鼬输入法"
+  DEFAULT_HANS_DISPLAY_NAME="智鼬输入法"
+  DEFAULT_HANT_DISPLAY_NAME="智鼬输入法（繁体）"
   DEFAULT_CONNECTION_NAME="Squirrel_Connection"
 else
   DEFAULT_DISPLAY_NAME="$INSTALL_APP_NAME"
+  DEFAULT_HANS_DISPLAY_NAME="$INSTALL_APP_NAME - Simplified"
+  DEFAULT_HANT_DISPLAY_NAME="$INSTALL_APP_NAME - Traditional"
   DEFAULT_CONNECTION_NAME="RagIme_Connection"
 fi
 DISPLAY_NAME="${RAG_IME_SQUIRREL_DISPLAY_NAME:-$DEFAULT_DISPLAY_NAME}"
-HANS_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANS_DISPLAY_NAME:-$DISPLAY_NAME - Simplified}"
-HANT_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANT_DISPLAY_NAME:-$DISPLAY_NAME - Traditional}"
+HANS_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANS_DISPLAY_NAME:-$DEFAULT_HANS_DISPLAY_NAME}"
+HANT_DISPLAY_NAME="${RAG_IME_SQUIRREL_HANT_DISPLAY_NAME:-$DEFAULT_HANT_DISPLAY_NAME}"
 CONNECTION_NAME="${RAG_IME_SQUIRREL_CONNECTION_NAME:-$DEFAULT_CONNECTION_NAME}"
 BUILD_SETTINGS_EXTRA="${RAG_IME_SQUIRREL_BUILD_SETTINGS:-CODE_SIGNING_ALLOWED=NO}"
 
@@ -64,7 +68,7 @@ Environment:
   RAG_IME_SQUIRREL_INSTALL_DIR   install target (default: ~/Library/Input Methods)
   RAG_IME_SQUIRREL_INSTALL_APP_NAME installed app bundle name (default: Squirrel)
   RAG_IME_SQUIRREL_BUNDLE_ID     app/input-source bundle prefix (default: im.rime.inputmethod.Squirrel)
-  RAG_IME_SQUIRREL_DISPLAY_NAME  app/input-source display name (default: Squirrel or install app name)
+  RAG_IME_SQUIRREL_DISPLAY_NAME  app/input-source display name (default: 智鼬输入法)
   RAG_IME_SQUIRREL_CONNECTION_NAME input method connection name (default: Squirrel_Connection or RagIme_Connection)
   RAG_IME_SQUIRREL_PREINSTALL    auto|1|0, run Squirrel action-install when dependencies are missing
   RAG_IME_SQUIRREL_NO_DOWNLOAD   set no_download=1 for action-install
@@ -541,17 +545,20 @@ canonicalize_input_method_bundles() {
     [[ -d "$candidate" ]] || continue
 
     mkdir -p "$quarantine_dir"
-    local destination="$quarantine_dir/$alias"
+    local destination="$quarantine_dir/${alias%.app}.disabled.zip"
     if [[ -e "$destination" ]]; then
-      destination="$quarantine_dir/${alias%.app}.$$.app"
+      destination="$quarantine_dir/${alias%.app}.$$.disabled.zip"
     fi
     pkill -f "$candidate/Contents/MacOS/Squirrel" >/dev/null 2>&1 || true
-    mv "$candidate" "$destination"
-    moved_count=$((moved_count + 1))
-    printf '[OK] quarantined noncanonical input method app: %s -> %s\n' "$candidate" "$destination"
-
     if [[ -x "$LSREGISTER" ]]; then
       "$LSREGISTER" -u "$candidate" >/dev/null 2>&1 || true
+    fi
+    /usr/bin/ditto -c -k --keepParent "$candidate" "$destination"
+    rm -rf "$candidate"
+    moved_count=$((moved_count + 1))
+    printf '[OK] archived noncanonical input method app: %s -> %s\n' "$candidate" "$destination"
+
+    if [[ -x "$LSREGISTER" ]]; then
       "$LSREGISTER" -u "$destination" >/dev/null 2>&1 || true
     fi
   done
@@ -614,7 +621,20 @@ install_squirrel_app() {
       return 0
     fi
     if command -v codesign >/dev/null 2>&1; then
-      codesign --force --deep --sign "$CODESIGN_IDENTITY" "$TARGET_APP"
+      if [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+        # Keep the local designated requirement stable across rebuilds so
+        # Accessibility authorization is not tied to a changing cdhash.
+        # First repair every nested dylib/tool/framework, then sign only the
+        # outer bundle with the stable requirement. Applying the outer
+        # requirement recursively would leave existing nested signatures
+        # sealed against pre-bootstrap binaries.
+        codesign --force --deep --sign - "$TARGET_APP"
+        codesign --force --sign - \
+          --requirements "=designated => identifier \"$BUNDLE_ID\"" \
+          "$TARGET_APP"
+      else
+        codesign --force --deep --sign "$CODESIGN_IDENTITY" "$TARGET_APP"
+      fi
       printf '[OK] %s signed patched Squirrel.app with identity: %s\n' "$phase" "$CODESIGN_IDENTITY"
     else
       printf '[WARN] codesign not found during %s; input source registration may fail\n' "$phase" >&2
@@ -651,6 +671,8 @@ install_squirrel_app() {
   cp -R "$PRODUCT_APP" "$TARGET_APP"
   mkdir -p "$TARGET_APP/Contents/Resources"
   cp "$ROOT/macos/Shared/Assets/CompanionStates/"*.png "$TARGET_APP/Contents/Resources/"
+  "$ROOT/scripts/support/build_input_menu_icon.sh" \
+    "$TARGET_APP/Contents/Resources/RagImeInputMenuIcon.png"
   /usr/libexec/PlistBuddy -c "Delete :LSRegisterProhibited" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || true
   "$ROOT/scripts/support/build_app_icon.sh" "$TARGET_APP/Contents/Resources/RagImeIcon.icns"
   /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile RagImeIcon" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || \

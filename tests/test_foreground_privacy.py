@@ -57,6 +57,15 @@ class ForegroundPrivacyTests(unittest.TestCase):
                 self.assertEqual(assessment["reason"], "sensitive_app_denylist")
                 self.assertFalse(assessment["storeAllowed"])
 
+    def test_non_password_browser_field_metadata_remains_allowed(self) -> None:
+        for field_type in ("username", "email", "login", "one-time-code", "otp"):
+            with self.subTest(field_type=field_type):
+                assessment = assess_foreground_write(
+                    {"privacyDisposition": "allowed", "rimeContext": {"fieldType": field_type}}
+                )
+                self.assertEqual(assessment["disposition"], "allowed")
+                self.assertTrue(assessment["storeAllowed"])
+
 
 if __name__ == "__main__":
     unittest.main()

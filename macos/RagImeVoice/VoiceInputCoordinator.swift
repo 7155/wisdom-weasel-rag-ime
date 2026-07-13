@@ -185,6 +185,7 @@ final class VoiceInputCoordinator {
         do {
             try recorder.start()
             state = .recording
+            overlay.showRecording()
             onStateChanged?()
         } catch {
             client.cancel()

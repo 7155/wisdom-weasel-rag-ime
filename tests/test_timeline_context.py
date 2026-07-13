@@ -12,7 +12,31 @@ from rag_ime.timeline_context import build_timeline_context_pack, timeline_evide
 
 
 class TimelineContextTests(unittest.TestCase):
-    def test_timeline_injects_up_to_eight_recent_complete_inputs(self) -> None:
+    def test_short_standalone_commit_keeps_longer_trusted_field_context(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-timeline-field-context-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "timeline.sqlite")
+            context = "请检查当前前台上下文是否完整注入，并在证据为空时明确降级。"
+            core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now_ms(),
+                    source="squirrel",
+                    committed_text="改正",
+                    privacy_disposition="allowed",
+                    recent_context=context,
+                    project="wisdom-weasel-rag-ime",
+                    tags=("user-input",),
+                )
+            )
+
+            pack = build_timeline_context_pack(core, project="wisdom-weasel-rag-ime")
+
+        self.assertIn(context, str(pack["recentInput"]))
+        record = pack["recentRecords"][0]
+        self.assertEqual(record["text"], context)
+        self.assertEqual(record["reconstruction"]["method"], "standalone-context")
+
+    def test_timeline_preserves_recent_complete_inputs_within_configured_budget(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-timeline-eight-") as tmp:
             core = LocalSqliteCoreClient(Path(tmp) / "timeline.sqlite")
             for index in range(1, 11):
@@ -21,9 +45,31 @@ class TimelineContextTests(unittest.TestCase):
             pack = build_timeline_context_pack(core, project="wisdom-weasel-rag-ime")
 
         recent = str(pack["recentInput"])
-        self.assertNotIn("第2条", recent)
-        for index in range(3, 11):
+        for index in range(1, 11):
             self.assertIn(f"第{index}条", recent)
+
+    def test_timeline_can_exceed_twenty_records_and_reports_source_budgets(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-timeline-dynamic-budget-") as tmp:
+            core = LocalSqliteCoreClient(Path(tmp) / "timeline.sqlite")
+            for index in range(1, 31):
+                _record_event(core, f"这是一条语义完整且用于动态上下文预算验证的最近输入记录编号{index}")
+
+            pack = build_timeline_context_pack(
+                core,
+                project="wisdom-weasel-rag-ime",
+                current_context="请结合最近完整输入和今日计划继续回答",
+            )
+
+        observability = pack["contextObservability"]
+        recent = observability["recentCompleteInputs"]
+        self.assertGreater(recent["recordCount"], 20)
+        self.assertLessEqual(recent["recordCount"], 80)
+        self.assertEqual(observability["tokenBudget"], 4096)
+        self.assertEqual(observability["reservedOutputTokens"], 1024)
+        self.assertEqual(observability["availableContextTokens"], 3072)
+        self.assertGreater(observability["currentInput"]["estimatedTokens"], 0)
+        self.assertGreater(observability["ragEvidence"]["recordCount"], 20)
+        self.assertGreater(observability["totalEstimatedTokens"], 0)
 
     def test_timeline_context_pack_includes_recent_input_and_daily_books(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-timeline-context-") as tmp:
