@@ -354,6 +354,9 @@ def _render_umbrella_dictionary() -> str:
         "name: rag_ime\n"
         f'version: "{time.strftime("%Y.%m.%d")}"\n'
         "sort: by_weight\n"
+        # Imported Luna entries depend on preset vocabulary weights. Without
+        # this, unweighted rare characters sort ahead of ordinary words.
+        "use_preset_vocabulary: true\n"
         "import_tables:\n"
         "  - luna_pinyin\n"
         "  - rag_ime_user\n"
