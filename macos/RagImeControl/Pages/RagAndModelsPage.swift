@@ -224,7 +224,7 @@ struct RagAndModelsPage: View {
                 }
                 Text(stageTitle).font(.headline)
                 if let response = model.knowledgeResponse, !response.status.isEmpty {
-                    Text(response.status.uppercased())
+                    Text(model.knowledgeMode == .organizeDatabase ? organizerStatusLabel : response.status.uppercased())
                         .font(.caption2.monospaced().weight(.semibold))
                         .foregroundStyle(resultColor)
                 }
@@ -260,7 +260,37 @@ struct RagAndModelsPage: View {
                 .padding(16)
             }
 
-            if let injection = contextInjection, !injection.isEmpty {
+            if model.knowledgeMode == .organizeDatabase {
+                Divider()
+                HStack(spacing: 16) {
+                    diagnosticValue(
+                        title: "历史输入",
+                        value: organizerSourceCount > 0 ? "\(organizerSourceCount) 条" : "已聚合",
+                        ready: organizerSourceCount > 0
+                    )
+                    diagnosticValue(
+                        title: "模型整理",
+                        value: model.knowledgeResponse?.status == "ready" ? "完成" : "处理中",
+                        ready: model.knowledgeResponse?.status == "ready"
+                    )
+                    diagnosticValue(
+                        title: "正式记忆库",
+                        value: databaseRunStatus == "applied" ? "已写入" : "尚未写入",
+                        ready: databaseRunStatus == "applied"
+                    )
+                    if organizerElapsedMs > 0 {
+                        Text(String(format: "用时 %.1f 秒", Double(organizerElapsedMs) / 1_000))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if let runId = organizeRunId, !runId.isEmpty {
+                        Text(runId).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            } else if let injection = contextInjection, !injection.isEmpty {
                 Divider()
                 HStack(spacing: 16) {
                     diagnosticValue(
@@ -279,11 +309,6 @@ struct RagAndModelsPage: View {
                         ready: injection["notionIncluded"]?.boolValue == true
                     )
                     Spacer()
-                    if model.knowledgeMode == .organizeDatabase,
-                       let runId = organizeRunId,
-                       !runId.isEmpty {
-                        Text(runId).font(.caption.monospaced()).foregroundStyle(.secondary)
-                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
@@ -510,7 +535,7 @@ struct RagAndModelsPage: View {
         case "merging_notion": return "正在合并多源知识"
         case "streaming_merge": return "正在流式合并多源知识"
         case "building_memory_bundle": return "正在整理数据库"
-        case "review_ready": return "整理草案可审阅"
+        case "review_ready": return "AI 整理草案可审阅"
         case "complete", "complete_local_only": return "结果已就绪"
         case "failed", "validation_failed": return "任务失败"
         case "cancelled", "superseded": return "任务已停止"
@@ -579,6 +604,26 @@ struct RagAndModelsPage: View {
 
     private var organizeRunId: String? {
         model.knowledgeResponse?.result?.objectValue["plan"]?.objectValue["runId"]?.stringValue
+    }
+
+    private var organizerStatusLabel: String {
+        switch model.knowledgeResponse?.status {
+        case "ready": return "待审"
+        case "running", "queued": return "整理中"
+        case "error": return "需重试"
+        default: return ""
+        }
+    }
+
+    private var organizerSourceCount: Int {
+        Int(model.knowledgeResponse?.result?.objectValue["source"]?.objectValue["eventCount"]?.numberValue ?? 0)
+    }
+
+    private var organizerElapsedMs: Int {
+        Int(
+            model.knowledgeResponse?.result?.objectValue["plan"]?.objectValue["metadata"]?.objectValue["elapsedMs"]?.numberValue
+                ?? 0
+        )
     }
 
     private var organizeDiffs: [[String: JSONValue]] {

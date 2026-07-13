@@ -10,15 +10,15 @@ struct OverviewPage: View {
             Divider()
             if let overview = model.overview {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
+                    VStack(alignment: .leading, spacing: ControlDesign.sectionSpacing) {
                         readinessSection(overview)
                         memorySection(overview.memory)
                         predictionSection(overview.lastPrediction)
                         actionSection
                     }
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 28)
-                    .frame(maxWidth: 1120, alignment: .leading)
+                    .padding(.horizontal, ControlDesign.pageHorizontalPadding)
+                    .padding(.vertical, ControlDesign.pageVerticalPadding)
+                    .frame(maxWidth: ControlDesign.contentMaxWidth, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
             } else {
@@ -30,6 +30,7 @@ struct OverviewPage: View {
 
     private var header: some View {
         HStack(spacing: 18) {
+            RagImeAnimeCompanion(state: .idle, size: 58)
             PageHeader(title: "今日概览", subtitle: "输入法、本地预测、个人记忆与知识生成的实时状态")
             Spacer()
             Picker("运行模式", selection: profileSelection) {
@@ -45,8 +46,8 @@ struct OverviewPage: View {
                 )
             }
         }
-        .padding(.horizontal, 30)
-        .padding(.vertical, 22)
+        .padding(.horizontal, ControlDesign.pageHorizontalPadding)
+        .padding(.vertical, 20)
     }
 
     private var profileSelection: Binding<String> {
@@ -65,23 +66,29 @@ struct OverviewPage: View {
                 title: "现在可以用",
                 trailing: overview.components.values.allSatisfy(\.ok) ? "全部就绪" : "有项目需要检查"
             )
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 12) {
-                readinessTile(overview, id: "inputMethod", title: "鼠须管", symbol: "keyboard")
-                readinessTile(overview, id: "predictor", title: "本地预测", symbol: "sparkles")
-                readinessTile(overview, id: "hybridRag", title: "Hybrid RAG", symbol: "point.3.connected.trianglepath.dotted")
-                readinessTile(overview, id: "foregroundContext", title: "前台上下文", symbol: "text.cursor")
+            ControlSurface {
+                HStack(spacing: 0) {
+                    readinessItem(overview, id: "inputMethod", title: "鼠须管", symbol: "keyboard")
+                    Divider().frame(height: 40)
+                    readinessItem(overview, id: "predictor", title: "本地预测", symbol: "sparkles")
+                    Divider().frame(height: 40)
+                    readinessItem(overview, id: "hybridRag", title: "知识召回", symbol: "point.3.connected.trianglepath.dotted")
+                    Divider().frame(height: 40)
+                    readinessItem(overview, id: "foregroundContext", title: "前台上下文", symbol: "text.cursor")
+                }
+                .padding(.vertical, 8)
             }
         }
     }
 
-    private func readinessTile(
+    private func readinessItem(
         _ overview: OverviewResponse,
         id: String,
         title: String,
         symbol: String
     ) -> some View {
         let status = overview.components[id]
-        return ControlReadinessTile(
+        return ControlReadinessItem(
             title: title,
             detail: status?.detail ?? "等待状态",
             symbol: symbol,
@@ -92,35 +99,41 @@ struct OverviewPage: View {
     private func memorySection(_ memory: MemorySummary) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             ControlSectionHeader(title: "个人知识库", trailing: "本地 SQLite")
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 12) {
-                ControlMetricTile(
+            ControlSurface {
+                HStack(spacing: 0) {
+                ControlMetricItem(
                     title: "输入事件",
                     value: "\(memory.eventCount)",
                     detail: "近期上下文",
                     symbol: "text.append",
                     tint: .blue
                 )
-                ControlMetricTile(
+                Divider().frame(height: 44)
+                ControlMetricItem(
                     title: "可召回文档",
                     value: "\(memory.retrievalDocCount)",
                     detail: "BGE / BM25",
                     symbol: "doc.text.magnifyingglass",
                     tint: .teal
                 )
-                ControlMetricTile(
-                    title: "Memory Book",
+                Divider().frame(height: 44)
+                ControlMetricItem(
+                    title: "主题记忆",
                     value: "\(memory.memoryBookCount)",
-                    detail: "Group 记忆",
+                    detail: "Memory Book",
                     symbol: "books.vertical",
                     tint: .orange
                 )
-                ControlMetricTile(
+                Divider().frame(height: 44)
+                ControlMetricItem(
                     title: "待整理",
                     value: "\(memory.pendingCompileEvents)",
                     detail: memory.pendingCompileEvents == 0 ? "已同步" : "可生成草案",
                     symbol: "arrow.triangle.2.circlepath",
                     tint: memory.pendingCompileEvents == 0 ? .green : .orange
                 )
+                }
+                .padding(.vertical, 8)
             }
         }
     }
@@ -156,25 +169,31 @@ struct OverviewPage: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Divider().frame(minHeight: 72)
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 9) {
                     Text("触发方式").font(.caption).foregroundStyle(.secondary)
                     Text(prediction.triggerReason ?? "等待前台输入")
                         .font(.callout.weight(.medium))
-                    Text("Tab 接受首项，Option + 数字选择其他候选")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 7) {
+                        ControlShortcutKey(text: "Tab")
+                        Text("首项")
+                        ControlShortcutKey(text: "⌥ 2–4")
+                        Text("其他候选")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 .frame(width: 260, alignment: .leading)
             }
             .padding(18)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor).opacity(0.65), lineWidth: 0.7))
+            .background(ControlDesign.quietSurface)
+            .clipShape(RoundedRectangle(cornerRadius: ControlDesign.surfaceRadius))
+            .overlay(RoundedRectangle(cornerRadius: ControlDesign.surfaceRadius).stroke(ControlDesign.hairline, lineWidth: 0.7))
         }
     }
 
     private var actionSection: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
+            Text("常用操作").font(.callout.weight(.semibold)).foregroundStyle(.secondary)
             Button {
                 model.destination = .ragAndModels
             } label: {
@@ -198,5 +217,6 @@ struct OverviewPage: View {
                 Label("检查运行组件", systemImage: "wrench.and.screwdriver")
             }
         }
+        .padding(.vertical, 4)
     }
 }

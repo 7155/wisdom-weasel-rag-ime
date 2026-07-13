@@ -303,8 +303,32 @@ final class RagImeAssistantPanelController {
     )
     updateGeneratingAnimation(for: state, payload: payload)
     panel.ignoresMouseEvents = false
-    panel.setContentSize(contentSize(for: state, payload: payload))
+    let previousFrame = panel.frame
+    let targetSize = contentSize(for: state, payload: payload)
+    panel.setContentSize(targetSize)
     position(state: state, anchor: anchor)
+    let positionedFrame = panel.frame
+    let reduceMotion = !animationsEnabled || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    let shouldMorphFrame = wasVisible
+      && !reduceMotion
+      && (abs(previousFrame.width - positionedFrame.width) > 0.5
+        || abs(previousFrame.height - positionedFrame.height) > 0.5)
+    if shouldMorphFrame {
+      panel.setFrame(previousFrame, display: false)
+      NSAnimationContext.runAnimationGroup { context in
+        context.duration = 0.18
+        context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        panel.animator().setFrame(positionedFrame, display: true)
+      }
+      trace("assistant_panel_frame_transition_started", [
+        "durationMs": 180,
+        "fromWidth": previousFrame.width,
+        "fromHeight": previousFrame.height,
+        "toWidth": positionedFrame.width,
+        "toHeight": positionedFrame.height,
+        "surfaceState": state.rawValue,
+      ])
+    }
     if state.isExplicit {
       resultRecallPanel.orderOut(nil)
     } else if pinnedExplicitPayload != nil {
@@ -313,7 +337,6 @@ final class RagImeAssistantPanelController {
     scheduleTTL(for: payload)
     if !wasVisible {
       visibleSince = Date()
-      let reduceMotion = !animationsEnabled || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
       let finalOrigin = panel.frame.origin
       panel.alphaValue = reduceMotion ? 1 : 0
       if !reduceMotion {
@@ -447,9 +470,10 @@ final class RagImeAssistantPanelController {
     case .explicitError: return NSSize(width: max(320, width), height: RagImeSuggestionCardView.errorHeight)
     case .explicitResult:
       let text = realCandidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
+      let resultWidth = min(configuredMaximumWidth, max(440, width))
       return NSSize(
-        width: max(RagImeSuggestionCardView.minimumPredictionWidth, width),
-        height: RagImeSuggestionCardView.explicitResultHeight(text: text, width: width)
+        width: max(RagImeSuggestionCardView.minimumPredictionWidth, resultWidth),
+        height: RagImeSuggestionCardView.explicitResultHeight(text: text, width: resultWidth)
       )
     case .transientConfirmation, .hidden:
       return NSSize(width: 224, height: RagImeSuggestionCardView.compactHeight)

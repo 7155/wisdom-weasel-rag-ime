@@ -35,8 +35,15 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn("$HOME/Applications/RagImeControl.app", script)
         self.assertIn("codesign --verify", script)
         self.assertIn("scripts/support/build_app_icon.sh", script)
+        self.assertIn("CompanionStates", script)
         self.assertNotIn("RagImeMac.app", script)
         self.assertNotIn("open \"$DEST\"", script)
+
+        icon_script = (ROOT / "scripts" / "support" / "build_app_icon.sh").read_text(encoding="utf-8")
+        icon_source = ROOT / "assets" / "brand" / "rag-ime-icon.png"
+        self.assertIn("assets/brand/rag-ime-icon.png", icon_script)
+        self.assertTrue(icon_source.is_file())
+        self.assertEqual(icon_source.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
 
     def test_native_knowledge_workbench_uses_async_sessions_and_visible_provenance(self) -> None:
         root = ROOT / "macos" / "RagImeControl"
@@ -67,6 +74,10 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn("清洗语音和错别字", page)
         self.assertIn("整理标签关系", page)
         self.assertIn("更新常用词表", page)
+        self.assertIn("AI 整理草案可审阅", page)
+        self.assertIn('title: "模型整理"', page)
+        self.assertIn('title: "正式记忆库"', page)
+        self.assertNotIn('answer += "\\n\\n" + "；".join', (ROOT / "rag_ime" / "knowledge_workbench.py").read_text(encoding="utf-8"))
         self.assertIn(
             "case .knowledgeAnswer, .longForm, .recall, .organizeDatabase: return 0",
             models,
@@ -75,6 +86,7 @@ class NativeControlCenterTests(unittest.TestCase):
     def test_overview_does_not_apply_a_profile_during_programmatic_startup_sync(self) -> None:
         source = (ROOT / "macos" / "RagImeControl" / "Pages" / "OverviewPage.swift").read_text(encoding="utf-8")
         components = (ROOT / "macos" / "RagImeControl" / "Components" / "ControlComponents.swift").read_text(encoding="utf-8")
+        root = (ROOT / "macos" / "RagImeControl" / "Navigation" / "ControlRootView.swift").read_text(encoding="utf-8")
 
         self.assertIn('Picker("运行模式", selection: profileSelection)', source)
         self.assertIn("private var profileSelection: Binding<String>", source)
@@ -85,6 +97,42 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn('default: return "本地实时补全"', components)
         self.assertIn('value: "\\(memory.retrievalDocCount)"', source)
         self.assertIn('Text("\\(prediction.providerCallCount ?? 0) 次调用")', source)
+        self.assertIn("ControlReadinessItem", source)
+        self.assertIn("ControlMetricItem", source)
+        self.assertIn("ControlShortcutKey", source)
+        self.assertIn('Section("输入体验")', root)
+        self.assertIn('Section("知识与系统")', root)
+        self.assertIn("ControlNoticeBanner", root)
+        self.assertNotIn('.alert("操作失败"', root)
+        self.assertIn("RagImeAnimeCompanion", root)
+        self.assertIn(".fixedSize(horizontal: true, vertical: false)", components)
+
+    def test_control_center_coalesces_input_events_and_keeps_idle_artwork_static(self) -> None:
+        app_model = (ROOT / "macos" / "RagImeControl" / "AppModel.swift").read_text(encoding="utf-8")
+        companion = (ROOT / "macos" / "Shared" / "RagImeCompanionMark.swift").read_text(encoding="utf-8")
+
+        self.assertIn("private var overviewRefreshTask", app_model)
+        self.assertIn("scheduleOverviewRefresh", app_model)
+        self.assertIn("Task.sleep(for: .milliseconds(500))", app_model)
+        self.assertIn("overviewRefreshTask?.cancel()", app_model)
+        self.assertNotIn("await self?.refreshOverview()", app_model)
+        self.assertIn("state == .listening || state == .thinking", companion)
+        self.assertIn(".onChange(of: state)", companion)
+
+    def test_memory_records_have_a_readable_detail_view(self) -> None:
+        page = (ROOT / "macos/RagImeControl/Pages/MemoryPage.swift").read_text(encoding="utf-8")
+
+        self.assertIn('Button("查看详情", systemImage: "doc.text.magnifyingglass"', page)
+        self.assertIn("MemoryDetailSheet", page)
+        self.assertIn('detailSection("完整内容")', page)
+        self.assertIn('detailSection("标签")', page)
+        self.assertIn('detailSection("包含的记忆")', page)
+        self.assertIn("MemoryTagBubble", page)
+        self.assertIn('Label("泡泡"', page)
+        self.assertIn('Label("列表"', page)
+        self.assertIn('detailSection("关联标签")', page)
+        self.assertIn('detailSection("记录信息")', page)
+        self.assertIn(".textSelection(.enabled)", page)
 
     def test_input_method_page_has_review_bound_rime_lexicon_apply_and_rollback(self) -> None:
         root = ROOT / "macos" / "RagImeControl"

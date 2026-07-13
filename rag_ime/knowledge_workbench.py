@@ -340,7 +340,6 @@ class KnowledgeWorkbenchService:
             return
         validation = result.get("validation") if isinstance(result.get("validation"), dict) else {}
         plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
-        counts = validation.get("counts") if isinstance(validation.get("counts"), dict) else {}
         summary = compact_whitespace(str(plan.get("summary") or ""))
         validation_ok = bool(validation.get("ok"))
         validation_errors = validation.get("errors") if isinstance(validation.get("errors"), list) else []
@@ -354,8 +353,6 @@ class KnowledgeWorkbenchService:
             answer = "模型这次没有整理出可靠内容，原始历史仍保持待整理。请重试，或把要求缩小为一个目标。"
         else:
             answer = "整理结果未通过安全校验，原始历史没有写入记忆库。"
-        if counts and validation_ok:
-            answer += "\n\n" + "；".join(f"{key}: {value}" for key, value in counts.items())
         with self._lock:
             if session.cancelled:
                 return

@@ -13,6 +13,7 @@ ACTION="${1:-build}"
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
 cp "$SRC/Info.plist" "$CONTENTS/Info.plist"
+cp "$SHARED/Assets/CompanionStates/"*.png "$RESOURCES/"
 
 sources=()
 while IFS= read -r file; do sources+=("$file"); done < <(find "$SHARED" "$SRC" -type f -name '*.swift' | sort)

@@ -62,12 +62,12 @@ final class RagImeSuggestionRowView: NSView {
     super.layout()
     let centerY = bounds.midY
     sourceBar.frame = NSRect(x: 0, y: centerY - 12, width: 3, height: 24)
-    shortcutPlate.frame = NSRect(x: 12, y: centerY - 12, width: 38, height: 24)
-    shortcutLabel.frame = NSRect(x: 14, y: centerY - 10, width: 34, height: 20)
-    sourceIcon.frame = NSRect(x: 60, y: centerY - 8.5, width: 17, height: 17)
+    shortcutPlate.frame = NSRect(x: 10, y: centerY - 12, width: 34, height: 24)
+    shortcutLabel.frame = NSRect(x: 11, y: centerY - 10, width: 32, height: 20)
+    sourceIcon.frame = NSRect(x: 49, y: centerY - 11, width: 22, height: 22)
     sourceLabel.frame = .zero
-    candidateLabel.frame = NSRect(x: 86, y: centerY - 13, width: max(52, bounds.width - 98), height: 26)
-    separatorView.frame = NSRect(x: 86, y: 0, width: max(0, bounds.width - 98), height: 1)
+    candidateLabel.frame = NSRect(x: 76, y: centerY - 13, width: max(52, bounds.width - 88), height: 26)
+    separatorView.frame = NSRect(x: 76, y: 0, width: max(0, bounds.width - 88), height: 1)
     hitButton.frame = bounds
   }
 
@@ -107,7 +107,7 @@ final class RagImeSuggestionRowView: NSView {
     let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
     candidateLabel.stringValue = text.isEmpty ? candidate.insertText : text
     sourceLabel.stringValue = sourceLabelText(for: candidate)
-    sourceIcon.image = NSImage(systemSymbolName: sourceSymbolName(for: candidate), accessibilityDescription: sourceLabel.stringValue)
+    sourceIcon.image = sourceImage(for: candidate)
     sourceTint = sourceColor(for: candidate)
     shortcutLabel.stringValue = shortcut
     sourceLabel.textColor = sourceTint
@@ -210,6 +210,17 @@ final class RagImeSuggestionRowView: NSView {
     }
   }
 
+  private func sourceImage(for candidate: RagImeDisplayCandidate) -> NSImage? {
+    let source = sourceLabelText(for: candidate)
+    if source == "模型" || source == "生成",
+       let url = Bundle.main.url(forResource: "RagImeCompanionIdle", withExtension: "png"),
+       let companion = NSImage(contentsOf: url) {
+      companion.isTemplate = false
+      return companion
+    }
+    return NSImage(systemSymbolName: sourceSymbolName(for: candidate), accessibilityDescription: source)
+  }
+
   private func sourceColor(for candidate: RagImeDisplayCandidate) -> NSColor {
     let configured = (candidate.sourceBadge ?? candidate.badge ?? "").lowercased()
     if configured.contains("deepseek") || configured == "ds" || configured.contains("生成") {
@@ -232,7 +243,7 @@ final class RagImeSuggestionRowView: NSView {
     let backgroundAlpha: CGFloat = isHovered ? 0.11 : (isPrimary ? 0.045 : 0)
     layer?.backgroundColor = sourceTint.withAlphaComponent(backgroundAlpha).cgColor
     sourceBar.layer?.backgroundColor = sourceTint.withAlphaComponent(isPrimary ? 0.9 : 0.68).cgColor
-    sourceIcon.contentTintColor = sourceTint
+    sourceIcon.contentTintColor = sourceIcon.image?.isTemplate == true ? sourceTint : nil
     shortcutPlate.layer?.backgroundColor = sourceTint.withAlphaComponent(isPrimary ? 0.08 : 0.035).cgColor
     shortcutPlate.layer?.borderColor = (isPrimary ? sourceTint : NSColor.separatorColor)
       .withAlphaComponent(isPrimary ? 0.28 : 0.58).cgColor

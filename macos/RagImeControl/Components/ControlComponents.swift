@@ -1,13 +1,24 @@
 import SwiftUI
 
+enum ControlDesign {
+    static let contentMaxWidth: CGFloat = 1160
+    static let pageHorizontalPadding: CGFloat = 34
+    static let pageVerticalPadding: CGFloat = 28
+    static let sectionSpacing: CGFloat = 26
+    static let surfaceRadius: CGFloat = 8
+    static let brand = Color(red: 0.06, green: 0.55, blue: 0.58)
+    static let quietSurface = Color(nsColor: .controlBackgroundColor)
+    static let hairline = Color(nsColor: .separatorColor).opacity(0.58)
+}
+
 struct PageHeader: View {
     let title: String
     let subtitle: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 27, weight: .semibold)).lineLimit(1)
-            Text(subtitle).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(2)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 29, weight: .semibold)).lineLimit(1)
+            Text(subtitle).font(.system(size: 14.5)).foregroundStyle(.secondary).lineLimit(2)
         }
     }
 }
@@ -24,6 +35,137 @@ struct ControlSectionHeader: View {
                 Text(trailing).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+struct ControlSurface<Content: View>: View {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .background(ControlDesign.quietSurface)
+            .clipShape(RoundedRectangle(cornerRadius: ControlDesign.surfaceRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: ControlDesign.surfaceRadius)
+                    .stroke(ControlDesign.hairline, lineWidth: 0.7)
+            )
+    }
+}
+
+struct ControlReadinessItem: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let ready: Bool
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(ready ? ControlDesign.brand : Color.orange)
+                .frame(width: 28, height: 28)
+                .background((ready ? ControlDesign.brand : Color.orange).opacity(0.09))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.callout.weight(.semibold)).lineLimit(1)
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Circle()
+                .fill(ready ? Color.green : Color.orange)
+                .frame(width: 7, height: 7)
+        }
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .padding(.horizontal, 14)
+    }
+}
+
+struct ControlMetricItem: View {
+    let title: String
+    let value: String
+    let detail: String
+    let symbol: String
+    var tint: Color = ControlDesign.brand
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(value)
+                        .font(.system(size: 23, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Text(title).font(.callout).foregroundStyle(.secondary)
+                }
+                Text(detail).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+        }
+        .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
+        .padding(.horizontal, 16)
+    }
+}
+
+struct ControlShortcutKey: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption.monospaced().weight(.semibold))
+            .foregroundStyle(ControlDesign.brand)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(ControlDesign.brand.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(ControlDesign.brand.opacity(0.24), lineWidth: 0.7)
+            )
+    }
+}
+
+struct ControlNoticeBanner: View {
+    enum Kind: Equatable {
+        case error
+        case report
+
+        var color: Color { self == .error ? .orange : ControlDesign.brand }
+        var symbol: String { self == .error ? "exclamationmark.triangle.fill" : "checkmark.circle.fill" }
+    }
+
+    let kind: Kind
+    let title: String
+    let detail: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Image(systemName: kind.symbol).foregroundStyle(kind.color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.callout.weight(.semibold))
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer()
+            Button(action: onDismiss) {
+                Image(systemName: "xmark").frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("关闭")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(kind.color.opacity(0.08))
+        .overlay(Rectangle().fill(kind.color.opacity(0.36)).frame(height: 1), alignment: .bottom)
     }
 }
 

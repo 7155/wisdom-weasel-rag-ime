@@ -27,6 +27,7 @@ class VoiceInputTests(unittest.TestCase):
         for framework in ("AVFoundation", "ApplicationServices", "Carbon", "Security"):
             self.assertIn(f"-framework {framework}", build)
         self.assertIn("scripts/support/build_app_icon.sh", build)
+        self.assertIn("CompanionStates", build)
         self.assertNotIn("RagImeMac.app", build)
         self.assertIn("RunAtLoad bool true", launch)
         self.assertIn("KeepAlive:SuccessfulExit bool false", launch)
@@ -66,6 +67,12 @@ class VoiceInputTests(unittest.TestCase):
         self.assertNotIn("AVCaptureDevice.authorizationStatus", page)
         self.assertIn('openPrivacyPane("Privacy_Accessibility")', page)
         self.assertIn('openPrivacyPane("Privacy_Microphone")', page)
+        self.assertIn('Button("打开辅助功能设置"', page)
+        self.assertIn('Button("请求麦克风权限"', page)
+        self.assertIn('不需要单独的“光标”权限', page)
+        self.assertIn("com.rag-ime.voice.request-microphone-permission", page)
+        self.assertIn("com.rag-ime.voice.request-microphone-permission", delegate)
+        self.assertIn("VoiceAudioRecorder.requestPermission", delegate)
 
         status = (ROOT / "macos/Shared/VoiceAgentStatus.swift").read_text(encoding="utf-8")
         self.assertIn("rag-ime.voice-agent-status.v3", status)
@@ -159,10 +166,26 @@ class VoiceInputTests(unittest.TestCase):
         self.assertLess(delegate.index("coordinator?.startHotkeyMonitor()"), delegate.index("if AXIsProcessTrusted()"))
 
         overlay = (ROOT / "macos/RagImeVoice/VoiceOverlay.swift").read_text(encoding="utf-8")
-        self.assertIn("VoiceCompanionGlyph", overlay)
+        companion = (ROOT / "macos/Shared/RagImeCompanionMark.swift").read_text(encoding="utf-8")
+        state_assets = ROOT / "macos/Shared/Assets/CompanionStates"
+        self.assertIn("RagImeAnimeCompanion", overlay)
+        self.assertIn("An original book-shaped companion", companion)
+        self.assertIn("Original anime companion artwork", companion)
+        for state in ("Idle", "Listening", "Thinking", "Done", "Warning"):
+            self.assertIn(f"RagImeCompanion{state}", companion)
+            asset = state_assets / f"RagImeCompanion{state}.png"
+            self.assertTrue(asset.is_file())
+            self.assertEqual(asset.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertNotIn("Circle()\n                .fill(state.accent.opacity(0.09))", companion)
+        self.assertIn("RagImeCompanionState", companion)
         self.assertIn('model.message = "听着呢"', overlay)
+        self.assertIn("请关闭后重新开启 RagImeVoice", overlay)
         self.assertIn("VoiceOverlayMetrics.compactWidth", overlay)
-        self.assertIn("Capsule()", overlay)
+        self.assertIn("panel.animator().setFrame", overlay)
+        self.assertIn("scheduleDismiss(after: 2.2)", overlay)
+        self.assertIn('credentialLabel("Access Token")', page)
+        self.assertIn("Grid(alignment: .leading", page)
+        self.assertIn('.help("打开辅助功能设置")', page)
 
         with tempfile.TemporaryDirectory(prefix="rag-ime-voice-hotkey-") as directory:
             result = subprocess.run(
@@ -217,6 +240,9 @@ class VoiceInputTests(unittest.TestCase):
 
         self.assertIn("func validateForAudioTransmission() throws", insertion)
         self.assertIn("VoiceInsertionError.privacyStateUnknown", insertion)
+        self.assertIn("value as? URL", insertion)
+        self.assertIn("url.absoluteString", insertion)
+        self.assertIn("Unknown optional metadata types", insertion)
         self.assertIn("AXUIElementGetPid", insertion)
         self.assertIn("VoicePrivacyPolicy.denies", insertion)
         self.assertIn("case .attributeUnsupported, .noValue", insertion)

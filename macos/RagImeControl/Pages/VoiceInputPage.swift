@@ -24,12 +24,13 @@ struct VoiceInputPage: View {
                 PageHeader(title: "语音输入", subtitle: "按住鼠标滚轮中键立即听写，松开后由流式语音服务原位定稿")
                 Spacer()
             }
-            .padding(.horizontal, 30)
-            .padding(.vertical, 22)
+            .padding(.horizontal, ControlDesign.pageHorizontalPadding)
+            .padding(.vertical, 20)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     pushToTalkSurface
+                    permissionSection
                     HStack(alignment: .top, spacing: 42) {
                         statusSection.frame(maxWidth: .infinity, alignment: .topLeading)
                         credentialSection.frame(maxWidth: .infinity, alignment: .topLeading)
@@ -45,9 +46,9 @@ struct VoiceInputPage: View {
                     Divider()
                     behaviorSection
                 }
-                .padding(.horizontal, 32)
-                .padding(.vertical, 28)
-                .frame(maxWidth: 1080, alignment: .leading)
+                .padding(.horizontal, ControlDesign.pageHorizontalPadding)
+                .padding(.vertical, ControlDesign.pageVerticalPadding)
+                .frame(maxWidth: ControlDesign.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
@@ -60,11 +61,72 @@ struct VoiceInputPage: View {
         }
     }
 
+    private var permissionSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("系统授权").font(.headline)
+            permissionRow(
+                title: "写入当前光标",
+                detail: voiceAgentStatus?.accessibilityTrusted == true
+                    ? "已通过辅助功能授权"
+                    : "由辅助功能权限负责，不需要单独的“光标”权限",
+                granted: voiceAgentStatus?.accessibilityTrusted == true
+            ) {
+                Button("打开辅助功能设置", systemImage: "hand.raised.fill") {
+                    openPrivacyPane("Privacy_Accessibility")
+                }
+                .buttonStyle(.borderedProminent)
+                .help("打开辅助功能设置")
+            }
+            Divider()
+            permissionRow(
+                title: "麦克风",
+                detail: microphoneStatus,
+                granted: voiceAgentStatus?.microphoneAuthorization == "authorized"
+            ) {
+                if voiceAgentStatus?.microphoneAuthorization == "not_determined" {
+                    Button("请求麦克风权限", systemImage: "mic.fill") {
+                        requestMicrophonePermission()
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button("打开麦克风设置", systemImage: "mic.fill") {
+                        openPrivacyPane("Privacy_Microphone")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .help("打开麦克风设置")
+                }
+            }
+        }
+        .padding(18)
+        .background(ControlDesign.quietSurface)
+        .clipShape(RoundedRectangle(cornerRadius: ControlDesign.surfaceRadius))
+        .overlay(RoundedRectangle(cornerRadius: ControlDesign.surfaceRadius).stroke(ControlDesign.hairline, lineWidth: 0.7))
+    }
+
+    private func permissionRow<Actions: View>(
+        title: String,
+        detail: String,
+        granted: Bool,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                .foregroundStyle(granted ? Color.green : Color.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).fontWeight(.semibold)
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            actions()
+        }
+    }
+
     private var pushToTalkSurface: some View {
         HStack(spacing: 18) {
-            Image(systemName: agentRunning ? "waveform.circle.fill" : "waveform.circle")
-                .font(.system(size: 42, weight: .medium))
-                .foregroundStyle(agentRunning ? Color.green : Color.accentColor)
+            RagImeAnimeCompanion(
+                state: agentRunning ? .done : .idle,
+                size: 64
+            )
             VStack(alignment: .leading, spacing: 5) {
                 Text(agentRunning ? "语音代理已待命" : "启动后即可在任意文本框听写")
                     .font(.title3.weight(.semibold))
@@ -73,20 +135,20 @@ struct VoiceInputPage: View {
             }
             Spacer()
             Text(hotkeyChoice.compactTitle)
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(nsColor: .separatorColor), lineWidth: 0.7))
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(ControlDesign.brand.opacity(0.07))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(ControlDesign.brand.opacity(0.22), lineWidth: 0.7))
             Button(agentRunning ? "停止" : "启动") { toggleAgent() }
                 .buttonStyle(.borderedProminent)
                 .disabled(!credentialsReady)
         }
         .padding(20)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor).opacity(0.65), lineWidth: 0.7))
+        .background(ControlDesign.quietSurface)
+        .clipShape(RoundedRectangle(cornerRadius: ControlDesign.surfaceRadius))
+        .overlay(RoundedRectangle(cornerRadius: ControlDesign.surfaceRadius).stroke(ControlDesign.hairline, lineWidth: 0.7))
     }
 
     private func telemetrySection(_ telemetry: VoiceSessionTelemetry) -> some View {
@@ -122,20 +184,14 @@ struct VoiceInputPage: View {
                 neutral: voiceAgentStatus?.hotwordsEnabled != true && !hotwordsEnabled
             )
             HStack {
-                if voiceAgentStatus?.accessibilityTrusted != true {
-                    Button("辅助功能设置", systemImage: "hand.raised") {
-                        openPrivacyPane("Privacy_Accessibility")
-                    }
-                }
-                if voiceAgentStatus?.microphoneAuthorization != "authorized" {
-                    Button("麦克风设置", systemImage: "mic") {
-                        openPrivacyPane("Privacy_Microphone")
-                    }
-                }
-                Button(agentRunning ? "停止语音代理" : "启动语音代理", systemImage: agentRunning ? "stop.fill" : "play.fill") {
+                Button {
                     toggleAgent()
+                } label: {
+                    Image(systemName: agentRunning ? "stop.fill" : "play.fill")
                 }
                 .disabled(!credentialsReady)
+                .help(agentRunning ? "停止语音代理" : "启动语音代理")
+                .accessibilityLabel(agentRunning ? "停止语音代理" : "启动语音代理")
             }
         }
     }
@@ -143,38 +199,47 @@ struct VoiceInputPage: View {
     private var credentialSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("流式语音识别").font(.headline)
-            LabeledContent("服务") {
-                Picker("服务", selection: $provider) {
-                    ForEach(VoiceASRProvider.allCases) { item in
-                        Text(item.title).tag(item)
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                GridRow {
+                    credentialLabel("服务")
+                    Picker("服务", selection: $provider) {
+                        ForEach(VoiceASRProvider.allCases) { item in
+                            Text(item.title).tag(item)
+                        }
                     }
-                }
-                .labelsHidden()
-                .frame(width: 330)
-                .onChange(of: provider) { value in loadProvider(value) }
-            }
-            LabeledContent("Access Token") {
-                SecureField(tokenConfigured ? "已配置，留空则保持不变" : "Access Token", text: $accessToken)
-                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
                     .frame(width: 330)
-            }
-            if provider == .nativeStreaming {
-                LabeledContent("App ID") {
-                    TextField("App ID", text: $appID).textFieldStyle(.roundedBorder).frame(width: 330)
+                    .onChange(of: provider) { value in loadProvider(value) }
                 }
-                LabeledContent("Resource ID") {
-                    TextField("Resource ID", text: $resourceID).textFieldStyle(.roundedBorder).frame(width: 330)
+                GridRow {
+                    credentialLabel("Access Token")
+                    SecureField(tokenConfigured ? "已配置，留空则保持不变" : "Access Token", text: $accessToken)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 330)
                 }
-            } else {
-                LabeledContent("WebSocket") {
-                    TextField("wss://...", text: $endpoint).textFieldStyle(.roundedBorder).frame(width: 330)
+                if provider == .nativeStreaming {
+                    GridRow {
+                        credentialLabel("App ID")
+                        TextField("App ID", text: $appID).textFieldStyle(.roundedBorder).frame(width: 330)
+                    }
+                    GridRow {
+                        credentialLabel("Resource ID")
+                        TextField("Resource ID", text: $resourceID).textFieldStyle(.roundedBorder).frame(width: 330)
+                    }
+                } else {
+                    GridRow {
+                        credentialLabel("WebSocket")
+                        TextField("wss://...", text: $endpoint).textFieldStyle(.roundedBorder).frame(width: 330)
+                    }
+                    GridRow {
+                        credentialLabel("转写模型")
+                        TextField("transcription model", text: $modelName).textFieldStyle(.roundedBorder).frame(width: 330)
+                    }
+                    Text("兼容 input_audio_buffer.append/commit 与 transcription delta/completed 事件。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .gridCellColumns(2)
                 }
-                LabeledContent("转写模型") {
-                    TextField("transcription model", text: $modelName).textFieldStyle(.roundedBorder).frame(width: 330)
-                }
-                Text("兼容 input_audio_buffer.append/commit 与 transcription delta/completed 事件。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
             HStack {
                 Button("保存到本机", systemImage: "key.fill") { save() }
@@ -184,6 +249,13 @@ struct VoiceInputPage: View {
                 }
             }
         }
+    }
+
+    private func credentialLabel(_ text: String) -> some View {
+        Text(text)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(width: 108, alignment: .leading)
     }
 
     private var behaviorSection: some View {
@@ -429,6 +501,19 @@ struct VoiceInputPage: View {
     private func openPrivacyPane(_ pane: String) {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func requestMicrophonePermission() {
+        guard agentRunning else {
+            saveMessage = "请先启动语音代理"
+            return
+        }
+        DistributedNotificationCenter.default().post(
+            name: Notification.Name("com.rag-ime.voice.request-microphone-permission"),
+            object: nil
+        )
+        saveMessage = "已向语音代理请求麦克风授权"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { refreshAgentState() }
     }
 
     private func refreshAgentState() {

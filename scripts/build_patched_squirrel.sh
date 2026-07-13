@@ -649,6 +649,8 @@ install_squirrel_app() {
   sleep 0.5
   rm -rf "$TARGET_APP"
   cp -R "$PRODUCT_APP" "$TARGET_APP"
+  mkdir -p "$TARGET_APP/Contents/Resources"
+  cp "$ROOT/macos/Shared/Assets/CompanionStates/"*.png "$TARGET_APP/Contents/Resources/"
   /usr/libexec/PlistBuddy -c "Delete :LSRegisterProhibited" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || true
   "$ROOT/scripts/support/build_app_icon.sh" "$TARGET_APP/Contents/Resources/RagImeIcon.icns"
   /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile RagImeIcon" "$TARGET_APP/Contents/Info.plist" >/dev/null 2>&1 || \

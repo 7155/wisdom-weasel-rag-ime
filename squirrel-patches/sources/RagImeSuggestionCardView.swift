@@ -57,7 +57,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   static let actionHeight: CGFloat = 40
   static let maximumPredictionCandidates = 4
   static let minimumPredictionWidth: CGFloat = 320
-  static let preferredPredictionWidth: CGFloat = 392
+  static let preferredPredictionWidth: CGFloat = 376
   static let maximumPredictionWidth: CGFloat = 460
   static let minimumExplicitResultHeight: CGFloat = 176
   static let maximumExplicitResultHeight: CGFloat = 300
@@ -75,7 +75,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private let deepSeekShortcutPlate = NSView()
   private let deepSeekShortcutLabel = NSTextField(labelWithString: "⌃.")
   private let statusHalo = NSView()
-  private let statusIcon = NSTextField(labelWithString: "✦")
+  private let statusIcon = NSImageView()
   private let statusLabel = NSTextField(labelWithString: "正在生成...")
   private let diagnosticLabel = NSTextField(labelWithString: "")
   private let stopButton = NSButton(title: "", target: nil, action: nil)
@@ -152,11 +152,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     deepSeekShortcutPlate.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.05).cgColor
     [actionSeparator, deepSeekButton, deepSeekShortcutPlate, deepSeekShortcutLabel].forEach(addSubview)
     statusHalo.wantsLayer = true
-    statusHalo.layer?.cornerRadius = 12
-    statusHalo.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.10).cgColor
-    statusIcon.font = .systemFont(ofSize: 13, weight: .semibold)
-    statusIcon.textColor = .systemIndigo
-    statusIcon.alignment = .center
+    statusHalo.layer?.backgroundColor = NSColor.clear.cgColor
+    statusIcon.imageScaling = .scaleProportionallyDown
     statusLabel.font = RagImeAssistantTypography.status
     statusLabel.textColor = .labelColor
     diagnosticLabel.font = RagImeAssistantTypography.diagnostic
@@ -223,9 +220,9 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     accentRail.frame = NSRect(x: 0, y: 8, width: 3, height: max(0, bounds.height - 16))
     switch surfaceState {
     case .pendingPrediction:
-      statusHalo.frame = NSRect(x: 12, y: 10, width: 24, height: 24)
-      statusIcon.frame = NSRect(x: 15, y: 12, width: 18, height: 18)
-      statusLabel.frame = NSRect(x: 44, y: 10, width: max(80, bounds.width - 96), height: 24)
+      statusHalo.frame = NSRect(x: 7, y: 4, width: 38, height: 36)
+      statusIcon.frame = statusHalo.frame
+      statusLabel.frame = NSRect(x: 49, y: 10, width: max(80, bounds.width - 101), height: 24)
       deepSeekButton.frame = NSRect(x: bounds.width - 42, y: 7, width: 32, height: 30)
     case .compactPrediction, .expandedPredictions:
       let actionOffset = actionCandidate == nil ? 0 : Self.actionHeight
@@ -244,14 +241,14 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         deepSeekButton.frame = NSRect(x: 60, y: 5, width: max(76, bounds.width - 72), height: 30)
       }
     case .explicitGenerating:
-      statusHalo.frame = NSRect(x: 8, y: 18, width: 28, height: 28)
-      statusIcon.frame = NSRect(x: 13, y: 23, width: 18, height: 18)
-      stopButton.frame = NSRect(x: 41, y: 17, width: 30, height: 30)
+      statusHalo.frame = NSRect(x: 4, y: 7, width: 46, height: 50)
+      statusIcon.frame = statusHalo.frame
+      stopButton.frame = NSRect(x: 48, y: 17, width: 26, height: 30)
     case .explicitError:
-      statusHalo.frame = NSRect(x: 12, y: 43, width: 26, height: 26)
-      statusIcon.frame = NSRect(x: 16, y: 47, width: 18, height: 18)
-      statusLabel.frame = NSRect(x: 46, y: 44, width: max(60, bounds.width - 92), height: 24)
-      diagnosticLabel.frame = NSRect(x: 46, y: 24, width: max(60, bounds.width - 60), height: 18)
+      statusHalo.frame = NSRect(x: 7, y: 34, width: 44, height: 42)
+      statusIcon.frame = statusHalo.frame
+      statusLabel.frame = NSRect(x: 57, y: 44, width: max(60, bounds.width - 103), height: 24)
+      diagnosticLabel.frame = NSRect(x: 57, y: 24, width: max(60, bounds.width - 71), height: 18)
       retryButton.frame = NSRect(x: 40, y: 2, width: 64, height: 26)
       closeButton.frame = NSRect(x: bounds.width - 38, y: 42, width: 30, height: 30)
     case .explicitResult:
@@ -320,8 +317,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     hideAll()
     switch state {
     case .pendingPrediction:
-      statusIcon.stringValue = "✦"
-      statusIcon.textColor = .controlAccentColor
+      statusIcon.image = companionImage(named: "RagImeCompanionThinking")
       statusLabel.stringValue = payload.statusText.isEmpty ? "正在联想" : providerNeutralStatus(payload.statusText)
       [statusHalo, statusIcon, statusLabel].forEach { $0.isHidden = false }
       deepSeekButton.imagePosition = .imageOnly
@@ -342,15 +338,13 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         [actionSeparator, deepSeekButton, deepSeekShortcutPlate, deepSeekShortcutLabel].forEach { $0.isHidden = false }
       }
     case .explicitGenerating:
-      statusIcon.stringValue = "✦"
-      statusIcon.textColor = .systemIndigo
+      statusIcon.image = companionImage(named: "RagImeCompanionThinking")
       statusLabel.stringValue = payload.statusText.isEmpty ? "正在生成..." : providerNeutralStatus(payload.statusText)
       [statusHalo, statusIcon, stopButton].forEach { $0.isHidden = false }
       toolTip = "\(statusLabel.stringValue)；点击停止"
       setAccessibilityLabel(statusLabel.stringValue)
     case .explicitError:
-      statusIcon.stringValue = "!"
-      statusIcon.textColor = .systemOrange
+      statusIcon.image = companionImage(named: "RagImeCompanionWarning")
       statusLabel.stringValue = payload.statusText.isEmpty ? "生成失败，请重试" : providerNeutralStatus(payload.statusText)
       [statusHalo, statusIcon, statusLabel, diagnosticLabel, retryButton, closeButton].forEach { $0.isHidden = false }
     case .explicitResult:
@@ -389,8 +383,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
 
   func updateGeneratingFrame(_ frame: Int, reduceMotion: Bool) {
     guard surfaceState == .pendingPrediction || surfaceState == .explicitGenerating else { return }
-    let frames = reduceMotion ? ["✦"] : ["✦", "✧", "✦", "·"]
-    statusIcon.stringValue = frames[frame % frames.count]
+    statusIcon.image = companionImage(named: "RagImeCompanionThinking")
   }
 
   func setGeneratingPulse(active: Bool, reduceMotion: Bool) {
@@ -463,23 +456,26 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     case .explicitGenerating:
       tint = NSColor.systemIndigo.withAlphaComponent(0.035)
       rail = .systemIndigo
-      statusHalo.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.11).cgColor
     case .explicitError:
       tint = NSColor.systemOrange.withAlphaComponent(0.045)
       rail = .systemOrange
-      statusHalo.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.12).cgColor
     case .explicitResult:
       tint = NSColor.systemTeal.withAlphaComponent(0.025)
       rail = .systemTeal
-      statusHalo.layer?.backgroundColor = NSColor.systemTeal.withAlphaComponent(0.10).cgColor
     default:
       tint = .clear
       rail = .clear
-      statusHalo.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.10).cgColor
     }
     stateTint.layer?.backgroundColor = tint.cgColor
     accentRail.layer?.backgroundColor = rail.withAlphaComponent(0.82).cgColor
     accentRail.isHidden = !state.isExplicit
+  }
+
+  private func companionImage(named name: String) -> NSImage? {
+    guard let url = Bundle.main.url(forResource: name, withExtension: "png"),
+          let image = NSImage(contentsOf: url) else { return nil }
+    image.isTemplate = false
+    return image
   }
 
   private func diagnosticText(for payload: RagImeAssistantOverlayPayload) -> String {

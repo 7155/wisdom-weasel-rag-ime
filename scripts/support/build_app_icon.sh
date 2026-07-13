@@ -3,7 +3,7 @@ set -euo pipefail
 
 OUTPUT="${1:?usage: build_app_icon.sh OUTPUT.icns}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SOURCE="${RAG_IME_ICON_SOURCE:-$ROOT/assets/brand/rag-ime-icon.svg}"
+SOURCE="${RAG_IME_ICON_SOURCE:-$ROOT/assets/brand/rag-ime-icon.png}"
 TMP_BASE="${TMPDIR:-/tmp}"
 WORK="$(mktemp -d "$TMP_BASE/rag-ime-app-icon.XXXXXX")"
 if [[ "${RAG_IME_KEEP_ICON_WORK:-0}" == "1" ]]; then
@@ -16,11 +16,22 @@ ICONSET="$WORK/RagImeIcon.iconset"
 MASTER="$WORK/RagImeIcon-1024.png"
 mkdir -p "$ICONSET" "$(dirname "$OUTPUT")"
 
-if ! command -v rsvg-convert >/dev/null 2>&1; then
-  echo "rsvg-convert is required to build the RAG-IME icon" >&2
-  exit 1
-fi
-rsvg-convert --width 1024 --height 1024 --keep-aspect-ratio "$SOURCE" --output "$MASTER"
+case "${SOURCE##*.}" in
+  png|PNG)
+    sips -s format png -z 1024 1024 "$SOURCE" --out "$MASTER" >/dev/null
+    ;;
+  svg|SVG)
+    if ! command -v rsvg-convert >/dev/null 2>&1; then
+      echo "rsvg-convert is required to build an SVG RAG-IME icon" >&2
+      exit 1
+    fi
+    rsvg-convert --width 1024 --height 1024 --keep-aspect-ratio "$SOURCE" --output "$MASTER"
+    ;;
+  *)
+    echo "unsupported RAG-IME icon source: $SOURCE" >&2
+    exit 1
+    ;;
+esac
 
 for size in 16 32 128 256 512; do
   sips -s format png -z "$size" "$size" "$MASTER" \
