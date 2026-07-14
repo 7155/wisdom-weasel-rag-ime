@@ -10,6 +10,10 @@ python3 -m unittest \
   tests.test_control_api \
   tests.test_control_center_web_host
 
+if [[ "${RAG_IME_SKIP_WEB_E2E:-0}" != "1" ]]; then
+  "$ROOT/scripts/run_control_center_web_qa.sh"
+fi
+
 RAG_IME_SKIP_WEB_BUILD=1 "$ROOT/scripts/build_control_center_web_host.sh" build >/dev/null
 RAG_IME_CONTROL_UI=web RAG_IME_CONTROL_SKIP_LIVE=1 \
   "$ROOT/scripts/check_control_center_footprint.sh"
