@@ -66,10 +66,15 @@ export function DesktopNavigation({
   return (
     <aside className="shell-sidebar" aria-label="主导航">
       <div className="shell-brand">
-        <span className="shell-brand__mark" aria-hidden="true">R</span>
+        <img
+          className="shell-brand__mark"
+          src="./companions/RagImeCompanionIdle.png"
+          alt=""
+          aria-hidden="true"
+        />
         <span className="shell-brand__copy">
-          <strong>RAG IME</strong>
-          <small>CONTROL CENTER</small>
+          <strong>智鼬</strong>
+          <small>RAG IME CONTROL</small>
         </span>
       </div>
       <nav className="shell-nav">

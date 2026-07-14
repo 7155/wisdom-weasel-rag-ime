@@ -1,4 +1,5 @@
 import { Navigate, createHashRouter } from 'react-router-dom';
+import { PrimitivesShowcase } from '@/components/primitives';
 import { AgentFeature } from '@/features/agent';
 import { ConfigurationFeature } from '@/features/configuration';
 import { DiagnosticsFeature } from '@/features/diagnostics';
@@ -28,5 +29,6 @@ export const router = createHashRouter([
   { path: '/history', element: <HistoryFeature /> },
   { path: '/diagnostics', element: <DiagnosticsFeature /> },
   { path: '/configuration', element: <ConfigurationFeature /> },
+  { path: '/_primitives', element: <PrimitivesShowcase /> },
   { path: '*', element: <Navigate replace to="/overview" /> },
 ]);

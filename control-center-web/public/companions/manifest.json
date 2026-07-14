@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "rag-ime.persona-assets.v1",
+  "personaId": "zhiyou-v1",
+  "states": {
+    "idle": "./RagImeCompanionIdle.png",
+    "listening": "./RagImeCompanionListening.png",
+    "thinking": "./RagImeCompanionThinking.png",
+    "warning": "./RagImeCompanionWarning.png",
+    "done": "./RagImeCompanionDone.png"
+  }
+}

@@ -30,7 +30,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="shell-workspace">
         <header className="shell-topbar">
           <div className="shell-topbar__mobile-brand">
-            <span className="shell-brand__mark" aria-hidden="true">R</span>
+            <img
+              className="shell-brand__mark"
+              src="./companions/RagImeCompanionIdle.png"
+              alt=""
+              aria-hidden="true"
+            />
             <MobileRouteMenu activeRouteId={activeRoute.id} />
           </div>
           <div className="shell-topbar__title">

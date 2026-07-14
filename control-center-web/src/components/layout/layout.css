@@ -34,19 +34,15 @@
 }
 
 .shell-brand__mark {
-  display: inline-flex;
+  display: block;
   width: 30px;
   height: 30px;
   flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
   border: 1px solid color-mix(in srgb, var(--color-accent) 58%, var(--color-border));
   border-radius: var(--radius-2);
   background: var(--color-accent-soft);
-  color: var(--color-accent);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: 800;
+  object-fit: cover;
+  object-position: center 24%;
 }
 
 .shell-brand__copy {
