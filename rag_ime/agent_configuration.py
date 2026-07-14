@@ -180,8 +180,15 @@ class AgentConfigurationStore:
 
             revision = current_revision + 1
             runtime_sync_required = bool(_RUNTIME_KEYS.intersection(changed_keys))
-            sync_state = "pending" if runtime_sync_required else "synchronized"
-            applied_revision = int(row["applied_revision"]) if runtime_sync_required else revision
+            if runtime_sync_required:
+                sync_state = "pending"
+                applied_revision = int(row["applied_revision"])
+            elif str(row["sync_state"]) == "synchronized":
+                sync_state = "synchronized"
+                applied_revision = revision
+            else:
+                sync_state = str(row["sync_state"])
+                applied_revision = int(row["applied_revision"])
             now = _now_ms()
             conn.execute(
                 """
@@ -431,7 +438,7 @@ class AgentControlEventHub:
             else:
                 replay = self.store.list_events(after_sequence=after_sequence or 0)
             self._subscribers.add(subscriber)
-        delivered = after_sequence or 0
+        delivered = 0 if gap else (after_sequence or 0)
         try:
             yield b": connected\n\n"
             for event in replay:

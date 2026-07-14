@@ -183,8 +183,18 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "ime_agents",
         "domain": "agents",
         "displayName": "多 Agent 协作",
-        "description": "查看固定子 Agent 目录，并发起、检查或停止有界任务委派",
-        "operations": ("catalog", "delegate", "status", "abort"),
+        "description": "管理有界任务委派，并在同一 Room 内进行可审计的 Agent 通信",
+        "operations": (
+            "catalog",
+            "delegate",
+            "status",
+            "artifact",
+            "abort",
+            "room_send",
+            "room_ask",
+            "room_reply",
+            "room_mailbox",
+        ),
         "resultPresentation": "tool_result",
     },
     {
@@ -300,6 +310,7 @@ class ControlToolGateway:
         facade: object | None = None,
         workspace_harness: WorkspaceHarness | None = None,
         delegation: object | None = None,
+        collaboration: object | None = None,
     ) -> None:
         self.sessions = sessions
         self.management = management
@@ -308,6 +319,7 @@ class ControlToolGateway:
         self.facade = facade
         self.workspace_harness = workspace_harness or WorkspaceHarness()
         self.delegation = delegation
+        self.collaboration = collaboration
 
     def manifests(self) -> dict[str, object]:
         manifests = []
@@ -405,19 +417,58 @@ class ControlToolGateway:
         return response
 
     def _agents(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
-        if self.delegation is None:
+        if operation in {"catalog", "delegate", "status", "artifact", "abort"} and self.delegation is None:
             raise ValueError("managed delegation is unavailable")
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
         if not session_id:
-            raise ValueError("delegation session is missing")
+            raise ValueError("agent collaboration session is missing")
         if operation == "catalog":
             return dict(self.delegation.catalog())  # type: ignore[attr-defined]
         if operation == "delegate":
             return dict(self.delegation.delegate(session_id, args))  # type: ignore[attr-defined]
         if operation == "status":
             return dict(self.delegation.status(session_id, args))  # type: ignore[attr-defined]
+        if operation == "artifact":
+            return dict(
+                self.delegation.inspect_artifact(  # type: ignore[attr-defined]
+                    session_id,
+                    _bounded_text(args.get("artifactId"), maximum=240),
+                    limit=_bounded_int(args.get("limit"), default=50, minimum=1, maximum=500),
+                )
+            )
         if operation == "abort":
             return dict(self.delegation.abort(session_id, args))  # type: ignore[attr-defined]
+        if operation in {"room_send", "room_ask", "room_reply"}:
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            kind = operation.removeprefix("room_")
+            request = {
+                "kind": kind,
+                "content": args.get("content"),
+                "clientMessageId": args.get("clientMessageId"),
+            }
+            if kind == "reply":
+                request["replyTo"] = args.get("replyTo")
+            else:
+                request["targetParticipantId"] = args.get("targetParticipantId")
+            return dict(
+                self.collaboration.send_room_intercom(  # type: ignore[attr-defined]
+                    session_id,
+                    request,
+                )
+            )
+        if operation == "room_mailbox":
+            if self.collaboration is None:
+                raise ValueError("managed room collaboration is unavailable")
+            return dict(
+                self.collaboration.list_room_intercom(  # type: ignore[attr-defined]
+                    session_id,
+                    {
+                        "status": args.get("status"),
+                        "limit": args.get("limit"),
+                    },
+                )
+            )
         raise ValueError("unsupported ime_agents operation")
 
     def apply_approval(self, approval: Mapping[str, object]) -> dict[str, object]:
@@ -3391,7 +3442,7 @@ def _tool_profile_allows(
         "ime_knowledge": frozenset({"recall", "deep_recall", "route_status"}),
         "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "ime_runtime": frozenset({"health", "components", "diagnose"}),
-        "ime_agents": frozenset({"catalog", "delegate", "status", "abort"}),
+        "ime_agents": frozenset({"catalog", "delegate", "status", "artifact", "abort"}),
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
     return operation_risk == "R0" and operation in allowed.get(tool, frozenset())

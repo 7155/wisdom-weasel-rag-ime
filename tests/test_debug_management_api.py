@@ -1709,6 +1709,96 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(accepted["participant"]["roleId"], "hermes-v1")
         self.assertEqual(archived["room"]["status"], "archived")
 
+    def test_agent_intercom_and_artifact_http_routes_preserve_session_authority(self) -> None:
+        session_id = "agent:http-room-source"
+        intercom_payload = {
+            "schemaVersion": "rag-ime.agent-room-intercom-enqueue.v1",
+            "ok": True,
+            "accepted": True,
+            "message": {"id": "room-message:http"},
+        }
+        mailbox_payload = {
+            "schemaVersion": "rag-ime.agent-room-intercom-list.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "items": [],
+        }
+        artifact_payload = {
+            "schemaVersion": "rag-ime.agent-artifact-inspection.v1",
+            "artifact": {"artifactId": "artifact:http"},
+            "records": [],
+            "totalRecords": 0,
+            "returnedRecords": 0,
+            "truncated": False,
+            "limits": {"requestedRecords": 5, "maxRecords": 500, "maxOutputBytes": 262144},
+        }
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}/api/agent"
+        try:
+            with (
+                patch.object(
+                    self.service.agent,
+                    "send_room_intercom",
+                    return_value=intercom_payload,
+                ) as send,
+                patch.object(
+                    self.service.agent,
+                    "list_room_intercom",
+                    return_value=mailbox_payload,
+                ) as mailbox,
+                patch.object(
+                    self.service.agent,
+                    "delegation_artifact",
+                    return_value=artifact_payload,
+                ) as artifact,
+            ):
+                request = Request(
+                    f"{base_url}/sessions/{session_id}/intercom",
+                    data=json.dumps(
+                        {
+                            "kind": "send",
+                            "targetParticipantId": "participant:target",
+                            "clientMessageId": "http-1",
+                            "content": "请复核",
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(request, timeout=5) as response:
+                    posted_status = response.status
+                    posted = json.loads(response.read().decode("utf-8"))
+                with urlopen(
+                    f"{base_url}/sessions/{session_id}/intercom?status=queued&limit=5",
+                    timeout=5,
+                ) as response:
+                    mailbox_result = json.loads(response.read().decode("utf-8"))
+                with urlopen(
+                    f"{base_url}/artifacts/artifact:http?sessionId={session_id}&limit=5",
+                    timeout=5,
+                ) as response:
+                    artifact_result = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(posted_status, 202)
+        self.assertEqual(posted["message"]["id"], "room-message:http")
+        self.assertEqual(mailbox_result["sessionId"], session_id)
+        self.assertEqual(artifact_result["artifact"]["artifactId"], "artifact:http")
+        self.assertEqual(send.call_args.args[0], session_id)
+        self.assertEqual(mailbox.call_args.args[0], session_id)
+        self.assertEqual(artifact.call_args.args[:2], (session_id, "artifact:http"))
+
     def test_agent_external_result_http_route_finalizes_durable_receipt(self) -> None:
         session = self.service.agent.create_session({"title": "外部监督器回执"})["session"]
         command = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.rag-ime.sidecar"]
@@ -1915,6 +2005,29 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.service.settings_update({"agent.pi.enabled": False})
         self.assertFalse(self.service.agent.runtime_status()["enabled"])
+
+    def test_agent_configuration_and_control_bootstrap_are_revision_bound(self) -> None:
+        bootstrap = self.service.control_api.bootstrap()
+        initial = self.service.agent.configuration()
+        update_payload = {
+            "expectedRevision": initial["configuration"]["revision"],
+            "changes": {"coordination.enabled": True},
+            "updatedBy": "api-test",
+        }
+        updated = self.service.agent.update_configuration(update_payload)
+
+        with self.assertRaisesRegex(ValueError, "revision changed"):
+            self.service.agent.update_configuration(update_payload)
+
+        self.assertTrue(updated["ok"])
+        self.assertEqual(bootstrap["apiVersion"], "control-api.v1")
+        self.assertIn(
+            "agent.configuration.update",
+            {item["pathId"] for item in bootstrap["routes"]},
+        )
+        self.assertEqual(updated["configuration"]["revision"], 2)
+        self.assertTrue(updated["configuration"]["configuration"]["coordination"]["enabled"])
+        self.assertEqual(updated["event"]["eventType"], "configuration_changed")
 
     def test_planning_and_yaml_configuration_http_routes_are_operational(self) -> None:
         config_path = Path(self.tmp.name) / "rag-ime.config.yaml"

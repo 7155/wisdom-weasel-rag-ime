@@ -1316,6 +1316,43 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn('sessionMode === "coordinator"', extension)
         self.assertIn("/tool/approval-result", extension)
 
+    def test_room_tool_uses_trusted_session_identity_and_drops_forged_source_fields(self) -> None:
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        class _Collaboration:
+            def send_room_intercom(self, session_id, payload):
+                calls.append((session_id, dict(payload)))
+                return {"ok": True, "message": {"id": "room-message:1"}}
+
+            def list_room_intercom(self, session_id, payload):
+                return {"ok": True, "sessionId": session_id, "items": [], **dict(payload)}
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            collaboration=_Collaboration(),
+        )
+        response = gateway.execute(
+            self._tool_call(
+                "ime_agents",
+                "room_send",
+                targetParticipantId="participant:reviewer",
+                clientMessageId="turn-7-message-1",
+                content="请复核这条结论",
+                sourceSessionId="forged-session",
+                sourceParticipantId="forged-participant",
+            )
+        )
+
+        self.assertTrue(response["result"]["ok"])
+        self.assertEqual(calls[0][0], self.session["id"])
+        self.assertNotIn("sourceSessionId", calls[0][1])
+        self.assertNotIn("sourceParticipantId", calls[0][1])
+        self.assertEqual(calls[0][1]["kind"], "send")
+
     def _call(self, operation: str, **args):
         return self._tool_call("ime_memory", operation, **args)
 

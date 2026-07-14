@@ -25,6 +25,7 @@ def agent_session_route(path: str) -> tuple[str, str]:
         "models",
         "model",
         "thinking",
+        "intercom",
     }:
         return "", ""
     return session_id, action
@@ -62,6 +63,16 @@ def agent_media_route(path: str) -> tuple[str, str]:
     if not media_id or action not in {"receipt", "content"}:
         return "", ""
     return media_id, action
+
+
+def agent_artifact_route(path: str) -> str:
+    prefix = "/api/agent/artifacts/"
+    if not path.startswith(prefix):
+        return ""
+    remainder = path[len(prefix) :].strip("/")
+    if not remainder or "/" in remainder:
+        return ""
+    return unquote(remainder).strip()
 
 
 def agent_room_route(path: str) -> tuple[str, str]:

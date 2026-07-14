@@ -40,6 +40,29 @@
     },
     "result": {"type": "object"},
     "error": {"type": "string", "maxLength": 500},
+    "artifact": {
+      "type": "object",
+      "required": ["schemaVersion", "artifactId", "ownerKind", "ownerId", "kind", "sha256"],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.agent-artifact-ref.v1"},
+        "artifactId": {"type": "string", "minLength": 1},
+        "ownerKind": {"type": "string", "const": "subagent_run"},
+        "ownerId": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "const": "lifecycle"},
+        "sha256": {"type": "string"}
+      }
+    },
+    "supervision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "reason", "requestedAtMs", "graceMs"],
+      "properties": {
+        "phase": {"type": "string", "enum": ["none", "soft", "hard", "forced"]},
+        "reason": {"type": "string", "maxLength": 240},
+        "requestedAtMs": {"type": ["integer", "null"], "minimum": 0},
+        "graceMs": {"type": "integer", "minimum": 0, "maximum": 30000}
+      }
+    },
     "createdAtMs": {"type": "integer", "minimum": 0},
     "startedAtMs": {"type": ["integer", "null"], "minimum": 0},
     "updatedAtMs": {"type": "integer", "minimum": 0},

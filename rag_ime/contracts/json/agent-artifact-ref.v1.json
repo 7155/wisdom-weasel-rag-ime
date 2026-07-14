@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-artifact-ref.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "artifactId", "ownerKind", "ownerId", "kind",
+    "mediaType", "appendOnly", "byteSize", "sha256", "recordCount",
+    "snapshotRevision", "snapshotSha256", "createdAtMs", "updatedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-artifact-ref.v1"},
+    "artifactId": {"type": "string", "minLength": 1},
+    "ownerKind": {"type": "string", "enum": ["subagent_run", "tool_run", "connector_run"]},
+    "ownerId": {"type": "string", "minLength": 1},
+    "kind": {"type": "string", "minLength": 1},
+    "mediaType": {"type": "string", "minLength": 1},
+    "appendOnly": {"type": "boolean"},
+    "byteSize": {"type": "integer", "minimum": 0},
+    "sha256": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"},
+    "recordCount": {"type": "integer", "minimum": 0},
+    "snapshotRevision": {"type": "integer", "minimum": 0},
+    "snapshotSha256": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0}
+  }
+}

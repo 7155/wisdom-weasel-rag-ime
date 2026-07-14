@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-room-intercom.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "roomId",
+    "kind",
+    "sourceParticipantId",
+    "targetParticipantId",
+    "sourceSessionId",
+    "targetSessionId",
+    "sourceGeneration",
+    "targetGeneration",
+    "clientMessageId",
+    "replyTo",
+    "status",
+    "content",
+    "acceptedTurnId",
+    "error",
+    "createdAtMs",
+    "updatedAtMs",
+    "deliveredAtMs",
+    "repliedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-room-intercom.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "roomId": {"type": "string", "minLength": 1},
+    "kind": {"type": "string", "enum": ["send", "ask", "reply"]},
+    "sourceParticipantId": {"type": "string", "minLength": 1},
+    "targetParticipantId": {"type": "string", "minLength": 1},
+    "sourceSessionId": {"type": "string", "minLength": 1},
+    "targetSessionId": {"type": "string", "minLength": 1},
+    "sourceGeneration": {"type": "integer", "minimum": 0},
+    "targetGeneration": {"type": "integer", "minimum": 0},
+    "clientMessageId": {"type": "string", "minLength": 1},
+    "replyTo": {"type": "string"},
+    "status": {
+      "type": "string",
+      "enum": ["queued", "delivering", "delivered", "replied", "failed", "stale", "cancelled"]
+    },
+    "content": {"type": "string", "minLength": 1},
+    "acceptedTurnId": {"type": "string"},
+    "error": {"type": "string"},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0},
+    "deliveredAtMs": {"type": ["integer", "null"]},
+    "repliedAtMs": {"type": ["integer", "null"]}
+  }
+}

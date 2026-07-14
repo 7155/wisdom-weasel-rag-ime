@@ -66,6 +66,9 @@ class _GatewayRuntimeFactory:
     def reconfigure(self, _config):
         return None
 
+    def apply_policy(self, _policy):
+        return None
+
 
 class AgentServiceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -127,6 +130,37 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
 
+    def test_kernel_configuration_drives_new_sessions_and_runtime_policy(self) -> None:
+        initial = self.service.configuration()["configuration"]
+        defaults = self.service.update_configuration(
+            {
+                "expectedRevision": initial["revision"],
+                "changes": {
+                    "sessionDefaults.roleId": "hermes-v1",
+                    "sessionDefaults.modelProfile": "deepseek/deepseek-chat",
+                },
+                "updatedBy": "mac-control",
+            }
+        )
+        session = self.service.create_session({"title": "默认角色"})["session"]
+        self.assertEqual(session["roleId"], "hermes-v1")
+        self.assertEqual(session["modelProfile"], "deepseek/deepseek-chat")
+
+        runtime = self.service.update_configuration(
+            {
+                "expectedRevision": defaults["configuration"]["revision"],
+                "changes": {
+                    "runtime.enabled": True,
+                    "runtime.idleTimeoutSeconds": 321,
+                },
+                "updatedBy": "phone-control",
+            }
+        )
+        self.assertTrue(runtime["ok"])
+        self.assertEqual(runtime["configuration"]["sync"]["state"], "synchronized")
+        self.assertTrue(self.service.runtime_status()["enabled"])
+        self.assertEqual(self.service.runtime_status()["idleTimeoutSeconds"], 321)
+
     def test_service_depends_on_runtime_driver_contract_not_pi_manager(self) -> None:
         factory = _GatewayRuntimeFactory(self.root)
         service = AgentService(
@@ -172,6 +206,47 @@ class AgentServiceTests(unittest.TestCase):
                     "workspaceRoots": [self.root.as_posix()],
                 }
             )
+
+    def test_room_intercom_delivery_uses_pi_transcript_without_memory_checkpoint(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "边界讨论",
+                "participants": [
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        source, target = room["participants"]
+        item = {
+            "id": "room-message:test",
+            "kind": "ask",
+            "sourceParticipantId": source["id"],
+            "targetParticipantId": target["id"],
+            "sourceSessionId": source["sessionId"],
+            "targetSessionId": target["sessionId"],
+            "replyTo": "",
+            "content": "控制面板是否只是配置客户端？",
+        }
+
+        with (
+            patch.object(self.service, "_room_target_idle", return_value=True),
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={"accepted": True, "turnId": "turn:intercom"},
+            ) as prompt,
+            patch.object(
+                self.service.memory_sources,
+                "checkpoint_user_message",
+            ) as checkpoint,
+        ):
+            accepted = self.service._deliver_room_intercom(item)
+
+        self.assertEqual(accepted["turnId"], "turn:intercom")
+        self.assertIn("房间协作消息", prompt.call_args.args[1])
+        self.assertIn("ime_agents.room_reply", prompt.call_args.args[1])
+        checkpoint.assert_not_called()
 
     def test_message_snapshot_returns_event_resume_cursor(self) -> None:
         session = self.service.create_session({"title": "恢复游标"})["session"]
@@ -238,6 +313,16 @@ class AgentServiceTests(unittest.TestCase):
             thinking = self.service.select_thinking_level(session_id, {"level": "high"})
         set_thinking.assert_called_once_with(session_id, level="high")
         self.assertEqual(thinking["thinkingLevel"], "high")
+
+        events, gap = self.service.events.replay(session_id)
+        self.assertFalse(gap)
+        configuration_events = [
+            event for event in events if event.event_type == "session_configuration_changed"
+        ]
+        self.assertEqual(
+            [event.payload["kind"] for event in configuration_events],
+            ["model", "thinking"],
+        )
 
     def test_session_lifecycle_probes_memory_due_without_running_the_organizer(self) -> None:
         session = self.service.create_session({"title": "生命周期"})["session"]

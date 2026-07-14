@@ -7,9 +7,10 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .agent_artifacts import AgentArtifactStore
 from .agent_events import AgentEventHub
 from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_driver import (
@@ -29,48 +30,29 @@ _TERMINAL_STATES = frozenset({"completed", "failed", "aborted", "timed_out"})
 _ACTIVE_STATES = frozenset({"queued", "running"})
 _MAX_PARALLEL_RUNS = 2
 _MAX_FORK_BYTES = 32 * 1024 * 1024
+_SOFT_BUDGET_RATIO = 0.8
+_DEFAULT_CANCELLATION_GRACE_MS = 2_000
 
 
 class AgentDelegationStore:
     """Durable lifecycle index for bounded task subagents."""
 
-    def __init__(self, db_path: str | Path):
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        artifacts: AgentArtifactStore | None = None,
+    ):
         self.db_path = Path(db_path)
+        self.artifacts = artifacts
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             apply_database_migrations(conn)
-            now = _timestamp(None)
-            interrupted = conn.execute(
-                "SELECT id FROM agent_subagent_runs WHERE state IN ('queued', 'running')"
-            ).fetchall()
-            for row in interrupted:
-                run_id = str(row["id"])
-                conn.execute(
-                    """
-                    UPDATE agent_subagent_runs
-                    SET state = 'failed', error = ?, updated_at_ms = ?, completed_at_ms = ?
-                    WHERE id = ?
-                    """,
-                    ("Sidecar restarted before the delegated task completed", now, now, run_id),
-                )
-                self._append_event_conn(
-                    conn,
-                    run_id=run_id,
-                    event_type="failed",
-                    payload={"reason": "sidecar_restarted"},
-                    created_at_ms=now,
-                )
-            batch_ids = {
-                str(row["batch_id"])
-                for row in conn.execute(
-                    "SELECT DISTINCT batch_id FROM agent_subagent_runs WHERE completed_at_ms = ?",
-                    (now,),
-                ).fetchall()
-            }
-            for batch_id in batch_ids:
-                self._refresh_batch_conn(conn, batch_id, updated_at_ms=now)
+        if self.artifacts is not None:
+            self.artifacts.initialize()
+            self._sync_all_artifacts()
 
     def create_batch(
         self,
@@ -92,6 +74,7 @@ class AgentDelegationStore:
             raise ValueError("delegation depth is outside the managed limit")
         now = _timestamp(created_at_ms)
         batch_id = f"subagent-batch:{uuid.uuid4()}"
+        run_ids: list[str] = []
         with self._connect() as conn:
             conn.execute(
                 """
@@ -113,6 +96,7 @@ class AgentDelegationStore:
             )
             for ordinal, value in enumerate(values):
                 run_id = f"subagent-run:{uuid.uuid4()}"
+                run_ids.append(run_id)
                 conn.execute(
                     """
                     INSERT INTO agent_subagent_runs(
@@ -146,6 +130,8 @@ class AgentDelegationStore:
                     payload={"batchId": batch_id, "ordinal": ordinal},
                     created_at_ms=now,
                 )
+        for run_id in run_ids:
+            self._sync_run_artifact(run_id)
         return self.get_batch(batch_id)
 
     def get_batch(self, batch_id: str) -> dict[str, object]:
@@ -159,7 +145,13 @@ class AgentDelegationStore:
                 "SELECT * FROM agent_subagent_runs WHERE batch_id = ? ORDER BY ordinal ASC",
                 (batch_id,),
             ).fetchall()
-        return _batch_payload(row, runs)
+        payload = _batch_payload(row, runs)
+        if self.artifacts is not None:
+            payload["runs"] = [self._decorate_run(run) for run in payload["runs"]]
+            for run in payload["runs"]:
+                validate_contract(run, "agent-subagent-run.v1.json")
+            validate_contract(payload, "agent-subagent-batch.v1.json")
+        return payload
 
     def get_run(self, run_id: str) -> dict[str, object]:
         with self._connect() as conn:
@@ -168,7 +160,7 @@ class AgentDelegationStore:
             ).fetchone()
         if row is None:
             raise KeyError(run_id)
-        return _run_payload(row)
+        return self._decorate_run(_run_payload(row))
 
     def run_for_child_session(self, session_id: str) -> dict[str, object] | None:
         with self._connect() as conn:
@@ -253,6 +245,7 @@ class AgentDelegationStore:
                 ).fetchone()[0]
             )
             self._refresh_batch_conn(conn, batch_id, updated_at_ms=now)
+        self._sync_run_artifact(run_id)
         return self.get_run(run_id)
 
     def update_usage(
@@ -289,6 +282,7 @@ class AgentDelegationStore:
                     payload={"summary": _bounded_text(summary, maximum=240)},
                     created_at_ms=now,
                 )
+        self._sync_run_artifact(run_id)
         return self.get_run(run_id)
 
     def finish_run(
@@ -344,10 +338,12 @@ class AgentDelegationStore:
                 created_at_ms=now,
             )
             self._refresh_batch_conn(conn, str(row["batch_id"]), updated_at_ms=now)
+        self._sync_run_artifact(run_id)
         return self.get_run(run_id)
 
     def request_abort(self, identifier: str, *, requested_at_ms: int | None = None) -> list[str]:
         now = _timestamp(requested_at_ms)
+        affected: list[str] = []
         with self._connect() as conn:
             batch = conn.execute(
                 "SELECT id FROM agent_subagent_batches WHERE id = ?", (identifier,)
@@ -377,6 +373,7 @@ class AgentDelegationStore:
             active: list[str] = []
             for row in rows:
                 run_id = str(row["id"])
+                affected.append(run_id)
                 state = str(row["state"])
                 if state == "queued":
                     conn.execute(
@@ -398,16 +395,283 @@ class AgentDelegationStore:
                 elif state == "running":
                     active.append(run_id)
             self._refresh_batch_conn(conn, batch_id, updated_at_ms=now)
+        for run_id in affected:
+            self._sync_run_artifact(run_id)
         return active
 
-    def append_budget_event(self, run_id: str, reason: str) -> None:
+    def append_budget_event(self, run_id: str, reason: str, *, phase: str) -> None:
+        if phase not in {"soft", "hard"}:
+            raise ValueError("delegated budget phase must be soft or hard")
+        now = _timestamp(None)
         with self._connect() as conn:
             self._append_event_conn(
                 conn,
                 run_id=run_id,
                 event_type="budget_exceeded",
-                payload={"reason": _bounded_text(reason, maximum=240)},
-                created_at_ms=_timestamp(None),
+                payload={
+                    "phase": phase,
+                    "reason": _bounded_text(reason, maximum=240),
+                },
+                created_at_ms=now,
+            )
+        self._sync_run_artifact(run_id)
+        self.checkpoint_supervision(
+            run_id,
+            phase=phase,
+            reason=reason,
+            requested_at_ms=now if phase == "hard" else None,
+        )
+
+    def checkpoint_runtime_event(
+        self,
+        run_id: str,
+        event: AgentEventEnvelope,
+        checkpoint: Mapping[str, object],
+    ) -> None:
+        if self.artifacts is None:
+            return
+        self.artifacts.append_records(
+            owner_kind="subagent_run",
+            owner_id=run_id,
+            records=[
+                {
+                    "recordId": f"runtime:{event.event_id}",
+                    "eventType": event.event_type,
+                    "createdAtMs": event.created_at_ms,
+                    "payload": _safe_runtime_artifact_payload(event),
+                }
+            ],
+        )
+        self.artifacts.checkpoint(
+            owner_kind="subagent_run",
+            owner_id=run_id,
+            runtime_checkpoint=checkpoint,
+            updated_at_ms=event.created_at_ms,
+        )
+
+    def checkpoint_supervision(
+        self,
+        run_id: str,
+        *,
+        phase: str,
+        reason: str,
+        requested_at_ms: int | None = None,
+        grace_ms: int | None = None,
+    ) -> None:
+        if self.artifacts is None:
+            return
+        now = _timestamp(None)
+        self.artifacts.append_records(
+            owner_kind="subagent_run",
+            owner_id=run_id,
+            records=[
+                {
+                    "recordId": f"supervision:{phase}:{now}",
+                    "eventType": f"supervision_{phase}",
+                    "createdAtMs": now,
+                    "payload": {
+                        "reason": _bounded_text(reason, maximum=240),
+                        "graceMs": max(0, int(grace_ms or 0)),
+                    },
+                }
+            ],
+        )
+        self.artifacts.checkpoint(
+            owner_kind="subagent_run",
+            owner_id=run_id,
+            supervision={
+                "phase": phase,
+                "reason": _bounded_text(reason, maximum=240),
+                "requestedAtMs": requested_at_ms,
+                "graceMs": max(0, int(grace_ms or 0)),
+            },
+            updated_at_ms=now,
+        )
+
+    def reconcile_interrupted_runs(self) -> list[str]:
+        """Recover safe queued work and project terminal artifact checkpoints."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, state FROM agent_subagent_runs WHERE state IN ('queued', 'running')"
+            ).fetchall()
+        relaunch: list[str] = []
+        for row in rows:
+            run_id = str(row["id"])
+            state = str(row["state"])
+            self._sync_run_artifact(run_id)
+            if state == "queued":
+                relaunch.append(run_id)
+                continue
+
+            snapshot = (
+                self.artifacts.snapshot(owner_kind="subagent_run", owner_id=run_id)
+                if self.artifacts is not None
+                else None
+            )
+            checkpoint = (
+                snapshot.get("runtimeCheckpoint")
+                if isinstance(snapshot, Mapping)
+                and isinstance(snapshot.get("runtimeCheckpoint"), Mapping)
+                else {}
+            )
+            terminal_state = str(checkpoint.get("terminalState") or "")
+            usage = checkpoint.get("usage") if isinstance(checkpoint.get("usage"), Mapping) else {}
+            last_message = (
+                dict(checkpoint["lastMessage"])
+                if isinstance(checkpoint.get("lastMessage"), Mapping)
+                else {}
+            )
+            if terminal_state == "completed" and last_message:
+                run = self.get_run(run_id)
+                result = {
+                    "summary": _message_summary(
+                        last_message,
+                        int(run["budget"]["maxOutputChars"]),
+                    ),
+                    "message": last_message,
+                    "childSessionId": run["childSessionId"],
+                    "templateId": run["templateId"],
+                    "recovered": True,
+                }
+                final_state = "completed"
+                error = ""
+            elif terminal_state in {"failed", "aborted", "timed_out"}:
+                result = {}
+                final_state = terminal_state
+                error = _bounded_text(
+                    checkpoint.get("error") or "Delegated runtime ended before projection",
+                    maximum=500,
+                )
+            else:
+                result = {}
+                final_state = "failed"
+                error = "Sidecar restarted before the delegated runtime reached a durable terminal checkpoint"
+
+            self.finish_run(
+                run_id,
+                state=final_state,
+                result=result,
+                error=error,
+                turn_count=max(0, int(usage.get("turnCount") or 0)),
+                tool_count=max(0, int(usage.get("toolCount") or 0)),
+                total_tokens=max(0, int(usage.get("totalTokens") or 0)),
+            )
+            if self.artifacts is not None:
+                now = _timestamp(None)
+                self.artifacts.append_records(
+                    owner_kind="subagent_run",
+                    owner_id=run_id,
+                    records=[
+                        {
+                            "recordId": f"reconcile:{now}",
+                            "eventType": "reconciled",
+                            "createdAtMs": now,
+                            "payload": {
+                                "fromState": "running",
+                                "toState": final_state,
+                                "terminalCheckpoint": bool(terminal_state),
+                            },
+                        }
+                    ],
+                )
+        return relaunch
+
+    def _decorate_run(self, run: Mapping[str, object]) -> dict[str, object]:
+        payload = dict(run)
+        if self.artifacts is None:
+            return payload
+        payload["artifact"] = self.artifacts.reference(
+            owner_kind="subagent_run",
+            owner_id=str(payload["id"]),
+        )
+        snapshot = self.artifacts.snapshot(
+            owner_kind="subagent_run",
+            owner_id=str(payload["id"]),
+        )
+        supervision = (
+            snapshot.get("supervision")
+            if isinstance(snapshot, Mapping)
+            and isinstance(snapshot.get("supervision"), Mapping)
+            else {}
+        )
+        payload["supervision"] = {
+            "phase": str(supervision.get("phase") or "none"),
+            "reason": str(supervision.get("reason") or ""),
+            "requestedAtMs": supervision.get("requestedAtMs"),
+            "graceMs": max(0, int(supervision.get("graceMs") or 0)),
+        }
+        return payload
+
+    def _sync_all_artifacts(self) -> None:
+        if self.artifacts is None:
+            return
+        with self._connect() as conn:
+            run_ids = [
+                str(row[0])
+                for row in conn.execute(
+                    """
+                    SELECT r.id
+                    FROM agent_subagent_runs r
+                    LEFT JOIN agent_artifacts a
+                      ON a.owner_kind = 'subagent_run'
+                     AND a.owner_id = r.id
+                     AND a.artifact_kind = 'lifecycle'
+                    WHERE a.id IS NULL
+                       OR a.updated_at_ms < r.updated_at_ms
+                       OR r.state IN ('queued', 'running')
+                    ORDER BY r.created_at_ms
+                    """
+                ).fetchall()
+            ]
+        for run_id in run_ids:
+            self._sync_run_artifact(run_id)
+
+    def _sync_run_artifact(self, run_id: str) -> None:
+        if self.artifacts is None:
+            return
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_subagent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            event_rows = conn.execute(
+                "SELECT * FROM agent_subagent_events WHERE run_id = ? ORDER BY sequence",
+                (run_id,),
+            ).fetchall()
+        projection = _run_payload(row)
+        records = [
+            {
+                "recordId": str(event["event_id"]),
+                "sequence": int(event["sequence"]),
+                "eventType": str(event["event_type"]),
+                "createdAtMs": int(event["created_at_ms"]),
+                "payload": _json_mapping(event["payload_json"]),
+            }
+            for event in event_rows
+        ]
+        self.artifacts.append_records(
+            owner_kind="subagent_run",
+            owner_id=run_id,
+            records=records,
+        )
+        snapshot = self.artifacts.snapshot(
+            owner_kind="subagent_run",
+            owner_id=run_id,
+        )
+        previous_projection = (
+            snapshot.get("projection")
+            if isinstance(snapshot, Mapping)
+            and isinstance(snapshot.get("projection"), Mapping)
+            else None
+        )
+        if previous_projection != projection:
+            self.artifacts.checkpoint(
+                owner_kind="subagent_run",
+                owner_id=run_id,
+                projection=projection,
+                updated_at_ms=int(projection["updatedAtMs"]),
             )
 
     def owns_session(self, session_id: str) -> bool:
@@ -493,6 +757,17 @@ class AgentDelegationStore:
             conn.close()
 
 
+@dataclass
+class _ActiveDelegatedRun:
+    runtime: AgentRuntimeDriver
+    child_session_id: str
+    terminal: threading.Event
+    forced: threading.Event
+    lock: threading.RLock
+    cancellation_state: str = ""
+    cancellation_reason: str = ""
+
+
 class AgentDelegationCoordinator:
     """Product-owned adapter for fixed-catalog Pi child sessions."""
 
@@ -507,8 +782,11 @@ class AgentDelegationCoordinator:
         runtime_factory: Callable[..., PiRuntimeManager] | None = None,
         runtime_driver_factory: RuntimeDriverFactory | None = None,
         tool_gateway_token: str = "",
+        artifact_root: str | Path | None = None,
+        cancellation_grace_ms: int = _DEFAULT_CANCELLATION_GRACE_MS,
     ) -> None:
-        self.store = AgentDelegationStore(db_path)
+        self.artifacts = AgentArtifactStore(db_path, root=artifact_root)
+        self.store = AgentDelegationStore(db_path, artifacts=self.artifacts)
         self.store.initialize()
         self.runtime_config = runtime_config
         self.sessions = sessions
@@ -521,10 +799,15 @@ class AgentDelegationCoordinator:
         self._tool_gateway_token = str(
             tool_gateway_token or runtime_config.tool_gateway_token
         )
+        self._cancellation_grace_ms = max(10, min(int(cancellation_grace_ms), 30_000))
         self._lock = threading.RLock()
-        self._active_runtimes: dict[str, AgentRuntimeDriver] = {}
+        self._active_runs: dict[str, _ActiveDelegatedRun] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._closed = False
+        recoverable = self.store.reconcile_interrupted_runs()
+        if self.runtime_config.enabled:
+            for run_id in recoverable:
+                self._start_run_thread(run_id)
 
     def catalog(self) -> dict[str, object]:
         return {
@@ -639,15 +922,7 @@ class AgentDelegationCoordinator:
                 raise
 
             for run in batch["runs"]:
-                run_id = str(run["id"])
-                thread = threading.Thread(
-                    target=self._run_task,
-                    args=(run_id,),
-                    name=f"rag-ime-{run_id[-8:]}",
-                    daemon=True,
-                )
-                self._threads[run_id] = thread
-                thread.start()
+                self._start_run_thread(str(run["id"]))
 
         wait = payload.get("wait") is not False
         if wait:
@@ -683,6 +958,22 @@ class AgentDelegationCoordinator:
             "batch": batch,
         }
 
+    def inspect_artifact(
+        self,
+        parent_session_id: str,
+        artifact_id: str,
+        *,
+        limit: int = 100,
+    ) -> dict[str, object]:
+        self.sessions.get(parent_session_id)
+        reference = self.artifacts.reference_by_id(artifact_id)
+        if str(reference.get("ownerKind") or "") != "subagent_run":
+            raise ValueError("artifact is not a delegated run lifecycle")
+        run = self.store.get_run(str(reference.get("ownerId") or ""))
+        batch = self.store.get_batch(str(run["batchId"]))
+        _assert_batch_owner(batch, parent_session_id)
+        return self.artifacts.inspect(artifact_id, limit=limit)
+
     def abort(self, parent_session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         identifier = str(payload.get("runId") or payload.get("batchId") or "").strip()
         if not identifier:
@@ -695,7 +986,7 @@ class AgentDelegationCoordinator:
         _assert_batch_owner(batch, parent_session_id)
         active = self.store.request_abort(identifier)
         for run_id in active:
-            self._abort_runtime(run_id)
+            self._request_cancel(run_id, state="aborted", reason="Stopped by user")
         return {
             "schemaVersion": "rag-ime.agent-delegation-abort.v1",
             "ok": True,
@@ -717,18 +1008,32 @@ class AgentDelegationCoordinator:
         self.store.request_abort(batch_id)
         for run in batch["runs"]:
             if str(run["state"]) in _ACTIVE_STATES:
-                self._abort_runtime(str(run["id"]))
+                self._request_cancel(
+                    str(run["id"]),
+                    state="timed_out",
+                    reason="Delegation wait deadline exceeded",
+                )
         return self.store.get_batch(batch_id)
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
-            runtimes = list(self._active_runtimes.values())
-        for runtime in runtimes:
+            active_runs = list(self._active_runs.values())
+            threads = list(self._threads.values())
+        for active in active_runs:
             try:
-                runtime.stop()
+                active.runtime.stop()
             except Exception:
                 pass
+            active.forced.set()
+        deadline = time.monotonic() + self._cancellation_grace_ms / 1000.0 + 1.0
+        for thread in threads:
+            if thread is threading.current_thread():
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(timeout=remaining)
 
     def reconfigure(self, config: PiRuntimeConfig) -> None:
         self.close()
@@ -737,6 +1042,9 @@ class AgentDelegationCoordinator:
             self._runtime_driver_factory.reconfigure(config)
             self._tool_gateway_token = config.tool_gateway_token
             self._closed = False
+        if config.enabled:
+            for run_id in self.store.reconcile_interrupted_runs():
+                self._start_run_thread(run_id)
 
     def refresh_runtime_factory(self) -> None:
         """Restart delegated-driver ownership after Kernel policy changes."""
@@ -748,16 +1056,38 @@ class AgentDelegationCoordinator:
                 self.runtime_config = factory_config
                 self._tool_gateway_token = factory_config.tool_gateway_token
             self._closed = False
+        if self.runtime_config.enabled:
+            for run_id in self.store.reconcile_interrupted_runs():
+                self._start_run_thread(run_id)
 
     def owns_session(self, session_id: str) -> bool:
         return self.store.owns_session(session_id)
 
+    def _start_run_thread(self, run_id: str) -> None:
+        with self._lock:
+            if self._closed or run_id in self._threads:
+                return
+            thread = threading.Thread(
+                target=self._run_task,
+                args=(run_id,),
+                name=f"rag-ime-{run_id[-8:]}",
+                daemon=True,
+            )
+            self._threads[run_id] = thread
+            thread.start()
+
     def _run_task(self, run_id: str) -> None:
-        run = self.store.start_run(run_id)
+        try:
+            run = self.store.start_run(run_id)
+        except ValueError:
+            with self._lock:
+                self._threads.pop(run_id, None)
+            return
         batch = self.store.get_batch(str(run["batchId"]))
         child_session_id = str(run["childSessionId"])
         parent_session_id = str(batch["parentSessionId"])
         terminal = threading.Event()
+        forced = threading.Event()
         terminal_error = ""
         completed = False
         budget_reason = ""
@@ -767,22 +1097,71 @@ class AgentDelegationCoordinator:
         output_chars = 0
         tool_ids: set[str] = set()
         update_lock = threading.RLock()
-        abort_scheduled = False
+        soft_reasons: set[str] = set()
+        hard_scheduled = False
+        active_run: _ActiveDelegatedRun | None = None
 
-        def schedule_budget_abort(reason: str) -> None:
-            nonlocal budget_reason, abort_scheduled
+        def usage_checkpoint() -> dict[str, object]:
+            return {
+                "usage": {
+                    "turnCount": turn_count,
+                    "toolCount": len(tool_ids),
+                    "totalTokens": total_tokens,
+                    "outputChars": output_chars,
+                },
+                "lastMessage": last_message,
+            }
+
+        def persist_runtime_event(
+            event: AgentEventEnvelope,
+            *,
+            terminal_state: str = "",
+            error: str = "",
+        ) -> None:
+            checkpoint = usage_checkpoint()
+            if terminal_state:
+                checkpoint.update(
+                    {
+                        "terminalState": terminal_state,
+                        "error": _bounded_text(error, maximum=500),
+                        "terminalAtMs": event.created_at_ms,
+                    }
+                )
+            try:
+                self.store.checkpoint_runtime_event(run_id, event, checkpoint)
+            except Exception:
+                # The primary DB projection still finishes the run. Startup
+                # reconciliation will fail this run closed if the artifact is unusable.
+                pass
+
+        def schedule_hard_budget(reason: str, event: AgentEventEnvelope) -> None:
+            nonlocal budget_reason, hard_scheduled
             with update_lock:
-                if abort_scheduled:
+                if hard_scheduled:
                     return
                 budget_reason = reason
-                abort_scheduled = True
-                self.store.append_budget_event(run_id, reason)
-            threading.Thread(
-                target=self._abort_runtime,
-                args=(run_id,),
-                name=f"rag-ime-budget-stop-{run_id[-8:]}",
-                daemon=True,
-            ).start()
+                hard_scheduled = True
+            self.store.append_budget_event(run_id, reason, phase="hard")
+            persist_runtime_event(event)
+            self._request_cancel(run_id, state="failed", reason=reason)
+
+        def check_usage_budget(event: AgentEventEnvelope) -> None:
+            budget = run["budget"]
+            checks = (
+                (turn_count, int(budget["maxTurns"]), "turn budget exceeded"),
+                (len(tool_ids), int(budget["maxToolCalls"]), "tool-call budget exceeded"),
+                (total_tokens, int(budget["maxTotalTokens"]), "token budget exceeded"),
+                (output_chars, int(budget["maxOutputChars"]), "output budget exceeded"),
+            )
+            for current, maximum, reason in checks:
+                if current > maximum:
+                    schedule_hard_budget(reason, event)
+                    return
+                threshold = max(1, int(maximum * _SOFT_BUDGET_RATIO + 0.999))
+                if maximum > 0 and current >= threshold and reason not in soft_reasons:
+                    soft_reasons.add(reason)
+                    self.store.append_budget_event(run_id, reason, phase="soft")
+                    persist_runtime_event(event)
 
         def observe(event: AgentEventEnvelope) -> None:
             nonlocal terminal_error, completed, last_message
@@ -799,6 +1178,7 @@ class AgentDelegationCoordinator:
                         or event.event_id
                     )
                     tool_ids.add(identity)
+                    persist_runtime_event(event)
                 elif event.event_type == "message_completed":
                     message = event.payload.get("message")
                     if isinstance(message, Mapping) and str(message.get("role") or "") == "assistant":
@@ -807,25 +1187,29 @@ class AgentDelegationCoordinator:
                         usage = event.payload.get("usage")
                         if isinstance(usage, Mapping):
                             total_tokens += max(0, int(usage.get("totalTokens") or 0))
+                        persist_runtime_event(event)
                 elif event.event_type == "turn_completed":
                     completed = True
+                    persist_runtime_event(event, terminal_state="completed")
                     terminal.set()
                 elif event.event_type == "turn_failed":
                     terminal_error = _bounded_text(
                         event.payload.get("error") or "delegated Pi turn failed",
                         maximum=500,
                     )
+                    cancellation_state = ""
+                    cancellation_reason = ""
+                    if active_run is not None:
+                        with active_run.lock:
+                            cancellation_state = active_run.cancellation_state
+                            cancellation_reason = active_run.cancellation_reason
+                    persist_runtime_event(
+                        event,
+                        terminal_state=cancellation_state or "failed",
+                        error=cancellation_reason or terminal_error,
+                    )
                     terminal.set()
-
-                budget = run["budget"]
-                if turn_count > int(budget["maxTurns"]):
-                    schedule_budget_abort("turn budget exceeded")
-                elif len(tool_ids) > int(budget["maxToolCalls"]):
-                    schedule_budget_abort("tool-call budget exceeded")
-                elif total_tokens > int(budget["maxTotalTokens"]):
-                    schedule_budget_abort("token budget exceeded")
-                elif output_chars > int(budget["maxOutputChars"]):
-                    schedule_budget_abort("output budget exceeded")
+                check_usage_budget(event)
 
         remove_observer = self.events.add_observer(observe)
         context = {
@@ -853,8 +1237,15 @@ class AgentDelegationCoordinator:
                 purpose="delegated",
                 session_context_provider=lambda _session: context,
             )
+        active_run = _ActiveDelegatedRun(
+            runtime=runtime,
+            child_session_id=child_session_id,
+            terminal=terminal,
+            forced=forced,
+            lock=threading.RLock(),
+        )
         with self._lock:
-            self._active_runtimes[run_id] = runtime
+            self._active_runs[run_id] = active_run
         self._publish_parent_progress(parent_session_id, batch, run, "子 Agent 已开始")
         state = "failed"
         error = ""
@@ -866,15 +1257,36 @@ class AgentDelegationCoordinator:
             else:
                 runtime.prompt(child_session_id, _subagent_prompt(run, batch))
                 duration_seconds = int(run["budget"]["maxDurationMs"]) / 1000.0
-                if not terminal.wait(duration_seconds):
-                    budget_reason = "duration budget exceeded"
-                    self.store.append_budget_event(run_id, budget_reason)
-                    try:
-                        runtime.abort(child_session_id)
-                    except Exception:
-                        runtime.stop()
-                    state = "timed_out"
-                    error = budget_reason
+                started = time.monotonic()
+                soft_deadline = started + duration_seconds * _SOFT_BUDGET_RATIO
+                hard_deadline = started + duration_seconds
+                duration_soft_emitted = False
+                duration_hard_emitted = False
+                while not terminal.wait(0.025) and not forced.is_set():
+                    now = time.monotonic()
+                    if not duration_soft_emitted and now >= soft_deadline:
+                        duration_soft_emitted = True
+                        self.store.append_budget_event(
+                            run_id,
+                            "duration budget approaching",
+                            phase="soft",
+                        )
+                    if not duration_hard_emitted and now >= hard_deadline:
+                        duration_hard_emitted = True
+                        budget_reason = "duration budget exceeded"
+                        self.store.append_budget_event(run_id, budget_reason, phase="hard")
+                        self._request_cancel(
+                            run_id,
+                            state="timed_out",
+                            reason=budget_reason,
+                        )
+
+                with active_run.lock:
+                    cancellation_state = active_run.cancellation_state
+                    cancellation_reason = active_run.cancellation_reason
+                if cancellation_state:
+                    state = cancellation_state
+                    error = cancellation_reason
                 elif self.store.get_batch(str(batch["id"]))["abortRequested"]:
                     state = "aborted"
                     error = "Stopped by user"
@@ -904,43 +1316,79 @@ class AgentDelegationCoordinator:
                 state = "aborted"
         finally:
             remove_observer()
+            terminal.set()
             try:
                 runtime.stop()
             except Exception:
                 pass
             with self._lock:
-                self._active_runtimes.pop(run_id, None)
+                self._active_runs.pop(run_id, None)
+        try:
+            final = self.store.finish_run(
+                run_id,
+                state=state,
+                result=result,
+                error=error,
+                turn_count=turn_count,
+                tool_count=len(tool_ids),
+                total_tokens=total_tokens,
+            )
+            self._publish_parent_progress(
+                parent_session_id,
+                self.store.get_batch(str(batch["id"])),
+                final,
+                "子 Agent 已完成" if state == "completed" else "子 Agent 已停止",
+            )
+        finally:
+            with self._lock:
                 self._threads.pop(run_id, None)
 
-        final = self.store.finish_run(
-            run_id,
-            state=state,
-            result=result,
-            error=error,
-            turn_count=turn_count,
-            tool_count=len(tool_ids),
-            total_tokens=total_tokens,
-        )
-        self._publish_parent_progress(
-            parent_session_id,
-            self.store.get_batch(str(batch["id"])),
-            final,
-            "子 Agent 已完成" if state == "completed" else "子 Agent 已停止",
-        )
-
-    def _abort_runtime(self, run_id: str) -> None:
+    def _request_cancel(self, run_id: str, *, state: str, reason: str) -> None:
+        if state not in {"failed", "aborted", "timed_out"}:
+            raise ValueError("delegated cancellation terminal state is invalid")
         with self._lock:
-            runtime = self._active_runtimes.get(run_id)
-        if runtime is None:
+            active = self._active_runs.get(run_id)
+        if active is None:
             return
-        run = self.store.get_run(run_id)
+        with active.lock:
+            if active.cancellation_state:
+                return
+            active.cancellation_state = state
+            active.cancellation_reason = _bounded_text(reason, maximum=240)
+        requested_at_ms = _timestamp(None)
+        self.store.checkpoint_supervision(
+            run_id,
+            phase="hard",
+            reason=reason,
+            requested_at_ms=requested_at_ms,
+            grace_ms=self._cancellation_grace_ms,
+        )
+        threading.Thread(
+            target=self._cancel_active_run,
+            args=(run_id, active),
+            name=f"rag-ime-cancel-{run_id[-8:]}",
+            daemon=True,
+        ).start()
+
+    def _cancel_active_run(self, run_id: str, active: _ActiveDelegatedRun) -> None:
         try:
-            runtime.abort(str(run["childSessionId"]))
+            active.runtime.abort(active.child_session_id)
         except Exception:
-            try:
-                runtime.stop()
-            except Exception:
-                pass
+            pass
+        if active.terminal.wait(self._cancellation_grace_ms / 1000.0):
+            return
+        try:
+            active.runtime.stop()
+        except Exception:
+            pass
+        active.forced.set()
+        self.store.checkpoint_supervision(
+            run_id,
+            phase="forced",
+            reason=active.cancellation_reason or "Delegated runtime ignored cancellation",
+            requested_at_ms=_timestamp(None),
+            grace_ms=self._cancellation_grace_ms,
+        )
 
     def _publish_parent_progress(
         self,
@@ -1165,6 +1613,44 @@ def _message_summary(message: Mapping[str, object], maximum: int) -> str:
         if text:
             parts.append(text)
     return "\n\n".join(parts)[:maximum]
+
+
+def _safe_runtime_artifact_payload(event: AgentEventEnvelope) -> dict[str, object]:
+    if event.event_type == "text_delta":
+        return {"characterCount": len(str(event.payload.get("delta") or ""))}
+    if event.event_type == "tool_started":
+        return {
+            "toolName": str(event.payload.get("toolName") or "")[:120],
+            "toolCallId": str(
+                event.payload.get("toolCallId") or event.payload.get("callId") or ""
+            )[:160],
+        }
+    if event.event_type == "message_completed":
+        message = event.payload.get("message")
+        usage = event.payload.get("usage")
+        return {
+            "messageId": str(message.get("id") or "")[:160]
+            if isinstance(message, Mapping)
+            else "",
+            "role": str(message.get("role") or "")[:40]
+            if isinstance(message, Mapping)
+            else "",
+            "usage": dict(usage) if isinstance(usage, Mapping) else {},
+        }
+    if event.event_type in {"turn_completed", "turn_failed"}:
+        return {
+            "status": str(event.payload.get("status") or "")[:80],
+            "error": _bounded_text(event.payload.get("error"), maximum=240),
+        }
+    return {}
+
+
+def _json_mapping(value: object) -> dict[str, object]:
+    try:
+        payload = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(payload) if isinstance(payload, Mapping) else {}
 
 
 def _assert_batch_owner(batch: Mapping[str, object], parent_session_id: str) -> None:

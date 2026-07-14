@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-artifact-inspection.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "artifact",
+    "records",
+    "totalRecords",
+    "returnedRecords",
+    "truncated",
+    "limits"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "rag-ime.agent-artifact-inspection.v1"
+    },
+    "artifact": {"type": "object"},
+    "records": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"type": "object"}
+    },
+    "totalRecords": {"type": "integer", "minimum": 0},
+    "returnedRecords": {"type": "integer", "minimum": 0, "maximum": 500},
+    "truncated": {"type": "boolean"},
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestedRecords", "maxRecords", "maxOutputBytes"],
+      "properties": {
+        "requestedRecords": {"type": "integer", "minimum": 1, "maximum": 500},
+        "maxRecords": {"type": "integer", "const": 500},
+        "maxOutputBytes": {"type": "integer", "const": 262144}
+      }
+    }
+  }
+}
