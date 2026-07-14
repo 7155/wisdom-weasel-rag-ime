@@ -9,7 +9,7 @@ CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 ACTION="${1:-build}"
-CONTROL_UI="${RAG_IME_CONTROL_UI:-native-legacy}"
+CONTROL_UI="${RAG_IME_CONTROL_UI:-web}"
 
 case "$CONTROL_UI" in
   native-legacy)
@@ -21,7 +21,7 @@ case "$CONTROL_UI" in
     exec "$ROOT/scripts/build_control_center_web_host.sh" build-release
     ;;
   *)
-    echo "RAG_IME_CONTROL_UI must be native-legacy or web" >&2
+    echo "RAG_IME_CONTROL_UI must be web (default) or native-legacy (rollback only)" >&2
     exit 2
     ;;
 esac

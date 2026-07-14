@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="${RAG_IME_CONTROL_APP:-$ROOT/build/RagImeControl.app}"
 BINARY="$APP/Contents/MacOS/RagImeControl"
-CONTROL_UI="${RAG_IME_CONTROL_UI:-native-legacy}"
+CONTROL_UI="${RAG_IME_CONTROL_UI:-web}"
 if [[ "$CONTROL_UI" == "web" ]]; then
   DEFAULT_FOOTPRINT_LIMIT_MB=250
   DEFAULT_RSS_LIMIT_MB=350
@@ -31,7 +31,7 @@ cleanup() {
 trap cleanup EXIT
 
 [[ "$CONTROL_UI" == "native-legacy" || "$CONTROL_UI" == "web" ]] || {
-  echo "RAG_IME_CONTROL_UI must be native-legacy or web" >&2
+  echo "RAG_IME_CONTROL_UI must be web (default) or native-legacy (rollback only)" >&2
   exit 2
 }
 
@@ -49,6 +49,8 @@ if [[ "$CONTROL_UI" == "web" ]]; then
   [[ ! -d "$WEB_RESOURCES/node_modules" ]]
   grep -q 'Content-Security-Policy' "$WEB_RESOURCES/index.html"
   ! grep -R -E -q 'unsafe-eval|new Function|require\("|eval\(' "$WEB_RESOURCES"
+  "$ROOT/scripts/check_control_center_web_dist.sh" \
+    "$WEB_RESOURCES" native production >/dev/null
   python3 - "$MARKER" <<'PY'
 import json
 import sys
@@ -59,6 +61,12 @@ if marker.get("bundleId") != "com.rag-ime.control":
     raise SystemExit("web control bundle marker has the wrong bundle id")
 if marker.get("ui") != "control-center-web" or marker.get("channel") != "release":
     raise SystemExit("web control bundle marker is not a release build")
+if marker.get("frontendTransport") != "native":
+    raise SystemExit("web control bundle marker is not native-only")
+if marker.get("frontendBuildChannel") != "production":
+    raise SystemExit("web control bundle marker is not a production frontend build")
+if marker.get("forbiddenTransportModulesExcluded") is not True:
+    raise SystemExit("web control bundle marker did not exclude mock/http transport modules")
 PY
 else
   ! otool -L "$BINARY" | grep -Eq 'WebKit|JavaScriptCore'
@@ -66,7 +74,7 @@ else
 fi
 
 if [[ "${RAG_IME_CONTROL_SKIP_LIVE:-0}" == "1" ]]; then
-  echo "control center static footprint gate: PASS"
+  echo "control center $CONTROL_UI static footprint gate: PASS"
   exit 0
 fi
 
@@ -110,4 +118,4 @@ print(f"physicalFootprint={physical_mb:.1f}MB RSS={rss_mb:.1f}MB idleCPU={cpu:.2
 PY
 cleanup
 pid=""
-echo "control center live footprint gate: PASS"
+echo "control center $CONTROL_UI live footprint gate: PASS"

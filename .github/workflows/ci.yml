@@ -54,6 +54,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Enable pinned pnpm for the Web control build
+        run: corepack enable && corepack prepare pnpm@11.9.0 --activate
       - name: Run full macOS unit suite
         env:
           PYTHONWARNINGS: "error::ResourceWarning"

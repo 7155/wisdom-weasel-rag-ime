@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -10,6 +11,34 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = ROOT / "macos" / "RagImeControlWebHost"
+DIST_CHECK = ROOT / "scripts" / "check_control_center_web_dist.sh"
+
+
+def _write_native_dist(
+    target: Path,
+    *,
+    marker_updates: dict[str, object] | None = None,
+    javascript: str = "console.log('native-only');\n",
+) -> None:
+    (target / "assets").mkdir(parents=True)
+    (target / "index.html").write_text(
+        '<meta http-equiv="Content-Security-Policy" content="connect-src \'self\';">\n',
+        encoding="utf-8",
+    )
+    (target / "manifest.webmanifest").write_text("{}\n", encoding="utf-8")
+    (target / "assets" / "index.js").write_text(javascript, encoding="utf-8")
+    marker: dict[str, object] = {
+        "schemaVersion": "rag-ime.control-web-build.v1",
+        "buildChannel": "production",
+        "transport": "native",
+        "nativeOnly": True,
+        "forbiddenTransportModulesExcluded": True,
+    }
+    marker.update(marker_updates or {})
+    (target / "rag-ime-control-web-build.json").write_text(
+        json.dumps(marker) + "\n",
+        encoding="utf-8",
+    )
 
 
 class ControlCenterWebHostTests(unittest.TestCase):
@@ -91,6 +120,62 @@ class ControlCenterWebHostTests(unittest.TestCase):
         self.assertIn('INSTALL_DEST="$HOME/Applications/RagImeControl.app"', script)
         self.assertIn('if [[ "$ACTION" == "install-preview" || "$ACTION" == "install-release" ]]', script)
         self.assertIn("must not enter the app bundle", script)
+        self.assertIn("RAG_IME_CONTROL_TRANSPORT=native", script)
+        self.assertIn('FRONTEND_CHANNEL="production"', script)
+        self.assertIn("check_control_center_web_dist.sh", script)
+        self.assertIn('"frontendTransport": "native"', script)
+
+    def test_native_dist_guard_accepts_only_production_native_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-native-dist-") as temporary:
+            dist = Path(temporary)
+            _write_native_dist(dist)
+            result = subprocess.run(
+                ["bash", str(DIST_CHECK), str(dist), "native", "production"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("production/native", result.stdout)
+
+    def test_native_dist_guard_rejects_mock_http_or_preview_artifacts(self) -> None:
+        cases = (
+            ({"transport": "mock"}, "console.log('native-only');\n"),
+            ({"buildChannel": "preview"}, "console.log('native-only');\n"),
+            ({}, "throw new Error('No mock response registered for system.health');\n"),
+            ({}, "const endpoint = 'http://127.0.0.1:8766';\n"),
+        )
+        for marker_updates, javascript in cases:
+            with self.subTest(marker_updates=marker_updates, javascript=javascript):
+                with tempfile.TemporaryDirectory(prefix="rag-ime-rejected-dist-") as temporary:
+                    dist = Path(temporary)
+                    _write_native_dist(
+                        dist,
+                        marker_updates=marker_updates,
+                        javascript=javascript,
+                    )
+                    result = subprocess.run(
+                        ["bash", str(DIST_CHECK), str(dist), "native", "production"],
+                        cwd=ROOT,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+
+    def test_production_frontend_uses_a_native_only_entry(self) -> None:
+        vite = (ROOT / "control-center-web" / "vite.config.ts").read_text(encoding="utf-8")
+        native_entry = (
+            ROOT / "control-center-web" / "src" / "app" / "control-transport.native.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Production control-center builds require", vite)
+        self.assertIn("control-transport.native.tsx", vite)
+        self.assertIn("/src/platform/http-transport.ts", vite)
+        self.assertIn("/src/test/mock-transport.ts", vite)
+        self.assertIn("forbiddenTransportModulesExcluded", vite)
+        self.assertIn("return new NativeControlTransport()", native_entry)
+        self.assertNotIn("HttpControlTransport", native_entry)
+        self.assertNotIn("MockControlTransport", native_entry)
 
 
 if __name__ == "__main__":

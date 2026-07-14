@@ -14,6 +14,7 @@ case "$ACTION" in
     DISPLAY_NAME="智鼬 Web Preview"
     INSTALL_DEST="$HOME/Applications/RagImeControlWebPreview.app"
     CHANNEL="preview"
+    FRONTEND_CHANNEL="preview"
     ;;
   build-release|install-release)
     APP="$ROOT/build/RagImeControl.app"
@@ -22,6 +23,7 @@ case "$ACTION" in
     DISPLAY_NAME="智鼬"
     INSTALL_DEST="$HOME/Applications/RagImeControl.app"
     CHANNEL="release"
+    FRONTEND_CHANNEL="production"
     ;;
   *)
     echo "usage: $0 [build|install-preview|build-release|install-release]" >&2
@@ -34,13 +36,17 @@ MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
 if [[ "${RAG_IME_SKIP_WEB_BUILD:-0}" != "1" ]]; then
-  "$ROOT/scripts/build_control_center_web.sh" >/dev/null
+  RAG_IME_CONTROL_TRANSPORT=native \
+  RAG_IME_CONTROL_BUILD_CHANNEL="$FRONTEND_CHANNEL" \
+    "$ROOT/scripts/build_control_center_web.sh" >/dev/null
 fi
 
 [[ -f "$WEB/dist/index.html" ]] || {
   echo "missing control-center-web/dist/index.html" >&2
   exit 1
 }
+"$ROOT/scripts/check_control_center_web_dist.sh" \
+  "$WEB/dist" native "$FRONTEND_CHANNEL" >/dev/null
 
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES/control-center-web"
@@ -66,7 +72,7 @@ xcrun swiftc \
   "${swift_files[@]}" \
   -o "$MACOS/$EXECUTABLE"
 
-python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$ROOT" "$BUNDLE_ID" "$CHANNEL" <<'PY'
+python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$ROOT" "$BUNDLE_ID" "$CHANNEL" "$FRONTEND_CHANNEL" <<'PY'
 import json
 import subprocess
 import sys
@@ -76,6 +82,7 @@ target = Path(sys.argv[1])
 root = Path(sys.argv[2])
 bundle_id = sys.argv[3]
 channel = sys.argv[4]
+frontend_channel = sys.argv[5]
 commit = subprocess.run(
     ["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True
 ).stdout.strip()
@@ -84,6 +91,9 @@ target.write_text(json.dumps({
     "gitCommit": commit,
     "ui": "control-center-web",
     "channel": channel,
+    "frontendTransport": "native",
+    "frontendBuildChannel": frontend_channel,
+    "forbiddenTransportModulesExcluded": True,
     "nativeBridgeVersion": 1,
 }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
@@ -111,6 +121,8 @@ if grep -R -q "unsafe-eval" "$RESOURCES/control-center-web"; then
   echo "control-center bundle CSP must not allow unsafe-eval" >&2
   exit 1
 fi
+"$ROOT/scripts/check_control_center_web_dist.sh" \
+  "$RESOURCES/control-center-web" native "$FRONTEND_CHANNEL" >/dev/null
 
 if [[ "$ACTION" == "install-preview" || "$ACTION" == "install-release" ]]; then
   DEST="$INSTALL_DEST"
