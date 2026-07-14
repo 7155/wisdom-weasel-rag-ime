@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+HOST = ROOT / "macos" / "RagImeControlWebHost"
+
+
+class ControlCenterWebHostTests(unittest.TestCase):
+    def test_native_route_policy_executes_fail_closed_security_cases(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-native-route-") as temporary:
+            output = Path(temporary) / "native-route-tests"
+            environment = os.environ.copy()
+            environment["CLANG_MODULE_CACHE_PATH"] = str(Path(temporary) / "clang-cache")
+            environment["SWIFT_MODULECACHE_PATH"] = str(Path(temporary) / "swift-cache")
+            subprocess.run(
+                [
+                    "xcrun",
+                    "swiftc",
+                    "-swift-version",
+                    "5",
+                    "-target",
+                    "arm64-apple-macosx13.0",
+                    str(HOST / "NativeRoutePolicy.swift"),
+                    str(ROOT / "tests" / "swift" / "NativeRoutePolicyTests.swift"),
+                    "-o",
+                    str(output),
+                ],
+                check=True,
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            result = subprocess.run(
+                [str(output)],
+                check=True,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("NativeRoutePolicyTests: OK", result.stdout)
+
+    def test_bridge_and_asset_loader_are_narrow(self) -> None:
+        bridge = (HOST / "NativeBridge.swift").read_text(encoding="utf-8")
+        assets = (HOST / "ControlCenterAssetSchemeHandler.swift").read_text(encoding="utf-8")
+        navigation = (HOST / "NativeNavigationPolicy.swift").read_text(encoding="utf-8")
+
+        self.assertIn('static let handlerName = "ragImeNativeBridge"', bridge)
+        self.assertIn('"arbitraryFetch": false', bridge)
+        self.assertIn('"arbitraryShell": false', bridge)
+        self.assertNotIn("Process()", bridge)
+        self.assertNotIn("NSTask", bridge)
+        self.assertNotIn("unsafe-eval", assets)
+        self.assertIn('url.scheme == ControlCenterAssetSchemeHandler.scheme', navigation)
+        self.assertNotIn("NSWorkspace.shared.open(url)", navigation)
+
+    def test_preview_build_cannot_overwrite_production_app(self) -> None:
+        script = (ROOT / "scripts" / "build_control_center_web_host.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("RagImeControlWebPreview.app", script)
+        self.assertIn("com.rag-ime.control.web-preview", script)
+        self.assertNotIn('DEST="$HOME/Applications/RagImeControl.app"', script)
+        self.assertIn("must not enter the app bundle", script)
+
+
+if __name__ == "__main__":
+    unittest.main()
