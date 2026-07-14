@@ -17,7 +17,7 @@ describe('Roles experience', () => {
       'agent.subagents.templates': { ok: true, items: previewTemplates },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
-    expect(await screen.findByText('热心、灵动，关键时刻可靠')).toBeInTheDocument();
+    expect(await screen.findByText('此刻陪你输入，也陪你把事情想清楚')).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: 'Agent Template' }));
     expect(screen.getAllByText('研究员')).toHaveLength(2);
     expect(screen.getByText(/10 turns/)).toBeInTheDocument();
@@ -30,7 +30,7 @@ describe('Roles experience', () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.subagents.templates': { ok: true, items: previewTemplates },
-      'agent.sessions.create': { ok: true, session: { id: 'session-hermes' } },
+      'agent.sessions.create': { ok: true, session: { id: 'session-past' } },
     } });
     render(
       <MemoryRouter initialEntries={['/roles']}>
@@ -40,13 +40,13 @@ describe('Roles experience', () => {
       </MemoryRouter>,
     );
 
-    await user.click(await screen.findByRole('button', { name: /Hermes/ }));
+    await user.click(await screen.findByRole('button', { name: /智鼬·初识/ }));
     await user.click(screen.getByRole('button', { name: '开始对话' }));
 
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/agent?session=session-hermes'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/agent?session=session-past'));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toEqual({
-      title: 'Hermes 对话',
+      title: '智鼬·初识 对话',
       mode: 'assistant',
       roleId: 'hermes-v1',
       roleVersion: '1',

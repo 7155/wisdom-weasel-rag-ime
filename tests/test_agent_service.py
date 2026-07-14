@@ -96,7 +96,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(runtime["schemaVersion"], "rag-ime.agent-runtime.v1")
         self.assertEqual(runtime["status"], "disabled")
         roles = self.service.list_roles()
-        self.assertEqual(roles["items"][0]["displayName"], "智鼬")
+        self.assertEqual(roles["items"][0]["displayName"], "智鼬·此刻")
         self.assertEqual(
             [item["roleId"] for item in roles["items"]],
             ["zhiyou-v1", "hermes-v1", "vcp-v1"],

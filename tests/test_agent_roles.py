@@ -14,8 +14,8 @@ class AgentRoleTests(unittest.TestCase):
         ]
         role = roles[0]
 
-        self.assertEqual(role.display_name, "智鼬")
-        self.assertEqual([item.display_name for item in roles], ["智鼬", "Hermes", "VCP"])
+        self.assertEqual(role.display_name, "智鼬·此刻")
+        self.assertEqual([item.display_name for item in roles], ["智鼬·此刻", "智鼬·初识", "智鼬·未来"])
         self.assertEqual(len({item.persona_prompt for item in roles}), 3)
         for item in roles:
             with self.subTest(role=item.role_id):
@@ -33,6 +33,13 @@ class AgentRoleTests(unittest.TestCase):
         self.assertNotIn("systemPrompt", catalog[0])
         self.assertNotIn("personaPrompt", catalog[0])
         self.assertEqual(catalog[1]["selectableModes"], ["assistant"])
+        self.assertEqual(catalog[0]["visualProfile"]["avatarAssetId"], "rag-ime-timeline-present-v1")
+        self.assertEqual(catalog[1]["visualProfile"]["avatarAssetId"], "rag-ime-timeline-past-v1")
+        self.assertEqual(catalog[2]["visualProfile"]["avatarAssetId"], "rag-ime-timeline-future-v1")
+        self.assertEqual(
+            [item["defaults"]["modelPolicy"] for item in catalog],
+            ["affinity-5.6-terra", "affinity-5.6-sol", "affinity-5.6-luna"],
+        )
         self.assertEqual(catalog[2]["visualProfile"]["accentToken"], "rose")
 
     def test_unknown_role_fails_closed(self) -> None:
