@@ -1,0 +1,385 @@
+import type { GeneratedContractName } from '@/contracts/generated';
+
+export type ControlHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+export type ControlStreamKind = 'agent' | 'room' | 'control';
+
+export interface ControlRouteDefinition {
+  method: ControlHttpMethod;
+  path: string;
+  params?: Readonly<Record<string, readonly string[] | null>>;
+  query?: readonly string[];
+  requiredQuery?: readonly string[];
+  body?: readonly string[];
+  requiredBody?: readonly string[];
+  responseContract?: GeneratedContractName;
+  subscription?: ControlStreamKind;
+}
+
+// These dotted ids are the cross-platform authority. Neither pages nor the
+// native bridge may replace them with a URL supplied at runtime.
+export const CONTROL_ROUTES = {
+  'control.bootstrap': { method: 'GET', path: '/api/agent/control/bootstrap' },
+  'control.capabilities': {
+    method: 'GET',
+    path: '/api/agent/control/capabilities',
+  },
+  'control.events': {
+    method: 'GET',
+    path: '/api/agent/control/events',
+    query: ['lastEventId'],
+    requiredQuery: ['lastEventId'],
+    subscription: 'control',
+  },
+  'system.health': { method: 'GET', path: '/api/health' },
+  'input.source.get': { method: 'GET', path: '/api/input-source' },
+  'overview.get': { method: 'GET', path: '/api/overview' },
+
+  'agent.runtime.get': {
+    method: 'GET',
+    path: '/api/agent/runtime',
+    responseContract: 'agent-runtime.v1',
+  },
+  'agent.runtime.ensure': {
+    method: 'POST',
+    path: '/api/agent/runtime/ensure',
+    body: ['sessionId'],
+    requiredBody: ['sessionId'],
+  },
+  'agent.configuration.get': { method: 'GET', path: '/api/agent/configuration' },
+  'agent.sessions.list': {
+    method: 'GET',
+    path: '/api/agent/sessions',
+    query: ['includeArchived', 'includeInternal', 'limit'],
+  },
+  'agent.sessions.create': {
+    method: 'POST',
+    path: '/api/agent/sessions',
+    body: [
+      'title',
+      'mode',
+      'roleId',
+      'roleVersion',
+      'modelProfile',
+      'toolProfileVersion',
+      'workspaceRoots',
+    ],
+  },
+  'agent.session.snapshot': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/messages',
+    params: { sessionId: null },
+  },
+  'agent.session.rename': {
+    method: 'PATCH',
+    path: '/api/agent/sessions/:sessionId',
+    params: { sessionId: null },
+    body: ['title'],
+    requiredBody: ['title'],
+  },
+  'agent.session.archive': {
+    method: 'PATCH',
+    path: '/api/agent/sessions/:sessionId',
+    params: { sessionId: null },
+    body: ['archived'],
+    requiredBody: ['archived'],
+  },
+  'agent.session.mode.update': {
+    method: 'PATCH',
+    path: '/api/agent/sessions/:sessionId',
+    params: { sessionId: null },
+    body: ['mode', 'workspaceRoots'],
+    requiredBody: ['mode'],
+  },
+  'agent.session.delete': {
+    method: 'DELETE',
+    path: '/api/agent/sessions/:sessionId',
+    params: { sessionId: null },
+  },
+  'agent.session.prompt': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/prompt',
+    params: { sessionId: null },
+    body: ['message', 'attachments', 'clientMessageId'],
+    requiredBody: ['message'],
+  },
+  'agent.session.abort': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/abort',
+    params: { sessionId: null },
+  },
+  'agent.session.compact': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/compact',
+    params: { sessionId: null },
+    body: ['instructions'],
+  },
+  'agent.session.models': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/models',
+    params: { sessionId: null },
+    responseContract: 'agent-model-catalog.v1',
+  },
+  'agent.session.model.select': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/model',
+    params: { sessionId: null },
+    body: ['provider', 'modelId'],
+    requiredBody: ['provider', 'modelId'],
+  },
+  'agent.session.thinking.select': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/thinking',
+    params: { sessionId: null },
+    body: ['level'],
+    requiredBody: ['level'],
+  },
+  'agent.session.events': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/events',
+    params: { sessionId: null },
+    query: ['lastEventId'],
+    requiredQuery: ['lastEventId'],
+    subscription: 'agent',
+  },
+  'agent.rooms.list': {
+    method: 'GET',
+    path: '/api/agent/rooms',
+    query: ['includeArchived', 'limit'],
+  },
+  'agent.rooms.create': {
+    method: 'POST',
+    path: '/api/agent/rooms',
+    body: ['title', 'participants', 'routingPolicy', 'moderatorRoleId'],
+    requiredBody: ['participants'],
+  },
+  'agent.room.get': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId',
+    params: { roomId: null },
+  },
+  'agent.room.archive': {
+    method: 'PATCH',
+    path: '/api/agent/rooms/:roomId',
+    params: { roomId: null },
+    body: ['archived'],
+    requiredBody: ['archived'],
+  },
+  'agent.room.message': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/messages',
+    params: { roomId: null },
+    body: ['message', 'clientMessageId'],
+    requiredBody: ['message'],
+  },
+  'agent.room.events': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId/events',
+    params: { roomId: null },
+    query: ['lastEventId'],
+    requiredQuery: ['lastEventId'],
+    subscription: 'room',
+  },
+  'agent.roles.list': { method: 'GET', path: '/api/agent/roles' },
+  'agent.tools.list': { method: 'GET', path: '/api/agent/tools' },
+  'agent.approvals.list': {
+    method: 'GET',
+    path: '/api/agent/approvals',
+    query: ['sessionId', 'state', 'limit'],
+    requiredQuery: ['sessionId'],
+  },
+  'agent.approval.get': {
+    method: 'GET',
+    path: '/api/agent/approvals/:approvalId',
+    params: { approvalId: null },
+  },
+  'agent.approval.decide': {
+    method: 'POST',
+    path: '/api/agent/approvals/:approvalId/decision',
+    params: { approvalId: null },
+    body: ['decision', 'payloadSha256'],
+    requiredBody: ['decision', 'payloadSha256'],
+  },
+  'agent.subagents.templates': {
+    method: 'GET',
+    path: '/api/agent/subagents/templates',
+  },
+  'agent.subagents.list': {
+    method: 'GET',
+    path: '/api/agent/subagents/runs',
+    query: ['sessionId', 'limit'],
+    requiredQuery: ['sessionId'],
+  },
+  'agent.subagents.create': {
+    method: 'POST',
+    path: '/api/agent/subagents/runs',
+    body: ['sessionId', 'tasks', 'agent', 'version', 'task', 'contextMode', 'wait'],
+    requiredBody: ['sessionId'],
+  },
+  'agent.subagent.get': {
+    method: 'GET',
+    path: '/api/agent/subagents/runs/:runId',
+    params: { runId: null },
+    query: ['sessionId'],
+    requiredQuery: ['sessionId'],
+  },
+  'agent.subagent.abort': {
+    method: 'POST',
+    path: '/api/agent/subagents/runs/:runId/abort',
+    params: { runId: null },
+    body: ['sessionId'],
+    requiredBody: ['sessionId'],
+  },
+  'agent.memorySources.list': {
+    method: 'GET',
+    path: '/api/agent/memory-sources',
+    query: ['sessionId', 'limit'],
+    requiredQuery: ['sessionId'],
+  },
+
+  'planning.dashboard': {
+    method: 'GET',
+    path: '/api/planning/dashboard',
+    query: ['date', 'project'],
+  },
+  'memory.summary': { method: 'GET', path: '/api/memory/summary' },
+  'memory.pages': {
+    method: 'GET',
+    path: '/api/memory/:kind',
+    params: { kind: ['books', 'atoms', 'tags', 'phrases', 'groups', 'negative'] },
+    query: ['limit', 'cursor', 'query', 'status'],
+  },
+  'history.page': {
+    method: 'GET',
+    path: '/api/history/page',
+    query: ['limit', 'cursor', 'query', 'filter'],
+  },
+  'knowledge.status': {
+    method: 'GET',
+    path: '/api/knowledge/status',
+    query: ['sessionId', 'id'],
+  },
+  'knowledge.routeStatus': { method: 'GET', path: '/api/knowledge/route-status' },
+  'diagnostics.runtime': { method: 'GET', path: '/api/runtime/status' },
+  'diagnostics.predictor': { method: 'GET', path: '/api/predictor/status' },
+  'diagnostics.models': { method: 'GET', path: '/api/models/status' },
+  'configuration.settings': { method: 'GET', path: '/api/settings' },
+  'configuration.schema': { method: 'GET', path: '/api/settings/schema' },
+} as const satisfies Record<string, ControlRouteDefinition>;
+
+export type ControlPathId = keyof typeof CONTROL_ROUTES;
+export type SubscriptionPathId = {
+  [PathId in ControlPathId]: (typeof CONTROL_ROUTES)[PathId] extends {
+    subscription: ControlStreamKind;
+  }
+    ? PathId
+    : never;
+}[ControlPathId];
+
+export function controlRoute(pathId: ControlPathId): ControlRouteDefinition {
+  if (!Object.hasOwn(CONTROL_ROUTES, pathId)) {
+    throw new ControlRoutePolicyError(String(pathId), 'pathId is not allowlisted');
+  }
+  return CONTROL_ROUTES[pathId];
+}
+
+export function isControlPathId(value: unknown): value is ControlPathId {
+  return typeof value === 'string' && Object.hasOwn(CONTROL_ROUTES, value);
+}
+
+export function resolveControlPath(
+  pathId: ControlPathId,
+  params: Readonly<Record<string, string>> = {},
+): string {
+  const route = controlRoute(pathId);
+  const policy = route.params ?? {};
+  const suppliedKeys = Object.keys(params);
+  const requiredKeys = Object.keys(policy);
+  if (
+    suppliedKeys.length !== requiredKeys.length ||
+    suppliedKeys.some((key) => !Object.hasOwn(policy, key))
+  ) {
+    throw new ControlRoutePolicyError(pathId, 'path parameters do not match the route policy');
+  }
+
+  let resolved = route.path;
+  for (const key of requiredKeys) {
+    const value = params[key];
+    if (!isSafeRouteParameter(value)) {
+      throw new ControlRoutePolicyError(pathId, `invalid ${key} path parameter`);
+    }
+    const allowedValues = policy[key];
+    if (allowedValues && !allowedValues.includes(value)) {
+      throw new ControlRoutePolicyError(pathId, `${key} is not allowlisted`);
+    }
+    resolved = resolved.replace(`:${key}`, encodeURIComponent(value));
+  }
+  return resolved;
+}
+
+export function assertAllowedQuery(
+  pathId: ControlPathId,
+  query: Readonly<Record<string, unknown>> | undefined,
+): void {
+  const values = query ?? {};
+  const allowed = new Set<string>(controlRoute(pathId).query ?? []);
+  for (const key of Object.keys(values)) {
+    if (!allowed.has(key)) {
+      throw new ControlRoutePolicyError(pathId, `query field is not allowlisted: ${key}`);
+    }
+    const value = values[key];
+    if (
+      (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') ||
+      (typeof value === 'number' && !Number.isFinite(value)) ||
+      (typeof value === 'string' &&
+        (value.length > 2_048 || /[\u0000-\u001f]/u.test(value)))
+    ) {
+      throw new ControlRoutePolicyError(pathId, `query field is invalid: ${key}`);
+    }
+  }
+  for (const key of controlRoute(pathId).requiredQuery ?? []) {
+    if (!Object.hasOwn(values, key)) {
+      throw new ControlRoutePolicyError(pathId, `required query field is missing: ${key}`);
+    }
+  }
+}
+
+export function assertAllowedBody(
+  pathId: ControlPathId,
+  body: unknown,
+): void {
+  const route = controlRoute(pathId);
+  if (body === undefined) {
+    if ((route.requiredBody?.length ?? 0) > 0) {
+      throw new ControlRoutePolicyError(pathId, 'required request body is missing');
+    }
+    return;
+  }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new ControlRoutePolicyError(pathId, 'request body must be an object');
+  }
+  const allowed = new Set<string>(route.body ?? []);
+  for (const key of Object.keys(body)) {
+    if (!allowed.has(key)) {
+      throw new ControlRoutePolicyError(pathId, `body field is not allowlisted: ${key}`);
+    }
+  }
+  for (const key of route.requiredBody ?? []) {
+    if (!Object.hasOwn(body, key)) {
+      throw new ControlRoutePolicyError(pathId, `required body field is missing: ${key}`);
+    }
+  }
+}
+
+export class ControlRoutePolicyError extends Error {
+  readonly pathId: string;
+
+  constructor(pathId: string, message: string) {
+    super(`Rejected ${pathId}: ${message}`);
+    this.name = 'ControlRoutePolicyError';
+    this.pathId = pathId;
+  }
+}
+
+function isSafeRouteParameter(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value);
+}

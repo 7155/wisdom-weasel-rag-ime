@@ -1,0 +1,4318 @@
+/* eslint-disable */
+/**
+ * This file is generated. Do not edit it by hand.
+ * The values are byte-stable projections of rag_ime/contracts/json/*.json.
+ */
+
+export const contractSchemas = {
+  "active-rag-start.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.active-rag-start.v1",
+    "type": "object",
+    "properties": {
+      "selectedText": {
+        "type": "string"
+      },
+      "selected_text": {
+        "type": "string"
+      },
+      "selectedTextHash": {
+        "type": "string"
+      },
+      "selected_text_hash": {
+        "type": "string"
+      },
+      "privacyDisposition": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "sensitive",
+          "unknown"
+        ]
+      },
+      "sensitiveField": {
+        "type": "boolean"
+      },
+      "secureInput": {
+        "type": "boolean"
+      },
+      "isPasswordField": {
+        "type": "boolean"
+      },
+      "credentialField": {
+        "type": "boolean"
+      },
+      "app": {
+        "type": "string"
+      },
+      "frontAppBundleId": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": true
+  },
+  "active-rag-status.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.active-rag-status.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "sessionId",
+      "status",
+      "evidenceCount",
+      "candidateCount",
+      "diagnostics"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.active-rag-service.v1"
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "type": "string"
+      },
+      "evidenceCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "candidateCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "candidates": {
+        "type": "array"
+      },
+      "stored": {
+        "type": "boolean"
+      },
+      "noStore": {
+        "type": "boolean"
+      },
+      "privacyAssessment": {
+        "type": "object"
+      },
+      "storageReceipt": {
+        "type": "object"
+      },
+      "diagnostics": {
+        "type": "object",
+        "required": [
+          "contextInjection",
+          "retrieval",
+          "remoteModel"
+        ],
+        "properties": {
+          "contextInjection": {
+            "type": "object",
+            "required": [
+              "applied",
+              "source",
+              "contextChars",
+              "contextHash",
+              "selectedTextChars",
+              "warnings"
+            ],
+            "properties": {
+              "applied": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string"
+              },
+              "contextChars": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "contextHash": {
+                "type": "string"
+              },
+              "selectedTextChars": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "retrieval": {
+            "type": "object",
+            "required": [
+              "called",
+              "evidenceCount",
+              "lanes",
+              "elapsedMs"
+            ],
+            "properties": {
+              "called": {
+                "type": "boolean"
+              },
+              "evidenceCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "lanes": {
+                "type": "object"
+              },
+              "elapsedMs": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "remoteModel": {
+            "type": "object",
+            "required": [
+              "requested",
+              "allowed",
+              "provider",
+              "model",
+              "skipReason",
+              "elapsedMs"
+            ],
+            "properties": {
+              "requested": {
+                "type": "boolean"
+              },
+              "allowed": {
+                "type": "boolean"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "skipReason": {
+                "type": "string"
+              },
+              "elapsedMs": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      },
+      "traceEvents": {
+        "type": "array"
+      }
+    }
+  },
+  "agent-approval.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-approval.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "approvalId",
+      "sessionId",
+      "toolId",
+      "operation",
+      "payloadSha256",
+      "preview",
+      "riskLevel",
+      "state",
+      "requestedAtMs",
+      "expiresAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-approval.v1"
+      },
+      "approvalId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "toolId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "operation": {
+        "type": "string",
+        "minLength": 1
+      },
+      "payloadSha256": {
+        "type": "string",
+        "minLength": 64
+      },
+      "preview": {
+        "type": "object"
+      },
+      "riskLevel": {
+        "type": "string",
+        "enum": [
+          "R1",
+          "R2",
+          "R3"
+        ]
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "external_pending",
+          "rejected",
+          "expired",
+          "stale",
+          "applied",
+          "failed"
+        ]
+      },
+      "requestedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "expiresAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "decidedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "receipt": {
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    }
+  },
+  "agent-configuration.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-configuration.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "revision",
+      "revisionToken",
+      "configuration",
+      "sync",
+      "updatedAtMs",
+      "updatedBy",
+      "lastEventId"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-configuration.v1"
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "revisionToken": {
+        "type": "string",
+        "minLength": 1
+      },
+      "configuration": {
+        "type": "object",
+        "required": [
+          "runtime",
+          "sessionDefaults",
+          "coordination"
+        ],
+        "properties": {
+          "runtime": {
+            "type": "object",
+            "required": [
+              "enabled",
+              "startup",
+              "idleTimeoutSeconds"
+            ],
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "startup": {
+                "type": "string",
+                "const": "lazy"
+              },
+              "idleTimeoutSeconds": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "sessionDefaults": {
+            "type": "object",
+            "required": [
+              "resumeLastSession",
+              "roleId",
+              "roleVersion",
+              "modelProfile",
+              "toolProfileVersion"
+            ],
+            "properties": {
+              "resumeLastSession": {
+                "type": "boolean"
+              },
+              "roleId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "roleVersion": {
+                "type": "string",
+                "minLength": 1
+              },
+              "modelProfile": {
+                "type": "string",
+                "minLength": 1
+              },
+              "toolProfileVersion": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "coordination": {
+            "type": "object",
+            "required": [
+              "enabled"
+            ],
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "sync": {
+        "type": "object",
+        "required": [
+          "state",
+          "appliedRevision",
+          "error"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "synchronized",
+              "pending",
+              "failed"
+            ]
+          },
+          "appliedRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedBy": {
+        "type": "string",
+        "minLength": 1
+      },
+      "lastEventId": {
+        "type": "string"
+      }
+    }
+  },
+  "agent-control-event.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-control-event.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "eventId",
+      "sequence",
+      "eventType",
+      "createdAtMs",
+      "payload",
+      "resumeToken"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-control-event.v1"
+      },
+      "eventId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "eventType": {
+        "type": "string",
+        "enum": [
+          "configuration_changed",
+          "configuration_applied",
+          "configuration_failed",
+          "snapshot_required"
+        ]
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "payload": {
+        "type": "object"
+      },
+      "resumeToken": {
+        "type": "string"
+      }
+    }
+  },
+  "agent-event.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-event.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "eventId",
+      "sessionId",
+      "turnId",
+      "sequence",
+      "createdAtMs",
+      "eventType",
+      "payload",
+      "resumeToken"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-event.v1"
+      },
+      "eventId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "turnId": {
+        "type": "string"
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "eventType": {
+        "type": "string",
+        "enum": [
+          "snapshot",
+          "text_delta",
+          "reasoning_summary",
+          "status_changed",
+          "tool_started",
+          "tool_progress",
+          "tool_finished",
+          "approval_required",
+          "approval_resolved",
+          "memory_checkpointed",
+          "memory_maintenance_updated",
+          "user_input_required",
+          "message_completed",
+          "turn_completed",
+          "turn_failed",
+          "snapshot_required",
+          "heartbeat"
+        ]
+      },
+      "payload": {
+        "type": "object"
+      },
+      "resumeToken": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "agent-media.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-media.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "mediaId",
+      "sessionId",
+      "mimeType",
+      "byteSize",
+      "sha256",
+      "origin",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-media.v1"
+      },
+      "mediaId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "fileName": {
+        "type": "string",
+        "maxLength": 160
+      },
+      "mimeType": {
+        "type": "string",
+        "enum": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "audio/mpeg",
+          "audio/mp4",
+          "audio/wav",
+          "application/pdf",
+          "text/plain"
+        ]
+      },
+      "byteSize": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sha256": {
+        "type": "string",
+        "minLength": 64
+      },
+      "width": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "height": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "durationMs": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "thumbnailMediaId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "origin": {
+        "type": "string",
+        "enum": [
+          "user_attachment",
+          "tool_result",
+          "managed_asset"
+        ]
+      },
+      "originTool": {
+        "type": "string"
+      },
+      "originReceiptId": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "agent-memory-maintenance-status.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-memory-maintenance-status.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "ok",
+      "policy",
+      "autoApply",
+      "scheduledDraftOnly",
+      "due",
+      "dueReason",
+      "idleMs",
+      "compileState",
+      "pendingDraftCount",
+      "runs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-memory-maintenance-status.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "policy": {
+        "type": "string",
+        "const": "review"
+      },
+      "autoApply": {
+        "type": "boolean",
+        "const": false
+      },
+      "scheduledDraftOnly": {
+        "type": "boolean",
+        "const": true
+      },
+      "due": {
+        "type": "boolean"
+      },
+      "dueReason": {
+        "type": "string",
+        "enum": [
+          "pending_events",
+          "idle",
+          "daily",
+          "not_due"
+        ]
+      },
+      "idleMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "compileState": {
+        "type": "object",
+        "required": [
+          "project",
+          "lastCompiledEventId",
+          "lastRunMs",
+          "pendingEventCount",
+          "lastBundleHash"
+        ],
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "lastCompiledEventId": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastRunMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pendingEventCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastBundleHash": {
+            "type": "string"
+          }
+        }
+      },
+      "pendingDraftCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "runs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "runId",
+            "createdAtMs",
+            "status",
+            "summary",
+            "diffCount",
+            "bundleHash",
+            "sourceCursor"
+          ],
+          "properties": {
+            "runId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "createdAtMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "applied",
+                "partial",
+                "rolled_back",
+                "superseded",
+                "empty"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "diffCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bundleHash": {
+              "type": "string"
+            },
+            "sourceCursor": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "agent-memory-source.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-memory-source.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "sourceId",
+      "sessionId",
+      "piEntryId",
+      "inputEventId",
+      "sourceRole",
+      "sourceRevision",
+      "canonicalTextSha256",
+      "status",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-memory-source.v1"
+      },
+      "sourceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "piEntryId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "inputEventId": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "sourceRole": {
+        "type": "string",
+        "enum": [
+          "user",
+          "tool_receipt"
+        ]
+      },
+      "sourceRevision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "canonicalTextSha256": {
+        "type": "string",
+        "minLength": 64
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "active",
+          "superseded",
+          "archived",
+          "tombstoned"
+        ]
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "supersededAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    }
+  },
+  "agent-message.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-message.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "id",
+      "sessionId",
+      "turnId",
+      "role",
+      "status",
+      "blocks",
+      "attachments",
+      "citations",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-message.v1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "turnId": {
+        "type": "string"
+      },
+      "role": {
+        "type": "string",
+        "enum": [
+          "user",
+          "assistant",
+          "tool",
+          "system"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "streaming",
+          "completed",
+          "failed",
+          "aborted"
+        ]
+      },
+      "blocks": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/block"
+        }
+      },
+      "attachments": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "citations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "completedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    },
+    "$defs": {
+      "block": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "status",
+          "presentationKind",
+          "data"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "code",
+              "reasoning_summary",
+              "progress",
+              "tool_call",
+              "tool_result",
+              "citation",
+              "image",
+              "audio",
+              "file",
+              "sticker",
+              "task_plan",
+              "diff",
+              "approval",
+              "error",
+              "unknown"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "aborted"
+            ]
+          },
+          "presentationKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "data": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "agent-model-catalog.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-model-catalog.v1",
+    "$defs": {
+      "model": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "id",
+          "name",
+          "api",
+          "reasoning",
+          "thinkingLevels",
+          "supportsImages",
+          "contextWindow",
+          "maxTokens"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "api": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "boolean"
+          },
+          "thinkingLevels": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ]
+            }
+          },
+          "supportsImages": {
+            "type": "boolean"
+          },
+          "contextWindow": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxTokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "sessionId",
+      "selected",
+      "thinkingLevel",
+      "providers"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-model-catalog.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "selected": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "thinkingLevel": {
+        "type": "string",
+        "enum": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "providers": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "displayName",
+            "models"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "models": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/model"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "agent-model-selection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-model-selection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "sessionId",
+      "selected",
+      "session"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-model-selection.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "selected": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "id",
+          "name",
+          "api",
+          "reasoning",
+          "thinkingLevels",
+          "supportsImages",
+          "contextWindow",
+          "maxTokens"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "api": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "boolean"
+          },
+          "thinkingLevels": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ]
+            }
+          },
+          "supportsImages": {
+            "type": "boolean"
+          },
+          "contextWindow": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxTokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "session": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "id",
+          "modelProfile"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-session.v1"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "modelProfile": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "agent-participant.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-participant.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "id",
+      "roomId",
+      "sessionId",
+      "roleId",
+      "roleVersion",
+      "displayName",
+      "status",
+      "ordinal",
+      "createdAtMs",
+      "lastSpokeAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-participant.v1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roleId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roleVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "displayName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "active",
+          "muted",
+          "removed"
+        ]
+      },
+      "ordinal": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 3
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "lastSpokeAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    }
+  },
+  "agent-persona.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-persona.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "roleId",
+      "version",
+      "displayName",
+      "tagline",
+      "summary",
+      "traits",
+      "visualProfile",
+      "defaults",
+      "safetyPolicyVersion",
+      "selectableModes"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-persona.v1"
+      },
+      "roleId": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+      },
+      "version": {
+        "type": "string",
+        "pattern": "^[1-9][0-9]{0,5}$"
+      },
+      "displayName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+      },
+      "tagline": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 180
+      },
+      "traits": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 5,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        }
+      },
+      "visualProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "avatarAssetId",
+          "symbolName",
+          "accentToken"
+        ],
+        "properties": {
+          "avatarAssetId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "symbolName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "accentToken": {
+            "type": "string",
+            "enum": [
+              "teal",
+              "blue",
+              "rose",
+              "neutral"
+            ]
+          }
+        }
+      },
+      "defaults": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "modelPolicy",
+          "memoryPolicy",
+          "toolProfileVersion"
+        ],
+        "properties": {
+          "modelPolicy": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "memoryPolicy": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "toolProfileVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        }
+      },
+      "safetyPolicyVersion": {
+        "type": "string",
+        "const": "control-center-safe-v1"
+      },
+      "selectableModes": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "assistant",
+            "coordinator"
+          ]
+        }
+      }
+    }
+  },
+  "agent-room-event.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-room-event.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "eventId",
+      "roomId",
+      "sequence",
+      "turnId",
+      "eventType",
+      "participantId",
+      "sourceSessionId",
+      "createdAtMs",
+      "payload",
+      "resumeToken"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-room-event.v1"
+      },
+      "eventId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "turnId": {
+        "type": "string"
+      },
+      "eventType": {
+        "type": "string",
+        "enum": [
+          "user_message",
+          "route_decision",
+          "participant_status",
+          "participant_delta",
+          "participant_activity",
+          "participant_message",
+          "turn_completed",
+          "turn_failed",
+          "snapshot_required"
+        ]
+      },
+      "participantId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "sourceSessionId": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "payload": {
+        "type": "object"
+      },
+      "resumeToken": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "agent-room.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-room.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "id",
+      "title",
+      "status",
+      "routingPolicy",
+      "moderatorParticipantId",
+      "createdAtMs",
+      "updatedAtMs",
+      "lastEventSequence",
+      "participants"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-room.v1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "active",
+          "archived"
+        ]
+      },
+      "routingPolicy": {
+        "type": "string",
+        "enum": [
+          "manual_mentions",
+          "moderator"
+        ]
+      },
+      "moderatorParticipantId": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "lastEventSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "participants": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 4,
+        "items": {
+          "type": "object"
+        }
+      }
+    }
+  },
+  "agent-runtime-binding.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-runtime-binding.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "driverId",
+      "runtimeKind",
+      "generation",
+      "state",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-runtime-binding.v1"
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "driverId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "runtimeKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "externalSessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "transcriptRef": {
+        "type": "string"
+      },
+      "branchAnchor": {
+        "type": "string"
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "prepared",
+          "active",
+          "stale"
+        ]
+      },
+      "metadata": {
+        "type": "object"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "agent-runtime.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-runtime.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "enabled",
+      "managed",
+      "status",
+      "piVersion",
+      "idleTimeoutSeconds",
+      "capabilities"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-runtime.v1"
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "managed": {
+        "type": "boolean"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "disabled",
+          "not_installed",
+          "needs_configuration",
+          "stopped",
+          "starting",
+          "ready",
+          "busy",
+          "faulted"
+        ]
+      },
+      "driverId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "runtimeKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "runtimeVersion": {
+        "type": "string"
+      },
+      "piVersion": {
+        "type": "string"
+      },
+      "idleTimeoutSeconds": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "activeSessionId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "lastError": {
+        "type": "string"
+      },
+      "capabilities": {
+        "type": "object"
+      }
+    }
+  },
+  "agent-session.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-session.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "id",
+      "title",
+      "mode",
+      "status",
+      "roleId",
+      "roleVersion",
+      "modelProfile",
+      "toolProfileVersion",
+      "createdAtMs",
+      "updatedAtMs",
+      "messageCount",
+      "workspaceRoots"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-session.v1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "piSessionId": {
+        "type": "string"
+      },
+      "sessionFile": {
+        "type": "string"
+      },
+      "runtimeBinding": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "driverId",
+          "runtimeKind",
+          "generation",
+          "state",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-runtime-binding.v1"
+          },
+          "driverId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtimeKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "prepared",
+              "active",
+              "stale"
+            ]
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "assistant",
+          "coordinator"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "active",
+          "busy",
+          "faulted",
+          "archived"
+        ]
+      },
+      "roleId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roleVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "modelProfile": {
+        "type": "string",
+        "minLength": 1
+      },
+      "toolProfileVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "lastOpenedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "archivedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "messageCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "lastMessagePreview": {
+        "type": "string"
+      },
+      "workspaceRoots": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "shellPolicyVersion": {
+        "type": "string"
+      }
+    }
+  },
+  "agent-subagent-batch.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-subagent-batch.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "id",
+      "parentSessionId",
+      "parentRunId",
+      "contextMode",
+      "state",
+      "depth",
+      "maxDepth",
+      "abortRequested",
+      "createdAtMs",
+      "updatedAtMs",
+      "completedAtMs",
+      "runs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-subagent-batch.v1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentSessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentRunId": {
+        "type": "string"
+      },
+      "contextMode": {
+        "type": "string",
+        "enum": [
+          "fresh",
+          "fork"
+        ]
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "failed",
+          "aborted",
+          "timed_out"
+        ]
+      },
+      "depth": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2
+      },
+      "maxDepth": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2
+      },
+      "abortRequested": {
+        "type": "boolean"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "completedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "runs": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2,
+        "items": {
+          "type": "object"
+        }
+      }
+    }
+  },
+  "agent-subagent-run.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-subagent-run.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "id",
+      "batchId",
+      "childSessionId",
+      "templateId",
+      "templateVersion",
+      "ordinal",
+      "task",
+      "state",
+      "budget",
+      "usage",
+      "result",
+      "error",
+      "createdAtMs",
+      "startedAtMs",
+      "updatedAtMs",
+      "completedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-subagent-run.v1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "batchId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "childSessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "templateId": {
+        "type": "string",
+        "enum": [
+          "researcher",
+          "planner",
+          "worker",
+          "reviewer",
+          "delegate"
+        ]
+      },
+      "templateVersion": {
+        "type": "string",
+        "const": "1"
+      },
+      "ordinal": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "task": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8000
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "failed",
+          "aborted",
+          "timed_out"
+        ]
+      },
+      "budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "maxTurns",
+          "maxToolCalls",
+          "maxTotalTokens",
+          "maxDurationMs",
+          "maxOutputChars"
+        ],
+        "properties": {
+          "maxTurns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32
+          },
+          "maxToolCalls": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "maxTotalTokens": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 262144
+          },
+          "maxDurationMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 900000
+          },
+          "maxOutputChars": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 100000
+          }
+        }
+      },
+      "usage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "turnCount",
+          "toolCount",
+          "totalTokens"
+        ],
+        "properties": {
+          "turnCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "toolCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalTokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "result": {
+        "type": "object"
+      },
+      "error": {
+        "type": "string",
+        "maxLength": 500
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "startedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "completedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      }
+    }
+  },
+  "agent-template.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-template.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "templateId",
+      "version",
+      "displayName",
+      "summary",
+      "contextModes",
+      "toolProfileVersion",
+      "budget",
+      "capabilities"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-template.v1"
+      },
+      "templateId": {
+        "type": "string",
+        "enum": [
+          "researcher",
+          "planner",
+          "worker",
+          "reviewer",
+          "delegate"
+        ]
+      },
+      "version": {
+        "type": "string",
+        "const": "1"
+      },
+      "displayName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 180
+      },
+      "contextModes": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "fresh",
+            "fork"
+          ]
+        }
+      },
+      "toolProfileVersion": {
+        "type": "string",
+        "enum": [
+          "subagent-readonly-v1",
+          "subagent-worker-v1"
+        ]
+      },
+      "budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "maxDepth",
+          "maxTurns",
+          "maxToolCalls",
+          "maxTotalTokens",
+          "maxDurationMs",
+          "maxOutputChars"
+        ],
+        "properties": {
+          "maxDepth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2
+          },
+          "maxTurns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32
+          },
+          "maxToolCalls": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "maxTotalTokens": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 262144
+          },
+          "maxDurationMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 900000
+          },
+          "maxOutputChars": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 100000
+          }
+        }
+      },
+      "capabilities": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "rag",
+            "memory",
+            "planning",
+            "review",
+            "control",
+            "delegation"
+          ]
+        }
+      }
+    }
+  },
+  "agent-thinking-selection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-thinking-selection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "sessionId",
+      "thinkingLevel",
+      "selected"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-thinking-selection.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "thinkingLevel": {
+        "type": "string",
+        "enum": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "selected": {
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    }
+  },
+  "agent-tool-call.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-tool-call.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "sessionId",
+      "tool",
+      "toolCallId",
+      "args"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-tool-call.v1"
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "tool": {
+        "type": "string",
+        "enum": [
+          "ime_overview",
+          "ime_input",
+          "ime_voice",
+          "ime_planning",
+          "ime_memory",
+          "ime_knowledge",
+          "ime_models",
+          "ime_runtime",
+          "ime_configuration",
+          "ime_agents",
+          "workspace_list",
+          "workspace_read",
+          "workspace_shell"
+        ]
+      },
+      "toolCallId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "args": {
+        "type": "object"
+      },
+      "runtimeContext": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "forkSessions"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-runtime-context.v1"
+          },
+          "forkSessions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "items": {
+              "type": "object",
+              "required": [
+                "sessionId",
+                "sessionFile",
+                "parentSessionFile",
+                "parentLeafId"
+              ],
+              "properties": {
+                "sessionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "sessionFile": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "parentSessionFile": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "parentLeafId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "thinkingOverride": {
+                  "type": "string",
+                  "enum": [
+                    "off"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "agent-tool-result.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-tool-result.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "ok",
+      "tool",
+      "operation",
+      "result"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-tool-result.v1"
+      },
+      "ok": {
+        "type": "boolean"
+      },
+      "tool": {
+        "type": "string",
+        "enum": [
+          "ime_overview",
+          "ime_input",
+          "ime_voice",
+          "ime_planning",
+          "ime_memory",
+          "ime_knowledge",
+          "ime_models",
+          "ime_runtime",
+          "ime_configuration",
+          "ime_agents",
+          "workspace_list",
+          "workspace_read",
+          "workspace_shell"
+        ]
+      },
+      "operation": {
+        "type": "string",
+        "enum": [
+          "status",
+          "capabilities",
+          "recent_activity",
+          "get_settings",
+          "preview_settings",
+          "apply_settings",
+          "rollback_settings",
+          "profile",
+          "candidate_explain",
+          "lexicon_review",
+          "lexicon_apply",
+          "lexicon_rollback",
+          "privacy_policy",
+          "provider_status",
+          "provider_preview",
+          "provider_apply",
+          "provider_rollback",
+          "dashboard",
+          "task_action",
+          "undo_task_event",
+          "catalog",
+          "read",
+          "recent",
+          "trace",
+          "maintenance_status",
+          "maintenance_preview",
+          "maintenance_review",
+          "maintenance_apply",
+          "maintenance_rollback",
+          "list",
+          "search",
+          "recall",
+          "deep_recall",
+          "route_status",
+          "profiles",
+          "profile_preview",
+          "profile_apply",
+          "profile_rollback",
+          "probe",
+          "cache_stats",
+          "health",
+          "components",
+          "diagnose",
+          "pause_ai",
+          "resume_ai",
+          "restart_sidecar",
+          "restart_predictor",
+          "redeploy_rime",
+          "history",
+          "audit",
+          "export_preview",
+          "export",
+          "restore_preview",
+          "restore_apply",
+          "run"
+        ]
+      },
+      "result": {
+        "type": "object"
+      }
+    }
+  },
+  "assistant-candidate-action.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.assistant-candidate-action.v1",
+    "type": "object",
+    "required": [
+      "action",
+      "candidate"
+    ],
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "remember",
+          "suppress"
+        ]
+      },
+      "candidate": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "insertText": {
+            "type": "string"
+          },
+          "sourceType": {
+            "type": "string"
+          },
+          "memoryId": {
+            "type": "string"
+          },
+          "sourceEventId": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "suggestionId": {
+            "type": "string"
+          },
+          "candidateStableId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "query": {
+        "type": "string"
+      },
+      "project": {
+        "type": "string"
+      },
+      "app": {
+        "type": "string"
+      },
+      "frontAppBundleId": {
+        "type": "string"
+      },
+      "frontmostApp": {
+        "type": "string"
+      },
+      "bundleId": {
+        "type": "string"
+      },
+      "privacyDisposition": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "sensitive",
+          "unknown"
+        ]
+      },
+      "sensitiveField": {
+        "type": "boolean"
+      },
+      "secureInput": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "assistant-overlay.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.assistant-overlay.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "visible",
+      "uiMode",
+      "phase",
+      "inputMode",
+      "candidates",
+      "keyPolicy",
+      "frontendTransaction"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.assistant-overlay.v1"
+      },
+      "visible": {
+        "type": "boolean"
+      },
+      "uiMode": {
+        "type": "string"
+      },
+      "phase": {
+        "type": "string"
+      },
+      "inputMode": {
+        "type": "string"
+      },
+      "statusText": {
+        "type": "string"
+      },
+      "snapshotId": {
+        "type": "string"
+      },
+      "sessionFingerprint": {
+        "type": "string"
+      },
+      "expiresAfterMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "candidates": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/candidate"
+        }
+      },
+      "sourceCards": {
+        "type": "array"
+      },
+      "keyPolicy": {
+        "type": "object"
+      },
+      "overlayConfig": {
+        "type": "object"
+      },
+      "progressive": {
+        "type": "object"
+      },
+      "frontendTransaction": {
+        "type": "object"
+      },
+      "dismissReason": {
+        "type": "string"
+      }
+    },
+    "$defs": {
+      "candidate": {
+        "type": "object",
+        "required": [
+          "insertText",
+          "sourceType"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "insertText": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "model",
+              "rag",
+              "memory",
+              "action"
+            ]
+          },
+          "candidateStableId": {
+            "type": "string"
+          },
+          "snapshotId": {
+            "type": "string"
+          },
+          "selectionAction": {
+            "type": "string"
+          },
+          "sourceBadge": {
+            "type": "string"
+          },
+          "memoryId": {
+            "type": "string"
+          },
+          "suggestionId": {
+            "type": "string"
+          },
+          "sourceEventId": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "control-tool-manifest.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.control-tool-manifest.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "id",
+      "domain",
+      "displayName",
+      "description",
+      "category",
+      "riskLevel",
+      "sessionModes",
+      "operations",
+      "resultPresentation",
+      "availability",
+      "version"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.control-tool-manifest.v1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "domain": {
+        "type": "string",
+        "minLength": 1
+      },
+      "displayName": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": {
+        "type": "string",
+        "minLength": 1
+      },
+      "category": {
+        "type": "string",
+        "enum": [
+          "overview",
+          "input",
+          "voice",
+          "planning",
+          "memory",
+          "knowledge",
+          "models",
+          "runtime",
+          "configuration",
+          "agents",
+          "workspace"
+        ]
+      },
+      "riskLevel": {
+        "type": "string",
+        "enum": [
+          "R0",
+          "R1",
+          "R2",
+          "R3"
+        ]
+      },
+      "operationRisks": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string",
+          "enum": [
+            "R0",
+            "R1",
+            "R2",
+            "R3"
+          ]
+        }
+      },
+      "sessionModes": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "assistant",
+            "coordinator"
+          ]
+        }
+      },
+      "operations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "resultPresentation": {
+        "type": "string",
+        "enum": [
+          "status",
+          "table",
+          "citation",
+          "tool_result",
+          "diff",
+          "approval",
+          "terminal",
+          "media"
+        ]
+      },
+      "availability": {
+        "type": "string",
+        "enum": [
+          "online",
+          "offline",
+          "disabled",
+          "unconfigured"
+        ]
+      },
+      "version": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "foreground-commit.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.foreground-commit.v1",
+    "type": "object",
+    "required": [
+      "text"
+    ],
+    "properties": {
+      "text": {
+        "type": "string",
+        "minLength": 1
+      },
+      "recentContext": {
+        "type": "string"
+      },
+      "preedit": {
+        "type": "string"
+      },
+      "project": {
+        "type": "string"
+      },
+      "app": {
+        "type": "string"
+      },
+      "frontAppBundleId": {
+        "type": "string"
+      },
+      "frontmostApp": {
+        "type": "string"
+      },
+      "bundleId": {
+        "type": "string"
+      },
+      "candidateRank": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "providerName": {
+        "type": "string"
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "source": {
+        "type": "string"
+      },
+      "contextGroupId": {
+        "type": "string"
+      },
+      "contextGroupLevel": {
+        "type": "string"
+      },
+      "privacyDisposition": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "sensitive",
+          "unknown"
+        ]
+      },
+      "sensitiveField": {
+        "type": "boolean"
+      },
+      "secureInput": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "foreground-context.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.foreground-context.v2",
+    "type": "object",
+    "required": [
+      "available",
+      "source",
+      "freshnessMs",
+      "canReplaceSelection"
+    ],
+    "properties": {
+      "available": {
+        "type": "boolean"
+      },
+      "source": {
+        "type": "string"
+      },
+      "freshnessMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "capturedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "surroundingBefore": {
+        "type": "string"
+      },
+      "surroundingAfter": {
+        "type": "string"
+      },
+      "selectedText": {
+        "type": "string"
+      },
+      "selectedTextHash": {
+        "type": "string"
+      },
+      "canReplaceSelection": {
+        "type": "boolean"
+      },
+      "contextGroupId": {
+        "type": "string"
+      },
+      "contextGroupLevel": {
+        "type": "string",
+        "enum": [
+          "document",
+          "project",
+          "app",
+          "global",
+          ""
+        ]
+      }
+    }
+  },
+  "frontend-capabilities.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.frontend-capabilities.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "gatewayVersion",
+      "contracts",
+      "features",
+      "adapterBoundary",
+      "legacyCompatibility"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.frontend-capabilities.v1"
+      },
+      "gatewayVersion": {
+        "type": "string",
+        "const": "rag-ime.frontend-gateway.v1"
+      },
+      "contracts": {
+        "type": "object"
+      },
+      "features": {
+        "type": "object"
+      },
+      "adapterBoundary": {
+        "type": "object"
+      },
+      "legacyCompatibility": {
+        "type": "object"
+      }
+    }
+  },
+  "frontend-selection-response.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.frontend-selection-response.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "gatewayVersion",
+      "ok",
+      "session",
+      "selectionReceipt",
+      "eventId",
+      "origin",
+      "insertText",
+      "recordedActionCount",
+      "privacy",
+      "backendContract"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.frontend-selection-response.v1"
+      },
+      "gatewayVersion": {
+        "type": "string",
+        "const": "rag-ime.frontend-gateway.v1"
+      },
+      "ok": {
+        "type": "boolean"
+      },
+      "session": {
+        "$ref": "#/$defs/session"
+      },
+      "selectionReceipt": {
+        "$ref": "#/$defs/selectionReceipt"
+      },
+      "eventId": {
+        "type": "string"
+      },
+      "origin": {
+        "type": "string"
+      },
+      "insertText": {
+        "type": "string"
+      },
+      "recordedActionCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "privacy": {
+        "type": "object"
+      },
+      "backendContract": {
+        "type": "string"
+      }
+    },
+    "$defs": {
+      "session": {
+        "type": "object",
+        "required": [
+          "id",
+          "requestSeq",
+          "inputGeneration"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requestSeq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inputGeneration": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "selectionReceipt": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "requestSeq",
+          "inputGeneration",
+          "snapshotId",
+          "snapshotGeneration",
+          "candidateId",
+          "requestConsistencyValidated",
+          "runtimeFreshnessValidated"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requestSeq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inputGeneration": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "snapshotId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "snapshotGeneration": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "candidateId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requestConsistencyValidated": {
+            "type": "boolean"
+          },
+          "runtimeFreshnessValidated": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "frontend-selection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.frontend-selection.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "frontend",
+      "session",
+      "privacy",
+      "candidate"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.frontend-selection.v1"
+      },
+      "frontend": {
+        "type": "object"
+      },
+      "session": {
+        "$ref": "#/$defs/session"
+      },
+      "privacy": {
+        "type": "object",
+        "required": [
+          "disposition"
+        ],
+        "properties": {
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "allowed",
+              "sensitive",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sensitiveField": {
+            "type": "boolean"
+          },
+          "secureInput": {
+            "type": "boolean"
+          }
+        }
+      },
+      "candidate": {
+        "$ref": "#/$defs/candidate"
+      },
+      "visibleCandidates": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/candidate"
+        }
+      },
+      "context": {
+        "type": "object"
+      },
+      "providerName": {
+        "type": "string"
+      },
+      "dryRun": {
+        "type": "boolean"
+      }
+    },
+    "$defs": {
+      "candidate": {
+        "type": "object",
+        "required": [
+          "id",
+          "snapshotId",
+          "snapshotGeneration",
+          "inputGeneration",
+          "text",
+          "insertText",
+          "origin"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "snapshotId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "snapshotGeneration": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inputGeneration": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "label": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "insertText": {
+            "type": "string",
+            "minLength": 1
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "native",
+              "model",
+              "retrieval",
+              "memory",
+              "action",
+              "status",
+              "literal",
+              "assistant"
+            ]
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "nativeIndex": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "selectionAction": {
+            "type": "string"
+          },
+          "suggestionId": {
+            "type": "string"
+          },
+          "memoryId": {
+            "type": "string"
+          },
+          "sourceEventId": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      },
+      "session": {
+        "type": "object",
+        "required": [
+          "id",
+          "requestSeq",
+          "inputGeneration"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requestSeq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inputGeneration": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "frontend-suggest-request.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.frontend-suggest-request.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "frontend",
+      "session",
+      "privacy",
+      "input"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.frontend-suggest-request.v1"
+      },
+      "frontend": {
+        "$ref": "#/$defs/frontend"
+      },
+      "session": {
+        "$ref": "#/$defs/session"
+      },
+      "privacy": {
+        "$ref": "#/$defs/privacy"
+      },
+      "input": {
+        "$ref": "#/$defs/input"
+      },
+      "context": {
+        "type": "object"
+      },
+      "nativeCandidates": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/nativeCandidate"
+        }
+      },
+      "nativeState": {
+        "type": "object"
+      },
+      "limits": {
+        "type": "object"
+      },
+      "flags": {
+        "type": "object"
+      }
+    },
+    "$defs": {
+      "frontend": {
+        "type": "object",
+        "required": [
+          "id",
+          "platform",
+          "inputEngine"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "build": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "minLength": 1
+          },
+          "inputFramework": {
+            "type": "string"
+          },
+          "inputEngine": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "session": {
+        "type": "object",
+        "required": [
+          "id",
+          "requestSeq",
+          "inputGeneration"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requestSeq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inputGeneration": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "privacy": {
+        "type": "object",
+        "required": [
+          "disposition"
+        ],
+        "properties": {
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "allowed",
+              "sensitive",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sensitiveField": {
+            "type": "boolean"
+          },
+          "secureInput": {
+            "type": "boolean"
+          }
+        }
+      },
+      "input": {
+        "type": "object",
+        "properties": {
+          "raw": {
+            "type": "string"
+          },
+          "preedit": {
+            "type": "string"
+          },
+          "commitPreview": {
+            "type": "string"
+          },
+          "committedContext": {
+            "type": "string"
+          },
+          "idleMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "nativeCandidate": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "nativeIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "frontend-suggest-response.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.frontend-suggest-response.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "gatewayVersion",
+      "frontend",
+      "session",
+      "input",
+      "candidates",
+      "presentation",
+      "selectionPolicy",
+      "predictionSession",
+      "privacy"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.frontend-suggest-response.v1"
+      },
+      "gatewayVersion": {
+        "type": "string",
+        "const": "rag-ime.frontend-gateway.v1"
+      },
+      "frontend": {
+        "type": "object"
+      },
+      "session": {
+        "$ref": "#/$defs/session"
+      },
+      "input": {
+        "type": "object"
+      },
+      "candidates": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/candidate"
+        }
+      },
+      "presentation": {
+        "type": "object"
+      },
+      "selectionPolicy": {
+        "type": "object"
+      },
+      "predictionSession": {
+        "type": "object"
+      },
+      "progressive": {
+        "type": "object"
+      },
+      "privacy": {
+        "type": "object"
+      },
+      "diagnostics": {
+        "type": "object"
+      }
+    },
+    "$defs": {
+      "candidate": {
+        "type": "object",
+        "required": [
+          "id",
+          "snapshotId",
+          "snapshotGeneration",
+          "inputGeneration",
+          "text",
+          "insertText",
+          "origin",
+          "rank",
+          "selectionAction"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "snapshotId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "snapshotGeneration": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inputGeneration": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "label": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "insertText": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "native",
+              "model",
+              "retrieval",
+              "memory",
+              "action",
+              "status",
+              "literal",
+              "assistant"
+            ]
+          },
+          "provider": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "nativeIndex": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "selectionAction": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      },
+      "session": {
+        "type": "object",
+        "required": [
+          "id",
+          "requestSeq",
+          "inputGeneration"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requestSeq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inputGeneration": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "memory-catalog.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.memory-catalog.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "project",
+      "catalogVersion",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.memory-catalog.v1"
+      },
+      "project": {
+        "type": "string",
+        "minLength": 1
+      },
+      "catalogVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/item"
+        }
+      }
+    },
+    "$defs": {
+      "item": {
+        "type": "object",
+        "required": [
+          "bookId",
+          "bookKey",
+          "bookType",
+          "title",
+          "summary",
+          "updatedAtMs",
+          "sourceCount",
+          "status"
+        ],
+        "properties": {
+          "bookId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bookKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bookType": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "topic",
+              "project",
+              "session"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string"
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sourceCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "overlay-config.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.overlay-config.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "candidateFontSize",
+      "maxWidth",
+      "fadeAnimation",
+      "panelStyle",
+      "expiresAfterMs",
+      "maxCandidates",
+      "showSourceBadge",
+      "badges",
+      "colors",
+      "keyPolicy",
+      "activeRag"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.overlay-config.v1"
+      },
+      "candidateFontSize": {
+        "type": "integer",
+        "minimum": 11,
+        "maximum": 24
+      },
+      "maxWidth": {
+        "type": "integer",
+        "minimum": 320,
+        "maximum": 760
+      },
+      "fadeAnimation": {
+        "type": "boolean"
+      },
+      "panelStyle": {
+        "type": "string",
+        "enum": [
+          "compact",
+          "expanded"
+        ]
+      },
+      "expiresAfterMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 15000
+      },
+      "maxCandidates": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10
+      },
+      "showSourceBadge": {
+        "type": "boolean"
+      },
+      "badges": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "colors": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "keyPolicy": {
+        "type": "object"
+      },
+      "activeRag": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "shortcut"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "shortcut": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "pi-runtime-manifest.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.pi-runtime-manifest.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "runtimeVersion",
+      "piVersion",
+      "platform",
+      "architecture",
+      "launchKind",
+      "piEntrypoint",
+      "extensionEntrypoint",
+      "tools",
+      "createdAtMs",
+      "source",
+      "files"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.pi-runtime-manifest.v1"
+      },
+      "runtimeVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "piVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "platform": {
+        "type": "string",
+        "minLength": 1
+      },
+      "architecture": {
+        "type": "string",
+        "minLength": 1
+      },
+      "launchKind": {
+        "type": "string",
+        "enum": [
+          "node",
+          "standalone"
+        ]
+      },
+      "piEntrypoint": {
+        "type": "string",
+        "minLength": 1
+      },
+      "nodeEntrypoint": {
+        "type": "string"
+      },
+      "extensionEntrypoint": {
+        "type": "string",
+        "minLength": 1
+      },
+      "tools": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "source": {
+        "type": "object",
+        "required": [
+          "repository",
+          "commit",
+          "package"
+        ],
+        "properties": {
+          "repository": {
+            "type": "string",
+            "minLength": 1
+          },
+          "commit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "package": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256",
+            "byteSize",
+            "executable"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": "string",
+              "minLength": 64
+            },
+            "byteSize": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "executable": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  },
+  "rime-rank-selection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.rime-rank-selection.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "selectionId",
+      "sourceType",
+      "preedit",
+      "acceptedText",
+      "candidateRank"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.rime-rank-selection.v1"
+      },
+      "selectionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "sourceType": {
+        "const": "rime"
+      },
+      "selectionSource": {
+        "type": "string",
+        "maxLength": 80
+      },
+      "preedit": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "acceptedText": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "rejectedText": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "candidateRank": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 999
+      },
+      "shownCandidateCount": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 999
+      },
+      "app": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "frontAppBundleId": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "frontmostApp": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "bundleId": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "project": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "privacyDisposition": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "sensitive",
+          "unknown"
+        ]
+      },
+      "sensitiveField": {
+        "type": "boolean"
+      },
+      "secureInput": {
+        "type": "boolean"
+      },
+      "dryRun": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "rime-select.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.rime-select.v1",
+    "type": "object",
+    "required": [
+      "candidate"
+    ],
+    "properties": {
+      "candidate": {
+        "$ref": "#/$defs/candidate"
+      },
+      "shownCandidates": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/candidate"
+        }
+      },
+      "query": {
+        "type": "string"
+      },
+      "recentContext": {
+        "type": "string"
+      },
+      "committedContext": {
+        "type": "string"
+      },
+      "preedit": {
+        "type": "string"
+      },
+      "project": {
+        "type": "string"
+      },
+      "app": {
+        "type": "string"
+      },
+      "frontAppBundleId": {
+        "type": "string"
+      },
+      "frontmostApp": {
+        "type": "string"
+      },
+      "bundleId": {
+        "type": "string"
+      },
+      "contextGroupId": {
+        "type": "string"
+      },
+      "contextGroupLevel": {
+        "type": "string"
+      },
+      "privacyDisposition": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "sensitive",
+          "unknown"
+        ]
+      },
+      "sensitiveField": {
+        "type": "boolean"
+      },
+      "secureInput": {
+        "type": "boolean"
+      },
+      "dryRun": {
+        "type": "boolean"
+      }
+    },
+    "$defs": {
+      "candidate": {
+        "type": "object",
+        "required": [
+          "insertText",
+          "sourceType"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "insertText": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceType": {
+            "type": "string"
+          },
+          "memoryId": {
+            "type": "string"
+          },
+          "suggestionId": {
+            "type": "string"
+          },
+          "sourceEventId": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "rime-suggest-request.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.rime-suggest-request.v1",
+    "type": "object",
+    "required": [
+      "sessionId",
+      "requestSeq"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string"
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "requestSeq": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "rawInput": {
+        "type": "string"
+      },
+      "preedit": {
+        "type": "string"
+      },
+      "commitTextPreview": {
+        "type": "string"
+      },
+      "committedContext": {
+        "type": "string"
+      },
+      "project": {
+        "type": "string"
+      },
+      "app": {
+        "type": "string"
+      },
+      "privacyDisposition": {
+        "type": "string",
+        "enum": [
+          "allowed",
+          "sensitive",
+          "unknown"
+        ]
+      },
+      "sensitiveField": {
+        "type": "boolean"
+      },
+      "secureInput": {
+        "type": "boolean"
+      },
+      "progressiveFollowUp": {
+        "type": "boolean"
+      },
+      "frontendRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "selectionEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "inputGeneration": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "foregroundText": {
+        "$ref": "#/$defs/foregroundContext"
+      }
+    },
+    "$defs": {
+      "foregroundContext": {
+        "type": "object",
+        "required": [
+          "available",
+          "source",
+          "freshnessMs"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          },
+          "freshnessMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "surroundingBefore": {
+            "type": "string"
+          },
+          "surroundingAfter": {
+            "type": "string"
+          },
+          "selectedText": {
+            "type": "string"
+          },
+          "canReplaceSelection": {
+            "type": "boolean"
+          },
+          "contextGroupId": {
+            "type": "string"
+          },
+          "contextGroupLevel": {
+            "type": "string",
+            "enum": [
+              "document",
+              "project",
+              "app",
+              "global",
+              ""
+            ]
+          }
+        }
+      }
+    }
+  },
+  "rime-suggest-response.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.rime-suggest-response.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "sessionId",
+      "requestSeq",
+      "displayCandidates",
+      "predictionSession",
+      "keyPolicy",
+      "assistantOverlay"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "requestSeq": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "runtimeRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "runtimeConfig": {
+        "type": "object"
+      },
+      "displayCandidates": {
+        "type": "array"
+      },
+      "predictionSession": {
+        "type": "object"
+      },
+      "keyPolicy": {
+        "type": "object"
+      },
+      "assistantOverlay": {
+        "type": "object"
+      },
+      "overlayConfig": {
+        "type": "object"
+      },
+      "frontendTransaction": {
+        "type": "object"
+      },
+      "stored": {
+        "type": "boolean"
+      },
+      "noStore": {
+        "type": "boolean"
+      },
+      "privacyAssessment": {
+        "type": "object"
+      },
+      "storageReceipt": {
+        "type": "object"
+      }
+    }
+  },
+} as const;
+
+export type ContractName = keyof typeof contractSchemas;
+
+export const contractSchemaIds = Object.fromEntries(
+  Object.entries(contractSchemas).map(([name, schema]) => [name, schema.$id]),
+) as Record<ContractName, string>;

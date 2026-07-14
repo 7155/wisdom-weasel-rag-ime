@@ -1,0 +1,636 @@
+import type { UiAgentEvent, UiAgentMessage } from './ui-events';
+import { tryParseAgentMessage } from './validators';
+
+export type AgentTurnStatus =
+  | 'queued'
+  | 'running'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | 'aborted';
+
+export interface AgentTurnProjection {
+  id: string;
+  status: AgentTurnStatus;
+  messageIds: string[];
+  activityIds: string[];
+  createdAtMs: number;
+  updatedAtMs: number;
+  failure?: string;
+}
+
+export interface AgentActivityProjection {
+  id: string;
+  turnId: string;
+  kind: string;
+  status: 'running' | 'waiting' | 'completed' | 'failed';
+  summary: string;
+  payload: Record<string, unknown>;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface ProjectionDiagnostic {
+  id: string;
+  streamKind: 'agent' | 'room';
+  eventType: string;
+  summary: string;
+  sequence: number;
+  payload: Record<string, unknown>;
+}
+
+export interface ProjectionGap {
+  expectedSequence: number;
+  receivedSequence: number;
+  receivedEventId: string;
+}
+
+export interface AgentProjectionState {
+  sessionId: string;
+  lastSequence: number;
+  lastEventId: string;
+  resumeToken: string;
+  needsSnapshot: boolean;
+  gap?: ProjectionGap;
+  status: string;
+  messagesById: Record<string, UiAgentMessage>;
+  messageOrder: string[];
+  turnsById: Record<string, AgentTurnProjection>;
+  turnOrder: string[];
+  activitiesById: Record<string, AgentActivityProjection>;
+  activityOrder: string[];
+  optimisticByClientMessageId: Record<string, string>;
+  diagnostics: ProjectionDiagnostic[];
+}
+
+export type ProjectionDisposition =
+  | 'applied'
+  | 'ignored-duplicate'
+  | 'ignored-foreign'
+  | 'ignored-snapshot-pending'
+  | 'snapshot-required';
+
+export interface ProjectionReduction<State> {
+  state: State;
+  disposition: ProjectionDisposition;
+}
+
+export interface AgentSnapshot {
+  messages: unknown[];
+  lastSequence: number;
+  resumeToken: string;
+  status?: string;
+}
+
+export interface OptimisticAgentMessageInput {
+  clientMessageId: string;
+  text: string;
+  attachments?: string[];
+  nowMs: number;
+}
+
+const diagnosticLimit = 50;
+
+export function createAgentProjection(sessionId: string): AgentProjectionState {
+  return {
+    sessionId,
+    lastSequence: 0,
+    lastEventId: '',
+    resumeToken: '',
+    needsSnapshot: false,
+    status: 'idle',
+    messagesById: {},
+    messageOrder: [],
+    turnsById: {},
+    turnOrder: [],
+    activitiesById: {},
+    activityOrder: [],
+    optimisticByClientMessageId: {},
+    diagnostics: [],
+  };
+}
+
+export function reduceAgentEvent(
+  state: AgentProjectionState,
+  event: UiAgentEvent,
+): ProjectionReduction<AgentProjectionState> {
+  if (event.sessionId !== state.sessionId) {
+    return { state, disposition: 'ignored-foreign' };
+  }
+  if (event.sequence <= state.lastSequence) {
+    return { state, disposition: 'ignored-duplicate' };
+  }
+  if (state.needsSnapshot && event.eventType !== 'snapshot') {
+    return { state, disposition: 'ignored-snapshot-pending' };
+  }
+  if (
+    event.eventType !== 'snapshot' &&
+    state.lastSequence > 0 &&
+    event.sequence !== state.lastSequence + 1
+  ) {
+    return {
+      state: {
+        ...state,
+        needsSnapshot: true,
+        gap: {
+          expectedSequence: state.lastSequence + 1,
+          receivedSequence: event.sequence,
+          receivedEventId: event.eventId,
+        },
+      },
+      disposition: 'snapshot-required',
+    };
+  }
+
+  if (event.eventType === 'snapshot') {
+    const snapshot = snapshotFromEvent(event, state.lastSequence);
+    const replaced = applyAgentSnapshot(state, snapshot);
+    return {
+      state: {
+        ...replaced,
+        lastSequence: Math.max(event.sequence, snapshot.lastSequence),
+        lastEventId: event.eventId,
+        resumeToken: snapshot.resumeToken || event.resumeToken,
+      },
+      disposition: 'applied',
+    };
+  }
+
+  let next = cloneState(state);
+  next.lastSequence = event.sequence;
+  next.lastEventId = event.eventId;
+  next.resumeToken = event.resumeToken;
+  const payload = record(event.payload);
+
+  switch (event.eventType) {
+    case 'text_delta':
+      applyTextDelta(next, event, payload);
+      break;
+    case 'message_completed':
+      applyCompletedMessage(next, event, payload);
+      break;
+    case 'status_changed':
+      next.status = text(payload.status) || next.status;
+      touchTurn(next, event.turnId, turnStatusFromRuntime(next.status), event.createdAtMs);
+      break;
+    case 'reasoning_summary':
+      upsertActivity(next, event, payload, 'completed');
+      break;
+    case 'tool_started':
+    case 'tool_progress':
+      upsertActivity(next, event, payload, payload.isError === true ? 'failed' : 'running');
+      next.status = payload.isError === true ? 'failed' : 'working';
+      break;
+    case 'tool_finished':
+      upsertActivity(next, event, payload, payload.isError === true ? 'failed' : 'completed');
+      break;
+    case 'approval_required':
+    case 'user_input_required':
+      upsertActivity(next, event, payload, 'waiting');
+      next.status = 'waiting';
+      touchTurn(next, event.turnId, 'waiting', event.createdAtMs);
+      break;
+    case 'approval_resolved':
+      upsertActivity(
+        next,
+        event,
+        payload,
+        ['approved', 'applied', 'external_pending'].includes(text(payload.state))
+          ? 'completed'
+          : 'failed',
+      );
+      break;
+    case 'memory_checkpointed':
+    case 'memory_maintenance_updated':
+      upsertActivity(next, event, payload, 'completed');
+      break;
+    case 'turn_completed':
+      completeTurn(next, event.turnId, 'completed', event.createdAtMs);
+      next.status = 'idle';
+      break;
+    case 'turn_failed':
+      completeTurn(next, event.turnId, 'failed', event.createdAtMs, text(payload.error));
+      next.status = 'failed';
+      upsertActivity(next, event, payload, 'failed');
+      break;
+    case 'snapshot_required':
+      next.needsSnapshot = true;
+      next.gap = {
+        expectedSequence: state.lastSequence + 1,
+        receivedSequence: event.sequence,
+        receivedEventId: event.eventId,
+      };
+      return { state: next, disposition: 'snapshot-required' };
+    case 'unknown':
+      appendDiagnostic(next, {
+        id: event.eventId,
+        streamKind: 'agent',
+        eventType: event.rawEventType || 'unknown',
+        summary: 'Unsupported agent event was retained for diagnostics.',
+        sequence: event.sequence,
+        payload,
+      });
+      break;
+    case 'heartbeat':
+      break;
+  }
+  return { state: next, disposition: 'applied' };
+}
+
+export function appendOptimisticAgentMessage(
+  state: AgentProjectionState,
+  input: OptimisticAgentMessageInput,
+): AgentProjectionState {
+  if (!input.clientMessageId.trim()) throw new TypeError('clientMessageId must not be empty');
+  if (state.optimisticByClientMessageId[input.clientMessageId]) return state;
+
+  const next = cloneState(state);
+  const messageId = `local:${input.clientMessageId}`;
+  const turnId = `local-turn:${input.clientMessageId}`;
+  const message: UiAgentMessage = {
+    schemaVersion: 'rag-ime.agent-message.v1',
+    id: messageId,
+    sessionId: state.sessionId,
+    turnId,
+    role: 'user',
+    status: 'queued',
+    blocks: [
+      {
+        id: `${messageId}:text`,
+        type: 'text',
+        status: 'completed',
+        presentationKind: 'plain_text',
+        data: { text: input.text },
+      },
+    ],
+    attachments: [...(input.attachments ?? [])],
+    citations: [],
+    createdAtMs: input.nowMs,
+    completedAtMs: null,
+    clientMessageId: input.clientMessageId,
+  };
+  next.messagesById[messageId] = message;
+  next.messageOrder.push(messageId);
+  next.optimisticByClientMessageId[input.clientMessageId] = messageId;
+  attachMessageToTurn(next, message);
+  touchTurn(next, turnId, 'queued', input.nowMs);
+  next.status = 'busy';
+  return next;
+}
+
+export function failOptimisticAgentMessage(
+  state: AgentProjectionState,
+  clientMessageId: string,
+  error: string,
+  nowMs: number,
+): AgentProjectionState {
+  const messageId = state.optimisticByClientMessageId[clientMessageId];
+  if (!messageId) return state;
+  const message = state.messagesById[messageId];
+  if (!message) return state;
+  const next = cloneState(state);
+  next.messagesById[messageId] = { ...message, status: 'failed' };
+  completeTurn(next, message.turnId, 'failed', nowMs, error);
+  next.status = 'failed';
+  return next;
+}
+
+export function abortAgentTurn(
+  state: AgentProjectionState,
+  turnId: string,
+  nowMs: number,
+): AgentProjectionState {
+  if (!state.turnsById[turnId]) return state;
+  const next = cloneState(state);
+  completeTurn(next, turnId, 'aborted', nowMs);
+  next.status = 'idle';
+  return next;
+}
+
+export function applyAgentSnapshot(
+  state: AgentProjectionState,
+  snapshot: AgentSnapshot,
+): AgentProjectionState {
+  const next = createAgentProjection(state.sessionId);
+  next.lastSequence = Math.max(0, snapshot.lastSequence);
+  next.lastEventId = snapshot.resumeToken;
+  next.resumeToken = snapshot.resumeToken;
+  next.status = snapshot.status ?? state.status;
+
+  const serverClientIds = new Set<string>();
+  for (const rawMessage of snapshot.messages) {
+    const parsed = tryParseAgentMessage(rawMessage);
+    if (!parsed.ok || parsed.value.sessionId !== state.sessionId) {
+      appendDiagnostic(next, {
+        id: `snapshot-invalid:${next.diagnostics.length}`,
+        streamKind: 'agent',
+        eventType: 'snapshot_message_invalid',
+        summary: 'A malformed snapshot message was skipped.',
+        sequence: next.lastSequence,
+        payload: {},
+      });
+      continue;
+    }
+    upsertMessage(next, parsed.value);
+    if (parsed.value.clientMessageId) serverClientIds.add(parsed.value.clientMessageId);
+  }
+
+  for (const [clientMessageId, messageId] of Object.entries(
+    state.optimisticByClientMessageId,
+  )) {
+    if (serverClientIds.has(clientMessageId)) continue;
+    const optimistic = state.messagesById[messageId];
+    if (!optimistic) continue;
+    next.messagesById[messageId] = optimistic;
+    next.messageOrder.push(messageId);
+    next.optimisticByClientMessageId[clientMessageId] = messageId;
+    attachMessageToTurn(next, optimistic);
+  }
+  return next;
+}
+
+export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
+  const payload = record(value);
+  const messages = Array.isArray(payload.messages)
+    ? payload.messages
+    : Array.isArray(payload.items)
+      ? payload.items
+      : [];
+  return {
+    messages,
+    lastSequence: integer(payload.lastSequence ?? payload.lastEventSequence),
+    resumeToken: text(payload.resumeToken ?? payload.lastEventId),
+    ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
+  };
+}
+
+function applyTextDelta(
+  state: AgentProjectionState,
+  event: UiAgentEvent,
+  payload: Record<string, unknown>,
+): void {
+  const delta = text(payload.delta);
+  if (!delta) return;
+  const messageId = text(payload.messageId) || `${event.turnId}:assistant`;
+  const blockId = text(payload.blockId) || `${messageId}:text`;
+  const existing = state.messagesById[messageId];
+  const blocks = existing ? [...existing.blocks] : [];
+  const blockIndex = blocks.findIndex((block) => block.id === blockId || block.type === 'text');
+  if (blockIndex >= 0) {
+    const block = blocks[blockIndex];
+    const previous = payload.replaceBlock === true ? '' : text(record(block.data).text);
+    blocks[blockIndex] = {
+      ...block,
+      status: 'running',
+      type: 'text',
+      presentationKind: 'markdown',
+      data: { ...record(block.data), text: previous + delta },
+    };
+  } else {
+    blocks.push({
+      id: blockId,
+      type: 'text',
+      status: 'running',
+      presentationKind: 'markdown',
+      data: { text: delta },
+    });
+  }
+  const message: UiAgentMessage = existing
+    ? { ...existing, status: 'streaming', blocks, completedAtMs: null }
+    : {
+        schemaVersion: 'rag-ime.agent-message.v1',
+        id: messageId,
+        sessionId: event.sessionId,
+        turnId: event.turnId,
+        role: 'assistant',
+        status: 'streaming',
+        blocks,
+        attachments: [],
+        citations: [],
+        createdAtMs: event.createdAtMs,
+        completedAtMs: null,
+      };
+  upsertMessage(state, message);
+  touchTurn(state, event.turnId, 'running', event.createdAtMs);
+  state.status = 'responding';
+}
+
+function applyCompletedMessage(
+  state: AgentProjectionState,
+  event: UiAgentEvent,
+  payload: Record<string, unknown>,
+): void {
+  const parsed = tryParseAgentMessage(payload.message);
+  if (!parsed.ok) {
+    appendDiagnostic(state, {
+      id: `${event.eventId}:invalid-message`,
+      streamKind: 'agent',
+      eventType: 'message_completed_invalid',
+      summary: 'A malformed completed message was skipped.',
+      sequence: event.sequence,
+      payload,
+    });
+    return;
+  }
+  const clientMessageId = text(payload.clientMessageId) || parsed.value.clientMessageId || '';
+  upsertMessage(
+    state,
+    clientMessageId ? { ...parsed.value, clientMessageId } : parsed.value,
+    clientMessageId,
+  );
+  touchTurn(
+    state,
+    parsed.value.turnId,
+    parsed.value.status === 'failed' ? 'failed' : 'running',
+    event.createdAtMs,
+  );
+}
+
+function upsertMessage(
+  state: AgentProjectionState,
+  message: UiAgentMessage,
+  clientMessageId = message.clientMessageId ?? '',
+): void {
+  if (message.role !== 'user' && message.role !== 'assistant') return;
+  const optimisticId = clientMessageId
+    ? state.optimisticByClientMessageId[clientMessageId]
+    : undefined;
+  let replacedOptimistic = false;
+  if (optimisticId && optimisticId !== message.id) {
+    const index = state.messageOrder.indexOf(optimisticId);
+    const optimistic = state.messagesById[optimisticId];
+    delete state.messagesById[optimisticId];
+    delete state.optimisticByClientMessageId[clientMessageId];
+    if (index >= 0) state.messageOrder[index] = message.id;
+    if (optimistic) detachMessageFromTurn(state, optimistic);
+    replacedOptimistic = index >= 0;
+  }
+
+  if (!state.messagesById[message.id] && !replacedOptimistic) state.messageOrder.push(message.id);
+  state.messagesById[message.id] = message;
+  attachMessageToTurn(state, message);
+}
+
+function upsertActivity(
+  state: AgentProjectionState,
+  event: UiAgentEvent,
+  payload: Record<string, unknown>,
+  status: AgentActivityProjection['status'],
+): void {
+  const id =
+    text(payload.toolCallId ?? payload.approvalId ?? payload.requestId) ||
+    `${event.turnId}:${event.eventType}`;
+  const previous = state.activitiesById[id];
+  const activity: AgentActivityProjection = {
+    id,
+    turnId: event.turnId,
+    kind: event.eventType,
+    status,
+    summary: activitySummary(payload, event.eventType),
+    payload,
+    createdAtMs: previous?.createdAtMs ?? event.createdAtMs,
+    updatedAtMs: event.createdAtMs,
+  };
+  if (!previous) state.activityOrder.push(id);
+  state.activitiesById[id] = activity;
+  const turn = ensureTurn(state, event.turnId, event.createdAtMs);
+  if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
+}
+
+function activitySummary(payload: Record<string, unknown>, fallback: string): string {
+  return text(payload.summary ?? payload.label ?? payload.message ?? payload.toolName) || fallback;
+}
+
+function touchTurn(
+  state: AgentProjectionState,
+  turnId: string,
+  status: AgentTurnStatus,
+  nowMs: number,
+): void {
+  const turn = ensureTurn(state, turnId, nowMs);
+  turn.status = status;
+  turn.updatedAtMs = nowMs;
+}
+
+function completeTurn(
+  state: AgentProjectionState,
+  turnId: string,
+  status: Extract<AgentTurnStatus, 'completed' | 'failed' | 'aborted'>,
+  nowMs: number,
+  failure = '',
+): void {
+  const turn = ensureTurn(state, turnId, nowMs);
+  turn.status = status;
+  turn.updatedAtMs = nowMs;
+  if (failure) turn.failure = failure;
+  for (const messageId of turn.messageIds) {
+    const message = state.messagesById[messageId];
+    if (!message) continue;
+    const messageStatus = status === 'completed' ? 'completed' : status;
+    state.messagesById[messageId] = {
+      ...message,
+      status: messageStatus,
+      blocks: message.blocks.map((block) => ({
+        ...block,
+        status: block.status === 'running' ? messageStatus : block.status,
+      })),
+      completedAtMs: nowMs,
+    };
+  }
+}
+
+function ensureTurn(
+  state: AgentProjectionState,
+  requestedTurnId: string,
+  nowMs: number,
+): AgentTurnProjection {
+  const turnId = requestedTurnId || 'unscoped';
+  let turn = state.turnsById[turnId];
+  if (!turn) {
+    turn = {
+      id: turnId,
+      status: 'running',
+      messageIds: [],
+      activityIds: [],
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    };
+    state.turnsById[turnId] = turn;
+    state.turnOrder.push(turnId);
+  }
+  return turn;
+}
+
+function attachMessageToTurn(state: AgentProjectionState, message: UiAgentMessage): void {
+  const turn = ensureTurn(state, message.turnId, message.createdAtMs);
+  if (!turn.messageIds.includes(message.id)) turn.messageIds.push(message.id);
+  turn.updatedAtMs = Math.max(turn.updatedAtMs, message.completedAtMs ?? message.createdAtMs);
+}
+
+function detachMessageFromTurn(state: AgentProjectionState, message: UiAgentMessage): void {
+  const turn = state.turnsById[message.turnId];
+  if (!turn) return;
+  turn.messageIds = turn.messageIds.filter((id) => id !== message.id);
+  if (turn.messageIds.length === 0 && turn.activityIds.length === 0) {
+    delete state.turnsById[turn.id];
+    state.turnOrder = state.turnOrder.filter((id) => id !== turn.id);
+  }
+}
+
+function appendDiagnostic(state: AgentProjectionState, diagnostic: ProjectionDiagnostic): void {
+  state.diagnostics.push(diagnostic);
+  if (state.diagnostics.length > diagnosticLimit) {
+    state.diagnostics.splice(0, state.diagnostics.length - diagnosticLimit);
+  }
+}
+
+function snapshotFromEvent(event: UiAgentEvent, fallbackSequence: number): AgentSnapshot {
+  const payload = record(event.payload);
+  const snapshot = agentSnapshotFromResponse(payload.snapshot ?? payload);
+  return {
+    ...snapshot,
+    lastSequence: snapshot.lastSequence || event.sequence || fallbackSequence,
+    resumeToken: snapshot.resumeToken || event.resumeToken,
+  };
+}
+
+function turnStatusFromRuntime(status: string): AgentTurnStatus {
+  if (status === 'waiting') return 'waiting';
+  if (status === 'failed' || status === 'faulted') return 'failed';
+  if (status === 'idle' || status === 'ready' || status === 'stopped') return 'completed';
+  return 'running';
+}
+
+function cloneState(state: AgentProjectionState): AgentProjectionState {
+  return {
+    ...state,
+    messagesById: { ...state.messagesById },
+    messageOrder: [...state.messageOrder],
+    turnsById: Object.fromEntries(
+      Object.entries(state.turnsById).map(([id, turn]) => [
+        id,
+        { ...turn, messageIds: [...turn.messageIds], activityIds: [...turn.activityIds] },
+      ]),
+    ),
+    turnOrder: [...state.turnOrder],
+    activitiesById: { ...state.activitiesById },
+    activityOrder: [...state.activityOrder],
+    optimisticByClientMessageId: { ...state.optimisticByClientMessageId },
+    diagnostics: [...state.diagnostics],
+    ...(state.gap ? { gap: { ...state.gap } } : {}),
+  };
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function integer(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) ? Math.max(0, value) : 0;
+}
