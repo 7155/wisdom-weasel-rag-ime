@@ -131,7 +131,7 @@ function PermissionPicker({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button className="agent-composer__picker" size="small" variant="quiet" disabled={!session || disabled} leadingIcon={mode === 'coordinator' ? <Network size={15} /> : <ShieldCheck size={15} />}>{mode === 'coordinator' ? '运行协调' : '受控模式'}</Button>
+        <Button aria-label={`Session 权限：${mode === 'coordinator' ? '运行协调' : '受控模式'}`} className="agent-composer__picker" size="small" variant="quiet" disabled={!session || disabled} leadingIcon={mode === 'coordinator' ? <Network size={15} /> : <ShieldCheck size={15} />}>{mode === 'coordinator' ? '运行协调' : '受控模式'}</Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-picker-popover">
         <header><LockKeyhole size={16} /><span><strong>Session 权限</strong><small>以服务端 Policy 回执为准</small></span></header>
@@ -160,7 +160,7 @@ function ModelTree({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button className="agent-composer__picker" size="small" variant="quiet" disabled={!catalog || disabled} leadingIcon={<BrainCircuit size={15} />}>{model?.name ?? '选择模型'} · {thinkingLabel(thinking)}</Button>
+        <Button aria-label={`模型：${model?.name ?? '未选择'}，思考强度：${thinkingLabel(thinking)}`} className="agent-composer__picker" size="small" variant="quiet" disabled={!catalog || disabled} leadingIcon={<BrainCircuit size={15} />}>{model?.name ?? '选择模型'} · {thinkingLabel(thinking)}</Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-model-tree">
         <header><strong>Provider → Model → Thinking</strong></header>

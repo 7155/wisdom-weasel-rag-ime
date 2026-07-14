@@ -72,7 +72,7 @@ export function RoomsFeature() {
     <main className="rooms-feature" data-route-id="rooms">
       <aside className="rooms-rail">
         <header><span><strong>Rooms</strong><small>多 Agent 协作</small></span><IconButton label="新建 Room" icon={<MessageSquarePlus size={17} />} onClick={() => void createRoom()} tooltip /></header>
-        <div>{rooms.map((item) => <button type="button" key={item.id} aria-current={item.id === selectedId} onClick={() => setSelectedId(item.id)}><UsersRound size={16} /><span><strong>{item.title}</strong><small>{item.participants.map((participant) => participant.displayName).join(' · ')}</small></span></button>)}</div>
+        <div>{rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => setSelectedId(item.id)}><UsersRound size={16} /><span><strong>{item.title}</strong><small>{item.participants.map((participant) => participant.displayName).join(' · ')}</small></span></button>)}</div>
       </aside>
       <section className="room-workspace">
         <header><span><strong>{room?.title ?? 'Room'}</strong><small>{room?.routingPolicy === 'moderator' ? '主持人路由' : '手动 @ 路由'}</small></span><div className="room-participants">{room?.participants.map((participant) => <span key={participant.id}><PersonaAvatar persona={previewPersonas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b></span>)}</div></header>

@@ -157,7 +157,7 @@ export function MetricStrip({
               {item.label}
             </dt>
             <dd>{item.value}</dd>
-            {item.detail ? <small>{item.detail}</small> : null}
+            {item.detail ? <dd className="mgmt-metric__detail">{item.detail}</dd> : null}
           </div>
         );
       })}
