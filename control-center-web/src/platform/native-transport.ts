@@ -137,9 +137,13 @@ export class NativeControlTransport implements ControlTransport {
   }
 
   async pickFiles(options: FilePickOptions): Promise<PickedFile[]> {
+    assertFilePickOptions(options);
     const result = await this.call('pickFiles', options);
     if (!Array.isArray(result)) throw new NativeBridgeCallError('pickFiles returned a non-array');
-    return result.map(parsePickedFile);
+    if (result.length > (options.maxFiles ?? (options.multiple ? 8 : 1))) {
+      throw new NativeBridgeCallError('pickFiles returned too many file receipts');
+    }
+    return result.map((value) => parsePickedFile(value, options));
   }
 
   async revealPath(path: string): Promise<void> {
@@ -334,6 +338,7 @@ function normalizeNativeCapabilities(value: unknown): FrontendCapabilities {
     features: booleanRecord(rawFeatures),
     native: {
       pickFiles: rawNative.pickFiles === true || rawNative.filePicker === true,
+      managedAgentImageImport: rawNative.managedAgentImageImport === true,
       revealPath: rawNative.revealPath === true,
       approvedExternalActions: rawNative.approvedExternalActions === true,
       keychain: rawNative.keychain === true || rawNative.keychainStatus === true,
@@ -343,7 +348,7 @@ function normalizeNativeCapabilities(value: unknown): FrontendCapabilities {
   };
 }
 
-function parsePickedFile(value: unknown): PickedFile {
+function parsePickedFile(value: unknown, options: FilePickOptions): PickedFile {
   if (
     !isRecord(value) ||
     typeof value.id !== 'string' ||
@@ -353,7 +358,61 @@ function parsePickedFile(value: unknown): PickedFile {
   ) {
     throw new NativeBridgeCallError('pickFiles returned an invalid file receipt');
   }
+  if (value.byteSize <= 0 || !Number.isSafeInteger(value.byteSize)) {
+    throw new NativeBridgeCallError('pickFiles returned an invalid byte size');
+  }
+  if (options.purpose === 'attachment') {
+    if (
+      !MANAGED_AGENT_IMAGE_MIME_TYPES.has(value.mimeType) ||
+      value.byteSize > MAX_MANAGED_AGENT_IMAGE_BYTES ||
+      typeof value.sessionId !== 'string' ||
+      value.sessionId !== options.sessionId ||
+      typeof value.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(value.sha256) ||
+      !/^media_[A-Za-z0-9_-]{12,80}$/.test(value.id) ||
+      'path' in value
+    ) {
+      throw new NativeBridgeCallError('pickFiles returned an invalid managed image receipt');
+    }
+  }
   return value as unknown as PickedFile;
+}
+
+const MANAGED_AGENT_IMAGE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+const MAX_MANAGED_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function assertFilePickOptions(options: FilePickOptions): void {
+  const allowedKeys = new Set(['accepts', 'multiple', 'purpose', 'sessionId', 'maxFiles']);
+  for (const key of Object.keys(options)) {
+    if (!allowedKeys.has(key)) throw new TypeError(`FilePickOptions field is not allowed: ${key}`);
+  }
+  if (!['attachment', 'configuration-import', 'restore', 'export-destination'].includes(options.purpose)) {
+    throw new TypeError('FilePickOptions purpose is not allowlisted');
+  }
+  if (options.accepts !== undefined && (!Array.isArray(options.accepts) || options.accepts.some((value) => typeof value !== 'string'))) {
+    throw new TypeError('FilePickOptions accepts must contain strings');
+  }
+  if (options.multiple !== undefined && typeof options.multiple !== 'boolean') {
+    throw new TypeError('FilePickOptions multiple must be a boolean');
+  }
+  if (options.maxFiles !== undefined && (!Number.isSafeInteger(options.maxFiles) || options.maxFiles < 1 || options.maxFiles > 8)) {
+    throw new TypeError('FilePickOptions maxFiles must be between 1 and 8');
+  }
+  if (options.purpose === 'attachment') {
+    if (typeof options.sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(options.sessionId)) {
+      throw new TypeError('attachment file selection requires a bounded sessionId');
+    }
+    if (options.maxFiles === undefined) {
+      throw new TypeError('attachment file selection requires maxFiles');
+    }
+  } else if (options.sessionId !== undefined) {
+    throw new TypeError('sessionId is only accepted for Agent attachments');
+  }
 }
 
 function booleanRecord(value: Record<string, unknown>): Record<string, boolean> {

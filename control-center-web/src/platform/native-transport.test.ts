@@ -36,7 +36,13 @@ describe('NativeControlTransport', () => {
     const capabilities = await transport.capabilities();
     expect(capabilities).toMatchObject({
       transport: 'native',
-      native: { pickFiles: true, revealPath: true, keychain: true, tcc: true },
+      native: {
+        pickFiles: true,
+        managedAgentImageImport: true,
+        revealPath: true,
+        keychain: true,
+        tcc: true,
+      },
     });
     await expect(
       transport.request({
@@ -183,6 +189,72 @@ describe('NativeControlTransport', () => {
     expect(sent).toEqual([]);
     transport.dispose();
   });
+
+  it('requires a session-bound managed image receipt without exposing a local path', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [{
+          id: 'media_native_attachment_01',
+          name: 'screen.png',
+          mimeType: 'image/png',
+          byteSize: 68,
+          sessionId: 'agent:session-1',
+          sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        }],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow, createId: () => 'media-call' });
+    await expect(transport.pickFiles({
+      accepts: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+      multiple: true,
+      purpose: 'attachment',
+      sessionId: 'agent:session-1',
+      maxFiles: 3,
+    })).resolves.toEqual([expect.objectContaining({ id: 'media_native_attachment_01' })]);
+    expect(sent).toEqual([{
+      id: 'media-call',
+      method: 'pickFiles',
+      payload: {
+        accepts: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+        multiple: true,
+        purpose: 'attachment',
+        sessionId: 'agent:session-1',
+        maxFiles: 3,
+      },
+    }]);
+    await expect(transport.pickFiles({ purpose: 'attachment', maxFiles: 1 })).rejects.toThrow(/sessionId/);
+    expect(sent).toHaveLength(1);
+    transport.dispose();
+  });
+
+  it('rejects a native attachment receipt that leaks a selected local path', async () => {
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [{
+          id: 'media_native_attachment_02',
+          name: 'screen.png',
+          mimeType: 'image/png',
+          byteSize: 68,
+          path: '/Users/private/screen.png',
+          sessionId: 'agent:session-1',
+          sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        }],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow });
+    await expect(transport.pickFiles({
+      purpose: 'attachment',
+      sessionId: 'agent:session-1',
+      maxFiles: 1,
+    })).rejects.toThrow(/invalid managed image receipt/);
+    transport.dispose();
+  });
 });
 
 function fakeBridgeWindow(
@@ -199,6 +271,7 @@ function capabilitiesFixture() {
     features: { subscriptions: true },
     native: {
       filePicker: true,
+      managedAgentImageImport: true,
       revealPath: true,
       keychainStatus: true,
       tccStatus: true,

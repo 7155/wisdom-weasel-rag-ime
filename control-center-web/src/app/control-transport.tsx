@@ -62,11 +62,12 @@ function createPreviewTransport(): MockControlTransport {
     routes,
     pickedFiles: [
       {
-        id: 'preview-attachment',
-        name: 'agent-runtime-trace.txt',
-        mimeType: 'text/plain',
+        id: 'media_preview_attachment_01',
+        name: 'agent-runtime.png',
+        mimeType: 'image/png',
         byteSize: 2_048,
-        path: '/tmp/agent-runtime-trace.txt',
+        sessionId: 'session-preview',
+        sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
       },
     ],
   });

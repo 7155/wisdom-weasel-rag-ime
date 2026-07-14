@@ -115,7 +115,28 @@ class NativeControlBridgeContractTests(unittest.TestCase):
             self.assertIn(f'"{key}"', pick_files_block)
         self.assertIn("replySuccess(id: id, result: Array(files))", pick_files_block)
         self.assertNotIn('result: ["files":', pick_files_block)
-        self.assertIn("result.map(parsePickedFile)", self.native_transport)
+        self.assertIn("parsePickedFile(value, options)", self.native_transport)
+
+    def test_attachment_picker_imports_only_managed_images_to_the_fixed_loopback_route(self) -> None:
+        pick_files_block = _required_match(
+            r"private func pickFiles\(.*?\n    \}\n\n    private func revealPath",
+            self.native_bridge,
+        )
+        for value in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+            self.assertIn(f'"{value}"', pick_files_block)
+        self.assertIn('requiredString("sessionId", in: payload)', pick_files_block)
+        self.assertIn('components.host = "127.0.0.1"', pick_files_block)
+        self.assertIn('components.port = 8766', pick_files_block)
+        self.assertIn('components.path = "/api/agent/media/import"', pick_files_block)
+        self.assertIn('forHTTPHeaderField: "Content-Type"', pick_files_block)
+        self.assertIn('forHTTPHeaderField: "Content-Length"', pick_files_block)
+        self.assertIn("uploadTask(with: request, fromFile: file.url)", pick_files_block)
+        self.assertIn('"rag-ime.agent-media.v1"', pick_files_block)
+        receipt_block = _required_match(
+            r"private func validatedAgentMediaResponse\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertNotIn('"path"', receipt_block)
 
     def test_external_action_request_and_receipt_share_hash_bound_fields(self) -> None:
         self.assertEqual(

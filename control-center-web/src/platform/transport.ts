@@ -53,6 +53,7 @@ export interface FrontendCapabilities {
   features: Readonly<Record<string, boolean>>;
   native: {
     pickFiles: boolean;
+    managedAgentImageImport: boolean;
     revealPath: boolean;
     approvedExternalActions: boolean;
     keychain: boolean;
@@ -65,6 +66,9 @@ export interface FilePickOptions {
   accepts?: readonly string[];
   multiple?: boolean;
   purpose: 'attachment' | 'configuration-import' | 'restore' | 'export-destination';
+  /** Required for attachment imports; the native host binds every receipt to this Agent session. */
+  sessionId?: string;
+  maxFiles?: number;
 }
 
 export interface PickedFile {
@@ -73,6 +77,9 @@ export interface PickedFile {
   mimeType: string;
   byteSize: number;
   path?: string;
+  /** Present only for a native managed-media import receipt. */
+  sessionId?: string;
+  sha256?: string;
 }
 
 export type ApprovedExternalActionId =
@@ -185,6 +192,7 @@ export function browserCapabilities(raw?: unknown): FrontendCapabilities {
     features,
     native: {
       pickFiles: false,
+      managedAgentImageImport: false,
       revealPath: false,
       approvedExternalActions: false,
       keychain: false,

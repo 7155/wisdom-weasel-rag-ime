@@ -3,6 +3,16 @@ import Foundation
 import UniformTypeIdentifiers
 import WebKit
 
+private enum NativeMediaImportError: LocalizedError {
+    case rejected(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .rejected(let message): message
+        }
+    }
+}
+
 final class NativeBridge: NSObject, WKScriptMessageHandler {
     static let handlerName = "ragImeNativeBridge"
 
@@ -19,7 +29,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
     private weak var webView: WKWebView?
     private let routePolicy: NativeRoutePolicy
     private let requestSession: URLSession
-    private var requestTasks: [String: URLSessionDataTask] = [:]
+    private var requestTasks: [String: URLSessionTask] = [:]
     private var allowedRevealPaths: Set<String> = []
     private lazy var eventBridge = NativeEventBridge { [weak self] envelope in
         self?.sendToWeb(envelope)
@@ -93,9 +103,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 "agentStreaming": true,
                 "roomStreaming": true,
                 "filePicker": true,
+                "managedAgentImageImport": true,
             ],
             "native": [
                 "pickFiles": true,
+                "managedAgentImageImport": true,
                 "revealPath": true,
                 "approvedExternalActions": true,
                 "keychain": false,
@@ -221,21 +233,87 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
     }
 
     private func pickFiles(id: String, payload: [String: Any]) {
-        let panel = NSOpenPanel()
-        let purpose = payload["purpose"] as? String ?? "attachment"
-        panel.canChooseFiles = purpose != "export-destination"
-        panel.canChooseDirectories = purpose == "export-destination"
-        panel.allowsMultipleSelection = payload["multiple"] as? Bool ?? false
-        panel.resolvesAliases = true
-        panel.prompt = "选择"
-        if let accepts = payload["accepts"] as? [String] {
-            let allowedTypes = accepts.compactMap { value -> UTType? in
-                if value.hasPrefix(".") {
-                    return UTType(filenameExtension: String(value.dropFirst()))
-                }
-                return UTType(mimeType: value)
+        do {
+            let allowedKeys: Set<String> = ["accepts", "multiple", "purpose", "sessionId", "maxFiles"]
+            guard Set(payload.keys).isSubset(of: allowedKeys) else {
+                throw NativeMediaImportError.rejected("File picker payload contained an unsupported field")
             }
-            if !allowedTypes.isEmpty { panel.allowedContentTypes = allowedTypes }
+            let purpose = try requiredString("purpose", in: payload)
+            guard ["attachment", "configuration-import", "restore", "export-destination"].contains(purpose) else {
+                throw NativeMediaImportError.rejected("File picker purpose is not allowlisted")
+            }
+            let multiple: Bool
+            if let rawMultiple = payload["multiple"] {
+                guard let value = rawMultiple as? Bool else {
+                    throw NativeMediaImportError.rejected("File picker multiple must be a boolean")
+                }
+                multiple = value
+            } else {
+                multiple = false
+            }
+            let accepts: [String]
+            if let rawAccepts = payload["accepts"] {
+                guard let value = rawAccepts as? [String], value.count <= 32 else {
+                    throw NativeMediaImportError.rejected("File picker accepts must be a bounded string array")
+                }
+                accepts = value
+            } else {
+                accepts = []
+            }
+            let requestedCount: Int
+            if let rawCount = payload["maxFiles"] {
+                guard let value = rawCount as? Int else {
+                    throw NativeMediaImportError.rejected("File picker maxFiles must be an integer")
+                }
+                requestedCount = value
+            } else {
+                requestedCount = multiple ? 8 : 1
+            }
+            guard (1...8).contains(requestedCount) else {
+                throw NativeMediaImportError.rejected("File picker maxFiles must be between 1 and 8")
+            }
+            if purpose == "attachment" {
+                let sessionId = try requiredString("sessionId", in: payload)
+                guard sessionId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$", options: .regularExpression) != nil else {
+                    throw NativeMediaImportError.rejected("Attachment sessionId is invalid")
+                }
+                presentAgentImagePicker(
+                    id: id,
+                    sessionId: sessionId,
+                    maxFiles: requestedCount,
+                    multiple: multiple
+                )
+                return
+            }
+            guard payload["sessionId"] == nil else {
+                throw NativeMediaImportError.rejected("sessionId is only accepted for Agent attachments")
+            }
+            presentLocalPathPicker(
+                id: id,
+                purpose: purpose,
+                accepts: accepts,
+                maxFiles: requestedCount,
+                multiple: multiple
+            )
+        } catch {
+            replyError(id: id, code: "file_picker_rejected", message: error.localizedDescription)
+        }
+    }
+
+    private func presentAgentImagePicker(
+        id: String,
+        sessionId: String,
+        maxFiles: Int,
+        multiple: Bool
+    ) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = multiple && maxFiles > 1
+        panel.resolvesAliases = true
+        panel.prompt = "导入"
+        panel.allowedContentTypes = ["image/png", "image/jpeg", "image/gif", "image/webp"].compactMap {
+            UTType(mimeType: $0)
         }
         panel.begin { [weak self] response in
             guard let self else { return }
@@ -243,7 +321,45 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 self.replySuccess(id: id, result: [])
                 return
             }
-            let files = panel.urls.prefix(20).map { url -> [String: Any] in
+            do {
+                let selected = try panel.urls.prefix(maxFiles).map(self.validatedAgentImage)
+                guard !selected.isEmpty else {
+                    throw NativeMediaImportError.rejected("No image was selected")
+                }
+                self.uploadAgentImages(id: id, sessionId: sessionId, files: Array(selected))
+            } catch {
+                self.replyError(id: id, code: "agent_media_selection_rejected", message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func presentLocalPathPicker(
+        id: String,
+        purpose: String,
+        accepts: [String],
+        maxFiles: Int,
+        multiple: Bool
+    ) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = purpose != "export-destination"
+        panel.canChooseDirectories = purpose == "export-destination"
+        panel.allowsMultipleSelection = multiple && maxFiles > 1
+        panel.resolvesAliases = true
+        panel.prompt = "选择"
+        let allowedTypes = accepts.compactMap { value -> UTType? in
+            if value.hasPrefix(".") {
+                return UTType(filenameExtension: String(value.dropFirst()))
+            }
+            return UTType(mimeType: value)
+        }
+        if !allowedTypes.isEmpty { panel.allowedContentTypes = allowedTypes }
+        panel.begin { [weak self] response in
+            guard let self else { return }
+            guard response == .OK else {
+                self.replySuccess(id: id, result: [])
+                return
+            }
+            let files = panel.urls.prefix(maxFiles).map { url -> [String: Any] in
                 let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
                 self.allowedRevealPaths.insert(url.standardizedFileURL.path)
                 let contentTypeValues = try? url.resourceValues(forKeys: [.contentTypeKey])
@@ -257,6 +373,156 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             }
             self.replySuccess(id: id, result: Array(files))
         }
+    }
+
+    private struct SelectedAgentImage {
+        let url: URL
+        let name: String
+        let mimeType: String
+        let byteSize: Int
+    }
+
+    private func validatedAgentImage(_ sourceURL: URL) throws -> SelectedAgentImage {
+        let url = sourceURL.standardizedFileURL
+        guard url.isFileURL else {
+            throw NativeMediaImportError.rejected("Agent attachments must be local files")
+        }
+        let values = try url.resourceValues(
+            forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey, .contentTypeKey]
+        )
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw NativeMediaImportError.rejected("Agent attachments must be regular non-symlink files")
+        }
+        guard let byteSize = values.fileSize, byteSize > 0, byteSize <= 20 * 1024 * 1024 else {
+            throw NativeMediaImportError.rejected("Agent images must be non-empty and no larger than 20 MiB")
+        }
+        let mimeType = values.contentType?.preferredMIMEType?.lowercased() ?? ""
+        guard ["image/png", "image/jpeg", "image/gif", "image/webp"].contains(mimeType) else {
+            throw NativeMediaImportError.rejected("Only PNG, JPEG, GIF, and WebP Agent images are supported")
+        }
+        let name = url.lastPathComponent
+        guard !name.isEmpty, name.utf8.count <= 512, !name.contains("\0") else {
+            throw NativeMediaImportError.rejected("Agent image file name is invalid")
+        }
+        return SelectedAgentImage(url: url, name: name, mimeType: mimeType, byteSize: byteSize)
+    }
+
+    private func uploadAgentImages(
+        id: String,
+        sessionId: String,
+        files: [SelectedAgentImage],
+        index: Int = 0,
+        receipts: [[String: Any]] = []
+    ) {
+        guard index < files.count else {
+            requestTasks.removeValue(forKey: id)
+            replySuccess(id: id, result: receipts)
+            return
+        }
+        let file = files[index]
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = "127.0.0.1"
+        components.port = 8766
+        components.path = "/api/agent/media/import"
+        components.queryItems = [
+            URLQueryItem(name: "sessionId", value: sessionId),
+            URLQueryItem(name: "fileName", value: file.name),
+        ]
+        guard let url = components.url,
+              url.scheme == "http",
+              url.host == "127.0.0.1",
+              url.port == 8766 else {
+            replyError(id: id, code: "agent_media_import_rejected", message: "Managed media import URL could not be constructed")
+            return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(file.mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(String(file.byteSize), forHTTPHeaderField: "Content-Length")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        let task = requestSession.uploadTask(with: request, fromFile: file.url) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.requestTasks.removeValue(forKey: id)
+                do {
+                    let receipt = try self.validatedAgentMediaResponse(
+                        data: data,
+                        response: response,
+                        error: error,
+                        sessionId: sessionId,
+                        selected: file
+                    )
+                    var nextReceipts = receipts
+                    nextReceipts.append(receipt)
+                    self.uploadAgentImages(
+                        id: id,
+                        sessionId: sessionId,
+                        files: files,
+                        index: index + 1,
+                        receipts: nextReceipts
+                    )
+                } catch {
+                    self.replyError(
+                        id: id,
+                        code: "agent_media_import_failed",
+                        message: error.localizedDescription,
+                        retryable: (error as NSError).code == NSURLErrorTimedOut
+                    )
+                }
+            }
+        }
+        requestTasks[id] = task
+        task.resume()
+    }
+
+    private func validatedAgentMediaResponse(
+        data: Data?,
+        response: URLResponse?,
+        error: Error?,
+        sessionId: String,
+        selected: SelectedAgentImage
+    ) throws -> [String: Any] {
+        if let error { throw error }
+        guard let http = response as? HTTPURLResponse else {
+            throw NativeMediaImportError.rejected("Managed media import returned no HTTP response")
+        }
+        guard let data, !data.isEmpty, data.count <= 1_048_576 else {
+            throw NativeMediaImportError.rejected("Managed media import returned an invalid response size")
+        }
+        guard let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NativeMediaImportError.rejected("Managed media import returned invalid JSON")
+        }
+        guard http.statusCode == 201 else {
+            let message = decoded["error"] as? String ?? "Managed media import returned HTTP \(http.statusCode)"
+            throw NativeMediaImportError.rejected(message)
+        }
+        guard decoded["schemaVersion"] as? String == "rag-ime.agent-media-import.v1",
+              decoded["ok"] as? Bool == true,
+              let media = decoded["media"] as? [String: Any],
+              media["schemaVersion"] as? String == "rag-ime.agent-media.v1",
+              let mediaId = media["mediaId"] as? String,
+              mediaId.range(of: "^media_[A-Za-z0-9_-]{12,80}$", options: .regularExpression) != nil,
+              media["sessionId"] as? String == sessionId,
+              media["mimeType"] as? String == selected.mimeType,
+              (media["byteSize"] as? NSNumber)?.intValue == selected.byteSize,
+              let sha256 = media["sha256"] as? String,
+              sha256.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+              media["origin"] as? String == "user_attachment" else {
+            throw NativeMediaImportError.rejected("Managed media import returned an invalid receipt")
+        }
+        let name = media["fileName"] as? String ?? selected.name
+        guard name.utf8.count <= 160 else {
+            throw NativeMediaImportError.rejected("Managed media receipt file name is invalid")
+        }
+        return [
+            "id": mediaId,
+            "name": name,
+            "mimeType": selected.mimeType,
+            "byteSize": selected.byteSize,
+            "sessionId": sessionId,
+            "sha256": sha256,
+        ]
     }
 
     private func revealPath(id: String, payload: [String: Any]) {

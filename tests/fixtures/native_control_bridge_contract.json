@@ -72,7 +72,7 @@
     "requestKeys": ["pathId", "params", "query", "lastEventId"],
     "outboundKinds": ["event", "error", "complete"]
   },
-  "pickedFileKeys": ["id", "name", "mimeType", "byteSize", "path"],
+  "pickedFileKeys": ["id", "name", "mimeType", "byteSize", "path", "sessionId", "sha256"],
   "externalActionRequestKeys": [
     "action",
     "receiptId",
@@ -99,6 +99,7 @@
   ],
   "nativeCapabilityKeys": [
     "pickFiles",
+    "managedAgentImageImport",
     "revealPath",
     "approvedExternalActions",
     "keychain",

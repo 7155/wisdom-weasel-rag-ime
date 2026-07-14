@@ -1,5 +1,5 @@
 import { AlertCircle, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
@@ -32,6 +32,8 @@ export function AgentFeature() {
   const [sending, setSending] = useState(false);
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [error, setError] = useState('');
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
   const ensure = useAgentLiveStore((state) => state.ensure);
   const projectionStatus = useAgentLiveStore((state) => state.projections[selectedId]?.status ?? 'idle');
 
@@ -62,6 +64,7 @@ export function AgentFeature() {
   }, [transport]);
 
   useEffect(() => { void loadSessions(); }, [loadSessions]);
+  useEffect(() => { setAttachments([]); }, [selectedId]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -166,9 +169,27 @@ export function AgentFeature() {
 
   async function pickFiles(): Promise<void> {
     if (!transport.pickFiles) { setError('当前平台未开放受控文件选择。'); return; }
+    if (!session) { setError('请先选择 Session。'); return; }
+    const remaining = 8 - attachments.length;
+    if (remaining <= 0) { setError('单次消息最多支持 8 张图片。'); return; }
     try {
-      const files = await transport.pickFiles({ accepts: ['image/*', 'text/*', 'application/pdf'], multiple: true, purpose: 'attachment' });
-      setAttachments((current) => [...current, ...files.slice(0, 8 - current.length).map((file) => ({ ...file, source: 'picker' as const }))]);
+      const files = await transport.pickFiles({
+        accepts: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+        multiple: true,
+        purpose: 'attachment',
+        sessionId: session.id,
+        maxFiles: remaining,
+      });
+      if (selectedIdRef.current !== session.id) {
+        setError('Session 已切换，刚导入的图片未加入当前消息。');
+        return;
+      }
+      setAttachments((current) => {
+        const byId = new Map(current.map((item) => [item.id, item]));
+        for (const file of files) byId.set(file.id, { ...file, source: 'picker' as const });
+        return [...byId.values()].slice(0, 8);
+      });
+      setError('');
     } catch (pickError) { setError(errorText(pickError)); }
   }
 

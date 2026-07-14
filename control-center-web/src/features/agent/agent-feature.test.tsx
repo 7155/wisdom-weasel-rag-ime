@@ -54,6 +54,25 @@ describe('Agent experience', () => {
     expect(prompt?.request.body).toMatchObject({ message: '检查 reducer 边界' });
   });
 
+  it('imports managed images for the current session before sending mediaIds', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><AgentFeature /></TooltipProvider></ControlTransportProvider>);
+    await screen.findByRole('textbox', { name: '消息' });
+    await user.click(screen.getByRole('button', { name: '添加附件' }));
+    expect(transport.filePickCalls).toEqual([{
+      accepts: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+      multiple: true,
+      purpose: 'attachment',
+      sessionId: 'session-preview',
+      maxFiles: 8,
+    }]);
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(true));
+    const prompt = transport.requests.find((call) => call.request.pathId === 'agent.session.prompt');
+    expect(prompt?.request.body).toMatchObject({ attachments: ['media_fixture_attachment_01'] });
+  });
+
   it('starts with the session rail closed on mobile and closes it after selection', async () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
     const user = userEvent.setup();
@@ -70,7 +89,14 @@ describe('Agent experience', () => {
 
 function featureTransport(): MockControlTransport {
   return new MockControlTransport({
-    pickedFiles: [{ id: 'media-1', name: 'trace.txt', mimeType: 'text/plain', byteSize: 20 }],
+    pickedFiles: [{
+      id: 'media_fixture_attachment_01',
+      name: 'screen.png',
+      mimeType: 'image/png',
+      byteSize: 68,
+      sessionId: 'session-preview',
+      sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    }],
     routes: {
       'agent.sessions.list': { ok: true, items: previewSessions },
       'agent.roles.list': { ok: true, items: previewPersonas },

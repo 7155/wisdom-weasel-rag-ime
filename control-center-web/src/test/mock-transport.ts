@@ -49,6 +49,7 @@ export class MockControlTransport implements ControlTransport {
   readonly kind = 'mock' as const;
   readonly requests: MockRequestCall[] = [];
   readonly subscriptionCalls: MockSubscriptionCall[] = [];
+  readonly filePickCalls: FilePickOptions[] = [];
 
   private readonly routeHandlers = new Map<ControlPathId, MockRouteHandler>();
   private readonly subscriptions = new Map<string, ActiveSubscription>();
@@ -71,6 +72,7 @@ export class MockControlTransport implements ControlTransport {
       features: {},
       native: {
         pickFiles: Boolean(options.pickedFiles),
+        managedAgentImageImport: Boolean(options.pickedFiles),
         revealPath: false,
         approvedExternalActions: Boolean(options.externalAction),
         keychain: false,
@@ -159,7 +161,8 @@ export class MockControlTransport implements ControlTransport {
     return this.subscriptions.size;
   }
 
-  async pickFiles(_options: FilePickOptions): Promise<PickedFile[]> {
+  async pickFiles(options: FilePickOptions): Promise<PickedFile[]> {
+    this.filePickCalls.push({ ...options });
     return [...this.pickedFiles];
   }
 
