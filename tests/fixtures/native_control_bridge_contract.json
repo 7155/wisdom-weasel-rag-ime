@@ -80,6 +80,7 @@
     "subscribe",
     "cancelSubscription",
     "pickFiles",
+    "pasteImages",
     "revealPath",
     "runApprovedExternalAction"
   ],

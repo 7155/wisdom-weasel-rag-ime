@@ -22,6 +22,16 @@ export function DiagnosticsFeature() {
   const runtime = asRecord(queries.runtime.data);
   const predictorEnvelope = asRecord(queries.predictor.data);
   const predictor = asRecord(predictorEnvelope.predictor);
+  const predictorCapabilities = asRecord(predictor.capabilities);
+  const predictorModelInfo = asRecord(predictor.modelInfo);
+  const predictorProvider = stringValue(
+    predictor.provider,
+    stringValue(predictor.providerName, stringValue(predictor.kind, 'local')),
+  );
+  const predictorDimensions = numberValue(
+    predictor.dimensions,
+    numberValue(predictorCapabilities.dimensions, numberValue(predictorModelInfo.hiddenSize)),
+  );
   const models = asRecord(queries.models.data);
   const inputSource = asRecord(queries.source.data);
   const components = Object.entries(asRecord(runtime.components)).map(([id, value]) => ({
@@ -66,8 +76,8 @@ export function DiagnosticsFeature() {
         <ManagementSection title="关键探针">
           <MetricStrip items={[
             { label: '输入源', value: booleanValue(inputSource.typingReady) ? 'ready' : 'not ready', detail: stringValue(inputSource.readinessState, 'unknown'), icon: Keyboard, tone: booleanValue(inputSource.typingReady) ? 'success' : 'warning' },
-            { label: '预测器', value: stringValue(predictor.status, booleanValue(predictorEnvelope.ok) ? 'ready' : 'unknown'), detail: stringValue(predictor.provider, stringValue(predictor.kind, 'local')), icon: Cpu, tone: booleanValue(predictorEnvelope.ok) ? 'success' : 'warning' },
-            { label: '模型维度', value: numberValue(predictor.dimensions, numberValue(asRecord(predictor.capabilities).dimensions)), detail: '当前能力', icon: Activity },
+            { label: '预测器', value: stringValue(predictor.status, booleanValue(predictorEnvelope.ok) ? 'ready' : 'unknown'), detail: predictorProvider, icon: Cpu, tone: booleanValue(predictorEnvelope.ok) ? 'success' : 'warning' },
+            { label: '模型维度', value: predictorDimensions, detail: '当前能力', icon: Activity },
             { label: '本机修复', value: queries.capabilities.data?.native.approvedExternalActions ? 'available' : 'unavailable', detail: '需要本机确认', icon: ServerCog, tone: queries.capabilities.data?.native.approvedExternalActions ? 'success' : 'warning' },
           ]} />
         </ManagementSection>
@@ -85,7 +95,7 @@ export function DiagnosticsFeature() {
         <div className="mgmt-grid-2">
           <ManagementSection title="预测器快照">
             <dl className="mgmt-kv">
-              <dt>Provider</dt><dd>{stringValue(predictor.provider, stringValue(predictor.kind, 'unknown'))}</dd>
+              <dt>Provider</dt><dd>{predictorProvider}</dd>
               <dt>Model</dt><dd>{stringValue(predictor.model, stringValue(predictor.modelPath, 'unknown'))}</dd>
               <dt>Runtime</dt><dd>{stringValue(predictor.runtime, 'local')}</dd>
               <dt>Cache</dt><dd>{booleanValue(asRecord(predictor.statusCache).hit) ? 'hit' : 'miss / unknown'}</dd>

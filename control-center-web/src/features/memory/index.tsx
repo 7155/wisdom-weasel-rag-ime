@@ -174,7 +174,7 @@ function normalizeMemoryRow(item: Record<string, unknown>): Record<string, unkno
   return {
     ...item,
     id: item.id ?? item.bookId ?? item.atomId ?? item.tagId ?? item.groupId ?? item.phraseId,
-    title: item.title ?? item.name ?? item.label ?? item.text ?? item.phrase,
+    title: item.title ?? item.name ?? item.label ?? item.tag ?? item.text ?? item.phrase,
     detail: item.summary ?? item.note ?? item.description ?? item.text ?? item.aliases,
     source: item.source ?? item.sourceType ?? item.project ?? item.kind,
     status: item.status ?? (item.active === false ? 'inactive' : 'active'),

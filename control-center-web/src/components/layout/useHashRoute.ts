@@ -1,10 +1,13 @@
 import { useSyncExternalStore } from 'react';
 import { routeRegistry, type RouteDefinition } from '@/app/route-registry';
+import { router } from '@/app/router';
 
 function subscribe(callback: () => void) {
+  const unsubscribeRouter = router.subscribe(callback);
   window.addEventListener('hashchange', callback);
   window.addEventListener('popstate', callback);
   return () => {
+    unsubscribeRouter();
     window.removeEventListener('hashchange', callback);
     window.removeEventListener('popstate', callback);
   };

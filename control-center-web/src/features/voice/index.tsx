@@ -17,6 +17,7 @@ import {
   stringValue,
   valueAt,
 } from '@/features/overview/management-ui';
+import './voice.css';
 
 const providers = [
   { value: 'native-streaming', label: '原生流式' },
@@ -30,14 +31,14 @@ export function VoiceFeature() {
   const runtime = asRecord(queries.runtime.data);
   const components = asRecord(runtime.components);
   const voiceSettings = asRecord(settings.voice);
-  const [provider, setProvider] = useState<(typeof providers)[number]['value']>(
-    (providers.some((item) => item.value === stringValue(voiceSettings.provider))
-      ? stringValue(voiceSettings.provider)
-      : 'native-streaming') as (typeof providers)[number]['value'],
-  );
+  const voiceConfigured = Object.keys(voiceSettings).length > 0;
+  const configuredProvider = providers.find((item) => item.value === stringValue(voiceSettings.provider))?.value ?? '';
+  const [providerDraft, setProviderDraft] = useState<(typeof providers)[number]['value'] | ''>('');
+  const provider = providerDraft || configuredProvider;
   const tokenState = configuredLabel(
     voiceSettings.tokenConfigured ?? voiceSettings.accessTokenConfigured ?? valueAt(settings, 'voice.credentials.configured'),
   );
+  const voiceAgent = asRecord(components.voiceAgent);
   const microphone = asRecord(components.microphone ?? components.voiceMicrophone);
   const accessibility = asRecord(components.accessibility ?? components.voiceAccessibility);
   const error = [queries.settings.error, queries.runtime.error, queries.capabilities.error].find(Boolean) as Error | null;
@@ -55,9 +56,9 @@ export function VoiceFeature() {
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection title="运行与隐私">
           <MetricStrip items={[
-            { label: '语音 Agent', value: stringValue(asRecord(components.voiceAgent).status, 'unknown'), detail: '独立受控进程', icon: Waves, tone: booleanValue(asRecord(components.voiceAgent).ok) ? 'success' : 'warning' },
-            { label: '麦克风', value: booleanValue(microphone.ok) ? 'allowed' : 'unknown', detail: 'TCC', icon: Mic, tone: booleanValue(microphone.ok) ? 'success' : 'warning' },
-            { label: '辅助功能', value: booleanValue(accessibility.ok) ? 'allowed' : 'unknown', detail: '光标写入', icon: Shield, tone: booleanValue(accessibility.ok) ? 'success' : 'warning' },
+            { label: '语音 Agent', value: stringValue(voiceAgent.status, 'unavailable'), detail: '独立受控进程', icon: Waves, tone: booleanValue(voiceAgent.ok) ? 'success' : 'warning' },
+            { label: '麦克风', value: booleanValue(microphone.ok) ? 'allowed' : 'unavailable', detail: 'TCC', icon: Mic, tone: booleanValue(microphone.ok) ? 'success' : 'warning' },
+            { label: '辅助功能', value: booleanValue(accessibility.ok) ? 'allowed' : 'unavailable', detail: '光标写入', icon: Shield, tone: booleanValue(accessibility.ok) ? 'success' : 'warning' },
             { label: '访问凭据', value: tokenState, detail: '安全存储', icon: KeyRound, tone: tokenState === 'configured' ? 'success' : 'warning' },
           ]} />
           <InlineNotice title="密钥边界" tone="info">已保存的 Token、Header 与 API Key 永不回显。本页只显示 configured / not configured。</InlineNotice>
@@ -67,11 +68,15 @@ export function VoiceFeature() {
           <div className="mgmt-grid-2">
             <div className="mgmt-stack">
               <strong style={{ fontSize: 12 }}>语音 Provider</strong>
-              <SegmentedControl aria-label="语音 Provider" items={providers} onValueChange={setProvider} value={provider} />
+              {provider ? (
+                <SegmentedControl aria-label="语音 Provider" items={providers} onValueChange={setProviderDraft} value={provider} />
+              ) : (
+                <InlineNotice title="Provider 未配置" tone="warning">后端未返回可用的语音 Provider 配置。</InlineNotice>
+              )}
             </div>
             <OperationalList items={[
-              { id: 'push-to-talk', title: '按住说话', detail: '按下开始、松开定稿，不与输入法候选键冲突', meta: stringValue(voiceSettings.hotkey, 'middle-mouse'), status: <StatusBadge label="local" tone="info" /> },
-              { id: 'hotwords', title: '热词', detail: '只传递给受控 ASR Provider', meta: `${Array.isArray(voiceSettings.hotwords) ? voiceSettings.hotwords.length : 0} 条`, status: <StatusBadge label={booleanValue(voiceSettings.hotwordsEnabled) ? 'enabled' : 'disabled'} tone={booleanValue(voiceSettings.hotwordsEnabled) ? 'success' : 'neutral'} /> },
+              { id: 'push-to-talk', title: '按住说话', detail: '按下开始、松开定稿，不与输入法候选键冲突', meta: stringValue(voiceSettings.hotkey, '未配置'), status: <StatusBadge label={voiceSettings.hotkey ? 'local' : 'unavailable'} tone={voiceSettings.hotkey ? 'info' : 'warning'} /> },
+              { id: 'hotwords', title: '热词', detail: '只传递给受控 ASR Provider', meta: voiceConfigured ? `${Array.isArray(voiceSettings.hotwords) ? voiceSettings.hotwords.length : 0} 条` : '未配置', status: <StatusBadge label={voiceConfigured ? (booleanValue(voiceSettings.hotwordsEnabled) ? 'enabled' : 'disabled') : 'unavailable'} tone={voiceConfigured && booleanValue(voiceSettings.hotwordsEnabled) ? 'success' : voiceConfigured ? 'neutral' : 'warning'} /> },
             ]} />
           </div>
         </ManagementSection>
@@ -83,7 +88,7 @@ export function VoiceFeature() {
               description="预览 Provider、模型与访问凭据状态的变化。"
               mutationKey={['voice', 'mutation', 'provider']}
               preview={[
-                `目标 Provider：${provider}`,
+                `目标 Provider：${provider || '未配置'}`,
                 `当前凭据：${tokenState}`,
                 'Token 与自定义 Header 不进入 receipt、日志或 VITE_*。',
               ]}
@@ -95,7 +100,7 @@ export function VoiceFeature() {
               description="切换按住说话热键并通知 Voice Agent 重载。"
               mutationKey={['voice', 'mutation', 'hotkey']}
               preview={[
-                '默认 middle mouse：按住录音，松开定稿。',
+                `当前热键：${stringValue(voiceSettings.hotkey, '未配置')}`,
                 '变更不能占用 Rime 普通数字键与 Tab 候选操作。',
                 '失败时保留旧热键。',
               ]}

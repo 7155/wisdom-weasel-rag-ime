@@ -1,0 +1,11 @@
+main[data-route-id='voice'] .mgmt-grid-2,
+main[data-route-id='voice'] .mgmt-grid-2 > * {
+  min-width: 0;
+}
+
+main[data-route-id='voice'] .mgmt-list__row {
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+}
+
+main[data-route-id='voice'] .mgmt-list__meta { grid-column: 2; }
+main[data-route-id='voice'] .mgmt-list__status { grid-column: 3; }

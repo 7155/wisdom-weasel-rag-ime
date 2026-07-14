@@ -1615,7 +1615,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(created["ok"])
         self.assertEqual(listed["items"][0]["id"], session_id)
         self.assertEqual(runtime["status"], "disabled")
-        self.assertEqual(roles["items"][0]["displayName"], "智鼬")
+        self.assertEqual(roles["items"][0]["displayName"], "智鼬·此刻")
         self.assertNotIn("systemPrompt", roles["items"][0])
         self.assertEqual(maintenance["policy"], "review")
         self.assertFalse(maintenance["autoApply"])
@@ -1682,7 +1682,7 @@ class DebugManagementApiTests(unittest.TestCase):
                     f"{base_url}/rooms/{room_id}/messages",
                     data=json.dumps(
                         {
-                            "message": "@Hermes 请诊断状态",
+                            "message": "@智鼬·初识 请诊断状态",
                             "clientMessageId": "room-http-client-1",
                         }
                     ).encode("utf-8"),
@@ -1814,6 +1814,48 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(send.call_args.args[0], session_id)
         self.assertEqual(mailbox.call_args.args[0], session_id)
         self.assertEqual(artifact.call_args.args[:2], (session_id, "artifact:http"))
+
+    def test_agent_intercom_get_returns_json_4xx_for_non_room_session(self) -> None:
+        session_id = self.service.agent.create_session({"title": "普通会话"})["session"]["id"]
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(f"{base_url}/api/agent/sessions/{session_id}/intercom", timeout=5)
+            try:
+                error_status = caught.exception.code
+                content_type = caught.exception.headers.get_content_type()
+                payload = json.loads(caught.exception.read().decode("utf-8"))
+            finally:
+                caught.exception.close()
+
+            with urlopen(f"{base_url}/api/health", timeout=5) as response:
+                health = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(error_status, 400)
+        self.assertEqual(content_type, "application/json")
+        self.assertEqual(
+            payload,
+            {
+                "schemaVersion": "rag-ime.local-api-error.v1",
+                "ok": False,
+                "errorCode": "invalid_request",
+                "error": "session is not a room participant",
+            },
+        )
+        self.assertTrue(health["ok"])
 
     def test_agent_external_result_http_route_finalizes_durable_receipt(self) -> None:
         session = self.service.agent.create_session({"title": "外部监督器回执"})["session"]

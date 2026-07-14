@@ -113,7 +113,7 @@ function previewResponse(pathId: ControlPathId): unknown {
         schemaVersion: 'rag-ime.agent-model-catalog.v1',
         ok: true,
         sessionId: 'session-preview',
-        selected: { provider: 'openai', modelId: 'gpt-5.4' },
+        selected: { provider: 'openai', id: 'gpt-5.4' },
         thinkingLevel: 'medium',
         providers: [
           {
@@ -200,14 +200,19 @@ function previewTool(
   operations: string[],
 ): Record<string, unknown> {
   return {
+    schemaVersion: 'rag-ime.control-tool-manifest.v1',
     id,
     displayName,
     description,
     domain,
     category: domain,
     riskLevel,
+    sessionModes: ['assistant', 'coordinator'],
     operations,
+    operationRisks: Object.fromEntries(operations.map((operation) => [operation, riskLevel])),
+    resultPresentation: 'tool_result',
     availability: 'online',
+    version: 'preview',
   };
 }
 

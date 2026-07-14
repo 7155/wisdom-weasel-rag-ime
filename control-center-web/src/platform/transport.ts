@@ -82,6 +82,12 @@ export interface PickedFile {
   sha256?: string;
 }
 
+export interface AgentImagePasteOptions {
+  /** The native host imports the current clipboard images into this Agent session. */
+  sessionId: string;
+  files: readonly File[];
+}
+
 export type ApprovedExternalActionId =
   | 'open_accessibility_settings'
   | 'restart_sidecar'
@@ -113,6 +119,7 @@ export interface ControlTransport {
     observer: ControlEventObserver<Event>,
   ): () => void;
   pickFiles?(options: FilePickOptions): Promise<PickedFile[]>;
+  pasteImages?(options: AgentImagePasteOptions): Promise<PickedFile[]>;
   revealPath?(path: string): Promise<void>;
   runApprovedExternalAction?(request: ExternalActionRequest): Promise<ExternalActionReceipt>;
   dispose?(): void;

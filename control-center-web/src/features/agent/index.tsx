@@ -14,10 +14,12 @@ import {
   isModelCatalog,
   roleItems,
   sessionItems,
+  toolItems,
   type ComposerAttachment,
   type ModelCatalog,
   type SessionSummary,
   type ThinkingLevel,
+  type ToolManifest,
 } from './types';
 import './agent.css';
 
@@ -29,6 +31,7 @@ export function AgentFeature() {
   const [personas, setPersonas] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
   const [selectedId, setSelectedId] = useState('');
   const [catalog, setCatalog] = useState<ModelCatalog>();
+  const [tools, setTools] = useState<ToolManifest[]>([]);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,15 +46,17 @@ export function AgentFeature() {
   const loadSessions = useCallback(async (preferredId = '') => {
     setLoading(true);
     try {
-      const [sessionResponse, roleResponse] = await Promise.all([
+      const [sessionResponse, roleResponse, toolResponse] = await Promise.all([
         transport.request({ pathId: 'agent.sessions.list', query: { limit: 100 } }),
         transport.request({ pathId: 'agent.roles.list' }),
+        transport.request({ pathId: 'agent.tools.list' }).catch(() => undefined),
       ]);
       const nextSessions = sessionItems(sessionResponse);
       const nextRoles = roleItems(roleResponse);
       const usableSessions = __CONTROL_PREVIEW__ && transport.kind === 'mock' && nextSessions.length === 0 ? previewSessions : nextSessions;
       setSessions(usableSessions);
       if (nextRoles.length) setPersonas(nextRoles);
+      setTools(toolItems(toolResponse));
       const preferredSessionId = usableSessions.some((item) => item.id === preferredId) ? preferredId : '';
       setSelectedId((current) => preferredSessionId || current || usableSessions[0]?.id || '');
       setError('');
@@ -130,7 +135,7 @@ export function AgentFeature() {
     try {
       const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.sessions.create',
-        body: { title: '新对话', mode: 'assistant', roleId: persona.roleId, roleVersion: persona.version, modelProfile: persona.defaults.modelPolicy, toolProfileVersion: persona.defaults.toolProfileVersion, workspaceRoots: [] },
+        body: { title: '新对话', mode: 'assistant', roleId: persona.roleId, roleVersion: persona.version, modelProfile: DEFAULT_AGENT_MODEL_PROFILE, toolProfileVersion: persona.defaults.toolProfileVersion, workspaceRoots: [] },
       });
       const created = isRecord(response.session) ? response.session as unknown as SessionSummary : undefined;
       if (created?.id) await loadSessions(created.id);
@@ -202,6 +207,39 @@ export function AgentFeature() {
     } catch (pickError) { setError(errorText(pickError)); }
   }
 
+  async function pasteImages(files: File[]): Promise<void> {
+    if (!session) { setError('请先选择 Session。'); return; }
+    if (!transport.pasteImages) { setError('当前平台暂不支持从剪贴板导入图片。'); return; }
+    const remaining = 8 - attachments.length;
+    if (files.length > remaining) { setError(`当前消息还可以粘贴 ${remaining} 张图片。`); return; }
+    const unsupported = files.find((file) => !PASTED_IMAGE_MIME_TYPES.has(file.type.toLowerCase()));
+    if (unsupported) { setError(`不支持粘贴 ${unsupported.type || unsupported.name}；仅支持 PNG、JPEG、GIF 和 WebP。`); return; }
+    const oversized = files.find((file) => file.size <= 0 || file.size > MAX_AGENT_IMAGE_BYTES);
+    if (oversized) { setError(`${oversized.name || '图片'} 必须小于 20 MiB 且不能为空。`); return; }
+    try {
+      const imported = await transport.pasteImages({ sessionId: session.id, files });
+      if (selectedIdRef.current !== session.id) {
+        setError('Session 已切换，刚粘贴的图片未加入当前消息。');
+        return;
+      }
+      mergeAttachments(imported, 'clipboard');
+      setError('');
+    } catch (pasteError) { setError(errorText(pasteError)); }
+  }
+
+  function mergeAttachments(files: Omit<ComposerAttachment, 'source'>[], source: ComposerAttachment['source']): void {
+    setAttachments((current) => {
+      const byId = new Map(current.map((item) => [item.id, item]));
+      for (const file of files) byId.set(file.id, { ...file, source });
+      return [...byId.values()].slice(0, 8);
+    });
+  }
+
+  function chooseTool(tool: ToolManifest): void {
+    const intent = `请使用 ${tool.id}（${tool.displayName}）`;
+    setDraft((current) => current.trim() ? `${current.trimEnd()}\n${intent}：` : `${intent}：`);
+  }
+
   async function changeMode(mode: 'assistant' | 'coordinator'): Promise<void> {
     if (!session || mode === session.mode) return;
     try {
@@ -214,9 +252,9 @@ export function AgentFeature() {
     if (!session || !catalog) return;
     try {
       const selected = isRecord(catalog.selected) ? catalog.selected : {};
-      if (selected.provider !== provider || selected.modelId !== modelId) await transport.request({ pathId: 'agent.session.model.select', params: { sessionId: session.id }, body: { provider, modelId } });
+      if (selected.provider !== provider || (selected.id !== modelId && selected.modelId !== modelId)) await transport.request({ pathId: 'agent.session.model.select', params: { sessionId: session.id }, body: { provider, modelId } });
       if (catalog.thinkingLevel !== level) await transport.request({ pathId: 'agent.session.thinking.select', params: { sessionId: session.id }, body: { level } });
-      setCatalog({ ...catalog, selected: { provider, modelId }, thinkingLevel: level });
+      setCatalog({ ...catalog, selected: { provider, id: modelId }, thinkingLevel: level });
     } catch (requestError) { setError(errorText(requestError)); }
   }
 
@@ -235,7 +273,7 @@ export function AgentFeature() {
           {error ? <p role="alert"><AlertCircle size={14} />{error}</p> : null}
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} onSuggestion={setDraft} onApprovalDecision={(id, decision, hash) => void decideApproval(id, decision, hash)} /> : null}
-        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} busy={busy} sending={sending} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickFiles={() => void pickFiles()} onSend={() => void send()} onStop={() => void stop()} onModeChange={(mode) => void changeMode(mode)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+        <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} tools={tools} busy={busy} sending={sending} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickFiles={() => void pickFiles()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onSend={() => void send()} onStop={() => void stop()} onModeChange={(mode) => void changeMode(mode)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
       </section>
     </main>
   );
@@ -244,3 +282,7 @@ export function AgentFeature() {
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 function errorText(value: unknown): string { return value instanceof Error ? value.message : String(value); }
 function isMobileViewport(): boolean { return window.matchMedia?.('(max-width: 760px)').matches === true; }
+
+const DEFAULT_AGENT_MODEL_PROFILE = 'gpt/gpt-5.6-luna';
+const PASTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const MAX_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;

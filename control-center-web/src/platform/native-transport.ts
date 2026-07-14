@@ -19,6 +19,7 @@ import {
   assertControlSubscription,
   controlRequestWirePayload,
   controlSubscriptionWirePayload,
+  type AgentImagePasteOptions,
   type ControlEventObserver,
   type ControlRequest,
   type ControlSubscription,
@@ -144,6 +145,22 @@ export class NativeControlTransport implements ControlTransport {
       throw new NativeBridgeCallError('pickFiles returned too many file receipts');
     }
     return result.map((value) => parsePickedFile(value, options));
+  }
+
+  async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {
+    assertAgentImagePasteOptions(options);
+    const result = await this.call('pasteImages', {
+      sessionId: options.sessionId,
+      maxFiles: options.files.length,
+    });
+    if (!Array.isArray(result) || result.length > options.files.length) {
+      throw new NativeBridgeCallError('pasteImages returned an invalid receipt list');
+    }
+    return result.map((value) => parsePickedFile(value, {
+      purpose: 'attachment',
+      sessionId: options.sessionId,
+      maxFiles: options.files.length,
+    }));
   }
 
   async revealPath(path: string): Promise<void> {
@@ -385,6 +402,32 @@ const MANAGED_AGENT_IMAGE_MIME_TYPES = new Set([
   'image/webp',
 ]);
 const MAX_MANAGED_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function assertAgentImagePasteOptions(options: AgentImagePasteOptions): void {
+  if (!isRecord(options) || Object.keys(options).some((key) => !['sessionId', 'files'].includes(key))) {
+    throw new TypeError('Agent image paste options contained an unsupported field');
+  }
+  if (typeof options.sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(options.sessionId)) {
+    throw new TypeError('Agent image paste requires a bounded sessionId');
+  }
+  if (!Array.isArray(options.files) || options.files.length < 1 || options.files.length > 8) {
+    throw new TypeError('Agent image paste requires between 1 and 8 files');
+  }
+  for (const file of options.files) {
+    if (
+      typeof file?.name !== 'string' ||
+      !file.name ||
+      file.name.length > 512 ||
+      file.name.includes('\u0000') ||
+      !MANAGED_AGENT_IMAGE_MIME_TYPES.has(String(file.type).toLowerCase()) ||
+      !Number.isSafeInteger(file.size) ||
+      file.size <= 0 ||
+      file.size > MAX_MANAGED_AGENT_IMAGE_BYTES
+    ) {
+      throw new TypeError('Agent image paste received an invalid image file');
+    }
+  }
+}
 
 function assertFilePickOptions(options: FilePickOptions): void {
   const allowedKeys = new Set(['accepts', 'multiple', 'purpose', 'sessionId', 'maxFiles']);

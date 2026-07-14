@@ -11,6 +11,21 @@ import { MemoryFeature } from './index';
 afterEach(cleanup);
 
 describe('MemoryFeature relations', () => {
+  it('uses the live tag field as the catalog title', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, eventCount: 18, memoryItemCount: 14, memoryBookCount: 4, memoryAtomCount: 10, pendingCompileEvents: 2 },
+        'memory.pages': (request: ControlRequest) => memoryPage(String(request.params?.kind ?? '')),
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('radio', { name: '标签' }));
+    expect((await screen.findAllByText('Agent Runtime')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Agent 生命周期与工具边界')).toBeInTheDocument();
+  });
+
   it('loads bounded tag/group graphs and links keyboard node selection to accessible tables', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({

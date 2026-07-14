@@ -1,3 +1,7 @@
+import lunaPortrait from '@/assets/personas/luna-v2.webp';
+import solPortrait from '@/assets/personas/sol-v2.webp';
+import terraPortrait from '@/assets/personas/terra-v2.webp';
+
 export type PersonaPresence = 'idle' | 'listening' | 'thinking' | 'done' | 'warning';
 
 type PersonaAssetStates = Readonly<Record<PersonaPresence, string>>;
@@ -19,13 +23,13 @@ const legacyCompanionStates: PersonaAssetStates = {
 };
 
 export const personaAssetManifest = {
-  schemaVersion: 'rag-ime.persona-assets.v2',
+  schemaVersion: 'rag-ime.persona-assets.v3',
   fallbackAssetId: 'rag-ime-timeline-present-v1',
   assets: {
     'rag-ime-companion-v1': assetRecord('zhiyou-v1', 'legacy-state', 'session-selected', legacyCompanionStates),
-    'rag-ime-timeline-past-v1': assetRecord('hermes-v1', 'past', '5.6 Luna', singlePortrait('/companions/timeline-past.png')),
-    'rag-ime-timeline-present-v1': assetRecord('zhiyou-v1', 'present', '5.6 Terra', singlePortrait('/companions/timeline-present.png')),
-    'rag-ime-timeline-future-v1': assetRecord('vcp-v1', 'future', '5.6 Sol', singlePortrait('/companions/timeline-future.png')),
+    'rag-ime-timeline-past-v1': assetRecord('hermes-v1', 'past', '5.6 Luna', singlePortrait(lunaPortrait)),
+    'rag-ime-timeline-present-v1': assetRecord('zhiyou-v1', 'present', '5.6 Terra', singlePortrait(terraPortrait)),
+    'rag-ime-timeline-future-v1': assetRecord('vcp-v1', 'future', '5.6 Sol', singlePortrait(solPortrait)),
   },
 } as const;
 

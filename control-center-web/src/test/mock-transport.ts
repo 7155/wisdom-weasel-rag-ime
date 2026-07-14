@@ -3,6 +3,7 @@ import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/rou
 import {
   assertControlRequest,
   assertControlSubscription,
+  type AgentImagePasteOptions,
   type ControlEventObserver,
   type ControlRequest,
   type ControlSubscription,
@@ -33,6 +34,7 @@ export interface MockControlTransportOptions {
   capabilities?: Partial<FrontendCapabilities>;
   routes?: Partial<Record<ControlPathId, MockRouteHandler>>;
   pickedFiles?: PickedFile[];
+  importedFiles?: PickedFile[];
   externalAction?: (
     request: ExternalActionRequest,
   ) => ExternalActionReceipt | Promise<ExternalActionReceipt>;
@@ -50,11 +52,13 @@ export class MockControlTransport implements ControlTransport {
   readonly requests: MockRequestCall[] = [];
   readonly subscriptionCalls: MockSubscriptionCall[] = [];
   readonly filePickCalls: FilePickOptions[] = [];
+  readonly imagePasteCalls: AgentImagePasteOptions[] = [];
 
   private readonly routeHandlers = new Map<ControlPathId, MockRouteHandler>();
   private readonly subscriptions = new Map<string, ActiveSubscription>();
   private readonly capabilityValue: FrontendCapabilities;
   private readonly pickedFiles: PickedFile[];
+  private readonly importedFiles: PickedFile[];
   private readonly externalAction?: MockControlTransportOptions['externalAction'];
   private readonly now: () => number;
   private nextSubscriptionId = 1;
@@ -72,7 +76,7 @@ export class MockControlTransport implements ControlTransport {
       features: {},
       native: {
         pickFiles: Boolean(options.pickedFiles),
-        managedAgentImageImport: Boolean(options.pickedFiles),
+        managedAgentImageImport: Boolean(options.pickedFiles || options.importedFiles),
         revealPath: false,
         approvedExternalActions: Boolean(options.externalAction),
         keychain: false,
@@ -82,6 +86,7 @@ export class MockControlTransport implements ControlTransport {
       transport: 'mock',
     };
     this.pickedFiles = [...(options.pickedFiles ?? [])];
+    this.importedFiles = [...(options.importedFiles ?? [])];
     this.externalAction = options.externalAction;
     this.now = options.now ?? Date.now;
   }
@@ -164,6 +169,11 @@ export class MockControlTransport implements ControlTransport {
   async pickFiles(options: FilePickOptions): Promise<PickedFile[]> {
     this.filePickCalls.push({ ...options });
     return [...this.pickedFiles];
+  }
+
+  async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {
+    this.imagePasteCalls.push({ sessionId: options.sessionId, files: [...options.files] });
+    return [...this.importedFiles];
   }
 
   async revealPath(_path: string): Promise<void> {}

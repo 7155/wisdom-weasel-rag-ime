@@ -31,6 +31,18 @@ describe('control center shell', () => {
     expect(screen.getByRole('region', { name: '全局通知' })).toHaveTextContent('可用更新');
   });
 
+  it('keeps the shell title in sync with programmatic route navigation', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => expect(document.querySelector('main[data-route-id="planning"]')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '交给智鼬整理' }));
+
+    await waitFor(() => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument());
+    expect(document.querySelector('.shell-topbar__title h1')).toHaveTextContent('Agent');
+    expect(document.querySelector('.shell-sidebar [data-route="agent"]')).toHaveAttribute('aria-current', 'page');
+  });
+
   it('persists theme, motion, and sidebar preferences', async () => {
     const user = userEvent.setup();
     render(<App />);

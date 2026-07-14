@@ -9,6 +9,7 @@ export type NativeBridgeMethod =
   | 'subscribe'
   | 'cancelSubscription'
   | 'pickFiles'
+  | 'pasteImages'
   | 'revealPath'
   | 'runApprovedExternalAction';
 
@@ -65,6 +66,10 @@ export interface RagImeNativeMessageHandler {
 }
 
 export interface NativePickFilesPayload extends FilePickOptions {}
+export interface NativePasteImagesPayload {
+  sessionId: string;
+  maxFiles: number;
+}
 export interface NativeRevealPathPayload {
   path: string;
 }

@@ -239,11 +239,14 @@ class AgentRoomServiceTests(unittest.TestCase):
             accepted = self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@Hermes 请先诊断状态",
+                    "message": "@智鼬·初识 请先诊断状态",
                     "clientMessageId": "room-client-1",
                 },
             )
-        prompt.assert_called_once_with(str(hermes["sessionId"]), {"message": "@Hermes 请先诊断状态"})
+        prompt.assert_called_once_with(
+            str(hermes["sessionId"]),
+            {"message": "@智鼬·初识 请先诊断状态"},
+        )
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
         self.assertEqual(accepted["clientMessageId"], "room-client-1")
 

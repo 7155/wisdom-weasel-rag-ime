@@ -286,6 +286,38 @@ describe('NativeControlTransport', () => {
     })).rejects.toThrow(/invalid managed image receipt/);
     transport.dispose();
   });
+
+  it('imports pasted clipboard images through the session-bound native media bridge', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [{
+          id: 'media_native_pasted_01',
+          name: 'pasted-image-1.gif',
+          mimeType: 'image/gif',
+          byteSize: 68,
+          sessionId: 'agent:session-1',
+          sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        }],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow, createId: () => 'paste-call' });
+    const image = new File([new Uint8Array([71, 73, 70, 56, 57, 97])], 'clipboard.gif', { type: 'image/gif' });
+
+    await expect(transport.pasteImages({
+      sessionId: 'agent:session-1',
+      files: [image],
+    })).resolves.toEqual([expect.objectContaining({ id: 'media_native_pasted_01' })]);
+    expect(sent).toEqual([{
+      id: 'paste-call',
+      method: 'pasteImages',
+      payload: { sessionId: 'agent:session-1', maxFiles: 1 },
+    }]);
+    transport.dispose();
+  });
 });
 
 function fakeBridgeWindow(

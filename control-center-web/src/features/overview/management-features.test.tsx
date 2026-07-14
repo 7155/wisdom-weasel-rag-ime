@@ -155,6 +155,82 @@ describe('management features', () => {
     expect(screen.queryByText('top-secret-must-not-render')).not.toBeInTheDocument();
   });
 
+  it('renders the live v3 settings hash and nested runtime revision', async () => {
+    renderFeature(ConfigurationFeature, {
+      ...routeFixtures,
+      'configuration.settings': {
+        schemaVersion: 'rag-ime.management-settings.v3',
+        ok: true,
+        settingsHash: 'sha256:live-settings-hash',
+        settings: { interaction: { postCommit: { enabled: true } } },
+        runtimeConfig: {
+          runtimeRevision: 554,
+          settingsRevision: 'sha256:effective-settings',
+        },
+      },
+    });
+
+    expect(await screen.findByText('sha256:live-settings-hash')).toBeInTheDocument();
+    expect(screen.getByText('554')).toBeInTheDocument();
+  });
+
+  it('renders live predictor providerName and modelInfo.hiddenSize in diagnostics', async () => {
+    renderFeature(DiagnosticsFeature, {
+      ...routeFixtures,
+      'diagnostics.predictor': {
+        schemaVersion: 'rag-ime.predictor-status.v1',
+        ok: true,
+        predictor: {
+          providerName: 'local-mlx',
+          model: '/Models/minimind-ime-v2',
+          modelInfo: { hiddenSize: 768 },
+          capabilities: {},
+        },
+      },
+    });
+
+    expect((await screen.findAllByText('local-mlx')).length).toBeGreaterThan(0);
+    expect(screen.getByText('768')).toBeInTheDocument();
+  });
+
+  it('renders live predictor providerName on the overview model route', async () => {
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'diagnostics.models': {
+        schemaVersion: 'rag-ime.models-status.v3',
+        ok: true,
+        predictor: { providerName: 'local-mlx' },
+        activeRagRoute: { remoteReady: true, skipReason: '' },
+      },
+    });
+
+    expect(await screen.findByText('local-mlx')).toBeInTheDocument();
+  });
+
+  it('keeps Voice explicitly unavailable when the backend exposes no voice state', async () => {
+    renderFeature(VoiceFeature, {
+      ...routeFixtures,
+      'configuration.settings': {
+        schemaVersion: 'rag-ime.management-settings.v3',
+        ok: true,
+        settings: { interaction: { postCommit: { enabled: true } } },
+        runtimeConfig: { runtimeRevision: 554 },
+      },
+      'diagnostics.runtime': {
+        schemaVersion: 'rag-ime.management.v1',
+        ok: true,
+        components: {
+          sidecar: { id: 'sidecar', ok: true, status: 'healthy', detail: '运行中' },
+        },
+      },
+    });
+
+    expect(await screen.findByText('后端未返回可用的语音 Provider 配置。')).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: '原生流式' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/middle-mouse/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('unavailable').length).toBeGreaterThanOrEqual(3);
+  });
+
   it('fails closed when the management WorkContract capability is absent', async () => {
     renderFeature(PlanningFeature);
     await screen.findByRole('heading', { name: '规划', level: 1 });
@@ -187,8 +263,11 @@ describe('management features', () => {
   });
 });
 
-function renderFeature(Feature: ComponentType): MockControlTransport {
-  const transport = new MockControlTransport({ routes: routeFixtures });
+function renderFeature(
+  Feature: ComponentType,
+  routes: Partial<Record<ControlPathId, MockRouteHandler>> = routeFixtures,
+): MockControlTransport {
+  const transport = new MockControlTransport({ routes });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });

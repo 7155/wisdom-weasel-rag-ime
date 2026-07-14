@@ -43,7 +43,7 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
   },
   hydrateSnapshot(sessionId, snapshot) {
     const current = get().projections[sessionId] ?? createAgentProjection(sessionId);
-    const projection = applyAgentSnapshot(current, snapshot);
+    const projection = applyAgentSnapshot(current, normalizeLegacyHistoryTurns(snapshot));
     set((state) => ({
       projections: { ...state.projections, [sessionId]: projection },
     }));
@@ -92,4 +92,29 @@ export function agentProjection(sessionId: string): AgentProjectionState {
   return (
     useAgentLiveStore.getState().projections[sessionId] ?? createAgentProjection(sessionId)
   );
+}
+
+function normalizeLegacyHistoryTurns(snapshot: AgentSnapshot): AgentSnapshot {
+  let currentTurnId = '';
+  let changed = false;
+  const messages = snapshot.messages.map((rawMessage, index) => {
+    if (!isRecord(rawMessage) || rawMessage.turnId !== 'history') {
+      currentTurnId = '';
+      return rawMessage;
+    }
+    const role = typeof rawMessage.role === 'string' ? rawMessage.role : '';
+    if (role === 'user' || !currentTurnId) {
+      const messageId = typeof rawMessage.id === 'string' && rawMessage.id
+        ? rawMessage.id
+        : String(index);
+      currentTurnId = `history:${messageId}`;
+    }
+    changed = true;
+    return { ...rawMessage, turnId: currentTurnId };
+  });
+  return changed ? { ...snapshot, messages } : snapshot;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

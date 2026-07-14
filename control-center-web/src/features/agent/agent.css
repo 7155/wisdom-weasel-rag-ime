@@ -180,7 +180,7 @@
 .agent-command-palette strong { font-size: 10px; }
 .agent-command-palette small { color: var(--color-text-tertiary); font-size: 9px; }
 
-.agent-picker-popover, .agent-model-tree { width: min(380px, calc(100vw - 24px)); padding: 6px; }
+.agent-picker-popover, .agent-model-tree, .agent-tool-picker { width: min(380px, calc(100vw - 24px)); padding: 6px; }
 .agent-picker-popover > header { display: flex; align-items: center; gap: 8px; padding: 7px 8px 9px; border-bottom: 1px solid var(--color-border); }
 .agent-picker-popover > header span { display: grid; gap: 1px; }
 .agent-picker-popover > header strong { font-size: 11px; }
@@ -199,6 +199,20 @@
 .agent-model-tree__levels button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-1); background: transparent; font-size: 9px; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard); }
 .agent-model-tree__levels button:active { box-shadow: var(--shadow-control-press); transform: scale(var(--scale-press)); }
 .agent-model-tree__levels button[aria-current='true'] { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent); }
+.agent-tool-picker > header { display: grid; gap: 2px; padding: 7px 8px 9px; border-bottom: 1px solid var(--color-border); }
+.agent-tool-picker > header strong { font-size: 11px; }
+.agent-tool-picker > header small { color: var(--color-text-tertiary); font-size: 9px; }
+.agent-tool-picker > div { max-height: min(420px, 60vh); overflow-y: auto; }
+.agent-tool-picker button { display: grid; width: 100%; min-height: 52px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 8px; border: 0; border-radius: var(--radius-1); background: transparent; text-align: left; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard); }
+.agent-tool-picker button:disabled { cursor: default; opacity: .5; }
+.agent-tool-picker button:active:not(:disabled) { box-shadow: var(--shadow-control-press); transform: scale(var(--scale-press)); }
+.agent-tool-picker button > span { display: grid; min-width: 0; gap: 2px; }
+.agent-tool-picker button strong { font-size: 10px; }
+.agent-tool-picker button small { color: var(--color-text-tertiary); font-size: 9px; line-height: 1.35; }
+.agent-tool-picker button i { padding: 2px 5px; border: 1px solid var(--color-border); border-radius: var(--radius-1); color: var(--color-text-tertiary); font: normal 700 8px var(--font-mono); white-space: nowrap; }
+.agent-tool-picker button i[data-risk='R0'] { color: var(--color-success); }
+.agent-tool-picker button i[data-risk='R1'], .agent-tool-picker button i[data-risk='R2'] { color: var(--color-warning); }
+.agent-tool-picker button i[data-risk='R3'] { color: var(--color-danger); }
 
 @keyframes agent-message-enter {
   from { opacity: 0; transform: translateY(var(--distance-enter)); }
@@ -235,6 +249,7 @@
   .agent-session-row:hover,
   .agent-command-palette > button:hover,
   .agent-picker-popover > button:hover:not(:disabled),
+  .agent-tool-picker button:hover:not(:disabled),
   .agent-model-tree summary:hover,
   .agent-model-tree__levels button:hover:not(:disabled) {
     background: var(--color-surface-hover);

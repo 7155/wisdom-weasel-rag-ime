@@ -22,6 +22,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         "subscribe",
         "cancelSubscription",
         "pickFiles",
+        "pasteImages",
         "revealPath",
         "runApprovedExternalAction",
     ]
@@ -83,6 +84,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             cancelSubscription(id: id, payload: payload)
         case "pickFiles":
             pickFiles(id: id, payload: payload)
+        case "pasteImages":
+            pasteImages(id: id, payload: payload)
         case "revealPath":
             revealPath(id: id, payload: payload)
         case "runApprovedExternalAction":
@@ -305,6 +308,32 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         }
     }
 
+    private func pasteImages(id: String, payload: [String: Any]) {
+        do {
+            let allowedKeys: Set<String> = ["sessionId", "maxFiles"]
+            guard Set(payload.keys).isSubset(of: allowedKeys) else {
+                throw NativeMediaImportError.rejected("Image paste payload contained an unsupported field")
+            }
+            let sessionId = try requiredString("sessionId", in: payload)
+            guard sessionId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$", options: .regularExpression) != nil else {
+                throw NativeMediaImportError.rejected("Attachment sessionId is invalid")
+            }
+            guard let number = payload["maxFiles"] as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue == Double(number.intValue),
+                  (1...8).contains(number.intValue) else {
+                throw NativeMediaImportError.rejected("Image paste maxFiles must be between 1 and 8")
+            }
+            let selected = try pastedAgentImages(maxFiles: number.intValue)
+            guard !selected.isEmpty else {
+                throw NativeMediaImportError.rejected("The clipboard does not contain a supported image")
+            }
+            uploadAgentImages(id: id, sessionId: sessionId, files: selected)
+        } catch {
+            replyError(id: id, code: "agent_media_paste_rejected", message: error.localizedDescription)
+        }
+    }
+
     private func presentAgentImagePicker(
         id: String,
         sessionId: String,
@@ -381,7 +410,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
     }
 
     private struct SelectedAgentImage {
-        let url: URL
+        let url: URL?
+        let data: Data?
         let name: String
         let mimeType: String
         let byteSize: Int
@@ -409,7 +439,71 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         guard !name.isEmpty, name.utf8.count <= 512, !name.contains("\0") else {
             throw NativeMediaImportError.rejected("Agent image file name is invalid")
         }
-        return SelectedAgentImage(url: url, name: name, mimeType: mimeType, byteSize: byteSize)
+        return SelectedAgentImage(url: url, data: nil, name: name, mimeType: mimeType, byteSize: byteSize)
+    }
+
+    private func pastedAgentImages(maxFiles: Int) throws -> [SelectedAgentImage] {
+        let pasteboard = NSPasteboard.general
+        let fileURLs = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] ?? []
+        if !fileURLs.isEmpty {
+            return try fileURLs.prefix(maxFiles).map(validatedAgentImage)
+        }
+
+        var selected: [SelectedAgentImage] = []
+        for (index, item) in (pasteboard.pasteboardItems ?? []).enumerated() {
+            guard selected.count < maxFiles else { break }
+            if let image = try pastedAgentImage(item, index: index) {
+                selected.append(image)
+            }
+        }
+        return selected
+    }
+
+    private func pastedAgentImage(_ item: NSPasteboardItem, index: Int) throws -> SelectedAgentImage? {
+        let candidates = [
+            (NSPasteboard.PasteboardType("public.png"), "image/png", "png"),
+            (NSPasteboard.PasteboardType("public.jpeg"), "image/jpeg", "jpg"),
+            (NSPasteboard.PasteboardType("com.compuserve.gif"), "image/gif", "gif"),
+            (NSPasteboard.PasteboardType("org.webmproject.webp"), "image/webp", "webp"),
+        ]
+        for (type, mimeType, extensionName) in candidates {
+            guard let data = item.data(forType: type) else { continue }
+            return try validatedPastedImage(
+                data: data,
+                name: "pasted-image-\(index + 1).\(extensionName)",
+                mimeType: mimeType
+            )
+        }
+        guard let tiff = item.data(forType: .tiff),
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else {
+            return nil
+        }
+        return try validatedPastedImage(
+            data: png,
+            name: "pasted-image-\(index + 1).png",
+            mimeType: "image/png"
+        )
+    }
+
+    private func validatedPastedImage(
+        data: Data,
+        name: String,
+        mimeType: String
+    ) throws -> SelectedAgentImage {
+        guard !data.isEmpty, data.count <= 20 * 1024 * 1024 else {
+            throw NativeMediaImportError.rejected("Pasted images must be non-empty and no larger than 20 MiB")
+        }
+        return SelectedAgentImage(
+            url: nil,
+            data: data,
+            name: name,
+            mimeType: mimeType,
+            byteSize: data.count
+        )
     }
 
     private func uploadAgentImages(
@@ -425,28 +519,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             return
         }
         let file = files[index]
-        var components = URLComponents()
-        components.scheme = "http"
-        components.host = "127.0.0.1"
-        components.port = 8766
-        components.path = "/api/agent/media/import"
-        components.queryItems = [
-            URLQueryItem(name: "sessionId", value: sessionId),
-            URLQueryItem(name: "fileName", value: file.name),
-        ]
-        guard let url = components.url,
-              url.scheme == "http",
-              url.host == "127.0.0.1",
-              url.port == 8766 else {
+        guard let request = agentMediaImportRequest(sessionId: sessionId, selected: file) else {
             replyError(id: id, code: "agent_media_import_rejected", message: "Managed media import URL could not be constructed")
             return
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(file.mimeType, forHTTPHeaderField: "Content-Type")
-        request.setValue(String(file.byteSize), forHTTPHeaderField: "Content-Length")
-        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
-        let task = requestSession.uploadTask(with: request, fromFile: file.url) { [weak self] data, response, error in
+        let completion: (Data?, URLResponse?, Error?) -> Void = { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.requestTasks.removeValue(forKey: id)
@@ -477,8 +554,44 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 }
             }
         }
+        let task: URLSessionUploadTask
+        if let fileURL = file.url {
+            task = requestSession.uploadTask(with: request, fromFile: fileURL, completionHandler: completion)
+        } else if let data = file.data {
+            task = requestSession.uploadTask(with: request, from: data, completionHandler: completion)
+        } else {
+            replyError(id: id, code: "agent_media_import_rejected", message: "Managed media import data is unavailable")
+            return
+        }
         requestTasks[id] = task
         task.resume()
+    }
+
+    private func agentMediaImportRequest(
+        sessionId: String,
+        selected: SelectedAgentImage
+    ) -> URLRequest? {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = "127.0.0.1"
+        components.port = 8766
+        components.path = "/api/agent/media/import"
+        components.queryItems = [
+            URLQueryItem(name: "sessionId", value: sessionId),
+            URLQueryItem(name: "fileName", value: selected.name),
+        ]
+        guard let url = components.url,
+              url.scheme == "http",
+              url.host == "127.0.0.1",
+              url.port == 8766 else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(selected.mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(String(selected.byteSize), forHTTPHeaderField: "Content-Length")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        return request
     }
 
     private func validatedAgentMediaResponse(

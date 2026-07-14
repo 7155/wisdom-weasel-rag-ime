@@ -4854,16 +4854,26 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, self.service.agent.model_catalog(agent_session_id))
             return
         if agent_session_id and agent_action == "intercom":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.agent.list_room_intercom(
+            try:
+                response = self.service.agent.list_room_intercom(
                     agent_session_id,
                     {
                         "status": _query_first(query, "status"),
                         "limit": _query_first(query, "limit"),
                     },
-                ),
-            )
+                )
+            except ValueError as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.local-api-error.v1",
+                        "ok": False,
+                        "errorCode": "invalid_request",
+                        "error": " ".join(str(exc).split())[:256] or "invalid request",
+                    },
+                )
+                return
+            self._write_json(HTTPStatus.OK, response)
             return
         if parsed.path == "/api/agent/configuration":
             self._write_json(HTTPStatus.OK, self.service.agent.configuration())

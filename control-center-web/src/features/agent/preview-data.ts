@@ -176,7 +176,7 @@ export function previewModelCatalog(sessionId: string): ModelCatalog {
     schemaVersion: 'rag-ime.agent-model-catalog.v1',
     ok: true,
     sessionId,
-    selected: { provider: 'openai', modelId: 'gpt-5.4' },
+    selected: { provider: 'openai', id: 'gpt-5.4' },
     thinkingLevel: 'medium',
     providers: [
       {

@@ -35,13 +35,19 @@ CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+USE_VERIFIED_WEB_DIST="${RAG_IME_USE_VERIFIED_WEB_DIST:-0}"
 
 if [[ "$FRONTEND_CHANNEL" == "production" && "${RAG_IME_SKIP_WEB_BUILD:-0}" == "1" ]]; then
   echo "release builds cannot reuse a pre-existing control-center dist" >&2
   exit 2
 fi
 
-if [[ "${RAG_IME_SKIP_WEB_BUILD:-0}" != "1" ]]; then
+if [[ "$USE_VERIFIED_WEB_DIST" != "0" && "$USE_VERIFIED_WEB_DIST" != "1" ]]; then
+  echo "RAG_IME_USE_VERIFIED_WEB_DIST must be 0 or 1" >&2
+  exit 2
+fi
+
+if [[ "$USE_VERIFIED_WEB_DIST" == "0" && "${RAG_IME_SKIP_WEB_BUILD:-0}" != "1" ]]; then
   RAG_IME_CONTROL_TRANSPORT=native \
   RAG_IME_CONTROL_BUILD_CHANNEL="$FRONTEND_CHANNEL" \
     "$ROOT/scripts/build_control_center_web.sh" >/dev/null

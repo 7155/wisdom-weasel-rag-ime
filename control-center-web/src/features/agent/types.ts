@@ -1,6 +1,7 @@
 import type { AgentModelCatalogV1 } from '@/contracts/generated/agent-model-catalog.v1';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { AgentSessionV1 } from '@/contracts/generated/agent-session.v1';
+import type { ControlToolManifestV1 } from '@/contracts/generated/control-tool-manifest.v1';
 import type { PickedFile } from '@/platform/transport';
 
 export type SessionSummary = Pick<
@@ -30,11 +31,12 @@ export interface AgentRoleListResponse {
 }
 
 export interface ComposerAttachment extends PickedFile {
-  source: 'picker' | 'path';
+  source: 'picker' | 'clipboard' | 'path';
 }
 
 export type ThinkingLevel = AgentModelCatalogV1['thinkingLevel'];
 export type ModelCatalog = AgentModelCatalogV1;
+export type ToolManifest = ControlToolManifestV1;
 
 export function sessionItems(value: unknown): SessionSummary[] {
   if (!isRecord(value)) return [];
@@ -54,6 +56,12 @@ export function roleItems(value: unknown): AgentPersonaV1[] {
       ? value.roles
       : [];
   return source.filter(isPersona);
+}
+
+export function toolItems(value: unknown): ToolManifest[] {
+  if (!isRecord(value)) return [];
+  const source = Array.isArray(value.items) ? value.items : [];
+  return source.filter(isToolManifest);
 }
 
 export function isModelCatalog(value: unknown): value is ModelCatalog {
@@ -79,6 +87,18 @@ function isPersona(value: unknown): value is AgentPersonaV1 {
     value.schemaVersion === 'rag-ime.agent-persona.v1' &&
     typeof value.roleId === 'string' &&
     typeof value.displayName === 'string'
+  );
+}
+
+function isToolManifest(value: unknown): value is ToolManifest {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 'rag-ime.control-tool-manifest.v1' &&
+    typeof value.id === 'string' &&
+    typeof value.displayName === 'string' &&
+    typeof value.description === 'string' &&
+    Array.isArray(value.sessionModes) &&
+    Array.isArray(value.operations)
   );
 }
 

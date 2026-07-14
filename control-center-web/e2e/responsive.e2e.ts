@@ -54,6 +54,27 @@ test('plugin catalog keeps readable columns for long capability lists', async ({
   }
 });
 
+test('voice provider rows stay inside the management grid', async ({ page }) => {
+  await page.goto('/#/voice');
+  const feature = page.locator('main[data-route-id="voice"]');
+  await expect(feature).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+
+  const bounds = await feature.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+    rows: [...element.querySelectorAll<HTMLElement>('.mgmt-list__row')].map((row) => ({
+      clientWidth: row.clientWidth,
+      scrollWidth: row.scrollWidth,
+    })),
+  }));
+  expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1);
+  expect(bounds.rows.length).toBeGreaterThan(0);
+  for (const row of bounds.rows) {
+    expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+  }
+});
+
 test('closing the Agent session rail releases its grid column', async ({ page }) => {
   test.skip(isMobileViewport(page), 'mobile session rail is an overlay');
   await page.goto('/#/agent');

@@ -130,7 +130,10 @@ class NativeControlBridgeContractTests(unittest.TestCase):
         self.assertIn('components.path = "/api/agent/media/import"', pick_files_block)
         self.assertIn('forHTTPHeaderField: "Content-Type"', pick_files_block)
         self.assertIn('forHTTPHeaderField: "Content-Length"', pick_files_block)
-        self.assertIn("uploadTask(with: request, fromFile: file.url)", pick_files_block)
+        self.assertIn("uploadTask(with: request, fromFile: fileURL", pick_files_block)
+        self.assertIn("uploadTask(with: request, from: data", pick_files_block)
+        self.assertIn("NSPasteboard.general", pick_files_block)
+        self.assertIn("CFGetTypeID(number) != CFBooleanGetTypeID()", pick_files_block)
         self.assertIn('"rag-ime.agent-media.v1"', pick_files_block)
         receipt_block = _required_match(
             r"private func validatedAgentMediaResponse\(.*?\n    \}",

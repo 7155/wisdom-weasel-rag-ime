@@ -32,6 +32,7 @@ export function OverviewFeature() {
   const lastPrediction = asRecord(overview.lastPrediction);
   const runtime = asRecord(queries.agentRuntime.data);
   const modelStatus = asRecord(queries.models.data);
+  const modelPredictor = asRecord(modelStatus.predictor);
   const knowledgeRoute = asRecord(queries.knowledgeRoute.data);
   const componentEntries = Object.entries(asRecord(overview.components)).map(([id, value]) => ({
     ...asRecord(value),
@@ -118,7 +119,7 @@ export function OverviewFeature() {
 
           <ManagementSection title="模型与知识路由" description="密钥只呈现可用性，不显示配置值。">
             <dl className="mgmt-kv">
-              <dt>预测器</dt><dd>{stringValue(asRecord(modelStatus.predictor).provider, stringValue(asRecord(modelStatus.predictor).status, 'unknown'))}</dd>
+              <dt>预测器</dt><dd>{stringValue(modelPredictor.provider, stringValue(modelPredictor.providerName, stringValue(modelPredictor.status, 'unknown')))}</dd>
               <dt>远程模型</dt><dd>{booleanValue(asRecord(modelStatus.activeRagRoute).remoteReady) ? 'configured' : 'not configured'}</dd>
               <dt>Notion submit</dt><dd>{booleanValue(asRecord(knowledgeRoute.notion).submitConfigured) ? 'configured' : 'not configured'}</dd>
               <dt>Notion poll</dt><dd>{booleanValue(asRecord(knowledgeRoute.notion).pollConfigured) ? 'configured' : 'not configured'}</dd>

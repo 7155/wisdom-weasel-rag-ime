@@ -11,6 +11,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = ROOT / "macos" / "RagImeControlWebHost"
+HOST_BUILD = ROOT / "scripts" / "build_control_center_web_host.sh"
 DIST_CHECK = ROOT / "scripts" / "check_control_center_web_dist.sh"
 
 
@@ -111,9 +112,7 @@ class ControlCenterWebHostTests(unittest.TestCase):
         self.assertIn("window.isMovable = true", source)
 
     def test_preview_build_cannot_overwrite_production_app(self) -> None:
-        script = (ROOT / "scripts" / "build_control_center_web_host.sh").read_text(
-            encoding="utf-8"
-        )
+        script = HOST_BUILD.read_text(encoding="utf-8")
         self.assertIn("RagImeControlWebPreview.app", script)
         self.assertIn("com.rag-ime.control.web-preview", script)
         self.assertIn('build|install-preview)', script)
@@ -127,12 +126,54 @@ class ControlCenterWebHostTests(unittest.TestCase):
         self.assertIn("check_control_center_web_dist.sh", script)
         self.assertIn('"frontendTransport": "native"', script)
 
+    def test_verified_dist_reuse_is_explicit_and_fail_closed(self) -> None:
+        script = HOST_BUILD.read_text(encoding="utf-8")
+
+        self.assertIn(
+            'USE_VERIFIED_WEB_DIST="${RAG_IME_USE_VERIFIED_WEB_DIST:-0}"',
+            script,
+        )
+        self.assertIn(
+            'if [[ "$USE_VERIFIED_WEB_DIST" != "0" && "$USE_VERIFIED_WEB_DIST" != "1" ]]',
+            script,
+        )
+        self.assertIn(
+            'if [[ "$USE_VERIFIED_WEB_DIST" == "0" && "${RAG_IME_SKIP_WEB_BUILD:-0}" != "1" ]]',
+            script,
+        )
+        first_dist_guard = script.index('"$ROOT/scripts/check_control_center_web_dist.sh"')
+        destructive_app_rebuild = script.index('rm -rf "$APP"')
+        self.assertLess(first_dist_guard, destructive_app_rebuild)
+        self.assertIn(
+            '"$WEB/dist" native "$FRONTEND_CHANNEL" "$SOURCE_COMMIT"',
+            script,
+        )
+
+        environment = os.environ.copy()
+        environment["RAG_IME_USE_VERIFIED_WEB_DIST"] = "yes"
+        result = subprocess.run(
+            ["bash", str(HOST_BUILD), "build-release"],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must be 0 or 1", result.stderr)
+
     def test_native_dist_guard_accepts_only_production_native_artifacts(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-native-dist-") as temporary:
             dist = Path(temporary)
             _write_native_dist(dist)
             result = subprocess.run(
-                ["bash", str(DIST_CHECK), str(dist), "native", "production"],
+                [
+                    "bash",
+                    str(DIST_CHECK),
+                    str(dist),
+                    "native",
+                    "production",
+                    "test-source-commit",
+                ],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
@@ -165,6 +206,26 @@ class ControlCenterWebHostTests(unittest.TestCase):
                         text=True,
                     )
                     self.assertNotEqual(result.returncode, 0)
+
+    def test_native_dist_guard_rejects_a_stale_source_commit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-stale-dist-") as temporary:
+            dist = Path(temporary)
+            _write_native_dist(dist)
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(DIST_CHECK),
+                    str(dist),
+                    "native",
+                    "production",
+                    "different-source-commit",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("source commit", result.stderr)
 
     def test_production_frontend_uses_a_native_only_entry(self) -> None:
         vite = (ROOT / "control-center-web" / "vite.config.ts").read_text(encoding="utf-8")

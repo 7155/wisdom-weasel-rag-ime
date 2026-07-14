@@ -25,6 +25,15 @@ export function ConfigurationFeature() {
   const queries = useConfigurationQueries();
   const settingsEnvelope = asRecord(queries.settings.data);
   const settings = asRecord(settingsEnvelope.settings);
+  const runtimeConfig = asRecord(settingsEnvelope.runtimeConfig);
+  const settingsRevision = stringValue(
+    settingsEnvelope.settingsRevision,
+    stringValue(settingsEnvelope.settingsHash, stringValue(runtimeConfig.settingsRevision, 'unknown')),
+  );
+  const runtimeRevision = numberValue(
+    settingsEnvelope.runtimeRevision,
+    numberValue(runtimeConfig.runtimeRevision),
+  );
   const schemaEnvelope = asRecord(queries.schema.data);
   const sections = arrayRecords(schemaEnvelope.sections);
   const [activeSection, setActiveSection] = useState('');
@@ -82,8 +91,8 @@ export function ConfigurationFeature() {
         <ManagementSection title="配置快照">
           <MetricStrip items={[
             { label: 'Schema', value: stringValue(schemaEnvelope.schemaVersion, 'unknown'), detail: `${sections.length} 个分组`, icon: Settings2 },
-            { label: '设置版本', value: stringValue(settingsEnvelope.settingsRevision, 'unknown'), detail: '当前版本', icon: FileCheck2 },
-            { label: '运行版本', value: numberValue(settingsEnvelope.runtimeRevision), detail: '已生效设置', icon: RefreshCw },
+            { label: '设置版本', value: settingsRevision, detail: '当前版本', icon: FileCheck2 },
+            { label: '运行版本', value: runtimeRevision, detail: '已生效设置', icon: RefreshCw },
             { label: '安全存储', value: queries.capabilities.data?.native.keychain ? 'available' : 'unavailable', detail: '秘密不会回显', icon: KeyRound, tone: queries.capabilities.data?.native.keychain ? 'success' : 'warning' },
           ]} />
           <InlineNotice title="秘密字段" tone="success">已保存的秘密只显示 configured / not configured。新值不会出现在差异明文、收据或日志中。</InlineNotice>

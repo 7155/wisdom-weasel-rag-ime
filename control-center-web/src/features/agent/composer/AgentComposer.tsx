@@ -9,9 +9,10 @@ import {
   Send,
   ShieldCheck,
   StopCircle,
+  Wrench,
   X,
 } from 'lucide-react';
-import { useMemo, useRef, type KeyboardEvent } from 'react';
+import { useMemo, useRef, type ClipboardEvent, type KeyboardEvent } from 'react';
 import {
   Button,
   IconButton,
@@ -20,7 +21,7 @@ import {
   PopoverTrigger,
 } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
-import type { ComposerAttachment, ModelCatalog, SessionSummary, ThinkingLevel } from '../types';
+import type { ComposerAttachment, ModelCatalog, SessionSummary, ThinkingLevel, ToolManifest } from '../types';
 
 export function AgentComposer({
   draft,
@@ -28,11 +29,14 @@ export function AgentComposer({
   session,
   persona,
   catalog,
+  tools,
   busy,
   sending,
   onDraftChange,
   onAttachmentsChange,
   onPickFiles,
+  onPasteImages,
+  onToolSelect,
   onSend,
   onStop,
   onModeChange,
@@ -43,11 +47,14 @@ export function AgentComposer({
   session?: SessionSummary;
   persona?: AgentPersonaV1;
   catalog?: ModelCatalog;
+  tools: ToolManifest[];
   busy: boolean;
   sending: boolean;
   onDraftChange: (value: string) => void;
   onAttachmentsChange: (value: ComposerAttachment[]) => void;
   onPickFiles: () => void;
+  onPasteImages: (files: File[]) => void;
+  onToolSelect: (tool: ToolManifest) => void;
   onSend: () => void;
   onStop: () => void;
   onModeChange: (mode: 'assistant' | 'coordinator') => void;
@@ -64,6 +71,20 @@ export function AgentComposer({
       event.preventDefault();
       if (busy) onStop(); else if (canSend) onSend();
     }
+  }
+  function paste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    const files = [...event.clipboardData.files];
+    const items = event.clipboardData.items;
+    if (!files.length && items) {
+      for (const item of items) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (!files.length) return;
+    event.preventDefault();
+    onPasteImages(files);
   }
   return (
     <div className="agent-composer-wrap">
@@ -93,12 +114,14 @@ export function AgentComposer({
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={keyDown}
-          placeholder={`给${persona?.displayName ?? '智鼬'}发消息，输入 / 查看命令，或粘贴路径…`}
+          onPaste={paste}
+          placeholder={`给${persona?.displayName ?? '智鼬'}发消息，输入 / 查看命令，或粘贴图片…`}
           aria-label="消息"
         />
         <div className="agent-composer__toolbar">
           <IconButton label="添加附件" icon={<Plus size={18} />} onClick={onPickFiles} disabled={!session || sending} tooltip />
           <PermissionPicker session={session} persona={persona} disabled={busy || sending} onChange={onModeChange} />
+          <ToolPicker tools={tools} mode={session?.mode ?? 'assistant'} disabled={!session || busy || sending} onSelect={onToolSelect} />
           <ModelTree catalog={catalog} disabled={busy || sending} onChange={onModelChange} />
           <span className="agent-composer__spacer" />
           <IconButton
@@ -112,6 +135,40 @@ export function AgentComposer({
         </div>
       </div>
     </div>
+  );
+}
+
+function ToolPicker({
+  tools,
+  mode,
+  disabled,
+  onSelect,
+}: {
+  tools: ToolManifest[];
+  mode: 'assistant' | 'coordinator';
+  disabled: boolean;
+  onSelect: (tool: ToolManifest) => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button aria-label={`受控工具：${tools.length} 个`} className="agent-composer__picker" size="small" variant="quiet" disabled={!tools.length || disabled} leadingIcon={<Wrench size={15} />}>工具 · {tools.length}</Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="agent-tool-picker">
+        <header><strong>受控工具</strong><small>由当前 Session 的真实 capability catalog 提供</small></header>
+        <div>
+          {tools.map((tool) => {
+            const available = tool.availability === 'online' && tool.sessionModes.includes(mode);
+            return (
+              <button type="button" key={tool.id} disabled={!available} onClick={() => onSelect(tool)}>
+                <span><strong>{tool.displayName}</strong><small>{tool.description}</small></span>
+                <i data-risk={tool.riskLevel}>{available ? tool.riskLevel : '当前模式不可用'}</i>
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -152,10 +209,16 @@ function ModelTree({
   onChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
 }) {
   const selected = record(catalog?.selected);
-  const selectedProvider = text(selected.provider) || catalog?.providers[0]?.id || '';
-  const selectedModelId = text(selected.modelId) || catalog?.providers[0]?.models[0]?.id || '';
-  const provider = catalog?.providers.find((item) => item.id === selectedProvider) ?? catalog?.providers[0];
-  const model = provider?.models.find((item) => item.id === selectedModelId) ?? provider?.models[0];
+  const selectedProviderId = text(selected.provider);
+  const selectedModelId = text(selected.id) || text(selected.modelId);
+  const selectedProvider = catalog?.providers.find((item) => item.id === selectedProviderId);
+  const selectedModel = selectedProvider?.models.find((item) => item.id === selectedModelId);
+  const hasBackendSelection = Boolean(selectedProviderId && selectedModelId);
+  const luna = hasBackendSelection ? undefined : catalog?.providers.flatMap((item) => item.models.map((modelItem) => ({ provider: item, model: modelItem }))).find(({ model: item }) => /luna/i.test(`${item.id} ${item.name}`));
+  const provider = selectedModel ? selectedProvider : luna?.provider ?? selectedProvider ?? catalog?.providers[0];
+  const model = selectedModel ?? luna?.model ?? provider?.models[0];
+  const displayedProviderId = provider?.id ?? '';
+  const displayedModelId = model?.id ?? '';
   const thinking = catalog?.thinkingLevel ?? 'off';
   return (
     <Popover>
@@ -165,14 +228,14 @@ function ModelTree({
       <PopoverContent align="start" className="agent-model-tree">
         <header><strong>Provider → Model → Thinking</strong></header>
         {catalog?.providers.map((providerItem) => (
-          <details key={providerItem.id} open={providerItem.id === selectedProvider}>
+          <details key={providerItem.id} open={providerItem.id === displayedProviderId}>
             <summary>{providerItem.displayName}<ChevronRight size={14} /></summary>
             {providerItem.models.map((modelItem) => (
-              <details key={modelItem.id} open={modelItem.id === selectedModelId}>
-                <summary>{modelItem.name}{modelItem.id === selectedModelId ? <Check size={14} /> : <ChevronRight size={14} />}</summary>
+              <details key={modelItem.id} open={modelItem.id === displayedModelId}>
+                <summary>{modelItem.name}{modelItem.id === displayedModelId ? <Check size={14} /> : <ChevronRight size={14} />}</summary>
                 <div className="agent-model-tree__levels">
                   {modelItem.thinkingLevels.map((level) => (
-                    <button type="button" key={level} aria-current={modelItem.id === selectedModelId && level === thinking} onClick={() => onChange(providerItem.id, modelItem.id, level)}>{thinkingLabel(level)}</button>
+                    <button type="button" key={level} aria-current={modelItem.id === displayedModelId && level === thinking} onClick={() => onChange(providerItem.id, modelItem.id, level)}>{thinkingLabel(level)}</button>
                   ))}
                 </div>
               </details>
