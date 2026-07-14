@@ -55,7 +55,7 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await composer.fill('');
   await page.getByRole('button', { name: '添加附件' }).click();
   await expect(page.locator('.agent-composer__attachments')).toContainText(
-    'agent-runtime-trace.txt',
+    'agent-runtime.png',
   );
   await expectNoHorizontalPageOverflow(page);
 });
