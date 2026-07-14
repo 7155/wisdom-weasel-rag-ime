@@ -1,0 +1,33 @@
+import { useQuery } from '@tanstack/react-query';
+import { useControlTransport } from '@/app/control-transport';
+
+export const voiceQueryKeys = {
+  root: ['voice'] as const,
+  settings: () => [...voiceQueryKeys.root, 'settings'] as const,
+  schema: () => [...voiceQueryKeys.root, 'schema'] as const,
+  runtime: () => [...voiceQueryKeys.root, 'runtime'] as const,
+  capabilities: () => [...voiceQueryKeys.root, 'capabilities'] as const,
+};
+
+export function useVoiceQueries() {
+  const transport = useControlTransport();
+  const settings = useQuery({
+    queryKey: voiceQueryKeys.settings(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'configuration.settings', signal }),
+  });
+  const schema = useQuery({
+    queryKey: voiceQueryKeys.schema(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'configuration.schema', signal }),
+  });
+  const runtime = useQuery({
+    queryKey: voiceQueryKeys.runtime(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'diagnostics.runtime', signal }),
+    refetchInterval: 10_000,
+  });
+  const capabilities = useQuery({
+    queryKey: voiceQueryKeys.capabilities(),
+    queryFn: () => transport.capabilities(),
+    staleTime: Infinity,
+  });
+  return { capabilities, runtime, schema, settings, transportKind: transport.kind };
+}
