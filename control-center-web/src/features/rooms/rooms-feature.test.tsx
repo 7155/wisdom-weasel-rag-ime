@@ -35,7 +35,7 @@ describe('Rooms experience', () => {
           moderatorParticipantId: 'p1', updatedAtMs: Date.now(),
           participants: [
             { id: 'p1', sessionId: 's1', roleId: 'zhiyou-v1', roleVersion: '1', displayName: '智鼬', status: 'active', ordinal: 0 },
-            { id: 'p2', sessionId: 's2', roleId: 'hermes-v1', roleVersion: '1', displayName: 'Hermes', status: 'active', ordinal: 1 },
+            { id: 'p2', sessionId: 's2', roleId: 'hermes-v1', roleVersion: '1', displayName: '智鼬·初识', status: 'active', ordinal: 1 },
           ],
         }],
       },
@@ -130,7 +130,7 @@ describe('Rooms experience', () => {
       moderatorParticipantId: 'p1', updatedAtMs: Date.now(),
       participants: [
         { id: 'p1', sessionId: 's1', roleId: 'zhiyou-v1', roleVersion: '1', displayName: '智鼬', status: 'active', ordinal: 0 },
-        { id: 'p2', sessionId: 's2', roleId: 'hermes-v1', roleVersion: '1', displayName: 'Hermes', status: 'active', ordinal: 1 },
+        { id: 'p2', sessionId: 's2', roleId: 'hermes-v1', roleVersion: '1', displayName: '智鼬·初识', status: 'active', ordinal: 1 },
       ],
     };
     const projection = createRoomProjection(room.id);
@@ -164,7 +164,7 @@ function roomSummary(roomId: string, title: string): RoomSummary {
     updatedAtMs: 2,
     participants: [
       { id: `${roomId}:p1`, sessionId: `${roomId}:s1`, roleId: 'zhiyou-v1', roleVersion: '1', displayName: '智鼬', status: 'active', ordinal: 0 },
-      { id: `${roomId}:p2`, sessionId: `${roomId}:s2`, roleId: 'hermes-v1', roleVersion: '1', displayName: 'Hermes', status: 'active', ordinal: 1 },
+      { id: `${roomId}:p2`, sessionId: `${roomId}:s2`, roleId: 'hermes-v1', roleVersion: '1', displayName: '智鼬·初识', status: 'active', ordinal: 1 },
     ],
   };
 }

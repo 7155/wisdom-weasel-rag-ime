@@ -17,7 +17,7 @@
     "rag-ime-timeline-past-v1": {
       "personaId": "hermes-v1",
       "timeline": "past",
-      "modelAffinity": "5.6 Sol",
+      "modelAffinity": "5.6 Luna",
       "states": {
         "idle": "./timeline-past.png",
         "listening": "./timeline-past.png",
@@ -41,7 +41,7 @@
     "rag-ime-timeline-future-v1": {
       "personaId": "vcp-v1",
       "timeline": "future",
-      "modelAffinity": "5.6 Luna",
+      "modelAffinity": "5.6 Sol",
       "states": {
         "idle": "./timeline-future.png",
         "listening": "./timeline-future.png",

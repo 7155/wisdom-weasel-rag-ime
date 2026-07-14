@@ -50,7 +50,7 @@ describe('Roles experience', () => {
       mode: 'assistant',
       roleId: 'hermes-v1',
       roleVersion: '1',
-      modelProfile: 'session-selected',
+      modelProfile: 'affinity-5.6-luna',
       toolProfileVersion: 'control-center-v1',
       workspaceRoots: [],
     });

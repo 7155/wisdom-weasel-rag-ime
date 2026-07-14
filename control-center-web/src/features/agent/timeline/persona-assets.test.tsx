@@ -9,9 +9,9 @@ describe('Persona timeline assets', () => {
     expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].timeline).toBe('past');
     expect(personaAssetManifest.assets['rag-ime-timeline-present-v1'].timeline).toBe('present');
     expect(personaAssetManifest.assets['rag-ime-timeline-future-v1'].timeline).toBe('future');
-    expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].modelAffinity).toBe('5.6 Sol');
+    expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].modelAffinity).toBe('5.6 Luna');
     expect(personaAssetManifest.assets['rag-ime-timeline-present-v1'].modelAffinity).toBe('5.6 Terra');
-    expect(personaAssetManifest.assets['rag-ime-timeline-future-v1'].modelAffinity).toBe('5.6 Luna');
+    expect(personaAssetManifest.assets['rag-ime-timeline-future-v1'].modelAffinity).toBe('5.6 Sol');
     expect(resolvePersonaAsset('rag-ime-timeline-past-v1', 'thinking')).toBe('/companions/timeline-past.png');
     expect(resolvePersonaAsset('rag-ime-timeline-present-v1', 'done')).toBe('/companions/timeline-present.png');
     expect(resolvePersonaAsset('rag-ime-timeline-future-v1', 'idle')).toBe('/companions/timeline-future.png');

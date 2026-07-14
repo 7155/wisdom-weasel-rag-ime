@@ -103,13 +103,13 @@ _PRESENT_DEFAULTS = PersonaDefaults(
 )
 
 _PAST_DEFAULTS = PersonaDefaults(
-    model_policy="affinity-5.6-sol",
+    model_policy="affinity-5.6-luna",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
 )
 
 _FUTURE_DEFAULTS = PersonaDefaults(
-    model_policy="affinity-5.6-luna",
+    model_policy="affinity-5.6-sol",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
 )
@@ -138,8 +138,8 @@ _HERMES_V1 = PersonaManifest(
     version="1",
     display_name="智鼬·初识",
     tagline="从第一笔记录开始，认真认识你的世界",
-    summary="时间线里的年轻见习记录者，默认亲和 5.6 Sol，适合核对现状并留下清楚的下一步。",
-    traits=("好奇", "记录优先", "5.6 Sol"),
+    summary="时间线里的幼年见习记录者，默认亲和 5.6 Luna，适合轻快地认识现状并留下下一步。",
+    traits=("好奇", "记录优先", "5.6 Luna"),
     persona_prompt="""你以“智鼬·初识”身份在个人输入法控制中心中协作。
 
 默认简洁、精确、行动导向。先说明当前判断，再给下一步；需要工具时直接调用并用短句报告进度。不要表演人格、重复问题或制造长篇铺垫。遇到不确定性时明确列出缺失证据与可验证动作。""",
@@ -156,8 +156,8 @@ _VCP_V1 = PersonaManifest(
     version="1",
     display_name="智鼬·未来",
     tagline="把记忆、工具与协作构筑成下一步",
-    summary="时间线里的成熟 Agent 构筑者，默认亲和 5.6 Luna，适合串联资料、角色与工具关系。",
-    traits=("结构化", "工具编排", "5.6 Luna"),
+    summary="时间线里的长成态 Agent 构筑者，默认亲和 5.6 Sol，适合稳定地串联资料、角色与工具关系。",
+    traits=("沉稳", "工具编排", "5.6 Sol"),
     persona_prompt="""你以“智鼬·未来”身份在个人输入法控制中心中协作。
 
 表达可以更有活力，但必须保持结构清楚。优先把多个来源、Book、Group、Tag 和近期对话之间的关系讲明白；检索时让用户看见简短进度，回答时把证据与结论对应起来。不要为了显得丰富而堆叠标签、表情或无关分支。""",

@@ -38,7 +38,7 @@ class AgentRoleTests(unittest.TestCase):
         self.assertEqual(catalog[2]["visualProfile"]["avatarAssetId"], "rag-ime-timeline-future-v1")
         self.assertEqual(
             [item["defaults"]["modelPolicy"] for item in catalog],
-            ["affinity-5.6-terra", "affinity-5.6-sol", "affinity-5.6-luna"],
+            ["affinity-5.6-terra", "affinity-5.6-luna", "affinity-5.6-sol"],
         )
         self.assertEqual(catalog[2]["visualProfile"]["accentToken"], "rose")
 

@@ -193,8 +193,8 @@ export function RoomTurn({ turnId, room, projection }: { turnId: string; room?: 
 }
 
 const previewRooms: RoomSummary[] = [{ id: 'room-preview', title: '迁移作战室', status: 'active', routingPolicy: 'moderator', moderatorParticipantId: 'participant-zhiyou', updatedAtMs: Date.now(), participants: [
-  { id: 'participant-zhiyou', sessionId: 'session-preview', roleId: 'zhiyou-v1', roleVersion: '1', displayName: '智鼬', status: 'active', ordinal: 0 },
-  { id: 'participant-hermes', sessionId: 'session-runtime', roleId: 'hermes-v1', roleVersion: '1', displayName: 'Hermes', status: 'active', ordinal: 1 },
+  { id: 'participant-zhiyou', sessionId: 'session-preview', roleId: 'zhiyou-v1', roleVersion: '1', displayName: '智鼬·此刻', status: 'active', ordinal: 0 },
+  { id: 'participant-hermes', sessionId: 'session-runtime', roleId: 'hermes-v1', roleVersion: '1', displayName: '智鼬·初识', status: 'active', ordinal: 1 },
 ] }];
 
 function roomItems(value: unknown): RoomSummary[] { const source = record(value); return (Array.isArray(source.items) ? source.items : Array.isArray(source.rooms) ? source.rooms : []).filter(isRoom); }

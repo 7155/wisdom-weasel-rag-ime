@@ -224,8 +224,8 @@ function record(value: unknown): Record<string, unknown> {
 function previewRoomSnapshot(roomId: string) {
   const now = Date.now() - 60_000;
   const participants = [
-    previewParticipant(roomId, 'participant-zhiyou', 'session-preview', 'zhiyou-v1', '智鼬', 0),
-    previewParticipant(roomId, 'participant-hermes', 'session-runtime', 'hermes-v1', 'Hermes', 1),
+    previewParticipant(roomId, 'participant-zhiyou', 'session-preview', 'zhiyou-v1', '智鼬·此刻', 0),
+    previewParticipant(roomId, 'participant-hermes', 'session-runtime', 'hermes-v1', '智鼬·初识', 1),
   ];
   const event = (
     sequence: number,

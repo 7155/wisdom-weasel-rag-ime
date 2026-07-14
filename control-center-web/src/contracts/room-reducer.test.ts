@@ -156,7 +156,7 @@ function roomParticipant(id: string, sessionId: string, ordinal: number) {
     sessionId,
     roleId: ordinal === 0 ? 'zhiyou-v1' : 'hermes-v1',
     roleVersion: '1',
-    displayName: ordinal === 0 ? '智鼬' : 'Hermes',
+    displayName: ordinal === 0 ? '智鼬·此刻' : '智鼬·初识',
     status: 'active',
     ordinal,
     createdAtMs: 1,
