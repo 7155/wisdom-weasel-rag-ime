@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .adapters import ControlTargetAdapter
+from .models import ControlAccessContext, ControlClientKind
+from .route_policy import ControlPathId, ControlRoutePolicy
+
+
+CONTROL_API_VERSION = "rag-ime.control.v1"
+CONTROL_CAPABILITIES_VERSION = "rag-ime.control-capabilities.v1"
+CONTROL_BOOTSTRAP_VERSION = "rag-ime.control-bootstrap.v1"
+NATIVE_BRIDGE_HANDLER = "ragImeNativeBridge"
+
+
+@dataclass(frozen=True)
+class NativeCapabilityState:
+    file_picker: bool = False
+    reveal_path: bool = False
+    keychain_status: bool = False
+    tcc_status: bool = False
+    approved_external_actions: bool = False
+
+
+def build_capabilities(
+    *,
+    policy: ControlRoutePolicy,
+    context: ControlAccessContext,
+    adapter: ControlTargetAdapter,
+    adapter_wired: bool,
+    http_mounted: bool = False,
+    native: NativeCapabilityState | None = None,
+) -> dict[str, object]:
+    native_state = native or NativeCapabilityState()
+    native_client = context.client_kind is ControlClientKind.NATIVE
+    route_manifest = policy.manifest(context=context, include_targets=False)
+    route_ids = {str(item["pathId"]) for item in route_manifest}
+    subscriptions = [
+        str(item["pathId"])
+        for item in route_manifest
+        if item.get("subscription") is True
+    ]
+    return {
+        "schemaVersion": CONTROL_CAPABILITIES_VERSION,
+        "apiVersion": CONTROL_API_VERSION,
+        "client": {
+            "kind": context.client_kind.value,
+            "remote": context.is_remote,
+            "deviceAuthenticated": context.remote_authenticated,
+            "grantedScopes": sorted(context.granted_scopes) if context.is_remote else [],
+        },
+        "transport": {
+            **adapter.public_descriptor(wired=adapter_wired),
+            "httpMounted": bool(http_mounted),
+            "nativeBridgeHandler": NATIVE_BRIDGE_HANDLER,
+        },
+        "requestContract": {
+            "fields": ["id", "pathId", "params", "query", "body"],
+            "acceptsUrl": False,
+            "acceptsHost": False,
+            "response": {"success": ["id", "ok", "result"], "failure": ["id", "ok", "error"]},
+        },
+        "features": {
+            "agentSessions": ControlPathId.AGENT_SESSIONS_LIST.value in route_ids,
+            "agentRooms": ControlPathId.AGENT_ROOMS_LIST.value in route_ids,
+            "agentRoles": ControlPathId.AGENT_ROLES_LIST.value in route_ids,
+            "agentApprovals": ControlPathId.AGENT_APPROVALS_LIST.value in route_ids,
+            "agentDelegation": ControlPathId.AGENT_SUBAGENTS_LIST.value in route_ids,
+            "managementReads": ControlPathId.OVERVIEW_GET.value in route_ids,
+            "subscriptions": bool(subscriptions),
+            "sessionSnapshot": ControlPathId.AGENT_SESSION_SNAPSHOT.value in route_ids,
+            "globalControlEvents": ControlPathId.CONTROL_EVENTS.value in route_ids,
+        },
+        "native": {
+            "filePicker": native_client and native_state.file_picker,
+            "revealPath": native_client and native_state.reveal_path,
+            "keychainStatus": native_client and native_state.keychain_status,
+            "tccStatus": native_client and native_state.tcc_status,
+            "approvedExternalActions": native_client and native_state.approved_external_actions,
+            "keychainValues": False,
+        },
+        "security": {
+            "failClosed": True,
+            "remoteUsesGatewayOnly": True,
+            "devicePairingRequired": True,
+            "corsWildcard": False,
+            "cookieCredentials": False,
+            "csrfRequiredForCookieAuth": True,
+            "debugApi": False,
+            "arbitraryUrl": False,
+            "arbitraryHost": False,
+            "arbitraryShell": False,
+            "arbitraryFileRead": False,
+            "arbitraryFileWrite": False,
+            "databaseApply": False,
+        },
+        "subscriptions": {
+            "pathIds": subscriptions,
+            "lastEventIdRequired": True,
+            "gapRecovery": "snapshot_required",
+        },
+        "routes": route_manifest,
+    }
+
+
+def build_bootstrap(
+    *,
+    policy: ControlRoutePolicy,
+    context: ControlAccessContext,
+    adapter: ControlTargetAdapter,
+    adapter_wired: bool,
+    http_mounted: bool = False,
+    native: NativeCapabilityState | None = None,
+) -> dict[str, object]:
+    capabilities = build_capabilities(
+        policy=policy,
+        context=context,
+        adapter=adapter,
+        adapter_wired=adapter_wired,
+        http_mounted=http_mounted,
+        native=native,
+    )
+    return {
+        "schemaVersion": CONTROL_BOOTSTRAP_VERSION,
+        "apiVersion": CONTROL_API_VERSION,
+        "capabilities": capabilities,
+        "recovery": {
+            "sessionSnapshotPathId": ControlPathId.AGENT_SESSION_SNAPSHOT.value,
+            "globalEventPathId": ControlPathId.CONTROL_EVENTS.value,
+            "globalSnapshotPathId": ControlPathId.AGENT_CONFIGURATION_GET.value,
+            "lastEventIdQueryKey": "lastEventId",
+        },
+        "integration": {
+            "facadeOnly": not http_mounted,
+            "httpMounted": bool(http_mounted),
+            "adapterWired": bool(adapter_wired),
+        },
+    }
