@@ -12,7 +12,7 @@
     "createdAtMs": {"type": "integer", "minimum": 0},
     "eventType": {
       "type": "string",
-      "enum": ["snapshot", "text_delta", "reasoning_summary", "status_changed", "tool_started", "tool_progress", "tool_finished", "approval_required", "approval_resolved", "memory_checkpointed", "memory_maintenance_updated", "user_input_required", "message_completed", "turn_completed", "turn_failed", "snapshot_required", "heartbeat"]
+      "enum": ["snapshot", "text_delta", "reasoning_summary", "status_changed", "session_configuration_changed", "tool_started", "tool_progress", "tool_finished", "approval_required", "approval_resolved", "memory_checkpointed", "memory_maintenance_updated", "user_input_required", "message_completed", "turn_completed", "turn_failed", "snapshot_required", "heartbeat"]
     },
     "payload": {"type": "object"},
     "resumeToken": {"type": "string", "minLength": 1}

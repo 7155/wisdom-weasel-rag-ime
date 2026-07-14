@@ -284,18 +284,28 @@ const toolSpecs: ToolSpec[] = [
   {
     name: "ime_agents",
     label: "多 Agent 协作",
-    description: "从固定目录委派一项或并行两项有界任务，并检查或停止运行。",
-    operations: ["catalog", "delegate", "status", "abort"],
+    description: "管理有界任务委派，并在同一 Room 内进行可审计的 Agent 通信。",
+    operations: [
+      "catalog", "delegate", "status", "artifact", "abort",
+      "room_send", "room_ask", "room_reply", "room_mailbox",
+    ],
     progress: {
       catalog: "正在读取可用协作角色",
       delegate: "正在启动受限子 Agent",
       status: "正在检查协作进度",
+      artifact: "正在读取有界协作记录",
       abort: "正在停止协作任务",
+      room_send: "正在向房间成员发送协作信息",
+      room_ask: "正在向房间成员提出关联问题",
+      room_reply: "正在发送关联回复",
+      room_mailbox: "正在读取房间协作信箱",
     },
     guidelines: [
       "只能使用 catalog 返回的固定 Agent；单批最多两个任务、最大深度 2，不得请求加载市场自定义代码。",
       "fresh 只携带任务，fork 继承当前会话上下文；涉及当前讨论的复核或规划时才使用 fork。",
       "子 Agent 是临时执行单元，结果交回当前会话，不要把它描述成长期群聊成员。",
+      "Room 通信前先调用 room_mailbox 获取受信的 participantId；send 是通知，ask 要求对方随后用 room_reply 关联回复。",
+      "clientMessageId 必须由当前回合稳定生成，重试时保持不变；不要在参数里伪造 sourceSessionId 或 sourceParticipantId。",
       "worker 仍没有任意文件或 Shell 权限；所有控制中心写操作继续经过原生审批。",
     ],
   },
@@ -509,6 +519,15 @@ function parametersFor(spec: ToolSpec) {
       contextMode: { type: "string", enum: ["fresh", "fork"] },
       wait: { type: "boolean" },
       batchId: { type: "string", maxLength: 240 },
+      artifactId: { type: "string", maxLength: 240 },
+      targetParticipantId: { type: "string", maxLength: 240 },
+      clientMessageId: { type: "string", minLength: 1, maxLength: 200 },
+      replyTo: { type: "string", maxLength: 240 },
+      content: { type: "string", minLength: 1, maxLength: 4000 },
+      status: {
+        type: "string",
+        enum: ["queued", "delivering", "delivered", "replied", "failed", "stale", "cancelled"],
+      },
     },
   };
 }
@@ -523,7 +542,7 @@ function specsForToolProfile(specs: ToolSpec[]) {
     ime_knowledge: ["recall", "deep_recall", "route_status"],
     ime_models: ["status", "profiles", "probe", "cache_stats"],
     ime_runtime: ["health", "components", "diagnose"],
-    ime_agents: ["catalog", "delegate", "status", "abort"],
+    ime_agents: ["catalog", "delegate", "status", "artifact", "abort"],
   };
   return specs.flatMap((spec) => {
     const operations = spec.operations.filter((operation) => allowed[spec.name]?.includes(operation));

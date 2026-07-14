@@ -4,6 +4,7 @@ import unittest
 
 from rag_ime.agent_routes import (
     agent_approval_route,
+    agent_artifact_route,
     agent_media_route,
     agent_room_route,
     agent_session_route,
@@ -35,6 +36,10 @@ class AgentRouteTests(unittest.TestCase):
         self.assertEqual(
             agent_session_route("/api/agent/sessions/agent:123/thinking"),
             ("agent:123", "thinking"),
+        )
+        self.assertEqual(
+            agent_session_route("/api/agent/sessions/agent:123/intercom"),
+            ("agent:123", "intercom"),
         )
 
     def test_unknown_or_nested_routes_do_not_fall_through(self) -> None:
@@ -107,6 +112,19 @@ class AgentRouteTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(agent_room_route(path), ("", ""))
+
+    def test_artifact_route_accepts_one_opaque_identifier_only(self) -> None:
+        self.assertEqual(
+            agent_artifact_route("/api/agent/artifacts/artifact%3Aabc123"),
+            "artifact:abc123",
+        )
+        for path in (
+            "/api/agent/artifacts",
+            "/api/agent/artifacts/",
+            "/api/agent/artifacts/artifact:abc/extra",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(agent_artifact_route(path), "")
 
 
 if __name__ == "__main__":

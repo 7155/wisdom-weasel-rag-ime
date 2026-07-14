@@ -6,11 +6,15 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
-from rag_ime.agent_delegation import AgentDelegationCoordinator
+from rag_ime.agent_artifacts import AgentArtifactStore
+from rag_ime.agent_delegation import AgentDelegationCoordinator, AgentDelegationStore
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
+from rag_ime.agent_templates import AgentTemplateBudget, agent_template as real_agent_template
 from rag_ime.pi_runtime import PiRuntimeConfig
 
 
@@ -56,6 +60,33 @@ class _HangingRuntime(_CompletingRuntime):
         return {"accepted": True, "turnId": "turn:hanging"}
 
 
+class _SoftBudgetRuntime(_CompletingRuntime):
+    def prompt(self, session_id, message):
+        self.events.publish(session_id, "text_delta", {"delta": "软" * 205})
+        return super().prompt(session_id, message)
+
+
+class _IgnoringAbortRuntime(_CompletingRuntime):
+    instances: list["_IgnoringAbortRuntime"] = []
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.abort_count = 0
+        self.stop_count = 0
+        self.__class__.instances.append(self)
+
+    def prompt(self, session_id, _message):
+        self.events.publish(session_id, "text_delta", {"delta": "硬" * 300})
+        return {"accepted": True, "turnId": "turn:over-budget"}
+
+    def abort(self, _session_id):
+        self.abort_count += 1
+
+    def stop(self):
+        self.stop_count += 1
+        self.stopped = True
+
+
 class AgentDelegationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-delegation-")
@@ -82,13 +113,19 @@ class AgentDelegationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def coordinator(self, runtime_factory=_CompletingRuntime) -> AgentDelegationCoordinator:
+    def coordinator(
+        self,
+        runtime_factory=_CompletingRuntime,
+        *,
+        cancellation_grace_ms: int = 50,
+    ) -> AgentDelegationCoordinator:
         return AgentDelegationCoordinator(
             db_path=self.db_path,
             runtime_config=self.config,
             sessions=self.sessions,
             events=self.events,
             runtime_factory=runtime_factory,
+            cancellation_grace_ms=cancellation_grace_ms,
         )
 
     def test_fixed_catalog_parallel_results_and_internal_sessions(self) -> None:
@@ -115,6 +152,8 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertEqual(len(batch["runs"]), 2)
         self.assertEqual({run["usage"]["totalTokens"] for run in batch["runs"]}, {321})
         self.assertTrue(all(run["result"]["summary"] for run in batch["runs"]))
+        self.assertTrue(all(run["artifact"]["recordCount"] >= 4 for run in batch["runs"]))
+        self.assertNotIn(str(self.root), json.dumps(batch["runs"][0]["artifact"]))
         self.assertEqual([item["id"] for item in self.sessions.list()], [self.parent["id"]])
         self.assertEqual(len(self.sessions.list(include_internal=True)), 3)
         with self.assertRaisesRegex(ValueError, "unsupported agent template"):
@@ -122,6 +161,27 @@ class AgentDelegationTests(unittest.TestCase):
                 str(self.parent["id"]),
                 {"agent": "market-shell-agent", "task": "执行任意命令"},
             )
+        coordinator.close()
+
+    def test_artifact_inspection_requires_the_owning_parent_session(self) -> None:
+        coordinator = self.coordinator()
+        batch = coordinator.delegate(
+            str(self.parent["id"]),
+            {"agent": "reviewer", "task": "检查受控 Artifact"},
+        )["batch"]
+        artifact_id = str(batch["runs"][0]["artifact"]["artifactId"])
+        other = self.sessions.create(title="其他主持会话")
+
+        inspected = coordinator.inspect_artifact(
+            str(self.parent["id"]),
+            artifact_id,
+            limit=3,
+        )
+
+        self.assertEqual(inspected["artifact"]["artifactId"], artifact_id)
+        self.assertLessEqual(inspected["returnedRecords"], 3)
+        with self.assertRaisesRegex(ValueError, "does not belong"):
+            coordinator.inspect_artifact(str(other["id"]), artifact_id)
         coordinator.close()
 
     def test_nested_delegation_stops_at_depth_two(self) -> None:
@@ -303,6 +363,136 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertEqual({run["state"] for run in final["runs"]}, {"aborted"})
         coordinator.close()
 
+    def test_soft_budget_is_recorded_without_stopping_a_successful_run(self) -> None:
+        with patch(
+            "rag_ime.agent_delegation.agent_template",
+            side_effect=_small_budget_template,
+        ):
+            coordinator = self.coordinator(_SoftBudgetRuntime)
+            batch = coordinator.delegate(
+                str(self.parent["id"]),
+                {"agent": "reviewer", "task": "接近输出预算但仍完成"},
+            )["batch"]
+
+        run = batch["runs"][0]
+        self.assertEqual(run["state"], "completed")
+        self.assertEqual(run["supervision"]["phase"], "soft")
+        records = coordinator.artifacts.lifecycle_records(
+            owner_kind="subagent_run",
+            owner_id=str(run["id"]),
+        )
+        self.assertIn("supervision_soft", {str(item["eventType"]) for item in records})
+        coordinator.close()
+
+    def test_hard_budget_uses_abort_then_forced_stop_after_grace(self) -> None:
+        _IgnoringAbortRuntime.instances.clear()
+        with patch(
+            "rag_ime.agent_delegation.agent_template",
+            side_effect=_small_budget_template,
+        ):
+            coordinator = self.coordinator(
+                _IgnoringAbortRuntime,
+                cancellation_grace_ms=20,
+            )
+            batch = coordinator.delegate(
+                str(self.parent["id"]),
+                {"agent": "worker", "task": "触发硬输出预算"},
+            )["batch"]
+
+        run = batch["runs"][0]
+        runtime = _IgnoringAbortRuntime.instances[-1]
+        self.assertEqual(run["state"], "failed")
+        self.assertEqual(run["error"], "output budget exceeded")
+        self.assertEqual(run["supervision"]["phase"], "forced")
+        self.assertGreaterEqual(runtime.abort_count, 1)
+        self.assertGreaterEqual(runtime.stop_count, 1)
+        records = coordinator.artifacts.lifecycle_records(
+            owner_kind="subagent_run",
+            owner_id=str(run["id"]),
+        )
+        self.assertIn("supervision_forced", {str(item["eventType"]) for item in records})
+        coordinator.close()
+
+    def test_restart_reconciles_terminal_artifact_checkpoint_without_reprompting(self) -> None:
+        artifacts = AgentArtifactStore(self.db_path)
+        store = AgentDelegationStore(self.db_path, artifacts=artifacts)
+        store.initialize()
+        child = self.sessions.create(
+            title="待恢复子任务",
+            role_id="hermes-v1",
+            role_version="1",
+            model_profile="gpt/test-model",
+        )
+        batch = store.create_batch(
+            parent_session_id=str(self.parent["id"]),
+            parent_run_id="",
+            context_mode="fresh",
+            depth=1,
+            max_depth=2,
+            runs=[_run_spec(str(child["id"]), task="恢复完成态")],
+        )
+        run_id = str(batch["runs"][0]["id"])
+        store.start_run(run_id)
+        message = _assistant_message(str(child["id"]), "turn:recovered", "恢复后的结果")
+        event = self.events.publish(
+            str(child["id"]),
+            "turn_completed",
+            {"status": "completed"},
+            turn_id="turn:recovered",
+        )
+        store.checkpoint_runtime_event(
+            run_id,
+            event,
+            {
+                "terminalState": "completed",
+                "terminalAtMs": event.created_at_ms,
+                "lastMessage": message,
+                "usage": {"turnCount": 1, "toolCount": 0, "totalTokens": 42},
+            },
+        )
+
+        coordinator = self.coordinator(_CompletingRuntime)
+        recovered = coordinator.store.get_batch(str(batch["id"]))
+        run = recovered["runs"][0]
+        self.assertEqual(recovered["state"], "completed")
+        self.assertTrue(run["result"]["recovered"])
+        self.assertEqual(run["usage"]["totalTokens"], 42)
+        self.assertNotIn(run_id, coordinator._threads)
+        coordinator.close()
+
+    def test_restart_relaunches_queued_work_but_fails_uncheckpointed_running_work(self) -> None:
+        artifacts = AgentArtifactStore(self.db_path)
+        store = AgentDelegationStore(self.db_path, artifacts=artifacts)
+        store.initialize()
+        queued_child = self.sessions.create(title="安全重放 queued")
+        queued = store.create_batch(
+            parent_session_id=str(self.parent["id"]),
+            parent_run_id="",
+            context_mode="fresh",
+            depth=1,
+            max_depth=2,
+            runs=[_run_spec(str(queued_child["id"]), task="重放 queued")],
+        )
+        running_child = self.sessions.create(title="拒绝猜测 running")
+        running = store.create_batch(
+            parent_session_id=str(self.parent["id"]),
+            parent_run_id="",
+            context_mode="fresh",
+            depth=1,
+            max_depth=2,
+            runs=[_run_spec(str(running_child["id"]), task="中断 running")],
+        )
+        store.start_run(str(running["runs"][0]["id"]))
+
+        coordinator = self.coordinator(_CompletingRuntime)
+        _wait_until(
+            lambda: coordinator.store.get_batch(str(queued["id"]))["state"] == "completed"
+        )
+        failed = coordinator.store.get_batch(str(running["id"]))
+        self.assertEqual(failed["state"], "failed")
+        self.assertIn("durable terminal checkpoint", failed["runs"][0]["error"])
+        coordinator.close()
+
 
 def _assistant_message(session_id: str, turn_id: str, text: str) -> dict[str, object]:
     return {
@@ -325,6 +515,35 @@ def _assistant_message(session_id: str, turn_id: str, text: str) -> dict[str, ob
         "citations": [],
         "createdAtMs": 10,
         "completedAtMs": 11,
+    }
+
+
+def _small_budget_template(template_id: object, version: object = "1"):
+    template = real_agent_template(template_id, version)
+    return replace(
+        template,
+        budget=AgentTemplateBudget(
+            max_depth=2,
+            max_turns=8,
+            max_tool_calls=12,
+            max_total_tokens=10_000,
+            max_duration_ms=5_000,
+            max_output_chars=256,
+        ),
+    )
+
+
+def _run_spec(child_session_id: str, *, task: str) -> dict[str, object]:
+    return {
+        "childSessionId": child_session_id,
+        "templateId": "reviewer",
+        "templateVersion": "1",
+        "task": task,
+        "maxTurns": 8,
+        "maxToolCalls": 12,
+        "maxTotalTokens": 10_000,
+        "maxDurationMs": 5_000,
+        "maxOutputChars": 1_000,
     }
 
 

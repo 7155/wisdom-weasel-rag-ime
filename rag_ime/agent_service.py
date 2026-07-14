@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from threading import RLock
 
 from .agent_configuration import (
     AgentConfigurationStore,
@@ -21,6 +22,11 @@ from .agent_delegation import AgentDelegationCoordinator
 from .agent_media import AgentMediaStore
 from .agent_memory_sources import AgentMemorySourceStore
 from .agent_protocol import AgentEventEnvelope
+from .agent_room_intercom import (
+    AgentRoomIntercomRouter,
+    AgentRoomIntercomStore,
+    AgentRoomTargetBusy,
+)
 from .agent_runtime_driver import (
     AgentRuntimePolicy,
     AgentRuntimeDriver,
@@ -69,6 +75,7 @@ class AgentService:
         self.configuration_store = AgentConfigurationStore(db_path)
         self.configuration_store.initialize(seed_configuration)
         self.control_events = AgentControlEventHub(self.configuration_store)
+        self._configuration_lock = RLock()
         self.runtime_factory.apply_policy(
             runtime_policy_from_configuration(
                 self.configuration_store.snapshot()["configuration"]
@@ -101,6 +108,17 @@ class AgentService:
             ),
             purpose="interactive",
         )
+        initial_configuration = self.configuration_store.snapshot()
+        if (
+            initial_configuration["sync"]["state"] != "synchronized"
+            or initial_configuration["sync"]["appliedRevision"]
+            != initial_configuration["revision"]
+        ):
+            _, reconciled_event = self.configuration_store.mark_applied(
+                int(initial_configuration["revision"]),
+                runtime_status=self.runtime.runtime_status(),
+            )
+            self.control_events.fan_out(reconciled_event)
         self.delegation = AgentDelegationCoordinator(
             db_path=db_path,
             runtime_config=configured,
@@ -109,6 +127,13 @@ class AgentService:
             media_resolver=self.media.resolve_pi_image,
             runtime_driver_factory=self.runtime_factory,
             tool_gateway_token=self.tool_token,
+        )
+        self.room_intercom = AgentRoomIntercomRouter(
+            AgentRoomIntercomStore(db_path),
+            generation_provider=self._room_runtime_generation,
+            idle_probe=self._room_target_idle,
+            delivery_handler=self._deliver_room_intercom,
+            audit_publisher=self._publish_room_intercom_audit,
         )
         self._approval_executor: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None
         self._memory_maintenance_probe: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None
@@ -153,6 +178,13 @@ class AgentService:
         }
 
     def update_configuration(self, payload: Mapping[str, object]) -> dict[str, object]:
+        with self._configuration_lock:
+            return self._update_configuration_locked(payload)
+
+    def _update_configuration_locked(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
         expected_revision = payload.get("expectedRevision")
         if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
             raise ValueError("agent configuration update requires expectedRevision")
@@ -301,6 +333,19 @@ class AgentService:
         payload: Mapping[str, object],
     ) -> dict[str, object]:
         return self.delegation.abort(session_id, payload)
+
+    def delegation_artifact(
+        self,
+        session_id: str,
+        artifact_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        value = dict(payload or {})
+        return self.delegation.inspect_artifact(
+            session_id,
+            artifact_id,
+            limit=_integer(value.get("limit"), default=100, minimum=1, maximum=500),
+        )
 
     def list_rooms(self, payload: Mapping[str, object] | None = None) -> dict[str, object]:
         value = dict(payload or {})
@@ -479,6 +524,41 @@ class AgentService:
             "sessionTurnId": accepted.get("turnId", ""),
         }
 
+    def send_room_intercom(
+        self,
+        source_session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        item = self.room_intercom.enqueue(source_session_id, payload)
+        return {
+            "schemaVersion": "rag-ime.agent-room-intercom-enqueue.v1",
+            "ok": True,
+            "accepted": True,
+            "message": item,
+        }
+
+    def list_room_intercom(
+        self,
+        session_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        value = dict(payload or {})
+        participant = self.rooms.participant_for_session(session_id, active_only=False)
+        if participant is None:
+            raise ValueError("session is not a room participant")
+        return {
+            "schemaVersion": "rag-ime.agent-room-intercom-list.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "participant": participant,
+            "room": self.rooms.get(str(participant["roomId"])),
+            "items": self.room_intercom.list(
+                session_id,
+                status=str(value.get("status") or ""),
+                limit=_integer(value.get("limit"), default=100, minimum=1, maximum=200),
+            ),
+        }
+
     def subscribe_room_events(
         self,
         room_id: str,
@@ -526,6 +606,15 @@ class AgentService:
             provider=_required_text(payload, "provider"),
             model_id=_required_text(payload, "modelId"),
         )
+        self.events.publish(
+            session_id,
+            "session_configuration_changed",
+            {
+                "kind": "model",
+                "selected": selected["selected"],
+                "modelProfile": selected["session"].get("modelProfile", ""),
+            },
+        )
         response = {
             "schemaVersion": "rag-ime.agent-model-selection.v1",
             "ok": True,
@@ -540,6 +629,15 @@ class AgentService:
         selected = self.runtime.set_thinking_level(
             session_id,
             level=_required_text(payload, "level"),
+        )
+        self.events.publish(
+            session_id,
+            "session_configuration_changed",
+            {
+                "kind": "thinking",
+                "thinkingLevel": selected["thinkingLevel"],
+                "selected": selected.get("selected"),
+            },
         )
         response = {
             "schemaVersion": "rag-ime.agent-thinking-selection.v1",
@@ -1237,6 +1335,7 @@ class AgentService:
         )
 
     def close(self) -> None:
+        self.room_intercom.close()
         self.delegation.close()
         self.runtime.stop()
 
@@ -1254,6 +1353,7 @@ class AgentService:
             ),
             purpose="interactive",
         )
+        self.room_intercom.notify()
         return self.runtime_status()
 
     def _apply_runtime_policy(self, policy: AgentRuntimePolicy) -> dict[str, object]:
@@ -1269,6 +1369,7 @@ class AgentService:
             ),
             purpose="interactive",
         )
+        self.room_intercom.notify()
         return self.runtime.runtime_status()
 
     def _record_event(self, event: AgentEventEnvelope) -> None:
@@ -1290,6 +1391,10 @@ class AgentService:
         )
 
     def _mirror_event_to_room(self, event: AgentEventEnvelope) -> None:
+        if event.event_type in {"turn_completed", "turn_failed"}:
+            intercom = getattr(self, "room_intercom", None)
+            if intercom is not None:
+                intercom.notify()
         participant = self.rooms.participant_for_session(event.session_id)
         if participant is None:
             return
@@ -1306,6 +1411,79 @@ class AgentService:
             participant_id=str(participant["id"]),
             source_session_id=event.session_id,
             created_at_ms=event.created_at_ms,
+        )
+
+    def _room_runtime_generation(self, session_id: str) -> int:
+        session = self.sessions.get(session_id)
+        if str(session.get("status") or "") in {"archived", "faulted"}:
+            raise ValueError("room participant session is unavailable")
+        binding = self.sessions.runtime_binding(session_id)
+        return max(0, int(binding.get("generation") or 0)) if binding else 0
+
+    def _room_target_idle(self, session_id: str) -> bool:
+        session = self.sessions.get(session_id)
+        if str(session.get("status") or "") not in {"idle", "active"}:
+            return False
+        return str(self.runtime.runtime_status().get("status") or "") not in {
+            "starting",
+            "busy",
+        }
+
+    def _deliver_room_intercom(
+        self,
+        item: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        target_session_id = str(item.get("targetSessionId") or "")
+        if not self._room_target_idle(target_session_id):
+            raise AgentRoomTargetBusy("target participant is not idle")
+        source = self.rooms.participant(str(item.get("sourceParticipantId") or ""))
+        target = self.rooms.participant(str(item.get("targetParticipantId") or ""))
+        kind = str(item.get("kind") or "send")
+        reply_instruction = {
+            "ask": (
+                "这是一个需要回复的问题。完成判断后，请调用 ime_agents.room_reply，"
+                f"并把 replyTo 设为 {item.get('id')}。"
+            ),
+            "reply": "这是对你先前提问的关联回复，请继续当前协作任务。",
+        }.get(kind, "这是协作信息；仅在当前任务需要时使用，不必机械复述。")
+        prompt = (
+            "房间协作消息（由 RAG-IME Agent Kernel 审计投递）\n"
+            f"消息 ID：{item.get('id')}\n"
+            f"类型：{kind}\n"
+            f"来自：{source.get('displayName')}（{source.get('id')}）\n"
+            f"接收者：{target.get('displayName')}（{target.get('id')}）\n"
+            f"关联消息：{item.get('replyTo') or '无'}\n\n"
+            f"{item.get('content')}\n\n"
+            f"{reply_instruction}"
+        )
+        return self.runtime.prompt(target_session_id, prompt)
+
+    def _publish_room_intercom_audit(
+        self,
+        item: Mapping[str, object],
+        phase: str,
+    ) -> None:
+        self.room_events.publish(
+            room_id=str(item.get("roomId") or ""),
+            event_type="participant_activity",
+            payload={
+                "activityKind": "intercom",
+                "phase": phase,
+                "message": {
+                    "id": str(item.get("id") or ""),
+                    "kind": str(item.get("kind") or ""),
+                    "sourceParticipantId": str(item.get("sourceParticipantId") or ""),
+                    "targetParticipantId": str(item.get("targetParticipantId") or ""),
+                    "replyTo": str(item.get("replyTo") or ""),
+                    "status": str(item.get("status") or ""),
+                    "content": str(item.get("content") or "")[:4_000],
+                    "acceptedTurnId": str(item.get("acceptedTurnId") or ""),
+                    "error": str(item.get("error") or "")[:500],
+                },
+            },
+            turn_id=str(item.get("acceptedTurnId") or item.get("id") or ""),
+            participant_id=str(item.get("sourceParticipantId") or ""),
+            source_session_id=str(item.get("sourceSessionId") or ""),
         )
 
 

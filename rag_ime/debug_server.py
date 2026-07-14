@@ -29,6 +29,7 @@ from .active_rag_service import (
 from .agent_service import AgentService, agent_service_from_settings
 from .agent_routes import (
     agent_approval_route,
+    agent_artifact_route,
     agent_media_route,
     agent_room_route,
     agent_session_route,
@@ -41,6 +42,7 @@ from .cli import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
 from .contracts.context_observability import build_context_injection_trace
 from .contracts.json_schema import validate_contract
+from .control_api import AgentKernelControlFacade
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
@@ -266,6 +268,18 @@ class DebugImeService:
             project=config.project,
             facade=self,
             delegation=self.agent.delegation,
+            collaboration=self.agent,
+        )
+        self.control_api = AgentKernelControlFacade(
+            agent=self.agent,
+            capabilities=self.agent_tools,
+            platform_capabilities=lambda: {
+                "transport": "http",
+                "nativeBridge": False,
+                "filePicker": False,
+                "revealPath": False,
+                "approvedExternalActions": False,
+            },
         )
         self.agent.bind_approval_executor(self.agent_tools.apply_approval)
         self.agent.bind_memory_maintenance_probe(self.agent_memory_maintenance_status)
@@ -4279,6 +4293,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/events/stream":
             self._stream_management_events()
             return
+        if parsed.path == "/api/agent/events":
+            query = parse_qs(parsed.query or "")
+            self._stream_agent_control_events(
+                after_event_id=(
+                    self.headers.get("Last-Event-ID", "")
+                    or _query_first(query, "afterEventId")
+                    or _query_first(query, "resumeToken")
+                )
+            )
+            return
         agent_session_id, agent_action = agent_session_route(parsed.path)
         if agent_session_id and agent_action == "events":
             query = parse_qs(parsed.query or "")
@@ -4293,6 +4317,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         agent_room_id, room_action = agent_room_route(parsed.path)
         subagent_run_id, subagent_action = agent_subagent_route(parsed.path)
+        artifact_id = agent_artifact_route(parsed.path)
         if agent_room_id and room_action == "events":
             query = parse_qs(parsed.query or "")
             self._stream_agent_room_events(
@@ -4311,6 +4336,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             response = self.service.frontend_capabilities()
             validate_contract(response, "frontend-capabilities.v1.json")
             self._write_json(HTTPStatus.OK, response)
+            return
+        if parsed.path == "/api/control/v1/bootstrap":
+            self._write_json(HTTPStatus.OK, self.service.control_api.bootstrap())
             return
         if parsed.path in ("/api/input-source", "/input-source"):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
@@ -4369,6 +4397,16 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self.service.agent.delegation_status(
                     _query_first(query, "sessionId"),
                     {"runId": subagent_run_id},
+                ),
+            )
+            return
+        if artifact_id:
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.delegation_artifact(
+                    _query_first(query, "sessionId"),
+                    artifact_id,
+                    {"limit": _query_first(query, "limit")},
                 ),
             )
             return
@@ -4453,6 +4491,21 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         if agent_session_id and agent_action == "models":
             self._write_json(HTTPStatus.OK, self.service.agent.model_catalog(agent_session_id))
+            return
+        if agent_session_id and agent_action == "intercom":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_room_intercom(
+                    agent_session_id,
+                    {
+                        "status": _query_first(query, "status"),
+                        "limit": _query_first(query, "limit"),
+                    },
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/configuration":
+            self._write_json(HTTPStatus.OK, self.service.agent.configuration())
             return
         if parsed.path == "/api/overview":
             self._write_json(HTTPStatus.OK, self.service.management.overview())
@@ -4882,6 +4935,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             approval_id, approval_action = agent_approval_route(path)
             if path == "/api/agent/runtime/ensure":
                 self._write_json(HTTPStatus.OK, self.service.agent.ensure_runtime(payload))
+            elif path == "/api/agent/configuration":
+                self._write_json(HTTPStatus.OK, self.service.agent.update_configuration(payload))
             elif path == "/api/agent/deep-search":
                 self._write_json(HTTPStatus.ACCEPTED, self.service.agent.deep_search(payload))
             elif path == "/api/agent/sessions":
@@ -4919,6 +4974,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.OK,
                     self.service.agent.select_thinking_level(agent_session_id, payload),
+                )
+            elif agent_session_id and agent_action == "intercom":
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.send_room_intercom(agent_session_id, payload),
                 )
             elif approval_id and approval_action == "decision":
                 self._write_json(HTTPStatus.OK, self.service.agent.decide_approval(approval_id, payload))
@@ -5177,6 +5237,21 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             session_id,
             after_event_id=after_event_id,
         )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for chunk in stream:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _stream_agent_control_events(self, *, after_event_id: str = "") -> None:
+        stream = self.service.agent.subscribe_control_events(after_event_id=after_event_id)
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -5883,6 +5958,17 @@ def _cleanup_diff_payload_for_debug(conn, *, diff_id: int) -> dict[str, object]:
 
 def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _nested_agent_configuration_value(
+    configuration: object,
+    dotted_key: str,
+) -> object:
+    if not isinstance(configuration, dict):
+        return None
+    section, leaf = dotted_key.split(".", 1)
+    branch = configuration.get(section)
+    return branch.get(leaf) if isinstance(branch, dict) else None
 
 
 def _query_first(query: dict[str, list[str]], key: str) -> str:

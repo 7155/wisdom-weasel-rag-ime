@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from .adapters import ControlTargetAdapter
 from .models import ControlAccessContext, ControlClientKind
@@ -135,4 +137,26 @@ def build_bootstrap(
             "httpMounted": bool(http_mounted),
             "adapterWired": bool(adapter_wired),
         },
+    }
+
+
+@runtime_checkable
+class AgentCapabilityGateway(Protocol):
+    """Plugin/tool boundary shared by Pi, native UI, Web, and remote gateways."""
+
+    def manifests(self) -> Mapping[str, object]: ...
+
+    def execute(self, payload: Mapping[str, object]) -> Mapping[str, object]: ...
+
+
+def public_capability_catalog(gateway: AgentCapabilityGateway) -> dict[str, object]:
+    payload = gateway.manifests()
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    return {
+        "schemaVersion": "rag-ime.control-capability-list.v1",
+        "items": [
+            dict(item)
+            for item in items
+            if isinstance(item, Mapping) and item.get("availability") != "hidden"
+        ],
     }
