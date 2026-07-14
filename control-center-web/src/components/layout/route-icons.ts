@@ -1,0 +1,33 @@
+import {
+  Activity,
+  BookOpen,
+  Bot,
+  Brain,
+  History,
+  Keyboard,
+  LayoutDashboard,
+  ListTodo,
+  MessagesSquare,
+  Mic2,
+  Puzzle,
+  Settings,
+  UsersRound,
+  type LucideIcon,
+} from 'lucide-react';
+import type { RouteId } from '@/app/route-registry';
+
+export const routeIcons: Record<RouteId, LucideIcon> = {
+  overview: LayoutDashboard,
+  input: Keyboard,
+  agent: Bot,
+  rooms: MessagesSquare,
+  roles: UsersRound,
+  plugins: Puzzle,
+  voice: Mic2,
+  planning: ListTodo,
+  memory: Brain,
+  knowledge: BookOpen,
+  history: History,
+  diagnostics: Activity,
+  configuration: Settings,
+};
