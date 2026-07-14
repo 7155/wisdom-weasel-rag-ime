@@ -14,6 +14,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState, Skeleton } from '@/components/primitives';
 import './management.css';
 
@@ -307,7 +308,9 @@ export function WorkflowAction({
   risk?: 'R0' | 'R1' | 'R2' | 'R3';
   title: string;
 }) {
-  const isRehearsal = !onApply;
+  const transport = useControlTransport();
+  const isRehearsal = !onApply && transport.kind === 'mock';
+  const unavailable = !onApply && !isRehearsal;
   const instanceId = useId();
   const [stage, setStage] = useState<'idle' | 'preview' | 'approval' | 'receipt' | 'rolled-back'>('idle');
   const [receipt, setReceipt] = useState<ActionReceipt | null>(null);
@@ -315,7 +318,11 @@ export function WorkflowAction({
 
   const applyMutation = useMutation({
     mutationKey: [...mutationKey, 'apply'],
-    mutationFn: async () => onApply?.() ?? mockReceipt(actionId, 'applied'),
+    mutationFn: async () => {
+      if (onApply) return onApply();
+      if (isRehearsal) return mockReceipt(actionId, 'applied');
+      throw new Error('真实写入合同尚未接入。');
+    },
     onSuccess: (nextReceipt) => {
       setReceipt(nextReceipt);
       setStage('receipt');
@@ -323,8 +330,11 @@ export function WorkflowAction({
   });
   const rollbackMutation = useMutation({
     mutationKey: [...mutationKey, 'rollback'],
-    mutationFn: async (appliedReceipt: ActionReceipt) =>
-      onRollback?.(appliedReceipt) ?? mockReceipt(actionId, 'rolled-back'),
+    mutationFn: async (appliedReceipt: ActionReceipt) => {
+      if (onRollback) return onRollback(appliedReceipt);
+      if (isRehearsal) return mockReceipt(actionId, 'rolled-back');
+      throw new Error('真实回滚合同尚未接入。');
+    },
     onSuccess: (nextReceipt) => {
       setRollbackReceipt(nextReceipt);
       setStage('rolled-back');
@@ -343,7 +353,7 @@ export function WorkflowAction({
   const stageIndex = stage === 'idle' ? -1 : steps.findIndex((step) => step.id === stage);
 
   return (
-    <div className="mgmt-workflow" data-stage={stage}>
+    <div className="mgmt-workflow" data-stage={stage} data-unavailable={unavailable || undefined}>
       <div className="mgmt-workflow__heading">
         <div>
           <span className="mgmt-workflow__risk">{risk}</span>
@@ -351,8 +361,8 @@ export function WorkflowAction({
           <p>{description}</p>
         </div>
         {stage === 'idle' ? (
-          <Button leadingIcon={<ShieldCheck size={15} />} onClick={() => setStage('preview')} size="small">
-            {isRehearsal ? '演练流程' : '预览操作'}
+          <Button disabled={unavailable} leadingIcon={<ShieldCheck size={15} />} onClick={() => setStage('preview')} size="small">
+            {unavailable ? '真实写入尚未接入' : isRehearsal ? '演练流程' : '预览操作'}
           </Button>
         ) : null}
       </div>
@@ -406,7 +416,7 @@ export function WorkflowAction({
       {stage === 'receipt' && receipt ? (
         <ReceiptView receipt={receipt}>
           <Button
-            disabled={!receipt.rollbackAvailable}
+            disabled={!receipt.rollbackAvailable || (!onRollback && !isRehearsal)}
             leadingIcon={<RotateCcw size={14} />}
             loading={rollbackMutation.isPending}
             onClick={() => rollbackMutation.mutate(receipt)}

@@ -16,6 +16,8 @@ import { PluginsFeature } from '@/features/plugins';
 import { VoiceFeature } from '@/features/voice';
 import type { ControlPathId } from '@/platform/routes';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
+import { StubControlTransport } from '@/test/stub-control-transport';
+import { WorkflowAction } from './management-ui';
 import { OverviewFeature } from './index';
 
 const now = 1_752_499_200_000;
@@ -160,6 +162,28 @@ describe('management features', () => {
     expect(unsupported.length).toBeGreaterThan(0);
     expect(unsupported.every((button) => button.hasAttribute('disabled'))).toBe(true);
     expect(screen.queryByText('演练 / 未执行')).not.toBeInTheDocument();
+  });
+
+  it('never offers a rehearsal receipt in the native host', () => {
+    const transport = new StubControlTransport('native', {});
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={client}>
+          <WorkflowAction
+            actionId="memory.archive"
+            description="归档一条记忆"
+            mutationKey={['memory', 'archive']}
+            preview={['memoryId: memory-1']}
+            title="归档记忆"
+          />
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    const button = screen.getByRole('button', { name: '真实写入尚未接入' });
+    expect(button).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '演练流程' })).not.toBeInTheDocument();
   });
 });
 
