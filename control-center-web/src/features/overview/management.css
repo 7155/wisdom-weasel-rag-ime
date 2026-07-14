@@ -313,6 +313,33 @@
 
 .mgmt-workflow__panel strong { font-size: 11px; }
 .mgmt-workflow__panel ul { margin: 0; padding-left: 18px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.55; }
+.mgmt-workflow__binding {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.mgmt-workflow__confirm {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 9px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+.mgmt-workflow__confirm input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
 .mgmt-workflow__buttons { justify-content: flex-end; }
 .mgmt-workflow__receipt {
   display: flex;

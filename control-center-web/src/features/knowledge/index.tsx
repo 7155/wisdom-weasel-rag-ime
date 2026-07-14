@@ -1,7 +1,14 @@
 import { BookOpenCheck, FileSearch, Network, RefreshCw, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { Button, EmptyState, Field, Input, SegmentedControl, TextArea } from '@/components/primitives';
-import { useKnowledgeQueries } from './api';
+import type { JsonValue } from '@/platform/transport';
+import {
+  ManagementMutationWorkflow,
+  parseManagementWorkPreview,
+  parseManagementWorkReceipt,
+} from '@/features/overview/management-mutation';
+import { knowledgeMutationPathIds, useKnowledgeMutationBoundary, useKnowledgeQueries } from './api';
+import { KnowledgeSessionWorkflow } from './session-workflow';
 import {
   DataTable,
   InlineNotice,
@@ -10,7 +17,6 @@ import {
   MetricStrip,
   QueryState,
   StatusBadge,
-  WorkflowAction,
   arrayRecords,
   asRecord,
   booleanValue,
@@ -38,8 +44,23 @@ export function KnowledgeFeature() {
   const sources = arrayRecords(session.sources);
   const result = asRecord(session.result);
   const plan = asRecord(result.plan);
+  const runId = stringValue(plan.runId);
+  const mutationBoundary = useKnowledgeMutationBoundary();
+  const startDraft: Record<string, JsonValue> = {
+    question: question.trim(),
+    context: context.trim(),
+    mode,
+    includeNotion: false,
+    generation: 1,
+    clientId: 'control-center-web',
+    project: 'wisdom-weasel-rag-ime',
+    app: 'com.rag-ime.control',
+    maxChars: mode === 'long_form' ? 8_000 : 4_000,
+    latencyBudgetMs: 120_000,
+  };
   const error = (queries.route.error ?? queries.session.error) as Error | null;
-  const pending = queries.route.isPending || queries.session.isPending;
+  // Session polling is secondary content; do not unmount an active write workflow while a new session key loads.
+  const pending = queries.route.isPending;
   const refresh = () => void Promise.all([queries.route.refetch(), queries.session.refetch()]);
 
   return (
@@ -61,7 +82,7 @@ export function KnowledgeFeature() {
           <InlineNotice title="来源边界" tone="info">本地 Memory/RAG、Notion 与模型生成来源分开呈现。</InlineNotice>
         </ManagementSection>
 
-        <ManagementSection title="Query Lab 与深度工作台" description="预览查询模式、范围与来源开关；当前启动操作为演练。">
+        <ManagementSection title="Query Lab 与深度工作台" description="确认请求范围后启动真实 Session；运行中可显式取消。">
           <div className="mgmt-stack">
             <SegmentedControl aria-label="知识任务模式" items={modes} onValueChange={setMode} value={mode} />
             <div className="mgmt-grid-2">
@@ -72,11 +93,28 @@ export function KnowledgeFeature() {
                 <TextArea id="knowledge-context" onChange={(event) => setContext(event.target.value)} placeholder="可选；敏感字段会被 gate 阻止" rows={5} value={context} />
               </Field>
             </div>
-            <WorkflowAction
-              actionId="knowledge.start"
+            <KnowledgeSessionWorkflow
+              availability={mutationBoundary.routeAvailability(
+                [knowledgeMutationPathIds.start, knowledgeMutationPathIds.cancel],
+                !question.trim()
+                  ? '填写明确的问题或整理指令后才能预览任务。'
+                  : !booleanValue(route.deepseekReady)
+                    ? '当前知识生成路由尚未就绪。'
+                    : '',
+              )}
               description="先检查敏感内容，再按所选模式运行检索或生成。"
-              mutationKey={['knowledge', 'mutation', 'start']}
-              preview={[
+              draft={startDraft}
+              draftKey={JSON.stringify(startDraft)}
+              onCancel={(nextSessionId) => mutationBoundary.request({
+                pathId: knowledgeMutationPathIds.cancel,
+                body: { sessionId: nextSessionId },
+              })}
+              onSessionStarted={setSessionId}
+              onStart={(boundDraft) => mutationBoundary.request({
+                pathId: knowledgeMutationPathIds.start,
+                body: boundDraft,
+              })}
+              previewLines={[
                 `mode：${mode}`,
                 `question：${question.trim() || '未填写'}`,
                 `context：${context.trim() ? `${context.trim().length} 字` : '无'}`,
@@ -119,28 +157,58 @@ export function KnowledgeFeature() {
         </ManagementSection>
 
         <ManagementSection title="数据库整理草案" description="逐项审阅后再应用，应用结果可回滚。">
-          <InlineNotice title="当前整理任务" tone={stringValue(plan.runId) ? 'info' : 'warning'}>
-            {stringValue(plan.runId) ? `${stringValue(plan.runId)} · ${stringValue(plan.status, 'draft')}` : '当前没有数据库整理任务。'}
+          <InlineNotice title="当前整理任务" tone={runId ? 'info' : 'warning'}>
+            {runId ? `${runId} · ${stringValue(plan.status, 'draft')}` : '当前没有数据库整理任务。'}
           </InlineNotice>
-          <div className="mgmt-grid-2">
-            <WorkflowAction
-              actionId="knowledge.database.apply"
-              description="应用已选择的整理项，写入正式记忆库。"
-              mutationKey={['knowledge', 'mutation', 'database-apply']}
-              preview={[`任务 ID：${stringValue(plan.runId, '尚未生成')}`, '只应用已选择的整理项。', '完成后显示成功、跳过和失败项目。']}
-              risk="R2"
-              title="应用整理草案"
-            />
-            <WorkflowAction
-              actionId="knowledge.database.rollback"
-              applyLabel="批准回滚"
-              description="回滚本次任务已应用的数据库整理。"
-              mutationKey={['knowledge', 'mutation', 'database-rollback']}
-              preview={[`任务 ID：${stringValue(plan.runId, '尚未生成')}`, '回滚只影响本次任务写入的变更。', '保留历史记录和回滚收据。']}
-              risk="R2"
-              title="回滚整理任务"
-            />
-          </div>
+          <ManagementMutationWorkflow
+            availability={mutationBoundary.databaseAvailability(runId ? '' : '当前任务还没有可应用的 runId。')}
+            description="服务端绑定整理任务版本；应用成功后只使用该收据回滚。"
+            draftKey={runId}
+            mutationKey={['knowledge', 'mutation', 'database-apply']}
+            onApply={async (preview) => parseManagementWorkReceipt(
+              await mutationBoundary.request({
+                pathId: knowledgeMutationPathIds.databaseApply,
+                body: {
+                  runId: preview.context.runId,
+                  confirm: 'apply',
+                  previewToken: preview.previewToken,
+                  payloadSha256: preview.payloadSha256,
+                  expectedRuntimeRevision: preview.expectedRuntimeRevision,
+                },
+              }),
+              knowledgeMutationPathIds.databaseApply,
+              preview.payloadSha256,
+            )}
+            onApplied={() => void queries.session.refetch()}
+            onPreview={async () => {
+              const context: Record<string, JsonValue> = { runId };
+              return parseManagementWorkPreview(
+                await mutationBoundary.request({
+                  pathId: knowledgeMutationPathIds.databaseApplyPreview,
+                  body: context,
+                }),
+                knowledgeMutationPathIds.databaseApply,
+                context,
+              );
+            }}
+            onRollback={async (receipt, preview) => parseManagementWorkReceipt(
+              await mutationBoundary.request({
+                pathId: knowledgeMutationPathIds.databaseRollback,
+                body: {
+                  runId: preview.context.runId,
+                  confirm: 'rollback',
+                  receiptId: receipt.receiptId,
+                  rollbackToken: receipt.rollbackToken,
+                  payloadSha256: receipt.payloadSha256,
+                },
+              }),
+              knowledgeMutationPathIds.databaseRollback,
+              preview.payloadSha256,
+            )}
+            onRolledBack={() => void queries.session.refetch()}
+            risk="R2"
+            title="应用整理草案"
+          />
         </ManagementSection>
       </QueryState>
     </ManagementPage>

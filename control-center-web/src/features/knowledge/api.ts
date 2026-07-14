@@ -1,10 +1,29 @@
 import { useQuery } from '@tanstack/react-query';
 import { useControlTransport } from '@/app/control-transport';
+import type { MutationAvailability } from '@/features/overview/management-mutation';
+import type { ControlPathId } from '@/platform/routes';
+import type { ControlRequest, ControlTransport, JsonValue } from '@/platform/transport';
 
 export const knowledgeQueryKeys = {
   root: ['knowledge'] as const,
   route: () => [...knowledgeQueryKeys.root, 'route-status'] as const,
   session: (sessionId: string) => [...knowledgeQueryKeys.root, 'session', sessionId] as const,
+  capabilities: () => [...knowledgeQueryKeys.root, 'capabilities'] as const,
+};
+
+export const knowledgeMutationPathIds = {
+  start: 'knowledge.start',
+  cancel: 'knowledge.cancel',
+  databaseApplyPreview: 'knowledge.database.apply.preview',
+  databaseApply: 'knowledge.database.apply',
+  databaseRollback: 'knowledge.database.rollback',
+} as const;
+
+export type KnowledgeMutationPathId = (typeof knowledgeMutationPathIds)[keyof typeof knowledgeMutationPathIds];
+
+export type KnowledgeMutationRequest = {
+  pathId: KnowledgeMutationPathId;
+  body: Record<string, JsonValue>;
 };
 
 export function useKnowledgeQueries(sessionId: string) {
@@ -27,4 +46,58 @@ export function useKnowledgeQueries(sessionId: string) {
     },
   });
   return { route, session, transportKind: transport.kind };
+}
+
+export function useKnowledgeMutationBoundary() {
+  const transport = useControlTransport();
+  const capabilities = useQuery({
+    queryKey: knowledgeQueryKeys.capabilities(),
+    queryFn: () => transport.capabilities(),
+    staleTime: 30_000,
+  });
+
+  const routeAvailability = (
+    pathIds: readonly KnowledgeMutationPathId[],
+    blockedReason = '',
+  ): MutationAvailability => {
+    if (capabilities.isPending) return { state: 'checking' };
+    if (capabilities.error) return { state: 'unsupported', reason: '无法读取 Control API 能力，请刷新后重试。' };
+    const routeIds = new Set((capabilities.data?.routeIds ?? []) as readonly string[]);
+    if (pathIds.some((pathId) => !routeIds.has(pathId))) {
+      return { state: 'unsupported', reason: '当前 Control API 未开放这组知识任务请求；没有请求被发送。' };
+    }
+    if (blockedReason) return { state: 'blocked', reason: blockedReason };
+    return { state: 'available' };
+  };
+
+  const databaseAvailability = (blockedReason = ''): MutationAvailability => {
+    const routeState = routeAvailability([
+      knowledgeMutationPathIds.databaseApplyPreview,
+      knowledgeMutationPathIds.databaseApply,
+      knowledgeMutationPathIds.databaseRollback,
+    ]);
+    if (routeState.state !== 'available') return routeState;
+    const flags = capabilities.data?.features ?? {};
+    if (!flags.managementWorkContract || !flags.knowledgeDatabaseWorkContract) {
+      return { state: 'unsupported', reason: '当前 Control API 未提供 Knowledge Database WorkContract；没有请求被发送。' };
+    }
+    return blockedReason ? { state: 'blocked', reason: blockedReason } : routeState;
+  };
+
+  return {
+    capabilities,
+    databaseAvailability,
+    routeAvailability,
+    request: <Response,>(request: KnowledgeMutationRequest) => requestKnowledgeMutation<Response>(transport, request),
+  };
+}
+
+export function requestKnowledgeMutation<Response>(
+  transport: ControlTransport,
+  request: KnowledgeMutationRequest,
+): Promise<Response> {
+  return transport.request<Response>({
+    pathId: request.pathId as unknown as ControlPathId,
+    body: request.body,
+  } as ControlRequest);
 }

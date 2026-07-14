@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import type { ComponentType } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
@@ -61,6 +61,7 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
   },
   'planning.dashboard': {
     ok: true,
+    runtimeRevision: 7,
     date: '2026-07-14',
     plan: { intention: '完成 Web 迁移', notes: '保持接口边界', reflection: '', project: 'wisdom-weasel-rag-ime' },
     tasks: [{ id: 'task-1', title: '完成管理页', detail: '运行测试并截图', status: 'in_progress', source: 'manual' }],
@@ -152,19 +153,13 @@ describe('management features', () => {
     expect(screen.queryByText('top-secret-must-not-render')).not.toBeInTheDocument();
   });
 
-  it('keeps write operations in preview, approval, receipt and rollback states', async () => {
-    const user = userEvent.setup();
+  it('fails closed when the management WorkContract capability is absent', async () => {
     renderFeature(PlanningFeature);
     await screen.findByRole('heading', { name: '规划', level: 1 });
-
-    await user.click((await screen.findAllByRole('button', { name: '演练流程' }))[0]);
-    expect(screen.getByText('演练预览')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '进入演练确认' }));
-    expect(screen.getByText('演练确认')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '生成演练收据' }));
-    expect(await screen.findByText('演练 / 未执行')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '回滚演练' }));
-    expect(await screen.findByText('已回滚')).toBeInTheDocument();
+    const unsupported = await screen.findAllByRole('button', { name: '后端暂不支持' });
+    expect(unsupported.length).toBeGreaterThan(0);
+    expect(unsupported.every((button) => button.hasAttribute('disabled'))).toBe(true);
+    expect(screen.queryByText('演练 / 未执行')).not.toBeInTheDocument();
   });
 });
 
@@ -174,13 +169,15 @@ function renderFeature(Feature: ComponentType): MockControlTransport {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
-    <TooltipProvider delayDuration={0}>
-      <ControlTransportProvider transport={transport}>
-        <QueryClientProvider client={client}>
-          <Feature />
-        </QueryClientProvider>
-      </ControlTransportProvider>
-    </TooltipProvider>,
+    <MemoryRouter>
+      <TooltipProvider delayDuration={0}>
+        <ControlTransportProvider transport={transport}>
+          <QueryClientProvider client={client}>
+            <Feature />
+          </QueryClientProvider>
+        </ControlTransportProvider>
+      </TooltipProvider>
+    </MemoryRouter>,
   );
   return transport;
 }
