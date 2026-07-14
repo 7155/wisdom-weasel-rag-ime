@@ -4,6 +4,7 @@
 .roles-header h2 { margin: 0; font-size: 18px; }
 .roles-header p { margin: 0; color: var(--color-text-tertiary); font-size: 10px; }
 .roles-notice { margin: 10px 0 0; padding: 7px 10px; border-left: 3px solid var(--color-warning); background: var(--color-warning-soft); color: var(--color-text-secondary); font-size: 10px; }
+.roles-empty { margin: 0; padding: 22px 4px; color: var(--color-text-tertiary); font-size: 11px; }
 .roles-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 28px; padding-top: 20px; }
 .persona-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 8px; }
 .persona-grid > button { display: grid; min-height: 126px; grid-template-columns: 54px minmax(0, 1fr); align-content: center; align-items: center; gap: 10px; padding: 15px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); text-align: left; cursor: pointer; }

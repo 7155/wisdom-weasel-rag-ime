@@ -14,10 +14,10 @@ export function RolesFeature() {
   const transport = useControlTransport();
   const navigate = useNavigate();
   const [view, setView] = useState<'personas' | 'templates'>('personas');
-  const [personas, setPersonas] = useState<AgentPersonaV1[]>(previewPersonas);
-  const [templates, setTemplates] = useState<AgentTemplateV1[]>(previewTemplates);
-  const [selectedPersona, setSelectedPersona] = useState(previewPersonas[0]?.roleId ?? '');
-  const [selectedTemplate, setSelectedTemplate] = useState(previewTemplates[0]?.templateId ?? '');
+  const [personas, setPersonas] = useState<AgentPersonaV1[]>(() => transport.kind === 'mock' ? previewPersonas : []);
+  const [templates, setTemplates] = useState<AgentTemplateV1[]>(() => transport.kind === 'mock' ? previewTemplates : []);
+  const [selectedPersona, setSelectedPersona] = useState(() => transport.kind === 'mock' ? previewPersonas[0]?.roleId ?? '' : '');
+  const [selectedTemplate, setSelectedTemplate] = useState(() => transport.kind === 'mock' ? previewTemplates[0]?.templateId ?? '' : '');
   const [creating, setCreating] = useState(false);
   const [notice, setNotice] = useState('');
   useEffect(() => {
@@ -70,12 +70,12 @@ export function RolesFeature() {
       {notice ? <p className="roles-notice" role="status">{notice}</p> : null}
       {view === 'personas' ? (
         <div className="roles-layout">
-          <section className="persona-grid" aria-label="Persona 列表">{personas.map((item) => <button type="button" key={item.roleId} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div>{item.traits.map((trait) => <i key={trait}>{trait}</i>)}</div></button>)}</section>
+          <section className="persona-grid" aria-label="Persona 列表">{personas.length ? personas.map((item) => <button type="button" key={item.roleId} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div>{item.traits.map((trait) => <i key={trait}>{trait}</i>)}</div></button>) : <p className="roles-empty">尚未从本机 Agent Kernel 读取到角色。</p>}</section>
           {persona ? <PersonaInspector persona={persona} /> : null}
         </div>
       ) : (
         <div className="roles-layout">
-          <section className="template-list" aria-label="Agent Template 列表">{templates.map((item) => <button type="button" key={item.templateId} aria-current={item.templateId === selectedTemplate} onClick={() => setSelectedTemplate(item.templateId)}><span><Bot size={17} /></span><div><strong>{item.displayName}</strong><small>{item.summary}</small></div></button>)}</section>
+          <section className="template-list" aria-label="Agent Template 列表">{templates.length ? templates.map((item) => <button type="button" key={item.templateId} aria-current={item.templateId === selectedTemplate} onClick={() => setSelectedTemplate(item.templateId)}><span><Bot size={17} /></span><div><strong>{item.displayName}</strong><small>{item.summary}</small></div></button>) : <p className="roles-empty">尚未从本机 Agent Kernel 读取到模板。</p>}</section>
           {template ? <TemplateInspector template={template} /> : null}
         </div>
       )}

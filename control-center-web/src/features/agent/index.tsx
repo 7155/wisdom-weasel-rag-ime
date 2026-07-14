@@ -26,7 +26,7 @@ export function AgentFeature() {
   const [searchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('session')?.trim() ?? '';
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [personas, setPersonas] = useState(previewPersonas);
+  const [personas, setPersonas] = useState(() => transport.kind === 'mock' ? previewPersonas : []);
   const [selectedId, setSelectedId] = useState('');
   const [catalog, setCatalog] = useState<ModelCatalog>();
   const [draft, setDraft] = useState('');
@@ -123,10 +123,14 @@ export function AgentFeature() {
   }
 
   async function createSession(): Promise<void> {
+    if (!persona) {
+      setError('真实角色目录尚未加载，暂时不能创建 Session。');
+      return;
+    }
     try {
       const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.sessions.create',
-        body: { title: '新对话', mode: 'assistant', roleId: persona?.roleId ?? 'zhiyou-v1', roleVersion: persona?.version ?? '1', modelProfile: 'session-selected', toolProfileVersion: 'control-center-v1', workspaceRoots: [] },
+        body: { title: '新对话', mode: 'assistant', roleId: persona.roleId, roleVersion: persona.version, modelProfile: persona.defaults.modelPolicy, toolProfileVersion: persona.defaults.toolProfileVersion, workspaceRoots: [] },
       });
       const created = isRecord(response.session) ? response.session as unknown as SessionSummary : undefined;
       if (created?.id) await loadSessions(created.id);

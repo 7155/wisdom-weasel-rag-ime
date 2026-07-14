@@ -13,9 +13,11 @@ import {
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
 import type { UiRoomEvent } from '@/contracts/ui-events';
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { previewPersonas } from '@/features/agent/preview-data';
 import { AgentBlocks, MarkdownBody } from '@/features/agent/timeline/BlockRenderer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
+import { roleItems } from '@/features/agent/types';
 import './rooms.css';
 
 interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; status: string; ordinal: number; }
@@ -24,6 +26,7 @@ export interface RoomSummary { id: string; title: string; status: string; routin
 export function RoomsFeature() {
   const transport = useControlTransport();
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
+  const [personas, setPersonas] = useState<AgentPersonaV1[]>(() => transport.kind === 'mock' ? previewPersonas : []);
   const [selectedId, setSelectedId] = useState('');
   const [projection, setProjection] = useState<RoomProjectionState>(() => createRoomProjection(''));
   const projectionRef = useRef(projection);
@@ -32,10 +35,16 @@ export function RoomsFeature() {
 
   useEffect(() => {
     let active = true;
-    void transport.request({ pathId: 'agent.rooms.list', query: { limit: 100 } }).then((value) => {
+    void Promise.allSettled([
+      transport.request({ pathId: 'agent.rooms.list', query: { limit: 100 } }),
+      transport.request({ pathId: 'agent.roles.list' }),
+    ]).then(([roomResult, roleResult]) => {
       if (!active) return;
-      const items = roomItems(value);
+      if (roomResult.status === 'rejected') throw roomResult.reason;
+      const items = roomItems(roomResult.value);
+      const roles = roleResult.status === 'fulfilled' ? roleItems(roleResult.value) : [];
       const next = transport.kind === 'mock' && items.length === 0 ? previewRooms : items;
+      setPersonas(transport.kind === 'mock' && roles.length === 0 ? previewPersonas : roles);
       setRooms(next); setSelectedId((current) => current || next[0]?.id || '');
     }).catch((loadError) => active && setError(errorText(loadError)));
     return () => { active = false; };
@@ -149,7 +158,11 @@ export function RoomsFeature() {
     catch (requestError) { setDraft(message); setError(errorText(requestError)); }
   }
   async function createRoom(): Promise<void> {
-    const participants = previewPersonas.slice(0, 2).map((persona) => ({ roleId: persona.roleId, roleVersion: persona.version, displayName: persona.displayName }));
+    const participants = personas.slice(0, 2).map((persona) => ({ roleId: persona.roleId, roleVersion: persona.version, displayName: persona.displayName }));
+    if (participants.length < 2) {
+      setError('真实角色目录至少需要两个角色才能创建 Room。');
+      return;
+    }
     try {
       const response = await transport.request<Record<string, unknown>>({ pathId: 'agent.rooms.create', body: { title: '新协作 Room', participants, routingPolicy: 'moderator', moderatorRoleId: participants[0]?.roleId ?? 'zhiyou-v1' } });
       const created = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
@@ -163,12 +176,12 @@ export function RoomsFeature() {
         <div>{rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => setSelectedId(item.id)}><UsersRound size={16} /><span><strong>{item.title}</strong><small>{item.participants.map((participant) => participant.displayName).join(' · ')}</small></span></button>)}</div>
       </aside>
       <section className="room-workspace">
-        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{room?.routingPolicy === 'moderator' ? '主持人路由' : '手动 @ 路由'}</small></span><div className="room-participants">{room?.participants.map((participant) => <span key={participant.id}><PersonaAvatar persona={previewPersonas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b></span>)}</div></header>
+        <header><span><strong>{room?.title ?? 'Room'}</strong><small>{room?.routingPolicy === 'moderator' ? '主持人路由' : '手动 @ 路由'}</small></span><div className="room-participants">{room?.participants.map((participant) => <span key={participant.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b></span>)}</div></header>
         <div className="room-error-slot" aria-live="polite">
           {error ? <p className="room-error" role="alert">{error}</p> : null}
         </div>
         <div className="room-timeline">
-          <Virtuoso data={projection.turnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} />} />
+          <Virtuoso data={projection.turnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} />} />
         </div>
         <div className="room-composer"><textarea rows={2} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="向 Room 发消息，使用 @ 指定参与者…" aria-label="Room 消息" /><IconButton label="发送 Room 消息" icon={<Send size={17} />} disabled={!draft.trim()} onClick={() => void send()} tooltip /></div>
       </section>
@@ -176,7 +189,7 @@ export function RoomsFeature() {
   );
 }
 
-export function RoomTurn({ turnId, room, projection }: { turnId: string; room?: RoomSummary; projection: RoomProjectionState }) {
+export function RoomTurn({ turnId, room, projection, personas = previewPersonas }: { turnId: string; room?: RoomSummary; projection: RoomProjectionState; personas?: AgentPersonaV1[] }) {
   const turn = projection.turnsById[turnId];
   if (!turn) return null;
   const activities = turn.activityIds.map((id) => projection.activitiesById[id]).filter(Boolean);
@@ -186,9 +199,9 @@ export function RoomTurn({ turnId, room, projection }: { turnId: string; room?: 
       if (!message) return null;
       if (message.role === 'user') return <div key={id} className="room-user-message"><MarkdownBody text={message.text} /></div>;
       const participant = room?.participants.find((item) => item.id === message.participantId);
-      return <div key={id} className="room-participant-message"><PersonaAvatar persona={previewPersonas.find((item) => item.roleId === participant?.roleId)} size="small" presence={message.status === 'streaming' ? 'thinking' : 'done'} /><div><header><strong>{participant?.displayName ?? 'Agent'}</strong><small>{message.status === 'streaming' ? '正在响应' : '已完成'}</small></header>{message.message ? <AgentBlocks blocks={message.message.blocks} /> : <MarkdownBody text={message.text} />}</div></div>;
+      return <div key={id} className="room-participant-message"><PersonaAvatar persona={personas.find((item) => item.roleId === participant?.roleId)} size="small" presence={message.status === 'streaming' ? 'thinking' : 'done'} /><div><header><strong>{participant?.displayName ?? 'Agent'}</strong><small>{message.status === 'streaming' ? '正在响应' : '已完成'}</small></header>{message.message ? <AgentBlocks blocks={message.message.blocks} /> : <MarkdownBody text={message.text} />}</div></div>;
     })}
-    {activities.length ? <details className="room-group-activity"><summary><GitBranch size={15} /><span><strong>{turn.participantIds.length || activities.length} 个 Agent 协同处理</strong><small>{activities.length} 条结构化活动，展开查看分支</small></span></summary><div>{activities.map((activity) => { const participant = room?.participants.find((item) => item.id === activity.participantId); return <p key={activity.id}><PersonaAvatar persona={previewPersonas.find((item) => item.roleId === participant?.roleId)} size="small" /><span className="room-group-activity__copy"><strong>{participant?.displayName ?? '路由器'}</strong><small>{activity.summary}</small></span><i>{activity.status === 'running' ? '进行中' : activity.status === 'failed' ? '失败' : '完成'}</i></p>; })}</div></details> : null}
+    {activities.length ? <details className="room-group-activity"><summary><GitBranch size={15} /><span><strong>{turn.participantIds.length || activities.length} 个 Agent 协同处理</strong><small>{activities.length} 条结构化活动，展开查看分支</small></span></summary><div>{activities.map((activity) => { const participant = room?.participants.find((item) => item.id === activity.participantId); return <p key={activity.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant?.roleId)} size="small" /><span className="room-group-activity__copy"><strong>{participant?.displayName ?? '路由器'}</strong><small>{activity.summary}</small></span><i>{activity.status === 'running' ? '进行中' : activity.status === 'failed' ? '失败' : '完成'}</i></p>; })}</div></details> : null}
   </article>;
 }
 

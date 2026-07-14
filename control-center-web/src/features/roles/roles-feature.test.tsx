@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
+import { StubControlTransport } from '@/test/stub-control-transport';
 import { previewPersonas, previewTemplates } from '@/features/agent/preview-data';
 import { RolesFeature } from './index';
 
@@ -54,6 +55,17 @@ describe('Roles experience', () => {
       toolProfileVersion: 'control-center-v1',
       workspaceRoots: [],
     });
+  });
+
+  it('does not substitute preview Personas when the native catalog is empty', async () => {
+    const transport = new StubControlTransport('native', {
+      'agent.roles.list': { ok: true, items: [] },
+      'agent.subagents.templates': { ok: true, items: [] },
+    });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    expect(await screen.findByText('尚未从本机 Agent Kernel 读取到角色。')).toBeInTheDocument();
+    expect(screen.queryByText('此刻陪你输入，也陪你把事情想清楚')).not.toBeInTheDocument();
   });
 });
 

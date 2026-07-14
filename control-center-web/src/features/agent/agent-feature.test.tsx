@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
+import { StubControlTransport } from '@/test/stub-control-transport';
 import { AgentFeature } from './index';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from './preview-data';
 import { SessionRail } from './sessions/SessionRail';
@@ -98,6 +99,27 @@ describe('Agent experience', () => {
         params: { sessionId: 'session-memory' },
       }),
     })));
+  });
+
+  it('does not substitute preview Sessions or Personas in the native host', async () => {
+    const transport = new StubControlTransport('native', {
+      'agent.sessions.list': { ok: true, items: [] },
+      'agent.roles.list': { ok: true, items: [] },
+    });
+    render(
+      <MemoryRouter initialEntries={['/agent']}>
+        <ControlTransportProvider transport={transport}>
+          <TooltipProvider><AgentFeature /></TooltipProvider>
+        </ControlTransportProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(transport.requests.map((request) => request.pathId)).toEqual(
+      expect.arrayContaining(['agent.sessions.list', 'agent.roles.list']),
+    ));
+    expect(screen.getByText('0 个连续对话')).toBeInTheDocument();
+    expect(screen.queryByText('控制中心迁移')).not.toBeInTheDocument();
+    expect(screen.queryByText('记忆整理')).not.toBeInTheDocument();
   });
 });
 
