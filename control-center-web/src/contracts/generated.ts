@@ -7,7 +7,10 @@
 import type { ActiveRagStartV1 } from './generated/active-rag-start.v1';
 import type { ActiveRagStatusV1 } from './generated/active-rag-status.v1';
 import type { AgentApprovalV1 } from './generated/agent-approval.v1';
+import type { AgentArtifactInspectionV1 } from './generated/agent-artifact-inspection.v1';
+import type { AgentArtifactRefV1 } from './generated/agent-artifact-ref.v1';
 import type { AgentConfigurationV1 } from './generated/agent-configuration.v1';
+import type { AgentControlBootstrapV1 } from './generated/agent-control-bootstrap.v1';
 import type { AgentControlEventV1 } from './generated/agent-control-event.v1';
 import type { AgentEventV1 } from './generated/agent-event.v1';
 import type { AgentMediaV1 } from './generated/agent-media.v1';
@@ -19,6 +22,7 @@ import type { AgentModelSelectionV1 } from './generated/agent-model-selection.v1
 import type { AgentParticipantV1 } from './generated/agent-participant.v1';
 import type { AgentPersonaV1 } from './generated/agent-persona.v1';
 import type { AgentRoomEventV1 } from './generated/agent-room-event.v1';
+import type { AgentRoomIntercomV1 } from './generated/agent-room-intercom.v1';
 import type { AgentRoomSnapshotV1 } from './generated/agent-room-snapshot.v1';
 import type { AgentRoomV1 } from './generated/agent-room.v1';
 import type { AgentRuntimeBindingV1 } from './generated/agent-runtime-binding.v1';
@@ -52,7 +56,10 @@ export type {
   ActiveRagStartV1,
   ActiveRagStatusV1,
   AgentApprovalV1,
+  AgentArtifactInspectionV1,
+  AgentArtifactRefV1,
   AgentConfigurationV1,
+  AgentControlBootstrapV1,
   AgentControlEventV1,
   AgentEventV1,
   AgentMediaV1,
@@ -64,6 +71,7 @@ export type {
   AgentParticipantV1,
   AgentPersonaV1,
   AgentRoomEventV1,
+  AgentRoomIntercomV1,
   AgentRoomSnapshotV1,
   AgentRoomV1,
   AgentRuntimeBindingV1,
@@ -98,7 +106,10 @@ export interface ContractTypeMap {
   'active-rag-start.v1': ActiveRagStartV1;
   'active-rag-status.v1': ActiveRagStatusV1;
   'agent-approval.v1': AgentApprovalV1;
+  'agent-artifact-inspection.v1': AgentArtifactInspectionV1;
+  'agent-artifact-ref.v1': AgentArtifactRefV1;
   'agent-configuration.v1': AgentConfigurationV1;
+  'agent-control-bootstrap.v1': AgentControlBootstrapV1;
   'agent-control-event.v1': AgentControlEventV1;
   'agent-event.v1': AgentEventV1;
   'agent-media.v1': AgentMediaV1;
@@ -110,6 +121,7 @@ export interface ContractTypeMap {
   'agent-participant.v1': AgentParticipantV1;
   'agent-persona.v1': AgentPersonaV1;
   'agent-room-event.v1': AgentRoomEventV1;
+  'agent-room-intercom.v1': AgentRoomIntercomV1;
   'agent-room-snapshot.v1': AgentRoomSnapshotV1;
   'agent-room.v1': AgentRoomV1;
   'agent-runtime-binding.v1': AgentRuntimeBindingV1;

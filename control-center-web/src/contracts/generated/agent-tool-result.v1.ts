@@ -76,6 +76,13 @@ export interface AgentToolResultV1 {
     | 'export'
     | 'restore_preview'
     | 'restore_apply'
+    | 'delegate'
+    | 'artifact'
+    | 'abort'
+    | 'room_send'
+    | 'room_ask'
+    | 'room_reply'
+    | 'room_mailbox'
     | 'run';
   result: {
     [k: string]: unknown;

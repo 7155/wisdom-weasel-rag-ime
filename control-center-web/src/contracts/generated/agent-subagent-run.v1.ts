@@ -30,6 +30,21 @@ export interface AgentSubagentRunV1 {
     [k: string]: unknown;
   };
   error: string;
+  artifact?: {
+    schemaVersion: 'rag-ime.agent-artifact-ref.v1';
+    artifactId: string;
+    ownerKind: 'subagent_run';
+    ownerId: string;
+    kind: 'lifecycle';
+    sha256: string;
+    [k: string]: unknown;
+  };
+  supervision?: {
+    phase: 'none' | 'soft' | 'hard' | 'forced';
+    reason: string;
+    requestedAtMs: number | null;
+    graceMs: number;
+  };
   createdAtMs: number;
   startedAtMs: number | null;
   updatedAtMs: number;

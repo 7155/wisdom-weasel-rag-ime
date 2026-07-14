@@ -293,6 +293,156 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-artifact-inspection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-artifact-inspection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "artifact",
+      "records",
+      "totalRecords",
+      "returnedRecords",
+      "truncated",
+      "limits"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-artifact-inspection.v1"
+      },
+      "artifact": {
+        "type": "object"
+      },
+      "records": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "type": "object"
+        }
+      },
+      "totalRecords": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "returnedRecords": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 500
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "limits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestedRecords",
+          "maxRecords",
+          "maxOutputBytes"
+        ],
+        "properties": {
+          "requestedRecords": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "maxRecords": {
+            "type": "integer",
+            "const": 500
+          },
+          "maxOutputBytes": {
+            "type": "integer",
+            "const": 262144
+          }
+        }
+      }
+    }
+  },
+  "agent-artifact-ref.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-artifact-ref.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "artifactId",
+      "ownerKind",
+      "ownerId",
+      "kind",
+      "mediaType",
+      "appendOnly",
+      "byteSize",
+      "sha256",
+      "recordCount",
+      "snapshotRevision",
+      "snapshotSha256",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-artifact-ref.v1"
+      },
+      "artifactId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "ownerKind": {
+        "type": "string",
+        "enum": [
+          "subagent_run",
+          "tool_run",
+          "connector_run"
+        ]
+      },
+      "ownerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "kind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "mediaType": {
+        "type": "string",
+        "minLength": 1
+      },
+      "appendOnly": {
+        "type": "boolean"
+      },
+      "byteSize": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sha256": {
+        "type": "string",
+        "pattern": "^$|^[a-f0-9]{64}$"
+      },
+      "recordCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "snapshotRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "snapshotSha256": {
+        "type": "string",
+        "pattern": "^$|^[a-f0-9]{64}$"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "agent-configuration.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-configuration.v1",
@@ -431,6 +581,132 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-control-bootstrap.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-control-bootstrap.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "apiVersion",
+      "configuration",
+      "runtime",
+      "capabilities",
+      "platform",
+      "routes"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-control-bootstrap.v1"
+      },
+      "apiVersion": {
+        "type": "string",
+        "const": "control-api.v1"
+      },
+      "configuration": {
+        "type": "object"
+      },
+      "runtime": {
+        "type": "object"
+      },
+      "capabilities": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "items"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.control-capability-list.v1"
+          },
+          "items": {
+            "type": "array"
+          }
+        }
+      },
+      "platform": {
+        "type": "object"
+      },
+      "routes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "pathId",
+            "method",
+            "remoteSafe",
+            "subscription",
+            "params",
+            "query",
+            "target"
+          ],
+          "properties": {
+            "pathId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "type": "string",
+              "enum": [
+                "GET",
+                "POST",
+                "PATCH",
+                "DELETE"
+              ]
+            },
+            "remoteSafe": {
+              "type": "boolean"
+            },
+            "subscription": {
+              "type": "boolean"
+            },
+            "params": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "query": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "remoteScopes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "remoteQuery": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "target": {
+              "type": "object",
+              "required": [
+                "8766",
+                "8768"
+              ],
+              "properties": {
+                "8766": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "8768": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "agent-control-event.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-control-event.v1",
@@ -524,6 +800,7 @@ export const contractSchemas = {
           "text_delta",
           "reasoning_summary",
           "status_changed",
+          "session_configuration_changed",
           "tool_started",
           "tool_progress",
           "tool_finished",
@@ -1519,6 +1796,129 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-room-intercom.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-room-intercom.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "id",
+      "roomId",
+      "kind",
+      "sourceParticipantId",
+      "targetParticipantId",
+      "sourceSessionId",
+      "targetSessionId",
+      "sourceGeneration",
+      "targetGeneration",
+      "clientMessageId",
+      "replyTo",
+      "status",
+      "content",
+      "acceptedTurnId",
+      "error",
+      "createdAtMs",
+      "updatedAtMs",
+      "deliveredAtMs",
+      "repliedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-room-intercom.v1"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "send",
+          "ask",
+          "reply"
+        ]
+      },
+      "sourceParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "targetParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceSessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "targetSessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceGeneration": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "targetGeneration": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "clientMessageId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "replyTo": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "delivering",
+          "delivered",
+          "replied",
+          "failed",
+          "stale",
+          "cancelled"
+        ]
+      },
+      "content": {
+        "type": "string",
+        "minLength": 1
+      },
+      "acceptedTurnId": {
+        "type": "string"
+      },
+      "error": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "deliveredAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "repliedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    }
+  },
   "agent-room-snapshot.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-room-snapshot.v1",
@@ -2375,6 +2775,79 @@ export const contractSchemas = {
         "type": "string",
         "maxLength": 500
       },
+      "artifact": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "artifactId",
+          "ownerKind",
+          "ownerId",
+          "kind",
+          "sha256"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-artifact-ref.v1"
+          },
+          "artifactId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ownerKind": {
+            "type": "string",
+            "const": "subagent_run"
+          },
+          "ownerId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "const": "lifecycle"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        }
+      },
+      "supervision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "phase",
+          "reason",
+          "requestedAtMs",
+          "graceMs"
+        ],
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": [
+              "none",
+              "soft",
+              "hard",
+              "forced"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "requestedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "graceMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30000
+          }
+        }
+      },
       "createdAtMs": {
         "type": "integer",
         "minimum": 0
@@ -2770,6 +3243,13 @@ export const contractSchemas = {
           "export",
           "restore_preview",
           "restore_apply",
+          "delegate",
+          "artifact",
+          "abort",
+          "room_send",
+          "room_ask",
+          "room_reply",
+          "room_mailbox",
           "run"
         ]
       },

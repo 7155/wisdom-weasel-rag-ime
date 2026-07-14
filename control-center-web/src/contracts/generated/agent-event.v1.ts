@@ -16,6 +16,7 @@ export interface AgentEventV1 {
     | 'text_delta'
     | 'reasoning_summary'
     | 'status_changed'
+    | 'session_configuration_changed'
     | 'tool_started'
     | 'tool_progress'
     | 'tool_finished'
