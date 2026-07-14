@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import sessionFixture from '../../../tests/fixtures/agent/agent-session.json';
 
@@ -107,6 +107,67 @@ describe('NativeControlTransport', () => {
       lastEventId: 'session-1:9',
     });
     transport.dispose();
+  });
+
+  it('reconnects a completed native stream from the last acknowledged cursor', async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: NativeBridgeRequestEnvelope[] = [];
+      let nextId = 1;
+      const bridgeWindow = fakeBridgeWindow((envelope) => {
+        sent.push(envelope);
+        queueMicrotask(() => {
+          bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+            id: envelope.id,
+            ok: true,
+            result: {},
+          });
+        });
+      });
+      const reconnects: unknown[] = [];
+      const transport = new NativeControlTransport({
+        bridgeWindow,
+        createId: () => `resume-${nextId++}`,
+      });
+      const cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:8',
+        },
+        {
+          next: () => undefined,
+          reconnect: (state) => reconnects.push(state),
+        },
+      );
+      await Promise.resolve();
+
+      bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        subscriptionId: 'resume-1',
+        kind: 'complete',
+        lastEventId: 'session-1:12',
+      });
+      expect(reconnects).toEqual([
+        { attempt: 1, delayMs: 250, lastEventId: 'session-1:12' },
+      ]);
+
+      await vi.advanceTimersByTimeAsync(250);
+      const subscribeCalls = sent.filter((item) => item.method === 'subscribe');
+      expect(subscribeCalls).toHaveLength(2);
+      expect(subscribeCalls[1]?.payload).toEqual({
+        subscriptionId: 'resume-1',
+        request: {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:12',
+        },
+      });
+      cancel();
+      await Promise.resolve();
+      transport.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fails closed before posting an unknown pathId or arbitrary URL field', async () => {

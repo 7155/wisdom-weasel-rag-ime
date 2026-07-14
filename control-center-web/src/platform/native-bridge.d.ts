@@ -24,6 +24,7 @@ export type NativeBridgeError =
       code?: string;
       message: string;
       details?: unknown;
+      retryable?: boolean;
     };
 
 export type NativeBridgeResponseEnvelope =
@@ -37,9 +38,23 @@ export interface NativeBridgeSubscriptionEventEnvelope {
   lastEventId: string;
 }
 
+export interface NativeBridgeSubscriptionErrorEnvelope {
+  subscriptionId: string;
+  kind: 'error';
+  error: NativeBridgeError;
+}
+
+export interface NativeBridgeSubscriptionCompleteEnvelope {
+  subscriptionId: string;
+  kind: 'complete';
+  lastEventId: string;
+}
+
 export type NativeBridgeOutboundEnvelope =
   | NativeBridgeResponseEnvelope
-  | NativeBridgeSubscriptionEventEnvelope;
+  | NativeBridgeSubscriptionEventEnvelope
+  | NativeBridgeSubscriptionErrorEnvelope
+  | NativeBridgeSubscriptionCompleteEnvelope;
 
 export interface RagImeNativeBridgeReceiver {
   receive(envelope: NativeBridgeOutboundEnvelope): void;

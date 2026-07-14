@@ -47,6 +47,8 @@ interface NativeSubscription {
   request: ControlSubscription;
   observer: ControlEventObserver<unknown>;
   lastEventId: string;
+  reconnectAttempt: number;
+  reconnectTimer?: ReturnType<typeof setTimeout>;
 }
 
 export class NativeBridgeUnavailableError extends Error {
@@ -119,6 +121,7 @@ export class NativeControlTransport implements ControlTransport {
       request,
       observer: observer as ControlEventObserver<unknown>,
       lastEventId: request.lastEventId,
+      reconnectAttempt: 0,
     });
     void this.call('subscribe', {
       subscriptionId,
@@ -223,13 +226,27 @@ export class NativeControlTransport implements ControlTransport {
       else pending.reject(new NativeBridgeCallError(envelope.error));
       return;
     }
-    if (envelope.kind !== 'event') return;
     const subscription = this.subscriptions.get(envelope.subscriptionId);
     if (!subscription) return;
+    if (envelope.kind === 'error') {
+      subscription.observer.error?.(new NativeBridgeCallError(envelope.error));
+      if (isRetryableBridgeError(envelope.error)) {
+        this.scheduleSubscriptionReconnect(envelope.subscriptionId, subscription);
+      } else {
+        this.subscriptions.delete(envelope.subscriptionId);
+      }
+      return;
+    }
+    if (envelope.kind === 'complete') {
+      subscription.lastEventId = envelope.lastEventId || subscription.lastEventId;
+      this.scheduleSubscriptionReconnect(envelope.subscriptionId, subscription);
+      return;
+    }
     try {
       const streamKind = controlRoute(subscription.request.pathId).subscription;
       const event = parseNativeEvent(streamKind, envelope.event);
       subscription.lastEventId = envelope.lastEventId || eventResumeToken(event);
+      subscription.reconnectAttempt = 0;
       subscription.observer.next(event);
       if (isSnapshotRequired(event)) subscription.observer.snapshotRequired?.(event);
     } catch (error) {
@@ -241,6 +258,7 @@ export class NativeControlTransport implements ControlTransport {
     const subscription = this.subscriptions.get(subscriptionId);
     if (!subscription) return;
     this.subscriptions.delete(subscriptionId);
+    if (subscription.reconnectTimer) globalThis.clearTimeout(subscription.reconnectTimer);
     if (this.disposed) return;
     void this.call('cancelSubscription', {
       subscriptionId,
@@ -252,6 +270,34 @@ export class NativeControlTransport implements ControlTransport {
 
   private assertActive(): void {
     if (this.disposed) throw new NativeBridgeUnavailableError('native transport was disposed');
+  }
+
+  private scheduleSubscriptionReconnect(
+    subscriptionId: string,
+    subscription: NativeSubscription,
+  ): void {
+    if (this.disposed || subscription.reconnectTimer) return;
+    subscription.reconnectAttempt += 1;
+    const delayMs = Math.min(5_000, 250 * 2 ** Math.min(5, subscription.reconnectAttempt - 1));
+    subscription.observer.reconnect?.({
+      attempt: subscription.reconnectAttempt,
+      delayMs,
+      lastEventId: subscription.lastEventId,
+    });
+    subscription.reconnectTimer = globalThis.setTimeout(() => {
+      subscription.reconnectTimer = undefined;
+      if (this.disposed || this.subscriptions.get(subscriptionId) !== subscription) return;
+      const request = { ...subscription.request, lastEventId: subscription.lastEventId };
+      void this.call('subscribe', {
+        subscriptionId,
+        request: controlSubscriptionWirePayload(request),
+      })
+        .then(() => subscription.observer.open?.(subscription.lastEventId))
+        .catch((error) => {
+          subscription.observer.error?.(asError(error));
+          this.scheduleSubscriptionReconnect(subscriptionId, subscription);
+        });
+    }, delayMs);
   }
 }
 
@@ -327,6 +373,10 @@ function eventResumeToken(event: unknown): string {
 
 function isSnapshotRequired(event: unknown): boolean {
   return isRecord(event) && event.eventType === 'snapshot_required';
+}
+
+function isRetryableBridgeError(error: NativeBridgeError): boolean {
+  return typeof error === 'object' && error !== null && error.retryable === true;
 }
 
 function createBridgeId(): string {

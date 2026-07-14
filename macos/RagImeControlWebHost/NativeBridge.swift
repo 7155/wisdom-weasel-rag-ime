@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 import WebKit
 
 final class NativeBridge: NSObject, WKScriptMessageHandler {
@@ -83,21 +84,28 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func capabilities() -> [String: Any] {
         [
-            "schemaVersion": "rag-ime.frontend-capabilities.v1",
+            "schemaVersion": "rag-ime.control-capabilities.v1",
             "transport": "native",
             "platform": "macos",
             "nativeBridgeVersion": 1,
-            "filePicker": true,
-            "revealPickedPath": true,
-            "approvedExternalActions": [
-                "openAccessibilitySettings",
-                "openKeyboardSettings",
-                "openInputSourceSettings",
+            "routeIds": NativeRoutePolicy.knownPathIds.sorted(),
+            "features": [
+                "agentStreaming": true,
+                "roomStreaming": true,
+                "filePicker": true,
             ],
-            "keychainValuesReadable": false,
-            "arbitraryFetch": false,
-            "arbitraryShell": false,
-            "pathIds": NativeRoutePolicy.knownPathIds.sorted(),
+            "native": [
+                "pickFiles": true,
+                "revealPath": true,
+                "approvedExternalActions": true,
+                "keychain": false,
+                "tcc": true,
+            ],
+            "security": [
+                "keychainValuesReadable": false,
+                "arbitraryFetch": false,
+                "arbitraryShell": false,
+            ],
         ]
     }
 
@@ -174,13 +182,16 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func subscribe(id: String, payload: [String: Any]) {
         do {
-            let pathId = try requiredString("pathId", in: payload)
+            guard let request = payload["request"] as? [String: Any] else {
+                throw NativeRoutePolicyError.invalidParameter("request")
+            }
+            let pathId = try requiredString("pathId", in: request)
             let subscriptionId = try requiredString("subscriptionId", in: payload)
-            let lastEventId = (payload["lastEventId"] as? String) ?? ""
+            let lastEventId = (request["lastEventId"] as? String) ?? ""
             let resolved = try routePolicy.resolveSubscription(
                 pathId: pathId,
-                parameters: try stringDictionary(payload["params"]),
-                query: try stringDictionary(payload["query"]),
+                parameters: try stringDictionary(request["params"]),
+                query: try stringDictionary(request["query"]),
                 lastEventId: lastEventId
             )
             try eventBridge.subscribe(
@@ -211,28 +222,40 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func pickFiles(id: String, payload: [String: Any]) {
         let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = payload["allowDirectories"] as? Bool ?? false
+        let purpose = payload["purpose"] as? String ?? "attachment"
+        panel.canChooseFiles = purpose != "export-destination"
+        panel.canChooseDirectories = purpose == "export-destination"
         panel.allowsMultipleSelection = payload["multiple"] as? Bool ?? false
         panel.resolvesAliases = true
         panel.prompt = "选择"
+        if let accepts = payload["accepts"] as? [String] {
+            let allowedTypes = accepts.compactMap { value -> UTType? in
+                if value.hasPrefix(".") {
+                    return UTType(filenameExtension: String(value.dropFirst()))
+                }
+                return UTType(mimeType: value)
+            }
+            if !allowedTypes.isEmpty { panel.allowedContentTypes = allowedTypes }
+        }
         panel.begin { [weak self] response in
             guard let self else { return }
             guard response == .OK else {
-                self.replySuccess(id: id, result: ["files": []])
+                self.replySuccess(id: id, result: [])
                 return
             }
             let files = panel.urls.prefix(20).map { url -> [String: Any] in
                 let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
                 self.allowedRevealPaths.insert(url.standardizedFileURL.path)
+                let contentTypeValues = try? url.resourceValues(forKeys: [.contentTypeKey])
                 return [
+                    "id": UUID().uuidString,
                     "path": url.path,
                     "name": url.lastPathComponent,
-                    "size": values?.fileSize ?? 0,
-                    "isDirectory": values?.isDirectory ?? false,
+                    "mimeType": contentTypeValues?.contentType?.preferredMIMEType ?? "application/octet-stream",
+                    "byteSize": values?.fileSize ?? 0,
                 ]
             }
-            self.replySuccess(id: id, result: ["files": Array(files)])
+            self.replySuccess(id: id, result: Array(files))
         }
     }
 
@@ -253,27 +276,17 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func runApprovedExternalAction(id: String, payload: [String: Any]) {
         do {
-            let actionId = try requiredString("actionId", in: payload)
-            let approval = payload["approval"] as? [String: Any]
-            let approved = approval?["approved"] as? Bool == true
-            let payloadHash = approval?["payloadHash"] as? String ?? ""
-            guard approved,
-                  payloadHash.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else {
-                replyError(id: id, code: "approval_required", message: "External action requires an approved payload hash")
+            let action = try requiredString("action", in: payload)
+            let receiptId = try requiredString("receiptId", in: payload)
+            let payloadHash = try requiredString("payloadSha256", in: payload)
+            let commandHash = try requiredString("commandSha256", in: payload)
+            guard payloadHash.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil,
+                  commandHash.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else {
+                replyError(id: id, code: "approval_required", message: "External action requires approved payload and command hashes")
                 return
             }
-            let settingsURL: URL?
-            switch actionId {
-            case "openAccessibilitySettings":
-                settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-            case "openKeyboardSettings":
-                settingsURL = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
-            case "openInputSourceSettings":
-                settingsURL = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?TextInput")
-            default:
-                settingsURL = nil
-            }
-            guard let settingsURL else {
+            guard action == "open_accessibility_settings",
+                  let settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
                 replyError(id: id, code: "external_action_not_allowed", message: "External action is not allowlisted")
                 return
             }
@@ -281,9 +294,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             replySuccess(
                 id: id,
                 result: [
-                    "actionId": actionId,
-                    "opened": opened,
-                    "payloadHash": payloadHash,
+                    "receiptId": receiptId,
+                    "action": action,
+                    "accepted": opened,
+                    "completed": opened,
+                    "exitCode": opened ? 0 : 1,
                 ]
             )
         } catch {

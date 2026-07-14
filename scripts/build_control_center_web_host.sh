@@ -42,6 +42,7 @@ xcrun swiftc \
   -swift-version 5 \
   -target arm64-apple-macosx13.0 \
   -framework AppKit \
+  -framework UniformTypeIdentifiers \
   -framework WebKit \
   "${swift_files[@]}" \
   -o "$MACOS/RagImeControlWebPreview"
