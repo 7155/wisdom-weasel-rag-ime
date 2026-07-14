@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="${1:-$ROOT/control-center-web/dist}"
 EXPECTED_TRANSPORT="${2:-native}"
 EXPECTED_CHANNEL="${3:-production}"
+EXPECTED_COMMIT="${4:-}"
 MARKER="$DIST/rag-ime-control-web-build.json"
 
 [[ -f "$DIST/index.html" ]] || {
@@ -24,11 +25,11 @@ MARKER="$DIST/rag-ime-control-web-build.json"
   exit 1
 }
 
-python3 - "$MARKER" "$EXPECTED_TRANSPORT" "$EXPECTED_CHANNEL" <<'PY'
+python3 - "$MARKER" "$EXPECTED_TRANSPORT" "$EXPECTED_CHANNEL" "$EXPECTED_COMMIT" <<'PY'
 import json
 import sys
 
-marker_path, expected_transport, expected_channel = sys.argv[1:]
+marker_path, expected_transport, expected_channel, expected_commit = sys.argv[1:]
 with open(marker_path, encoding="utf-8") as handle:
     marker = json.load(handle)
 
@@ -47,6 +48,12 @@ if expected_transport == "native":
         raise SystemExit("native control-center build is not marked native-only")
     if marker.get("forbiddenTransportModulesExcluded") is not True:
         raise SystemExit("native control-center build did not exclude mock/http modules")
+    if expected_channel == "production" and marker.get("previewFixturesExcluded") is not True:
+        raise SystemExit("production control-center build did not exclude preview fixtures")
+if expected_commit and marker.get("sourceCommit") != expected_commit:
+    raise SystemExit(
+        f"control-center source commit is {marker.get('sourceCommit')!r}, expected {expected_commit!r}"
+    )
 PY
 
 if [[ "$EXPECTED_TRANSPORT" == "native" ]]; then
@@ -55,6 +62,13 @@ if [[ "$EXPECTED_TRANSPORT" == "native" ]]; then
     'ControlTransportHttpError|No mock response registered for|mock-subscription-|http://127\.0\.0\.1:8766' \
     "$DIST"; then
     echo "native control-center dist contains a mock/http transport sentinel" >&2
+    exit 1
+  fi
+  if [[ "$EXPECTED_CHANNEL" == "production" ]] && grep -R -E -q \
+    --include='*.html' --include='*.js' \
+    'session-preview|room-preview|迁移作战室|control-center-fixture\.json' \
+    "$DIST"; then
+    echo "production control-center dist contains a preview fixture sentinel" >&2
     exit 1
   fi
   grep -q "connect-src 'self';" "$DIST/index.html" || {

@@ -33,6 +33,8 @@ def _write_native_dist(
         "transport": "native",
         "nativeOnly": True,
         "forbiddenTransportModulesExcluded": True,
+        "previewFixturesExcluded": True,
+        "sourceCommit": "test-source-commit",
     }
     marker.update(marker_updates or {})
     (target / "rag-ime-control-web-build.json").write_text(
@@ -144,6 +146,8 @@ class ControlCenterWebHostTests(unittest.TestCase):
             ({"buildChannel": "preview"}, "console.log('native-only');\n"),
             ({}, "throw new Error('No mock response registered for system.health');\n"),
             ({}, "const endpoint = 'http://127.0.0.1:8766';\n"),
+            ({}, "const session = 'session-preview';\n"),
+            ({"previewFixturesExcluded": False}, "console.log('native-only');\n"),
         )
         for marker_updates, javascript in cases:
             with self.subTest(marker_updates=marker_updates, javascript=javascript):
@@ -172,7 +176,9 @@ class ControlCenterWebHostTests(unittest.TestCase):
         self.assertIn("control-transport.native.tsx", vite)
         self.assertIn("/src/platform/http-transport.ts", vite)
         self.assertIn("/src/test/mock-transport.ts", vite)
+        self.assertIn("/src/features/agent/preview-data.ts", vite)
         self.assertIn("forbiddenTransportModulesExcluded", vite)
+        self.assertIn("previewFixturesExcluded", vite)
         self.assertIn("return new NativeControlTransport()", native_entry)
         self.assertNotIn("HttpControlTransport", native_entry)
         self.assertNotIn("MockControlTransport", native_entry)

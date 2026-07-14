@@ -34,6 +34,12 @@ esac
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
+SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+
+if [[ "$FRONTEND_CHANNEL" == "production" && "${RAG_IME_SKIP_WEB_BUILD:-0}" == "1" ]]; then
+  echo "release builds cannot reuse a pre-existing control-center dist" >&2
+  exit 2
+fi
 
 if [[ "${RAG_IME_SKIP_WEB_BUILD:-0}" != "1" ]]; then
   RAG_IME_CONTROL_TRANSPORT=native \
@@ -46,7 +52,7 @@ fi
   exit 1
 }
 "$ROOT/scripts/check_control_center_web_dist.sh" \
-  "$WEB/dist" native "$FRONTEND_CHANNEL" >/dev/null
+  "$WEB/dist" native "$FRONTEND_CHANNEL" "$SOURCE_COMMIT" >/dev/null
 
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES/control-center-web"
@@ -122,7 +128,7 @@ if grep -R -q "unsafe-eval" "$RESOURCES/control-center-web"; then
   exit 1
 fi
 "$ROOT/scripts/check_control_center_web_dist.sh" \
-  "$RESOURCES/control-center-web" native "$FRONTEND_CHANNEL" >/dev/null
+  "$RESOURCES/control-center-web" native "$FRONTEND_CHANNEL" "$SOURCE_COMMIT" >/dev/null
 
 if [[ "$ACTION" == "install-preview" || "$ACTION" == "install-release" ]]; then
   DEST="$INSTALL_DEST"

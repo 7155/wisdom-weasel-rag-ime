@@ -6,6 +6,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { createRoomProjection } from '@/contracts/room-reducer';
+import { previewPersonas } from '@/features/agent/preview-data';
 import type { ControlRequest } from '@/platform/transport';
 import { RoomTurn, RoomsFeature, type RoomSummary } from './index';
 
@@ -144,7 +145,7 @@ describe('Rooms experience', () => {
       id: 'activity-a', turnId: 'turn-a', participantId: 'p1', sourceSessionId: 's1',
       kind: 'participant_activity', status: 'running', summary: '核对移动端布局', payload: {}, createdAtMs: 1,
     };
-    render(<RoomTurn turnId="turn-a" room={room} projection={projection} />);
+    render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
     const avatar = document.querySelector<HTMLElement>('.room-group-activity p > .agent-persona-avatar');
     expect(avatar).toBeInTheDocument();
     const style = getComputedStyle(avatar!);

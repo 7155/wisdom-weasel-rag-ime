@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
@@ -8,6 +9,10 @@ const rootDirectory = path.dirname(fileURLToPath(import.meta.url));
 const controlTransport = process.env.VITE_CONTROL_TRANSPORT ?? 'auto';
 const buildChannel = process.env.VITE_BUILD_CHANNEL ?? 'preview';
 const nativeOnlyBuild = controlTransport === 'native';
+const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+  cwd: path.resolve(rootDirectory, '..'),
+  encoding: 'utf8',
+}).trim();
 
 if (!new Set(['auto', 'mock', 'http', 'native']).has(controlTransport)) {
   throw new Error(`Unsupported VITE_CONTROL_TRANSPORT: ${controlTransport}`);
@@ -23,10 +28,15 @@ const nativeTransportEntry = path.resolve(
   rootDirectory,
   'src/app/control-transport.native.tsx',
 );
+const productionDataEntry = path.resolve(
+  rootDirectory,
+  'src/features/agent/production-data.ts',
+);
 const forbiddenNativeBundleModules = [
   '/src/app/control-transport.tsx',
   '/src/platform/http-transport.ts',
   '/src/test/mock-transport.ts',
+  '/src/features/agent/preview-data.ts',
 ];
 
 function controlTransportBoundary(): Plugin {
@@ -62,6 +72,8 @@ function controlTransportBoundary(): Plugin {
           transport: controlTransport,
           nativeOnly: nativeOnlyBuild,
           forbiddenTransportModulesExcluded: nativeOnlyBuild && forbiddenModules.length === 0,
+          previewFixturesExcluded: nativeOnlyBuild && buildChannel === 'production' && forbiddenModules.length === 0,
+          sourceCommit,
         }, null, 2)}\n`,
       });
     },
@@ -70,11 +82,17 @@ function controlTransportBoundary(): Plugin {
 
 export default defineConfig({
   base: './',
+  define: {
+    __CONTROL_PREVIEW__: JSON.stringify(buildChannel !== 'production'),
+  },
   plugins: [react(), controlTransportBoundary()],
   resolve: {
     alias: [
       ...(nativeOnlyBuild
         ? [{ find: /^@\/app\/control-transport$/, replacement: nativeTransportEntry }]
+        : []),
+      ...(nativeOnlyBuild && buildChannel === 'production'
+        ? [{ find: /^@\/features\/agent\/preview-data$/, replacement: productionDataEntry }]
         : []),
       { find: '@', replacement: path.resolve(rootDirectory, 'src') },
     ],

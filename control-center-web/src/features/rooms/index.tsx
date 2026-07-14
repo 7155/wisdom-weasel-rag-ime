@@ -26,7 +26,7 @@ export interface RoomSummary { id: string; title: string; status: string; routin
 export function RoomsFeature() {
   const transport = useControlTransport();
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
-  const [personas, setPersonas] = useState<AgentPersonaV1[]>(() => transport.kind === 'mock' ? previewPersonas : []);
+  const [personas, setPersonas] = useState<AgentPersonaV1[]>(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
   const [selectedId, setSelectedId] = useState('');
   const [projection, setProjection] = useState<RoomProjectionState>(() => createRoomProjection(''));
   const projectionRef = useRef(projection);
@@ -43,8 +43,8 @@ export function RoomsFeature() {
       if (roomResult.status === 'rejected') throw roomResult.reason;
       const items = roomItems(roomResult.value);
       const roles = roleResult.status === 'fulfilled' ? roleItems(roleResult.value) : [];
-      const next = transport.kind === 'mock' && items.length === 0 ? previewRooms : items;
-      setPersonas(transport.kind === 'mock' && roles.length === 0 ? previewPersonas : roles);
+      const next = __CONTROL_PREVIEW__ && transport.kind === 'mock' && items.length === 0 ? previewRooms : items;
+      setPersonas(__CONTROL_PREVIEW__ && transport.kind === 'mock' && roles.length === 0 ? previewPersonas : roles);
       setRooms(next); setSelectedId((current) => current || next[0]?.id || '');
     }).catch((loadError) => active && setError(errorText(loadError)));
     return () => { active = false; };
@@ -189,7 +189,7 @@ export function RoomsFeature() {
   );
 }
 
-export function RoomTurn({ turnId, room, projection, personas = previewPersonas }: { turnId: string; room?: RoomSummary; projection: RoomProjectionState; personas?: AgentPersonaV1[] }) {
+export function RoomTurn({ turnId, room, projection, personas }: { turnId: string; room?: RoomSummary; projection: RoomProjectionState; personas: AgentPersonaV1[] }) {
   const turn = projection.turnsById[turnId];
   if (!turn) return null;
   const activities = turn.activityIds.map((id) => projection.activitiesById[id]).filter(Boolean);

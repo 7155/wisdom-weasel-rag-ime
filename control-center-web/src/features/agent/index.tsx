@@ -6,7 +6,7 @@ import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { UiAgentEvent } from '@/contracts/ui-events';
 import { AgentComposer } from './composer/AgentComposer';
-import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from './preview-data';
+import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from '@/features/agent/preview-data';
 import { SessionRail } from './sessions/SessionRail';
 import { agentProjection, useAgentLiveStore } from './state/live-store';
 import { AgentTimeline } from './timeline/AgentTimeline';
@@ -26,7 +26,7 @@ export function AgentFeature() {
   const [searchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('session')?.trim() ?? '';
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [personas, setPersonas] = useState(() => transport.kind === 'mock' ? previewPersonas : []);
+  const [personas, setPersonas] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
   const [selectedId, setSelectedId] = useState('');
   const [catalog, setCatalog] = useState<ModelCatalog>();
   const [draft, setDraft] = useState('');
@@ -49,14 +49,14 @@ export function AgentFeature() {
       ]);
       const nextSessions = sessionItems(sessionResponse);
       const nextRoles = roleItems(roleResponse);
-      const usableSessions = transport.kind === 'mock' && nextSessions.length === 0 ? previewSessions : nextSessions;
+      const usableSessions = __CONTROL_PREVIEW__ && transport.kind === 'mock' && nextSessions.length === 0 ? previewSessions : nextSessions;
       setSessions(usableSessions);
       if (nextRoles.length) setPersonas(nextRoles);
       const preferredSessionId = usableSessions.some((item) => item.id === preferredId) ? preferredId : '';
       setSelectedId((current) => preferredSessionId || current || usableSessions[0]?.id || '');
       setError('');
     } catch (loadError) {
-      if (transport.kind === 'mock') {
+      if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
         setSessions(previewSessions);
         const preferredSessionId = previewSessions.some((item) => item.id === preferredId) ? preferredId : '';
         setSelectedId((current) => preferredSessionId || current || previewSessions[0]?.id || '');
@@ -87,7 +87,7 @@ export function AgentFeature() {
           transport.request({ pathId: 'agent.session.models', params: { sessionId: selectedId } }),
         ]);
         if (!active) return;
-        if (transport.kind === 'mock') {
+        if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
           useAgentLiveStore.getState().hydrateSnapshot(selectedId, previewAgentSnapshot(selectedId));
           useAgentLiveStore.getState().applyEvents(selectedId, previewAgentEvents(selectedId));
           setCatalog(isModelCatalog(modelResponse) ? modelResponse : previewModelCatalog(selectedId));
@@ -134,7 +134,7 @@ export function AgentFeature() {
       });
       const created = isRecord(response.session) ? response.session as unknown as SessionSummary : undefined;
       if (created?.id) await loadSessions(created.id);
-      else if (transport.kind === 'mock') {
+      else if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
         const mockSession = { ...previewSessions[0], id: `session-${Date.now()}`, title: '新对话', updatedAtMs: Date.now(), messageCount: 0, lastMessagePreview: '' };
         setSessions((current) => [mockSession, ...current]);
         setSelectedId(mockSession.id);
