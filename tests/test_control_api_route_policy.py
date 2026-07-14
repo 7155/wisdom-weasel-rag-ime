@@ -28,11 +28,21 @@ class ControlRoutePolicyTests(unittest.TestCase):
         self.assertEqual(
             {
                 "planning.dashboard",
+                "planning.mutation.preview",
+                "planning.task.save",
+                "planning.task.action",
+                "planning.taskEvent.undo",
+                "planning.mutation.rollback",
                 "memory.summary",
                 "memory.pages",
                 "history.page",
+                "knowledge.start",
+                "knowledge.cancel",
                 "knowledge.status",
                 "knowledge.routeStatus",
+                "knowledge.database.apply.preview",
+                "knowledge.database.apply",
+                "knowledge.database.rollback",
                 "diagnostics.runtime",
                 "diagnostics.predictor",
                 "diagnostics.models",
@@ -333,14 +343,27 @@ class ControlRoutePolicyTests(unittest.TestCase):
             if path != "facade"
         }
 
-        for forbidden in ("shell", "keychain", "file.read", "file.write", "database.apply"):
+        for forbidden in ("shell", "keychain", "file.read", "file.write"):
             self.assertFalse(any(forbidden in path_id for path_id in path_ids))
         self.assertNotIn("/api/action", targets)
-        self.assertNotIn("/api/knowledge/database/apply", targets)
         self.assertNotIn("/api/configuration/import-apply", targets)
         self.assertNotIn("agent.media.import", path_ids)
         self.assertNotIn("agent.tool.execute", path_ids)
         self.assertNotIn("agent.session.get", path_ids)
+
+        entries = {item["pathId"]: item for item in manifest}
+        for path_id in (
+            "knowledge.database.apply.preview",
+            "knowledge.database.apply",
+            "knowledge.database.rollback",
+        ):
+            self.assertFalse(entries[path_id]["remoteSafe"])
+
+        apply_route = self.policy.resolve(ControlPathId.KNOWLEDGE_DATABASE_APPLY)
+        self.assertEqual(
+            apply_route.required_body,
+            {"runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"},
+        )
 
 
 if __name__ == "__main__":

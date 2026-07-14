@@ -83,6 +83,32 @@ struct NativeRoutePolicyTests {
             scope: .remote
         )
 
+        let planningPreview = try policy.resolveRequest(
+            pathId: "planning.mutation.preview",
+            parameters: [:],
+            query: [:],
+            body: [
+                "kind": "task.save",
+                "payload": ["date": "2026-07-14", "title": "整理记忆图"],
+                "expectedRuntimeRevision": "runtime:1",
+            ]
+        )
+        expect(planningPreview.request.url?.path == "/api/planning/mutation/preview", "planning WorkContract preview")
+
+        let knowledgeApply = try policy.resolveRequest(
+            pathId: "knowledge.database.apply",
+            parameters: [:],
+            query: [:],
+            body: [
+                "runId": "run:1",
+                "confirm": "apply",
+                "previewToken": "preview-token",
+                "payloadSha256": String(repeating: "a", count: 64),
+                "expectedRuntimeRevision": "runtime:1",
+            ]
+        )
+        expect(knowledgeApply.request.url?.path == "/api/knowledge/database/apply", "knowledge WorkContract apply")
+
         expectThrows("unknown pathId") {
             _ = try policy.resolveRequest(pathId: "debug.anything", parameters: [:], query: [:], body: nil)
         }
@@ -125,6 +151,19 @@ struct NativeRoutePolicyTests {
                 parameters: ["artifactId": "artifact:alpha"],
                 query: [:],
                 body: nil
+            )
+        }
+        expectThrows("knowledge apply requires the preview hash") {
+            _ = try policy.resolveRequest(
+                pathId: "knowledge.database.apply",
+                parameters: [:],
+                query: [:],
+                body: [
+                    "runId": "run:1",
+                    "confirm": "apply",
+                    "previewToken": "preview-token",
+                    "expectedRuntimeRevision": "runtime:1",
+                ]
             )
         }
         expectThrows("intercom source identity injection") {

@@ -1,8 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useControlTransport } from '@/app/control-transport';
 import type { MutationAvailability } from '@/features/overview/management-mutation';
-import type { ControlPathId } from '@/platform/routes';
-import type { ControlRequest, ControlTransport, JsonValue } from '@/platform/transport';
+import type { ControlTransport, JsonValue } from '@/platform/transport';
 
 export const knowledgeQueryKeys = {
   root: ['knowledge'] as const,
@@ -97,7 +96,7 @@ export function requestKnowledgeMutation<Response>(
   request: KnowledgeMutationRequest,
 ): Promise<Response> {
   return transport.request<Response>({
-    pathId: request.pathId as unknown as ControlPathId,
+    pathId: request.pathId,
     body: request.body,
-  } as ControlRequest);
+  });
 }

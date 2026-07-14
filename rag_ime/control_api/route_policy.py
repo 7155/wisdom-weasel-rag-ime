@@ -62,11 +62,21 @@ class ControlPathId(str, Enum):
     AGENT_MEMORY_SOURCES_LIST = "agent.memorySources.list"
 
     PLANNING_DASHBOARD = "planning.dashboard"
+    PLANNING_MUTATION_PREVIEW = "planning.mutation.preview"
+    PLANNING_TASK_SAVE = "planning.task.save"
+    PLANNING_TASK_ACTION = "planning.task.action"
+    PLANNING_TASK_EVENT_UNDO = "planning.taskEvent.undo"
+    PLANNING_MUTATION_ROLLBACK = "planning.mutation.rollback"
     MEMORY_SUMMARY = "memory.summary"
     MEMORY_PAGES = "memory.pages"
     HISTORY_PAGE = "history.page"
+    KNOWLEDGE_START = "knowledge.start"
+    KNOWLEDGE_CANCEL = "knowledge.cancel"
     KNOWLEDGE_STATUS = "knowledge.status"
     KNOWLEDGE_ROUTE_STATUS = "knowledge.routeStatus"
+    KNOWLEDGE_DATABASE_APPLY_PREVIEW = "knowledge.database.apply.preview"
+    KNOWLEDGE_DATABASE_APPLY = "knowledge.database.apply"
+    KNOWLEDGE_DATABASE_ROLLBACK = "knowledge.database.rollback"
     DIAGNOSTICS_RUNTIME = "diagnostics.runtime"
     DIAGNOSTICS_PREDICTOR = "diagnostics.predictor"
     DIAGNOSTICS_MODELS = "diagnostics.models"
@@ -412,11 +422,21 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_MEMORY_SOURCES_LIST, ControlMethod.GET, "/api/agent/memory-sources", "/control/v1/agent/memory-sources", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
 
         _route(ControlPathId.PLANNING_DASHBOARD, ControlMethod.GET, "/api/planning/dashboard", "/control/v1/planning/dashboard", scopes=[ControlScope.PLANNING_READ], remote_safe=True, query={"date", "project"}),
+        _route(ControlPathId.PLANNING_MUTATION_PREVIEW, ControlMethod.POST, "/api/planning/mutation/preview", "/control/v1/planning/mutation/preview", body={"kind", "payload", "expectedRuntimeRevision"}, required_body={"kind", "payload", "expectedRuntimeRevision"}),
+        _route(ControlPathId.PLANNING_TASK_SAVE, ControlMethod.POST, "/api/planning/task/save", "/control/v1/planning/task/save", body={"taskId", "date", "title", "detail", "priority", "status", "dueAtMs", "goalId", "project", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}, required_body={"date", "title", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}),
+        _route(ControlPathId.PLANNING_TASK_ACTION, ControlMethod.POST, "/api/planning/task/action", "/control/v1/planning/task/action", body={"taskId", "action", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}, required_body={"taskId", "action", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}),
+        _route(ControlPathId.PLANNING_TASK_EVENT_UNDO, ControlMethod.POST, "/api/planning/task-event/undo", "/control/v1/planning/task-event/undo", body={"eventId", "receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"eventId", "receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
+        _route(ControlPathId.PLANNING_MUTATION_ROLLBACK, ControlMethod.POST, "/api/planning/mutation/rollback", "/control/v1/planning/mutation/rollback", body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.MEMORY_SUMMARY, ControlMethod.GET, "/api/memory/summary", "/control/v1/memory/summary", scopes=[ControlScope.MEMORY_READ], remote_safe=True),
         _route(ControlPathId.MEMORY_PAGES, ControlMethod.GET, "/api/memory/{kind}", "/control/v1/memory/{kind}", scopes=[ControlScope.MEMORY_READ], remote_safe=True, params={"kind"}, param_values={"kind": {"books", "atoms", "tags", "phrases", "groups", "negative"}}, query=_PAGE_QUERY),
         _route(ControlPathId.HISTORY_PAGE, ControlMethod.GET, "/api/history/page", "/control/v1/history/page", scopes=[ControlScope.HISTORY_READ], remote_safe=True, query={"limit", "cursor", "query", "filter"}),
+        _route(ControlPathId.KNOWLEDGE_START, ControlMethod.POST, "/api/knowledge/start", "/control/v1/knowledge/start", body={"question", "context", "mode", "includeNotion", "generation", "contextHash", "clientId", "project", "app", "maxChars", "latencyBudgetMs"}, required_body={"question"}),
+        _route(ControlPathId.KNOWLEDGE_CANCEL, ControlMethod.POST, "/api/knowledge/cancel", "/control/v1/knowledge/cancel", body={"sessionId", "id"}),
         _route(ControlPathId.KNOWLEDGE_STATUS, ControlMethod.GET, "/api/knowledge/status", "/control/v1/knowledge/status", scopes=[ControlScope.KNOWLEDGE_READ], remote_safe=True, query={"sessionId", "id"}),
         _route(ControlPathId.KNOWLEDGE_ROUTE_STATUS, ControlMethod.GET, "/api/knowledge/route-status", "/control/v1/knowledge/route-status", scopes=[ControlScope.KNOWLEDGE_READ], remote_safe=True),
+        _route(ControlPathId.KNOWLEDGE_DATABASE_APPLY_PREVIEW, ControlMethod.POST, "/api/knowledge/database/apply-preview", "/control/v1/knowledge/database/apply-preview", body={"runId", "expectedRuntimeRevision"}, required_body={"runId"}),
+        _route(ControlPathId.KNOWLEDGE_DATABASE_APPLY, ControlMethod.POST, "/api/knowledge/database/apply", "/control/v1/knowledge/database/apply", body={"runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"}, required_body={"runId", "confirm", "previewToken", "payloadSha256", "expectedRuntimeRevision"}),
+        _route(ControlPathId.KNOWLEDGE_DATABASE_ROLLBACK, ControlMethod.POST, "/api/knowledge/database/rollback", "/control/v1/knowledge/database/rollback", body={"runId", "confirm", "receiptId", "rollbackToken", "payloadSha256"}, required_body={"runId", "confirm", "receiptId", "rollbackToken", "payloadSha256"}),
         _route(ControlPathId.DIAGNOSTICS_RUNTIME, ControlMethod.GET, "/api/runtime/status", "/control/v1/diagnostics/runtime", scopes=[ControlScope.DIAGNOSTICS_READ], remote_safe=True),
         _route(ControlPathId.DIAGNOSTICS_PREDICTOR, ControlMethod.GET, "/api/predictor/status", "/control/v1/diagnostics/predictor", scopes=[ControlScope.DIAGNOSTICS_READ], remote_safe=True),
         _route(ControlPathId.DIAGNOSTICS_MODELS, ControlMethod.GET, "/api/models/status", "/control/v1/diagnostics/models", scopes=[ControlScope.DIAGNOSTICS_READ], remote_safe=True),

@@ -171,6 +171,12 @@ class NativeControlBridgeContractTests(unittest.TestCase):
             self.assertIn(f'"{key}"', capability_block)
         self.assertIn('"routeIds": NativeRoutePolicy.knownPathIds.sorted()', capability_block)
         self.assertIn('"native": [', capability_block)
+        for key in (
+            "managementWorkContract",
+            "planningWorkContract",
+            "knowledgeDatabaseWorkContract",
+        ):
+            self.assertIn(f'"{key}": true', capability_block)
 
         normalizer = _required_match(
             r"function normalizeNativeCapabilities\(.*?\n\}", self.native_transport

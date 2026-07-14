@@ -104,6 +104,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 "roomStreaming": true,
                 "filePicker": true,
                 "managedAgentImageImport": true,
+                "managementWorkContract": true,
+                "planningWorkContract": true,
+                "knowledgeDatabaseWorkContract": true,
             ],
             "native": [
                 "pickFiles": true,

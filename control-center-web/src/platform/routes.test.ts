@@ -56,11 +56,21 @@ const canonicalPathIds = [
   'agent.subagent.abort',
   'agent.memorySources.list',
   'planning.dashboard',
+  'planning.mutation.preview',
+  'planning.task.save',
+  'planning.task.action',
+  'planning.taskEvent.undo',
+  'planning.mutation.rollback',
   'memory.summary',
   'memory.pages',
   'history.page',
+  'knowledge.start',
+  'knowledge.cancel',
   'knowledge.status',
   'knowledge.routeStatus',
+  'knowledge.database.apply.preview',
+  'knowledge.database.apply',
+  'knowledge.database.rollback',
   'diagnostics.runtime',
   'diagnostics.predictor',
   'diagnostics.models',
@@ -71,7 +81,7 @@ const canonicalPathIds = [
 describe('control route policy', () => {
   it('mirrors the canonical Lane F pathId manifest exactly', () => {
     expect(Object.keys(CONTROL_ROUTES).sort()).toEqual([...canonicalPathIds].sort());
-    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(58);
+    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(68);
   });
 
   it('resolves only allowlisted path parameters', () => {
