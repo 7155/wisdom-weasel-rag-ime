@@ -77,7 +77,11 @@ class ControlCenterWebHostTests(unittest.TestCase):
         )
         self.assertIn("RagImeControlWebPreview.app", script)
         self.assertIn("com.rag-ime.control.web-preview", script)
-        self.assertNotIn('DEST="$HOME/Applications/RagImeControl.app"', script)
+        self.assertIn('build|install-preview)', script)
+        self.assertIn('build-release|install-release)', script)
+        self.assertIn('INSTALL_DEST="$HOME/Applications/RagImeControlWebPreview.app"', script)
+        self.assertIn('INSTALL_DEST="$HOME/Applications/RagImeControl.app"', script)
+        self.assertIn('if [[ "$ACTION" == "install-preview" || "$ACTION" == "install-release" ]]', script)
         self.assertIn("must not enter the app bundle", script)
 
 

@@ -4,8 +4,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="${RAG_IME_CONTROL_APP:-$ROOT/build/RagImeControl.app}"
 BINARY="$APP/Contents/MacOS/RagImeControl"
-FOOTPRINT_LIMIT_MB="${RAG_IME_CONTROL_FOOTPRINT_LIMIT_MB:-55}"
-RSS_LIMIT_MB="${RAG_IME_CONTROL_RSS_LIMIT_MB:-150}"
+CONTROL_UI="${RAG_IME_CONTROL_UI:-native-legacy}"
+if [[ "$CONTROL_UI" == "web" ]]; then
+  DEFAULT_FOOTPRINT_LIMIT_MB=250
+  DEFAULT_RSS_LIMIT_MB=350
+else
+  DEFAULT_FOOTPRINT_LIMIT_MB=55
+  DEFAULT_RSS_LIMIT_MB=150
+fi
+FOOTPRINT_LIMIT_MB="${RAG_IME_CONTROL_FOOTPRINT_LIMIT_MB:-$DEFAULT_FOOTPRINT_LIMIT_MB}"
+RSS_LIMIT_MB="${RAG_IME_CONTROL_RSS_LIMIT_MB:-$DEFAULT_RSS_LIMIT_MB}"
 IDLE_CPU_LIMIT="${RAG_IME_CONTROL_IDLE_CPU_LIMIT:-0.5}"
 pid=""
 
@@ -22,9 +30,40 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[[ -x "$BINARY" ]] || "$ROOT/scripts/build_control_center.sh" >/dev/null
-! otool -L "$BINARY" | grep -Eq 'WebKit|JavaScriptCore'
-! strings "$BINARY" | grep -Eq 'WKWebView|Electron|Tauri|node_modules'
+[[ "$CONTROL_UI" == "native-legacy" || "$CONTROL_UI" == "web" ]] || {
+  echo "RAG_IME_CONTROL_UI must be native-legacy or web" >&2
+  exit 2
+}
+
+[[ -x "$BINARY" ]] || RAG_IME_CONTROL_UI="$CONTROL_UI" "$ROOT/scripts/build_control_center.sh" >/dev/null
+
+if [[ "$CONTROL_UI" == "web" ]]; then
+  WEB_RESOURCES="$APP/Contents/Resources/control-center-web"
+  MARKER="$APP/Contents/Resources/rag-ime-control-web-build-marker.json"
+  otool -L "$BINARY" | grep -q '/WebKit.framework/'
+  ! otool -L "$BINARY" | grep -Eq 'Electron|Tauri'
+  [[ -f "$WEB_RESOURCES/index.html" ]]
+  [[ -f "$WEB_RESOURCES/manifest.webmanifest" ]]
+  [[ -d "$WEB_RESOURCES/assets" ]]
+  [[ -f "$MARKER" ]]
+  [[ ! -d "$WEB_RESOURCES/node_modules" ]]
+  grep -q 'Content-Security-Policy' "$WEB_RESOURCES/index.html"
+  ! grep -R -q 'unsafe-eval' "$WEB_RESOURCES"
+  python3 - "$MARKER" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    marker = json.load(handle)
+if marker.get("bundleId") != "com.rag-ime.control":
+    raise SystemExit("web control bundle marker has the wrong bundle id")
+if marker.get("ui") != "control-center-web" or marker.get("channel") != "release":
+    raise SystemExit("web control bundle marker is not a release build")
+PY
+else
+  ! otool -L "$BINARY" | grep -Eq 'WebKit|JavaScriptCore'
+  ! strings "$BINARY" | grep -Eq 'WKWebView|Electron|Tauri|node_modules'
+fi
 
 if [[ "${RAG_IME_CONTROL_SKIP_LIVE:-0}" == "1" ]]; then
   echo "control center static footprint gate: PASS"

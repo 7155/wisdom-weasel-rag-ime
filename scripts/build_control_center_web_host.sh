@@ -4,22 +4,37 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB="$ROOT/control-center-web"
 SRC="$ROOT/macos/RagImeControlWebHost"
-APP="$ROOT/build/RagImeControlWebPreview.app"
+ACTION="${1:-build}"
+
+case "$ACTION" in
+  build|install-preview)
+    APP="$ROOT/build/RagImeControlWebPreview.app"
+    EXECUTABLE="RagImeControlWebPreview"
+    BUNDLE_ID="com.rag-ime.control.web-preview"
+    DISPLAY_NAME="智鼬 Web Preview"
+    INSTALL_DEST="$HOME/Applications/RagImeControlWebPreview.app"
+    CHANNEL="preview"
+    ;;
+  build-release|install-release)
+    APP="$ROOT/build/RagImeControl.app"
+    EXECUTABLE="RagImeControl"
+    BUNDLE_ID="com.rag-ime.control"
+    DISPLAY_NAME="智鼬"
+    INSTALL_DEST="$HOME/Applications/RagImeControl.app"
+    CHANNEL="release"
+    ;;
+  *)
+    echo "usage: $0 [build|install-preview|build-release|install-release]" >&2
+    exit 2
+    ;;
+esac
+
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
-ACTION="${1:-build}"
-
-if [[ "$ACTION" != "build" && "$ACTION" != "install-preview" ]]; then
-  echo "usage: $0 [build|install-preview]" >&2
-  exit 2
-fi
 
 if [[ "${RAG_IME_SKIP_WEB_BUILD:-0}" != "1" ]]; then
-  CI=true pnpm --dir "$WEB" install --frozen-lockfile
-  pnpm --dir "$WEB" typecheck
-  pnpm --dir "$WEB" test
-  pnpm --dir "$WEB" build
+  "$ROOT/scripts/build_control_center_web.sh" >/dev/null
 fi
 
 [[ -f "$WEB/dist/index.html" ]] || {
@@ -31,6 +46,10 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES/control-center-web"
 cp "$SRC/Info.plist" "$CONTENTS/Info.plist"
 ditto "$WEB/dist" "$RESOURCES/control-center-web"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $DISPLAY_NAME" "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $EXECUTABLE" "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName $EXECUTABLE" "$CONTENTS/Info.plist"
 
 swift_files=()
 while IFS= read -r file; do swift_files+=("$file"); done < <(find "$SRC" -type f -name '*.swift' | sort)
@@ -45,9 +64,9 @@ xcrun swiftc \
   -framework UniformTypeIdentifiers \
   -framework WebKit \
   "${swift_files[@]}" \
-  -o "$MACOS/RagImeControlWebPreview"
+  -o "$MACOS/$EXECUTABLE"
 
-python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$ROOT" <<'PY'
+python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$ROOT" "$BUNDLE_ID" "$CHANNEL" <<'PY'
 import json
 import subprocess
 import sys
@@ -55,26 +74,33 @@ from pathlib import Path
 
 target = Path(sys.argv[1])
 root = Path(sys.argv[2])
+bundle_id = sys.argv[3]
+channel = sys.argv[4]
 commit = subprocess.run(
     ["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True
 ).stdout.strip()
 target.write_text(json.dumps({
-    "bundleId": "com.rag-ime.control.web-preview",
+    "bundleId": bundle_id,
     "gitCommit": commit,
     "ui": "control-center-web",
+    "channel": channel,
     "nativeBridgeVersion": 1,
 }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
+"$ROOT/scripts/support/build_app_icon.sh" "$RESOURCES/RagImeIcon.icns"
+/usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string RagImeIcon' "$CONTENTS/Info.plist" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleIconFile RagImeIcon' "$CONTENTS/Info.plist"
+
 codesign --force --deep --sign - "$APP" >/dev/null
 bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CONTENTS/Info.plist")"
-[[ "$bundle_id" == "com.rag-ime.control.web-preview" ]] || {
-  echo "unexpected preview bundle id: $bundle_id" >&2
+[[ "$bundle_id" == "$BUNDLE_ID" ]] || {
+  echo "unexpected bundle id: $bundle_id" >&2
   exit 1
 }
 
-otool -L "$MACOS/RagImeControlWebPreview" | grep -q '/WebKit.framework/' || {
-  echo "preview host must link WebKit" >&2
+otool -L "$MACOS/$EXECUTABLE" | grep -q '/WebKit.framework/' || {
+  echo "web host must link WebKit" >&2
   exit 1
 }
 [[ ! -d "$RESOURCES/control-center-web/node_modules" ]] || {
@@ -86,8 +112,8 @@ if grep -R -q "unsafe-eval" "$RESOURCES/control-center-web"; then
   exit 1
 fi
 
-if [[ "$ACTION" == "install-preview" ]]; then
-  DEST="$HOME/Applications/RagImeControlWebPreview.app"
+if [[ "$ACTION" == "install-preview" || "$ACTION" == "install-release" ]]; then
+  DEST="$INSTALL_DEST"
   mkdir -p "$HOME/Applications"
   rm -rf "$DEST"
   ditto "$APP" "$DEST"

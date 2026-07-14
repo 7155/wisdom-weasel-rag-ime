@@ -9,6 +9,22 @@ CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 ACTION="${1:-build}"
+CONTROL_UI="${RAG_IME_CONTROL_UI:-native-legacy}"
+
+case "$CONTROL_UI" in
+  native-legacy)
+    ;;
+  web)
+    if [[ "$ACTION" == "install" ]]; then
+      exec "$ROOT/scripts/build_control_center_web_host.sh" install-release
+    fi
+    exec "$ROOT/scripts/build_control_center_web_host.sh" build-release
+    ;;
+  *)
+    echo "RAG_IME_CONTROL_UI must be native-legacy or web" >&2
+    exit 2
+    ;;
+esac
 
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"

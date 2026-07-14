@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NativeControlCenterTests(unittest.TestCase):
-    def test_native_app_has_all_workspace_pages_and_no_web_runtime(self) -> None:
+    def test_native_legacy_rollback_has_all_workspace_pages_and_no_web_runtime(self) -> None:
         root = ROOT / "macos" / "RagImeControl"
         text = "\n".join(path.read_text(encoding="utf-8") for path in root.rglob("*.swift"))
 
@@ -29,6 +29,45 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn("applicationShouldTerminateAfterLastWindowClosed", text)
         self.assertIn("defaultSize(width: 1280, height: 820)", text)
         self.assertIn("frame(minWidth: 1080, minHeight: 720)", text)
+
+    def test_web_control_center_replaces_the_visible_surface_with_route_and_security_gates(self) -> None:
+        web = ROOT / "control-center-web"
+        route_registry = (web / "src" / "app" / "route-registry.ts").read_text(
+            encoding="utf-8"
+        )
+        router = (web / "src" / "app" / "router.tsx").read_text(encoding="utf-8")
+        index = (web / "index.html").read_text(encoding="utf-8")
+        host = ROOT / "macos" / "RagImeControlWebHost"
+        host_view = (host / "WebHostView.swift").read_text(encoding="utf-8")
+        bridge = (host / "NativeBridge.swift").read_text(encoding="utf-8")
+        build = (ROOT / "scripts" / "build_control_center.sh").read_text(
+            encoding="utf-8"
+        )
+        footprint = (ROOT / "scripts" / "check_control_center_footprint.sh").read_text(
+            encoding="utf-8"
+        )
+
+        routes = (
+            "overview", "input", "agent", "rooms", "roles", "plugins", "voice",
+            "planning", "memory", "knowledge", "history", "diagnostics", "configuration",
+        )
+        for route in routes:
+            self.assertIn(f"id: '{route}'", route_registry)
+            self.assertIn(f"path: '/{route}'", route_registry)
+            self.assertIn(f"path: '/{route}'", router)
+        self.assertEqual(route_registry.count("{ id:"), len(routes))
+        self.assertIn("WKWebView(frame:", host_view)
+        self.assertIn("ControlCenterAssetSchemeHandler", host_view)
+        self.assertIn('"arbitraryFetch": false', bridge)
+        self.assertIn('"arbitraryShell": false', bridge)
+        self.assertNotIn("Process()", bridge)
+        self.assertIn("Content-Security-Policy", index)
+        self.assertNotIn("unsafe-eval", index)
+        self.assertIn('CONTROL_UI="${RAG_IME_CONTROL_UI:-native-legacy}"', build)
+        self.assertIn("build-release", build)
+        self.assertIn('if [[ "$CONTROL_UI" == "web" ]]', footprint)
+        self.assertIn("node_modules", footprint)
+        self.assertIn("unsafe-eval", footprint)
 
     def test_agent_inspector_exposes_typed_tool_catalog_and_native_receipts(self) -> None:
         root = ROOT / "macos" / "RagImeControl"
@@ -198,6 +237,9 @@ class NativeControlCenterTests(unittest.TestCase):
 
         self.assertEqual(info["CFBundleIdentifier"], "com.rag-ime.control")
         self.assertIn("$HOME/Applications/RagImeControl.app", script)
+        self.assertIn("RAG_IME_CONTROL_UI", script)
+        self.assertIn("native-legacy", script)
+        self.assertIn("build-release", script)
         self.assertIn("codesign --verify", script)
         self.assertIn("scripts/support/build_app_icon.sh", script)
         self.assertIn("CompanionStates", script)
