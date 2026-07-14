@@ -159,7 +159,7 @@ export function controlRequestWirePayload(request: ControlRequest): object {
   return {
     pathId: request.pathId,
     ...(request.params ? { params: request.params } : {}),
-    ...(request.query ? { query: request.query } : {}),
+    ...(request.query ? { query: stringifyControlQuery(request.query) } : {}),
     ...(request.body !== undefined ? { body: request.body } : {}),
   };
 }
@@ -169,9 +169,17 @@ export function controlSubscriptionWirePayload(request: ControlSubscription): ob
   return {
     pathId: request.pathId,
     ...(request.params ? { params: request.params } : {}),
-    ...(request.query ? { query: request.query } : {}),
+    ...(request.query ? { query: stringifyControlQuery(request.query) } : {}),
     lastEventId: request.lastEventId,
   };
+}
+
+function stringifyControlQuery(
+  query: Readonly<Record<string, ControlQueryValue>>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(query).map(([key, value]) => [key, String(value)]),
+  );
 }
 
 export function browserCapabilities(raw?: unknown): FrontendCapabilities {

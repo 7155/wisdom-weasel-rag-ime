@@ -71,6 +71,14 @@ class ControlCenterWebHostTests(unittest.TestCase):
         self.assertIn('url.scheme == ControlCenterAssetSchemeHandler.scheme', navigation)
         self.assertNotIn("NSWorkspace.shared.open(url)", navigation)
 
+    def test_host_keeps_a_native_draggable_titlebar(self) -> None:
+        source = (HOST / "RagImeControlWebApp.swift").read_text(encoding="utf-8")
+
+        self.assertNotIn(".fullSizeContentView", source)
+        self.assertIn("window.titlebarAppearsTransparent = false", source)
+        self.assertIn("window.titleVisibility = .visible", source)
+        self.assertIn("window.isMovable = true", source)
+
     def test_preview_build_cannot_overwrite_production_app(self) -> None:
         script = (ROOT / "scripts" / "build_control_center_web_host.sh").read_text(
             encoding="utf-8"

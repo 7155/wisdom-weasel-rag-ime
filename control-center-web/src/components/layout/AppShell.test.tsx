@@ -9,7 +9,7 @@ describe('control center shell', () => {
 
   beforeEach(() => {
     window.localStorage.clear();
-    window.location.hash = '#/overview';
+    window.location.hash = '#/';
     document.documentElement.dataset.controlTransport = 'mock';
   });
 
@@ -17,8 +17,8 @@ describe('control center shell', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: '总览' })).toBeInTheDocument();
-    expect(document.querySelector('main[data-route-id="overview"]')).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: '规划' })).not.toHaveLength(0);
+    expect(document.querySelector('main[data-route-id="planning"]')).toBeInTheDocument();
 
     await user.click(screen.getAllByRole('link', { name: 'Agent' })[0]);
     await waitFor(() => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument());

@@ -17,13 +17,14 @@ final class RagImeControlWebApp: NSObject, NSApplicationDelegate {
         let host = WebHostViewController()
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "智鼬"
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = false
+        window.titleVisibility = .visible
+        window.isMovable = true
         window.minSize = NSSize(width: 900, height: 640)
         window.contentViewController = host
         window.center()

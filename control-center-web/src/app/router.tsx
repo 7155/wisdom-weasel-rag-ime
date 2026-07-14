@@ -15,7 +15,7 @@ import { RoomsFeature } from '@/features/rooms';
 import { VoiceFeature } from '@/features/voice';
 
 export const router = createHashRouter([
-  { path: '/', element: <Navigate replace to="/overview" /> },
+  { path: '/', element: <Navigate replace to="/planning" /> },
   { path: '/overview', element: <OverviewFeature /> },
   { path: '/input', element: <InputMethodFeature /> },
   { path: '/agent', element: <AgentFeature /> },
@@ -30,5 +30,5 @@ export const router = createHashRouter([
   { path: '/diagnostics', element: <DiagnosticsFeature /> },
   { path: '/configuration', element: <ConfigurationFeature /> },
   { path: '/_primitives', element: <PrimitivesShowcase /> },
-  { path: '*', element: <Navigate replace to="/overview" /> },
+  { path: '*', element: <Navigate replace to="/planning" /> },
 ]);

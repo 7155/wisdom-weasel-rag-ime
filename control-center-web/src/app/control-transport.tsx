@@ -141,6 +141,18 @@ function previewResponse(pathId: ControlPathId): unknown {
       return (request: ControlRequest) => previewRoomSnapshot(String(request.params?.roomId ?? 'room-preview'));
     case 'agent.roles.list':
       return { ok: true, roles: [] };
+    case 'agent.tools.list':
+      return {
+        ok: true,
+        items: [
+          previewTool('control.overview', '控制中心概览', '查看输入法、模型、记忆和最近活动的整体状态', 'control', 'R0', ['status', 'capabilities', 'recent_activity']),
+          previewTool('ime.input', '输入法', '查看输入设置、方案与候选解释，并在批准后调整配置或词表', 'input', 'R1', ['get_settings', 'preview_settings', 'apply_settings', 'rollback_settings', 'profile', 'candidate_explain', 'lexicon_review', 'lexicon_apply', 'lexicon_rollback']),
+          previewTool('voice.input', '语音输入', '查看语音状态，并在批准后切换已配置的语音 Provider', 'voice', 'R1', ['status', 'privacy_policy', 'provider_status', 'provider_preview', 'provider_apply', 'provider_rollback']),
+          previewTool('planning.tasks', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
+          previewTool('ime.memory', '记忆与工具书', '渐进查询 Memory Book，并通过可审阅草案维护长期记忆', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'maintenance_status', 'maintenance_preview', 'maintenance_review', 'maintenance_apply', 'maintenance_rollback', 'list', 'search']),
+          previewTool('ime.knowledge', '知识检索', '执行有来源的本地 RAG 召回并检查深度检索路由', 'knowledge', 'R0', ['recall', 'deep_recall', 'route_status']),
+        ],
+      };
     case 'planning.dashboard':
       return { ok: true, date: new Date().toISOString().slice(0, 10), tasks: [], goals: [] };
     case 'memory.summary':
@@ -176,6 +188,26 @@ function previewSession(
     modelProfile: 'session-selected',
     messageCount: 0,
     lastMessagePreview: '',
+  };
+}
+
+function previewTool(
+  id: string,
+  displayName: string,
+  description: string,
+  domain: string,
+  riskLevel: string,
+  operations: string[],
+): Record<string, unknown> {
+  return {
+    id,
+    displayName,
+    description,
+    domain,
+    category: domain,
+    riskLevel,
+    operations,
+    availability: 'online',
   };
 }
 

@@ -30,3 +30,52 @@ test('production-shaped fixture stays bounded and records a viewport screenshot'
     contentType: 'image/png',
   });
 });
+
+test('plugin catalog keeps readable columns for long capability lists', async ({ page }) => {
+  await page.goto('/#/plugins');
+  const rows = page.locator('.mgmt-list__row');
+  await expect(rows).toHaveCount(6);
+  await expectNoHorizontalPageOverflow(page);
+
+  const measurements = await rows.evaluateAll((items) => items.map((item) => {
+    const copy = item.querySelector<HTMLElement>('.mgmt-list__copy');
+    const meta = item.querySelector<HTMLElement>('.mgmt-list__meta');
+    return {
+      copyWidth: copy?.getBoundingClientRect().width ?? 0,
+      copyHeight: copy?.getBoundingClientRect().height ?? 0,
+      metaScrollWidth: meta?.scrollWidth ?? 0,
+      metaClientWidth: meta?.clientWidth ?? 0,
+    };
+  }));
+  for (const measurement of measurements) {
+    expect(measurement.copyWidth).toBeGreaterThan(180);
+    expect(measurement.copyHeight).toBeLessThan(100);
+    expect(measurement.metaScrollWidth).toBeLessThanOrEqual(measurement.metaClientWidth + 1);
+  }
+});
+
+test('closing the Agent session rail releases its grid column', async ({ page }) => {
+  test.skip(isMobileViewport(page), 'mobile session rail is an overlay');
+  await page.goto('/#/agent');
+  const feature = page.locator('main[data-route-id="agent"]');
+  const conversation = page.locator('.agent-conversation');
+  await expect(feature).toHaveAttribute('data-rail-open', 'true');
+  await expect(page.locator('.agent-session-row').first()).toBeVisible();
+
+  const before = await conversation.boundingBox();
+  await page.getByRole('button', { name: '收起 Sessions' }).click();
+  await expect(feature).toHaveAttribute('data-rail-open', 'false');
+  await page.waitForTimeout(260);
+  const [featureBox, after] = await Promise.all([
+    feature.boundingBox(),
+    conversation.boundingBox(),
+  ]);
+
+  expect(before).not.toBeNull();
+  expect(featureBox).not.toBeNull();
+  expect(after).not.toBeNull();
+  expect((before?.x ?? 0) - (after?.x ?? 0)).toBeGreaterThan(200);
+  expect(Math.abs((after?.x ?? 0) - (featureBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect((after?.width ?? 0) - (before?.width ?? 0)).toBeGreaterThan(200);
+  await expectNoHorizontalPageOverflow(page);
+});

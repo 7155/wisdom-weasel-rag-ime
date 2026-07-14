@@ -19,7 +19,7 @@ const groupLabels = {
   system: '系统',
 } as const;
 
-const mobilePrimaryRoutes: RouteId[] = ['overview', 'input', 'agent', 'memory'];
+const mobilePrimaryRoutes: RouteId[] = ['planning', 'input', 'agent', 'memory'];
 
 function RouteLink({
   compact = false,

@@ -6,6 +6,12 @@ import {
   routes,
 } from './helpers';
 
+test('planning is the default companion workspace', async ({ page }) => {
+  await page.goto('/#/');
+  await expect(page.locator('main[data-route-id="planning"]')).toBeVisible();
+  await expect(page.locator('.shell-topbar__title h1')).toHaveText('规划');
+});
+
 test('all 13 routes commit before data work and preserve the selected state', async ({ page }, testInfo) => {
   await page.goto('/#/overview');
   await expect(page.locator('main[data-route-id="overview"]')).toBeVisible();

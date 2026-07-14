@@ -61,6 +61,37 @@ describe('NativeControlTransport', () => {
     transport.dispose();
   });
 
+  it('serializes numeric and boolean query values for the Swift bridge', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: { ok: true, sessions: [] },
+      }));
+    });
+    const transport = new NativeControlTransport({
+      bridgeWindow,
+      createId: () => 'query-call',
+    });
+
+    await transport.request({
+      pathId: 'agent.sessions.list',
+      query: { limit: 100, includeArchived: false },
+    });
+
+    expect(sent).toEqual([{
+      id: 'query-call',
+      method: 'request',
+      payload: {
+        pathId: 'agent.sessions.list',
+        query: { limit: '100', includeArchived: 'false' },
+      },
+    }]);
+    transport.dispose();
+  });
+
   it('multiplexes subscribe/event/cancelSubscription with resume cursors', async () => {
     const sent: NativeBridgeRequestEnvelope[] = [];
     let nextId = 1;
