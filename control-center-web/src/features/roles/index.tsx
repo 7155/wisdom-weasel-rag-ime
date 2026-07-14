@@ -1,5 +1,64 @@
-import { RoutePlaceholder } from '@/app/RoutePlaceholder';
+import { Bot, Gauge, LockKeyhole, Plus, ShieldCheck, Sparkles, Wrench } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useControlTransport } from '@/app/control-transport';
+import { Button, SegmentedControl } from '@/components/primitives';
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import type { AgentTemplateV1 } from '@/contracts/generated/agent-template.v1';
+import { previewPersonas, previewTemplates } from '@/features/agent/preview-data';
+import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
+import { roleItems } from '@/features/agent/types';
+import './roles.css';
 
 export function RolesFeature() {
-  return <RoutePlaceholder routeId="roles" />;
+  const transport = useControlTransport();
+  const [view, setView] = useState<'personas' | 'templates'>('personas');
+  const [personas, setPersonas] = useState<AgentPersonaV1[]>(previewPersonas);
+  const [templates, setTemplates] = useState<AgentTemplateV1[]>(previewTemplates);
+  const [selectedPersona, setSelectedPersona] = useState(previewPersonas[0]?.roleId ?? '');
+  const [selectedTemplate, setSelectedTemplate] = useState(previewTemplates[0]?.templateId ?? '');
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      transport.request({ pathId: 'agent.roles.list' }),
+      transport.request({ pathId: 'agent.subagents.templates' }),
+    ]).then(([roleResponse, templateResponse]) => {
+      if (!active) return;
+      const roles = roleItems(roleResponse);
+      const values = templateItems(templateResponse);
+      if (roles.length) { setPersonas(roles); setSelectedPersona((current) => current || roles[0]?.roleId || ''); }
+      if (values.length) { setTemplates(values); setSelectedTemplate((current) => current || values[0]?.templateId || ''); }
+    }).catch((error) => active && setNotice(error instanceof Error ? error.message : String(error)));
+    return () => { active = false; };
+  }, [transport]);
+  const persona = personas.find((item) => item.roleId === selectedPersona);
+  const template = templates.find((item) => item.templateId === selectedTemplate);
+  return (
+    <main className="roles-feature" data-route-id="roles">
+      <header className="roles-header"><span><h2>角色与 Agent 模板</h2><p>说话者视觉与运行权限保持独立</p></span><SegmentedControl aria-label="角色视图" value={view} onValueChange={(value) => setView(value as 'personas' | 'templates')} items={[{ value: 'personas', label: 'Persona' }, { value: 'templates', label: 'Agent Template' }]} /><Button size="small" leadingIcon={<Plus size={15} />} onClick={() => setNotice('当前 Control API 尚未开放角色写入 pathId。')}>创建</Button></header>
+      {notice ? <p className="roles-notice" role="status">{notice}</p> : null}
+      {view === 'personas' ? (
+        <div className="roles-layout">
+          <section className="persona-grid" aria-label="Persona 列表">{personas.map((item) => <button type="button" key={item.roleId} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => setSelectedPersona(item.roleId)}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div>{item.traits.map((trait) => <i key={trait}>{trait}</i>)}</div></button>)}</section>
+          {persona ? <PersonaInspector persona={persona} /> : null}
+        </div>
+      ) : (
+        <div className="roles-layout">
+          <section className="template-list" aria-label="Agent Template 列表">{templates.map((item) => <button type="button" key={item.templateId} aria-current={item.templateId === selectedTemplate} onClick={() => setSelectedTemplate(item.templateId)}><span><Bot size={17} /></span><div><strong>{item.displayName}</strong><small>{item.summary}</small></div></button>)}</section>
+          {template ? <TemplateInspector template={template} /> : null}
+        </div>
+      )}
+    </main>
+  );
 }
+
+function PersonaInspector({ persona }: { persona: AgentPersonaV1 }) {
+  return <aside className="role-inspector" data-accent={persona.visualProfile.accentToken}><div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>PERSONA</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div><dl><div><dt><Sparkles size={15} />表达特征</dt><dd>{persona.traits.join(' · ')}</dd></div><div><dt><ShieldCheck size={15} />安全策略</dt><dd>{persona.safetyPolicyVersion}</dd></div><div><dt><LockKeyhole size={15} />可选模式</dt><dd>{persona.selectableModes.map((mode) => mode === 'assistant' ? '受控模式' : '运行协调').join(' · ')}</dd></div><div><dt><Wrench size={15} />工具配置</dt><dd>{persona.defaults.toolProfileVersion}</dd></div></dl></aside>;
+}
+
+function TemplateInspector({ template }: { template: AgentTemplateV1 }) {
+  return <aside className="role-inspector template-inspector"><div className="template-inspector__title"><span><Bot size={25} /></span><div><small>AGENT TEMPLATE</small><h3>{template.displayName}</h3><p>{template.summary}</p></div></div><dl><div><dt><Wrench size={15} />工具边界</dt><dd>{template.toolProfileVersion}</dd></div><div><dt><Gauge size={15} />预算</dt><dd>{template.budget.maxTurns} turns · {template.budget.maxToolCalls} tools · {Math.round(template.budget.maxTotalTokens / 1_000)}k tokens</dd></div><div><dt><LockKeyhole size={15} />上下文</dt><dd>{template.contextModes.join(' · ')}</dd></div></dl><div className="template-capabilities">{template.capabilities.map((capability) => <span key={capability}>{capability}</span>)}</div></aside>;
+}
+
+function templateItems(value: unknown): AgentTemplateV1[] { const source = record(value); const items = Array.isArray(source.items) ? source.items : Array.isArray(source.templates) ? source.templates : []; return items.filter((item) => record(item).schemaVersion === 'rag-ime.agent-template.v1') as AgentTemplateV1[]; }
+function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }

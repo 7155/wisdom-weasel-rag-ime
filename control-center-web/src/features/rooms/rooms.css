@@ -1,0 +1,37 @@
+.shell-route-stage > main.rooms-feature { display: grid; width: 100%; height: calc(100dvh - var(--topbar-height)); min-height: 620px; grid-template-columns: 236px minmax(0, 1fr); margin: 0; padding: 0; overflow: hidden; }
+.rooms-rail { min-width: 0; border-right: 1px solid var(--color-border); background: var(--color-surface-subtle); }
+.rooms-rail > header { display: flex; height: 62px; align-items: center; justify-content: space-between; padding: 10px 12px 8px 16px; }
+.rooms-rail > header > span, .rooms-rail button > span, .room-workspace > header > span { display: grid; gap: 2px; min-width: 0; }
+.rooms-rail small, .room-workspace > header small { color: var(--color-text-tertiary); font-size: 9px; }
+.rooms-rail > div { padding: 0 7px; }
+.rooms-rail > div > button { display: grid; width: 100%; min-height: 54px; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px; border: 0; border-radius: var(--radius-2); background: transparent; text-align: left; cursor: pointer; }
+.rooms-rail > div > button:hover { background: var(--color-surface-hover); }
+.rooms-rail > div > button[aria-current='true'] { background: var(--color-accent-soft); color: var(--color-accent); }
+.rooms-rail button strong { font-size: 11px; }
+.rooms-rail button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-workspace { display: grid; min-width: 0; min-height: 0; grid-template-rows: 54px auto minmax(0, 1fr) auto; background: var(--color-surface); }
+.room-workspace > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 16px; border-bottom: 1px solid var(--color-border); }
+.room-participants { display: flex; min-width: 0; gap: 6px; }
+.room-participants > span { display: flex; align-items: center; gap: 5px; color: var(--color-text-secondary); font-size: 9px; }
+.room-error { margin: 0; padding: 5px 16px; background: var(--color-danger-soft); color: var(--color-danger); font-size: 10px; }
+.room-timeline { min-height: 0; }
+.room-timeline > div { height: 100%; }
+.room-turn { width: min(100%, 860px); margin: 0 auto; padding: 18px 22px 8px; }
+.room-user-message { width: fit-content; max-width: 78%; margin: 0 0 16px auto; padding: 9px 12px; border-radius: 8px 8px 2px 8px; background: var(--color-surface-subtle); }
+.room-user-message .agent-markdown p { margin: 0; }
+.room-participant-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 9px; margin: 0 0 14px; }
+.room-participant-message > div > header { display: flex; align-items: baseline; gap: 6px; min-height: 24px; }
+.room-participant-message header strong { font-size: 11px; }
+.room-participant-message header small { color: var(--color-text-tertiary); font-size: 8px; }
+.room-group-activity { margin: 8px 0 12px 39px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface-subtle); }
+.room-group-activity > summary { display: flex; min-height: 42px; align-items: center; gap: 9px; padding: 7px 10px; cursor: pointer; list-style: none; }
+.room-group-activity > summary::-webkit-details-marker { display: none; }
+.room-group-activity > summary > span, .room-group-activity p > span { display: grid; flex: 1; gap: 2px; }
+.room-group-activity strong { font-size: 10px; }
+.room-group-activity small { color: var(--color-text-tertiary); font-size: 8px; }
+.room-group-activity > div { padding: 3px 10px 8px; border-top: 1px solid var(--color-border); }
+.room-group-activity p { display: flex; align-items: center; gap: 8px; margin: 0; padding: 5px 0; }
+.room-group-activity i { color: var(--color-success); font-size: 8px; font-style: normal; }
+.room-composer { display: flex; width: min(calc(100% - 32px), 860px); align-items: end; gap: 6px; margin: 8px auto 14px; padding: 6px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-3); }
+.room-composer textarea { min-width: 0; min-height: 42px; max-height: 110px; flex: 1; resize: none; border: 0; outline: 0; padding: 7px; background: transparent; font-size: 12px; }
+@media (max-width: 760px) { .shell-route-stage > main.rooms-feature { height: calc(100dvh - 52px - var(--mobile-nav-height)); min-height: 0; grid-template-columns: 86px minmax(0, 1fr); } .rooms-rail > header > span, .rooms-rail > div > button > span { display: none; } .rooms-rail > header { justify-content: center; padding: 8px; } .rooms-rail > div > button { grid-template-columns: 1fr; justify-items: center; } .room-participants b { display: none; } .room-turn { padding-inline: 11px; } .room-group-activity { margin-left: 0; } }
