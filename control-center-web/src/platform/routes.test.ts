@@ -34,6 +34,7 @@ const canonicalPathIds = [
   'agent.rooms.list',
   'agent.rooms.create',
   'agent.room.get',
+  'agent.room.snapshot',
   'agent.room.archive',
   'agent.room.message',
   'agent.room.events',
@@ -64,7 +65,7 @@ const canonicalPathIds = [
 describe('control route policy', () => {
   it('mirrors the canonical Lane F pathId manifest exactly', () => {
     expect(Object.keys(CONTROL_ROUTES).sort()).toEqual([...canonicalPathIds].sort());
-    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(51);
+    expect(Object.keys(CONTROL_ROUTES)).toHaveLength(52);
   });
 
   it('resolves only allowlisted path parameters', () => {

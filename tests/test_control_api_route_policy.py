@@ -72,6 +72,15 @@ class ControlRoutePolicyTests(unittest.TestCase):
         self.assertTrue(events["subscription"])
         self.assertIn("lastEventId", events["query"])
 
+        room_snapshot = entries[ControlPathId.AGENT_ROOM_SNAPSHOT.value]
+        self.assertEqual(room_snapshot["method"], "GET")
+        self.assertEqual(
+            room_snapshot["target"]["8766"],
+            "/api/agent/rooms/{roomId}/snapshot",
+        )
+        self.assertTrue(room_snapshot["remoteSafe"])
+        self.assertFalse(room_snapshot["subscription"])
+
         tools = entries[ControlPathId.AGENT_TOOLS_LIST.value]
         self.assertFalse(tools["remoteSafe"])
 

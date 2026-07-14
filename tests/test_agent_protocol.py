@@ -29,6 +29,7 @@ class AgentProtocolTests(unittest.TestCase):
             "agent-room.v1.json",
             "agent-participant.v1.json",
             "agent-room-event.v1.json",
+            "agent-room-snapshot.v1.json",
             "agent-event.v1.json",
             "agent-message.v1.json",
             "agent-media.v1.json",

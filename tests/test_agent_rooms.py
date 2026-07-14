@@ -110,6 +110,58 @@ class AgentRoomTests(unittest.TestCase):
         self.assertIn(b"room_event_replay_gap", snapshot_required)
         gap.close()
 
+    def test_snapshot_returns_atomic_room_metadata_and_retained_event_window(self) -> None:
+        room = self.store.create(
+            title="快照房间",
+            routing_policy="moderator",
+            participants=[
+                self._participant("zhiyou-v1", "智鼬"),
+                self._participant("hermes-v1", "Hermes"),
+            ],
+            created_at_ms=1,
+        )
+        room_id = str(room["id"])
+        for sequence in range(1, 103):
+            self.store.append_event(
+                room_id=room_id,
+                event_type="participant_status",
+                payload={"status": f"step-{sequence}"},
+                created_at_ms=sequence + 1,
+                retain_per_room=100,
+            )
+
+        snapshot = self.store.snapshot(room_id)
+
+        self.assertEqual(snapshot["schemaVersion"], "rag-ime.agent-room-snapshot.v1")
+        self.assertEqual(snapshot["room"]["lastEventSequence"], 102)
+        self.assertEqual(len(snapshot["room"]["participants"]), 2)
+        self.assertEqual(snapshot["firstSequence"], 3)
+        self.assertEqual(snapshot["lastSequence"], 102)
+        self.assertEqual(snapshot["resumeToken"], f"{room_id}:102")
+        self.assertTrue(snapshot["truncated"])
+        self.assertEqual(
+            [event["sequence"] for event in snapshot["events"]],
+            list(range(3, 103)),
+        )
+
+    def test_empty_room_snapshot_has_zero_cursor(self) -> None:
+        room = self.store.create(
+            title="空房间",
+            routing_policy="manual_mentions",
+            participants=[
+                self._participant("zhiyou-v1", "智鼬"),
+                self._participant("hermes-v1", "Hermes"),
+            ],
+        )
+
+        snapshot = self.store.snapshot(str(room["id"]))
+
+        self.assertEqual(snapshot["events"], [])
+        self.assertEqual(snapshot["firstSequence"], 0)
+        self.assertEqual(snapshot["lastSequence"], 0)
+        self.assertEqual(snapshot["resumeToken"], "")
+        self.assertFalse(snapshot["truncated"])
+
     def test_room_limits_and_participant_session_ownership_fail_closed(self) -> None:
         participants = [
             self._participant("zhiyou-v1", "智鼬"),
@@ -186,10 +238,14 @@ class AgentRoomServiceTests(unittest.TestCase):
         with patch.object(self.service, "prompt", return_value={"turnId": "turn:hermes"}) as prompt:
             accepted = self.service.post_room_message(
                 str(room["id"]),
-                {"message": "@Hermes 请先诊断状态"},
+                {
+                    "message": "@Hermes 请先诊断状态",
+                    "clientMessageId": "room-client-1",
+                },
             )
         prompt.assert_called_once_with(str(hermes["sessionId"]), {"message": "@Hermes 请先诊断状态"})
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
+        self.assertEqual(accepted["clientMessageId"], "room-client-1")
 
         self.service.events.publish(
             str(hermes["sessionId"]),
@@ -205,6 +261,12 @@ class AgentRoomServiceTests(unittest.TestCase):
         )
         self.assertEqual(events[-1]["participantId"], hermes["id"])
         self.assertEqual(events[-1]["sourceSessionId"], hermes["sessionId"])
+        self.assertEqual(events[1]["payload"]["clientMessageId"], "room-client-1")
+
+        snapshot = self.service.room_snapshot(str(room["id"]))
+        self.assertEqual(snapshot["lastSequence"], events[-1]["sequence"])
+        self.assertEqual(snapshot["resumeToken"], events[-1]["resumeToken"])
+        self.assertEqual(snapshot["room"]["id"], room["id"])
 
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(hermes["sessionId"]))

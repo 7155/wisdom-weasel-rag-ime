@@ -50,6 +50,15 @@ struct NativeRoutePolicyTests {
         )
         expect(subscription.request.value(forHTTPHeaderField: "Last-Event-ID") == "session-a:41", "resume cursor")
 
+        let roomSnapshot = try policy.resolveRequest(
+            pathId: "agent.room.snapshot",
+            parameters: ["roomId": "room:alpha"],
+            query: [:],
+            body: nil
+        )
+        expect(roomSnapshot.request.url?.absoluteString.contains("room:alpha/snapshot") == true, "room snapshot route")
+        expect(roomSnapshot.request.httpMethod == "GET", "room snapshot method")
+
         _ = try policy.resolveRequest(
             pathId: "memory.pages",
             parameters: ["kind": "books"],

@@ -39,6 +39,7 @@ class ControlPathId(str, Enum):
     AGENT_ROOMS_LIST = "agent.rooms.list"
     AGENT_ROOMS_CREATE = "agent.rooms.create"
     AGENT_ROOM_GET = "agent.room.get"
+    AGENT_ROOM_SNAPSHOT = "agent.room.snapshot"
     AGENT_ROOM_ARCHIVE = "agent.room.archive"
     AGENT_ROOM_MESSAGE = "agent.room.message"
     AGENT_ROOM_EVENTS = "agent.room.events"
@@ -381,6 +382,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOMS_LIST, ControlMethod.GET, "/api/agent/rooms", "/control/v1/agent/rooms", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "limit"}),
         _route(ControlPathId.AGENT_ROOMS_CREATE, ControlMethod.POST, "/api/agent/rooms", "/control/v1/agent/rooms", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "participants", "routingPolicy", "moderatorRoleId"}, required_body={"participants"}, remote_body={"title", "participants", "routingPolicy", "moderatorRoleId"}),
         _route(ControlPathId.AGENT_ROOM_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
+        _route(ControlPathId.AGENT_ROOM_SNAPSHOT, ControlMethod.GET, "/api/agent/rooms/{roomId}/snapshot", "/control/v1/agent/rooms/{roomId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_ARCHIVE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"archived"}, required_body={"archived"}, remote_body={"archived"}),
         _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId"}, required_body={"message"}, remote_body={"message", "clientMessageId"}),
         _route(ControlPathId.AGENT_ROOM_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),

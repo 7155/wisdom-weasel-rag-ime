@@ -4370,6 +4370,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if agent_room_id and room_action == "snapshot":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_snapshot(agent_room_id),
+            )
+            return
         if agent_room_id and not room_action:
             self._write_json(HTTPStatus.OK, self.service.agent.room(agent_room_id))
             return

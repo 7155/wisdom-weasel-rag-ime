@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { HttpControlTransport } from '@/platform/http-transport';
 import { NativeBridgeUnavailableError, NativeControlTransport } from '@/platform/native-transport';
 import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/routes';
-import type { ControlTransport } from '@/platform/transport';
+import type { ControlRequest, ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 
 const ControlTransportContext = createContext<ControlTransport | null>(null);
@@ -127,6 +127,8 @@ function previewResponse(pathId: ControlPathId): unknown {
       };
     case 'agent.rooms.list':
       return { ok: true, rooms: [] };
+    case 'agent.room.snapshot':
+      return (request: ControlRequest) => previewRoomSnapshot(String(request.params?.roomId ?? 'room-preview'));
     case 'agent.roles.list':
       return { ok: true, roles: [] };
     case 'planning.dashboard':
@@ -143,4 +145,84 @@ function previewResponse(pathId: ControlPathId): unknown {
     default:
       return { ok: true, schemaVersion: 'rag-ime.control-preview.v1' };
   }
+}
+
+function previewRoomSnapshot(roomId: string) {
+  const now = Date.now() - 60_000;
+  const participants = [
+    previewParticipant(roomId, 'participant-zhiyou', 'session-preview', 'zhiyou-v1', '智鼬', 0),
+    previewParticipant(roomId, 'participant-hermes', 'session-runtime', 'hermes-v1', 'Hermes', 1),
+  ];
+  const event = (
+    sequence: number,
+    eventType: string,
+    participantId: string | null,
+    payload: Record<string, unknown>,
+  ) => ({
+    schemaVersion: 'rag-ime.agent-room-event.v1',
+    eventId: `${roomId}:${sequence}`,
+    roomId,
+    sequence,
+    turnId: `${roomId}:turn-1`,
+    eventType,
+    participantId,
+    sourceSessionId: '',
+    createdAtMs: now + sequence,
+    payload,
+    resumeToken: `${roomId}:${sequence}`,
+  });
+  const events = [
+    event(1, 'user_message', null, { messageId: 'room-user-1', text: '并行检查 Agent UI 与 Control API 的集成边界。' }),
+    event(2, 'route_decision', null, { summary: '主持人将任务分给 2 个 Agent' }),
+    event(3, 'participant_activity', 'participant-zhiyou', { requestId: 'activity-a', summary: '核对 Turn 聚合与流式投影', status: 'completed' }),
+    event(4, 'participant_activity', 'participant-hermes', { requestId: 'activity-b', summary: '核对 route policy 与权限回执', status: 'completed' }),
+    event(5, 'participant_delta', 'participant-zhiyou', { messageId: 'room-assistant-1', delta: 'Agent 时间线已经复用统一 reducer 与 batcher，' }),
+    event(6, 'participant_delta', 'participant-zhiyou', { messageId: 'room-assistant-1', delta: '主时间线不会平铺每个工具结果。' }),
+    event(7, 'participant_delta', 'participant-hermes', { messageId: 'room-assistant-2', delta: '权限切换只在服务端回执后更新。' }),
+    event(8, 'turn_completed', null, { summary: '协作检查完成' }),
+  ];
+  return {
+    schemaVersion: 'rag-ime.agent-room-snapshot.v1',
+    ok: true,
+    room: {
+      schemaVersion: 'rag-ime.agent-room.v1',
+      id: roomId,
+      title: '迁移作战室',
+      status: 'active',
+      routingPolicy: 'moderator',
+      moderatorParticipantId: 'participant-zhiyou',
+      createdAtMs: now,
+      updatedAtMs: now + events.length,
+      lastEventSequence: events.length,
+      participants,
+    },
+    events,
+    firstSequence: 1,
+    lastSequence: events.length,
+    resumeToken: `${roomId}:${events.length}`,
+    truncated: false,
+  };
+}
+
+function previewParticipant(
+  roomId: string,
+  id: string,
+  sessionId: string,
+  roleId: string,
+  displayName: string,
+  ordinal: number,
+) {
+  return {
+    schemaVersion: 'rag-ime.agent-participant.v1',
+    id,
+    roomId,
+    sessionId,
+    roleId,
+    roleVersion: '1',
+    displayName,
+    status: 'active',
+    ordinal,
+    createdAtMs: 1,
+    lastSpokeAtMs: null,
+  };
 }

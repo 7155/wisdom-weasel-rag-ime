@@ -87,7 +87,7 @@ def agent_room_route(path: str) -> tuple[str, str]:
         return "", ""
     room_id = unquote(parts[0]).strip()
     action = parts[1] if len(parts) == 2 else ""
-    if not room_id or action not in {"", "events", "messages"}:
+    if not room_id or action not in {"", "events", "messages", "snapshot"}:
         return "", ""
     return room_id, action
 

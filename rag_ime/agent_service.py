@@ -365,6 +365,9 @@ class AgentService:
             "room": self.rooms.get(room_id),
         }
 
+    def room_snapshot(self, room_id: str) -> dict[str, object]:
+        return self.rooms.snapshot(room_id)
+
     def update_room(self, room_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         if set(payload) != {"archived"}:
             raise ValueError("agent room update only accepts archived")
@@ -475,6 +478,7 @@ class AgentService:
         message = _bounded_text(payload.get("message"), maximum=8_000)
         if not message:
             raise ValueError("room message must not be empty")
+        client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
         room = self.rooms.get(room_id)
         for value in room["participants"]:
             if not isinstance(value, Mapping) or value.get("status") != "active":
@@ -484,10 +488,16 @@ class AgentService:
                 raise ValueError("agent room already has an active speaker")
         target = self.rooms.route_target(room_id, message)
         room_turn_id = f"room-turn:{uuid.uuid4()}"
+        user_event_payload: dict[str, object] = {
+            "text": message,
+            "targetParticipantId": target["id"],
+        }
+        if client_message_id:
+            user_event_payload["clientMessageId"] = client_message_id
         self.room_events.publish(
             room_id=room_id,
             event_type="user_message",
-            payload={"text": message, "targetParticipantId": target["id"]},
+            payload=user_event_payload,
             turn_id=room_turn_id,
         )
         self.room_events.publish(
@@ -520,6 +530,7 @@ class AgentService:
             "accepted": True,
             "roomId": room_id,
             "roomTurnId": room_turn_id,
+            "clientMessageId": client_message_id,
             "participant": target,
             "sessionTurnId": accepted.get("turnId", ""),
         }
@@ -1748,6 +1759,17 @@ def _deep_search_prompt(
 def _bounded_text(value: object, *, maximum: int) -> str:
     text = " ".join(str(value or "").split())
     return text[: max(0, maximum)]
+
+
+def _optional_client_message_id(value: object) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("clientMessageId must be a string")
+    normalized = value.strip()
+    if not normalized or len(normalized) > 128 or any(ord(char) < 32 for char in normalized):
+        raise ValueError("clientMessageId must contain between 1 and 128 safe characters")
+    return normalized
 
 
 def _public_error(error: BaseException) -> str:

@@ -106,6 +106,7 @@ final class NativeRoutePolicy {
             "agent.rooms.list": route("GET", "/api/agent/rooms", "/control/v1/agent/rooms", query: ["includeArchived", "limit"], remoteSafe: true),
             "agent.rooms.create": route("POST", "/api/agent/rooms", "/control/v1/agent/rooms", remoteSafe: true, bodyKeys: ["title", "participants", "routingPolicy", "moderatorRoleId"], requiredBodyKeys: ["participants"]),
             "agent.room.get": route("GET", "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", remoteSafe: true),
+            "agent.room.snapshot": route("GET", "/api/agent/rooms/{roomId}/snapshot", "/control/v1/agent/rooms/{roomId}/snapshot", remoteSafe: true),
             "agent.room.archive": route("PATCH", "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", remoteSafe: true, bodyKeys: ["archived"], requiredBodyKeys: ["archived"]),
             "agent.room.message": route("POST", "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", remoteSafe: true, bodyKeys: ["message", "clientMessageId"], requiredBodyKeys: ["message"]),
             "agent.room.events": route("GET", "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", remoteSafe: true, subscription: true),

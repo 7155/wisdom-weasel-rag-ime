@@ -157,6 +157,12 @@ export const CONTROL_ROUTES = {
     path: '/api/agent/rooms/:roomId',
     params: { roomId: null },
   },
+  'agent.room.snapshot': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId/snapshot',
+    params: { roomId: null },
+    responseContract: 'agent-room-snapshot.v1',
+  },
   'agent.room.archive': {
     method: 'PATCH',
     path: '/api/agent/rooms/:roomId',

@@ -1519,6 +1519,269 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-room-snapshot.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-room-snapshot.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "room",
+      "events",
+      "firstSequence",
+      "lastSequence",
+      "resumeToken",
+      "truncated"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-room-snapshot.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "room": {
+        "$ref": "#/$defs/room"
+      },
+      "events": {
+        "type": "array",
+        "maxItems": 2000,
+        "items": {
+          "$ref": "#/$defs/event"
+        }
+      },
+      "firstSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "lastSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "resumeToken": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "$defs": {
+      "participant": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "id",
+          "roomId",
+          "sessionId",
+          "roleId",
+          "roleVersion",
+          "displayName",
+          "status",
+          "ordinal",
+          "createdAtMs",
+          "lastSpokeAtMs"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-participant.v1"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roomId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roleVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "muted",
+              "removed"
+            ]
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastSpokeAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "room": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "id",
+          "title",
+          "status",
+          "routingPolicy",
+          "moderatorParticipantId",
+          "createdAtMs",
+          "updatedAtMs",
+          "lastEventSequence",
+          "participants"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-room.v1"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ]
+          },
+          "routingPolicy": {
+            "type": "string",
+            "enum": [
+              "manual_mentions",
+              "moderator"
+            ]
+          },
+          "moderatorParticipantId": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastEventSequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "participants": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": {
+              "$ref": "#/$defs/participant"
+            }
+          }
+        }
+      },
+      "event": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "eventId",
+          "roomId",
+          "sequence",
+          "turnId",
+          "eventType",
+          "participantId",
+          "sourceSessionId",
+          "createdAtMs",
+          "payload",
+          "resumeToken"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-room-event.v1"
+          },
+          "eventId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roomId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "turnId": {
+            "type": "string"
+          },
+          "eventType": {
+            "type": "string",
+            "enum": [
+              "user_message",
+              "route_decision",
+              "participant_status",
+              "participant_delta",
+              "participant_activity",
+              "participant_message",
+              "turn_completed",
+              "turn_failed",
+              "snapshot_required"
+            ]
+          },
+          "participantId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceSessionId": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "payload": {
+            "type": "object"
+          },
+          "resumeToken": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
   "agent-room.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-room.v1",

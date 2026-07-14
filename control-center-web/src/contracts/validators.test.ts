@@ -31,8 +31,11 @@ describe('generated JSON contracts', () => {
   });
 
   it('builds a stable schema index for every source contract', () => {
-    expect(Object.keys(contractSchemas)).toHaveLength(42);
+    expect(Object.keys(contractSchemas)).toHaveLength(43);
     expect(contractSchemas['agent-event.v1'].$id).toBe('rag-ime.contract.agent-event.v1');
+    expect(contractSchemas['agent-room-snapshot.v1'].$id).toBe(
+      'rag-ime.contract.agent-room-snapshot.v1',
+    );
   });
 
   it('returns structured Ajv issues and throws a bounded boundary error', () => {

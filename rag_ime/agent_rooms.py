@@ -29,6 +29,8 @@ ROOM_EVENT_TYPES = frozenset(
     }
 )
 
+ROOM_SNAPSHOT_EVENT_LIMIT = 2000
+
 
 class AgentRoomNotFound(KeyError):
     pass
@@ -317,6 +319,71 @@ class AgentRoomStore:
                 (room_id, max(0, int(after_sequence)), bounded),
             ).fetchall()
         return [_room_event_payload(row) for row in rows]
+
+    def snapshot(self, room_id: str) -> dict[str, object]:
+        """Read room metadata and the retained timeline from one SQLite snapshot."""
+        with self._connect() as conn:
+            # sqlite3 does not keep multiple SELECT statements on one snapshot
+            # unless a transaction is opened explicitly.
+            conn.execute("BEGIN")
+            room_row = conn.execute(
+                "SELECT * FROM agent_rooms WHERE id = ?",
+                (room_id,),
+            ).fetchone()
+            if room_row is None:
+                raise AgentRoomNotFound(room_id)
+            participant_rows = conn.execute(
+                """
+                SELECT * FROM agent_room_participants
+                WHERE room_id = ? ORDER BY ordinal ASC
+                """,
+                (room_id,),
+            ).fetchall()
+            bounds_row = conn.execute(
+                """
+                SELECT COUNT(*) AS event_count,
+                       COALESCE(MIN(sequence), 0) AS first_sequence,
+                       COALESCE(MAX(sequence), 0) AS last_sequence
+                FROM agent_room_events WHERE room_id = ?
+                """,
+                (room_id,),
+            ).fetchone()
+            event_rows = conn.execute(
+                """
+                SELECT * FROM (
+                    SELECT * FROM agent_room_events
+                    WHERE room_id = ?
+                    ORDER BY sequence DESC LIMIT ?
+                ) ORDER BY sequence ASC
+                """,
+                (room_id, ROOM_SNAPSHOT_EVENT_LIMIT),
+            ).fetchall()
+
+        room = _room_payload(room_row, participant_rows)
+        events = [_room_event_payload(row) for row in event_rows]
+        retained_count = int(bounds_row["event_count"]) if bounds_row is not None else 0
+        retained_first = int(bounds_row["first_sequence"]) if bounds_row is not None else 0
+        last_sequence = int(room["lastEventSequence"])
+        retained_last = int(bounds_row["last_sequence"]) if bounds_row is not None else 0
+        if retained_count and retained_last != last_sequence:
+            raise RuntimeError("agent room event cursor is inconsistent with retained events")
+        first_sequence = int(events[0]["sequence"]) if events else 0
+        snapshot: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-room-snapshot.v1",
+            "ok": True,
+            "room": room,
+            "events": events,
+            "firstSequence": first_sequence,
+            "lastSequence": last_sequence,
+            "resumeToken": f"{room_id}:{last_sequence}" if last_sequence else "",
+            "truncated": bool(
+                retained_count > len(events)
+                or retained_first > 1
+                or (last_sequence > 0 and not events)
+            ),
+        }
+        validate_contract(snapshot, "agent-room-snapshot.v1.json")
+        return snapshot
 
     def event_bounds(self, room_id: str) -> tuple[int, int]:
         self.get(room_id)

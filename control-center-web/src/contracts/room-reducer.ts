@@ -1,6 +1,7 @@
 import type { ProjectionDiagnostic, ProjectionGap, ProjectionReduction } from './agent-reducer';
+import type { AgentRoomSnapshotV1 } from './generated';
 import type { UiAgentMessage, UiRoomEvent } from './ui-events';
-import { tryParseAgentMessage } from './validators';
+import { parseContract, parseRoomEvent, tryParseAgentMessage } from './validators';
 
 export interface RoomMessageProjection {
   id: string;
@@ -63,6 +64,14 @@ export interface RoomSnapshot {
   resumeToken: string;
 }
 
+export type RoomEventSnapshot = Omit<AgentRoomSnapshotV1, 'events'> & {
+  events: UiRoomEvent[];
+};
+
+export interface RoomEventReductionOptions {
+  snapshotReplay?: boolean;
+}
+
 export interface OptimisticRoomMessageInput {
   clientMessageId: string;
   text: string;
@@ -92,6 +101,7 @@ export function createRoomProjection(roomId: string): RoomProjectionState {
 export function reduceRoomEvent(
   state: RoomProjectionState,
   event: UiRoomEvent,
+  options: RoomEventReductionOptions = {},
 ): ProjectionReduction<RoomProjectionState> {
   if (event.roomId !== state.roomId) return { state, disposition: 'ignored-foreign' };
   if (event.sequence <= state.lastSequence) {
@@ -142,6 +152,17 @@ export function reduceRoomEvent(
       upsertActivity(next, event, payload, 'failed');
       break;
     case 'snapshot_required':
+      if (options.snapshotReplay) {
+        appendDiagnostic(next, {
+          id: event.eventId,
+          streamKind: 'room',
+          eventType: event.eventType,
+          summary: 'A historical Room snapshot marker was replayed as an inert diagnostic.',
+          sequence: event.sequence,
+          payload,
+        });
+        break;
+      }
       next.needsSnapshot = true;
       next.gap = {
         expectedSequence: state.lastSequence + 1,
@@ -201,18 +222,96 @@ export function applyRoomSnapshot(
   next.resumeToken = snapshot.resumeToken;
   const clientIds = new Set(snapshot.messages.map((message) => message.clientMessageId).filter(Boolean));
   for (const message of snapshot.messages) upsertMessage(next, message);
+  preserveOptimisticMessages(state, next, clientIds);
+  return next;
+}
+
+export function parseRoomEventSnapshot(value: unknown): RoomEventSnapshot {
+  const snapshot = parseContract('agent-room-snapshot.v1', value);
+  const events = snapshot.events.map((event) => parseRoomEvent(event));
+  if (snapshot.room.lastEventSequence !== snapshot.lastSequence) {
+    throw new TypeError('Room snapshot metadata cursor does not match lastSequence');
+  }
+  if (events.length === 0) {
+    if (
+      snapshot.firstSequence !== 0 ||
+      snapshot.lastSequence !== 0 ||
+      snapshot.resumeToken !== ''
+    ) {
+      throw new TypeError('Empty Room snapshot must use a zero cursor');
+    }
+  } else {
+    const first = events[0];
+    const last = events[events.length - 1];
+    if (
+      first.sequence !== snapshot.firstSequence ||
+      last.sequence !== snapshot.lastSequence ||
+      last.resumeToken !== snapshot.resumeToken
+    ) {
+      throw new TypeError('Room snapshot bounds do not match its retained events');
+    }
+    for (const [index, event] of events.entries()) {
+      if (
+        event.roomId !== snapshot.room.id ||
+        event.sequence !== snapshot.firstSequence + index
+      ) {
+        throw new TypeError('Room snapshot events must be contiguous and belong to the room');
+      }
+    }
+    if (snapshot.firstSequence > 1 && !snapshot.truncated) {
+      throw new TypeError('Room snapshot must disclose a truncated retained prefix');
+    }
+  }
+  return { ...snapshot, events };
+}
+
+export function replayRoomEventSnapshot(
+  state: RoomProjectionState,
+  snapshot: RoomEventSnapshot,
+): RoomProjectionState {
+  if (state.roomId !== snapshot.room.id) {
+    throw new TypeError('Room snapshot does not belong to the active Room');
+  }
+  let next = createRoomProjection(state.roomId);
+  if (snapshot.firstSequence > 1) next.lastSequence = snapshot.firstSequence - 1;
+  for (const event of snapshot.events) {
+    const reduced = reduceRoomEvent(next, event, { snapshotReplay: true });
+    if (reduced.disposition !== 'applied') {
+      throw new TypeError(`Room snapshot replay failed: ${reduced.disposition}`);
+    }
+    next = reduced.state;
+  }
+  if (next.lastSequence !== snapshot.lastSequence) {
+    throw new TypeError('Room snapshot replay did not reach its declared cursor');
+  }
+  next.lastEventId = snapshot.resumeToken;
+  next.resumeToken = snapshot.resumeToken;
+  const clientIds = new Set(
+    Object.values(next.messagesById)
+      .map((message) => message.clientMessageId)
+      .filter((value): value is string => Boolean(value)),
+  );
+  preserveOptimisticMessages(state, next, clientIds);
+  return next;
+}
+
+function preserveOptimisticMessages(
+  state: RoomProjectionState,
+  next: RoomProjectionState,
+  serverClientIds: ReadonlySet<string | undefined>,
+): void {
   for (const [clientMessageId, messageId] of Object.entries(
     state.optimisticByClientMessageId,
   )) {
-    if (clientIds.has(clientMessageId)) continue;
+    if (serverClientIds.has(clientMessageId)) continue;
     const message = state.messagesById[messageId];
     if (!message) continue;
+    if (next.messagesById[messageId]) continue;
     next.messagesById[messageId] = message;
     next.messageOrder.push(messageId);
     next.optimisticByClientMessageId[clientMessageId] = messageId;
     attachMessage(next, message);
   }
-  return next;
 }
 
 export function abortRoomTurn(

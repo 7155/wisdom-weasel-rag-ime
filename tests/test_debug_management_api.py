@@ -1680,13 +1680,21 @@ class DebugManagementApiTests(unittest.TestCase):
             with patch.object(self.service.agent, "prompt", return_value={"turnId": "turn:http:room"}):
                 message_request = Request(
                     f"{base_url}/rooms/{room_id}/messages",
-                    data=json.dumps({"message": "@Hermes 请诊断状态"}).encode("utf-8"),
+                    data=json.dumps(
+                        {
+                            "message": "@Hermes 请诊断状态",
+                            "clientMessageId": "room-http-client-1",
+                        }
+                    ).encode("utf-8"),
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
                 with urlopen(message_request, timeout=5) as response:
                     message_status = response.status
                     accepted = json.loads(response.read().decode("utf-8"))
+
+            with urlopen(f"{base_url}/rooms/{room_id}/snapshot", timeout=5) as response:
+                snapshot = json.loads(response.read().decode("utf-8"))
 
             archive_request = Request(
                 f"{base_url}/rooms/{room_id}",
@@ -1707,6 +1715,14 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(detail["room"]["id"], room_id)
         self.assertEqual(message_status, 202)
         self.assertEqual(accepted["participant"]["roleId"], "hermes-v1")
+        self.assertEqual(accepted["clientMessageId"], "room-http-client-1")
+        self.assertEqual(snapshot["schemaVersion"], "rag-ime.agent-room-snapshot.v1")
+        self.assertEqual(snapshot["room"]["id"], room_id)
+        self.assertEqual(snapshot["lastSequence"], snapshot["room"]["lastEventSequence"])
+        user_event = next(
+            event for event in snapshot["events"] if event["eventType"] == "user_message"
+        )
+        self.assertEqual(user_event["payload"]["clientMessageId"], "room-http-client-1")
         self.assertEqual(archived["room"]["status"], "archived")
 
     def test_agent_intercom_and_artifact_http_routes_preserve_session_authority(self) -> None:

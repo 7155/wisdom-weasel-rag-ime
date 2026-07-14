@@ -1,10 +1,17 @@
 import { GitBranch, MessageSquarePlus, Send, UsersRound } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { useControlTransport } from '@/app/control-transport';
 import { IconButton } from '@/components/primitives';
 import { createRoomDeltaBatcher } from '@/contracts/batching';
-import { appendOptimisticRoomMessage, createRoomProjection, reduceRoomEvent, type RoomProjectionState } from '@/contracts/room-reducer';
+import {
+  appendOptimisticRoomMessage,
+  createRoomProjection,
+  parseRoomEventSnapshot,
+  reduceRoomEvent,
+  replayRoomEventSnapshot,
+  type RoomProjectionState,
+} from '@/contracts/room-reducer';
 import type { UiRoomEvent } from '@/contracts/ui-events';
 import { previewPersonas } from '@/features/agent/preview-data';
 import { AgentBlocks, MarkdownBody } from '@/features/agent/timeline/BlockRenderer';
@@ -19,6 +26,7 @@ export function RoomsFeature() {
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [projection, setProjection] = useState<RoomProjectionState>(() => createRoomProjection(''));
+  const projectionRef = useRef(projection);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
 
@@ -35,19 +43,95 @@ export function RoomsFeature() {
 
   useEffect(() => {
     if (!selectedId) return;
-    let state = createRoomProjection(selectedId);
-    if (transport.kind === 'mock') for (const event of previewRoomEvents(selectedId)) state = reduceRoomEvent(state, event).state;
-    setProjection(state);
-    const batcher = createRoomDeltaBatcher((events) => setProjection((current) => {
-      let next = current;
-      for (const event of events) next = reduceRoomEvent(next, event).state;
-      return next;
-    }));
-    const unsubscribe = transport.subscribe<UiRoomEvent>(
-      { pathId: 'agent.room.events', params: { roomId: selectedId }, lastEventId: state.resumeToken },
-      { next: (event) => batcher.push(event), error: (streamError) => setError(streamError.message) },
-    );
-    return () => { batcher.clear(); unsubscribe(); };
+    let active = true;
+    let generation = 0;
+    let reloadQueued = false;
+    let unsubscribe: (() => void) | undefined;
+    let snapshotController: AbortController | undefined;
+    const empty = createRoomProjection(selectedId);
+    projectionRef.current = empty;
+    setProjection(empty);
+
+    const scheduleSnapshotReload = () => {
+      if (!active || reloadQueued) return;
+      reloadQueued = true;
+      queueMicrotask(() => {
+        reloadQueued = false;
+        if (active) void loadSnapshotAndSubscribe();
+      });
+    };
+    const batcher = createRoomDeltaBatcher((events) => {
+      if (!active || projectionRef.current.roomId !== selectedId) return;
+      let next = projectionRef.current;
+      let snapshotRequired = false;
+      for (const event of events) {
+        const reduced = reduceRoomEvent(next, event);
+        next = reduced.state;
+        snapshotRequired ||= reduced.disposition === 'snapshot-required';
+      }
+      projectionRef.current = next;
+      setProjection(next);
+      if (snapshotRequired) scheduleSnapshotReload();
+    });
+
+    async function loadSnapshotAndSubscribe(): Promise<void> {
+      const requestGeneration = ++generation;
+      batcher.clear();
+      unsubscribe?.();
+      unsubscribe = undefined;
+      snapshotController?.abort();
+      snapshotController = new AbortController();
+      try {
+        const value = await transport.request({
+          pathId: 'agent.room.snapshot',
+          params: { roomId: selectedId },
+          signal: snapshotController.signal,
+        });
+        if (!active || requestGeneration !== generation) return;
+        const snapshot = parseRoomEventSnapshot(value);
+        const base = projectionRef.current.roomId === selectedId
+          ? projectionRef.current
+          : createRoomProjection(selectedId);
+        const next = replayRoomEventSnapshot(base, snapshot);
+        projectionRef.current = next;
+        setProjection(next);
+        const snapshotRoom: RoomSummary = snapshot.room;
+        setRooms((current) => current.map((item) => item.id === snapshotRoom.id ? snapshotRoom : item));
+        setError('');
+        const subscriptionGeneration = requestGeneration;
+        unsubscribe = transport.subscribe<UiRoomEvent>(
+          {
+            pathId: 'agent.room.events',
+            params: { roomId: selectedId },
+            lastEventId: snapshot.resumeToken,
+          },
+          {
+            next: (event) => {
+              if (active && subscriptionGeneration === generation) batcher.push(event);
+            },
+            error: (streamError) => {
+              if (active && subscriptionGeneration === generation) setError(streamError.message);
+            },
+            snapshotRequired: () => {
+              if (active && subscriptionGeneration === generation) scheduleSnapshotReload();
+            },
+          },
+        );
+      } catch (loadError) {
+        if (active && requestGeneration === generation && !isAbortError(loadError)) {
+          setError(errorText(loadError));
+        }
+      }
+    }
+
+    void loadSnapshotAndSubscribe();
+    return () => {
+      active = false;
+      generation += 1;
+      snapshotController?.abort();
+      batcher.clear();
+      unsubscribe?.();
+    };
   }, [selectedId, transport]);
 
   const room = rooms.find((item) => item.id === selectedId);
@@ -55,7 +139,11 @@ export function RoomsFeature() {
     const message = draft.trim();
     if (!room || !message) return;
     const clientMessageId = `room-web-${crypto.randomUUID()}`;
-    setProjection((current) => appendOptimisticRoomMessage(current, { clientMessageId, text: message, nowMs: Date.now() }));
+    setProjection((current) => {
+      const next = appendOptimisticRoomMessage(current, { clientMessageId, text: message, nowMs: Date.now() });
+      projectionRef.current = next;
+      return next;
+    });
     setDraft('');
     try { await transport.request({ pathId: 'agent.room.message', params: { roomId: room.id }, body: { message, clientMessageId } }); }
     catch (requestError) { setDraft(message); setError(errorText(requestError)); }
@@ -109,23 +197,8 @@ const previewRooms: RoomSummary[] = [{ id: 'room-preview', title: '迁移作战�
   { id: 'participant-hermes', sessionId: 'session-runtime', roleId: 'hermes-v1', roleVersion: '1', displayName: 'Hermes', status: 'active', ordinal: 1 },
 ] }];
 
-function previewRoomEvents(roomId: string): UiRoomEvent[] {
-  const turnId = `${roomId}:turn-1`;
-  const base = { schemaVersion: 'rag-ime.agent-room-event.v1' as const, roomId, turnId, createdAtMs: Date.now() - 60_000, sourceSessionId: '' };
-  const make = (sequence: number, eventType: UiRoomEvent['eventType'], participantId: string | null, payload: Record<string, unknown>): UiRoomEvent => ({ ...base, eventId: `${roomId}:${sequence}`, sequence, eventType, participantId, payload, resumeToken: `${roomId}:${sequence}`, streamKind: 'room' });
-  return [
-    make(1, 'user_message', null, { messageId: 'room-user-1', text: '并行检查 Agent UI 与 Control API 的集成边界。' }),
-    make(2, 'route_decision', null, { summary: '主持人将任务分给 2 个 Agent' }),
-    make(3, 'participant_activity', 'participant-zhiyou', { requestId: 'activity-a', summary: '核对 Turn 聚合与流式投影', status: 'completed' }),
-    make(4, 'participant_activity', 'participant-hermes', { requestId: 'activity-b', summary: '核对 route policy 与权限回执', status: 'completed' }),
-    make(5, 'participant_delta', 'participant-zhiyou', { messageId: 'room-assistant-1', delta: 'Agent 时间线已经复用统一 reducer 与 batcher，' }),
-    make(6, 'participant_delta', 'participant-zhiyou', { messageId: 'room-assistant-1', delta: '主时间线不会平铺每个工具结果。' }),
-    make(7, 'participant_delta', 'participant-hermes', { messageId: 'room-assistant-2', delta: '权限切换只在服务端回执后更新。' }),
-    make(8, 'turn_completed', null, { summary: '协作检查完成' }),
-  ];
-}
-
 function roomItems(value: unknown): RoomSummary[] { const source = record(value); return (Array.isArray(source.items) ? source.items : Array.isArray(source.rooms) ? source.rooms : []).filter(isRoom); }
 function isRoom(value: unknown): value is RoomSummary { const item = record(value); return typeof item.id === 'string' && typeof item.title === 'string' && Array.isArray(item.participants); }
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function errorText(value: unknown): string { return value instanceof Error ? value.message : String(value); }
+function isAbortError(value: unknown): boolean { return value instanceof DOMException && value.name === 'AbortError'; }
