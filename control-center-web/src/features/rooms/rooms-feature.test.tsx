@@ -28,6 +28,11 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
     const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const errorSlot = document.querySelector('.room-error-slot');
+    expect(errorSlot).toBeInTheDocument();
+    expect(errorSlot).toBeEmptyDOMElement();
+    expect(errorSlot?.nextElementSibling).toHaveClass('room-timeline');
+    expect(errorSlot?.nextElementSibling?.nextElementSibling).toHaveClass('room-composer');
     await user.type(composer, '并行核对边界');
     await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));

@@ -76,7 +76,9 @@ export function RoomsFeature() {
       </aside>
       <section className="room-workspace">
         <header><span><strong>{room?.title ?? 'Room'}</strong><small>{room?.routingPolicy === 'moderator' ? '主持人路由' : '手动 @ 路由'}</small></span><div className="room-participants">{room?.participants.map((participant) => <span key={participant.id}><PersonaAvatar persona={previewPersonas.find((item) => item.roleId === participant.roleId)} size="small" /><b>{participant.displayName}</b></span>)}</div></header>
-        {error ? <p className="room-error" role="alert">{error}</p> : null}
+        <div className="room-error-slot" aria-live="polite">
+          {error ? <p className="room-error" role="alert">{error}</p> : null}
+        </div>
         <div className="room-timeline">
           <Virtuoso data={projection.turnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} />} />
         </div>

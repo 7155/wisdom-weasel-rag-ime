@@ -13,6 +13,7 @@
 .room-workspace > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 16px; border-bottom: 1px solid var(--color-border); }
 .room-participants { display: flex; min-width: 0; gap: 6px; }
 .room-participants > span { display: flex; align-items: center; gap: 5px; color: var(--color-text-secondary); font-size: 9px; }
+.room-error-slot { min-height: 0; }
 .room-error { margin: 0; padding: 5px 16px; background: var(--color-danger-soft); color: var(--color-danger); font-size: 10px; }
 .room-timeline { min-height: 0; }
 .room-timeline > div { height: 100%; }
