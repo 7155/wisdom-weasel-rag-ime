@@ -2066,10 +2066,36 @@ class DebugManagementApiTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
+            task_domain = {
+                "date": "2026-07-13",
+                "title": "完成配置与规划联调",
+                "priority": 2,
+            }
+            planning_preview_request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/planning/mutation/preview",
+                data=json.dumps(
+                    {
+                        "kind": "task.save",
+                        "payload": task_domain,
+                        "expectedRuntimeRevision": self.service.management.revision().runtime_revision,
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(planning_preview_request, timeout=5) as response:
+                planning_preview = json.loads(response.read().decode("utf-8"))
+
             task_request = Request(
                 f"http://127.0.0.1:{server.server_port}/api/planning/task/save",
                 data=json.dumps(
-                    {"date": "2026-07-13", "title": "完成配置与规划联调", "priority": "high"}
+                    {
+                        **task_domain,
+                        "expectedRuntimeRevision": planning_preview["expectedRevision"]["runtimeRevision"],
+                        "previewToken": planning_preview["previewToken"],
+                        "payloadSha256": planning_preview["payloadSha256"],
+                        "confirmText": "apply",
+                    }
                 ).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="POST",
@@ -2097,6 +2123,8 @@ class DebugManagementApiTests(unittest.TestCase):
             server.server_close()
 
         self.assertTrue(task_payload["ok"])
+        self.assertEqual(task_payload["pathId"], "planning.task.save")
+        self.assertTrue(task_payload["receiptId"].startswith("work-receipt:"))
         self.assertEqual(task_payload["task"]["title"], "完成配置与规划联调")
         self.assertTrue(config_payload["valid"])
         self.assertTrue(config_payload["source"]["permissionsHardened"])

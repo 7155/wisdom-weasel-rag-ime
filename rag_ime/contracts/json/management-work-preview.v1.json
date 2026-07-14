@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.management-work-preview.v1",
+  "type": "object",
+  "required": ["schemaVersion", "ok", "previewToken", "pathId", "payloadSha256", "expectedRevision", "expiresAtMs", "requiredConfirm", "summary"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.management-work-preview.v1"},
+    "ok": {"type": "boolean", "const": true},
+    "previewToken": {"type": "string", "minLength": 32},
+    "pathId": {"type": "string", "minLength": 1},
+    "payloadSha256": {"type": "string", "minLength": 71},
+    "expectedRevision": {"type": "object"},
+    "expiresAtMs": {"type": "integer", "minimum": 1},
+    "requiredConfirm": {"type": "string", "minLength": 1},
+    "summary": {
+      "type": "object",
+      "required": ["title", "items", "risk"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "items": {"type": "array", "items": {"type": "string"}},
+        "risk": {"type": "string", "enum": ["R1", "R2", "R3"]}
+      }
+    }
+  }
+}

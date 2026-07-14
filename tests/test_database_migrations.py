@@ -22,10 +22,10 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 first.applied_versions,
-                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25),
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 25)
+            self.assertEqual(status["currentVersion"], 26)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -62,6 +62,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_artifacts", tables)
             self.assertIn("agent_artifact_snapshots", tables)
             self.assertIn("agent_room_intercom_messages", tables)
+            self.assertIn("management_work_previews", tables)
+            self.assertIn("management_work_receipts", tables)
 
     def test_legacy_feedback_table_is_rebuilt_without_losing_rows(self) -> None:
         with closing(sqlite3.connect(":memory:")) as conn, conn:

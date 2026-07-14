@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -16,7 +17,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, RLock
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .active_rag_service import (
@@ -59,6 +60,11 @@ from .knowledge_workbench import (
     KnowledgeWorkbenchService,
 )
 from .management_service import ManagementService, page_request
+from .management_work_contract import (
+    ManagementWorkError,
+    StoredReceipt,
+    WorkExecution,
+)
 from .memory_book_compiler import (
     apply_stored_memory_book_run,
     build_memory_book_source_bundle,
@@ -152,6 +158,91 @@ def _memory_book_operation_label(operation: str) -> str:
         "add_negative_phrase": "新增负向记忆",
         "supersede_memory": "替代旧记忆",
     }.get(operation, "整理记忆")
+
+
+def _knowledge_database_contract_state(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    project: str,
+) -> dict[str, object]:
+    run = memory_book_run_payload(conn, run_id=run_id)
+    if not run.get("provider"):
+        raise ManagementWorkError("domain_not_found", "The knowledge database run was not found.")
+    metadata = dict(run.get("metadata") or {})
+    if _string(metadata.get("project")) != project:
+        raise ManagementWorkError(
+            "domain_scope_mismatch",
+            "The knowledge database run is outside the current project.",
+        )
+    diffs = [dict(item) for item in list(run.get("diffs") or []) if isinstance(item, dict)]
+    pending_count = sum(1 for item in diffs if _string(item.get("status")) in {"pending", "approved"})
+    applied_count = sum(1 for item in diffs if _string(item.get("status")) == "applied")
+    stale = memory_book_run_is_stale(conn, run=run)
+    newer_applied_run = find_newer_applied_memory_book_run(conn, run_id=run_id)
+    status = _string(run.get("status"))
+    can_apply = status == "draft" and not stale and pending_count > 0
+    can_rollback = status in {"applied", "partial"} and applied_count > 0 and newer_applied_run is None
+    if stale:
+        apply_blocked_reason = "The knowledge database run is stale."
+    elif status != "draft":
+        apply_blocked_reason = "The knowledge database run is not a draft."
+    elif pending_count == 0:
+        apply_blocked_reason = "The knowledge database run has no selected pending changes."
+    else:
+        apply_blocked_reason = ""
+    rollback_blocked_reason = (
+        "A newer knowledge database apply must be rolled back first."
+        if newer_applied_run is not None
+        else "The knowledge database run is not rollbackable."
+    )
+    revision_hash = "sha256:" + hashlib.sha256(
+        json.dumps(run, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "run": run,
+        "revisionHash": revision_hash,
+        "summary": _string(run.get("summary")),
+        "pendingCount": pending_count,
+        "appliedCount": applied_count,
+        "canApply": can_apply,
+        "canRollback": can_rollback,
+        "applyBlockedReason": apply_blocked_reason,
+        "rollbackBlockedReason": rollback_blocked_reason,
+    }
+
+
+def _require_management_fields(
+    payload: Mapping[str, object],
+    *,
+    required: set[str],
+    optional: set[str],
+) -> None:
+    keys = {str(key) for key in payload}
+    missing = sorted(required - keys)
+    if missing:
+        raise ManagementWorkError("invalid_request", f"Missing required fields: {', '.join(missing)}.")
+    unknown = sorted(keys - required - optional)
+    if unknown:
+        raise ManagementWorkError("invalid_request", f"Unsupported fields: {', '.join(unknown)}.")
+
+
+def _strict_management_revision(value: object) -> int:
+    if isinstance(value, bool):
+        raise ManagementWorkError("invalid_request", "expectedRuntimeRevision must be an integer.")
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ManagementWorkError(
+            "invalid_request",
+            "expectedRuntimeRevision must be an integer.",
+        ) from exc
+    if parsed < 0:
+        raise ManagementWorkError(
+            "invalid_request",
+            "expectedRuntimeRevision must be non-negative.",
+        )
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -1499,6 +1590,164 @@ class DebugImeService:
             "retrieval": retrieval,
         }
 
+    def knowledge_workbench_database_apply_preview(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={"runId"},
+                optional={"expectedRuntimeRevision"},
+            )
+            if not isinstance(self.core, LocalSqliteCoreClient):
+                raise ManagementWorkError("unsupported_backend", "Local SQLite core is required.")
+            run_id = _string(payload.get("runId"))
+            if not run_id:
+                raise ManagementWorkError("invalid_request", "runId is required.")
+            if "expectedRuntimeRevision" in payload:
+                expected_runtime = _strict_management_revision(payload.get("expectedRuntimeRevision"))
+                if expected_runtime != current["runtimeRevision"]:
+                    raise ManagementWorkError(
+                        "revision_mismatch",
+                        "The knowledge workbench revision is stale.",
+                        current_revision=current,
+                    )
+            with self.core._connect() as conn:  # type: ignore[attr-defined]
+                state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+            if not state["canApply"]:
+                raise ManagementWorkError(
+                    "domain_not_applicable",
+                    str(state["applyBlockedReason"]),
+                    current_revision={
+                        **current,
+                        "subjectRevision": state["revisionHash"],
+                    },
+                )
+            expected_revision = {
+                **current,
+                "subjectRevision": state["revisionHash"],
+            }
+            return self.management.work_contract.create_preview(
+                path_id="knowledge.database.apply",
+                payload={"runId": run_id},
+                expected_revision=expected_revision,
+                required_confirm="apply",
+                summary={
+                    "title": "应用知识库整理草案",
+                    "items": [
+                        f"运行: {run_id}",
+                        f"待应用变更: {state['pendingCount']}",
+                        _string(state.get("summary"))[:160],
+                    ],
+                    "risk": "R2",
+                },
+            )
+        except Exception as exc:
+            return self.management.work_contract.error_payload(exc, current_revision=current)
+
+    def knowledge_workbench_database_apply_contract(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={
+                    "runId",
+                    "confirm",
+                    "previewToken",
+                    "payloadSha256",
+                    "expectedRuntimeRevision",
+                },
+                optional=set(),
+            )
+            if not isinstance(self.core, LocalSqliteCoreClient):
+                raise ManagementWorkError("unsupported_backend", "Local SQLite core is required.")
+            run_id = _string(payload.get("runId"))
+            expected_runtime = _strict_management_revision(payload.get("expectedRuntimeRevision"))
+            if expected_runtime != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The knowledge apply request revision is stale.",
+                    current_revision=current,
+                )
+
+            def current_revision(conn: sqlite3.Connection) -> dict[str, object]:
+                state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+                return self.management.management_work_revision(
+                    conn,
+                    subject_revision=str(state["revisionHash"]),
+                )
+
+            def execute(conn: sqlite3.Connection) -> WorkExecution:
+                state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+                if not state["canApply"]:
+                    raise ManagementWorkError(
+                        "domain_not_applicable",
+                        str(state["applyBlockedReason"]),
+                    )
+                run = apply_stored_memory_book_run(conn, run_id=run_id)
+                retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
+                after_state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+                result = {
+                    "schemaVersion": "rag-ime.knowledge-database-action.v1",
+                    "ok": True,
+                    "action": "apply",
+                    "run": run,
+                    "retrieval": retrieval,
+                }
+                return WorkExecution(
+                    result=result,
+                    audit_action="knowledge_database_apply",
+                    target_type="memory_book_run",
+                    target_id=run_id,
+                    rollback_available=bool(after_state["canRollback"]),
+                    rollback_path_id="knowledge.database.rollback",
+                    rollback_confirm="rollback",
+                    rollback_authority={"runId": run_id},
+                    rollback_data={
+                        "runId": run_id,
+                        "afterRevision": after_state["revisionHash"],
+                    },
+                )
+
+            response = self.management.work_contract.execute_apply(
+                path_id="knowledge.database.apply",
+                payload={"runId": run_id},
+                preview_token=_string(payload.get("previewToken")),
+                payload_sha256=_string(payload.get("payloadSha256")),
+                confirm_text=_string(payload.get("confirm")),
+                current_revision=current_revision,
+                executor=execute,
+            )
+            self._clear_rime_cache()
+            self.management.events.publish(
+                "knowledge_database_changed",
+                {"runId": run_id, "action": "apply", "receiptId": response.get("receiptId")},
+            )
+            return response
+        except Exception as exc:
+            return self.management.work_contract.error_payload(exc, current_revision=current)
+
     def knowledge_workbench_database_draft_edit(self, payload: dict[str, Any]) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
             return {"schemaVersion": "rag-ime.knowledge-database-action.v1", "ok": False, "error": "local SQLite core required"}
@@ -1544,6 +1793,87 @@ class DebugImeService:
             "run": run,
             "retrieval": retrieval,
         }
+
+    def knowledge_workbench_database_rollback_contract(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.management.revision().runtime_revision}
+        try:
+            _require_management_fields(
+                payload,
+                required={
+                    "runId",
+                    "confirm",
+                    "receiptId",
+                    "rollbackToken",
+                    "payloadSha256",
+                },
+                optional=set(),
+            )
+            if not isinstance(self.core, LocalSqliteCoreClient):
+                raise ManagementWorkError("unsupported_backend", "Local SQLite core is required.")
+            run_id = _string(payload.get("runId"))
+
+            def execute(conn: sqlite3.Connection, receipt: StoredReceipt) -> WorkExecution:
+                authority = dict(receipt.rollback_authority)
+                if authority.get("runId") != run_id:
+                    raise ManagementWorkError(
+                        "rollback_authority_mismatch",
+                        "The knowledge run is not owned by this receipt.",
+                    )
+                state = _knowledge_database_contract_state(
+                    conn,
+                    run_id=run_id,
+                    project=self.config.project,
+                )
+                if state["revisionHash"] != receipt.rollback_data.get("afterRevision"):
+                    raise ManagementWorkError(
+                        "rollback_state_changed",
+                        "The knowledge run changed after the apply receipt was issued.",
+                        current_revision={
+                            **current,
+                            "subjectRevision": state["revisionHash"],
+                        },
+                    )
+                if not state["canRollback"]:
+                    raise ManagementWorkError(
+                        "rollback_unavailable",
+                        str(state["rollbackBlockedReason"]),
+                    )
+                run = rollback_memory_book_run(conn, run_id=run_id)
+                retrieval = rebuild_retrieval_docs(conn, project=self.config.project)
+                result = {
+                    "schemaVersion": "rag-ime.knowledge-database-action.v1",
+                    "ok": True,
+                    "action": "rollback",
+                    "run": run,
+                    "retrieval": retrieval,
+                }
+                return WorkExecution(
+                    result=result,
+                    audit_action="knowledge_database_rollback",
+                    target_type="memory_book_run",
+                    target_id=run_id,
+                )
+
+            response = self.management.work_contract.execute_rollback(
+                path_id="knowledge.database.rollback",
+                receipt_id=_string(payload.get("receiptId")),
+                rollback_token=_string(payload.get("rollbackToken")),
+                payload_sha256=_string(payload.get("payloadSha256")),
+                confirm_text=_string(payload.get("confirm")),
+                expected_apply_path_id="knowledge.database.apply",
+                executor=execute,
+            )
+            self._clear_rime_cache()
+            self.management.events.publish(
+                "knowledge_database_changed",
+                {"runId": run_id, "action": "rollback", "receiptId": response.get("receiptId")},
+            )
+            return response
+        except Exception as exc:
+            return self.management.work_contract.error_payload(exc, current_revision=current)
 
     def _knowledge_workbench_evidence(
         self,
@@ -5015,16 +5345,23 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_status(payload))
             elif path == "/api/memory/book/archive-maintenance":
                 self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_maintenance(payload))
+            elif path == "/api/planning/mutation/preview":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_mutation_preview(payload))
+            elif path == "/api/planning/mutation/rollback":
+                self._write_json(HTTPStatus.OK, self.service.management.planning_mutation_rollback(payload))
             elif path == "/api/planning/plan/save":
                 self._write_json(HTTPStatus.OK, self.service.management.planning_save_plan(payload))
             elif path == "/api/planning/goal/save":
                 self._write_json(HTTPStatus.OK, self.service.management.planning_save_goal(payload))
             elif path == "/api/planning/task/save":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_save_task(payload))
+                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_task_save(payload))
             elif path == "/api/planning/task/action":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_task_action(payload))
+                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_task_action(payload))
             elif path == "/api/planning/task-event/undo":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_undo_task_event(payload))
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.management.planning_undo_task_event_contract(payload),
+                )
             elif path == "/api/planning/completion/resolve":
                 self._write_json(HTTPStatus.OK, self.service.management.planning_resolve_completion(payload))
             elif path == "/api/planning/assistant":
@@ -5119,12 +5456,23 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_status(payload))
             elif path in ("/api/knowledge/cancel",):
                 self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_cancel(payload))
+            elif path in ("/api/knowledge/database/apply-preview",):
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.knowledge_workbench_database_apply_preview(payload),
+                )
             elif path in ("/api/knowledge/database/apply",):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_apply(payload))
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.knowledge_workbench_database_apply_contract(payload),
+                )
             elif path in ("/api/knowledge/database/draft-edit",):
                 self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_draft_edit(payload))
             elif path in ("/api/knowledge/database/rollback",):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_rollback(payload))
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.knowledge_workbench_database_rollback_contract(payload),
+                )
             elif path in ("/api/cache-probe", "/cache-probe"):
                 self._write_json(HTTPStatus.OK, self.service.cache_probe(payload))
             elif path in ("/api/rebuild-vector-index", "/rebuild-vector-index"):

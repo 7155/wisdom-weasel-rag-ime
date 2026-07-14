@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -35,6 +36,13 @@ from .memory_book_lifecycle import archive_inactive_memory_books, set_memory_boo
 from .memory_ingest import normalize_text
 from .management_events import ManagementEventHub
 from .management_models import MANAGEMENT_SCHEMA_VERSION, ManagementRevision, PageRequest, RuntimeJob
+from .management_work_contract import (
+    ManagementWorkContract,
+    ManagementWorkError,
+    StoredReceipt,
+    WorkExecution,
+    canonical_payload_sha256,
+)
 from .retrieval_docs import rebuild_retrieval_docs
 from .runtime_config import RuntimeConfigSnapshot
 from .settings_store import ManagementSettingsStore, record_management_audit
@@ -76,6 +84,7 @@ class ManagementService:
         self.last_prediction_provider = last_prediction_provider or (lambda: {})
         self.cache_invalidator = cache_invalidator
         self.events = ManagementEventHub()
+        self.work_contract = ManagementWorkContract(db_path=self.db_path)
         self._jobs: dict[str, RuntimeJob] = {}
         self._jobs_lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rag-ime-management")
@@ -101,6 +110,21 @@ class ManagementService:
             **self.revision(snapshot=snapshot).payload(),
             "ok": True,
             "runtimeConfig": snapshot.payload(),
+        }
+
+    def management_work_revision(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        subject_revision: str,
+    ) -> dict[str, object]:
+        row = conn.execute(
+            "SELECT runtime_revision FROM runtime_config_state WHERE singleton_id = 1"
+        ).fetchone()
+        runtime_revision = self.revision().runtime_revision if row is None else int(row[0])
+        return {
+            "runtimeRevision": runtime_revision,
+            "subjectRevision": subject_revision,
         }
 
     def settings_changed(
@@ -469,6 +493,307 @@ class ManagementService:
         audit_id = self._audit("planning_task_save", "task", str(task.get("id") or ""), payload, result)
         self.events.publish("planning_changed", {"kind": "task", "id": task.get("id")})
         return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    def planning_mutation_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current_revision = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            kind = compact_whitespace(str(payload.get("kind") or ""))
+            if kind not in {"task.save", "task.action"}:
+                raise ManagementWorkError(
+                    "unsupported_mutation",
+                    "Planning preview supports only task.save and task.action.",
+                    current_revision=current_revision,
+                )
+            expected_runtime_revision = _strict_nonnegative_int(
+                payload.get("expectedRuntimeRevision"),
+                field="expectedRuntimeRevision",
+            )
+            if expected_runtime_revision != current_revision["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The planning dashboard revision is stale.",
+                    current_revision=current_revision,
+                )
+            raw_domain = payload.get("payload")
+            if not isinstance(raw_domain, Mapping):
+                raise ManagementWorkError("invalid_request", "payload must be an object.")
+            if kind == "task.save":
+                _require_exact_keys(
+                    raw_domain,
+                    required={"date", "title"},
+                    optional=_PLANNING_TASK_SAVE_FIELDS - {"date", "title"},
+                )
+            else:
+                _require_exact_keys(
+                    raw_domain,
+                    required=_PLANNING_TASK_ACTION_FIELDS,
+                    optional=set(),
+                )
+            domain = _normalize_planning_work_payload(kind, raw_domain, project=self.project)
+            path_id = {
+                "task.save": "planning.task.save",
+                "task.action": "planning.task.action",
+            }[kind]
+            with self._connect() as conn:
+                subject_revision = _planning_subject_revision(conn, kind=kind, payload=domain)
+            expected_revision = {
+                "runtimeRevision": expected_runtime_revision,
+                "subjectRevision": subject_revision,
+            }
+            title = "保存规划任务" if kind == "task.save" else "更新规划任务状态"
+            summary = {
+                "title": title,
+                "items": _planning_preview_items(kind, domain),
+                "risk": "R1",
+            }
+            return self.work_contract.create_preview(
+                path_id=path_id,
+                payload=domain,
+                expected_revision=expected_revision,
+                required_confirm="apply",
+                summary=summary,
+            )
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current_revision)
+
+    def planning_apply_task_save(self, payload: Mapping[str, object]) -> dict[str, object]:
+        return self._planning_apply_contract("task.save", payload)
+
+    def planning_apply_task_action(self, payload: Mapping[str, object]) -> dict[str, object]:
+        return self._planning_apply_contract("task.action", payload)
+
+    def _planning_apply_contract(
+        self,
+        kind: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _reject_unknown_work_fields(payload, kind=kind)
+            expected_runtime_revision = _strict_nonnegative_int(
+                payload.get("expectedRuntimeRevision"),
+                field="expectedRuntimeRevision",
+            )
+            if expected_runtime_revision != current["runtimeRevision"]:
+                raise ManagementWorkError(
+                    "revision_mismatch",
+                    "The apply request revision is stale.",
+                    current_revision=current,
+                )
+            domain = _normalize_planning_work_payload(kind, payload, project=self.project)
+            path_id = {
+                "task.save": "planning.task.save",
+                "task.action": "planning.task.action",
+            }[kind]
+
+            def current_revision(conn: sqlite3.Connection) -> Mapping[str, object]:
+                return self.management_work_revision(
+                    conn,
+                    subject_revision=_planning_subject_revision(conn, kind=kind, payload=domain),
+                )
+
+            def execute(conn: sqlite3.Connection) -> WorkExecution:
+                if kind == "task.save":
+                    task_id = compact_whitespace(str(domain.get("taskId") or ""))
+                    before = _planning_task_snapshot(conn, task_id) if task_id else None
+                    result = save_task(conn, domain, project=self.project)
+                    task = result.get("task") if isinstance(result.get("task"), dict) else {}
+                    applied_task_id = compact_whitespace(str(task.get("id") or ""))
+                    after = _planning_task_snapshot(conn, applied_task_id)
+                    return WorkExecution(
+                        result=result,
+                        audit_action="planning_task_save",
+                        target_type="task",
+                        target_id=applied_task_id,
+                        rollback_available=True,
+                        rollback_path_id="planning.mutation.rollback",
+                        rollback_confirm="rollback",
+                        rollback_authority={"taskId": applied_task_id},
+                        rollback_data={
+                            "kind": kind,
+                            "taskId": applied_task_id,
+                            "beforeTask": before,
+                            "afterRevision": _snapshot_revision(after),
+                        },
+                    )
+                task_id = compact_whitespace(str(domain.get("taskId") or ""))
+                result = task_action(
+                    conn,
+                    task_id=task_id,
+                    action=compact_whitespace(str(domain.get("action") or "")),
+                    metadata={"source": "control-center-web"},
+                )
+                event_id = compact_whitespace(str(result.get("eventId") or ""))
+                after = _planning_task_snapshot(conn, task_id)
+                return WorkExecution(
+                    result=result,
+                    audit_action=f"planning_task_{domain['action']}",
+                    target_type="task",
+                    target_id=task_id,
+                    rollback_available=bool(result.get("undoAvailable")),
+                    rollback_path_id="planning.taskEvent.undo",
+                    rollback_confirm="undo",
+                    rollback_authority={"eventId": event_id, "taskId": task_id},
+                    rollback_data={
+                        "kind": kind,
+                        "eventId": event_id,
+                        "taskId": task_id,
+                        "afterRevision": _snapshot_revision(after),
+                    },
+                )
+
+            response = self.work_contract.execute_apply(
+                path_id=path_id,
+                payload=domain,
+                preview_token=str(payload.get("previewToken") or ""),
+                payload_sha256=str(payload.get("payloadSha256") or ""),
+                confirm_text=str(payload.get("confirmText") or ""),
+                current_revision=current_revision,
+                executor=execute,
+            )
+            task = response.get("task") if isinstance(response.get("task"), dict) else {}
+            self.events.publish(
+                "planning_changed",
+                {
+                    "kind": "task",
+                    "id": task.get("id"),
+                    "action": domain.get("action") or "save",
+                },
+            )
+            return response
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
+
+    def planning_undo_task_event_contract(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={"eventId", "receiptId", "rollbackToken", "payloadSha256", "confirmText"},
+                optional=set(),
+            )
+            event_id = compact_whitespace(str(payload.get("eventId") or ""))
+            if not event_id:
+                raise ManagementWorkError("invalid_request", "eventId is required.")
+
+            def execute(conn: sqlite3.Connection, receipt: StoredReceipt) -> WorkExecution:
+                authority = dict(receipt.rollback_authority)
+                if authority.get("eventId") != event_id:
+                    raise ManagementWorkError(
+                        "rollback_authority_mismatch",
+                        "The task event is not owned by this receipt.",
+                    )
+                rollback_data = dict(receipt.rollback_data)
+                task_id = compact_whitespace(str(rollback_data.get("taskId") or ""))
+                current_task = _planning_task_snapshot(conn, task_id)
+                if _snapshot_revision(current_task) != rollback_data.get("afterRevision"):
+                    raise ManagementWorkError(
+                        "rollback_state_changed",
+                        "The task changed after the receipt was issued.",
+                        current_revision={
+                            **current,
+                            "subjectRevision": _snapshot_revision(current_task),
+                        },
+                    )
+                result = undo_task_event(conn, event_id=event_id)
+                return WorkExecution(
+                    result=result,
+                    audit_action="planning_task_event_undo",
+                    target_type="task",
+                    target_id=task_id,
+                )
+
+            response = self.work_contract.execute_rollback(
+                path_id="planning.taskEvent.undo",
+                receipt_id=str(payload.get("receiptId") or ""),
+                rollback_token=str(payload.get("rollbackToken") or ""),
+                payload_sha256=str(payload.get("payloadSha256") or ""),
+                confirm_text=str(payload.get("confirmText") or ""),
+                expected_apply_path_id="planning.task.action",
+                executor=execute,
+            )
+            task = response.get("task") if isinstance(response.get("task"), dict) else {}
+            self.events.publish(
+                "planning_changed",
+                {"kind": "task", "id": task.get("id"), "action": "undo"},
+            )
+            return response
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
+
+    def planning_mutation_rollback(self, payload: Mapping[str, object]) -> dict[str, object]:
+        current = {"runtimeRevision": self.revision().runtime_revision}
+        try:
+            _require_exact_keys(
+                payload,
+                required={"receiptId", "rollbackToken", "payloadSha256", "confirmText"},
+                optional=set(),
+            )
+
+            def execute(conn: sqlite3.Connection, receipt: StoredReceipt) -> WorkExecution:
+                rollback_data = dict(receipt.rollback_data)
+                if rollback_data.get("kind") != "task.save":
+                    raise ManagementWorkError(
+                        "rollback_authority_mismatch",
+                        "This receipt is not a task save receipt.",
+                    )
+                task_id = compact_whitespace(str(rollback_data.get("taskId") or ""))
+                current_task = _planning_task_snapshot(conn, task_id)
+                if _snapshot_revision(current_task) != rollback_data.get("afterRevision"):
+                    raise ManagementWorkError(
+                        "rollback_state_changed",
+                        "The task changed after the receipt was issued.",
+                        current_revision={
+                            **current,
+                            "subjectRevision": _snapshot_revision(current_task),
+                        },
+                    )
+                before = rollback_data.get("beforeTask")
+                if before is None:
+                    conn.execute("DELETE FROM planning_tasks WHERE task_id = ?", (task_id,))
+                    result: dict[str, object] = {
+                        "schemaVersion": "rag-ime.planning.v1",
+                        "ok": True,
+                        "taskId": task_id,
+                        "deleted": True,
+                    }
+                elif isinstance(before, Mapping):
+                    _restore_planning_task(conn, before)
+                    result = {
+                        "schemaVersion": "rag-ime.planning.v1",
+                        "ok": True,
+                        "taskId": task_id,
+                        "restored": True,
+                    }
+                else:
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "The task rollback snapshot is invalid.",
+                    )
+                return WorkExecution(
+                    result=result,
+                    audit_action="planning_task_save_rollback",
+                    target_type="task",
+                    target_id=task_id,
+                )
+
+            response = self.work_contract.execute_rollback(
+                path_id="planning.mutation.rollback",
+                receipt_id=str(payload.get("receiptId") or ""),
+                rollback_token=str(payload.get("rollbackToken") or ""),
+                payload_sha256=str(payload.get("payloadSha256") or ""),
+                confirm_text=str(payload.get("confirmText") or ""),
+                expected_apply_path_id="planning.task.save",
+                executor=execute,
+            )
+            authority = response.get("rollbackAuthority")
+            self.events.publish(
+                "planning_changed",
+                {"kind": "task", "id": authority.get("taskId") if isinstance(authority, Mapping) else "", "action": "rollback"},
+            )
+            return response
+        except Exception as exc:
+            return self.work_contract.error_payload(exc, current_revision=current)
 
     def planning_task_action(self, payload: Mapping[str, object]) -> dict[str, object]:
         task_id = compact_whitespace(str(payload.get("taskId") or payload.get("id") or ""))
@@ -1485,6 +1810,187 @@ class _ConnectionContext:
         else:
             self.conn.rollback()
         self.conn.close()
+
+
+_PLANNING_TASK_SAVE_FIELDS = {
+    "taskId",
+    "date",
+    "title",
+    "detail",
+    "priority",
+    "status",
+    "dueAtMs",
+    "goalId",
+    "project",
+}
+_PLANNING_TASK_ACTION_FIELDS = {"taskId", "action"}
+_WORK_APPLY_FIELDS = {
+    "expectedRuntimeRevision",
+    "previewToken",
+    "payloadSha256",
+    "confirmText",
+}
+_PLANNING_TASK_COLUMNS = (
+    "task_id",
+    "plan_date",
+    "title",
+    "detail",
+    "status",
+    "priority",
+    "due_at_ms",
+    "project",
+    "goal_id",
+    "source",
+    "confidence",
+    "created_at_ms",
+    "updated_at_ms",
+    "completed_at_ms",
+    "metadata_json",
+)
+
+
+def _normalize_planning_work_payload(
+    kind: str,
+    payload: Mapping[str, object],
+    *,
+    project: str,
+) -> dict[str, object]:
+    if kind == "task.action":
+        task_id = compact_whitespace(str(payload.get("taskId") or ""))
+        action = compact_whitespace(str(payload.get("action") or "")).lower()
+        if not task_id:
+            raise ManagementWorkError("invalid_request", "taskId is required.")
+        if action not in {"start", "complete", "reopen", "cancel"}:
+            raise ManagementWorkError("invalid_request", "Unsupported planning task action.")
+        return {"taskId": task_id, "action": action}
+    if kind != "task.save":
+        raise ManagementWorkError("unsupported_mutation", "Unsupported planning mutation.")
+    title = compact_whitespace(str(payload.get("title") or ""))
+    day = compact_whitespace(str(payload.get("date") or ""))
+    if not title:
+        raise ManagementWorkError("invalid_request", "Task title is required.")
+    if not day:
+        raise ManagementWorkError("invalid_request", "Task date is required.")
+    try:
+        date.fromisoformat(day)
+    except ValueError as exc:
+        raise ManagementWorkError("invalid_request", "Task date must use YYYY-MM-DD.") from exc
+    status = compact_whitespace(str(payload.get("status") or "todo")).lower()
+    if status not in {"todo", "in_progress", "done", "cancelled"}:
+        raise ManagementWorkError("invalid_request", "Unsupported planning task status.")
+    priority = _strict_bounded_int(payload.get("priority", 1), field="priority", minimum=0, maximum=3)
+    normalized: dict[str, object] = {
+        "date": day,
+        "title": title,
+        "detail": compact_whitespace(str(payload.get("detail") or "")),
+        "priority": priority,
+        "status": status,
+        "goalId": compact_whitespace(str(payload.get("goalId") or "")),
+        "project": compact_whitespace(str(payload.get("project") or project)),
+    }
+    task_id = compact_whitespace(str(payload.get("taskId") or ""))
+    if task_id:
+        normalized["taskId"] = task_id
+    if payload.get("dueAtMs") is not None:
+        normalized["dueAtMs"] = _strict_nonnegative_int(payload.get("dueAtMs"), field="dueAtMs")
+    return normalized
+
+
+def _reject_unknown_work_fields(payload: Mapping[str, object], *, kind: str) -> None:
+    allowed_domain = _PLANNING_TASK_SAVE_FIELDS if kind == "task.save" else _PLANNING_TASK_ACTION_FIELDS
+    _require_exact_keys(payload, required=_WORK_APPLY_FIELDS, optional=allowed_domain)
+
+
+def _require_exact_keys(
+    payload: Mapping[str, object],
+    *,
+    required: set[str],
+    optional: set[str],
+) -> None:
+    keys = {str(key) for key in payload}
+    missing = sorted(required - keys)
+    if missing:
+        raise ManagementWorkError("invalid_request", f"Missing required fields: {', '.join(missing)}.")
+    unknown = sorted(keys - required - optional)
+    if unknown:
+        raise ManagementWorkError("invalid_request", f"Unsupported fields: {', '.join(unknown)}.")
+
+
+def _planning_subject_revision(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    payload: Mapping[str, object],
+) -> str:
+    task_id = compact_whitespace(str(payload.get("taskId") or ""))
+    if not task_id:
+        return "new"
+    snapshot = _planning_task_snapshot(conn, task_id)
+    if kind == "task.action" and snapshot is None:
+        raise ManagementWorkError("domain_not_found", "The planning task was not found.")
+    return _snapshot_revision(snapshot)
+
+
+def _planning_task_snapshot(conn: sqlite3.Connection, task_id: str) -> dict[str, object] | None:
+    if not task_id:
+        return None
+    row = conn.execute(
+        "SELECT * FROM planning_tasks WHERE task_id = ?",
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {column: row[column] for column in _PLANNING_TASK_COLUMNS}
+
+
+def _snapshot_revision(snapshot: Mapping[str, object] | None) -> str:
+    if snapshot is None:
+        return "missing"
+    return canonical_payload_sha256(snapshot)
+
+
+def _planning_preview_items(kind: str, payload: Mapping[str, object]) -> list[str]:
+    if kind == "task.action":
+        return [
+            f"任务: {payload.get('taskId', '')}",
+            f"动作: {payload.get('action', '')}",
+        ]
+    return [
+        f"日期: {payload.get('date', '')}",
+        f"任务: {payload.get('title', '')}",
+        f"状态: {payload.get('status', '')}",
+    ]
+
+
+def _restore_planning_task(conn: sqlite3.Connection, snapshot: Mapping[str, object]) -> None:
+    missing = [column for column in _PLANNING_TASK_COLUMNS if column not in snapshot]
+    if missing:
+        raise ManagementWorkError("stored_contract_invalid", "The stored task snapshot is incomplete.")
+    placeholders = ", ".join("?" for _ in _PLANNING_TASK_COLUMNS)
+    columns = ", ".join(_PLANNING_TASK_COLUMNS)
+    conn.execute(
+        f"INSERT OR REPLACE INTO planning_tasks({columns}) VALUES ({placeholders})",
+        tuple(snapshot[column] for column in _PLANNING_TASK_COLUMNS),
+    )
+
+
+def _strict_nonnegative_int(value: object, *, field: str) -> int:
+    return _strict_bounded_int(value, field=field, minimum=0, maximum=9_223_372_036_854_775_807)
+
+
+def _strict_bounded_int(value: object, *, field: str, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        raise ManagementWorkError("invalid_request", f"{field} must be an integer.")
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ManagementWorkError("invalid_request", f"{field} must be an integer.") from exc
+    if parsed < minimum or parsed > maximum:
+        raise ManagementWorkError(
+            "invalid_request",
+            f"{field} must be between {minimum} and {maximum}.",
+        )
+    return parsed
 
 
 _RUNTIME_ACTIONS = {

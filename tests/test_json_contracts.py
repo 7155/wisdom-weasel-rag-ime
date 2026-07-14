@@ -35,6 +35,9 @@ class JsonContractTests(unittest.TestCase):
             "agent-artifact-inspection.v1.json",
             "agent-room-intercom.v1.json",
             "agent-control-bootstrap.v1.json",
+            "management-work-preview.v1.json",
+            "management-work-receipt.v1.json",
+            "management-work-error.v1.json",
         ):
             with self.subTest(name=name):
                 self.assertEqual(load_contract(name)["type"], "object")
