@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import ipaddress
 import json
 import os
@@ -25,6 +26,15 @@ from .active_rag_service import (
     ActiveRagStartRequest,
     active_rag_sensitive_text_blocked,
 )
+from .agent_service import AgentService, agent_service_from_settings
+from .agent_routes import (
+    agent_approval_route,
+    agent_media_route,
+    agent_room_route,
+    agent_session_route,
+    agent_subagent_route,
+)
+from .agent_tools import ControlToolGateway
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .cli import seed_demo_memories
@@ -50,8 +60,14 @@ from .management_service import ManagementService, page_request
 from .memory_book_compiler import (
     apply_stored_memory_book_run,
     build_memory_book_source_bundle,
+    find_newer_applied_memory_book_run,
+    find_memory_book_draft_for_bundle,
+    memory_compile_due,
     inspect_memory_book_plan,
     memory_book_plan_from_compile_output,
+    memory_book_plan_from_stored_run,
+    memory_book_run_is_stale,
+    memory_book_run_payload,
     rollback_memory_book_run,
     store_memory_book_plan,
     update_stored_memory_book_diff,
@@ -122,6 +138,20 @@ def _origin_matches_host(origin: str, host_header: str) -> bool:
     return bool(origin_host and request_host and origin_host == request_host)
 
 
+def _memory_book_operation_label(operation: str) -> str:
+    return {
+        "upsert_semantic_group": "更新主题分组",
+        "upsert_semantic_tag": "更新标签",
+        "upsert_memory_book": "更新工具书",
+        "upsert_memory_atom": "更新记忆条目",
+        "upsert_tag_edge": "更新标签关系",
+        "merge_semantic_tag": "合并标签",
+        "add_phrase_candidate": "新增词表提案",
+        "add_negative_phrase": "新增负向记忆",
+        "supersede_memory": "替代旧记忆",
+    }.get(operation, "整理记忆")
+
+
 @dataclass(frozen=True)
 class DebugServerConfig:
     host: str = "127.0.0.1"
@@ -143,6 +173,7 @@ class DebugServerConfig:
     rime_user_dir: Path = Path.home() / "Library" / "Rime"
     rime_lexicon_backup_root: Path = Path.home() / "Library" / "Application Support" / "RagIme" / "LexiconBackups"
     active_rag_trace_path: Path | None = None
+    agent_service: AgentService | None = None
 
 
 @dataclass
@@ -195,6 +226,12 @@ class DebugImeService:
             database_organizer=self._knowledge_workbench_database_organizer,
             notion_client=NotionAsyncKnowledgeClient(load_notion_knowledge_config()),
         )
+        self._agent_managed_by_settings = config.agent_service is None
+        self.agent = config.agent_service or agent_service_from_settings(
+            config.db_path,
+            self.settings_store.get_settings(include_sensitive=True),
+            project=config.project,
+        )
         self._runtime_command_runner = config.runtime_command_runner or subprocess.run
         self._rime_cache: dict[str, _RimeSuggestCacheEntry] = {}
         self._rime_inflight: dict[str, _RimeSuggestInflightEntry] = {}
@@ -222,6 +259,16 @@ class DebugImeService:
             last_prediction_provider=self._last_management_prediction,
             cache_invalidator=self._clear_rime_cache,
         )
+        self.agent_tools = ControlToolGateway(
+            sessions=self.agent.sessions,
+            management=self.management,
+            core=self.core,
+            project=config.project,
+            facade=self,
+            delegation=self.agent.delegation,
+        )
+        self.agent.bind_approval_executor(self.agent_tools.apply_approval)
+        self.agent.bind_memory_maintenance_probe(self.agent_memory_maintenance_status)
         self.frontend_gateway = FrontendGateway(
             suggest_handler=self.rime_suggest,
             selection_handler=self.rime_select,
@@ -338,7 +385,7 @@ class DebugImeService:
         }
 
     def settings(self) -> dict[str, object]:
-        settings = self.settings_store.get_settings()
+        settings = self._settings_with_agent_authority(self.settings_store.get_settings())
         snapshot = self.runtime_config_snapshot()
         return {
             **settings_response(settings),
@@ -371,11 +418,17 @@ class DebugImeService:
             confirm_text=_string(payload.get("confirmText")),
         )
         persisted = self.settings_store.get_settings(include_sensitive=True)
+        agent_sync = None
+        if self._agent_managed_by_settings and any(key.startswith("agent.pi.") for key in result.changed_keys):
+            agent_sync = self._sync_agent_settings(
+                persisted,
+                updated_by=_string(payload.get("updatedBy")) or "local-console",
+            )
         snapshot = self.runtime_config_snapshot(settings=persisted)
         _apply_pinyin_settings_to_process_env(snapshot.effective_settings(persisted))
         self._clear_rime_cache()
         response = {
-            **settings_response(result.settings),
+            **settings_response(self._settings_with_agent_authority(result.settings)),
             "auditId": result.audit_id,
             "changedKeys": list(result.changed_keys),
             **self.management.settings_changed(
@@ -393,17 +446,25 @@ class DebugImeService:
             active_settings=active_settings,
             changed_keys=tuple(result.changed_keys),
         )
+        if agent_sync is not None:
+            response["agentSync"] = agent_sync
         return response
 
     def settings_reset_section(self, payload: dict[str, Any]) -> dict[str, object]:
         section = _string(payload.get("section"))
         result = self.settings_store.reset_section(section, updated_by=_string(payload.get("updatedBy")) or "local-console")
         persisted = self.settings_store.get_settings(include_sensitive=True)
+        agent_sync = None
+        if self._agent_managed_by_settings and section == "agent":
+            agent_sync = self._sync_agent_settings(
+                persisted,
+                updated_by=_string(payload.get("updatedBy")) or "local-console",
+            )
         snapshot = self.runtime_config_snapshot(settings=persisted)
         _apply_pinyin_settings_to_process_env(snapshot.effective_settings(persisted))
         self._clear_rime_cache()
         response = {
-            **settings_response(result.settings),
+            **settings_response(self._settings_with_agent_authority(result.settings)),
             "auditId": result.audit_id,
             "changedKeys": list(result.changed_keys),
             "section": section,
@@ -422,7 +483,87 @@ class DebugImeService:
             active_settings=active_settings,
             changed_keys=tuple(result.changed_keys),
         )
+        if agent_sync is not None:
+            response["agentSync"] = agent_sync
         return response
+
+    def _settings_with_agent_authority(
+        self,
+        settings: dict[str, object],
+    ) -> dict[str, object]:
+        result = copy.deepcopy(settings)
+        snapshot = self.agent.configuration()["configuration"]
+        configuration = snapshot["configuration"]
+        runtime = configuration["runtime"]
+        defaults = configuration["sessionDefaults"]
+        coordination = configuration["coordination"]
+        agent = result.setdefault("agent", {})
+        if not isinstance(agent, dict):
+            agent = {}
+            result["agent"] = agent
+        pi = agent.setdefault("pi", {})
+        if not isinstance(pi, dict):
+            pi = {}
+            agent["pi"] = pi
+        pi.update(
+            {
+                "enabled": runtime["enabled"],
+                "startup": runtime["startup"],
+                "idleTimeoutSeconds": runtime["idleTimeoutSeconds"],
+                "resumeLastSession": defaults["resumeLastSession"],
+                "defaultRoleId": defaults["roleId"],
+                "toolProfile": defaults["toolProfileVersion"],
+                "coordinatorEnabled": coordination["enabled"],
+            }
+        )
+        return result
+
+    def _sync_agent_settings(
+        self,
+        settings: dict[str, object],
+        *,
+        updated_by: str,
+    ) -> dict[str, object]:
+        agent = settings.get("agent") if isinstance(settings.get("agent"), dict) else {}
+        pi = agent.get("pi") if isinstance(agent.get("pi"), dict) else {}
+        snapshot = self.agent.configuration()["configuration"]
+        current = snapshot["configuration"]
+        desired = {
+            "runtime.enabled": bool(pi.get("enabled")),
+            "runtime.startup": _string(pi.get("startup")) or "lazy",
+            "runtime.idleTimeoutSeconds": _bounded_int(
+                pi.get("idleTimeoutSeconds"),
+                default=900,
+                minimum=0,
+                maximum=86_400,
+            ),
+            "sessionDefaults.resumeLastSession": bool(pi.get("resumeLastSession")),
+            "sessionDefaults.roleId": _string(pi.get("defaultRoleId")) or "zhiyou-v1",
+            "sessionDefaults.toolProfileVersion": (
+                _string(pi.get("toolProfile")) or "control-center-v1"
+            ),
+            "coordination.enabled": bool(pi.get("coordinatorEnabled")),
+        }
+        changes = {
+            key: value
+            for key, value in desired.items()
+            if _nested_agent_configuration_value(current, key) != value
+        }
+        if not changes:
+            return {
+                "schemaVersion": "rag-ime.agent-configuration-update.v1",
+                "ok": True,
+                "changedKeys": [],
+                "configuration": snapshot,
+                "event": None,
+            }
+        return self.agent.update_configuration(
+            {
+                "expectedRevision": snapshot["revision"],
+                "changes": changes,
+                "updatedBy": updated_by,
+            }
+        )
 
     def _last_management_prediction(self) -> dict[str, object]:
         if not self._prediction_live_trace:
@@ -1618,6 +1759,31 @@ class DebugImeService:
                 since_days=30,
                 limit=120,
             )
+            existing = find_memory_book_draft_for_bundle(
+                conn,
+                project=request.project,
+                bundle_hash=str(bundle.get("bundleHash") or ""),
+            )
+        if existing is not None:
+            plan = memory_book_plan_from_stored_run(existing)
+            validation = inspect_memory_book_plan(plan)
+            return {
+                "schemaVersion": "rag-ime.knowledge-database-organize.v1",
+                "ok": bool(validation.get("ok")),
+                "dryRun": True,
+                "applySupported": True,
+                "applyRequiresReview": True,
+                "storedDraft": True,
+                "reusedDraft": True,
+                "source": {
+                    "bundleHash": bundle.get("bundleHash"),
+                    "eventCount": len(bundle.get("recentEvents") or []),
+                    "redactionStats": bundle.get("redactionStats"),
+                },
+                "plan": plan,
+                "validation": validation,
+                "storedRun": existing,
+            }
         config = load_deepseek_config()
         organizer = DeepSeekMemoryOrganizer(config)
         compile_output = organizer.compile_memory_book(
@@ -1636,13 +1802,19 @@ class DebugImeService:
         stored_run: dict[str, object] = {}
         if validation.get("ok"):
             with self.core._connect() as conn:  # type: ignore[attr-defined]
-                stored_run = store_memory_book_plan(conn, plan)
+                stored_run = store_memory_book_plan(
+                    conn,
+                    plan,
+                    supersede_project_drafts=True,
+                )
         return {
             "schemaVersion": "rag-ime.knowledge-database-organize.v1",
             "ok": bool(validation.get("ok")),
             "dryRun": True,
             "applySupported": True,
             "applyRequiresReview": True,
+            "storedDraft": bool(stored_run),
+            "reusedDraft": False,
             "source": {
                 "bundleHash": bundle.get("bundleHash"),
                 "eventCount": len(bundle.get("recentEvents") or []),
@@ -1652,6 +1824,207 @@ class DebugImeService:
             "validation": validation,
             "storedRun": stored_run,
         }
+
+    def agent_memory_maintenance_prepare(self, payload: dict[str, Any]) -> dict[str, object]:
+        instruction = compact_whitespace(_string(payload.get("instruction")))[:800] or (
+            "根据新增最终消息和已验证工具回执增量整理长期记忆；只生成可审阅草案，不自动应用。"
+        )
+        request = KnowledgeWorkbenchRequest(
+            question=instruction,
+            mode="database_organize",
+            project=_string(payload.get("project")) or self.config.project,
+            app="com.rag-ime.control.agent",
+            client_id="pi-control-agent",
+        )
+        return self._knowledge_workbench_database_organizer(request)
+
+    def agent_memory_maintenance_run(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.agent-memory-maintenance-run.v1",
+                "ok": False,
+                "error": "local SQLite core required",
+            }
+        run_id = _string(payload.get("runId"))
+        if not run_id:
+            raise ValueError("runId is required")
+        requested_project = _string(payload.get("project")) or self.config.project
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            run = memory_book_run_payload(conn, run_id=run_id)
+            if not run.get("provider"):
+                raise ValueError(f"memory book run not found: {run_id}")
+            metadata = dict(run.get("metadata") or {})
+            project = _string(metadata.get("project"))
+            if project != requested_project:
+                raise ValueError("memory book run is outside the current project")
+            stale = memory_book_run_is_stale(conn, run=run)
+            newer_applied_run = find_newer_applied_memory_book_run(conn, run_id=run_id)
+        diffs = [dict(item) for item in list(run.get("diffs") or []) if isinstance(item, dict)]
+        status_counts: dict[str, int] = {}
+        operation_counts: dict[str, int] = {}
+        changes: list[dict[str, object]] = []
+        for diff in diffs:
+            status = _string(diff.get("status")) or "unknown"
+            operation = _string(diff.get("op")) or "unknown"
+            status_counts[status] = status_counts.get(status, 0) + 1
+            operation_counts[operation] = operation_counts.get(operation, 0) + 1
+            diff_payload = dict(diff.get("payload") or {})
+            title = next(
+                (
+                    compact_whitespace(_string(diff_payload.get(key)))
+                    for key in ("title", "name", "phrase", "bookKey", "tag", "text")
+                    if compact_whitespace(_string(diff_payload.get(key)))
+                ),
+                compact_whitespace(_string(diff.get("targetId"))) or operation,
+            )
+            detail = next(
+                (
+                    compact_whitespace(_string(diff_payload.get(key)))
+                    for key in ("summary", "description", "reason", "text")
+                    if compact_whitespace(_string(diff_payload.get(key)))
+                ),
+                "",
+            )
+            source_ids = diff_payload.get("sourceEventIds")
+            changes.append(
+                {
+                    "diffId": int(diff.get("diffId") or 0),
+                    "operation": operation,
+                    "operationLabel": _memory_book_operation_label(operation),
+                    "status": status,
+                    "selected": status != "rejected",
+                    "title": title[:120],
+                    "detail": detail[:240],
+                    "sourceCount": len(source_ids) if isinstance(source_ids, list) else 0,
+                }
+            )
+        revision_hash = "sha256:" + hashlib.sha256(
+            json.dumps(run, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        run_status = _string(run.get("status"))
+        pending_count = status_counts.get("pending", 0) + status_counts.get("approved", 0)
+        applied_count = status_counts.get("applied", 0)
+        return {
+            "schemaVersion": "rag-ime.agent-memory-maintenance-run.v1",
+            "ok": True,
+            "revisionHash": revision_hash,
+            "stale": stale,
+            "canApply": run_status == "draft" and not stale and pending_count > 0,
+            "canRollback": (
+                run_status in {"applied", "partial"}
+                and applied_count > 0
+                and newer_applied_run is None
+            ),
+            "newerAppliedRunId": "" if newer_applied_run is None else str(newer_applied_run["runId"]),
+            "rollbackBlockedReason": (
+                ""
+                if newer_applied_run is None
+                else "newer_applied_memory_run_must_be_rolled_back_first"
+            ),
+            "run": {
+                "runId": run_id,
+                "status": run_status,
+                "summary": _string(run.get("summary"))[:240],
+                "provider": _string(run.get("provider")),
+                "model": _string(run.get("model")),
+                "bundleHash": _string(metadata.get("bundleHash")),
+                "sourceCursor": dict(metadata.get("sourceCursor") or {}),
+                "diffCount": len(diffs),
+                "pendingDiffCount": pending_count,
+                "appliedDiffCount": applied_count,
+                "statusCounts": status_counts,
+                "operationCounts": operation_counts,
+                "changes": changes[:80],
+            },
+        }
+
+    def agent_memory_maintenance_status(self, payload: dict[str, Any]) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
+                "ok": False,
+                "error": "local SQLite core required",
+            }
+        project = _string(payload.get("project")) or self.config.project
+        limit = _bounded_int(payload.get("limit"), default=8, minimum=1, maximum=30)
+        current_ms = int(time.time() * 1000)
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            last_event_row = conn.execute(
+                """
+                SELECT MAX(created_at_ms)
+                FROM input_events
+                WHERE (? = '' OR project = ? OR project = '')
+                """,
+                (project, project),
+            ).fetchone()
+            last_event_ms = int(last_event_row[0] or 0)
+            idle_ms = max(0, current_ms - last_event_ms) if last_event_ms else 0
+            due, reason, compile_state = memory_compile_due(
+                conn,
+                project=project,
+                idle_ms=idle_ms,
+                current_ms=current_ms,
+            )
+            rows = conn.execute(
+                """
+                SELECT r.run_id, r.created_at_ms, r.status, r.summary, r.metadata_json,
+                       (SELECT COUNT(*) FROM memory_cleanup_diffs d WHERE d.run_id = r.run_id) AS diff_count
+                FROM memory_cleanup_runs r
+                WHERE r.run_id LIKE 'memory_book_%'
+                ORDER BY r.created_at_ms DESC, r.id DESC
+                LIMIT 100
+                """
+            ).fetchall()
+        runs: list[dict[str, object]] = []
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            if compact_whitespace(str(metadata.get("project") or "")) != project:
+                continue
+            source_cursor = dict(metadata.get("sourceCursor") or {})
+            run_status = str(row["status"] or "")
+            try:
+                to_event_id = int(source_cursor.get("toEventId") or 0)
+            except (TypeError, ValueError):
+                to_event_id = 0
+            if (
+                run_status == "draft"
+                and to_event_id > 0
+                and to_event_id <= int(compile_state.get("lastCompiledEventId") or 0)
+            ):
+                run_status = "superseded"
+            runs.append(
+                {
+                    "runId": str(row["run_id"]),
+                    "createdAtMs": int(row["created_at_ms"] or 0),
+                    "status": run_status,
+                    "summary": compact_whitespace(str(row["summary"] or ""))[:240],
+                    "diffCount": int(row["diff_count"] or 0),
+                    "bundleHash": str(metadata.get("bundleHash") or ""),
+                    "sourceCursor": source_cursor,
+                }
+            )
+            if len(runs) >= limit:
+                break
+        response = {
+            "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
+            "ok": True,
+            "policy": "review",
+            "autoApply": False,
+            "scheduledDraftOnly": True,
+            "due": due,
+            "dueReason": reason,
+            "idleMs": idle_ms,
+            "compileState": compile_state,
+            "pendingDraftCount": sum(1 for item in runs if item["status"] == "draft"),
+            "runs": runs,
+        }
+        validate_contract(response, "agent-memory-maintenance-status.v1.json")
+        return response
 
     def rag_core_v3_query_preview(self, payload: dict[str, Any]) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
@@ -3906,6 +4279,31 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/events/stream":
             self._stream_management_events()
             return
+        agent_session_id, agent_action = agent_session_route(parsed.path)
+        if agent_session_id and agent_action == "events":
+            query = parse_qs(parsed.query or "")
+            self._stream_agent_events(
+                agent_session_id,
+                after_event_id=(
+                    self.headers.get("Last-Event-ID", "")
+                    or _query_first(query, "afterEventId")
+                    or _query_first(query, "resumeToken")
+                ),
+            )
+            return
+        agent_room_id, room_action = agent_room_route(parsed.path)
+        subagent_run_id, subagent_action = agent_subagent_route(parsed.path)
+        if agent_room_id and room_action == "events":
+            query = parse_qs(parsed.query or "")
+            self._stream_agent_room_events(
+                agent_room_id,
+                after_event_id=(
+                    self.headers.get("Last-Event-ID", "")
+                    or _query_first(query, "afterEventId")
+                    or _query_first(query, "resumeToken")
+                ),
+            )
+            return
         if parsed.path in ("/api/health", "/health"):
             self._write_json(HTTPStatus.OK, self.service.health())
             return
@@ -3918,6 +4316,144 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
+        if parsed.path == "/api/agent/runtime":
+            self._write_json(HTTPStatus.OK, self.service.agent.runtime_status())
+            return
+        if parsed.path == "/api/agent/sessions":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_sessions(
+                    {
+                        "includeArchived": _query_first(query, "includeArchived"),
+                        "includeInternal": _query_first(query, "includeInternal"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/rooms":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_rooms(
+                    {
+                        "includeArchived": _query_first(query, "includeArchived"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if agent_room_id and not room_action:
+            self._write_json(HTTPStatus.OK, self.service.agent.room(agent_room_id))
+            return
+        if parsed.path == "/api/agent/tools":
+            self._write_json(HTTPStatus.OK, self.service.agent_tools.manifests())
+            return
+        if parsed.path == "/api/agent/roles":
+            self._write_json(HTTPStatus.OK, self.service.agent.list_roles())
+            return
+        if parsed.path == "/api/agent/subagents/templates":
+            self._write_json(HTTPStatus.OK, self.service.agent.list_agent_templates())
+            return
+        if parsed.path == "/api/agent/subagents/runs":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.delegation_status(
+                    _query_first(query, "sessionId"),
+                    {"limit": _query_first(query, "limit")},
+                ),
+            )
+            return
+        if subagent_run_id and not subagent_action:
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.delegation_status(
+                    _query_first(query, "sessionId"),
+                    {"runId": subagent_run_id},
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/approvals":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_approvals(
+                    {
+                        "sessionId": _query_first(query, "sessionId"),
+                        "state": _query_first(query, "state"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/memory-sources":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_memory_sources(
+                    {
+                        "sessionId": _query_first(query, "sessionId"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/memory-maintenance":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent_memory_maintenance_status(
+                    {
+                        "project": _query_first(query, "project"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/media":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.list_media(
+                    {
+                        "sessionId": _query_first(query, "sessionId"),
+                        "limit": _query_first(query, "limit"),
+                    }
+                ),
+            )
+            return
+        media_id, media_action = agent_media_route(parsed.path)
+        if media_id:
+            try:
+                session_id = _query_first(query, "sessionId")
+                if media_action == "content":
+                    receipt, content = self.service.agent.media_content(media_id, session_id=session_id)
+                    self._write_binary(
+                        HTTPStatus.OK,
+                        content,
+                        mime_type=str(receipt["mimeType"]),
+                        etag=str(receipt["sha256"]),
+                    )
+                else:
+                    self._write_json(
+                        HTTPStatus.OK,
+                        self.service.agent.media_receipt(media_id, session_id=session_id),
+                    )
+            except Exception as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        approval_id, approval_action = agent_approval_route(parsed.path)
+        if approval_id and not approval_action:
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "schemaVersion": "rag-ime.agent-approval-get.v1",
+                    "ok": True,
+                    "approval": self.service.agent.sessions.get_approval(approval_id),
+                },
+            )
+            return
+        if agent_session_id and agent_action == "messages":
+            self._write_json(HTTPStatus.OK, self.service.agent.messages(agent_session_id))
+            return
+        if agent_session_id and agent_action == "models":
+            self._write_json(HTTPStatus.OK, self.service.agent.model_catalog(agent_session_id))
+            return
         if parsed.path == "/api/overview":
             self._write_json(HTTPStatus.OK, self.service.management.overview())
             return
@@ -4275,13 +4811,123 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib API
         try:
-            path = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            path = parsed.path
+            if path == "/api/agent/media/import":
+                security_error = self._management_post_security_error(path, require_json=False)
+                if security_error is not None:
+                    self._write_json(HTTPStatus.FORBIDDEN, security_error)
+                    return
+                query = parse_qs(parsed.query or "")
+                if self.headers.get("Content-Encoding", "").strip():
+                    raise ValueError("compressed agent media uploads are not accepted")
+                mime_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                maximum = self.service.agent.media.max_bytes_for_mime(mime_type)
+                length = int(self.headers.get("Content-Length") or "0")
+                if length <= 0:
+                    raise ValueError("agent media import requires a non-empty Content-Length")
+                if length > maximum:
+                    raise ValueError(f"agent media exceeds {maximum} byte limit")
+                data = self.rfile.read(length)
+                if len(data) != length:
+                    raise ValueError("agent media upload ended before Content-Length")
+                self._write_json(
+                    HTTPStatus.CREATED,
+                    self.service.agent.import_media(
+                        session_id=_query_first(query, "sessionId"),
+                        data=data,
+                        mime_type=mime_type,
+                        file_name=_query_first(query, "fileName"),
+                    ),
+                )
+                return
+            if path == "/api/agent/tool/execute":
+                provided = self.headers.get("X-RAG-IME-Agent-Token", "")
+                expected = self.service.agent.tool_token
+                if not provided or not hmac.compare_digest(provided, expected):
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "schemaVersion": "rag-ime.agent-tool-error.v1",
+                            "ok": False,
+                            "error": "agent capability token required",
+                        },
+                    )
+                    return
+                self._write_json(HTTPStatus.OK, self.service.agent_tools.execute(self._read_json()))
+                return
+            if path == "/api/agent/tool/approval-result":
+                provided = self.headers.get("X-RAG-IME-Agent-Token", "")
+                expected = self.service.agent.tool_token
+                if not provided or not hmac.compare_digest(provided, expected):
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "schemaVersion": "rag-ime.agent-tool-error.v1",
+                            "ok": False,
+                            "error": "agent capability token required",
+                        },
+                    )
+                    return
+                self._write_json(HTTPStatus.OK, self.service.agent.approval_result(self._read_json()))
+                return
             security_error = self._management_post_security_error(path)
             if security_error is not None:
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
             payload = self._read_json()
-            if path in ("/api/suggest", "/suggest"):
+            agent_session_id, agent_action = agent_session_route(path)
+            agent_room_id, room_action = agent_room_route(path)
+            subagent_run_id, subagent_action = agent_subagent_route(path)
+            approval_id, approval_action = agent_approval_route(path)
+            if path == "/api/agent/runtime/ensure":
+                self._write_json(HTTPStatus.OK, self.service.agent.ensure_runtime(payload))
+            elif path == "/api/agent/deep-search":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.agent.deep_search(payload))
+            elif path == "/api/agent/sessions":
+                self._write_json(HTTPStatus.CREATED, self.service.agent.create_session(payload))
+            elif path == "/api/agent/rooms":
+                self._write_json(HTTPStatus.CREATED, self.service.agent.create_room(payload))
+            elif path == "/api/agent/subagents/runs":
+                session_id = str(payload.pop("sessionId", ""))
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.delegate_tasks(session_id, payload),
+                )
+            elif subagent_run_id and subagent_action == "abort":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.abort_delegation(
+                        str(payload.get("sessionId") or ""),
+                        {"runId": subagent_run_id},
+                    ),
+                )
+            elif agent_room_id and room_action == "messages":
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.post_room_message(agent_room_id, payload),
+                )
+            elif agent_session_id and agent_action == "prompt":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.agent.prompt(agent_session_id, payload))
+            elif agent_session_id and agent_action == "abort":
+                self._write_json(HTTPStatus.OK, self.service.agent.abort(agent_session_id))
+            elif agent_session_id and agent_action == "compact":
+                self._write_json(HTTPStatus.OK, self.service.agent.compact(agent_session_id, payload))
+            elif agent_session_id and agent_action == "model":
+                self._write_json(HTTPStatus.OK, self.service.agent.select_model(agent_session_id, payload))
+            elif agent_session_id and agent_action == "thinking":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.select_thinking_level(agent_session_id, payload),
+                )
+            elif approval_id and approval_action == "decision":
+                self._write_json(HTTPStatus.OK, self.service.agent.decide_approval(approval_id, payload))
+            elif approval_id and approval_action == "external-result":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.finalize_external_approval(approval_id, payload),
+                )
+            elif path in ("/api/suggest", "/suggest"):
                 self._write_json(HTTPStatus.OK, self.service.suggest(payload))
             elif path in ("/api/frontend/v1/suggest", "/frontend/v1/suggest"):
                 validate_contract(payload, "frontend-suggest-request.v1.json")
@@ -4474,6 +5120,40 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # pragma: no cover - exercised through browser/manual debugging
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
 
+    def do_PATCH(self) -> None:  # noqa: N802 - stdlib API
+        try:
+            path = urlparse(self.path).path
+            security_error = self._management_post_security_error(path)
+            if security_error is not None:
+                self._write_json(HTTPStatus.FORBIDDEN, security_error)
+                return
+            session_id, action = agent_session_route(path)
+            room_id, room_action = agent_room_route(path)
+            if room_id and not room_action:
+                self._write_json(HTTPStatus.OK, self.service.agent.update_room(room_id, self._read_json()))
+                return
+            if not session_id or action:
+                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                return
+            self._write_json(HTTPStatus.OK, self.service.agent.update_session(session_id, self._read_json()))
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+
+    def do_DELETE(self) -> None:  # noqa: N802 - stdlib API
+        try:
+            path = urlparse(self.path).path
+            security_error = self._management_post_security_error(path)
+            if security_error is not None:
+                self._write_json(HTTPStatus.FORBIDDEN, security_error)
+                return
+            session_id, action = agent_session_route(path)
+            if not session_id or action:
+                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
+                return
+            self._write_json(HTTPStatus.OK, self.service.agent.delete_session(session_id))
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+
     def log_message(self, fmt: str, *args: object) -> None:
         if self.path.startswith(("/api/active-rag/status", "/api/active-rag/session", "/api/knowledge/status", "/api/knowledge/session")):
             return
@@ -4492,11 +5172,52 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             return
 
-    def _management_post_security_error(self, path: str) -> dict[str, object] | None:
+    def _stream_agent_events(self, session_id: str, *, after_event_id: str = "") -> None:
+        stream = self.service.agent.subscribe_events(
+            session_id,
+            after_event_id=after_event_id,
+        )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for chunk in stream:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _stream_agent_room_events(self, room_id: str, *, after_event_id: str = "") -> None:
+        stream = self.service.agent.subscribe_room_events(
+            room_id,
+            after_event_id=after_event_id,
+        )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for chunk in stream:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _management_post_security_error(
+        self,
+        path: str,
+        *,
+        require_json: bool = True,
+    ) -> dict[str, object] | None:
         if not path.startswith("/api/"):
             return None
         settings = self.service.management_security_settings()
-        if settings.get("postRequiresJson") is True:
+        if require_json and settings.get("postRequiresJson") is True:
             content_type = self.headers.get("Content-Type", "")
             if "application/json" not in content_type.lower():
                 return {"schemaVersion": "rag-ime.management-security.v3", "ok": False, "error": "POST requires application/json"}
@@ -4533,6 +5254,28 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 
+    def _write_binary(
+        self,
+        status: HTTPStatus,
+        body: bytes,
+        *,
+        mime_type: str,
+        etag: str,
+    ) -> None:
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Content-Disposition", "inline")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("ETag", f'"{etag}"')
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
 class QuietThreadingHTTPServer(ThreadingHTTPServer):
     """Ignore normal client disconnects without dumping multi-line tracebacks."""
 
@@ -4554,7 +5297,11 @@ def run_debug_server(config: DebugServerConfig) -> None:
     url = f"http://{config.host}:{config.port}/api/health"
     print(f"RAG IME {config.server_name} API: {url}")
     print(f"DB: {config.db_path}")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        service.agent.close()
 
 
 def _stable_debug_hash(text: str) -> str:

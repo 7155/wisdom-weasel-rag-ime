@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RagAndModelsPage: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var navigation: ControlNavigationModel
     @State private var confirmingDatabaseApply = false
     @State private var confirmingDatabaseRollback = false
     @State private var editingDatabaseDiff: [String: JSONValue] = [:]
@@ -127,7 +128,7 @@ struct RagAndModelsPage: View {
                     subtitle: VoiceProviderConfigStore.read().title,
                     symbol: "waveform.and.mic"
                 ) {
-                    model.destination = .voiceInput
+                    navigation.destination = .voiceInput
                 }
                 Divider()
                 instantCompletionEditor

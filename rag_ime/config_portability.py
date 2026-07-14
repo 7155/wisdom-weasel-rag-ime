@@ -10,7 +10,7 @@ import stat
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Mapping
+from typing import Callable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 import yaml
@@ -305,6 +305,7 @@ def restore_portable_backup(
     confirm_text: str,
     rime_user_dir: str | Path | None = None,
     support_directory: str | Path | None = None,
+    post_restore: Callable[[Path], None] | None = None,
 ) -> dict[str, object]:
     if confirm_text != "RESTORE RAG-IME":
         raise ValueError("restore requires confirmText=RESTORE RAG-IME")
@@ -374,6 +375,12 @@ def restore_portable_backup(
                 provider_metadata,
                 support_directory=support,
             )
+            if post_restore is not None:
+                # External supervisors use this hook to preserve the durable
+                # approval receipt inside the restored database. Keeping the
+                # callback in this rollback boundary prevents a successful
+                # restore from becoming impossible to reconcile after restart.
+                post_restore(target_db)
         except Exception:
             _restore_sqlite(current_snapshot, target_db)
             _restore_optional_files(rime_backups)
@@ -534,18 +541,38 @@ def _apply_model_provider(
     existing = _read_env(path)
     if slot_name == "instant":
         mapping = {
-            "RAG_IME_PREDICTOR_PROVIDER": compact_whitespace(str(slot.get("provider") or existing.get("RAG_IME_PREDICTOR_PROVIDER") or "mlx")),
-            "RAG_IME_PREDICTOR_BASE_URL": compact_whitespace(str(slot.get("endpoint") or existing.get("RAG_IME_PREDICTOR_BASE_URL") or "http://127.0.0.1:8767")),
-            "RAG_IME_PREDICTOR_MODEL": compact_whitespace(str(slot.get("model") or existing.get("RAG_IME_PREDICTOR_MODEL") or "")),
+            "RAG_IME_PREDICTOR_PROVIDER": _provider_field(
+                slot, "provider", fallback=existing.get("RAG_IME_PREDICTOR_PROVIDER") or "mlx"
+            ),
+            "RAG_IME_PREDICTOR_BASE_URL": _provider_field(
+                slot,
+                "endpoint",
+                fallback=existing.get("RAG_IME_PREDICTOR_BASE_URL") or "http://127.0.0.1:8767",
+            ),
+            "RAG_IME_PREDICTOR_MODEL": _provider_field(
+                slot, "model", fallback=existing.get("RAG_IME_PREDICTOR_MODEL") or ""
+            ),
             "RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON": _headers_text(slot.get("headers"), fallback=existing.get("RAG_IME_PREDICTOR_EXTRA_HEADERS_JSON", "")),
         }
         secret_account = MODEL_INSTANT_ACCOUNT
         legacy_secret_names = {"RAG_IME_PREDICTOR_API_KEY"}
     else:
         mapping = {
-            "RAG_IME_KNOWLEDGE_PROVIDER": compact_whitespace(str(slot.get("provider") or existing.get("RAG_IME_KNOWLEDGE_PROVIDER") or "deepseek")),
-            "RAG_IME_DEEPSEEK_BASE_URL": compact_whitespace(str(slot.get("endpoint") or existing.get("RAG_IME_DEEPSEEK_BASE_URL") or "https://api.deepseek.com")),
-            "RAG_IME_DEEPSEEK_MODEL": compact_whitespace(str(slot.get("model") or existing.get("RAG_IME_DEEPSEEK_MODEL") or "deepseek-v4-flash")),
+            "RAG_IME_KNOWLEDGE_PROVIDER": _provider_field(
+                slot,
+                "provider",
+                fallback=existing.get("RAG_IME_KNOWLEDGE_PROVIDER") or "deepseek",
+            ),
+            "RAG_IME_DEEPSEEK_BASE_URL": _provider_field(
+                slot,
+                "endpoint",
+                fallback=existing.get("RAG_IME_DEEPSEEK_BASE_URL") or "https://api.deepseek.com",
+            ),
+            "RAG_IME_DEEPSEEK_MODEL": _provider_field(
+                slot,
+                "model",
+                fallback=existing.get("RAG_IME_DEEPSEEK_MODEL") or "deepseek-v4-flash",
+            ),
             "RAG_IME_KNOWLEDGE_EXTRA_HEADERS_JSON": _headers_text(slot.get("headers"), fallback=existing.get("RAG_IME_KNOWLEDGE_EXTRA_HEADERS_JSON", "")),
             "RAG_IME_DEEPSEEK_ACTIVE_RAG": "1",
         }
@@ -562,6 +589,12 @@ def _apply_model_provider(
         "secretImportedToKeychain": bool(provided_secret),
         "existingSecretPreserved": not bool(provided_secret),
     }
+
+
+def _provider_field(slot: Mapping[str, object], key: str, *, fallback: str) -> str:
+    if key not in slot:
+        return compact_whitespace(fallback)
+    return compact_whitespace(str(slot.get(key) or ""))
 
 
 def _apply_voice_provider(slot: Mapping[str, object], *, support_directory: Path) -> dict[str, object]:
@@ -581,16 +614,27 @@ def _apply_voice_provider(slot: Mapping[str, object], *, support_directory: Path
             write_keychain_secret(service, account, value)
             imported += 1
     support_directory.mkdir(parents=True, exist_ok=True)
+    provider_path = support_directory / "voice-provider.json"
     _write_json(
-        support_directory / "voice-provider.json",
+        provider_path,
         {"schemaVersion": "rag-ime.voice-provider.v1", "provider": provider},
     )
+    os.chmod(provider_path, 0o600)
     return {
         "configured": True,
         "provider": provider,
         "secretFieldsImportedToKeychain": imported,
         "existingSecretPreserved": not bool(values["access-token"]),
     }
+
+
+def provider_metadata(*, support_directory: str | Path | None = None) -> dict[str, object]:
+    support = (
+        Path(support_directory).expanduser()
+        if support_directory is not None
+        else Path.home() / "Library" / "Application Support" / "RagIme"
+    )
+    return _provider_metadata(support)
 
 
 def _provider_metadata(support_directory: Path) -> dict[str, object]:

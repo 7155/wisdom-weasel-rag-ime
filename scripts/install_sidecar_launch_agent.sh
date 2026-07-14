@@ -9,6 +9,7 @@ LOG_DIR="$HOME/Library/Logs/RagIme"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
 APP_CODE_DIR="$APP_SUPPORT_DIR/app"
 LAUNCH_WRAPPER="$APP_CODE_DIR/sidecar_launch.py"
+RESTORE_SUPERVISOR="$APP_CODE_DIR/portable_restore_supervisor.py"
 DB_PATH="${RAG_IME_DB_PATH:-$APP_SUPPORT_DIR/rag-ime.sqlite}"
 PROJECT="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
@@ -119,6 +120,8 @@ mkdir -p "$PLIST_DIR" "$LOG_DIR" "$(dirname "$DB_PATH")" "$APP_CODE_DIR"
 rm -rf "$APP_CODE_DIR/rag_ime"
 cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
 cp "$ROOT/scripts/sidecar_launch.py" "$LAUNCH_WRAPPER"
+cp "$ROOT/scripts/portable_restore_supervisor.py" "$RESTORE_SUPERVISOR"
+chmod 700 "$RESTORE_SUPERVISOR"
 
 # Keep the explicit high-intelligence route usable after every reinstall. The
 # LaunchAgent cannot inherit an interactive shell's secrets, so install one
@@ -140,6 +143,23 @@ if [[ -n "$MODEL_ENV_SOURCE" && -f "$MODEL_ENV_SOURCE" ]]; then
   chmod 600 "$INSTALLED_MODEL_ENV"
   export RAG_IME_DEEPSEEK_ENV="$INSTALLED_MODEL_ENV"
   export RAG_IME_DEEPSEEK_ACTIVE_RAG="${RAG_IME_DEEPSEEK_ACTIVE_RAG:-1}"
+fi
+
+# Optional Pi-only provider catalogs (for example an OpenCode JSON export) are
+# installed beside the model env with the same owner-only permissions. The
+# Python runtime translates their credentials to child-process environment
+# references; generated Pi models.json files never contain the literal keys.
+PI_PROVIDER_CONFIG_SOURCE="${RAG_IME_PI_PROVIDER_CONFIG:-}"
+if [[ -z "$PI_PROVIDER_CONFIG_SOURCE" && -f "$APP_SUPPORT_DIR/pi-providers.json" ]]; then
+  PI_PROVIDER_CONFIG_SOURCE="$APP_SUPPORT_DIR/pi-providers.json"
+fi
+if [[ -n "$PI_PROVIDER_CONFIG_SOURCE" && -f "$PI_PROVIDER_CONFIG_SOURCE" ]]; then
+  INSTALLED_PI_PROVIDER_CONFIG="$APP_SUPPORT_DIR/pi-providers.json"
+  if [[ "$PI_PROVIDER_CONFIG_SOURCE" != "$INSTALLED_PI_PROVIDER_CONFIG" ]]; then
+    cp "$PI_PROVIDER_CONFIG_SOURCE" "$INSTALLED_PI_PROVIDER_CONFIG"
+  fi
+  chmod 600 "$INSTALLED_PI_PROVIDER_CONFIG"
+  export RAG_IME_PI_PROVIDER_CONFIG="$INSTALLED_PI_PROVIDER_CONFIG"
 fi
 
 ROOT="$ROOT" \
@@ -207,6 +227,7 @@ env_vars = {
     "PYTHONUNBUFFERED": "1",
     "RAG_IME_ROOT": app_code_dir,
     "RAG_IME_SOURCE_ROOT": root,
+    "RAG_IME_APP_SUPPORT_DIR": app_support_dir,
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],
     "RAG_IME_CORE_MODE": os.environ["CORE_MODE"],
     "RAG_IME_RUNTIME_PROFILE": os.environ.get("RAG_IME_RUNTIME_PROFILE", "foreground-rag-proof"),
@@ -297,6 +318,16 @@ preserve_existing_keys = {
     "RAG_IME_DEEPSEEK_ACTIVE_RAG",
     "RAG_IME_DEEPSEEK_POST_COMMIT",
     "RAG_IME_DEEPSEEK_PREVIEW_TOKEN",
+    "RAG_IME_PI_ENABLED",
+    "RAG_IME_PI_EXECUTABLE",
+    "RAG_IME_PI_NODE",
+    "RAG_IME_PI_EXTENSION",
+    "RAG_IME_PI_VERSION",
+    "RAG_IME_PI_PROVIDER",
+    "RAG_IME_PI_MODEL",
+    "RAG_IME_PI_PROVIDER_CONFIG",
+    "RAG_IME_PI_TOOLS",
+    "RAG_IME_PI_IDLE_TIMEOUT_SECONDS",
     "RAG_IME_NOTION_ENV",
     "RAG_IME_NOTION_WORKER_URL",
     "RAG_IME_NOTION_STATUS_URL",
@@ -433,6 +464,16 @@ for key in (
     "RAG_IME_DEEPSEEK_ACTIVE_RAG",
     "RAG_IME_DEEPSEEK_POST_COMMIT",
     "RAG_IME_DEEPSEEK_PREVIEW_TOKEN",
+    "RAG_IME_PI_ENABLED",
+    "RAG_IME_PI_EXECUTABLE",
+    "RAG_IME_PI_NODE",
+    "RAG_IME_PI_EXTENSION",
+    "RAG_IME_PI_VERSION",
+    "RAG_IME_PI_PROVIDER",
+    "RAG_IME_PI_MODEL",
+    "RAG_IME_PI_PROVIDER_CONFIG",
+    "RAG_IME_PI_TOOLS",
+    "RAG_IME_PI_IDLE_TIMEOUT_SECONDS",
     "RAG_IME_NOTION_ENV",
     "RAG_IME_NOTION_WORKER_URL",
     "RAG_IME_NOTION_STATUS_URL",

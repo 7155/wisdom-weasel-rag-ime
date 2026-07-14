@@ -30,6 +30,167 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn("defaultSize(width: 1280, height: 820)", text)
         self.assertIn("frame(minWidth: 1080, minHeight: 720)", text)
 
+    def test_agent_inspector_exposes_typed_tool_catalog_and_native_receipts(self) -> None:
+        root = ROOT / "macos" / "RagImeControl"
+        api = (root / "API" / "AgentAPIClient.swift").read_text(encoding="utf-8")
+        models = (root / "Models" / "AgentModels.swift").read_text(encoding="utf-8")
+        store = (root / "Stores" / "AgentConversationStore.swift").read_text(encoding="utf-8")
+        page = (root / "Pages" / "AgentConversationPage.swift").read_text(encoding="utf-8")
+
+        self.assertIn('get(path: ["api", "agent", "tools"])', api)
+        self.assertIn('get(path: ["api", "agent", "roles"])', api)
+        self.assertIn('get(path: ["api", "agent", "sessions", sessionId, "models"])', api)
+        self.assertIn('path: ["api", "agent", "sessions", sessionId, "model"]', api)
+        self.assertIn('path: ["api", "agent", "sessions", sessionId, "thinking"]', api)
+        self.assertIn('path: ["api", "agent", "memory-maintenance"]', api)
+        self.assertIn("struct AgentMemoryMaintenanceStatus", models)
+        self.assertIn("struct AgentModelProvider", models)
+        self.assertIn("struct AgentModelCatalogResponse", models)
+        self.assertIn("struct AgentPersonaVisualProfile", models)
+        self.assertIn("struct AgentPersonaDefaults", models)
+        self.assertIn("selectableModes", models)
+        self.assertIn("case memoryMaintenanceUpdated", models)
+        self.assertIn("@Published private(set) var toolCatalog", store)
+        self.assertIn("@Published private(set) var roleCatalog", store)
+        self.assertIn("@Published private(set) var memoryMaintenance", store)
+        self.assertIn("@Published private(set) var modelCatalog", store)
+        self.assertIn("func selectModel(_ model: AgentModelOption) async", store)
+        self.assertIn("func selectThinkingLevel(_ level: String) async", store)
+        self.assertIn("func switchSessionMode(_ mode: String) async", store)
+        self.assertIn('case tools = "工具"', page)
+        self.assertIn("toolsInspector", page)
+        self.assertIn('tool.approvalOperationCount == 0', page)
+        self.assertIn('"\\(tool.approvalOperationCount) 项需确认"', page)
+        self.assertIn('Text("\\(tool.operations.count) 个动作")', page)
+        self.assertIn("AgentApprovalCard", page)
+        self.assertIn("AgentApprovalReceiptCard", page)
+        self.assertIn("remainingSeconds", page)
+        self.assertIn("记忆来源检查点", page)
+        self.assertIn("等待异步整理", page)
+        self.assertIn("memoryMaintenanceBand", page)
+        self.assertIn("定时任务只生成草案，不会自动应用", page)
+        self.assertIn('case ("ime_memory", "maintenance_preview")', store)
+        self.assertIn('case ("ime_memory", "maintenance_review")', store)
+        self.assertIn('case ("ime_memory", "maintenance_apply")', store)
+        self.assertIn('case ("ime_memory", "maintenance_rollback")', store)
+        self.assertIn('case ("ime_input", "preview_settings")', store)
+        self.assertIn('case ("ime_input", "apply_settings")', store)
+        self.assertIn('case ("ime_input", "lexicon_apply")', store)
+        self.assertIn('case ("ime_voice", "provider_preview")', store)
+        self.assertIn('case ("ime_voice", "provider_apply")', store)
+        self.assertIn('case ("ime_voice", "provider_rollback")', store)
+        self.assertIn('case ("ime_runtime", "pause_ai")', store)
+        self.assertIn('case ("ime_runtime", "restart_sidecar")', store)
+        self.assertIn('case ("ime_runtime", "restart_predictor")', store)
+        self.assertIn('case ("ime_models", "profile_preview")', store)
+        self.assertIn('case ("ime_models", "profile_apply")', store)
+        self.assertIn('case ("ime_models", "profile_rollback")', store)
+        self.assertIn("记忆草案已应用", page)
+        self.assertIn("记忆整理已回滚", page)
+        self.assertIn('Button("让\\(selectedPersona.displayName)审阅"', page)
+        self.assertIn("申请应用", page)
+        self.assertIn("生成审阅草案", page)
+        self.assertIn('if approval.toolId == "ime_memory" { return "记忆变更" }', page)
+        self.assertIn("准备撤销", page)
+        self.assertIn("输入设置已更新", page)
+        self.assertIn("输入设置已恢复", page)
+        self.assertIn("个人词表已应用", page)
+        self.assertIn("Rime 已重新部署", page)
+        self.assertIn("AI 辅助已暂停", page)
+        self.assertIn("Sidecar 已重启", page)
+        self.assertIn("本地预测器已重启", page)
+        self.assertIn("运行组件变更", page)
+        self.assertIn("模型配置变更", page)
+        self.assertIn("语音配置变更", page)
+        self.assertIn("语音 Provider 已保存", page)
+        self.assertIn("等待语音代理重启后激活", page)
+        self.assertIn("Provider 配置已保存", page)
+        self.assertIn("等待 Sidecar 重启后激活", page)
+        self.assertIn("便携备份已导出", page)
+        self.assertIn('Label("不含密钥", systemImage: "key.slash")', page)
+        self.assertIn("revertedSettingsApprovalId", store)
+        self.assertIn("revertedLexiconApprovalId", store)
+        self.assertIn("revertedModelProfileApprovalId", store)
+        self.assertIn("revertedVoiceProviderApprovalId", store)
+        self.assertIn("timeoutInterval: approved ? 110 : nil", api)
+        self.assertIn('"external-result"', api)
+        self.assertIn("finalizeExternalApproval", api)
+        self.assertIn("waitForPiTurnToFinish", store)
+        self.assertIn("ExternalRuntimeSupervisor.execute", store)
+        self.assertIn("继续执行", page)
+        self.assertIn("Pi 回合结束后执行", page)
+        self.assertIn("@Published private(set) var memorySources", store)
+        self.assertIn('Button("批准并继续", systemImage: "checkmark")', page)
+        self.assertIn("payloadSha256: approval.payloadSha256", store)
+        self.assertIn("今天想先从哪里开始？", page)
+        self.assertIn("回顾今天", page)
+        self.assertIn("找最近进展", page)
+        self.assertIn('case "needs_configuration": return "对话模型待配置"', page)
+        self.assertIn('Text("Pi 对话模型")', page)
+        self.assertIn("piModelMenu", page)
+        self.assertIn("sessionPermissionMenu", page)
+        self.assertIn("model.thinkingLevels", page)
+        self.assertNotIn('Image(systemName: "slash.circle")', page)
+
+    def test_agent_media_and_compact_composer_are_native_managed_surfaces(self) -> None:
+        root = ROOT / "macos" / "RagImeControl"
+        page = (root / "Pages" / "AgentConversationPage.swift").read_text(encoding="utf-8")
+        api = (root / "API" / "AgentAPIClient.swift").read_text(encoding="utf-8")
+        cache = (root / "API" / "AgentMediaCache.swift").read_text(encoding="utf-8")
+        store = (root / "Stores" / "AgentConversationStore.swift").read_text(encoding="utf-8")
+        root_view = (root / "Navigation" / "ControlRootView.swift").read_text(encoding="utf-8")
+        build = (ROOT / "scripts" / "build_control_center.sh").read_text(encoding="utf-8")
+
+        for view in (
+            "AgentImageBlockView",
+            "AgentAudioBlockView",
+            "AgentFileBlockView",
+            "AgentStickerBlockView",
+            "AgentQuickLookPresenter",
+        ):
+            self.assertIn(view, page)
+        self.assertIn("AVAudioPlayer(data:", page)
+        self.assertIn("QLPreviewPanel.shared()", page)
+        self.assertIn('"^[A-Za-z0-9_-]+$"', page)
+        self.assertIn("maximumObjects = 96", cache)
+        self.assertIn("maximumBytes = 64 * 1024 * 1024", cache)
+        self.assertIn("materializedURL", cache)
+        self.assertNotIn("WKWebView", page)
+        self.assertIn("-framework AVFoundation", build)
+        self.assertIn("-framework QuickLookUI", build)
+        self.assertIn(".focused($composerFocused)", page)
+        self.assertIn('Image(systemName: "plus")', page)
+        self.assertIn("输入消息、/ 命令，或直接粘贴路径", page)
+        self.assertIn('"roleId": .string(roleId)', api)
+        self.assertIn('"roleVersion": .string(roleVersion)', api)
+        self.assertIn("acceptComposerDrop", page)
+        self.assertIn("store.selectSessionInteractively(session.id)", page)
+        self.assertIn(".contentShape(Rectangle())", page)
+        self.assertIn("func selectSessionInteractively(_ id: String)", store)
+        self.assertIn("loadConversationAndStream(expectedSessionId: id)", store)
+        self.assertNotIn("VoiceAgentStatusStore.read()", page)
+        self.assertNotIn("mic.badge.plus", page)
+        self.assertIn("AgentNewSessionSheet", page)
+        self.assertIn("personaSelectionRow", page)
+        self.assertIn('case "hermes-v1"', page)
+        self.assertIn('case "vcp-v1"', page)
+        self.assertIn("AgentPersonaMark", page)
+        persona_snapshot = (ROOT / "tests" / "swift" / "AgentPersonaSheetSnapshot.swift").read_text(encoding="utf-8")
+        persona_script = (ROOT / "scripts" / "render_agent_persona_snapshot.sh").read_text(encoding="utf-8")
+        self.assertIn("AgentNewSessionSheet(roles: roles)", persona_snapshot)
+        self.assertIn("AgentPersonaSheetSnapshot.swift", persona_script)
+        self.assertIn('Label("运行协调", systemImage: "terminal")', page)
+        self.assertIn("授权工作区", page)
+        self.assertIn("Command Harness", page)
+        self.assertIn(
+            "return store.toolCatalog.filter { $0.sessionModes.contains(mode) }",
+            page,
+        )
+        self.assertIn("com.rag-ime.control.open-agent", root_view)
+        self.assertIn("navigation.destination = .assistant", root_view)
+        self.assertIn("focusExternalSession", root_view)
+        self.assertIn("func focusExternalSession", store)
+
     def test_bundle_and_build_script_contract(self) -> None:
         with (ROOT / "macos" / "RagImeControl" / "Info.plist").open("rb") as handle:
             info = plistlib.load(handle)
@@ -104,6 +265,7 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn("ControlReadinessItem", source)
         self.assertIn("ControlMetricItem", source)
         self.assertIn("ControlShortcutKey", source)
+        self.assertIn('Section("工作台")', root)
         self.assertIn('Section("输入体验")', root)
         self.assertIn('Section("知识与系统")', root)
         self.assertIn("ControlNoticeBanner", root)
@@ -129,12 +291,150 @@ class NativeControlCenterTests(unittest.TestCase):
         companion = (ROOT / "macos" / "Shared" / "RagImeCompanionMark.swift").read_text(encoding="utf-8")
 
         self.assertIn("private var overviewRefreshTask", app_model)
+        self.assertIn("private var destinationLoadTask", app_model)
+        self.assertNotIn("@Published var destination", app_model)
+        self.assertIn("destinationLoadTask?.cancel()", app_model)
+        self.assertIn("await Task.yield()", app_model)
         self.assertIn("scheduleOverviewRefresh", app_model)
         self.assertIn("Task.sleep(for: .milliseconds(500))", app_model)
         self.assertIn("overviewRefreshTask?.cancel()", app_model)
         self.assertNotIn("await self?.refreshOverview()", app_model)
         self.assertIn("state == .listening || state == .thinking", companion)
         self.assertIn(".onChange(of: state)", companion)
+        self.assertIn("Task.detached(priority: .utility)", companion)
+        self.assertIn("CGImageSourceCreateThumbnailAtIndex", companion)
+        self.assertNotIn("NSImage(contentsOf:", companion)
+
+    def test_agent_transcript_coalesces_streaming_and_isolates_composer_redraws(self) -> None:
+        root = ROOT / "macos" / "RagImeControl"
+        store = (root / "Stores" / "AgentConversationStore.swift").read_text(encoding="utf-8")
+        page = (root / "Pages" / "AgentConversationPage.swift").read_text(encoding="utf-8")
+
+        self.assertIn("private let deltaFlushNanoseconds: UInt64 = 16_666_667", store)
+        self.assertIn("bufferedTextDeltaEvents.append(event)", store)
+        self.assertIn("var next = conversation", store)
+        self.assertIn("if result != .ignored { conversation = next }", store)
+        self.assertNotIn("if next != conversation", store)
+        self.assertIn('guard message.role == "user" || message.role == "assistant"', store)
+        self.assertIn("let replaceBlock = payload[\"replaceBlock\"]?.boolValue == true", store)
+        self.assertIn("final class AgentComposerState: ObservableObject", store)
+        self.assertNotIn("@Published var draft", store.split("final class AgentWorkspaceStore", 1)[1])
+
+        self.assertIn("AgentComposerStateHost(state: store.composerState)", page)
+        self.assertIn("await store.activate()", page)
+        self.assertNotIn(".opacity(appeared", page)
+        self.assertIn("AgentIncrementalTextSurface: NSViewRepresentable", page)
+        self.assertIn("textStorage?.append(NSAttributedString", page)
+        self.assertIn("private struct AgentMarkdownView", page)
+        self.assertIn("case .code", page)
+        self.assertIn("activityExpansionBySession", page)
+        self.assertIn("AgentTranscriptSurface: NSViewRepresentable", page)
+        self.assertIn("AgentTranscriptTableView: NSTableView", page)
+        self.assertIn("tableView.usesAutomaticRowHeights = true", page)
+        self.assertIn("tableView.makeView(", page)
+        self.assertIn("refreshChangedVisibleRows", page)
+        self.assertIn("makeIfNecessary: false", page)
+        self.assertIn("newIds.starts(with: oldIds)", page)
+        self.assertIn("if sessionChanged || (revisionChanged && wasNearBottom)", page)
+        transcript = page.split("private var timeline: some View", 1)[1].split(
+            "private var conversationWelcome", 1
+        )[0]
+        self.assertIn("AgentTranscriptSurface(", transcript)
+        self.assertNotIn("ScrollViewReader", transcript)
+        self.assertNotIn("LazyVStack", transcript)
+
+    def test_unified_motion_system_limits_continuous_work_and_honors_reduce_motion(self) -> None:
+        motion = (ROOT / "macos" / "Shared" / "RagImeMotion.swift").read_text(encoding="utf-8")
+        companion = (ROOT / "macos" / "Shared" / "RagImeCompanionMark.swift").read_text(encoding="utf-8")
+        page = (ROOT / "macos" / "RagImeControl" / "Pages" / "AgentConversationPage.swift").read_text(encoding="utf-8")
+        root_view = (ROOT / "macos" / "RagImeControl" / "Navigation" / "ControlRootView.swift").read_text(encoding="utf-8")
+        voice = (ROOT / "macos" / "RagImeVoice" / "VoiceOverlay.swift").read_text(encoding="utf-8")
+
+        self.assertIn("enum RagImeMotion", motion)
+        self.assertIn("static let maximumContinuousAnimationsPerSurface = 3", motion)
+        self.assertIn("static func entrance(reduceMotion: Bool) -> Animation?", motion)
+        self.assertIn("static func spring(reduceMotion: Bool) -> Animation?", motion)
+        self.assertIn("reduceMotion ? nil", motion)
+        self.assertIn("RagImeMotion.transition(reduceMotion: reduceMotion)", root_view)
+        self.assertIn("RagImeMotion.Duration.transition", voice)
+
+        full_body_float_rule = companion.split("struct RagImeFullBodyCompanion", 1)[1].split(
+            "private func updateFloatingAnimation", 1
+        )[0]
+        self.assertNotIn("state == .idle", full_body_float_rule)
+        self.assertIn("animatesAmbientMotion", companion)
+
+        message_view = page.split("private struct AgentMessageView", 1)[1].split(
+            "private struct AgentStreamingText", 1
+        )[0]
+        self.assertIn("animates: false", message_view)
+        self.assertIn("AgentThinkingIndicator(", message_view)
+        self.assertNotIn("repeatForever", message_view)
+        self.assertIn("accessibilityDisplayShouldReduceMotion", page)
+
+        self.assertIn("private var userFacingErrorTitle", page)
+        self.assertIn("private var userFacingErrorDetail", page)
+        self.assertIn(".help(rawErrorMessage)", page)
+        self.assertNotIn('Label(block.data.objectValue["message"]?.stringValue', page)
+
+    def test_agent_transcript_has_a_500_row_native_performance_gate(self) -> None:
+        benchmark = (
+            ROOT / "tests" / "swift" / "AgentTranscriptBenchmark.swift"
+        ).read_text(encoding="utf-8")
+        script = (ROOT / "scripts" / "benchmark_agent_transcript.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("(0..<520).map", benchmark)
+        self.assertIn("realizedAtStart < 64", benchmark)
+        self.assertIn("realizedAfterStream < 64", benchmark)
+        self.assertIn("streamUpdates\": 120", benchmark)
+        self.assertIn("streamTotalMs / 120 < 12", benchmark)
+
+        activity_snapshot = (
+            ROOT / "tests" / "swift" / "AgentActivityPanelSnapshot.swift"
+        ).read_text(encoding="utf-8")
+        activity_script = (
+            ROOT / "scripts" / "render_agent_activity_snapshot.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('status: "working"', activity_snapshot)
+        self.assertIn("AgentActivityPanel(items: items", activity_snapshot)
+        self.assertIn("AgentActivityPanelSnapshot.swift", activity_script)
+        self.assertIn("AgentTranscriptSurface.Coordinator()", benchmark)
+        self.assertIn("! -name 'RagImeControlApp.swift'", script)
+        self.assertIn("/usr/bin/time -l", script)
+
+    def test_agent_center_has_versioned_personas_and_participant_aware_rooms(self) -> None:
+        root = ROOT / "macos" / "RagImeControl"
+        app = (root / "RagImeControlApp.swift").read_text(encoding="utf-8")
+        api = (root / "API" / "AgentAPIClient.swift").read_text(encoding="utf-8")
+        models = (root / "Models" / "AgentRoomModels.swift").read_text(encoding="utf-8")
+        center = (root / "Pages" / "AgentCenterPage.swift").read_text(encoding="utf-8")
+        rooms = (root / "Pages" / "AgentRoomsPage.swift").read_text(encoding="utf-8")
+        transcript = (root / "Pages" / "AgentConversationPage.swift").read_text(encoding="utf-8")
+        store = (root / "Stores" / "AgentRoomConversationStore.swift").read_text(encoding="utf-8")
+        snapshot = (ROOT / "tests" / "swift" / "AgentRoomSheetSnapshot.swift").read_text(encoding="utf-8")
+        render = (ROOT / "scripts" / "render_agent_room_snapshot.sh").read_text(encoding="utf-8")
+
+        self.assertIn("AgentCenterNavigationModel", app)
+        self.assertIn("AgentRoomWorkspaceStore", app)
+        self.assertIn("case conversations", center)
+        self.assertIn("case rooms", center)
+        self.assertIn("case personas", center)
+        self.assertIn("transaction.animation = nil", center)
+        self.assertIn("struct AgentRoomParticipant", models)
+        self.assertIn("struct AgentRoomEventEnvelope", models)
+        self.assertIn('path: ["api", "agent", "rooms"]', api)
+        self.assertIn('path: ["api", "agent", "rooms", roomId, "events"]', api)
+        self.assertIn("deltaFlushNanoseconds: UInt64 = 16_666_667", store)
+        self.assertIn("func selectRoomInteractively", store)
+        self.assertIn("var canRouteDraft", store)
+        self.assertIn("AgentTranscriptSurface(", rooms)
+        self.assertIn(".participantMessage(entry.message", rooms)
+        self.assertIn("case participantMessage", transcript)
+        self.assertIn(".contentShape(Rectangle())", rooms)
+        self.assertIn("AgentNewRoomSheet(roles: roles)", snapshot)
+        self.assertIn("AgentRoomSheetSnapshot.swift", render)
 
     def test_memory_records_have_a_readable_detail_view(self) -> None:
         page = (ROOT / "macos/RagImeControl/Pages/MemoryPage.swift").read_text(encoding="utf-8")
@@ -333,7 +633,16 @@ struct ExternalCommandPolicyHarness {
             trusted_root = temp / "trusted-source"
             harness_path.write_text(harness, encoding="utf-8")
             compiled = subprocess.run(
-                [swiftc, "-parse-as-library", str(supervisor), str(harness_path), "-o", str(binary)],
+                [
+                    swiftc,
+                    "-module-cache-path",
+                    str(temp / "module-cache"),
+                    "-parse-as-library",
+                    str(supervisor),
+                    str(harness_path),
+                    "-o",
+                    str(binary),
+                ],
                 text=True,
                 capture_output=True,
                 check=False,
@@ -341,6 +650,386 @@ struct ExternalCommandPolicyHarness {
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
             executed = subprocess.run(
                 [str(binary), str(trusted_root)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(executed.returncode, 0, executed.stderr)
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS Swift compiler")
+    def test_agent_protocol_fixtures_decode_in_swift(self) -> None:
+        swiftc = shutil.which("swiftc")
+        if swiftc is None:
+            self.skipTest("swiftc is not available")
+
+        root = ROOT / "macos" / "RagImeControl" / "Models"
+        harness = r'''
+import Foundation
+
+@main
+struct AgentProtocolFixtureHarness {
+    static func decode<T: Decodable>(_ type: T.Type, _ path: String) throws -> T {
+        try JSONDecoder().decode(type, from: Data(contentsOf: URL(fileURLWithPath: path)))
+    }
+
+    static func main() throws {
+        let event = try decode(AgentEventEnvelope.self, CommandLine.arguments[1])
+        let message = try decode(AgentMessage.self, CommandLine.arguments[2])
+        let media = try decode(AgentMediaReceipt.self, CommandLine.arguments[3])
+        let session = try decode(AgentSessionSummary.self, CommandLine.arguments[4])
+        let approval = try decode(AgentApproval.self, CommandLine.arguments[5])
+        let maintenance = try decode(AgentMemoryMaintenanceStatus.self, CommandLine.arguments[6])
+
+        precondition(event.eventType == .toolProgress)
+        precondition(event.sequence == 7)
+        precondition(message.blocks.count == 2)
+        precondition(message.blocks[0].type == .text)
+        precondition(media.mimeType == "image/png")
+        precondition(session.mode == "assistant")
+        precondition(approval.state == "pending")
+        precondition(approval.preview.objectValue["summary"]?.stringValue == "关闭模糊音")
+        precondition(maintenance.policy == "review")
+        precondition(maintenance.autoApply == false)
+        precondition(maintenance.compileState.pendingEventCount == 7)
+        precondition(maintenance.runs.first?.sourceCursor.objectValue["toEventId"]?.numberValue == 13023)
+
+        let unknownJSON = Data("{\"schemaVersion\":\"rag-ime.agent-event.v1\",\"eventId\":\"e\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAtMs\":1,\"eventType\":\"future_event\",\"payload\":{},\"resumeToken\":\"s:1\"}".utf8)
+        let unknown = try JSONDecoder().decode(AgentEventEnvelope.self, from: unknownJSON)
+        precondition(unknown.eventType == .unknown("future_event"))
+    }
+}
+'''
+        fixtures = ROOT / "tests" / "fixtures" / "agent"
+        with tempfile.TemporaryDirectory(prefix="rag-ime-agent-protocol-swift-") as temp_dir:
+            temp = Path(temp_dir)
+            harness_path = temp / "Harness.swift"
+            binary = temp / "agent-protocol-test"
+            harness_path.write_text(harness, encoding="utf-8")
+            compiled = subprocess.run(
+                [
+                    swiftc,
+                    "-module-cache-path",
+                    str(temp / "module-cache"),
+                    "-parse-as-library",
+                    str(root / "ManagementModels.swift"),
+                    str(root / "AgentModels.swift"),
+                    str(harness_path),
+                    "-o",
+                    str(binary),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            executed = subprocess.run(
+                [
+                    str(binary),
+                    str(fixtures / "agent-event.json"),
+                    str(fixtures / "agent-message.json"),
+                    str(fixtures / "agent-media.json"),
+                    str(fixtures / "agent-session.json"),
+                    str(fixtures / "agent-approval.json"),
+                    str(fixtures / "agent-memory-maintenance-status.json"),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(executed.returncode, 0, executed.stderr)
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS Swift compiler")
+    def test_agent_conversation_reducer_tracks_activity_and_event_gaps(self) -> None:
+        swiftc = shutil.which("swiftc")
+        if swiftc is None:
+            self.skipTest("swiftc is not available")
+
+        source = ROOT / "macos" / "RagImeControl"
+        harness = r'''
+import Foundation
+
+@main
+struct AgentConversationReducerHarness {
+    static func event(_ sequence: Int, _ type: AgentEventKind, _ payload: JSONValue) -> AgentEventEnvelope {
+        AgentEventEnvelope(
+            schemaVersion: "rag-ime.agent-event.v1",
+            eventId: "agent:test:\(sequence)",
+            sessionId: "agent:test",
+            turnId: "turn:1",
+            sequence: sequence,
+            createdAtMs: 1000 + sequence,
+            eventType: type,
+            payload: payload,
+            resumeToken: "agent:test:\(sequence)"
+        )
+    }
+
+    static func roomEvent(
+        _ sequence: Int,
+        _ type: AgentRoomEventKind,
+        _ payload: JSONValue,
+        participantId: String? = "participant:hermes"
+    ) -> AgentRoomEventEnvelope {
+        AgentRoomEventEnvelope(
+            schemaVersion: "rag-ime.agent-room-event.v1",
+            eventId: "room:test:\(sequence)",
+            roomId: "room:test",
+            sequence: sequence,
+            turnId: "room-turn:1",
+            eventType: type,
+            participantId: participantId,
+            sourceSessionId: participantId == nil ? "" : "agent:hermes",
+            createdAtMs: 2000 + sequence,
+            payload: payload,
+            resumeToken: "room:test:\(sequence)"
+        )
+    }
+
+    static func main() {
+        var state = AgentConversationState()
+        let busy = event(1, .statusChanged, .object(["status": .string("busy")]))
+        precondition(AgentConversationReducer.reduce(state: &state, event: busy) == .applied)
+        precondition(state.activity.first?.title == "理解问题中…")
+
+        let started = event(2, .toolStarted, .object([
+            "toolCallId": .string("tool:1"),
+            "toolName": .string("ime_memory"),
+            "args": .object(["op": .string("catalog")]),
+            "isError": .bool(false),
+        ]))
+        _ = AgentConversationReducer.reduce(state: &state, event: started)
+        precondition(state.activity.last?.title == "查找相关工具书中…")
+
+        let finished = event(3, .toolFinished, .object([
+            "toolCallId": .string("tool:1"),
+            "toolName": .string("ime_memory"),
+            "args": .object(["op": .string("catalog")]),
+            "result": .object([
+                "content": .array([.object(["type": .string("text"), "text": .string("result")])]),
+                "details": .object([
+                    "schemaVersion": .string("rag-ime.agent-tool-result.v1"),
+                    "ok": .bool(true),
+                    "tool": .string("ime_memory"),
+                    "operation": .string("catalog"),
+                    "result": .object([
+                        "summary": .string("查询到 1 本工具书、1 个 Group、1 个 Tag"),
+                        "items": .array([
+                            .object(["kind": .string("book"), "title": .string("输入法项目")]),
+                            .object(["kind": .string("group"), "title": .string("Agent Runtime")]),
+                            .object(["kind": .string("tag"), "title": .string("Pi")]),
+                        ]),
+                    ]),
+                ]),
+            ]),
+            "isError": .bool(false),
+        ]))
+        _ = AgentConversationReducer.reduce(state: &state, event: finished)
+        precondition(state.activity.last?.state == .completed)
+        precondition(state.activity.last?.detail.contains("书《输入法项目》") == true)
+        precondition(state.activity.last?.detail.contains("Group「Agent Runtime」") == true)
+        precondition(state.activity.last?.detail.contains("Tag #Pi") == true)
+        precondition(state.activity.last?.references.map(\.kind) == [.book, .group, .tag])
+
+        let recentStarted = event(4, .toolStarted, .object([
+            "toolCallId": .string("tool:recent"),
+            "toolName": .string("ime_memory"),
+            "args": .object(["op": .string("recent")]),
+            "isError": .bool(false),
+        ]))
+        _ = AgentConversationReducer.reduce(state: &state, event: recentStarted)
+        precondition(state.activity.last?.title == "查近期对话中…")
+
+        let recentFinished = event(5, .toolFinished, .object([
+            "toolCallId": .string("tool:recent"),
+            "toolName": .string("ime_memory"),
+            "args": .object(["op": .string("recent")]),
+            "result": .object(["details": .object([
+                "schemaVersion": .string("rag-ime.agent-tool-result.v1"),
+                "ok": .bool(true),
+                "tool": .string("ime_memory"),
+                "operation": .string("recent"),
+                "result": .object([
+                    "summary": .string("召回 3 段近期最终输入"),
+                    "count": .number(3),
+                    "items": .array([
+                        .object(["kind": .string("source"), "text": .string("继续完善 Pi 控制中心")]),
+                    ]),
+                ]),
+            ])]),
+            "isError": .bool(false),
+        ]))
+        _ = AgentConversationReducer.reduce(state: &state, event: recentFinished)
+        precondition(state.activity.last?.title == "已查近期对话")
+        precondition(state.activity.last?.detail.contains("3 段") == true)
+        precondition(state.activity.last?.references.first?.kind == .recent)
+        precondition(state.activity.last?.references.first?.label.contains("Pi 控制中心") == true)
+
+        let message = AgentMessage(
+            schemaVersion: "rag-ime.agent-message.v1",
+            id: "message:1",
+            sessionId: "agent:test",
+            turnId: "turn:1",
+            role: "assistant",
+            status: "completed",
+            blocks: [AgentBlock(
+                id: "block:1",
+                type: .text,
+                status: "completed",
+                presentationKind: "markdown",
+                data: .object(["text": .string("最终回答")])
+            )],
+            attachments: [],
+            citations: [],
+            createdAtMs: 1006,
+            completedAtMs: 1006
+        )
+        let encoded = try! JSONEncoder().encode(message)
+        let messageValue = try! JSONDecoder().decode(JSONValue.self, from: encoded)
+        _ = AgentConversationReducer.reduce(
+            state: &state,
+            event: event(6, .messageCompleted, .object(["message": messageValue]))
+        )
+        precondition(state.messages.last?.blocks.first?.data.objectValue["text"]?.stringValue == "最终回答")
+        precondition(AgentConversationReducer.reduce(state: &state, event: finished) == .ignored)
+
+        let maintenance = event(7, .memoryMaintenanceUpdated, .object([
+            "trigger": .string("session_switch"),
+            "due": .bool(true),
+            "summary": .string("新增最终消息已达到整理阈值"),
+        ]))
+        _ = AgentConversationReducer.reduce(state: &state, event: maintenance)
+        precondition(state.activity.last?.title == "记忆整理已就绪")
+        precondition(state.activity.last?.detail.contains("整理阈值") == true)
+
+        let approvalRequired = event(8, .approvalRequired, .object([
+            "approvalId": .string("approval:external"),
+            "summary": .string("确认重启 Sidecar"),
+        ]))
+        _ = AgentConversationReducer.reduce(state: &state, event: approvalRequired)
+        let externalPending = event(9, .approvalResolved, .object([
+            "approvalId": .string("approval:external"),
+            "state": .string("external_pending"),
+        ]))
+        _ = AgentConversationReducer.reduce(state: &state, event: externalPending)
+        precondition(state.activity.last?.state == .waiting)
+        precondition(state.activity.last?.title == "已批准，等待外部执行")
+        precondition(state.status == "working")
+
+        let externalApplied = event(10, .approvalResolved, .object([
+            "approvalId": .string("approval:external"),
+            "state": .string("applied"),
+            "externalFinalized": .bool(true),
+            "summary": .string("Sidecar 已由新进程确认"),
+        ]))
+        _ = AgentConversationReducer.reduce(state: &state, event: externalApplied)
+        precondition(state.activity.last?.state == .completed)
+        precondition(state.activity.last?.detail == "Sidecar 已由新进程确认")
+        precondition(state.status == "idle")
+
+        let gap = event(12, .statusChanged, .object(["status": .string("busy")]))
+        precondition(AgentConversationReducer.reduce(state: &state, event: gap) == .reloadSnapshot)
+        precondition(state.needsSnapshot)
+
+        var room = AgentRoomConversationState()
+        _ = AgentRoomConversationReducer.appendOptimisticUser(
+            state: &room,
+            roomId: "room:test",
+            text: "@Hermes 请核对",
+            nowMs: 1999
+        )
+        precondition(room.messages.count == 1)
+        _ = AgentRoomConversationReducer.reduce(
+            state: &room,
+            event: roomEvent(
+                1,
+                .userMessage,
+                .object(["text": .string("@Hermes 请核对")]),
+                participantId: nil
+            ),
+            participantName: "Agent"
+        )
+        precondition(room.messages.count == 1)
+        precondition(room.messages[0].message.status == "completed")
+        _ = AgentRoomConversationReducer.reduce(
+            state: &room,
+            event: roomEvent(2, .routeDecision, .object([
+                "targetDisplayName": .string("Hermes"),
+            ])),
+            participantName: "Hermes"
+        )
+        precondition(room.activeParticipantId == "participant:hermes")
+        precondition(room.activity.last?.title == "已交给Hermes")
+        _ = AgentRoomConversationReducer.reduce(
+            state: &room,
+            event: roomEvent(3, .participantDelta, .object([
+                "data": .object([
+                    "messageId": .string("message:hermes"),
+                    "blockId": .string("block:text"),
+                    "delta": .string("正在"),
+                ]),
+            ])),
+            participantName: "Hermes"
+        )
+        _ = AgentRoomConversationReducer.reduce(
+            state: &room,
+            event: roomEvent(4, .participantDelta, .object([
+                "data": .object([
+                    "messageId": .string("message:hermes"),
+                    "blockId": .string("block:text"),
+                    "delta": .string("核对"),
+                ]),
+            ])),
+            participantName: "Hermes"
+        )
+        precondition(room.messages.last?.participantId == "participant:hermes")
+        precondition(room.messages.last?.message.blocks.first?.data.objectValue["text"]?.stringValue == "正在核对")
+        _ = AgentRoomConversationReducer.reduce(
+            state: &room,
+            event: roomEvent(5, .turnCompleted, .object([:])),
+            participantName: "Hermes"
+        )
+        precondition(room.status == "idle")
+        precondition(room.activeParticipantId == nil)
+        precondition(
+            AgentRoomConversationReducer.reduce(
+                state: &room,
+                event: roomEvent(7, .participantStatus, .object(["status": .string("active")])),
+                participantName: "Hermes"
+            ) == .reloadFromBeginning
+        )
+    }
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="rag-ime-agent-reducer-swift-") as temp_dir:
+            temp = Path(temp_dir)
+            harness_path = temp / "Harness.swift"
+            binary = temp / "agent-reducer-test"
+            harness_path.write_text(harness, encoding="utf-8")
+            compiled = subprocess.run(
+                [
+                    swiftc,
+                    "-module-cache-path",
+                    str(temp / "module-cache"),
+                    "-parse-as-library",
+                    str(source / "Models" / "ManagementModels.swift"),
+                    str(source / "Models" / "AgentModels.swift"),
+                    str(source / "Models" / "AgentRoomModels.swift"),
+                    str(source / "API" / "ManagementAPIClient.swift"),
+                    str(source / "API" / "AgentAPIClient.swift"),
+                    str(source / "ExternalRuntimeSupervisor.swift"),
+                    str(source / "Stores" / "AgentConversationStore.swift"),
+                    str(source / "Stores" / "AgentRoomConversationStore.swift"),
+                    str(harness_path),
+                    "-o",
+                    str(binary),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            executed = subprocess.run(
+                [str(binary)],
                 text=True,
                 capture_output=True,
                 check=False,

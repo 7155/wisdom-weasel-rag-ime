@@ -14,6 +14,7 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
 cp "$SRC/Info.plist" "$CONTENTS/Info.plist"
 cp "$SHARED/Assets/CompanionStates/"*.png "$RESOURCES/"
+cp "$SHARED/Assets/CompanionStatesFull/"*.png "$RESOURCES/"
 
 mapfile=()
 while IFS= read -r file; do mapfile+=("$file"); done < <(find "$SHARED" "$SRC" -type f -name '*.swift' | sort)
@@ -22,6 +23,9 @@ xcrun swiftc \
   -O \
   -target arm64-apple-macosx13.0 \
   -framework AppKit \
+  -framework AVFoundation \
+  -framework ImageIO \
+  -framework QuickLookUI \
   -framework Security \
   -framework SwiftUI \
   "${mapfile[@]}" \

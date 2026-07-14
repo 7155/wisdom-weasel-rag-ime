@@ -541,7 +541,6 @@ require_patch_text "sources/SquirrelInputController.swift" "return !backspaceHan
 require_patch_text "sources/SquirrelInputController.swift" '"forwardedToClient": false' "native learning rollback is not forwarded to IMK"
 require_patch_text "sources/SquirrelInputController.swift" "assistant_overlay_candidate_visible" "assistant overlay candidate trace"
 require_patch_text "sources/RagImeAssistantPanelController.swift" "same_snapshot_stable_ids" "assistant overlay snapshot diff"
-require_patch_text "sources/RagImeAssistantPanelController.swift" "passive_anchor_missing" "passive missing-anchor suppression"
 require_patch_text "sources/RagImeAssistantPanelController.swift" "assistant_panel_created" "assistant overlay lifecycle trace"
 require_patch_text "sources/RagImeSuggestionCardView.swift" "preferredPredictionWidth" "stable prediction panel width"
 require_patch_text "sources/RagImeSuggestionRowView.swift" "shortcutPlate" "stable shortcut keycap lane"

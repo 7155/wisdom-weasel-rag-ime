@@ -3,9 +3,6 @@ import Foundation
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var destination: ControlDestination = .overview {
-        didSet { Task { await loadDestination() } }
-    }
     @Published var overview: OverviewResponse?
     @Published var runtime: RuntimeResponse?
     @Published var schemaSections: [SettingsSection] = []
@@ -21,6 +18,7 @@ final class AppModel: ObservableObject {
     @Published var planning: PlanningDashboardResponse?
     @Published var planningDate = ""
     @Published var planningBusy = false
+    @Published var planningLoading = false
     @Published var planningAssistantDraft = ""
     @Published var configurationPath = ""
     @Published var configurationPreview: ConfigurationPreviewResponse?
@@ -55,7 +53,10 @@ final class AppModel: ObservableObject {
     private lazy var schemaClient = SettingsSchemaClient(api: api)
     private var eventTask: Task<Void, Never>?
     private var overviewRefreshTask: Task<Void, Never>?
+    private var destinationLoadTask: Task<Void, Never>?
+    private var activeDestination: ControlDestination = .overview
     private var knowledgeGeneration = 0
+    private var planningLoadGeneration = 0
 
     func start() async {
         guard eventTask == nil else { return }
@@ -81,6 +82,8 @@ final class AppModel: ObservableObject {
         eventTask = nil
         overviewRefreshTask?.cancel()
         overviewRefreshTask = nil
+        destinationLoadTask?.cancel()
+        destinationLoadTask = nil
         Task { await api.invalidate() }
     }
 
@@ -98,7 +101,7 @@ final class AppModel: ObservableObject {
             }
             guard let self, !Task.isCancelled else { return }
             await self.refreshOverview()
-            if self.destination == .planning { await self.loadPlanning() }
+            if self.activeDestination == .planning { await self.loadPlanning() }
         }
     }
 
@@ -114,10 +117,21 @@ final class AppModel: ObservableObject {
             self.settings = loadedSchema.1.settings
             connected = true
             clearTransientConnectionError()
-            await loadDestination()
         } catch {
             connected = false
             present(error)
+        }
+    }
+
+    func activateDestination(_ target: ControlDestination) {
+        activeDestination = target
+        destinationLoadTask?.cancel()
+        destinationLoadTask = Task { [weak self] in
+            // Navigation commits first; network-backed page loading follows on
+            // the next main-actor turn and cannot stall the selection highlight.
+            await Task.yield()
+            guard let self, !Task.isCancelled, self.activeDestination == target else { return }
+            await self.loadDestination(target)
         }
     }
 
@@ -333,6 +347,14 @@ final class AppModel: ObservableObject {
     }
 
     func loadPlanning(date: String? = nil) async {
+        planningLoadGeneration += 1
+        let generation = planningLoadGeneration
+        planningLoading = true
+        defer {
+            if generation == planningLoadGeneration {
+                planningLoading = false
+            }
+        }
         do {
             let requestedDate = date ?? planningDate
             let query = requestedDate.isEmpty
@@ -342,9 +364,11 @@ final class AppModel: ObservableObject {
                 "api/planning/dashboard",
                 query: query
             )
+            guard generation == planningLoadGeneration else { return }
             planning = response
             planningDate = response.date
         } catch {
+            guard generation == planningLoadGeneration else { return }
             present(error)
         }
     }
@@ -502,9 +526,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func sendPlanningAssistantMessage() async {
-        let message = planningAssistantDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else { return }
+    func sendPlanningAssistantMessage(_ proposedMessage: String? = nil) async {
+        let usesDraft = proposedMessage == nil
+        let message = (proposedMessage ?? planningAssistantDraft)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty, !planningBusy else { return }
         planningBusy = true
         defer { planningBusy = false }
         do {
@@ -513,7 +539,9 @@ final class AppModel: ObservableObject {
                 body: ["message": .string(message), "date": .string(planning?.date ?? "")]
             )
             guard response.ok else { throw APIClientError.server(400, "规划助手没有返回结果") }
-            planningAssistantDraft = ""
+            if usesDraft {
+                planningAssistantDraft = ""
+            }
             planning = response.dashboard
         } catch {
             present(error)
@@ -843,8 +871,8 @@ final class AppModel: ObservableObject {
         await run(action: "open_accessibility_settings")
     }
 
-    private func loadDestination() async {
-        switch destination {
+    private func loadDestination(_ target: ControlDestination) async {
+        switch target {
         case .inputMethod: await loadRimeLexiconReview()
         case .planning: await loadPlanning()
         case .memory: await loadMemory()

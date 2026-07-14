@@ -10,6 +10,11 @@ final class VoiceInputCoordinator {
         case finalizing
     }
 
+    private enum InteractionSource: String {
+        case hotkey
+        case agentComposer = "agent_composer"
+    }
+
     var onStateChanged: (() -> Void)?
 
     private let hotkey = GlobalVoiceHotkey()
@@ -28,11 +33,12 @@ final class VoiceInputCoordinator {
     private var telemetry = VoiceSessionTelemetry.idle
     private var releasedAtMs: Int?
     private var committedVoiceTextRecorded = false
+    private var interactionSource: InteractionSource = .hotkey
 
     init() {
         credentials = VoiceKeychainStore.loadCredentials()
         hotwordConfig = VoiceHotwordConfigStore.read()
-        hotkey.onPress = { [weak self] in self?.press() }
+        hotkey.onPress = { [weak self] in self?.press(source: .hotkey) }
         hotkey.onRelease = { [weak self] in self?.release() }
         hotkey.onCancel = { [weak self] in self?.cancel(reason: "用户取消") }
     }
@@ -50,8 +56,8 @@ final class VoiceInputCoordinator {
         switch state {
         case .idle: return VoiceAudioRecorder.permissionGranted ? "语音输入已就绪" : "首次使用时申请麦克风权限"
         case .starting: return "正在启动语音输入"
-        case .recording: return "正在听写"
-        case .finalizing: return "正在等待最终定稿"
+        case .recording: return interactionSource == .agentComposer ? "正在向智鼬输入" : "正在听写"
+        case .finalizing: return interactionSource == .agentComposer ? "正在整理对话草稿" : "正在等待最终定稿"
         }
     }
 
@@ -68,6 +74,7 @@ final class VoiceInputCoordinator {
             hotwordCount: hotwordConfig.effectiveWords.count,
             hotkeyInstalled: hotkeyInstalled,
             state: stateName,
+            interactionSource: state == .idle ? "none" : interactionSource.rawValue,
             statusText: statusText,
             telemetry: telemetry,
             updatedAtMs: Int(Date().timeIntervalSince1970 * 1000)
@@ -108,11 +115,27 @@ final class VoiceInputCoordinator {
         cancel(reason: "语音代理退出", showMessage: false)
     }
 
-    private func press() {
+    func beginAgentComposerSession() {
+        press(source: .agentComposer)
+    }
+
+    func finishAgentComposerSession() {
+        guard interactionSource == .agentComposer else { return }
+        release()
+    }
+
+    func cancelAgentComposerSession() {
+        guard interactionSource == .agentComposer else { return }
+        cancel(reason: "已取消对话语音输入", showMessage: false)
+    }
+
+    private func press(source: InteractionSource) {
         guard state == .idle else { return }
+        interactionSource = source
         hotkeyPressed = true
         guard let credentials, credentials.isComplete else {
             overlay.showError("请先在控制中心配置语音服务凭据")
+            interactionSource = .hotkey
             return
         }
         let insertion: VoiceTextInsertionSession
@@ -120,6 +143,12 @@ final class VoiceInputCoordinator {
             insertion = try VoiceTextInsertionSession.capture()
         } catch {
             overlay.showError(error.localizedDescription)
+            interactionSource = .hotkey
+            return
+        }
+        guard source != .agentComposer || insertion.appBundleIdentifier == "com.rag-ime.control" else {
+            overlay.showError("请先把光标放回智鼬对话输入框")
+            interactionSource = .hotkey
             return
         }
         state = .starting
@@ -240,7 +269,9 @@ final class VoiceInputCoordinator {
                 finalLatencyMs: releasedAtMs.map { max(0, nowMs - $0) },
                 finalReceived: true
             )
-            recordCommittedVoiceTextIfNeeded(text)
+            if interactionSource == .hotkey {
+                recordCommittedVoiceTextIfNeeded(text)
+            }
             overlay.showDone(text)
             finishSession()
         case .failure(let message):
@@ -338,6 +369,7 @@ final class VoiceInputCoordinator {
         insertion = nil
         reconciler = VoiceTranscriptReconciler()
         state = .idle
+        interactionSource = .hotkey
         telemetry = updatingTelemetry(sessionActive: false)
         onStateChanged?()
     }

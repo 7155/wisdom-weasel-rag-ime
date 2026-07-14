@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import tempfile
 import threading
 import unittest
 import json
 import os
+import sqlite3
 import subprocess
 import time
 from http.server import ThreadingHTTPServer
@@ -18,12 +21,22 @@ from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trac
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.knowledge_workbench import KnowledgeGenerationResult, KnowledgeWorkbenchRequest
 from rag_ime.memory_ingest import normalize_text, upsert_memory_item
-from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output, store_memory_book_plan
+from rag_ime.memory_book_compiler import (
+    apply_memory_book_plan,
+    build_memory_book_source_bundle,
+    memory_book_plan_from_compile_output,
+    store_memory_book_plan,
+)
 from rag_ime.models import InputEvent, MemoryAction, ModelPrediction
 from rag_ime.predictor import OpenAICompatiblePredictionConfig
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.rime_lexicon_review import CONFIRM_TEXT
 from rag_ime.rime_rank_export import record_rime_rank_feedback
+
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 class _ManagementPredictionProvider:
@@ -121,6 +134,7 @@ class DebugManagementApiTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self.service.agent.close()
         for key, value in self._pinyin_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -167,6 +181,60 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("sourceType", first)
         self.assertIn("score", first)
         self.assertIn("reason", first)
+
+    def test_provider_configuration_apply_is_hash_bound_and_never_echoes_secrets(self) -> None:
+        support = Path(self.tmp.name) / "ProviderSupport"
+        support.mkdir()
+        predictor_env = support / "predictor.env"
+        predictor_env.write_text(
+            "RAG_IME_PREDICTOR_PROVIDER=mlx\n"
+            "RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:8767\n"
+            "RAG_IME_PREDICTOR_MODEL=\n"
+            "RAG_IME_PREDICTOR_API_KEY=must-not-leak\n",
+            encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"RAG_IME_APP_SUPPORT_DIR": str(support)}):
+            before = self.service.management.provider_configuration()
+            applied = self.service.management.provider_configuration_apply(
+                {
+                    "slot": "instant",
+                    "provider": "ollama",
+                    "endpoint": "http://127.0.0.1:11434/v1",
+                    "model": "qwen3:0.6b",
+                    "expectedConfigurationHash": before["configurationHash"],
+                }
+            )
+
+            self.assertTrue(applied["ok"])
+            self.assertEqual(applied["after"]["provider"], "ollama")
+            self.assertEqual(applied["restartComponent"], "predictor")
+            self.assertTrue(applied["existingSecretPreserved"])
+            self.assertNotIn("must-not-leak", str(applied))
+            self.assertIn("RAG_IME_PREDICTOR_API_KEY=must-not-leak", predictor_env.read_text())
+
+            current = self.service.management.provider_configuration()
+            voice = self.service.management.provider_configuration_apply(
+                {
+                    "slot": "voice",
+                    "provider": "http_transcription",
+                    "expectedConfigurationHash": current["configurationHash"],
+                }
+            )
+            self.assertEqual(voice["after"]["provider"], "http_transcription")
+            self.assertEqual(voice["restartComponent"], "voice")
+            self.assertNotIn("must-not-leak", str(voice))
+            self.assertEqual((support / "voice-provider.json").stat().st_mode & 0o777, 0o600)
+
+            with self.assertRaisesRegex(ValueError, "changed after"):
+                self.service.management.provider_configuration_apply(
+                    {
+                        "slot": "instant",
+                        "provider": "mlx",
+                        "endpoint": "http://127.0.0.1:8767",
+                        "model": "",
+                        "expectedConfigurationHash": before["configurationHash"],
+                    }
+                )
 
     def test_local_mlx_embedding_is_warmed_before_health_becomes_ready(self) -> None:
         provider = _WarmupEmbeddingProvider()
@@ -408,6 +476,68 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(rolled_back["rolledBack"])
         self.assertFalse((Path(self.tmp.name) / "Rime" / "rag_ime_user.dict.yaml").exists())
         self.assertEqual(self.service.rime_lexicon_review({})["entryCount"], 1)
+
+    def test_rime_lexicon_rollbacks_must_run_in_reverse_apply_order(self) -> None:
+        for index in range(2):
+            record_rime_rank_feedback(
+                self.db_path,
+                preedit="pai hui hua",
+                accepted_text="派会话",
+                action="accepted",
+                candidate_rank=1,
+                context_hash=f"first-{index}",
+                project="wisdom-weasel-rag-ime",
+            )
+        first_review = self.service.rime_lexicon_review({})
+        first = self.service.rime_lexicon_apply(
+            {
+                "reviewToken": first_review["reviewToken"],
+                "selectedKeys": [first_review["entries"][0]["reviewKey"]],
+                "confirmText": CONFIRM_TEXT,
+            }
+        )
+        self.assertTrue(first["applied"])
+
+        for index in range(2):
+            record_rime_rank_feedback(
+                self.db_path,
+                preedit="shen du jian suo",
+                accepted_text="深度检索",
+                action="accepted",
+                candidate_rank=1,
+                context_hash=f"second-{index}",
+                project="wisdom-weasel-rag-ime",
+            )
+        time.sleep(0.002)
+        second_review = self.service.rime_lexicon_review({})
+        second_key = next(
+            item["reviewKey"]
+            for item in second_review["entries"]
+            if item["text"] == "深度检索"
+        )
+        second = self.service.rime_lexicon_apply(
+            {
+                "reviewToken": second_review["reviewToken"],
+                "selectedKeys": [second_key],
+                "confirmText": CONFIRM_TEXT,
+            }
+        )
+        self.assertTrue(second["applied"])
+
+        blocked = self.service.rime_lexicon_rollback({"rollbackId": first["rollbackId"]})
+        self.assertFalse(blocked["ok"])
+        self.assertEqual(blocked["reason"], "newer_rollback_required_first")
+        self.assertEqual(blocked["blockingRollbackId"], second["rollbackId"])
+
+        self.assertTrue(
+            self.service.rime_lexicon_rollback({"rollbackId": second["rollbackId"]})["rolledBack"]
+        )
+        self.assertTrue(
+            self.service.rime_lexicon_rollback({"rollbackId": first["rollbackId"]})["rolledBack"]
+        )
+        duplicate = self.service.rime_lexicon_rollback({"rollbackId": first["rollbackId"]})
+        self.assertFalse(duplicate["ok"])
+        self.assertEqual(duplicate["reason"], "rollback_already_applied")
 
     def test_cleanup_diff_apply_and_rollback_are_audited(self) -> None:
         event_ref = self.core.record_event(
@@ -1045,6 +1175,85 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("pollConfigured", route["notion"])
         self.assertFalse(route["notion"]["ready"])
 
+    def test_agent_memory_maintenance_status_is_review_only_and_counts_drafts(self) -> None:
+        event_ref = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=int(time.time() * 1000),
+                source="pi_agent_user",
+                committed_text="Pi 最终消息等待异步整理",
+                privacy_disposition="allowed",
+                recent_context="",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        event_id = int(event_ref.split(":", 1)[1])
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            source_bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+        plan = memory_book_plan_from_compile_output(
+            {
+                "schemaVersion": "rag-ime.memory-book-compile.v1",
+                "dailyBooks": [
+                    {
+                        "bookKey": "2026-07-14",
+                        "title": "Pi 会话整理草案",
+                        "summary": "只保存草案，等待原生审批。",
+                        "sourceEventIds": [event_id],
+                    }
+                ],
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-test",
+            source_bundle=source_bundle,
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            store_memory_book_plan(conn, plan)
+
+        status = self.service.agent_memory_maintenance_status(
+            {"project": "wisdom-weasel-rag-ime", "limit": 5}
+        )
+
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["policy"], "review")
+        self.assertFalse(status["autoApply"])
+        self.assertTrue(status["scheduledDraftOnly"])
+        self.assertGreaterEqual(status["compileState"]["pendingEventCount"], 1)
+        self.assertEqual(status["pendingDraftCount"], 1)
+        self.assertEqual(status["runs"][0]["runId"], plan["runId"])
+        self.assertEqual(status["runs"][0]["status"], "draft")
+
+        compiled_event_id = int(plan["metadata"]["sourceCursor"]["toEventId"])
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                """
+                INSERT INTO memory_compile_state(
+                    project, last_compiled_event_id, last_run_ms, pending_event_count, last_bundle_hash
+                ) VALUES (?, ?, ?, 0, ?)
+                ON CONFLICT(project) DO UPDATE SET
+                    last_compiled_event_id = excluded.last_compiled_event_id,
+                    last_run_ms = excluded.last_run_ms,
+                    pending_event_count = 0,
+                    last_bundle_hash = excluded.last_bundle_hash
+                """,
+                (
+                    "wisdom-weasel-rag-ime",
+                    compiled_event_id,
+                    int(time.time() * 1000),
+                    str(plan["metadata"]["bundleHash"]),
+                ),
+            )
+            conn.commit()
+
+        stale_status = self.service.agent_memory_maintenance_status(
+            {"project": "wisdom-weasel-rag-ime", "limit": 5}
+        )
+        self.assertEqual(stale_status["pendingDraftCount"], 0)
+        self.assertEqual(stale_status["runs"][0]["status"], "superseded")
+
     def test_knowledge_database_draft_requires_confirmation_and_supports_rollback(self) -> None:
         event_ref = self.core.record_event(
             InputEvent(
@@ -1082,17 +1291,35 @@ class DebugManagementApiTests(unittest.TestCase):
             store_memory_book_plan(conn, plan)
 
         blocked = self.service.knowledge_workbench_database_apply({"runId": plan["runId"]})
+        draft_review = self.service.agent_memory_maintenance_run(
+            {"runId": plan["runId"], "project": "wisdom-weasel-rag-ime"}
+        )
         applied = self.service.knowledge_workbench_database_apply(
             {"runId": plan["runId"], "confirm": "apply"}
+        )
+        applied_review = self.service.agent_memory_maintenance_run(
+            {"runId": plan["runId"], "project": "wisdom-weasel-rag-ime"}
         )
         rolled_back = self.service.knowledge_workbench_database_rollback(
             {"runId": plan["runId"], "confirm": "rollback"}
         )
+        rolled_back_review = self.service.agent_memory_maintenance_run(
+            {"runId": plan["runId"], "project": "wisdom-weasel-rag-ime"}
+        )
 
         self.assertFalse(blocked["ok"])
         self.assertEqual(blocked["requiredConfirm"], "apply")
+        self.assertTrue(draft_review["canApply"])
+        self.assertFalse(draft_review["canRollback"])
+        self.assertTrue(str(draft_review["revisionHash"]).startswith("sha256:"))
+        self.assertNotIn("diffs", draft_review["run"])
+        self.assertEqual(draft_review["run"]["changes"][0]["operationLabel"], "更新工具书")
+        self.assertNotIn("payload", draft_review["run"]["changes"][0])
         self.assertEqual(applied["run"]["status"], "applied")
+        self.assertFalse(applied_review["canApply"])
+        self.assertTrue(applied_review["canRollback"])
         self.assertEqual(rolled_back["run"]["status"], "rolled_back")
+        self.assertFalse(rolled_back_review["canRollback"])
         self.assertIn("retrieval", applied)
 
     def test_legacy_browser_control_surface_is_removed(self) -> None:
@@ -1160,6 +1387,534 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(payload["schemaVersion"], "rag-ime.management-history.v1")
         self.assertFalse(payload["rawTextVisible"])
         self.assertNotIn("text", payload["items"][0])
+
+    def test_agent_session_http_routes_are_operational(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}/api/agent"
+        try:
+            create_request = Request(
+                f"{base_url}/sessions",
+                data=json.dumps({"title": "连续对话"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(create_request, timeout=5) as response:
+                created = json.loads(response.read().decode("utf-8"))
+            session_id = created["session"]["id"]
+
+            with urlopen(f"{base_url}/sessions", timeout=5) as response:
+                listed = json.loads(response.read().decode("utf-8"))
+            with urlopen(f"{base_url}/runtime", timeout=5) as response:
+                runtime = json.loads(response.read().decode("utf-8"))
+            with urlopen(f"{base_url}/roles", timeout=5) as response:
+                roles = json.loads(response.read().decode("utf-8"))
+            with urlopen(f"{base_url}/memory-maintenance?limit=5", timeout=5) as response:
+                maintenance = json.loads(response.read().decode("utf-8"))
+
+            pi_model = {
+                "provider": "openrouter",
+                "id": "anthropic/claude-sonnet",
+                "name": "Claude Sonnet",
+                "api": "openai-completions",
+                "reasoning": True,
+                "thinkingLevels": ["off", "low", "medium", "high"],
+                "supportsImages": True,
+                "contextWindow": 200000,
+                "maxTokens": 16384,
+            }
+            model_catalog_payload = {
+                "schemaVersion": "rag-ime.agent-model-catalog.v1",
+                "ok": True,
+                "sessionId": session_id,
+                "selected": pi_model,
+                "thinkingLevel": "medium",
+                "providers": [
+                    {"id": "openrouter", "displayName": "OpenRouter", "models": [pi_model]}
+                ],
+            }
+            model_selection_payload = {
+                "schemaVersion": "rag-ime.agent-model-selection.v1",
+                "ok": True,
+                "sessionId": session_id,
+                "selected": pi_model,
+                "session": {
+                    **created["session"],
+                    "modelProfile": "openrouter/anthropic/claude-sonnet",
+                },
+            }
+            with (
+                patch.object(self.service.agent, "model_catalog", return_value=model_catalog_payload),
+                patch.object(self.service.agent, "select_model", return_value=model_selection_payload),
+            ):
+                with urlopen(f"{base_url}/sessions/{session_id}/models", timeout=5) as response:
+                    model_catalog = json.loads(response.read().decode("utf-8"))
+                model_request = Request(
+                    f"{base_url}/sessions/{session_id}/model",
+                    data=json.dumps(
+                        {"provider": "openrouter", "modelId": "anthropic/claude-sonnet"}
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(model_request, timeout=5) as response:
+                    model_selection = json.loads(response.read().decode("utf-8"))
+
+            deep_runtime = {
+                "schemaVersion": "rag-ime.agent-runtime.v1",
+                "enabled": True,
+                "status": "ready",
+                "activeSessionId": session_id,
+                "capabilities": {"rpc": True, "modelConfigured": True},
+            }
+            with (
+                patch.object(self.service.agent, "runtime_status", return_value=deep_runtime),
+                patch.object(
+                    self.service.agent.runtime,
+                    "prompt",
+                    return_value={
+                        "accepted": True,
+                        "turnId": "turn:http:deep",
+                        "piEntryId": "pi-entry:http:deep",
+                        "response": {"success": True},
+                    },
+                ),
+            ):
+                deep_request = Request(
+                    f"{base_url}/deep-search",
+                    data=json.dumps(
+                        {
+                            "query": "继续深度查找",
+                            "context": "输入法当前上下文",
+                            "privacyDisposition": "allowed",
+                            "evidence": [],
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(deep_request, timeout=5) as response:
+                    deep_status = response.status
+                    deep_search = json.loads(response.read().decode("utf-8"))
+
+            denied_tool_request = Request(
+                f"{base_url}/tool/execute",
+                data=json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.agent-tool-call.v1",
+                        "sessionId": session_id,
+                        "tool": "ime_memory",
+                        "toolCallId": "tool:http:1",
+                        "args": {"op": "catalog", "query": "输入法"},
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(HTTPError) as denied_context:
+                urlopen(denied_tool_request, timeout=5)
+            self.assertEqual(denied_context.exception.code, 403)
+            denied_context.exception.close()
+
+            allowed_tool_request = Request(
+                f"{base_url}/tool/execute",
+                data=denied_tool_request.data,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+                },
+                method="POST",
+            )
+            with urlopen(allowed_tool_request, timeout=5) as response:
+                tool_result = json.loads(response.read().decode("utf-8"))
+
+            approval = self.service.agent.sessions.create_approval(
+                session_id=session_id,
+                tool_name="ime_input",
+                operation="apply_settings",
+                payload_sha256="a" * 64,
+                preview={"summary": "关闭模糊音"},
+                risk_level="R1",
+            )
+            with urlopen(f"{base_url}/approvals?sessionId={session_id}", timeout=5) as response:
+                approvals = json.loads(response.read().decode("utf-8"))
+            decision_request = Request(
+                f"{base_url}/approvals/{approval['approvalId']}/decision",
+                data=json.dumps({"decision": "reject", "payloadSha256": "a" * 64}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(decision_request, timeout=5) as response:
+                decision = json.loads(response.read().decode("utf-8"))
+
+            approval_result_request = Request(
+                f"{base_url}/tool/approval-result",
+                data=json.dumps(
+                    {"sessionId": session_id, "approvalId": approval["approvalId"]}
+                ).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+                },
+                method="POST",
+            )
+            with urlopen(approval_result_request, timeout=5) as response:
+                approval_result = json.loads(response.read().decode("utf-8"))
+
+            media_import_request = Request(
+                f"{base_url}/media/import?sessionId={session_id}&fileName=screen.png",
+                data=PNG_1X1,
+                headers={"Content-Type": "image/png"},
+                method="POST",
+            )
+            with urlopen(media_import_request, timeout=5) as response:
+                media_import = json.loads(response.read().decode("utf-8"))
+            media_id = media_import["media"]["mediaId"]
+            with urlopen(
+                f"{base_url}/media/{media_id}/receipt?sessionId={session_id}",
+                timeout=5,
+            ) as response:
+                media_receipt = json.loads(response.read().decode("utf-8"))
+            with urlopen(
+                f"{base_url}/media/{media_id}/content?sessionId={session_id}",
+                timeout=5,
+            ) as response:
+                media_content = response.read()
+                media_headers = response.headers
+            with urlopen(f"{base_url}/media?sessionId={session_id}", timeout=5) as response:
+                media_list = json.loads(response.read().decode("utf-8"))
+
+            update_request = Request(
+                f"{base_url}/sessions/{session_id}",
+                data=json.dumps({"title": "深度检索"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="PATCH",
+            )
+            with urlopen(update_request, timeout=5) as response:
+                updated = json.loads(response.read().decode("utf-8"))
+
+            delete_request = Request(
+                f"{base_url}/sessions/{session_id}",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="DELETE",
+            )
+            with urlopen(delete_request, timeout=5) as response:
+                deleted = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertTrue(created["ok"])
+        self.assertEqual(listed["items"][0]["id"], session_id)
+        self.assertEqual(runtime["status"], "disabled")
+        self.assertEqual(roles["items"][0]["displayName"], "智鼬")
+        self.assertNotIn("systemPrompt", roles["items"][0])
+        self.assertEqual(maintenance["policy"], "review")
+        self.assertFalse(maintenance["autoApply"])
+        self.assertEqual(model_catalog["providers"][0]["displayName"], "OpenRouter")
+        self.assertEqual(
+            model_selection["session"]["modelProfile"],
+            "openrouter/anthropic/claude-sonnet",
+        )
+        self.assertEqual(deep_status, 202)
+        self.assertEqual(deep_search["schemaVersion"], "rag-ime.agent-deep-search.v1")
+        self.assertEqual(deep_search["sessionId"], session_id)
+        self.assertEqual(deep_search["turnId"], "turn:http:deep")
+        self.assertTrue(tool_result["ok"])
+        self.assertEqual(tool_result["operation"], "catalog")
+        self.assertEqual(approvals["items"][0]["approvalId"], approval["approvalId"])
+        self.assertEqual(decision["approval"]["state"], "rejected")
+        self.assertEqual(approval_result["approval"]["state"], "rejected")
+        self.assertEqual(media_receipt["media"]["mediaId"], media_id)
+        self.assertEqual(media_content, PNG_1X1)
+        self.assertEqual(media_headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(media_list["items"][0]["fileName"], "screen.png")
+        self.assertEqual(updated["session"]["title"], "深度检索")
+        self.assertEqual(deleted["sessionId"], session_id)
+
+    def test_agent_room_http_routes_create_route_and_archive(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}/api/agent"
+        try:
+            create_request = Request(
+                f"{base_url}/rooms",
+                data=json.dumps(
+                    {
+                        "title": "HTTP 群聊",
+                        "routingPolicy": "manual_mentions",
+                        "participants": [
+                            {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                            {"roleId": "hermes-v1", "roleVersion": "1"},
+                            {"roleId": "vcp-v1", "roleVersion": "1"},
+                        ],
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(create_request, timeout=5) as response:
+                created_status = response.status
+                created = json.loads(response.read().decode("utf-8"))
+            room_id = created["room"]["id"]
+
+            with urlopen(f"{base_url}/rooms", timeout=5) as response:
+                listed = json.loads(response.read().decode("utf-8"))
+            with urlopen(f"{base_url}/rooms/{room_id}", timeout=5) as response:
+                detail = json.loads(response.read().decode("utf-8"))
+
+            with patch.object(self.service.agent, "prompt", return_value={"turnId": "turn:http:room"}):
+                message_request = Request(
+                    f"{base_url}/rooms/{room_id}/messages",
+                    data=json.dumps({"message": "@Hermes 请诊断状态"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(message_request, timeout=5) as response:
+                    message_status = response.status
+                    accepted = json.loads(response.read().decode("utf-8"))
+
+            archive_request = Request(
+                f"{base_url}/rooms/{room_id}",
+                data=json.dumps({"archived": True}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="PATCH",
+            )
+            with urlopen(archive_request, timeout=5) as response:
+                archived = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(created_status, 201)
+        self.assertEqual(len(created["room"]["participants"]), 3)
+        self.assertEqual(listed["items"][0]["id"], room_id)
+        self.assertEqual(detail["room"]["id"], room_id)
+        self.assertEqual(message_status, 202)
+        self.assertEqual(accepted["participant"]["roleId"], "hermes-v1")
+        self.assertEqual(archived["room"]["status"], "archived")
+
+    def test_agent_external_result_http_route_finalizes_durable_receipt(self) -> None:
+        session = self.service.agent.create_session({"title": "外部监督器回执"})["session"]
+        command = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.rag-ime.sidecar"]
+        command_sha256 = hashlib.sha256(
+            json.dumps(command, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        approval = self.service.agent.sessions.create_approval(
+            session_id=str(session["id"]),
+            tool_name="ime_runtime",
+            operation="restart_sidecar",
+            payload_sha256="f" * 64,
+            preview={"summary": "重启 Sidecar"},
+            risk_level="R2",
+        )
+        decided = self.service.agent.sessions.decide_approval(
+            str(approval["approvalId"]),
+            approved=True,
+            payload_sha256="f" * 64,
+        )
+        self.service.agent.sessions.complete_approval(
+            str(decided["approvalId"]),
+            state="external_pending",
+            receipt={
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": False,
+                "externalActionPending": True,
+                "externalAction": "restart_sidecar",
+                "externalCommand": command,
+                "externalCommandSha256": command_sha256,
+                "originProcessId": os.getpid(),
+            },
+        )
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            request = Request(
+                f"http://127.0.0.1:{server.server_port}/api/agent/approvals/"
+                f"{approval['approvalId']}/external-result",
+                data=json.dumps(
+                    {
+                        "payloadSha256": "f" * 64,
+                        "externalAction": "restart_sidecar",
+                        "externalCommandSha256": command_sha256,
+                        "succeeded": False,
+                        "exitCode": 7,
+                        "timedOut": False,
+                        "error": "launchctl failed",
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(result["approval"]["state"], "failed")
+        self.assertFalse(result["approval"]["receipt"]["externalActionPending"])
+        self.assertEqual(result["approval"]["receipt"]["exitCode"], 7)
+        self.assertEqual(result["approval"]["receipt"]["reason"], "external_supervisor_failed")
+
+    def test_agent_task_action_and_rollback_use_real_management_service(self) -> None:
+        task = self.service.management.planning_save_task(
+            {
+                "id": "task:agent-real",
+                "date": "2026-07-13",
+                "title": "验证 Pi 审批闭环",
+                "status": "todo",
+                "project": self.service.config.project,
+            }
+        )["task"]
+        session = self.service.agent.create_session({"title": "真实任务审批"})["session"]
+        prepared = self.service.agent_tools.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session["id"],
+                "tool": "ime_planning",
+                "toolCallId": "tool:real:complete",
+                "args": {
+                    "op": "task_action",
+                    "taskId": task["id"],
+                    "date": "2026-07-13",
+                    "action": "complete",
+                },
+            }
+        )["result"]["approval"]
+        with (
+            patch.object(self.service.agent.runtime, "has_pending_approval", return_value=True),
+            patch.object(self.service.agent.runtime, "resolve_approval"),
+        ):
+            applied = self.service.agent.decide_approval(
+                prepared["approvalId"],
+                {"decision": "approve", "payloadSha256": prepared["payloadSha256"]},
+            )["approval"]
+
+        self.assertEqual(applied["state"], "applied")
+        self.assertEqual(applied["receipt"]["task"]["status"], "done")
+        self.assertTrue(applied["receipt"]["undoAvailable"])
+
+        rollback = self.service.agent_tools.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session["id"],
+                "tool": "ime_planning",
+                "toolCallId": "tool:real:undo",
+                "args": {
+                    "op": "undo_task_event",
+                    "eventId": applied["receipt"]["taskEventId"],
+                },
+            }
+        )["result"]["approval"]
+        with (
+            patch.object(self.service.agent.runtime, "has_pending_approval", return_value=True),
+            patch.object(self.service.agent.runtime, "resolve_approval"),
+        ):
+            reverted = self.service.agent.decide_approval(
+                rollback["approvalId"],
+                {"decision": "approve", "payloadSha256": rollback["payloadSha256"]},
+            )["approval"]
+
+        self.assertEqual(reverted["state"], "applied")
+        self.assertEqual(reverted["receipt"]["task"]["status"], "todo")
+        self.assertEqual(
+            reverted["receipt"]["revertedTaskEventId"],
+            applied["receipt"]["taskEventId"],
+        )
+        sources = self.service.agent.list_memory_sources({"sessionId": session["id"]})["items"]
+        self.assertEqual([item["sourceRole"] for item in sources], ["tool_receipt", "tool_receipt"])
+        with sqlite3.connect(self.db_path) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM phrase_stats").fetchone()[0], 0)
+
+    def test_agent_input_settings_use_real_store_and_approved_rollback(self) -> None:
+        session = self.service.agent.create_session({"title": "真实输入设置审批"})["session"]
+        prepared = self.service.agent_tools.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session["id"],
+                "tool": "ime_input",
+                "toolCallId": "tool:real:settings",
+                "args": {
+                    "op": "apply_settings",
+                    "changes": [{"key": "pinyin.pairs.nL", "value": True}],
+                },
+            }
+        )["result"]["approval"]
+        self.assertFalse(self.service.settings()["settings"]["pinyin"]["pairs"]["nL"])
+        with (
+            patch.object(self.service.agent.runtime, "has_pending_approval", return_value=True),
+            patch.object(self.service.agent.runtime, "resolve_approval"),
+        ):
+            applied = self.service.agent.decide_approval(
+                prepared["approvalId"],
+                {"decision": "approve", "payloadSha256": prepared["payloadSha256"]},
+            )["approval"]
+        self.assertEqual(applied["state"], "applied")
+        self.assertTrue(self.service.settings()["settings"]["pinyin"]["pairs"]["nL"])
+        self.assertEqual(applied["receipt"]["settingKeys"], ["pinyin.pairs.nL"])
+
+        rollback = self.service.agent_tools.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session["id"],
+                "tool": "ime_input",
+                "toolCallId": "tool:real:settings:rollback",
+                "args": {
+                    "op": "rollback_settings",
+                    "sourceApprovalId": prepared["approvalId"],
+                },
+            }
+        )["result"]["approval"]
+        with (
+            patch.object(self.service.agent.runtime, "has_pending_approval", return_value=True),
+            patch.object(self.service.agent.runtime, "resolve_approval"),
+        ):
+            reverted = self.service.agent.decide_approval(
+                rollback["approvalId"],
+                {"decision": "approve", "payloadSha256": rollback["payloadSha256"]},
+            )["approval"]
+        self.assertEqual(reverted["state"], "applied")
+        self.assertFalse(self.service.settings()["settings"]["pinyin"]["pairs"]["nL"])
+        self.assertEqual(
+            reverted["receipt"]["revertedSettingsApprovalId"],
+            prepared["approvalId"],
+        )
+
+    def test_agent_runtime_toggle_reconfigures_owned_runtime(self) -> None:
+        self.assertFalse(self.service.agent.runtime_status()["enabled"])
+
+        enabled = self.service.settings_update({"agent.pi.enabled": True})
+        self.assertIn("agent.pi.enabled", enabled["changedKeys"])
+        self.assertTrue(self.service.agent.runtime_status()["enabled"])
+
+        self.service.settings_update({"agent.pi.enabled": False})
+        self.assertFalse(self.service.agent.runtime_status()["enabled"])
 
     def test_planning_and_yaml_configuration_http_routes_are_operational(self) -> None:
         config_path = Path(self.tmp.name) / "rag-ime.config.yaml"

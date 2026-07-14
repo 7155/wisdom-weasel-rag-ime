@@ -517,6 +517,7 @@ class ModelRuntimePlanTests(unittest.TestCase):
                     "restart_rag_ime_runtime.sh",
                     "install_sidecar_launch_agent.sh",
                     "sidecar_launch.py",
+                    "portable_restore_supervisor.py",
                 ):
                     shutil.copy2(ROOT / "scripts" / name, scripts / name)
                 home = root / "home"

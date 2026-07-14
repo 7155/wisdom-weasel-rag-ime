@@ -72,7 +72,7 @@ struct VoiceOverlayView: View {
                 .frame(width: 3, height: 68)
                 .padding(.leading, 1)
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: model.phase)
+        .animation(RagImeMotion.entrance(reduceMotion: reduceMotion), value: model.phase)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(model.message)，\(model.transcript)")
     }
@@ -241,8 +241,8 @@ final class VoiceOverlayController {
         panel.orderFrontRegardless()
         if !reduceMotion {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                context.duration = RagImeMotion.Duration.entrance
+                context.timingFunction = RagImeMotion.timingFunction()
                 panel.animator().alphaValue = 1
             }
         }
@@ -261,8 +261,8 @@ final class VoiceOverlayController {
             return
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.duration = RagImeMotion.Duration.transition
+            context.timingFunction = RagImeMotion.timingFunction()
             panel.animator().setFrame(targetFrame, display: true)
         }
     }

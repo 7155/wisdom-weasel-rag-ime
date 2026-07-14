@@ -47,6 +47,37 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(launch_env["RAG_IME_DEEPSEEK_ENV"], str(model_env))
         self.assertEqual(launch_env["RAG_IME_DEEPSEEK_ACTIVE_RAG"], "1")
 
+    def test_sidecar_installer_copies_pi_provider_catalog_with_owner_only_permissions(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-pi-provider-") as tmp:
+            home = Path(tmp) / "home"
+            source = Path(tmp) / "pikey.md"
+            source.write_text('{"provider":{"openai":{"options":{"apiKey":"test-only"}}}}', encoding="utf-8")
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+                "RAG_IME_SIDECAR_PORT": "18767",
+                "RAG_IME_PI_PROVIDER_CONFIG": str(source),
+            }
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            installed = home / "Library" / "Application Support" / "RagIme" / "pi-providers.json"
+            plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist"
+            with plist_path.open("rb") as fh:
+                payload = plistlib.load(fh)
+
+            self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PI_PROVIDER_CONFIG"], str(installed))
+            self.assertEqual(installed.read_text(encoding="utf-8"), source.read_text(encoding="utf-8"))
+            self.assertEqual(installed.stat().st_mode & 0o777, 0o600)
+
     def test_install_frontend_launch_agent_dry_run_pins_user_app(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-frontend-launchd-test-") as tmp:
@@ -340,6 +371,10 @@ class LaunchAgentScriptTests(unittest.TestCase):
                             "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
                             "RAG_IME_DEEPSEEK_ENV": str(legacy_model_env),
                             "RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS": "1536",
+                            "RAG_IME_PI_EXECUTABLE": "/tmp/pi/dist/cli.js",
+                            "RAG_IME_PI_NODE": "/tmp/node",
+                            "RAG_IME_PI_EXTENSION": "/tmp/rag-ime-control.ts",
+                            "RAG_IME_PI_VERSION": "0.80.2",
                         },
                     },
                     fh,
@@ -385,6 +420,10 @@ class LaunchAgentScriptTests(unittest.TestCase):
             str(home / "Library" / "Application Support" / "RagIme" / "deepseek.env"),
         )
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS"], "1536")
+        self.assertEqual(env_vars["RAG_IME_PI_EXECUTABLE"], "/tmp/pi/dist/cli.js")
+        self.assertEqual(env_vars["RAG_IME_PI_NODE"], "/tmp/node")
+        self.assertEqual(env_vars["RAG_IME_PI_EXTENSION"], "/tmp/rag-ime-control.ts")
+        self.assertEqual(env_vars["RAG_IME_PI_VERSION"], "0.80.2")
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_THINKING"], "disabled")
         self.assertEqual(env_vars["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "900")
         self.assertEqual(env_vars["RAG_IME_ENABLE_POST_COMMIT_AUTO_MODEL"], "1")

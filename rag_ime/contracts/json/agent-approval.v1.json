@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-approval.v1",
+  "type": "object",
+  "required": ["schemaVersion", "approvalId", "sessionId", "toolId", "operation", "payloadSha256", "preview", "riskLevel", "state", "requestedAtMs", "expiresAtMs"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-approval.v1"},
+    "approvalId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "toolId": {"type": "string", "minLength": 1},
+    "operation": {"type": "string", "minLength": 1},
+    "payloadSha256": {"type": "string", "minLength": 64},
+    "preview": {"type": "object"},
+    "riskLevel": {"type": "string", "enum": ["R1", "R2", "R3"]},
+    "state": {"type": "string", "enum": ["pending", "approved", "external_pending", "rejected", "expired", "stale", "applied", "failed"]},
+    "requestedAtMs": {"type": "integer", "minimum": 0},
+    "expiresAtMs": {"type": "integer", "minimum": 0},
+    "decidedAtMs": {"type": ["integer", "null"]},
+    "receipt": {"type": ["object", "null"]}
+  }
+}

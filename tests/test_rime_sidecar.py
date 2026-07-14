@@ -1101,23 +1101,27 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         action_candidates = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
 
         self.assertEqual(response["uiMode"], "post_commit_pending")
-        self.assertTrue(action_candidates)
-        self.assertEqual(action_candidates[0]["label"], "")
-        self.assertEqual(action_candidates[0]["visibleLabel"], "")
-        self.assertIsNone(action_candidates[0]["selectionKey"])
-        self.assertEqual(action_candidates[0]["selectionRank"], 0)
-        self.assertEqual(action_candidates[0]["candidateOrdinal"], 0)
-        self.assertTrue(action_candidates[0]["isSelectable"])
-        self.assertEqual(action_candidates[0]["text"], "知识生成")
-        self.assertEqual(action_candidates[0]["sourceBadge"], "生成")
-        self.assertEqual(action_candidates[0]["colorToken"], "modelBlue")
-        self.assertEqual(action_candidates[0]["selectionAction"], "start_active_rag_from_context")
-        self.assertEqual(action_candidates[0]["metadata"]["maxCandidates"], 1)
+        self.assertEqual([item["text"] for item in action_candidates], ["快速生成", "深度查找"])
+        self.assertEqual(
+            [item["selectionAction"] for item in action_candidates],
+            ["start_active_rag_from_context", "start_agent_deep_search_from_context"],
+        )
+        for item in action_candidates:
+            self.assertEqual(item["label"], "")
+            self.assertEqual(item["visibleLabel"], "")
+            self.assertIsNone(item["selectionKey"])
+            self.assertEqual(item["selectionRank"], 0)
+            self.assertEqual(item["candidateOrdinal"], 0)
+            self.assertTrue(item["isSelectable"])
+            self.assertEqual(item["colorToken"], "modelBlue")
+            self.assertEqual(item["metadata"]["maxCandidates"], 1)
+            self.assertTrue(item["metadata"]["numericSelectionDisabled"])
+            self.assertEqual(item["metadata"]["triggerPolicy"], "manual_only")
+            self.assertTrue(item["metadata"]["requiresExplicitSelection"])
         self.assertEqual(action_candidates[0]["metadata"]["buttonRole"], "active_rag_generate")
         self.assertEqual(action_candidates[0]["metadata"]["shortcutHint"], "ctrl+.")
-        self.assertTrue(action_candidates[0]["metadata"]["numericSelectionDisabled"])
-        self.assertEqual(action_candidates[0]["metadata"]["triggerPolicy"], "manual_only")
-        self.assertTrue(action_candidates[0]["metadata"]["requiresExplicitSelection"])
+        self.assertEqual(action_candidates[1]["metadata"]["buttonRole"], "agent_deep_search")
+        self.assertTrue(action_candidates[1]["metadata"]["requiresPi"])
         overlay_candidates = response["assistantOverlay"]["candidates"]
         self.assertEqual(response["candidatePanel"]["candidates"], [])
         self.assertTrue(any(item["sourceType"] == "action" for item in overlay_candidates))
@@ -1158,11 +1162,12 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
 
         self.assertEqual(core.calls, 0)
         self.assertEqual(predictor.calls, 0)
-        self.assertEqual([item["text"] for item in action_candidates], ["知识生成"])
-        self.assertEqual(action_candidates[0]["label"], "")
-        self.assertIsNone(action_candidates[0]["selectionKey"])
-        self.assertEqual(action_candidates[0]["candidateOrdinal"], 0)
-        self.assertTrue(action_candidates[0]["isSelectable"])
+        self.assertEqual([item["text"] for item in action_candidates], ["快速生成", "深度查找"])
+        for item in action_candidates:
+            self.assertEqual(item["label"], "")
+            self.assertIsNone(item["selectionKey"])
+            self.assertEqual(item["candidateOrdinal"], 0)
+            self.assertTrue(item["isSelectable"])
         self.assertIn("action-only fast path", response["ragLane"]["skippedReason"])
         self.assertIn("action-only fast path", response["modelLane"]["skippedReason"])
         self.assertFalse(response["predictionFirst"]["enabled"])
@@ -1183,15 +1188,20 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertTrue("自动LLM候选".startswith(model_candidates[0]["text"]))
         self.assertEqual(follow_up["uiMode"], "post_commit_prediction")
 
-    def test_v1_post_commit_active_rag_action_reserves_visible_slot(self) -> None:
+    def test_v1_post_commit_actions_do_not_consume_numbered_candidate_slots(self) -> None:
         payload = self._post_commit_payload()
         payload["maxVisibleCandidates"] = 1
-        with patch.dict(os.environ, {"RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1"}):
-            response = self._response(payload, predictor=RecordingPredictionProvider(sleep_s=0.4))
+        with (
+            patch.dict(os.environ, {"RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1"}),
+            patch.object(rime_sidecar_module, "Thread", InlinePredictionThread),
+        ):
+            response = self._response(payload, predictor=RecordingPredictionProvider(["继续完善"]))
 
-        self.assertEqual(len(response["displayCandidates"]), 1)
-        self.assertEqual(response["displayCandidates"][0]["sourceType"], "action")
-        self.assertEqual(response["displayCandidates"][0]["selectionAction"], "start_active_rag_from_context")
+        numbered = [item for item in response["displayCandidates"] if item["candidateOrdinal"] > 0]
+        actions = [item for item in response["displayCandidates"] if item["sourceType"] == "action"]
+        self.assertEqual(len(numbered), 1)
+        self.assertEqual(numbered[0]["selectionAction"], "commit_side_candidate")
+        self.assertEqual([item["candidateOrdinal"] for item in actions], [0, 0])
 
     def test_v1_empty_post_commit_followup_does_not_emit_demo_fallback_by_default(self) -> None:
         first, follow_up, _, _ = self._prime_post_commit(

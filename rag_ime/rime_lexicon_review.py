@@ -131,6 +131,7 @@ def apply_reviewed_rime_lexicon(
             "schemaVersion": SCHEMA_VERSION,
             "rollbackId": rollback_id,
             "createdAtMs": int(time.time() * 1000),
+            "state": "applied",
             "reviewToken": review_token,
             "project": project,
             "entryCount": len(entries),
@@ -166,11 +167,24 @@ def rollback_reviewed_rime_lexicon(
     manifest_path = rollback_dir / _MANIFEST_NAME
     if not manifest_path.is_file():
         return _failure("rollback_manifest_missing")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _failure("rollback_manifest_invalid")
+    if not isinstance(manifest, dict) or str(manifest.get("rollbackId") or "") != rollback_id:
+        return _failure("rollback_manifest_invalid")
+    if str(manifest.get("state") or "applied") == "rolled_back":
+        return _failure("rollback_already_applied")
+    newer = _newer_applied_rollback_manifest(root, manifest)
+    if newer:
+        return _failure("newer_rollback_required_first", blockingRollbackId=newer)
     files = manifest.get("files")
     if not isinstance(files, list):
         return _failure("rollback_manifest_invalid")
     _restore_manifest_entries(files)
+    manifest["state"] = "rolled_back"
+    manifest["rolledBackAtMs"] = int(time.time() * 1000)
+    _atomic_write(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     return {
         "schemaVersion": SCHEMA_VERSION,
         "ok": True,
@@ -178,6 +192,30 @@ def rollback_reviewed_rime_lexicon(
         "rollbackId": rollback_id,
         "requiresRedeploy": True,
     }
+
+
+def _newer_applied_rollback_manifest(root: Path, current: dict[str, object]) -> str:
+    current_key = (
+        int(current.get("createdAtMs") or 0),
+        str(current.get("rollbackId") or ""),
+    )
+    if not root.is_dir():
+        return ""
+    for directory in root.iterdir():
+        manifest_path = directory / _MANIFEST_NAME
+        if not directory.is_dir() or not manifest_path.is_file():
+            continue
+        try:
+            candidate = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(candidate, dict) or str(candidate.get("state") or "applied") == "rolled_back":
+            continue
+        candidate_id = str(candidate.get("rollbackId") or "")
+        candidate_key = (int(candidate.get("createdAtMs") or 0), candidate_id)
+        if candidate_id and candidate_key > current_key:
+            return candidate_id
+    return ""
 
 
 def _review_token(*, project: str, entries: list[dict[str, object]]) -> str:

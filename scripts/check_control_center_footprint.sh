@@ -7,6 +7,20 @@ BINARY="$APP/Contents/MacOS/RagImeControl"
 FOOTPRINT_LIMIT_MB="${RAG_IME_CONTROL_FOOTPRINT_LIMIT_MB:-55}"
 RSS_LIMIT_MB="${RAG_IME_CONTROL_RSS_LIMIT_MB:-150}"
 IDLE_CPU_LIMIT="${RAG_IME_CONTROL_IDLE_CPU_LIMIT:-0.5}"
+pid=""
+
+cleanup() {
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    osascript -e 'tell application id "com.rag-ime.control" to quit' >/dev/null 2>&1 || kill "$pid"
+    for _ in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || return 0
+      sleep 0.1
+    done
+    kill "$pid" 2>/dev/null || true
+  fi
+  return 0
+}
+trap cleanup EXIT
 
 [[ -x "$BINARY" ]] || "$ROOT/scripts/build_control_center.sh" >/dev/null
 ! otool -L "$BINARY" | grep -Eq 'WebKit|JavaScriptCore'
@@ -15,6 +29,15 @@ IDLE_CPU_LIMIT="${RAG_IME_CONTROL_IDLE_CPU_LIMIT:-0.5}"
 if [[ "${RAG_IME_CONTROL_SKIP_LIVE:-0}" == "1" ]]; then
   echo "control center static footprint gate: PASS"
   exit 0
+fi
+
+existing_pid="$(pgrep -f "$BINARY" | head -1 || true)"
+if [[ -n "$existing_pid" ]]; then
+  kill "$existing_pid"
+  for _ in $(seq 1 30); do
+    kill -0 "$existing_pid" 2>/dev/null || break
+    sleep 0.1
+  done
 fi
 
 open "$APP"
@@ -46,7 +69,6 @@ if cpu > cpu_limit:
     raise SystemExit(f"idle CPU {cpu:.2f}% exceeds {cpu_limit:.2f}%")
 print(f"physicalFootprint={physical_mb:.1f}MB RSS={rss_mb:.1f}MB idleCPU={cpu:.2f}%")
 PY
-osascript -e 'tell application id "com.rag-ime.control" to quit' >/dev/null 2>&1 || kill "$pid"
-sleep 1
-! kill -0 "$pid" 2>/dev/null
+cleanup
+pid=""
 echo "control center live footprint gate: PASS"

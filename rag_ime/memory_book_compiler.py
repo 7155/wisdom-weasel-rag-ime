@@ -4,6 +4,7 @@ import ipaddress
 import json
 import re
 import sqlite3
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -180,7 +181,11 @@ def build_memory_book_source_bundle(
             "pendingEventCount": pending_count,
         },
     }
-    payload["bundleHash"] = stable_text_hash(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    hash_payload = dict(payload)
+    hash_payload.pop("exportedAtMs", None)
+    payload["bundleHash"] = stable_text_hash(
+        json.dumps(hash_payload, ensure_ascii=False, sort_keys=True)
+    )
     return payload
 
 
@@ -1011,7 +1016,97 @@ def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
     return memory_book_run_payload(conn, run_id=run_id)
 
 
-def store_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) -> dict[str, object]:
+def find_memory_book_draft_for_bundle(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    bundle_hash: str,
+) -> dict[str, object] | None:
+    """Return the newest review draft for one exact source bundle.
+
+    Scheduled maintenance must not spend another model call every hour while
+    the same evidence is still waiting for human review.
+    """
+
+    normalized_project = compact_whitespace(project)
+    normalized_hash = compact_whitespace(bundle_hash)
+    if not normalized_hash:
+        return None
+    rows = conn.execute(
+        """
+        SELECT run_id, metadata_json
+        FROM memory_cleanup_runs
+        WHERE status = 'draft' AND run_id LIKE 'memory_book_%'
+        ORDER BY created_at_ms DESC, id DESC
+        """
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        if compact_whitespace(str(metadata.get("project") or "")) != normalized_project:
+            continue
+        if compact_whitespace(str(metadata.get("bundleHash") or "")) != normalized_hash:
+            continue
+        run = memory_book_run_payload(conn, run_id=str(row["run_id"]))
+        if memory_book_run_is_stale(conn, run=run):
+            continue
+        return run
+    return None
+
+
+def memory_book_run_is_stale(conn: sqlite3.Connection, *, run: Mapping[str, object]) -> bool:
+    """Return whether a draft's evidence cursor was already consumed by a newer apply."""
+
+    if compact_whitespace(str(run.get("status") or "")) != "draft":
+        return False
+    metadata = dict(run.get("metadata") or {})
+    project = compact_whitespace(str(metadata.get("project") or ""))
+    source_cursor = dict(metadata.get("sourceCursor") or {})
+    try:
+        to_event_id = int(source_cursor.get("toEventId") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not project or to_event_id <= 0:
+        return False
+    state = memory_compile_state(conn, project=project)
+    return int(state.get("lastCompiledEventId") or 0) >= to_event_id
+
+
+def memory_book_plan_from_stored_run(run: Mapping[str, object]) -> dict[str, object]:
+    """Rebuild a validated plan payload from a review draft."""
+
+    run_id = compact_whitespace(str(run.get("runId") or ""))
+    if not run_id:
+        raise ValueError("stored memory book runId is required")
+    return {
+        "schemaVersion": MEMORY_BOOK_RUN_SCHEMA_VERSION,
+        "runId": run_id,
+        "provider": str(run.get("provider") or ""),
+        "model": str(run.get("model") or ""),
+        "summary": str(run.get("summary") or ""),
+        "metadata": dict(run.get("metadata") or {}),
+        "diffs": [
+            {
+                "op": str(item.get("op") or ""),
+                "targetId": str(item.get("targetId") or ""),
+                "payload": dict(item.get("payload") or {}),
+                "status": str(item.get("status") or "pending"),
+            }
+            for item in _list_of_dicts(run.get("diffs"))
+        ],
+    }
+
+
+def store_memory_book_plan(
+    conn: sqlite3.Connection,
+    plan: dict[str, object],
+    *,
+    supersede_project_drafts: bool = False,
+) -> dict[str, object]:
     """Persist a validated compiler plan as a draft without changing user memory."""
     validation = inspect_memory_book_plan(plan)
     if not validation.get("ok"):
@@ -1020,8 +1115,53 @@ def store_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
     if not run_id:
         raise ValueError("memory book runId is required")
     with conn:
+        if supersede_project_drafts:
+            _supersede_project_memory_book_drafts(conn, plan=plan)
         _persist_memory_book_run(conn, plan)
     return memory_book_run_payload(conn, run_id=run_id)
+
+
+def _supersede_project_memory_book_drafts(
+    conn: sqlite3.Connection,
+    *,
+    plan: Mapping[str, object],
+) -> None:
+    run_id = compact_whitespace(str(plan.get("runId") or ""))
+    metadata = dict(plan.get("metadata") or {})
+    project = compact_whitespace(str(metadata.get("project") or ""))
+    if not project:
+        return
+    rows = conn.execute(
+        """
+        SELECT run_id, metadata_json
+        FROM memory_cleanup_runs
+        WHERE status = 'draft' AND run_id LIKE 'memory_book_%' AND run_id != ?
+        """,
+        (run_id,),
+    ).fetchall()
+    superseded: list[str] = []
+    for row in rows:
+        try:
+            previous_metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(previous_metadata, dict):
+            continue
+        if compact_whitespace(str(previous_metadata.get("project") or "")) == project:
+            superseded.append(str(row["run_id"]))
+    for previous_run_id in superseded:
+        conn.execute(
+            "UPDATE memory_cleanup_runs SET status = 'superseded' WHERE run_id = ?",
+            (previous_run_id,),
+        )
+        conn.execute(
+            """
+            UPDATE memory_cleanup_diffs
+            SET status = 'rejected'
+            WHERE run_id = ? AND status IN ('pending', 'approved')
+            """,
+            (previous_run_id,),
+        )
 
 
 def update_stored_memory_book_diff(
@@ -1104,6 +1244,11 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
     current = memory_book_run_payload(conn, run_id=run_id)
     if not current.get("provider"):
         raise ValueError(f"memory book run not found: {run_id}")
+    status = compact_whitespace(str(current.get("status") or ""))
+    if status not in {"draft", "partial"}:
+        raise ValueError(f"memory book run is not reviewable: {run_id} ({status or 'unknown'})")
+    if memory_book_run_is_stale(conn, run=current):
+        raise ValueError(f"memory book draft is stale: {run_id}")
     with conn:
         rows = conn.execute(
             """
@@ -1131,6 +1276,18 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
 
 
 def rollback_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> dict[str, object]:
+    current = memory_book_run_payload(conn, run_id=run_id)
+    if not current.get("provider"):
+        raise ValueError(f"memory book run not found: {run_id}")
+    status = compact_whitespace(str(current.get("status") or ""))
+    if status not in {"applied", "partial"}:
+        raise ValueError(f"memory book run is not rollbackable: {run_id} ({status or 'unknown'})")
+    newer_run = find_newer_applied_memory_book_run(conn, run_id=run_id)
+    if newer_run is not None:
+        raise ValueError(
+            "memory book run is not rollbackable after a newer applied run: "
+            f"{run_id} -> {newer_run['runId']}"
+        )
     rows = conn.execute(
         """
         SELECT id, op, rollback_json, status
@@ -1150,7 +1307,7 @@ def rollback_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> dict[s
 def memory_book_run_payload(conn: sqlite3.Connection, *, run_id: str) -> dict[str, object]:
     run = conn.execute(
         """
-        SELECT run_id, provider, model, status, summary, metadata_json
+        SELECT run_id, created_at_ms, provider, model, status, summary, metadata_json
         FROM memory_cleanup_runs
         WHERE run_id = ?
         """,
@@ -1167,6 +1324,7 @@ def memory_book_run_payload(conn: sqlite3.Connection, *, run_id: str) -> dict[st
     ).fetchall()
     return {
         "runId": run_id,
+        "createdAtMs": 0 if run is None else int(run["created_at_ms"] or 0),
         "status": "" if run is None else str(run["status"]),
         "provider": "" if run is None else str(run["provider"]),
         "model": "" if run is None else str(run["model"]),
@@ -1185,6 +1343,57 @@ def memory_book_run_payload(conn: sqlite3.Connection, *, run_id: str) -> dict[st
             for row in diffs
         ],
     }
+
+
+def find_newer_applied_memory_book_run(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+) -> dict[str, object] | None:
+    """Return a later active apply that makes this run unsafe to roll back.
+
+    Each diff stores the database state that existed immediately before its
+    own apply. Replaying an older rollback after a newer apply would therefore
+    overwrite the newer memory state. Runs must unwind in reverse apply order.
+    """
+
+    current = conn.execute(
+        "SELECT id, metadata_json FROM memory_cleanup_runs WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    if current is None:
+        return None
+    try:
+        current_metadata = json.loads(current["metadata_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        current_metadata = {}
+    project = compact_whitespace(
+        str(current_metadata.get("project") or "") if isinstance(current_metadata, dict) else ""
+    )
+    rows = conn.execute(
+        """
+        SELECT id, run_id, created_at_ms, status, metadata_json
+        FROM memory_cleanup_runs
+        WHERE id > ? AND status IN ('applied', 'partial') AND run_id LIKE 'memory_book_%'
+        ORDER BY id DESC
+        """,
+        (int(current["id"]),),
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        if compact_whitespace(str(metadata.get("project") or "")) != project:
+            continue
+        return {
+            "runId": str(row["run_id"]),
+            "createdAtMs": int(row["created_at_ms"] or 0),
+            "status": str(row["status"]),
+        }
+    return None
 
 
 def _persist_memory_book_run(conn: sqlite3.Connection, plan: dict[str, object]) -> None:
@@ -2120,13 +2329,16 @@ def _ensure_tag(conn: sqlite3.Connection, tag: str, *, source: str = "dsv4") -> 
 def _sync_run_status(conn: sqlite3.Connection, run_id: str) -> None:
     rows = conn.execute("SELECT status FROM memory_cleanup_diffs WHERE run_id = ?", (run_id,)).fetchall()
     statuses = {str(row["status"]) for row in rows}
+    effective_statuses = statuses - {"rejected"}
     if not statuses:
         status = "empty"
-    elif statuses == {"applied"}:
+    elif not effective_statuses:
+        status = "draft"
+    elif effective_statuses == {"applied"}:
         status = "applied"
-    elif statuses == {"rolled_back"}:
+    elif effective_statuses == {"rolled_back"}:
         status = "rolled_back"
-    elif "applied" in statuses:
+    elif "applied" in effective_statuses:
         status = "partial"
     else:
         status = "draft"

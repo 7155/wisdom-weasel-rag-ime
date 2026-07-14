@@ -24,6 +24,7 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
                     "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
                     "RAG_IME_DEEPSEEK_ENV": str(root / ".rag-ime-data" / "deepseek.env"),
                     "RAG_IME_MEMORY_BOOK_MAINTENANCE_INTERVAL_SECONDS": "900",
+                    "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": "1",
                 },
                 check=True,
                 text=True,
@@ -58,7 +59,7 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_REASONING_EFFORT"], "low")
         self.assertEqual(env_vars["RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS"], "2048")
         self.assertTrue(env_vars["RAG_IME_DEEPSEEK_ENV"].endswith("Application Support/RagIme/deepseek.env"))
-        self.assertEqual(env_vars["RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY"], "1")
+        self.assertEqual(env_vars["RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY"], "0")
 
     def test_install_discovers_existing_app_support_model_env(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -98,6 +99,8 @@ class MemoryBookMaintenanceScriptTests(unittest.TestCase):
         self.assertIn("trap cleanup_lock EXIT INT TERM", source)
         self.assertIn('APPLY="${RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY:-0}"', source)
         self.assertIn('RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS="${RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS:-2048}"', source)
+        self.assertIn("--save-draft", source)
+        self.assertIn('"reviewRequired": applied != "true"', source)
         self.assertIn('if [[ "$APPLY" == "1"', source)
 
 

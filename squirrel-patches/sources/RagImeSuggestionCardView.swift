@@ -53,7 +53,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   static let pendingHeight: CGFloat = 44
   static let thinkingHeight: CGFloat = 64
   static let errorHeight: CGFloat = 82
-  static let rowHeight: CGFloat = 44
+  static let rowHeight: CGFloat = 40
   static let actionHeight: CGFloat = 40
   static let maximumPredictionCandidates = 4
   static let minimumPredictionWidth: CGFloat = 320
@@ -71,7 +71,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private let stateTint = NSView()
   private let accentRail = NSView()
   private let actionSeparator = NSView()
-  private let deepSeekButton = NSButton(title: "生成", target: nil, action: nil)
+  private let actionContainer = NSView()
+  private let actionDivider = NSView()
+  private let deepSeekButton = NSButton(title: "快速", target: nil, action: nil)
+  private let deepSearchButton = NSButton(title: "深度", target: nil, action: nil)
   private let statusHalo = NSView()
   private let statusIcon = NSImageView()
   private let statusLabel = NSTextField(labelWithString: "正在生成...")
@@ -91,8 +94,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   private(set) var surfaceState: RagImeAssistantSurfaceState = .hidden
   private var candidates: [RagImeDisplayCandidate] = []
   private var candidateIndexes: [Int] = []
-  private var actionCandidate: RagImeDisplayCandidate?
-  private var actionCandidateIndex: Int?
+  private var quickActionCandidate: RagImeDisplayCandidate?
+  private var quickActionCandidateIndex: Int?
+  private var deepActionCandidate: RagImeDisplayCandidate?
+  private var deepActionCandidateIndex: Int?
   private var canReplaceSelection = false
   private var isStreamingResult = false
   private var contentSignature = ""
@@ -129,18 +134,45 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     }
     actionSeparator.wantsLayer = true
     actionSeparator.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.42).cgColor
+    actionContainer.wantsLayer = true
+    actionContainer.layer?.cornerRadius = 6
+    actionContainer.layer?.borderWidth = 0
+    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
+    actionContainer.layer?.masksToBounds = true
+    actionDivider.wantsLayer = true
+    actionDivider.layer?.backgroundColor = NSColor.clear.cgColor
     deepSeekButton.isBordered = false
     deepSeekButton.focusRingType = .none
     deepSeekButton.font = RagImeAssistantTypography.action
     deepSeekButton.alignment = .left
-    deepSeekButton.image = NSImage(systemSymbolName: "bolt.horizontal.fill", accessibilityDescription: "知识生成")
+    deepSeekButton.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "快速生成")
     deepSeekButton.imagePosition = .imageLeading
     deepSeekButton.contentTintColor = .systemIndigo
+    deepSeekButton.wantsLayer = true
+    deepSeekButton.layer?.cornerRadius = 6
+    deepSeekButton.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.08).cgColor
     deepSeekButton.target = self
     deepSeekButton.action = #selector(startActiveRag)
-    deepSeekButton.toolTip = "生成内容（⌃.）"
-    deepSeekButton.setAccessibilityLabel("生成长文本")
-    [actionSeparator, deepSeekButton].forEach(addSubview)
+    deepSeekButton.toolTip = "快速生成：一次检索与一次模型调用（⌃.）"
+    deepSeekButton.setAccessibilityLabel("快速生成")
+    deepSearchButton.isBordered = false
+    deepSearchButton.focusRingType = .none
+    deepSearchButton.font = RagImeAssistantTypography.action
+    deepSearchButton.alignment = .center
+    deepSearchButton.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "深度查找")
+    deepSearchButton.imagePosition = .imageLeading
+    deepSearchButton.contentTintColor = .systemIndigo
+    deepSearchButton.wantsLayer = true
+    deepSearchButton.layer?.cornerRadius = 6
+    deepSearchButton.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.09).cgColor
+    deepSearchButton.target = self
+    deepSearchButton.action = #selector(startAgentDeepSearch)
+    deepSearchButton.toolTip = "深度查找：交给 Pi 连续会话和 Agent Loop"
+    deepSearchButton.setAccessibilityLabel("使用 Pi 深度查找")
+    actionContainer.addSubview(deepSeekButton)
+    actionContainer.addSubview(actionDivider)
+    actionContainer.addSubview(deepSearchButton)
+    [actionSeparator, actionContainer].forEach(addSubview)
     statusHalo.wantsLayer = true
     statusHalo.layer?.backgroundColor = NSColor.clear.cgColor
     statusIcon.imageScaling = .scaleProportionallyDown
@@ -200,6 +232,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     layer?.borderColor = NSColor.separatorColor.cgColor
     layer?.backgroundColor = NSColor.clear.cgColor
     resultShortcutPlate.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.42).cgColor
+    actionContainer.layer?.borderColor = NSColor.clear.cgColor
+    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
+    deepSeekButton.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.08).cgColor
+    deepSearchButton.layer?.backgroundColor = NSColor.systemIndigo.withAlphaComponent(0.09).cgColor
     updateThemeChrome(for: surfaceState)
   }
 
@@ -211,21 +247,23 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     case .pendingPrediction:
       statusHalo.frame = NSRect(x: 7, y: 4, width: 38, height: 36)
       statusIcon.frame = statusHalo.frame
-      statusLabel.frame = NSRect(x: 49, y: 10, width: max(80, bounds.width - 101), height: 24)
-      deepSeekButton.frame = NSRect(x: bounds.width - 42, y: 7, width: 32, height: 30)
+      statusLabel.frame = NSRect(x: 49, y: 10, width: max(80, bounds.width - 137), height: 24)
+      layoutActionBar(frame: NSRect(x: bounds.width - 82, y: 7, width: 72, height: 30), compact: true)
     case .compactPrediction, .expandedPredictions:
-      let actionOffset = actionCandidate == nil ? 0 : Self.actionHeight
+      let hasAction = quickActionCandidate != nil || deepActionCandidate != nil
+      let actionOffset = hasAction ? Self.actionHeight : 0
+      let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
       for (index, row) in rows.enumerated() {
         row.frame = NSRect(
           x: 0,
-          y: actionOffset + CGFloat(max(0, candidates.count - index - 1)) * Self.rowHeight,
+          y: actionOffset + CGFloat(max(0, visibleCount - index - 1)) * Self.rowHeight,
           width: bounds.width,
           height: Self.rowHeight
         )
       }
-      if actionCandidate != nil {
+      if hasAction {
         actionSeparator.frame = NSRect(x: 12, y: Self.actionHeight - 1, width: max(0, bounds.width - 24), height: 1)
-        deepSeekButton.frame = NSRect(x: 12, y: 5, width: 96, height: 30)
+        layoutActionBar(frame: NSRect(x: 12, y: 5, width: max(0, bounds.width - 24), height: 30), compact: false)
       }
     case .explicitGenerating:
       statusHalo.frame = NSRect(x: 4, y: 7, width: 46, height: 50)
@@ -286,13 +324,18 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       .prefix(Self.maximumPredictionCandidates)
     candidates = realCandidates.map(\.element)
     candidateIndexes = realCandidates.map(\.offset)
-    if let action = indexedCandidates.first(where: { Self.isActionCandidate($0.element) }) {
-      actionCandidateIndex = action.offset
-      actionCandidate = action.element
-    } else {
-      actionCandidateIndex = nil
-      actionCandidate = nil
+    let quickAction = indexedCandidates.first {
+      $0.element.selectionAction == "start_active_rag_from_context"
     }
+    quickActionCandidateIndex = quickAction?.offset
+    quickActionCandidate = quickAction?.element
+    let deepAction = indexedCandidates.first {
+      $0.element.selectionAction == "start_agent_deep_search_from_context"
+    }
+    deepActionCandidateIndex = deepAction?.offset
+    deepActionCandidate = deepAction?.element
+    deepSeekButton.isEnabled = quickActionCandidate != nil
+    deepSearchButton.isEnabled = deepActionCandidate != nil
     let nextSignature = ([state.rawValue, payload.snapshotId] + candidates.map {
       $0.candidateStableId ?? "\($0.sourceType):\($0.insertText)"
     }).joined(separator: "|")
@@ -308,9 +351,11 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       statusLabel.stringValue = payload.statusText.isEmpty ? "正在联想" : providerNeutralStatus(payload.statusText)
       [statusHalo, statusIcon, statusLabel].forEach { $0.isHidden = false }
       deepSeekButton.imagePosition = .imageOnly
-      deepSeekButton.isHidden = actionCandidate == nil
+      deepSearchButton.imagePosition = .imageOnly
+      actionContainer.isHidden = quickActionCandidate == nil && deepActionCandidate == nil
     case .compactPrediction, .expandedPredictions:
       deepSeekButton.imagePosition = .imageLeading
+      deepSearchButton.imagePosition = .imageLeading
       let visibleCount = min(Self.maximumPredictionCandidates, candidates.count)
       for index in rows.indices where index < visibleCount {
         let shortcut = index == 0 ? "Tab" : "⌥\(index + 1)"
@@ -318,11 +363,14 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         rows[index].showsSeparator = index < visibleCount - 1
         rows[index].isHidden = false
         if contentChanged {
-          rows[index].animateContentIn(delay: TimeInterval(index) * 0.025, reduceMotion: reduceMotion)
+          rows[index].animateContentIn(
+            delay: TimeInterval(index) * RagImeAssistantMotion.stagger,
+            reduceMotion: reduceMotion
+          )
         }
       }
-      if actionCandidate != nil {
-        [actionSeparator, deepSeekButton].forEach { $0.isHidden = false }
+      if quickActionCandidate != nil || deepActionCandidate != nil {
+        [actionSeparator, actionContainer].forEach { $0.isHidden = false }
       }
     case .explicitGenerating:
       statusIcon.image = companionImage(named: "RagImeCompanionThinking")
@@ -385,19 +433,11 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     let pulse = CABasicAnimation(keyPath: "opacity")
     pulse.fromValue = 0.45
     pulse.toValue = 1
-    pulse.duration = 0.65
+    pulse.duration = RagImeAssistantMotion.Duration.ambientPulse
     pulse.autoreverses = true
     pulse.repeatCount = .infinity
-    pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    pulse.timingFunction = RagImeAssistantMotion.timingFunction(.easeInEaseOut)
     statusIcon.layer?.add(pulse, forKey: "rag-ime-thinking-pulse")
-    let breathe = CABasicAnimation(keyPath: "transform.scale")
-    breathe.fromValue = 0.92
-    breathe.toValue = 1.06
-    breathe.duration = 0.8
-    breathe.autoreverses = true
-    breathe.repeatCount = .infinity
-    breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-    statusHalo.layer?.add(breathe, forKey: "rag-ime-companion-breathe")
   }
 
   func animateAccepted(reduceMotion: Bool) {
@@ -411,7 +451,9 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   }
 
   static func isActionCandidate(_ candidate: RagImeDisplayCandidate) -> Bool {
-    candidate.sourceType == "action" || candidate.selectionAction == "start_active_rag_from_context"
+    candidate.sourceType == "action"
+      || candidate.selectionAction == "start_active_rag_from_context"
+      || candidate.selectionAction == "start_agent_deep_search_from_context"
   }
 
   static func predictionHeight(candidateCount: Int, hasAction: Bool) -> CGFloat {
@@ -436,7 +478,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       $0.isHidden = true
       $0.showsSeparator = false
     }
-    [actionSeparator, deepSeekButton].forEach { $0.isHidden = true }
+    [actionSeparator, actionContainer].forEach { $0.isHidden = true }
     [statusHalo, statusIcon, statusLabel, diagnosticLabel, stopButton, closeButton, resultHeader, resultShortcutPlate, resultShortcutLabel, resultScroll, insertButton, replaceButton, retryButton, moreButton, confirmationLabel].forEach { $0.isHidden = true }
   }
 
@@ -560,12 +602,12 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     opacity.fromValue = 0
     opacity.toValue = 1
     let translation = CABasicAnimation(keyPath: "transform.translation.y")
-    translation.fromValue = 3
+    translation.fromValue = RagImeAssistantMotion.Distance.tiny
     translation.toValue = 0
     let group = CAAnimationGroup()
     group.animations = [opacity, translation]
-    group.duration = 0.15
-    group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+    group.duration = RagImeAssistantMotion.Duration.transition
+    group.timingFunction = RagImeAssistantMotion.timingFunction()
     resultScroll.layer?.add(group, forKey: "rag-ime-explicit-result-in")
   }
 
@@ -579,6 +621,18 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     )
     resultText.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
     resultText.frame = NSRect(x: 0, y: 0, width: width, height: max(viewport.height, ceil(measured.height) + 4))
+  }
+
+  private func layoutActionBar(frame: NSRect, compact: Bool) {
+    actionContainer.frame = frame
+    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
+    let gap: CGFloat = compact ? 4 : 7
+    let half = max(0, (frame.width - gap) / 2)
+    deepSeekButton.frame = NSRect(x: 0, y: 0, width: half, height: frame.height)
+    actionDivider.frame = .zero
+    deepSearchButton.frame = NSRect(x: half + gap, y: 0, width: half, height: frame.height)
+    deepSeekButton.alignment = .center
+    deepSearchButton.alignment = .center
   }
 
   private func configureActionButton(_ button: NSButton, action: Selector, symbol: String, toolTip: String) {
@@ -601,7 +655,12 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   @objc private func more() { onAction?(.more(moreButton)) }
 
   @objc private func startActiveRag() {
-    guard let actionCandidate, let actionCandidateIndex else { return }
-    onSelect?(actionCandidate, actionCandidateIndex, .insert)
+    guard let quickActionCandidate, let quickActionCandidateIndex else { return }
+    onSelect?(quickActionCandidate, quickActionCandidateIndex, .insert)
+  }
+
+  @objc private func startAgentDeepSearch() {
+    guard let deepActionCandidate, let deepActionCandidateIndex else { return }
+    onSelect?(deepActionCandidate, deepActionCandidateIndex, .insert)
   }
 }

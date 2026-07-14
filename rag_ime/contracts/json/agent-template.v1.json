@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-template.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "templateId", "version", "displayName", "summary",
+    "contextModes", "toolProfileVersion", "budget", "capabilities"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-template.v1"},
+    "templateId": {"type": "string", "enum": ["researcher", "planner", "worker", "reviewer", "delegate"]},
+    "version": {"type": "string", "const": "1"},
+    "displayName": {"type": "string", "minLength": 1, "maxLength": 40},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 180},
+    "contextModes": {
+      "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
+      "items": {"type": "string", "enum": ["fresh", "fork"]}
+    },
+    "toolProfileVersion": {"type": "string", "enum": ["subagent-readonly-v1", "subagent-worker-v1"]},
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxDepth", "maxTurns", "maxToolCalls", "maxTotalTokens", "maxDurationMs", "maxOutputChars"],
+      "properties": {
+        "maxDepth": {"type": "integer", "minimum": 1, "maximum": 2},
+        "maxTurns": {"type": "integer", "minimum": 1, "maximum": 32},
+        "maxToolCalls": {"type": "integer", "minimum": 0, "maximum": 64},
+        "maxTotalTokens": {"type": "integer", "minimum": 256, "maximum": 262144},
+        "maxDurationMs": {"type": "integer", "minimum": 1000, "maximum": 900000},
+        "maxOutputChars": {"type": "integer", "minimum": 256, "maximum": 100000}
+      }
+    },
+    "capabilities": {
+      "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true,
+      "items": {"type": "string", "enum": ["rag", "memory", "planning", "review", "control", "delegation"]}
+    }
+  }
+}

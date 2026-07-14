@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "rag-ime.agent-approval.v1",
+  "approvalId": "approval-fixture-1",
+  "sessionId": "agent-session-1",
+  "toolId": "ime_input",
+  "operation": "apply_settings",
+  "payloadSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "preview": {
+    "title": "调整拼音设置",
+    "summary": "关闭模糊音",
+    "changes": [
+      {"label": "模糊音", "before": true, "after": false}
+    ]
+  },
+  "riskLevel": "R1",
+  "state": "pending",
+  "requestedAtMs": 1783950000000,
+  "expiresAtMs": 1783950060000,
+  "decidedAtMs": null,
+  "receipt": null
+}

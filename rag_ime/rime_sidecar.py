@@ -6459,48 +6459,55 @@ def append_post_commit_active_rag_action(
         return False
     if not post_commit_active_rag_button_enabled():
         return False
-    if any(item.selection_action == "start_active_rag_from_context" for item in display_candidates):
-        return True
-    max_visible = max(1, int(snapshot.max_visible_candidates))
-    if len(display_candidates) >= max_visible:
-        removable_index = _post_commit_active_rag_action_slot_index(display_candidates)
-        if removable_index < 0:
-            return False
-        display_candidates.pop(removable_index)
-    display_candidates.append(
-        SideCandidateDisplayItem(
-            label="",
-            text="知识生成",
-            insert_text="",
-            source_type="action",
-            selection_action="start_active_rag_from_context",
-            source_index=len(display_candidates),
-            comment="active_rag",
-            display_layout="block",
-            display_lane="active_rag",
-            metadata={
-                "candidate_mode": "post-commit-active-rag-button",
-                "activeRagTrigger": True,
-                "buttonRole": "active_rag_generate",
-                "buttonLabel": "知识生成",
-                "shortcutHint": "ctrl+.",
-                "numericSelectionDisabled": True,
-                "triggerPolicy": "manual_only",
-                "requiresExplicitSelection": True,
-                "intent": "complete",
-                "placement": "insert_after_selection",
-                "maxCandidates": 1,
-            },
-        )
+    existing = {item.selection_action for item in display_candidates if item.source_type == "action"}
+    action_specs = (
+        (
+            "快速生成",
+            "start_active_rag_from_context",
+            "active_rag_generate",
+            "ctrl+.",
+            "active_rag",
+        ),
+        (
+            "深度查找",
+            "start_agent_deep_search_from_context",
+            "agent_deep_search",
+            "",
+            "agent_deep_search",
+        ),
     )
+    for text, selection_action, button_role, shortcut, lane in action_specs:
+        if selection_action in existing:
+            continue
+        display_candidates.append(
+            SideCandidateDisplayItem(
+                label="",
+                text=text,
+                insert_text="",
+                source_type="action",
+                selection_action=selection_action,
+                source_index=len(display_candidates),
+                comment=lane,
+                display_layout="action_bar",
+                display_lane=lane,
+                metadata={
+                    "candidate_mode": "post-commit-dual-action-button",
+                    "activeRagTrigger": selection_action == "start_active_rag_from_context",
+                    "agentDeepSearchTrigger": selection_action == "start_agent_deep_search_from_context",
+                    "buttonRole": button_role,
+                    "buttonLabel": text,
+                    "shortcutHint": shortcut,
+                    "numericSelectionDisabled": True,
+                    "triggerPolicy": "manual_only",
+                    "requiresExplicitSelection": True,
+                    "intent": "complete" if button_role == "active_rag_generate" else "deep_search",
+                    "placement": "insert_after_selection" if button_role == "active_rag_generate" else "control_center",
+                    "maxCandidates": 1,
+                    "requiresPi": button_role == "agent_deep_search",
+                },
+            )
+        )
     return True
-
-
-def _post_commit_active_rag_action_slot_index(display_candidates: list[SideCandidateDisplayItem]) -> int:
-    for index in range(len(display_candidates) - 1, -1, -1):
-        if display_candidates[index].source_type != "status":
-            return index
-    return len(display_candidates) - 1
 
 
 def ui_mode_for_response(

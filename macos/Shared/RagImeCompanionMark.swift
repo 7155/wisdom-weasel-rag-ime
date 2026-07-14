@@ -1,5 +1,41 @@
 import AppKit
+import ImageIO
 import SwiftUI
+
+@MainActor
+private final class RagImeCompanionArtworkStore {
+    static let shared = RagImeCompanionArtworkStore()
+
+    private let images: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 12
+        cache.totalCostLimit = 20 * 1024 * 1024
+        return cache
+    }()
+
+    func image(named name: String, maximumPixelSize: Int) async -> NSImage? {
+        let bucket = maximumPixelSize <= 192 ? 160 : 512
+        let key = "\(name)@\(bucket)" as NSString
+        if let cached = images.object(forKey: key) { return cached }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "png") else { return nil }
+
+        let cgImage = await Task.detached(priority: .utility) { () -> CGImage? in
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: bucket,
+                kCGImageSourceShouldCacheImmediately: true,
+            ]
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        }.value
+        guard let cgImage else { return nil }
+
+        let image = NSImage(cgImage: cgImage, size: .zero)
+        images.setObject(image, forKey: key, cost: max(1, cgImage.width * cgImage.height * 4))
+        return image
+    }
+}
 
 enum RagImeCompanionState: Equatable {
     case idle
@@ -26,6 +62,10 @@ enum RagImeCompanionState: Equatable {
         case .done: return "RagImeCompanionDone"
         case .warning: return "RagImeCompanionWarning"
         }
+    }
+
+    var fullAnimeAssetName: String {
+        "\(animeAssetName)Full"
     }
 }
 
@@ -75,8 +115,8 @@ struct RagImeCompanionMark: View {
             }
         }
         .frame(width: size * 1.08, height: size * 1.08)
-        .animation(reduceMotion ? nil : .spring(response: 0.20, dampingFraction: 0.74), value: level)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: state)
+        .animation(RagImeMotion.spring(reduceMotion: reduceMotion), value: level)
+        .animation(RagImeMotion.transition(reduceMotion: reduceMotion), value: state)
         .accessibilityHidden(true)
     }
 
@@ -143,13 +183,15 @@ struct RagImeAnimeCompanion: View {
     let state: RagImeCompanionState
     var level: Double = 0
     var size: CGFloat = 56
+    var animatesAmbientMotion = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var floating = false
+    @State private var artwork: NSImage?
 
     var body: some View {
         ZStack {
-            if let artwork = Self.artworks[state.animeAssetName] {
+            if let artwork {
                 Image(nsImage: artwork)
                     .resizable()
                     .interpolation(.high)
@@ -170,27 +212,23 @@ struct RagImeAnimeCompanion: View {
         }
         .frame(width: size, height: size)
         .shadow(color: Color.black.opacity(0.10), radius: 3, y: 1.5)
-        .animation(reduceMotion ? nil : .spring(response: 0.20, dampingFraction: 0.72), value: level)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: state)
+        .animation(RagImeMotion.spring(reduceMotion: reduceMotion), value: level)
+        .animation(RagImeMotion.transition(reduceMotion: reduceMotion), value: state)
+        .task(id: state.animeAssetName) {
+            let name = state.animeAssetName
+            artwork = nil
+            let loaded = await RagImeCompanionArtworkStore.shared.image(
+                named: name,
+                maximumPixelSize: 160
+            )
+            guard !Task.isCancelled, state.animeAssetName == name else { return }
+            artwork = loaded
+        }
         .onAppear { updateFloatingAnimation() }
         .onChange(of: state) { _ in updateFloatingAnimation() }
         .onChange(of: reduceMotion) { _ in updateFloatingAnimation() }
         .accessibilityHidden(true)
     }
-
-    private static let artworks: [String: NSImage] = {
-        Dictionary(uniqueKeysWithValues: [
-            "RagImeCompanionIdle",
-            "RagImeCompanionListening",
-            "RagImeCompanionThinking",
-            "RagImeCompanionDone",
-            "RagImeCompanionWarning",
-        ].compactMap { name in
-            guard let url = Bundle.main.url(forResource: name, withExtension: "png"),
-                  let image = NSImage(contentsOf: url) else { return nil }
-            return (name, image)
-        })
-    }()
 
     private var listeningScale: CGFloat {
         guard state == .listening, !reduceMotion else { return 1 }
@@ -198,13 +236,69 @@ struct RagImeAnimeCompanion: View {
     }
 
     private var shouldFloat: Bool {
-        !reduceMotion && (state == .listening || state == .thinking)
+        animatesAmbientMotion && !reduceMotion && (state == .listening || state == .thinking)
     }
 
     private func updateFloatingAnimation() {
         floating = false
         guard shouldFloat else { return }
-        withAnimation(.easeInOut(duration: 1.55).repeatForever(autoreverses: true)) {
+        withAnimation(.easeInOut(duration: RagImeMotion.Duration.companionFloat).repeatForever(autoreverses: true)) {
+            floating = true
+        }
+    }
+}
+
+/// Full-body artwork for empty states and Agent stages where the character is part of the experience.
+struct RagImeFullBodyCompanion: View {
+    let state: RagImeCompanionState
+    var size: CGFloat = 180
+    var animatesAmbientMotion = true
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var floating = false
+    @State private var artwork: NSImage?
+
+    var body: some View {
+        Group {
+            if let artwork {
+                Image(nsImage: artwork)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .id(state.fullAnimeAssetName)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            } else {
+                RagImeAnimeCompanion(state: state, size: size * 0.64)
+            }
+        }
+        .frame(width: size, height: size)
+        .offset(y: shouldFloat ? (floating ? -2.5 : 2) : 0)
+        .shadow(color: Color.black.opacity(0.09), radius: 5, y: 2)
+        .animation(RagImeMotion.transition(reduceMotion: reduceMotion), value: state)
+        .task(id: state.fullAnimeAssetName) {
+            let name = state.fullAnimeAssetName
+            artwork = nil
+            let loaded = await RagImeCompanionArtworkStore.shared.image(
+                named: name,
+                maximumPixelSize: 512
+            )
+            guard !Task.isCancelled, state.fullAnimeAssetName == name else { return }
+            artwork = loaded
+        }
+        .onAppear { updateFloatingAnimation() }
+        .onChange(of: state) { _ in updateFloatingAnimation() }
+        .onChange(of: reduceMotion) { _ in updateFloatingAnimation() }
+        .accessibilityHidden(true)
+    }
+
+    private var shouldFloat: Bool {
+        animatesAmbientMotion && !reduceMotion && (state == .listening || state == .thinking)
+    }
+
+    private func updateFloatingAnimation() {
+        floating = false
+        guard shouldFloat else { return }
+        withAnimation(.easeInOut(duration: RagImeMotion.Duration.companionFloat).repeatForever(autoreverses: true)) {
             floating = true
         }
     }

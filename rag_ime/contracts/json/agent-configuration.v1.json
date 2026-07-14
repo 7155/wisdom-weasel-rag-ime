@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-configuration.v1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "revision",
+    "revisionToken",
+    "configuration",
+    "sync",
+    "updatedAtMs",
+    "updatedBy",
+    "lastEventId"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-configuration.v1"},
+    "revision": {"type": "integer", "minimum": 1},
+    "revisionToken": {"type": "string", "minLength": 1},
+    "configuration": {
+      "type": "object",
+      "required": ["runtime", "sessionDefaults", "coordination"],
+      "properties": {
+        "runtime": {
+          "type": "object",
+          "required": ["enabled", "startup", "idleTimeoutSeconds"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "startup": {"type": "string", "const": "lazy"},
+            "idleTimeoutSeconds": {"type": "integer", "minimum": 0}
+          }
+        },
+        "sessionDefaults": {
+          "type": "object",
+          "required": [
+            "resumeLastSession",
+            "roleId",
+            "roleVersion",
+            "modelProfile",
+            "toolProfileVersion"
+          ],
+          "properties": {
+            "resumeLastSession": {"type": "boolean"},
+            "roleId": {"type": "string", "minLength": 1},
+            "roleVersion": {"type": "string", "minLength": 1},
+            "modelProfile": {"type": "string", "minLength": 1},
+            "toolProfileVersion": {"type": "string", "minLength": 1}
+          }
+        },
+        "coordination": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "sync": {
+      "type": "object",
+      "required": ["state", "appliedRevision", "error"],
+      "properties": {
+        "state": {"type": "string", "enum": ["synchronized", "pending", "failed"]},
+        "appliedRevision": {"type": "integer", "minimum": 0},
+        "error": {"type": "string"}
+      }
+    },
+    "updatedAtMs": {"type": "integer", "minimum": 0},
+    "updatedBy": {"type": "string", "minLength": 1},
+    "lastEventId": {"type": "string"}
+  }
+}

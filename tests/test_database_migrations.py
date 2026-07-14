@@ -20,9 +20,12 @@ class DatabaseMigrationTests(unittest.TestCase):
             second = apply_database_migrations(conn, applied_at_ms=456)
             status = migration_status(conn)
 
-            self.assertEqual(first.applied_versions, (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15))
+            self.assertEqual(
+                first.applied_versions,
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22),
+            )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 15)
+            self.assertEqual(status["currentVersion"], 22)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -41,6 +44,19 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("planning_daily", tables)
             self.assertIn("planning_assistant_messages", tables)
             self.assertIn("memory_supersessions", tables)
+            self.assertIn("agent_sessions", tables)
+            self.assertIn("agent_approvals", tables)
+            self.assertIn("agent_runtime_events", tables)
+            self.assertIn("agent_memory_sources", tables)
+            self.assertIn("agent_media", tables)
+            self.assertIn("agent_message_media", tables)
+            self.assertIn("agent_rooms", tables)
+            self.assertIn("agent_room_participants", tables)
+            self.assertIn("agent_room_events", tables)
+            self.assertIn("agent_subagent_batches", tables)
+            self.assertIn("agent_subagent_runs", tables)
+            self.assertIn("agent_subagent_events", tables)
+            self.assertIn("agent_runtime_bindings", tables)
 
     def test_legacy_feedback_table_is_rebuilt_without_losing_rows(self) -> None:
         with closing(sqlite3.connect(":memory:")) as conn, conn:

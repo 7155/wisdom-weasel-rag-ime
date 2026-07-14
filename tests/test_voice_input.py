@@ -80,7 +80,9 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("VoiceAudioRecorder.requestPermission", delegate)
 
         status = (ROOT / "macos/Shared/VoiceAgentStatus.swift").read_text(encoding="utf-8")
-        self.assertIn("rag-ime.voice-agent-status.v3", status)
+        self.assertIn("rag-ime.voice-agent-status.v4", status)
+        self.assertIn("LegacyVoiceAgentStatusV3", status)
+        self.assertIn("let interactionSource: String", status)
         self.assertIn("voice-agent-status.json", status)
         self.assertIn(".posixPermissions: 0o600", status)
         for marker in (
@@ -106,6 +108,9 @@ class VoiceInputTests(unittest.TestCase):
         failure_start = coordinator.index("case .failure(let message):", final_start)
         self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[partial_start:final_start])
         self.assertIn("recordCommittedVoiceTextIfNeeded(text)", coordinator[final_start:failure_start])
+        self.assertIn("if interactionSource == .hotkey", coordinator[final_start:failure_start])
+        self.assertIn('case agentComposer = "agent_composer"', coordinator)
+        self.assertIn('insertion.appBundleIdentifier == "com.rag-ime.control"', coordinator)
         self.assertIn("appBundleIdentifier", insertion)
         self.assertIn("http://127.0.0.1:8766/api/commit", recorder)
         self.assertIn('"voice-input"', recorder)
@@ -117,6 +122,13 @@ class VoiceInputTests(unittest.TestCase):
         self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[failure_start:failure_end])
         self.assertNotIn("recordCommittedVoiceTextIfNeeded", coordinator[timeout_start:])
         self.assertIn("临时稿未记入历史", coordinator)
+
+        delegate = (ROOT / "macos/RagImeVoice/VoiceApplicationDelegate.swift").read_text(encoding="utf-8")
+        page = (ROOT / "macos/RagImeControl/Pages/AgentConversationPage.swift").read_text(encoding="utf-8")
+        for command in ("begin", "finish", "cancel"):
+            notification = f"com.rag-ime.voice.agent-composer-{command}"
+            self.assertIn(notification, delegate)
+            self.assertNotIn(notification, page)
 
     def test_voice_provider_credentials_and_adapters_are_isolated(self) -> None:
         keychain = (ROOT / "macos/Shared/VoiceKeychainStore.swift").read_text(encoding="utf-8")

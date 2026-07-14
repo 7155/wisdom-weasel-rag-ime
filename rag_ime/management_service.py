@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping
 from .config_portability import (
     apply_user_configuration,
     export_portable_backup,
+    provider_metadata,
     preview_portable_restore,
     preview_user_configuration,
     restore_portable_backup,
@@ -38,6 +39,13 @@ from .retrieval_docs import rebuild_retrieval_docs
 from .runtime_config import RuntimeConfigSnapshot
 from .settings_store import ManagementSettingsStore, record_management_audit
 from .text_utils import compact_whitespace
+
+
+def _provider_configuration_hash(payload: Mapping[str, object]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 class ManagementService:
@@ -126,6 +134,105 @@ class ManagementService:
         self.events.publish("configuration_imported", {"changedKeys": changed_keys})
         return {**self.revision(audit_id=audit_id or None, snapshot=snapshot).payload(), **result}
 
+    def provider_configuration(self) -> dict[str, object]:
+        providers = provider_metadata(support_directory=self._provider_support_directory())
+        return {
+            "schemaVersion": "rag-ime.provider-configuration.v1",
+            "ok": True,
+            **self.revision().payload(),
+            "configurationHash": _provider_configuration_hash(providers),
+            "providers": providers,
+        }
+
+    def provider_configuration_apply(self, payload: Mapping[str, object]) -> dict[str, object]:
+        slot = compact_whitespace(str(payload.get("slot") or ""))
+        if slot not in {"instant", "knowledge", "voice"}:
+            raise ValueError("provider slot must be instant, knowledge, or voice")
+        if any(key in payload for key in ("apiKey", "accessToken", "headers")):
+            raise ValueError("provider secrets and custom headers are not accepted by this operation")
+
+        expected_hash = compact_whitespace(str(payload.get("expectedConfigurationHash") or ""))
+        current = self.provider_configuration()
+        if not expected_hash or expected_hash != current["configurationHash"]:
+            raise ValueError("provider configuration changed after the approval preview was created")
+
+        desired: dict[str, object] = {}
+        profile_keys = ("provider",) if slot == "voice" else ("provider", "endpoint", "model")
+        for key in profile_keys:
+            if key in payload:
+                desired[key] = compact_whitespace(str(payload.get(key) or ""))
+        if not desired:
+            raise ValueError("provider configuration did not include any changes")
+
+        config = {
+            "schemaVersion": "rag-ime.user-config.v1",
+            "providers": {slot: desired},
+        }
+        preview = preview_user_configuration({"config": config}, settings_store=self.settings_store)
+        if preview.get("valid") is not True:
+            errors = preview.get("errors") if isinstance(preview.get("errors"), list) else []
+            raise ValueError("; ".join(str(item) for item in errors) or "provider configuration is invalid")
+
+        before_providers = current.get("providers") if isinstance(current.get("providers"), Mapping) else {}
+        before = dict(before_providers.get(slot) or {}) if isinstance(before_providers.get(slot), Mapping) else {}
+        result = apply_user_configuration(
+            {"config": config},
+            settings_store=self.settings_store,
+            support_directory=self._provider_support_directory(),
+        )
+        after_status = self.provider_configuration()
+        after_providers = (
+            after_status.get("providers")
+            if isinstance(after_status.get("providers"), Mapping)
+            else {}
+        )
+        after = dict(after_providers.get(slot) or {}) if isinstance(after_providers.get(slot), Mapping) else {}
+        audit_result = {
+            "slot": slot,
+            "before": before,
+            "after": after,
+            "secretsEchoed": False,
+            "existingSecretPreserved": True,
+        }
+        audit_id = self._audit(
+            "provider_configuration_apply",
+            "provider_slot",
+            slot,
+            {
+                "slot": slot,
+                "provider": desired.get("provider", ""),
+                "endpoint": desired.get("endpoint", ""),
+                "model": desired.get("model", ""),
+                "expectedConfigurationHash": expected_hash,
+            },
+            audit_result,
+        )
+        self._bump_runtime_revision()
+        snapshot = self.runtime_config_provider()
+        final_status = self.provider_configuration()
+        self.events.publish(
+            "provider_configuration_changed",
+            {"slot": slot, "requiresRestart": True, "auditId": audit_id},
+        )
+        return {
+            "schemaVersion": "rag-ime.provider-configuration-apply.v1",
+            "ok": True,
+            **self.revision(audit_id=audit_id, snapshot=snapshot).payload(),
+            "slot": slot,
+            "before": before,
+            "after": after,
+            "configurationHash": final_status["configurationHash"],
+            "requiresRestart": True,
+            "restartComponent": {
+                "instant": "predictor",
+                "knowledge": "sidecar",
+                "voice": "voice",
+            }[slot],
+            "secretsEchoed": False,
+            "existingSecretPreserved": True,
+            "providerResultConfigured": bool(result.get("providers")),
+        }
+
     def portable_backup_export(self, payload: Mapping[str, object]) -> dict[str, object]:
         destination = compact_whitespace(str(payload.get("destination") or payload.get("path") or ""))
         if not destination:
@@ -137,6 +244,13 @@ class ManagementService:
         )
         audit_id = self._audit("portable_backup_export", "backup", str(result.get("path") or ""), payload, result)
         return {**self.revision(audit_id=audit_id).payload(), **result}
+
+    @staticmethod
+    def _provider_support_directory() -> Path:
+        configured = compact_whitespace(os.environ.get("RAG_IME_APP_SUPPORT_DIR", ""))
+        if configured:
+            return Path(configured).expanduser()
+        return Path.home() / "Library" / "Application Support" / "RagIme"
 
     def portable_restore_preview(self, payload: Mapping[str, object]) -> dict[str, object]:
         source = compact_whitespace(str(payload.get("path") or payload.get("archivePath") or ""))

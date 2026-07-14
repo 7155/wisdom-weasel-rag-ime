@@ -103,13 +103,15 @@ final class RagImeAssistantPanelController {
       "snapshotId": payload.snapshotId,
       "reason": "candidate_accepted",
     ])
-    let transitionDelay = reduceMotion ? 0 : 80
+    let transitionDelay = reduceMotion ? 0 : Int(RagImeAssistantMotion.Duration.micro * 1000)
     DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(transitionDelay)) { [weak self] in
       guard let self, self.currentState == .transientConfirmation else { return }
       self.cardView.apply(state: .transientConfirmation, payload: payload)
       self.panel.setContentSize(NSSize(width: 224, height: RagImeSuggestionCardView.compactHeight))
     }
-    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(360)) { [weak self] in
+    DispatchQueue.main.asyncAfter(
+      deadline: .now() + .milliseconds(RagImeAssistantMotion.confirmationHoldMilliseconds)
+    ) { [weak self] in
       guard self?.currentState == .transientConfirmation else { return }
       self?.dismiss(reason: "confirmation_finished")
     }
@@ -147,8 +149,8 @@ final class RagImeAssistantPanelController {
     if panel.isVisible && reason == "candidate_accepted" && !reduceMotion {
       cardView.animateAccepted(reduceMotion: false)
       NSAnimationContext.runAnimationGroup { context in
-        context.duration = 0.08
-        context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        context.duration = RagImeAssistantMotion.Duration.micro
+        context.timingFunction = RagImeAssistantMotion.timingFunction(.easeIn)
         panel.animator().alphaValue = 0
       } completionHandler: { [weak self] in
         guard let self else { return }
@@ -158,7 +160,7 @@ final class RagImeAssistantPanelController {
         self.panel.alphaValue = 1
       }
       trace("assistant_candidate_group_exit_animation_started", [
-        "durationMs": 80,
+        "durationMs": Int(RagImeAssistantMotion.Duration.micro * 1000),
         "reduceMotion": false,
         "reason": reason,
       ])
@@ -196,11 +198,6 @@ final class RagImeAssistantPanelController {
     }
     currentRestore = incomingRestore
     if let anchor { lastReliableCaretAnchor = anchor }
-    if !state.isExplicit && anchor == nil && lastReliableCaretAnchor == nil && !panel.isVisible {
-      trace("assistant_panel_anchor_missing", ["surfaceState": state.rawValue, "anchorSource": "missing", "reason": "passive_requires_caret"])
-      dismiss(reason: "passive_anchor_missing")
-      return
-    }
     guard applyVisible(payload, state: state, anchor: anchor, forceContent: false) else { return }
     trace("assistant_panel_content_updated", [
       "surfaceState": state.rawValue,
@@ -251,22 +248,30 @@ final class RagImeAssistantPanelController {
     let previousFrame = panel.frame
     let targetSize = contentSize(for: state, payload: payload)
     panel.setContentSize(targetSize)
+    cardView.frame = NSRect(origin: .zero, size: targetSize)
+    cardView.needsLayout = true
+    cardView.layoutSubtreeIfNeeded()
+    panel.contentView?.layoutSubtreeIfNeeded()
     position(state: state, anchor: anchor)
     let positionedFrame = panel.frame
     let reduceMotion = !animationsEnabled || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    let isPassivePrediction = state == .pendingPrediction
+      || state == .compactPrediction
+      || state == .expandedPredictions
     let shouldMorphFrame = wasVisible
       && !reduceMotion
+      && !isPassivePrediction
       && (abs(previousFrame.width - positionedFrame.width) > 0.5
         || abs(previousFrame.height - positionedFrame.height) > 0.5)
     if shouldMorphFrame {
       panel.setFrame(previousFrame, display: false)
       NSAnimationContext.runAnimationGroup { context in
-        context.duration = 0.18
-        context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        context.duration = RagImeAssistantMotion.Duration.transition
+        context.timingFunction = RagImeAssistantMotion.timingFunction()
         panel.animator().setFrame(positionedFrame, display: true)
       }
       trace("assistant_panel_frame_transition_started", [
-        "durationMs": 180,
+        "durationMs": Int(RagImeAssistantMotion.Duration.transition * 1000),
         "fromWidth": previousFrame.width,
         "fromHeight": previousFrame.height,
         "toWidth": positionedFrame.width,
@@ -280,25 +285,28 @@ final class RagImeAssistantPanelController {
       let finalOrigin = panel.frame.origin
       panel.alphaValue = reduceMotion ? 1 : 0
       if !reduceMotion {
-        panel.setFrameOrigin(NSPoint(x: finalOrigin.x, y: finalOrigin.y + 3))
+        panel.setFrameOrigin(NSPoint(
+          x: finalOrigin.x,
+          y: finalOrigin.y + RagImeAssistantMotion.Distance.tiny
+        ))
       }
       panel.orderFront(nil)
       if !reduceMotion {
         let scale = CABasicAnimation(keyPath: "transform.scale")
         scale.fromValue = 0.985
         scale.toValue = 1
-        scale.duration = 0.12
-        scale.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        scale.duration = RagImeAssistantMotion.Duration.entrance
+        scale.timingFunction = RagImeAssistantMotion.timingFunction()
         cardView.layer?.add(scale, forKey: "rag-ime-panel-scale-in")
         NSAnimationContext.runAnimationGroup { context in
-          context.duration = 0.12
-          context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+          context.duration = RagImeAssistantMotion.Duration.entrance
+          context.timingFunction = RagImeAssistantMotion.timingFunction()
           panel.animator().alphaValue = 1
           panel.animator().setFrameOrigin(finalOrigin)
         }
       }
       trace("assistant_panel_present_animation_started", [
-        "durationMs": reduceMotion ? 0 : 120,
+        "durationMs": reduceMotion ? 0 : Int(RagImeAssistantMotion.Duration.entrance * 1000),
         "style": reduceMotion ? "none" : "fade_translate_scale",
         "reduceMotion": reduceMotion,
       ])
@@ -306,8 +314,8 @@ final class RagImeAssistantPanelController {
     }
     if contentAnimated {
       trace("assistant_candidate_content_transition_started", [
-        "durationMs": 130,
-        "staggerMs": 25,
+        "durationMs": Int(RagImeAssistantMotion.Duration.entrance * 1000),
+        "staggerMs": Int(RagImeAssistantMotion.stagger * 1000),
         "candidateCount": stableIds.count,
         "reduceMotion": false,
       ])
@@ -437,7 +445,16 @@ final class RagImeAssistantPanelController {
       } else if let screen = NSScreen.main?.visibleFrame {
         resolved = (NSPoint(x: screen.midX, y: screen.midY), "screen_center")
       } else { resolved = nil }
-    } else { resolved = nil }
+    } else if let lastPositionedAnchor {
+      resolved = (lastPositionedAnchor, "last_panel_anchor")
+    } else {
+      let mouse = NSEvent.mouseLocation
+      if NSScreen.screens.contains(where: { $0.visibleFrame.contains(mouse) }) {
+        resolved = (mouse, "passive_mouse_fallback")
+      } else if let screen = NSScreen.main?.visibleFrame {
+        resolved = (NSPoint(x: screen.midX, y: screen.midY), "passive_screen_center")
+      } else { resolved = nil }
+    }
     guard let (point, source) = resolved else { return }
     let size = panel.frame.size
     if let lastPositionedAnchor,

@@ -1,4 +1,5 @@
 import Darwin
+import CryptoKit
 import Foundation
 
 struct ValidatedExternalCommand: Sendable, Equatable {
@@ -47,7 +48,8 @@ enum ExternalCommandPolicy {
         action: String,
         command: [String],
         uid: uid_t = getuid(),
-        trustedRoots: [URL] = ExternalRuntimeSupervisor.trustedHelperRoots()
+        trustedRoots: [URL] = ExternalRuntimeSupervisor.trustedHelperRoots(),
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) throws -> ValidatedExternalCommand {
         guard !command.isEmpty else {
             throw ExternalRuntimeSupervisorError.missingCommand(action)
@@ -60,8 +62,94 @@ enum ExternalCommandPolicy {
             return try validateLaunchctl(command, uid: uid, expectedLabel: predictorLabel)
         case "repair_launch_agents":
             return try validateRepairHelper(command, trustedRoots: trustedRoots)
+        case "restore_backup":
+            return try validatePortableRestore(command, homeDirectory: homeDirectory)
         default:
             throw ExternalRuntimeSupervisorError.rejectedCommand("操作 \(action) 不允许由外部监督器执行")
+        }
+    }
+
+    private static func validatePortableRestore(
+        _ command: [String],
+        homeDirectory: URL
+    ) throws -> ValidatedExternalCommand {
+        guard command.count == 3,
+              command[0] == "rag-ime-supervisor",
+              command[1] == "restore_backup"
+        else {
+            throw ExternalRuntimeSupervisorError.rejectedCommand("便携恢复只接受固定的监督器动作和计划 ID")
+        }
+        let planId = command[2]
+        let suffix = String(planId.dropFirst("restore-".count))
+        guard planId.hasPrefix("restore-"), suffix.count == 24,
+              suffix.allSatisfy({ $0.isHexDigit && !$0.isUppercase })
+        else {
+            throw ExternalRuntimeSupervisorError.rejectedCommand("便携恢复计划 ID 无效")
+        }
+
+        let launchAgentURL = homeDirectory
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+            .appendingPathComponent("com.rag-ime.sidecar.plist")
+        guard
+            let data = try? Data(contentsOf: launchAgentURL),
+            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
+            let object = plist as? [String: Any],
+            let arguments = object["ProgramArguments"] as? [String],
+            let pythonPath = arguments.first,
+            !pythonPath.isEmpty
+        else {
+            throw ExternalRuntimeSupervisorError.rejectedCommand("无法读取已安装 Sidecar 的 Python 运行时")
+        }
+        let variables = object["EnvironmentVariables"] as? [String: Any] ?? [:]
+        let defaultSupport = homeDirectory
+            .appendingPathComponent("Library/Application Support/RagIme", isDirectory: true)
+        let supportURL = URL(
+            fileURLWithPath: variables["RAG_IME_APP_SUPPORT_DIR"] as? String ?? defaultSupport.path,
+            isDirectory: true
+        ).standardizedFileURL
+        let appRootURL = URL(
+            fileURLWithPath: variables["RAG_IME_ROOT"] as? String
+                ?? supportURL.appendingPathComponent("app", isDirectory: true).path,
+            isDirectory: true
+        ).standardizedFileURL
+        let scriptURL = appRootURL.appendingPathComponent("portable_restore_supervisor.py")
+        let planURL = supportURL
+            .appendingPathComponent("Agent/external-actions", isDirectory: true)
+            .appendingPathComponent("\(planId).json")
+        let pythonURL = URL(fileURLWithPath: pythonPath).standardizedFileURL
+
+        guard FileManager.default.isExecutableFile(atPath: pythonURL.path) else {
+            throw ExternalRuntimeSupervisorError.rejectedCommand("Sidecar Python 运行时不可执行")
+        }
+        try requireRegularUnlinkedFile(scriptURL, label: "恢复监督器")
+        try requireRegularUnlinkedFile(planURL, label: "恢复计划")
+        let attributes = try? FileManager.default.attributesOfItem(atPath: planURL.path)
+        let permissions = (attributes?[.posixPermissions] as? NSNumber)?.intValue ?? 0o777
+        guard permissions & 0o077 == 0 else {
+            throw ExternalRuntimeSupervisorError.rejectedCommand("恢复计划权限过宽")
+        }
+        return ValidatedExternalCommand(
+            executableURL: pythonURL,
+            arguments: [scriptURL.path, "--plan", planURL.path],
+            currentDirectoryURL: appRootURL
+        )
+    }
+
+    private static func requireRegularUnlinkedFile(_ url: URL, label: String) throws {
+        let standardized = url.standardizedFileURL
+        let resolved = standardized.resolvingSymlinksInPath().standardizedFileURL
+        guard standardized == resolved else {
+            throw ExternalRuntimeSupervisorError.rejectedCommand("\(label)不能是符号链接")
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue
+        else {
+            throw ExternalRuntimeSupervisorError.missingCommand(label)
+        }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: standardized.path)
+        guard attributes?[.type] as? FileAttributeType == .typeRegular else {
+            throw ExternalRuntimeSupervisorError.rejectedCommand("\(label)不是普通文件")
         }
     }
 
@@ -178,13 +266,30 @@ enum ExternalRuntimeSupervisor {
         action: String,
         command: [String],
         timeoutSeconds: TimeInterval = 90,
-        trustedRoots: [URL]? = nil
+        trustedRoots: [URL]? = nil,
+        expectedPlanSha256: String? = nil,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) async throws -> ExternalSupervisorExecutionResult {
         let validated = try ExternalCommandPolicy.validate(
             action: action,
             command: command,
-            trustedRoots: trustedRoots ?? trustedHelperRoots()
+            trustedRoots: trustedRoots ?? trustedHelperRoots(),
+            homeDirectory: homeDirectory
         )
+        if action == "restore_backup" {
+            guard let expectedPlanSha256,
+                  expectedPlanSha256.count == 64,
+                  validated.arguments.count == 3
+            else {
+                throw ExternalRuntimeSupervisorError.rejectedCommand("恢复回执缺少计划 SHA-256")
+            }
+            let planURL = URL(fileURLWithPath: validated.arguments[2])
+            let data = try Data(contentsOf: planURL, options: [.mappedIfSafe])
+            let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard actual == expectedPlanSha256 else {
+                throw ExternalRuntimeSupervisorError.rejectedCommand("恢复计划在审批后发生变化")
+            }
+        }
         return try await run(validated, timeoutSeconds: timeoutSeconds)
     }
 

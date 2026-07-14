@@ -25,6 +25,10 @@ class JsonContractTests(unittest.TestCase):
             "frontend-selection.v1.json",
             "frontend-selection-response.v1.json",
             "frontend-capabilities.v1.json",
+            "pi-runtime-manifest.v1.json",
+            "agent-model-catalog.v1.json",
+            "agent-model-selection.v1.json",
+            "agent-thinking-selection.v1.json",
         ):
             with self.subTest(name=name):
                 self.assertEqual(load_contract(name)["type"], "object")

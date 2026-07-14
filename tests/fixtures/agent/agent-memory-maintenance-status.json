@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
+  "ok": true,
+  "policy": "review",
+  "autoApply": false,
+  "scheduledDraftOnly": true,
+  "due": true,
+  "dueReason": "idle",
+  "idleMs": 1200001,
+  "compileState": {
+    "project": "wisdom-weasel-rag-ime",
+    "lastCompiledEventId": 13016,
+    "lastRunMs": 1783950000000,
+    "pendingEventCount": 7,
+    "lastBundleHash": "sha256:previous"
+  },
+  "pendingDraftCount": 1,
+  "runs": [
+    {
+      "runId": "memory_book_review_1",
+      "createdAtMs": 1783951200000,
+      "status": "draft",
+      "summary": "记忆整理草案",
+      "diffCount": 3,
+      "bundleHash": "sha256:current",
+      "sourceCursor": {
+        "fromEventId": 13016,
+        "toEventId": 13023,
+        "pendingEventCount": 7
+      }
+    }
+  ]
+}

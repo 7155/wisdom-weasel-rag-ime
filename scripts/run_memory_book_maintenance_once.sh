@@ -139,6 +139,7 @@ preview_cmd=(
   --since-days "$SINCE_DAYS"
   --recent-limit "$RECENT_LIMIT"
   --output "$PLAN_PATH"
+  --save-draft
 )
 if [[ -n "$MODEL_ENV_PATH" ]]; then
   preview_cmd+=(--model-env-path "$MODEL_ENV_PATH")
@@ -170,11 +171,21 @@ payload = {
     "ok": True,
     "generatedAt": datetime.now(timezone.utc).isoformat(),
     "applied": applied == "true",
+    "reviewRequired": applied != "true",
     "planPath": plan_path,
     "previewLog": preview_path,
     "validateLog": validate_path,
     "applyLog": apply_path if applied == "true" else "",
 }
+try:
+    preview = json.loads(Path(preview_path).read_text(encoding="utf-8"))
+    run = preview.get("run") if isinstance(preview.get("run"), dict) else {}
+    payload["storedDraft"] = bool(preview.get("storedDraft"))
+    payload["reusedDraft"] = bool(preview.get("reusedDraft"))
+    payload["runId"] = str(run.get("runId") or "")
+except Exception as exc:
+    payload["ok"] = False
+    payload["previewError"] = str(exc)
 try:
     validate = json.loads(Path(validate_path).read_text(encoding="utf-8"))
     payload["validationOk"] = bool(validate.get("ok"))

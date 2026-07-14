@@ -15,9 +15,12 @@ from rag_ime.memory_book_compiler import (
     apply_memory_book_plan,
     apply_stored_memory_book_run,
     build_memory_book_source_bundle,
+    find_newer_applied_memory_book_run,
+    find_memory_book_draft_for_bundle,
     inspect_memory_book_plan,
     memory_compile_state,
     memory_book_plan_from_compile_output,
+    memory_book_plan_from_stored_run,
     rollback_memory_book_run,
     store_memory_book_plan,
     update_stored_memory_book_diff,
@@ -101,6 +104,151 @@ class MemoryBookCompilerTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db_path)) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_cleanup_runs WHERE run_id LIKE 'memory_book_%'").fetchone()[0], 0)
+
+    def test_memory_book_preview_saved_draft_reuses_identical_source_bundle(self) -> None:
+        class CountingOrganizer(FakeMemoryBookOrganizer):
+            calls = 0
+
+            def compile_memory_book(self, *, bundle: dict[str, object], project: str) -> dict[str, object]:
+                type(self).calls += 1
+                return super().compile_memory_book(bundle=bundle, project=project)
+
+        original = cli_module.DeepSeekMemoryOrganizer
+        cli_module.DeepSeekMemoryOrganizer = CountingOrganizer
+        try:
+            env_path = Path(self.tmp.name) / "deepseek.env"
+            env_path.write_text("DEEPSEEK_API_KEY=fake\nRAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash\n", encoding="utf-8")
+            output = Path(self.tmp.name) / "memory-book-review.json"
+            arguments = (
+                "memory-book-preview",
+                "--project",
+                "wisdom-weasel-rag-ime",
+                "--model-env-path",
+                str(env_path),
+                "--output",
+                str(output),
+                "--save-draft",
+            )
+            first_code, first = self._run_cli_json(*arguments)
+            second_code, second = self._run_cli_json(*arguments)
+        finally:
+            cli_module.DeepSeekMemoryOrganizer = original
+
+        self.assertEqual((first_code, second_code), (0, 0))
+        self.assertTrue(first["storedDraft"])
+        self.assertFalse(first["reusedDraft"])
+        self.assertTrue(second["storedDraft"])
+        self.assertTrue(second["reusedDraft"])
+        self.assertEqual(CountingOrganizer.calls, 1)
+        self.assertEqual(first["run"]["runId"], second["run"]["runId"])
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            existing = find_memory_book_draft_for_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                bundle_hash=str(first["source"]["bundleHash"]),
+            )
+            assert existing is not None
+            restored = memory_book_plan_from_stored_run(existing)
+            draft_count = conn.execute(
+                "SELECT COUNT(*) FROM memory_cleanup_runs WHERE status = 'draft' AND run_id LIKE 'memory_book_%'"
+            ).fetchone()[0]
+        self.assertEqual(restored["runId"], first["run"]["runId"])
+        self.assertTrue(inspect_memory_book_plan(restored)["ok"])
+        self.assertEqual(draft_count, 1)
+
+    def test_coalesced_memory_book_draft_supersedes_older_project_draft(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                since_days=7,
+                limit=80,
+            )
+            first_plan = memory_book_plan_from_compile_output(
+                sample_compile_output(self.event_id),
+                project="wisdom-weasel-rag-ime",
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                source_bundle=bundle,
+            )
+            store_memory_book_plan(conn, first_plan, supersede_project_drafts=True)
+            second_plan = json.loads(json.dumps(first_plan))
+            second_plan["runId"] = "memory_book_newer_review"
+            second_plan["metadata"]["bundleHash"] = "sha256:newer-bundle"
+            store_memory_book_plan(conn, second_plan, supersede_project_drafts=True)
+            statuses = {
+                str(row["run_id"]): str(row["status"])
+                for row in conn.execute(
+                    "SELECT run_id, status FROM memory_cleanup_runs WHERE run_id IN (?, ?)",
+                    (first_plan["runId"], second_plan["runId"]),
+                ).fetchall()
+            }
+            rejected = conn.execute(
+                "SELECT COUNT(*) FROM memory_cleanup_diffs WHERE run_id = ? AND status = 'rejected'",
+                (first_plan["runId"],),
+            ).fetchone()[0]
+
+        self.assertEqual(statuses[first_plan["runId"]], "superseded")
+        self.assertEqual(statuses[second_plan["runId"]], "draft")
+        self.assertGreater(rejected, 0)
+
+    def test_stale_memory_book_draft_cannot_apply_or_be_reused(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            first_bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                since_days=7,
+                limit=80,
+            )
+            stale_plan = memory_book_plan_from_compile_output(
+                sample_compile_output(self.event_id),
+                project="wisdom-weasel-rag-ime",
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                source_bundle=first_bundle,
+            )
+            stale_plan["runId"] = "memory_book_stale_review"
+            store_memory_book_plan(conn, stale_plan)
+
+        second_event_id = int(
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now_ms(),
+                    source="manual",
+                    committed_text="后续证据已经生成并应用新的记忆草案",
+                    privacy_disposition="allowed",
+                    recent_context="",
+                    project="wisdom-weasel-rag-ime",
+                )
+            ).split(":", 1)[1]
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            newer_bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                since_days=7,
+                limit=80,
+            )
+            newer_plan = memory_book_plan_from_compile_output(
+                sample_compile_output(second_event_id),
+                project="wisdom-weasel-rag-ime",
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                source_bundle=newer_bundle,
+            )
+            newer_plan["runId"] = "memory_book_newer_apply"
+            apply_memory_book_plan(conn, newer_plan)
+
+            with self.assertRaisesRegex(ValueError, "draft is stale"):
+                apply_stored_memory_book_run(conn, run_id="memory_book_stale_review")
+            reused = find_memory_book_draft_for_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                bundle_hash=str(stale_plan["metadata"]["bundleHash"]),
+            )
+
+        self.assertIsNone(reused)
 
     def test_source_bundle_exposes_delete_and_correction_feedback_to_dsv4(self) -> None:
         self.core.record_memory_feedback(
@@ -579,6 +727,30 @@ class MemoryBookCompilerTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db_path)) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0], 0)
+
+    def test_memory_book_runs_must_roll_back_in_reverse_apply_order(self) -> None:
+        first = memory_book_plan_from_compile_output(
+            sample_compile_output(self.event_id),
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        first["runId"] = "memory_book_first_apply"
+        second = json.loads(json.dumps(first))
+        second["runId"] = "memory_book_second_apply"
+        second["summary"] = "later memory state"
+
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            apply_memory_book_plan(conn, first)
+            apply_memory_book_plan(conn, second)
+            newer = find_newer_applied_memory_book_run(conn, run_id=first["runId"])
+            with self.assertRaisesRegex(ValueError, "newer applied run"):
+                rollback_memory_book_run(conn, run_id=first["runId"])
+            rollback_memory_book_run(conn, run_id=second["runId"])
+            rolled_back = rollback_memory_book_run(conn, run_id=first["runId"])
+
+        self.assertEqual(newer["runId"], second["runId"])
+        self.assertEqual(rolled_back["status"], "rolled_back")
 
     def test_stored_workbench_draft_supports_review_edit_and_exclusion(self) -> None:
         plan = memory_book_plan_from_compile_output(

@@ -1,0 +1,635 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
+from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
+
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+
+
+class _GatewayRuntime:
+    runtime_kind = "gateway_http"
+    driver_id = "test-gateway"
+
+    def __init__(self, session_root: Path):
+        self.session_root = session_root
+        self.default_model_profile = "gateway/default"
+        self.stopped = False
+
+    def runtime_status(self):
+        return {
+            "schemaVersion": "rag-ime.agent-runtime.v1",
+            "enabled": True,
+            "managed": True,
+            "status": "ready",
+            "driverId": self.driver_id,
+            "runtimeKind": self.runtime_kind,
+            "runtimeVersion": "test-1",
+            "piVersion": "",
+            "idleTimeoutSeconds": 0,
+            "activeSessionId": None,
+            "lastError": "",
+            "capabilities": {"sessions": True, "modelConfigured": True},
+        }
+
+    def stop(self):
+        self.stopped = True
+
+
+class _GatewayRuntimeFactory:
+    runtime_kind = "gateway_http"
+    driver_id = "test-gateway"
+    default_model_profile = "gateway/default"
+
+    def __init__(self, root: Path):
+        self.session_root = root / "gateway-sessions"
+        self.working_root = root / "gateway-work"
+        self.created_for: list[str] = []
+        self.runtime: _GatewayRuntime | None = None
+
+    def create(self, _context, *, purpose, session_context_provider=None):
+        del session_context_provider
+        self.created_for.append(purpose)
+        self.runtime = _GatewayRuntime(self.session_root)
+        return self.runtime
+
+    def reconfigure(self, _config):
+        return None
+
+
+class AgentServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-service-")
+        self.root = Path(self.tmp.name)
+        self.process_id = 100
+        self.service = AgentService(
+            db_path=self.root / "rag-ime.sqlite",
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config",
+                session_dir=self.root / "sessions",
+                logs_dir=self.root / "logs",
+            ),
+            process_id_provider=lambda: self.process_id,
+        )
+
+    def tearDown(self) -> None:
+        self.service.close()
+        self.tmp.cleanup()
+
+    def test_runtime_and_session_crud_are_typed(self) -> None:
+        runtime = self.service.runtime_status()
+        self.assertEqual(runtime["schemaVersion"], "rag-ime.agent-runtime.v1")
+        self.assertEqual(runtime["status"], "disabled")
+        roles = self.service.list_roles()
+        self.assertEqual(roles["items"][0]["displayName"], "智鼬")
+        self.assertEqual(
+            [item["roleId"] for item in roles["items"]],
+            ["zhiyou-v1", "hermes-v1", "vcp-v1"],
+        )
+        self.assertNotIn("systemPrompt", roles["items"][0])
+
+        created = self.service.create_session({"title": " 连续   对话 "})
+        session = created["session"]
+        session_id = str(session["id"])
+        self.assertEqual(session["title"], "连续 对话")
+
+        listed = self.service.list_sessions()
+        self.assertEqual(listed["items"][0]["id"], session_id)
+        renamed = self.service.update_session(session_id, {"title": "检索会话"})
+        self.assertEqual(renamed["session"]["title"], "检索会话")
+        archived = self.service.update_session(session_id, {"archived": True})
+        self.assertEqual(archived["session"]["status"], "archived")
+        restored = self.service.update_session(session_id, {"archived": False})
+        self.assertEqual(restored["session"]["status"], "idle")
+        coordinator = self.service.update_session(
+            session_id,
+            {"mode": "coordinator", "workspaceRoots": [self.root.as_posix()]},
+        )
+        self.assertEqual(coordinator["session"]["mode"], "coordinator")
+        self.assertEqual(coordinator["session"]["shellPolicyVersion"], "coordinator-per-command-v1")
+        controlled = self.service.update_session(session_id, {"mode": "assistant"})
+        self.assertEqual(controlled["session"]["mode"], "assistant")
+        self.assertEqual(controlled["session"]["workspaceRoots"], [])
+
+        deleted = self.service.delete_session(session_id)
+        self.assertTrue(deleted["ok"])
+        self.assertEqual(self.service.list_sessions()["items"], [])
+
+    def test_service_depends_on_runtime_driver_contract_not_pi_manager(self) -> None:
+        factory = _GatewayRuntimeFactory(self.root)
+        service = AgentService(
+            db_path=self.root / "gateway.sqlite",
+            runtime_factory=factory,
+        )
+        try:
+            runtime = service.runtime_status()
+            session = service.create_session({"title": "网关会话"})["session"]
+
+            self.assertEqual(runtime["runtimeKind"], "gateway_http")
+            self.assertEqual(runtime["driverId"], "test-gateway")
+            self.assertEqual(session["modelProfile"], "gateway/default")
+            self.assertEqual(factory.created_for, ["interactive"])
+        finally:
+            service.close()
+        self.assertTrue(factory.runtime and factory.runtime.stopped)
+
+    def test_direct_chat_persona_is_immutable_session_metadata(self) -> None:
+        created = self.service.create_session(
+            {
+                "title": "Hermes 任务",
+                "mode": "assistant",
+                "roleId": "hermes-v1",
+                "roleVersion": "1",
+            }
+        )["session"]
+
+        self.assertEqual(created["roleId"], "hermes-v1")
+        self.assertEqual(created["roleVersion"], "1")
+        self.assertEqual(created["toolProfileVersion"], "control-center-v1")
+        renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
+        self.assertEqual(renamed["roleId"], "hermes-v1")
+        self.assertEqual(renamed["roleVersion"], "1")
+
+        with self.assertRaisesRegex(ValueError, "not available for coordinator"):
+            self.service.create_session(
+                {
+                    "title": "越权角色",
+                    "mode": "coordinator",
+                    "roleId": "vcp-v1",
+                    "roleVersion": "1",
+                    "workspaceRoots": [self.root.as_posix()],
+                }
+            )
+
+    def test_message_snapshot_returns_event_resume_cursor(self) -> None:
+        session = self.service.create_session({"title": "恢复游标"})["session"]
+        session_id = str(session["id"])
+        event = self.service.events.publish(session_id, "status_changed", {"status": "ready"})
+        with patch.object(self.service.runtime, "messages", return_value=[]):
+            response = self.service.messages(session_id)
+
+        self.assertEqual(response["lastSequence"], event.sequence)
+        self.assertEqual(response["resumeToken"], event.resume_token)
+
+    def test_model_catalog_and_selection_are_owned_by_pi_session(self) -> None:
+        session = self.service.create_session({"title": "模型切换"})["session"]
+        session_id = str(session["id"])
+        model = {
+            "provider": "openrouter",
+            "id": "anthropic/claude-sonnet",
+            "name": "Claude Sonnet",
+            "api": "openai-completions",
+            "reasoning": True,
+            "thinkingLevels": ["off", "low", "medium", "high"],
+            "supportsImages": True,
+            "contextWindow": 200000,
+            "maxTokens": 16384,
+        }
+        with patch.object(
+            self.service.runtime,
+            "model_catalog",
+            return_value={"selected": model, "models": [model], "thinkingLevel": "medium"},
+        ):
+            catalog = self.service.model_catalog(session_id)
+
+        self.assertEqual(catalog["providers"][0]["displayName"], "OpenRouter")
+        self.assertEqual(catalog["selected"]["id"], "anthropic/claude-sonnet")
+        self.assertEqual(catalog["thinkingLevel"], "medium")
+        self.assertNotIn("apiKey", json.dumps(catalog))
+
+        selected_session = self.service.sessions.set_model_profile(
+            session_id,
+            "openrouter/anthropic/claude-sonnet",
+        )
+        with patch.object(
+            self.service.runtime,
+            "set_model",
+            return_value={"selected": model, "session": selected_session},
+        ) as select:
+            response = self.service.select_model(
+                session_id,
+                {"provider": "openrouter", "modelId": "anthropic/claude-sonnet"},
+            )
+
+        select.assert_called_once_with(
+            session_id,
+            provider="openrouter",
+            model_id="anthropic/claude-sonnet",
+        )
+        self.assertEqual(response["session"]["modelProfile"], "openrouter/anthropic/claude-sonnet")
+
+        with patch.object(
+            self.service.runtime,
+            "set_thinking_level",
+            return_value={"thinkingLevel": "high", "selected": model},
+        ) as set_thinking:
+            thinking = self.service.select_thinking_level(session_id, {"level": "high"})
+        set_thinking.assert_called_once_with(session_id, level="high")
+        self.assertEqual(thinking["thinkingLevel"], "high")
+
+    def test_session_lifecycle_probes_memory_due_without_running_the_organizer(self) -> None:
+        session = self.service.create_session({"title": "生命周期"})["session"]
+        session_id = str(session["id"])
+        triggers: list[str] = []
+
+        def probe(payload):
+            triggers.append(str(payload["trigger"]))
+            return {
+                "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
+                "ok": True,
+                "policy": "review",
+                "autoApply": False,
+                "due": True,
+                "dueReason": "idle",
+                "compileState": {"pendingEventCount": 4},
+                "pendingDraftCount": 1,
+                "runs": [],
+            }
+
+        self.service.bind_memory_maintenance_probe(probe)
+        with patch.object(
+            self.service.runtime,
+            "ensure",
+            return_value={"state": {"sessionId": "pi-test"}, "session": session},
+        ):
+            ensured = self.service.ensure_runtime({"sessionId": session_id})
+        archived = self.service.update_session(session_id, {"archived": True})
+        with patch.object(self.service.runtime, "compact", return_value={"compacted": True}):
+            compacted = self.service.compact(session_id, {})
+
+        self.assertEqual(triggers, ["session_switch", "session_archive", "compaction"])
+        self.assertEqual(ensured["memoryMaintenance"]["trigger"], "session_switch")
+        self.assertEqual(archived["memoryMaintenance"]["trigger"], "session_archive")
+        self.assertEqual(compacted["memoryMaintenance"]["trigger"], "compaction")
+        events, gap = self.service.events.replay(session_id)
+        self.assertFalse(gap)
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["memory_maintenance_updated"] * 3,
+        )
+        self.assertTrue(all(event.payload["due"] is True for event in events))
+
+    def test_session_input_and_runtime_capabilities_fail_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "workspaceRoots must be an array"):
+            self.service.create_session({"title": "bad", "workspaceRoots": self.root.as_posix()})
+        with self.assertRaisesRegex(ValueError, "unsupported agent role"):
+            self.service.create_session({"title": "bad", "roleId": "model-injected-role"})
+        with self.assertRaisesRegex(ValueError, "cannot carry workspace roots"):
+            self.service.create_session({"title": "bad", "workspaceRoots": [self.root.as_posix()]})
+
+        coordinator = self.service.create_session(
+            {
+                "title": "运行协调",
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+            }
+        )["session"]
+        self.assertEqual(coordinator["mode"], "coordinator")
+        with self.assertRaisesRegex(PiRuntimeError, "disabled"):
+            self.service.ensure_runtime({"sessionId": coordinator["id"]})
+
+    def test_delete_only_removes_session_file_inside_managed_root(self) -> None:
+        inside = self.service.create_session({"title": "inside"})["session"]
+        session_root = self.service.runtime.config.session_dir
+        session_root.mkdir(parents=True)
+        inside_file = session_root / "inside.jsonl"
+        inside_file.write_text("{}\n", encoding="utf-8")
+        self.service.sessions.bind_pi_session(
+            str(inside["id"]),
+            pi_session_id="pi-inside",
+            session_file=str(inside_file),
+        )
+        deleted = self.service.delete_session(str(inside["id"]))
+        self.assertTrue(deleted["sessionFileDeleted"])
+        self.assertFalse(inside_file.exists())
+
+        outside = self.service.create_session({"title": "outside"})["session"]
+        outside_file = self.root / "outside.jsonl"
+        outside_file.write_text("{}\n", encoding="utf-8")
+        self.service.sessions.bind_pi_session(
+            str(outside["id"]),
+            pi_session_id="pi-outside",
+            session_file=str(outside_file),
+        )
+        deleted = self.service.delete_session(str(outside["id"]))
+        self.assertFalse(deleted["sessionFileDeleted"])
+        self.assertTrue(outside_file.exists())
+
+    def test_managed_image_is_bound_to_prompt_and_deleted_with_session(self) -> None:
+        session = self.service.create_session({"title": "图片对话"})["session"]
+        session_id = str(session["id"])
+        imported = self.service.import_media(
+            session_id=session_id,
+            data=PNG_1X1,
+            mime_type="image/png",
+            file_name="screen.png",
+        )["media"]
+
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            return_value={
+                "accepted": True,
+                "turnId": "turn:image:1",
+                "piEntryId": "pi-entry:image:1",
+                "response": {"success": True},
+            },
+        ) as prompt:
+            response = self.service.prompt(
+                session_id,
+                {"message": "这张图里有什么", "attachments": [imported["mediaId"]]},
+            )
+
+        images = prompt.call_args.kwargs["images"]
+        self.assertEqual(images[0]["mimeType"], "image/png")
+        self.assertEqual(base64.b64decode(images[0]["data"]), PNG_1X1)
+        self.assertEqual(response["attachments"][0]["mediaId"], imported["mediaId"])
+        self.assertEqual(
+            self.service.media.attachments_for_entry(
+                session_id=session_id,
+                pi_entry_id="pi-entry:image:1",
+            )[0]["mediaId"],
+            imported["mediaId"],
+        )
+
+        deleted = self.service.delete_session(session_id)
+        self.assertEqual(deleted["mediaFilesDeleted"], 1)
+        self.assertEqual(list(self.service.media.root.glob("*.blob")), [])
+
+    def test_persisted_runtime_toggle_is_used_unless_development_env_overrides_it(self) -> None:
+        settings = {"agent": {"pi": {"enabled": True, "idleTimeoutSeconds": 321}}}
+        with patch.dict("os.environ", {}, clear=True):
+            configured = pi_runtime_config_from_settings(settings)
+        self.assertTrue(configured.enabled)
+        self.assertEqual(configured.idle_timeout_seconds, 321)
+
+        with patch.dict(
+            "os.environ",
+            {"RAG_IME_PI_ENABLED": "false", "RAG_IME_PI_IDLE_TIMEOUT_SECONDS": "12"},
+            clear=True,
+        ):
+            overridden = pi_runtime_config_from_settings(settings)
+        self.assertFalse(overridden.enabled)
+        self.assertEqual(overridden.idle_timeout_seconds, 12)
+
+    def test_approval_api_lists_and_rejects_but_cannot_fake_an_approval(self) -> None:
+        session = self.service.create_session({"title": "审批"})["session"]
+        approval = self.service.sessions.create_approval(
+            session_id=str(session["id"]),
+            tool_name="ime_input",
+            operation="apply_settings",
+            payload_sha256="a" * 64,
+            preview={"summary": "关闭模糊音"},
+            risk_level="R1",
+        )
+        listed = self.service.list_approvals({"sessionId": session["id"]})
+        self.assertEqual(listed["items"][0]["approvalId"], approval["approvalId"])
+
+        rejected = self.service.decide_approval(
+            str(approval["approvalId"]),
+            {"decision": "reject", "payloadSha256": "a" * 64},
+        )
+        self.assertEqual(rejected["approval"]["state"], "rejected")
+
+        forged = self.service.sessions.create_approval(
+            session_id=str(session["id"]),
+            tool_name="ime_runtime",
+            operation="restart",
+            payload_sha256="b" * 64,
+            preview={"summary": "重启"},
+            risk_level="R2",
+        )
+        with self.assertRaisesRegex(ValueError, "no longer active in Pi"):
+            self.service.decide_approval(
+                str(forged["approvalId"]),
+                {"decision": "approve", "payloadSha256": "b" * 64},
+            )
+        self.assertEqual(
+            self.service.sessions.get_approval(str(forged["approvalId"]))["state"],
+            "pending",
+        )
+
+    def test_approved_operation_executes_before_pi_is_released_and_returns_receipt(self) -> None:
+        session = self.service.create_session({"title": "任务审批"})["session"]
+        approval = self.service.sessions.create_approval(
+            session_id=str(session["id"]),
+            tool_name="ime_planning",
+            operation="task_action",
+            payload_sha256="c" * 64,
+            preview={"summary": "完成接入 Pi"},
+            risk_level="R1",
+        )
+        calls: list[str] = []
+
+        def execute(value):
+            calls.append("execute")
+            self.assertEqual(value["state"], "approved")
+            return {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": True,
+                "summary": "已完成接入 Pi",
+                "auditId": 42,
+                "undoAvailable": True,
+            }
+
+        self.service.bind_approval_executor(execute)
+        with (
+            patch.object(self.service.runtime, "has_pending_approval", return_value=True),
+            patch.object(self.service.runtime, "resolve_approval") as resolve,
+        ):
+            result = self.service.decide_approval(
+                str(approval["approvalId"]),
+                {"decision": "approve", "payloadSha256": "c" * 64},
+            )
+
+        self.assertEqual(calls, ["execute"])
+        self.assertEqual(result["approval"]["state"], "applied")
+        self.assertTrue(result["approval"]["receipt"]["mutationApplied"])
+        self.assertTrue(result["runtimeNotified"])
+        resolve.assert_called_once_with(
+            str(session["id"]),
+            str(approval["approvalId"]),
+            approved=True,
+            resolution_state="applied",
+        )
+        lookup = self.service.approval_result(
+            {"sessionId": session["id"], "approvalId": approval["approvalId"]}
+        )
+        self.assertEqual(lookup["approval"]["receipt"]["auditId"], 42)
+
+    def test_sidecar_restart_is_released_to_pi_then_finalized_by_new_process(self) -> None:
+        session = self.service.create_session({"title": "Sidecar 两阶段重启"})["session"]
+        approval = self.service.sessions.create_approval(
+            session_id=str(session["id"]),
+            tool_name="ime_runtime",
+            operation="restart_sidecar",
+            payload_sha256="d" * 64,
+            preview={"summary": "重启 Sidecar"},
+            risk_level="R2",
+        )
+        command = ["launchctl", "kickstart", "-k", "gui/501/com.rag-ime.sidecar"]
+        command_sha256 = hashlib.sha256(
+            json.dumps(command, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+        self.service.bind_approval_executor(
+            lambda value: {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": False,
+                "externalActionPending": True,
+                "approvalId": value["approvalId"],
+                "toolId": "ime_runtime",
+                "operation": "restart_sidecar",
+                "summary": "等待 Pi 回合结束",
+                "externalAction": "restart_sidecar",
+                "externalCommand": command,
+                "externalCommandSha256": command_sha256,
+            }
+        )
+        with (
+            patch.object(self.service.runtime, "has_pending_approval", return_value=True),
+            patch.object(self.service.runtime, "resolve_approval") as resolve,
+        ):
+            pending = self.service.decide_approval(
+                str(approval["approvalId"]),
+                {"decision": "approve", "payloadSha256": "d" * 64},
+            )
+
+        self.assertEqual(pending["approval"]["state"], "external_pending")
+        self.assertEqual(pending["approval"]["receipt"]["originProcessId"], 100)
+        self.assertFalse(pending["approval"]["receipt"]["mutationApplied"])
+        resolve.assert_called_once_with(
+            str(session["id"]),
+            str(approval["approvalId"]),
+            approved=True,
+            resolution_state="external_pending",
+        )
+        finalize_payload = {
+            "payloadSha256": "d" * 64,
+            "externalAction": "restart_sidecar",
+            "externalCommandSha256": command_sha256,
+            "succeeded": True,
+            "exitCode": 0,
+            "timedOut": False,
+        }
+        with self.assertRaisesRegex(ValueError, "new Sidecar process"):
+            self.service.finalize_external_approval(str(approval["approvalId"]), finalize_payload)
+
+        self.process_id = 101
+        finalized = self.service.finalize_external_approval(
+            str(approval["approvalId"]),
+            finalize_payload,
+        )
+        self.assertEqual(finalized["approval"]["state"], "applied")
+        self.assertTrue(finalized["approval"]["receipt"]["mutationApplied"])
+        self.assertFalse(finalized["approval"]["receipt"]["externalActionPending"])
+        self.assertEqual(finalized["approval"]["receipt"]["finalProcessId"], 101)
+        events, _ = self.service.events.replay(str(session["id"]))
+        self.assertEqual(events[-1].event_type, "approval_resolved")
+        self.assertTrue(events[-1].payload["externalFinalized"])
+
+    def test_final_user_prompt_creates_source_checkpoint_without_assistant_text(self) -> None:
+        session = self.service.create_session({"title": "连续记忆"})["session"]
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            return_value={
+                "accepted": True,
+                "turnId": "turn:memory:1",
+                "piEntryId": "pi-entry:user:1",
+                "response": {"success": True},
+            },
+        ):
+            result = self.service.prompt(
+                str(session["id"]),
+                {"message": "记住普通生成和深度检索要分开"},
+            )
+
+        self.assertTrue(result["memoryCheckpoint"]["stored"])
+        sources = self.service.list_memory_sources({"sessionId": session["id"]})["items"]
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["sourceRole"], "user")
+        events, _ = self.service.events.replay(str(session["id"]))
+        self.assertIn("memory_checkpointed", [event.event_type for event in events])
+
+    def test_input_method_deep_search_reuses_daily_assistant_and_checkpoints_only_question(self) -> None:
+        runtime_status = {
+            "schemaVersion": "rag-ime.agent-runtime.v1",
+            "enabled": True,
+            "status": "ready",
+            "activeSessionId": None,
+            "capabilities": {"rpc": True, "modelConfigured": True},
+        }
+        prompt_receipt = {
+            "accepted": True,
+            "turnId": "turn:deep:1",
+            "piEntryId": "pi-entry:deep:1",
+            "response": {"success": True},
+        }
+        payload = {
+            "query": "最近我在做什么？",
+            "context": "前面还讨论了 Pi Session 和双闪电入口。",
+            "contextSource": "text_input_client",
+            "frontAppBundleId": "com.example.editor",
+            "privacyDisposition": "allowed",
+            "evidence": [
+                {
+                    "sourceType": "memory",
+                    "title": "Pi 控制中心",
+                    "memoryId": "book:pi",
+                    "evidencePreview": "控制中心使用连续 Pi Session。",
+                }
+            ],
+        }
+
+        with (
+            patch.object(self.service, "runtime_status", return_value=runtime_status),
+            patch.object(self.service.runtime, "prompt", return_value=prompt_receipt) as prompt,
+        ):
+            first = self.service.deep_search(payload)
+            second = self.service.deep_search(payload)
+
+        self.assertTrue(first["accepted"])
+        self.assertTrue(first["sessionCreated"])
+        self.assertFalse(second["sessionCreated"])
+        self.assertEqual(first["sessionId"], second["sessionId"])
+        self.assertTrue(str(first["session"]["title"]).startswith("输入助手 "))
+        self.assertEqual(first["evidenceCount"], 1)
+        sent = prompt.call_args_list[0].args[1]
+        self.assertIn("<rag-ime-user-query>\n最近我在做什么？\n</rag-ime-user-query>", sent)
+        self.assertIn("控制中心使用连续 Pi Session", sent)
+        self.assertIn("任何写操作仍必须经过原生审批", sent)
+        sources = self.service.list_memory_sources({"sessionId": first["sessionId"]})["items"]
+        self.assertEqual(
+            [item["canonicalTextSha256"] for item in sources],
+            [hashlib.sha256("最近我在做什么？".encode()).hexdigest()],
+        )
+
+    def test_input_method_deep_search_fails_before_creating_session_when_pi_is_unavailable(self) -> None:
+        with self.assertRaisesRegex(ValueError, "disabled"):
+            self.service.deep_search(
+                {
+                    "query": "深度查找",
+                    "privacyDisposition": "allowed",
+                    "evidence": [],
+                }
+            )
+        self.assertEqual(self.service.list_sessions()["items"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

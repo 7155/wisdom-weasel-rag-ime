@@ -1,9 +1,9 @@
 {
   "schemaVersion": "rag-ime.product-status.v1",
-  "sourceCommit": "caaf4de",
+  "sourceCommit": "fb4ef14",
   "verificationScope": {
     "kind": "working_tree",
-    "baseCommit": "caaf4de",
+    "baseCommit": "fb4ef14",
     "includesUncommittedChanges": true,
     "automatedEvidenceThrough": "2026-07-11",
     "foregroundPermissionActionsRun": false,
@@ -55,7 +55,7 @@
     },
     {
       "id": "public_generated_artifacts_removed",
-      "evidence": "The obsolete 20k template corpus, its generators, stale handoff files, archived agent-process subtree, browser console, and duplicate InputMethodKit frontend were removed in commit caaf4de; the public audit reports no forbidden tracked artifacts."
+      "evidence": "The obsolete 20k template corpus, its generators, stale handoff files, archived agent-process subtree, browser console, and duplicate InputMethodKit frontend were removed in the history-rewritten baseline fb4ef14; the public audit reports no forbidden tracked artifacts."
     },
     {
       "id": "top_level_project_license_selected",

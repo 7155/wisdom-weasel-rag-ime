@@ -398,7 +398,7 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "ragImePanelUsesSid
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "return NSView()" "plain non-glass macOS 26 panel background"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "traceRagImePanelTextLayout" "actual frontend mixed-layout trace"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "same_snapshot_stable_ids" "Assistant Overlay snapshot diff"
-require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "passive_anchor_missing" "passive missing-anchor suppression"
+require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "passive_mouse_fallback" "passive missing-anchor fallback"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "assistant_panel_created" "Assistant Overlay lifecycle tracing"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSuggestionCardView.swift" "preferredPredictionWidth" "stable prediction panel width"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSuggestionRowView.swift" "shortcutPlate" "stable shortcut keycap lane"

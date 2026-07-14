@@ -77,6 +77,39 @@ class ConfigurationPortabilityTests(unittest.TestCase):
         self.assertFalse(result["providers"]["instant"]["secretImportedToKeychain"])
         self.assertNotIn("API_KEY", predictor_env)
 
+    def test_provider_import_can_restore_an_explicitly_empty_model(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-config-empty-model-") as temporary:
+            root = Path(temporary)
+            support = root / "support"
+            support.mkdir()
+            predictor_env = support / "predictor.env"
+            predictor_env.write_text(
+                "RAG_IME_PREDICTOR_PROVIDER=ollama\n"
+                "RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:11434/v1\n"
+                "RAG_IME_PREDICTOR_MODEL=qwen3:0.6b\n",
+                encoding="utf-8",
+            )
+            store = ManagementSettingsStore(root / "rag-ime.sqlite")
+            apply_user_configuration(
+                {
+                    "schemaVersion": USER_CONFIG_SCHEMA_VERSION,
+                    "providers": {
+                        "instant": {
+                            "provider": "mlx",
+                            "endpoint": "http://127.0.0.1:8767",
+                            "model": "",
+                        }
+                    },
+                },
+                settings_store=store,
+                support_directory=support,
+            )
+            text = predictor_env.read_text(encoding="utf-8")
+
+        self.assertIn("RAG_IME_PREDICTOR_PROVIDER=mlx", text)
+        self.assertIn("RAG_IME_PREDICTOR_MODEL=\n", text)
+        self.assertNotIn("qwen3:0.6b", text)
+
     def test_yaml_configuration_file_is_hardened_and_imports_secret_to_keychain(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-yaml-config-") as temporary:
             root = Path(temporary)

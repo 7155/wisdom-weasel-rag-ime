@@ -37,6 +37,24 @@ final class VoiceApplicationDelegate: NSObject, NSApplicationDelegate {
             name: Notification.Name("com.rag-ime.voice.request-accessibility-permission"),
             object: nil
         )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(beginAgentComposerSession),
+            name: Notification.Name("com.rag-ime.voice.agent-composer-begin"),
+            object: nil
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(finishAgentComposerSession),
+            name: Notification.Name("com.rag-ime.voice.agent-composer-finish"),
+            object: nil
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(cancelAgentComposerSession),
+            name: Notification.Name("com.rag-ime.voice.agent-composer-cancel"),
+            object: nil
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -60,6 +78,18 @@ final class VoiceApplicationDelegate: NSObject, NSApplicationDelegate {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
         publishStatus()
+    }
+
+    @objc private func beginAgentComposerSession() {
+        coordinator?.beginAgentComposerSession()
+    }
+
+    @objc private func finishAgentComposerSession() {
+        coordinator?.finishAgentComposerSession()
+    }
+
+    @objc private func cancelAgentComposerSession() {
+        coordinator?.cancelAgentComposerSession()
     }
 
     private func startHotkeyWhenTrusted() {

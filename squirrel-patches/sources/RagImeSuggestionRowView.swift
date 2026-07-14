@@ -28,6 +28,7 @@ final class RagImeSuggestionRowView: NSView {
     sourceBar.layer?.cornerRadius = 1
     sourceIcon.imageScaling = .scaleProportionallyDown
     sourceIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+    sourceIcon.isHidden = true
     sourceLabel.font = RagImeAssistantTypography.source
     sourceLabel.lineBreakMode = .byTruncatingTail
     sourceLabel.maximumNumberOfLines = 1
@@ -41,10 +42,10 @@ final class RagImeSuggestionRowView: NSView {
     shortcutLabel.lineBreakMode = .byClipping
     shortcutLabel.alignment = .center
     shortcutPlate.wantsLayer = true
-    shortcutPlate.layer?.cornerRadius = 5
-    shortcutPlate.layer?.borderWidth = 0.5
+    shortcutPlate.layer?.cornerRadius = 0
+    shortcutPlate.layer?.borderWidth = 0
     separatorView.wantsLayer = true
-    separatorView.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.48).cgColor
+    separatorView.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.28).cgColor
     separatorView.isHidden = true
     hitButton.isBordered = false
     hitButton.title = ""
@@ -61,13 +62,13 @@ final class RagImeSuggestionRowView: NSView {
   override func layout() {
     super.layout()
     let centerY = bounds.midY
-    sourceBar.frame = NSRect(x: 0, y: centerY - 12, width: 3, height: 24)
-    shortcutPlate.frame = NSRect(x: 10, y: centerY - 12, width: 34, height: 24)
-    shortcutLabel.frame = NSRect(x: 11, y: centerY - 10, width: 32, height: 20)
-    sourceIcon.frame = NSRect(x: 49, y: centerY - 11, width: 22, height: 22)
+    sourceBar.frame = NSRect(x: 0, y: centerY - 11, width: 3, height: 22)
+    shortcutPlate.frame = NSRect(x: 9, y: centerY - 11, width: 38, height: 22)
+    shortcutLabel.frame = NSRect(x: 9, y: centerY - 9, width: 38, height: 18)
+    sourceIcon.frame = .zero
     sourceLabel.frame = .zero
-    candidateLabel.frame = NSRect(x: 76, y: centerY - 13, width: max(52, bounds.width - 88), height: 26)
-    separatorView.frame = NSRect(x: 76, y: 0, width: max(0, bounds.width - 88), height: 1)
+    candidateLabel.frame = NSRect(x: 56, y: centerY - 12, width: max(52, bounds.width - 68), height: 24)
+    separatorView.frame = NSRect(x: 56, y: 0, width: max(0, bounds.width - 68), height: 0.5)
     hitButton.frame = bounds
   }
 
@@ -96,8 +97,7 @@ final class RagImeSuggestionRowView: NSView {
 
   override func viewDidChangeEffectiveAppearance() {
     super.viewDidChangeEffectiveAppearance()
-    separatorView.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.48).cgColor
-    shortcutPlate.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.58).cgColor
+    separatorView.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.28).cgColor
     updateAppearance()
   }
 
@@ -107,7 +107,6 @@ final class RagImeSuggestionRowView: NSView {
     let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
     candidateLabel.stringValue = text.isEmpty ? candidate.insertText : text
     sourceLabel.stringValue = sourceLabelText(for: candidate)
-    sourceIcon.image = sourceImage(for: candidate)
     sourceTint = sourceColor(for: candidate)
     shortcutLabel.stringValue = shortcut
     sourceLabel.textColor = sourceTint
@@ -118,7 +117,6 @@ final class RagImeSuggestionRowView: NSView {
     )
     let contextHint = modelContextHint(for: candidate)
     toolTip = contextHint ?? (candidate.evidencePreview.isEmpty ? nil : candidate.evidencePreview)
-    sourceIcon.toolTip = contextHint ?? sourceLabel.stringValue
     let accessibilityShortcut = isPrimary ? "Tab 或 Option+1" : shortcut
     shortcutLabel.toolTip = accessibilityShortcut
     hitButton.setAccessibilityLabel("\(sourceLabel.stringValue) \(candidateLabel.stringValue), \(accessibilityShortcut)")
@@ -137,13 +135,13 @@ final class RagImeSuggestionRowView: NSView {
     opacity.fromValue = 0
     opacity.toValue = 1
     let translation = CABasicAnimation(keyPath: "transform.translation.y")
-    translation.fromValue = 3
+    translation.fromValue = RagImeAssistantMotion.Distance.tiny
     translation.toValue = 0
     let group = CAAnimationGroup()
     group.animations = [opacity, translation]
     group.beginTime = CACurrentMediaTime() + delay
-    group.duration = 0.13
-    group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+    group.duration = RagImeAssistantMotion.Duration.entrance
+    group.timingFunction = RagImeAssistantMotion.timingFunction()
     group.isRemovedOnCompletion = true
     layer?.add(group, forKey: "rag-ime-row-content-in")
   }
@@ -156,11 +154,11 @@ final class RagImeSuggestionRowView: NSView {
     opacity.toValue = 0
     let translation = CABasicAnimation(keyPath: "transform.translation.x")
     translation.fromValue = 0
-    translation.toValue = 5
+    translation.toValue = RagImeAssistantMotion.Distance.small
     let group = CAAnimationGroup()
     group.animations = [opacity, translation]
-    group.duration = 0.08
-    group.timingFunction = CAMediaTimingFunction(name: .easeIn)
+    group.duration = RagImeAssistantMotion.Duration.micro
+    group.timingFunction = RagImeAssistantMotion.timingFunction(.easeIn)
     layer?.add(group, forKey: "rag-ime-row-accepted")
   }
 
@@ -201,26 +199,6 @@ final class RagImeSuggestionRowView: NSView {
     return "本地预测 · 上下文 \(Int(total)) 字"
   }
 
-  private func sourceSymbolName(for candidate: RagImeDisplayCandidate) -> String {
-    switch sourceLabelText(for: candidate) {
-    case "生成": return "bolt.horizontal.circle"
-    case "RAG": return "doc.text.magnifyingglass"
-    case "记忆": return "clock.arrow.circlepath"
-    default: return "sparkles"
-    }
-  }
-
-  private func sourceImage(for candidate: RagImeDisplayCandidate) -> NSImage? {
-    let source = sourceLabelText(for: candidate)
-    if source == "模型" || source == "生成",
-       let url = Bundle.main.url(forResource: "RagImeCompanionIdle", withExtension: "png"),
-       let companion = NSImage(contentsOf: url) {
-      companion.isTemplate = false
-      return companion
-    }
-    return NSImage(systemSymbolName: sourceSymbolName(for: candidate), accessibilityDescription: source)
-  }
-
   private func sourceColor(for candidate: RagImeDisplayCandidate) -> NSColor {
     let configured = (candidate.sourceBadge ?? candidate.badge ?? "").lowercased()
     if configured.contains("deepseek") || configured == "ds" || configured.contains("生成") {
@@ -238,15 +216,12 @@ final class RagImeSuggestionRowView: NSView {
     let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     CATransaction.begin()
     CATransaction.setDisableActions(!animated || reduceMotion)
-    CATransaction.setAnimationDuration(0.08)
-    CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+    CATransaction.setAnimationDuration(RagImeAssistantMotion.Duration.micro)
+    CATransaction.setAnimationTimingFunction(RagImeAssistantMotion.timingFunction())
     let backgroundAlpha: CGFloat = isHovered ? 0.11 : (isPrimary ? 0.045 : 0)
     layer?.backgroundColor = sourceTint.withAlphaComponent(backgroundAlpha).cgColor
     sourceBar.layer?.backgroundColor = sourceTint.withAlphaComponent(isPrimary ? 0.9 : 0.68).cgColor
-    sourceIcon.contentTintColor = sourceIcon.image?.isTemplate == true ? sourceTint : nil
-    shortcutPlate.layer?.backgroundColor = sourceTint.withAlphaComponent(isPrimary ? 0.08 : 0.035).cgColor
-    shortcutPlate.layer?.borderColor = (isPrimary ? sourceTint : NSColor.separatorColor)
-      .withAlphaComponent(isPrimary ? 0.28 : 0.58).cgColor
+    shortcutPlate.layer?.backgroundColor = NSColor.clear.cgColor
     CATransaction.commit()
   }
 }

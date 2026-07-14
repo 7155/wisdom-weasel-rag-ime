@@ -45,10 +45,13 @@ from .memory_book_compiler import (
     MEMORY_BOOK_VALIDATE_SCHEMA_VERSION,
     apply_memory_book_plan,
     build_memory_book_source_bundle,
+    find_memory_book_draft_for_bundle,
     inspect_memory_book_plan,
     load_memory_book_plan,
     memory_book_plan_from_compile_output,
+    memory_book_plan_from_stored_run,
     rollback_memory_book_run,
+    store_memory_book_plan,
 )
 from .memory_cleanup import cleanup_plan_from_payload, cleanup_plan_to_payload, inspect_cleanup_plan, load_cleanup_run_from_file
 from .memory_compiler import (
@@ -409,6 +412,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     memory_book_preview.add_argument("--model", default="")
     memory_book_preview.add_argument("--model-env-path", default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "") or os.environ.get("RAG_IME_MODEL_ENV", ""))
     memory_book_preview.add_argument("--output", default="")
+    memory_book_preview.add_argument(
+        "--save-draft",
+        action="store_true",
+        help="Store a validated review draft without applying memory changes.",
+    )
 
     memory_book_validate = subparsers.add_parser("memory-book-validate", help="Validate a Memory Book compile preview before apply")
     memory_book_validate.add_argument("--run", required=True, help="JSON Memory Book run file")
@@ -1696,22 +1704,48 @@ def main(argv: Sequence[str] | None = None) -> int:
                     since_days=max(1, int(args.since_days)),
                     limit=max(1, int(args.recent_limit)),
                 )
-            config = load_deepseek_config(args.model_env_path or None)
-            if args.model:
-                config = replace(config, model=args.model)
-            organizer = DeepSeekMemoryOrganizer(config)
-            compile_output = organizer.compile_memory_book(bundle=bundle, project=args.project)
-            plan = memory_book_plan_from_compile_output(
-                compile_output,
-                project=args.project,
-                provider=organizer.provider_name,
-                model=config.model,
-                source_bundle=bundle,
-            )
+                existing_draft = (
+                    find_memory_book_draft_for_bundle(
+                        conn,
+                        project=args.project,
+                        bundle_hash=str(bundle.get("bundleHash") or ""),
+                    )
+                    if bool(args.save_draft)
+                    else None
+                )
+            reused_draft = existing_draft is not None
+            stored_run: dict[str, object] | None = None
+            if existing_draft is not None:
+                plan = memory_book_plan_from_stored_run(existing_draft)
+                stored_run = existing_draft
+                provider_name = str(existing_draft.get("provider") or "")
+                model_name = str(existing_draft.get("model") or "")
+            else:
+                config = load_deepseek_config(args.model_env_path or None)
+                if args.model:
+                    config = replace(config, model=args.model)
+                organizer = DeepSeekMemoryOrganizer(config)
+                compile_output = organizer.compile_memory_book(bundle=bundle, project=args.project)
+                provider_name = organizer.provider_name
+                model_name = config.model
+                plan = memory_book_plan_from_compile_output(
+                    compile_output,
+                    project=args.project,
+                    provider=provider_name,
+                    model=model_name,
+                    source_bundle=bundle,
+                )
         except (DeepSeekMemoryOrganizerError, ValueError) as exc:
             print(json.dumps({"schemaVersion": MEMORY_BOOK_PREVIEW_SCHEMA_VERSION, "ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         validation = inspect_memory_book_plan(plan)
+        if bool(args.save_draft) and validation.get("ok") and stored_run is None:
+            with _connect_local_sqlite(core.db_path) as conn:
+                stored_run = store_memory_book_plan(
+                    conn,
+                    plan,
+                    supersede_project_drafts=True,
+                )
         if args.output:
             Path(args.output).parent.mkdir(parents=True, exist_ok=True)
             Path(args.output).write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -1721,16 +1755,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "schemaVersion": MEMORY_BOOK_PREVIEW_SCHEMA_VERSION,
                     "ok": bool(validation.get("ok")),
                     "dryRun": True,
+                    "memoryApplied": False,
+                    "storedDraft": stored_run is not None,
+                    "reusedDraft": reused_draft,
                     "project": args.project,
-                    "provider": organizer.provider_name,
-                    "model": config.model,
+                    "provider": provider_name,
+                    "model": model_name,
                     "source": {
                         "sinceDays": max(1, int(args.since_days)),
                         "recentLimit": max(1, int(args.recent_limit)),
                         "eventCount": len(bundle.get("recentEvents") or []),
+                        "bundleHash": str(bundle.get("bundleHash") or ""),
                     },
                     "validation": validation,
                     "run": plan,
+                    "storedRun": stored_run or {},
                     "outputPath": str(args.output or ""),
                 },
                 ensure_ascii=False,

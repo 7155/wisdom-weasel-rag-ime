@@ -112,6 +112,21 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "injectIntoContext": True,
         "detectExplicitCompletion": True,
     },
+    "agent": {
+        "pi": {
+            "enabled": False,
+            "startup": "lazy",
+            "idleTimeoutSeconds": 900,
+            "resumeLastSession": True,
+            "defaultRoleId": "zhiyou-v1",
+            "toolProfile": "control-center-v1",
+            "coordinatorEnabled": False,
+        },
+        "ui": {
+            "deltaFlushMilliseconds": 40,
+            "showReasoningSummary": False,
+        },
+    },
     "models": {
         "hot": "minimind_ime_v2",
         "main": "",
@@ -291,6 +306,21 @@ SETTINGS_SCHEMA: dict[str, object] = {
             ],
         },
         {
+            "id": "agent",
+            "label": "Agent",
+            "fields": [
+                {"key": "agent.pi.enabled", "type": "boolean", "label": "连接 Pi", "default": False},
+                {"key": "agent.pi.startup", "type": "enum", "label": "启动方式", "options": ["lazy"], "default": "lazy"},
+                {"key": "agent.pi.idleTimeoutSeconds", "type": "integer", "label": "空闲退出时间", "default": 900},
+                {"key": "agent.pi.resumeLastSession", "type": "boolean", "label": "恢复上次对话", "default": True},
+                {"key": "agent.pi.defaultRoleId", "type": "string", "label": "默认角色", "default": "zhiyou-v1"},
+                {"key": "agent.pi.toolProfile", "type": "string", "label": "工具配置", "default": "control-center-v1"},
+                {"key": "agent.pi.coordinatorEnabled", "type": "boolean", "label": "允许运行协调模式", "default": False},
+                {"key": "agent.ui.deltaFlushMilliseconds", "type": "integer", "label": "流式刷新间隔", "default": 40},
+                {"key": "agent.ui.showReasoningSummary", "type": "boolean", "label": "显示可公开的分析摘要", "default": False},
+            ],
+        },
+        {
             "id": "pinyin",
             "label": "Pinyin",
             "fields": [
@@ -365,6 +395,11 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     "activeRag.shortcut": {"description": "显式生成快捷键", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
     "activeRag.latencyBudgetMs": {"description": "显式多段生成的最长等待时间", "min": 1000, "max": 300000, "step": 1000, "unit": "ms"},
     "activeRag.allowRemoteModel": {"description": "只允许显式 Active RAG 使用远程模型", "risk": "sensitive", "validation": {"confirmText": "ALLOW REMOTE MODEL"}},
+    "agent.pi.enabled": {"description": "按需启动受管理的 Pi RPC，不影响普通输入路径"},
+    "agent.pi.idleTimeoutSeconds": {"description": "Pi 无活动后自动退出的等待时间", "min": 0, "max": 86400, "step": 60, "unit": "秒"},
+    "agent.pi.coordinatorEnabled": {"description": "允许显式创建受审批约束的运行协调会话", "risk": "sensitive", "expert": True},
+    "agent.ui.deltaFlushMilliseconds": {"description": "原生对话页合并流式文本更新的时间窗口", "min": 16, "max": 250, "step": 8, "unit": "ms"},
+    "agent.ui.showReasoningSummary": {"description": "只显示服务端明确标记可公开的分析摘要，不显示原始 thinking"},
     "pinyin.rimeManagedPatch": {"description": "写入受管理的 Rime 模糊音 patch", "applyMode": "redeploy_rime", "restartComponent": "rime"},
     "pinyin.fuzzyProfile": {"applyMode": "redeploy_rime", "restartComponent": "rime"},
     "models.hot": {"applyMode": "restart_predictor", "restartComponent": "predictor"},

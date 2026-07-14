@@ -2,6 +2,7 @@ import SwiftUI
 
 struct OverviewPage: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var navigation: ControlNavigationModel
     @State private var selectedProfile = "标准模式"
 
     var body: some View {
@@ -195,18 +196,18 @@ struct OverviewPage: View {
         HStack(spacing: 12) {
             Text("常用操作").font(.callout.weight(.semibold)).foregroundStyle(.secondary)
             Button {
-                model.destination = .ragAndModels
+                navigation.destination = .ragAndModels
             } label: {
                 Label("打开知识工作台", systemImage: "sparkles.rectangle.stack")
             }
             .buttonStyle(.borderedProminent)
             Button {
-                model.destination = .voiceInput
+                navigation.destination = .voiceInput
             } label: {
                 Label("语音输入", systemImage: "waveform.and.mic")
             }
             Button {
-                model.destination = .diagnostics
+                navigation.destination = .diagnostics
             } label: {
                 Label("实时诊断", systemImage: "waveform.path.ecg")
             }

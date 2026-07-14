@@ -15,6 +15,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertIn("rag", section_ids)
         self.assertIn("models", section_ids)
         self.assertIn("activeRag", section_ids)
+        self.assertIn("agent", section_ids)
         self.assertIn("pinyin", section_ids)
         self.assertIn("privacy", section_ids)
 
@@ -52,6 +53,8 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertFalse(defaults["privacy"]["debugIncludeText"])
         self.assertEqual(defaults["context"]["tokenBudget"], 4096)
         self.assertEqual(defaults["context"]["reservedOutputTokens"], 1024)
+        self.assertFalse(defaults["agent"]["pi"]["enabled"])
+        self.assertEqual(defaults["agent"]["pi"]["idleTimeoutSeconds"], 900)
 
         fields = {field["key"]: field for section in settings_schema()["sections"] for field in section["fields"]}
         self.assertFalse(fields["interaction.composition.showPrediction"]["default"])

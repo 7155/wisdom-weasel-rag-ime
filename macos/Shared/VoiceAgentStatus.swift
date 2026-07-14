@@ -1,7 +1,7 @@
 import Foundation
 
 struct VoiceAgentStatus: Codable, Equatable {
-    static let schemaVersion = "rag-ime.voice-agent-status.v3"
+    static let schemaVersion = "rag-ime.voice-agent-status.v4"
 
     let schemaVersion: String
     let processID: Int32
@@ -14,6 +14,7 @@ struct VoiceAgentStatus: Codable, Equatable {
     let hotwordCount: Int
     let hotkeyInstalled: Bool
     let state: String
+    let interactionSource: String
     let statusText: String
     let telemetry: VoiceSessionTelemetry
     let updatedAtMs: Int
@@ -44,6 +45,43 @@ struct VoiceSessionTelemetry: Codable, Equatable {
 }
 
 enum VoiceAgentStatusStore {
+    private struct LegacyVoiceAgentStatusV3: Codable {
+        let schemaVersion: String
+        let processID: Int32
+        let running: Bool
+        let accessibilityTrusted: Bool
+        let microphoneAuthorization: String
+        let credentialsConfigured: Bool
+        let hotkeyMode: String?
+        let hotwordsEnabled: Bool
+        let hotwordCount: Int
+        let hotkeyInstalled: Bool
+        let state: String
+        let statusText: String
+        let telemetry: VoiceSessionTelemetry
+        let updatedAtMs: Int
+
+        var upgraded: VoiceAgentStatus {
+            VoiceAgentStatus(
+                schemaVersion: VoiceAgentStatus.schemaVersion,
+                processID: processID,
+                running: running,
+                accessibilityTrusted: accessibilityTrusted,
+                microphoneAuthorization: microphoneAuthorization,
+                credentialsConfigured: credentialsConfigured,
+                hotkeyMode: hotkeyMode,
+                hotwordsEnabled: hotwordsEnabled,
+                hotwordCount: hotwordCount,
+                hotkeyInstalled: hotkeyInstalled,
+                state: state,
+                interactionSource: state == "idle" ? "none" : "hotkey",
+                statusText: statusText,
+                telemetry: telemetry,
+                updatedAtMs: updatedAtMs
+            )
+        }
+    }
+
     private struct LegacyVoiceAgentStatusV2: Codable {
         let schemaVersion: String
         let processID: Int32
@@ -70,6 +108,7 @@ enum VoiceAgentStatusStore {
                 hotwordCount: 0,
                 hotkeyInstalled: hotkeyInstalled,
                 state: state,
+                interactionSource: state == "idle" ? "none" : "hotkey",
                 statusText: statusText,
                 telemetry: telemetry,
                 updatedAtMs: updatedAtMs
@@ -88,6 +127,10 @@ enum VoiceAgentStatusStore {
         if let status = try? JSONDecoder().decode(VoiceAgentStatus.self, from: data),
            status.schemaVersion == VoiceAgentStatus.schemaVersion {
             return status
+        }
+        if let legacy = try? JSONDecoder().decode(LegacyVoiceAgentStatusV3.self, from: data),
+           legacy.schemaVersion == "rag-ime.voice-agent-status.v3" {
+            return legacy.upgraded
         }
         if let legacy = try? JSONDecoder().decode(LegacyVoiceAgentStatusV2.self, from: data),
            legacy.schemaVersion == "rag-ime.voice-agent-status.v2" {

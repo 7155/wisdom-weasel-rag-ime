@@ -91,7 +91,6 @@ env_keys = [
     "RAG_IME_DEEPSEEK_REASONING_EFFORT",
     "RAG_IME_DEEPSEEK_MAX_TOKENS",
     "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS",
-    "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY",
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_DIR",
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_SINCE_DAYS",
     "RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT",
@@ -107,9 +106,9 @@ environment = {
     "RAG_IME_DEEPSEEK_THINKING": os.environ.get("RAG_IME_DEEPSEEK_THINKING", "disabled"),
     "RAG_IME_DEEPSEEK_REASONING_EFFORT": os.environ.get("RAG_IME_DEEPSEEK_REASONING_EFFORT", "low"),
     "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS": os.environ.get("RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS", "2048"),
-    # Periodic maintenance writes only schema-validated semantic memory. Rime
-    # dictionary mutations remain in the separate review/apply workflow.
-    "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": os.environ.get("RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY", "1"),
+    # The scheduled job may prepare a review draft, but it never applies
+    # memory changes. Apply/rollback stays behind the native approval path.
+    "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": "0",
 }
 environment["RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER"] = "scheduled"
 for key in env_keys:

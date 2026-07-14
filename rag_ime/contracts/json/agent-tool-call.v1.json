@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-tool-call.v1",
+  "type": "object",
+  "required": ["schemaVersion", "sessionId", "tool", "toolCallId", "args"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-tool-call.v1"},
+    "sessionId": {"type": "string", "minLength": 1},
+    "tool": {
+      "type": "string",
+      "enum": ["ime_overview", "ime_input", "ime_voice", "ime_planning", "ime_memory", "ime_knowledge", "ime_models", "ime_runtime", "ime_configuration", "ime_agents", "workspace_list", "workspace_read", "workspace_shell"]
+    },
+    "toolCallId": {"type": "string", "minLength": 1},
+    "args": {"type": "object"},
+    "runtimeContext": {
+      "type": "object",
+      "required": ["schemaVersion", "forkSessions"],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "rag-ime.agent-runtime-context.v1"
+        },
+        "forkSessions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "sessionFile",
+              "parentSessionFile",
+              "parentLeafId"
+            ],
+            "properties": {
+              "sessionId": {"type": "string", "minLength": 1, "maxLength": 128},
+              "sessionFile": {"type": "string", "minLength": 1, "maxLength": 4096},
+              "parentSessionFile": {"type": "string", "minLength": 1, "maxLength": 4096},
+              "parentLeafId": {"type": "string", "minLength": 1, "maxLength": 128},
+              "thinkingOverride": {"type": "string", "enum": ["off"]}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

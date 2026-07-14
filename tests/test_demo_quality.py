@@ -376,7 +376,14 @@ class RagImeDemoQualityTests(unittest.TestCase):
             display,
         )
         self.assertTrue(
-            all(item["selectionAction"] == "start_active_rag_from_context" for item in actions),
+            {
+                item["selectionAction"]
+                for item in actions
+            }
+            == {
+                "start_active_rag_from_context",
+                "start_agent_deep_search_from_context",
+            },
             display,
         )
         self.assertGreaterEqual(response["modelLane"]["predictionCount"], 1)

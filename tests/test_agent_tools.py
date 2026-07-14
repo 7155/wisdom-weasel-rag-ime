@@ -1,0 +1,1333 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+
+from rag_ime.agent_sessions import AgentSessionStore
+from rag_ime.agent_tools import ControlToolGateway
+from rag_ime.agent_workspace import WorkspaceHarness
+
+
+class _Management:
+    def __init__(self):
+        self.task_events = {}
+        self.runtime_jobs = {}
+        self.ai_paused = False
+        self.runtime_revision = 1
+        self.provider_configuration_revision = 1
+        self.provider_profiles = {
+            "instant": {
+                "provider": "mlx",
+                "endpoint": "http://127.0.0.1:8767",
+                "model": "",
+            },
+            "knowledge": {
+                "provider": "deepseek",
+                "endpoint": "https://api.deepseek.com",
+                "model": "deepseek-v4-flash",
+            },
+            "voice": {"provider": "native_streaming"},
+        }
+        self.tasks = [
+            {
+                "id": "task:1",
+                "date": "2026-07-13",
+                "title": "接入 Pi",
+                "status": "todo",
+                "project": "wisdom-weasel-rag-ime",
+                "updatedAtMs": 20,
+            },
+            {
+                "id": "task:2",
+                "date": "2026-07-13",
+                "title": "协议测试",
+                "status": "done",
+                "project": "wisdom-weasel-rag-ime",
+                "updatedAtMs": 19,
+            },
+        ]
+
+    def overview(self):
+        return {
+            "settingsRevision": "settings:1",
+            "runtimeRevision": self.runtime_revision,
+            "aiPaused": self.ai_paused,
+            "components": {"sidecar": {"ok": True}, "predictor": {"ok": False}},
+            "memory": {"memoryBookCount": 2},
+            "lastPrediction": {"visibleCandidate": "继续实现"},
+        }
+
+    def runtime_status(self):
+        return {
+            "ok": True,
+            "runtimeRevision": self.runtime_revision,
+            "components": {"sidecar": {"ok": True}, "predictor": {"ok": False}},
+        }
+
+    def runtime_components(self):
+        return {"ok": True, "items": [{"id": "sidecar", "ok": True}]}
+
+    def start_runtime_action(self, payload):
+        if payload["action"] == "restart_sidecar":
+            self.runtime_jobs["runtime:1"] = {
+                "jobId": "runtime:1",
+                "action": payload["action"],
+                "status": "external-supervisor-required",
+                "error": "external supervisor required",
+                "result": {
+                    "externalCommand": [
+                        "launchctl",
+                        "kickstart",
+                        "-k",
+                        f"gui/{os.getuid()}/com.rag-ime.sidecar",
+                    ]
+                },
+            }
+            return {"ok": True, "jobId": "runtime:1", "job": self.runtime_jobs["runtime:1"]}
+        if payload["action"] == "stop_ai":
+            self.ai_paused = True
+        elif payload["action"] == "resume_ai":
+            self.ai_paused = False
+        self.runtime_revision += 1
+        self.runtime_jobs["runtime:1"] = {
+            "jobId": "runtime:1",
+            "action": payload["action"],
+            "status": "succeeded",
+            "error": "",
+        }
+        return {"ok": True, "jobId": "runtime:1", "job": self.runtime_jobs["runtime:1"]}
+
+    def runtime_job(self, job_id):
+        return {"ok": True, "jobId": job_id, "job": self.runtime_jobs[job_id]}
+
+    def history_page(self, request):
+        return {
+            "items": [{"id": 1, "textPreview": "把普通生成和深度检索分开", "rawTextVisible": False}][
+                : request.limit
+            ],
+            "nextCursor": "",
+        }
+
+    def portable_backup_export(self, payload):
+        target = Path(payload["destination"])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"portable-backup-fixture")
+        return {
+            "ok": True,
+            "path": str(target),
+            "sizeBytes": target.stat().st_size,
+            "databaseCounts": {"memory_books": 2, "agent_sessions": 1},
+            "rimeFileCount": 3,
+            "secretsIncluded": False,
+            "auditId": 61,
+        }
+
+    def portable_restore_preview(self, payload):
+        source = Path(payload["path"])
+        if not source.is_file():
+            raise ValueError("backup not found")
+        return {
+            "ok": True,
+            "valid": True,
+            "path": str(source),
+            "restoreToken": "7" * 64,
+            "createdAtMs": 1_700_000_000_000,
+            "databaseCounts": {"memory_books": 2, "agent_sessions": 1},
+            "databaseMigrationVersion": 18,
+            "rimeFileCount": 3,
+            "requiresConfirmation": "RESTORE RAG-IME",
+            "requiresRestart": True,
+        }
+
+    def provider_configuration(self):
+        return {
+            "ok": True,
+            "configurationHash": f"provider:{self.provider_configuration_revision}",
+            "settingsRevision": "settings:1",
+            "runtimeRevision": self.runtime_revision,
+            "providers": {
+                **{slot: dict(profile) for slot, profile in self.provider_profiles.items()},
+                "secretsIncluded": False,
+            },
+        }
+
+    def provider_configuration_apply(self, payload):
+        if payload["expectedConfigurationHash"] != f"provider:{self.provider_configuration_revision}":
+            raise ValueError("provider configuration changed after the approval preview was created")
+        slot = payload["slot"]
+        before = dict(self.provider_profiles[slot])
+        after = {"provider": payload["provider"]}
+        if slot != "voice":
+            after.update({"endpoint": payload["endpoint"], "model": payload["model"]})
+        self.provider_profiles[slot] = after
+        self.provider_configuration_revision += 1
+        self.runtime_revision += 1
+        return {
+            "ok": True,
+            "auditId": 62,
+            "slot": slot,
+            "before": before,
+            "after": dict(after),
+            "configurationHash": f"provider:{self.provider_configuration_revision}",
+            "settingsRevision": "settings:1",
+            "runtimeRevision": self.runtime_revision,
+            "restartComponent": "predictor" if slot == "instant" else "sidecar",
+            "existingSecretPreserved": True,
+        }
+
+    def planning_dashboard(self, *, plan_date, project):
+        return {
+            "date": plan_date or "2026-07-13",
+            "project": project,
+            "tasks": [dict(task) for task in self.tasks if task["date"] == (plan_date or "2026-07-13")],
+            "goals": [],
+        }
+
+    def planning_task_action(self, payload):
+        target = {
+            "complete": "done",
+            "start": "in_progress",
+            "reopen": "todo",
+            "cancel": "cancelled",
+        }[payload["action"]]
+        task = next(item for item in self.tasks if item["id"] == payload["taskId"])
+        previous = task["status"]
+        task["status"] = target
+        task["updatedAtMs"] += 1
+        event_id = f"task-event:{len(self.task_events) + 1}"
+        self.task_events[event_id] = {"taskId": task["id"], "previous": previous}
+        return {
+            "ok": True,
+            "auditId": 42,
+            "eventId": event_id,
+            "task": dict(task),
+            "undoAvailable": True,
+        }
+
+    def planning_undo_task_event(self, payload):
+        event = self.task_events[payload["eventId"]]
+        task = next(item for item in self.tasks if item["id"] == event["taskId"])
+        task["status"] = event["previous"]
+        task["updatedAtMs"] += 1
+        return {"ok": True, "auditId": 43, "task": dict(task)}
+
+    def memory_page(self, kind, request):
+        if kind == "books":
+            return {
+                "items": [
+                    {
+                        "id": "book:1",
+                        "title": "输入法项目",
+                        "summary": "记录输入法 Agent 与 RAG 的设计决定",
+                        "tags": ["输入法", "Agent"],
+                        "atomCount": 2,
+                        "updated_at_ms": 20,
+                        "sourceStartMs": 10,
+                        "sourceEndMs": 20,
+                        "memories": [
+                            {"type": "decision", "text": "普通生成不经过 Pi", "updatedAtMs": 20}
+                        ],
+                    }
+                ]
+            }
+        if kind == "groups":
+            return {
+                "items": [
+                    {
+                        "title": "Agent Runtime",
+                        "note": "Pi RPC 和 Session",
+                        "tags": ["Pi"],
+                        "event_count": 4,
+                        "updated_at_ms": 19,
+                    }
+                ]
+            }
+        if kind == "tags":
+            return {
+                "items": [
+                    {
+                        "tag": "Pi",
+                        "description": "Pi 运行时",
+                        "item_count": 3,
+                        "updated_at_ms": 18,
+                    }
+                ]
+            }
+        raise AssertionError(kind)
+
+
+class _Core:
+    def list_memory_events(self, *, project, query, limit):
+        return {
+            "items": [
+                {
+                    "eventId": 7,
+                    "createdAtMs": 30,
+                    "source": "rime",
+                    "text": "把普通生成和深度检索分开",
+                    "app": "Codex",
+                    "project": project,
+                    "tags": ["Agent"],
+                }
+            ][:limit]
+        }
+
+    def retrieve_memories(self, *, current_input, project, top_k):
+        return [
+            SimpleNamespace(
+                memory_id="stable:1",
+                text="Pi 只负责 Agent Loop",
+                source_ref="event:7",
+                score=0.91,
+                reason="hybrid retrieval",
+                evidence_preview="输入法快速链路不经过 Pi",
+                project=project,
+                tags=("Pi",),
+                source_event_id="7",
+                created_at_ms=30,
+            )
+        ][:top_k]
+
+    def suggestion_cache_stats(self):
+        return {"hits": 3, "misses": 1}
+
+
+class _Facade:
+    def __init__(self):
+        self.memory_run_status = "draft"
+        self.settings_revision = 1
+        self.settings_payload = {
+            "interaction": {"postCommit": {"enabled": True, "idleTriggerMs": 420}},
+            "display": {"fadeAnimation": True},
+            "activeRag": {"enabled": True, "localOnlyDefault": True},
+            "pinyin": {"fuzzyProfile": "sichuan-mild", "pairs": {"nL": False}},
+            "privacy": {"allowRemoteModelForActiveRag": False},
+            "providers": {"knowledge": {"apiKey": "must-not-leak"}},
+        }
+        self.lexicon_applied = False
+
+    def settings(self):
+        return {
+            "settings": self.settings_payload,
+            "settingsHash": f"settings:{self.settings_revision}",
+            "runtimeConfig": {"profile": "default"},
+        }
+
+    def settings_update(self, payload):
+        changed = []
+        for key, value in payload.items():
+            if key == "updatedBy":
+                continue
+            cursor = self.settings_payload
+            parts = key.split(".")
+            for part in parts[:-1]:
+                cursor = cursor.setdefault(part, {})
+            if cursor.get(parts[-1]) != value:
+                cursor[parts[-1]] = value
+                changed.append(key)
+        self.settings_revision += 1
+        return {
+            "ok": True,
+            "auditId": 51,
+            "changedKeys": sorted(changed),
+            "settingsRevision": f"settings:{self.settings_revision}",
+            "runtimeRevision": self.settings_revision,
+        }
+
+    def frontend_capabilities(self):
+        return {"frontend": "squirrel", "postCommit": True}
+
+    def input_source_status(self):
+        return {"ok": True, "selected": True}
+
+    def candidate_explain(self, payload):
+        return {"ok": True, "queryPreview": payload["query"], "candidates": [{"text": "继续"}]}
+
+    def rime_lexicon_review(self, payload):
+        entries = [] if self.lexicon_applied else [
+            {
+                "text": "派会话",
+                "pinyin": "pai hui hua",
+                "reviewKey": "派会话\tpai hui hua",
+                "selected": True,
+            }
+        ]
+        return {
+            "ok": True,
+            "reviewToken": "must-not-reach-pi",
+            "confirmText": "must-not-reach-pi",
+            "entries": entries,
+        }
+
+    def rime_lexicon_apply(self, payload):
+        if payload["reviewToken"] != "must-not-reach-pi":
+            return {"ok": False, "reason": "review_token_stale"}
+        self.lexicon_applied = True
+        return {
+            "ok": True,
+            "applied": True,
+            "entryCount": len(payload["selectedKeys"]),
+            "rollbackId": "lexicon:1",
+            "requiresRedeploy": True,
+        }
+
+    def rime_lexicon_rollback(self, payload):
+        if payload["rollbackId"] != "lexicon:1":
+            return {"ok": False, "reason": "rollback_manifest_missing"}
+        self.lexicon_applied = False
+        return {"ok": True, "rolledBack": True, "rollbackId": "lexicon:1", "requiresRedeploy": True}
+
+    def memory_optimizer_trace(self, payload):
+        return {"ok": True, "traceId": payload["traceId"], "decision": "keep"}
+
+    def agent_memory_maintenance_status(self, payload):
+        return {
+            "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
+            "ok": True,
+            "policy": "review",
+            "autoApply": False,
+            "compileState": {"pendingEventCount": 7},
+            "pendingDraftCount": 1,
+            "runs": [{"runId": "memory_book_draft", "status": "draft", "diffCount": 3}],
+            "limit": payload["limit"],
+        }
+
+    def agent_memory_maintenance_prepare(self, payload):
+        return {
+            "ok": True,
+            "storedDraft": True,
+            "reusedDraft": False,
+            "source": {"bundleHash": "sha256:bundle", "eventCount": 7},
+            "validation": {"ok": True, "errors": []},
+            "storedRun": {"runId": "memory_book_draft", "status": "draft"},
+            "instruction": payload["instruction"],
+        }
+
+    def agent_memory_maintenance_run(self, payload):
+        status = self.memory_run_status
+        return {
+            "ok": True,
+            "revisionHash": f"sha256:{status}",
+            "stale": False,
+            "canApply": status == "draft",
+            "canRollback": status == "applied",
+            "run": {
+                "runId": payload["runId"],
+                "status": status,
+                "summary": "Pi 记忆整理草案",
+                "bundleHash": "sha256:bundle",
+                "sourceCursor": {"fromEventId": 10, "toEventId": 16},
+                "diffCount": 3,
+                "pendingDiffCount": 3 if status == "draft" else 0,
+                "appliedDiffCount": 3 if status == "applied" else 0,
+                "changes": [
+                    {
+                        "diffId": 1,
+                        "operation": "upsert_memory_book",
+                        "operationLabel": "更新工具书",
+                        "status": "pending" if status == "draft" else status,
+                        "selected": True,
+                        "title": "Pi 控制中心",
+                        "detail": "记录审批和记忆整理边界",
+                        "sourceCount": 3,
+                    }
+                ],
+            },
+        }
+
+    def knowledge_workbench_database_apply(self, payload):
+        self.memory_run_status = "applied"
+        return {"ok": True, "action": "apply", "run": {"runId": payload["runId"]}}
+
+    def knowledge_workbench_database_rollback(self, payload):
+        self.memory_run_status = "rolled_back"
+        return {"ok": True, "action": "rollback", "run": {"runId": payload["runId"]}}
+
+    def knowledge_workbench_route_status(self):
+        return {"ok": True, "deepseekReady": False, "skipReason": "credentials_missing"}
+
+    def models_status(self):
+        return {
+            "ok": True,
+            "predictor": {"ok": True},
+            "activeRagRoute": {"remoteReady": False, "skipReason": "credentials_missing"},
+        }
+
+    def model_probe(self, payload):
+        return {"ok": True, "dryRun": True, "predictor": {"ok": True}}
+
+    def management_audit(self, payload):
+        return {"ok": True, "items": [{"action": "settings_update", "apiKey": "must-not-leak"}]}
+
+
+class ControlToolGatewayTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-tools-")
+        self.previous_support_dir = os.environ.get("RAG_IME_APP_SUPPORT_DIR")
+        os.environ["RAG_IME_APP_SUPPORT_DIR"] = str(Path(self.tmp.name) / "support")
+        self.store = AgentSessionStore(Path(self.tmp.name) / "rag-ime.sqlite")
+        self.store.initialize()
+        self.session = self.store.create(title="tool test", created_at_ms=1)
+        self.management = _Management()
+        self.facade = _Facade()
+        self.gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+        )
+
+    def tearDown(self) -> None:
+        if self.previous_support_dir is None:
+            os.environ.pop("RAG_IME_APP_SUPPORT_DIR", None)
+        else:
+            os.environ["RAG_IME_APP_SUPPORT_DIR"] = self.previous_support_dir
+        self.tmp.cleanup()
+
+    def test_catalog_exposes_named_books_groups_and_tags_without_database_access(self) -> None:
+        response = self.gateway.execute(self._call("catalog", query="Pi"))
+        result = response["result"]
+
+        self.assertEqual(result["counts"], {"books": 1, "groups": 1, "tags": 1})
+        self.assertIn("1 本工具书", result["summary"])
+        self.assertEqual([item["kind"] for item in result["items"]], ["book", "group", "tag"])
+        self.assertNotIn("sourceEventIds", str(response))
+
+    def test_read_and_recent_return_bounded_evidence(self) -> None:
+        read = self.gateway.execute(self._call("read", bookId="book:1"))["result"]
+        recent = self.gateway.execute(self._call("recent", query="深度检索", limit=8))["result"]
+
+        self.assertEqual(read["book"]["title"], "输入法项目")
+        self.assertEqual(read["book"]["memories"][0]["text"], "普通生成不经过 Pi")
+        self.assertEqual(recent["count"], 1)
+        self.assertEqual(recent["items"][0]["text"], "把普通生成和深度检索分开")
+
+    def test_memory_maintenance_status_exposes_review_only_drafts(self) -> None:
+        result = self.gateway.execute(self._call("maintenance_status", limit=8))["result"]
+
+        self.assertEqual(result["summary"], "有 7 条来源待整理、1 份草案待审阅")
+        self.assertEqual(result["maintenance"]["policy"], "review")
+        self.assertFalse(result["maintenance"]["autoApply"])
+        self.assertEqual(result["maintenance"]["runs"][0]["status"], "draft")
+
+    def test_unknown_operations_and_archived_sessions_fail_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            self.gateway.execute(self._call("write"))
+        self.store.archive(str(self.session["id"]))
+        with self.assertRaisesRegex(ValueError, "archived"):
+            self.gateway.execute(self._call("catalog"))
+
+    def test_manifests_expose_workspace_shell_only_for_coordinator_sessions(self) -> None:
+        manifests = self.gateway.manifests()["items"]
+        self.assertEqual(
+            [manifest["id"] for manifest in manifests],
+            [
+                "ime_overview",
+                "ime_input",
+                "ime_voice",
+                "ime_planning",
+                "ime_memory",
+                "ime_knowledge",
+                "ime_models",
+                "ime_runtime",
+                "ime_configuration",
+                "ime_agents",
+                "workspace_list",
+                "workspace_read",
+                "workspace_shell",
+            ],
+        )
+        planning = next(manifest for manifest in manifests if manifest["id"] == "ime_planning")
+        self.assertEqual(planning["riskLevel"], "R1")
+        self.assertEqual(
+            planning["operationRisks"],
+            {"dashboard": "R0", "task_action": "R1", "undo_task_event": "R1"},
+        )
+        memory = next(manifest for manifest in manifests if manifest["id"] == "ime_memory")
+        self.assertEqual(memory["riskLevel"], "R1")
+        self.assertEqual(memory["operationRisks"]["maintenance_preview"], "R0")
+        self.assertEqual(memory["operationRisks"]["maintenance_apply"], "R1")
+        self.assertEqual(memory["operationRisks"]["maintenance_rollback"], "R1")
+        input_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_input")
+        self.assertEqual(input_tool["riskLevel"], "R1")
+        self.assertEqual(input_tool["operationRisks"]["preview_settings"], "R0")
+        self.assertEqual(input_tool["operationRisks"]["apply_settings"], "R1")
+        self.assertEqual(input_tool["operationRisks"]["lexicon_apply"], "R1")
+        voice_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_voice")
+        self.assertEqual(voice_tool["riskLevel"], "R1")
+        self.assertEqual(voice_tool["operationRisks"]["provider_preview"], "R0")
+        self.assertEqual(voice_tool["operationRisks"]["provider_apply"], "R1")
+        self.assertEqual(voice_tool["operationRisks"]["provider_rollback"], "R1")
+        runtime_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_runtime")
+        self.assertEqual(runtime_tool["riskLevel"], "R2")
+        self.assertEqual(runtime_tool["operationRisks"]["diagnose"], "R0")
+        self.assertEqual(runtime_tool["operationRisks"]["pause_ai"], "R1")
+        self.assertEqual(runtime_tool["operationRisks"]["restart_sidecar"], "R2")
+        self.assertEqual(runtime_tool["operationRisks"]["restart_predictor"], "R2")
+        model_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_models")
+        self.assertEqual(model_tool["riskLevel"], "R1")
+        self.assertEqual(model_tool["operationRisks"]["profiles"], "R0")
+        self.assertEqual(model_tool["operationRisks"]["profile_apply"], "R1")
+        self.assertEqual(model_tool["operationRisks"]["profile_rollback"], "R1")
+        configuration_tool = next(
+            manifest for manifest in manifests if manifest["id"] == "ime_configuration"
+        )
+        self.assertEqual(configuration_tool["riskLevel"], "R3")
+        self.assertEqual(configuration_tool["operationRisks"]["export_preview"], "R0")
+        self.assertEqual(configuration_tool["operationRisks"]["export"], "R1")
+        self.assertEqual(configuration_tool["operationRisks"]["restore_preview"], "R0")
+        self.assertEqual(configuration_tool["operationRisks"]["restore_apply"], "R3")
+        workspace_shell = next(
+            manifest for manifest in manifests if manifest["id"] == "workspace_shell"
+        )
+        self.assertEqual(workspace_shell["sessionModes"], ["coordinator"])
+        self.assertEqual(workspace_shell["operationRisks"], {"run": "R2"})
+        self.assertTrue(
+            all(
+                manifest["riskLevel"] == "R0"
+                for manifest in manifests
+                if manifest["id"] not in {
+                    "ime_input",
+                    "ime_voice",
+                    "ime_planning",
+                    "ime_memory",
+                    "ime_models",
+                    "ime_runtime",
+                    "ime_configuration",
+                    "workspace_shell",
+                }
+            )
+        )
+        assistant_call = self._tool_call("workspace_list", "list")
+        with self.assertRaisesRegex(ValueError, "session mode"):
+            self.gateway.execute(assistant_call)
+
+    def test_coordinator_workspace_read_and_shell_use_hash_bound_native_approval(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace"
+        workspace.mkdir()
+        (workspace / "README.md").write_text("coordinator proof\n", encoding="utf-8")
+        coordinator = self.store.create(
+            title="coordinator",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=2,
+        )
+        executed = []
+
+        def fake_execute(prepared):
+            executed.append(prepared)
+            return {
+                "schemaVersion": "rag-ime.workspace-command-receipt.v1",
+                "mutationApplied": True,
+                "summary": "命令执行完成，退出码 0",
+                "exitCode": 0,
+                "output": "ok\n",
+                "undoAvailable": False,
+            }
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            workspace_harness=WorkspaceHarness(executor=fake_execute),
+        )
+        listed = gateway.execute(
+            {
+                **self._tool_call("workspace_list", "list", path=str(workspace)),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        read = gateway.execute(
+            {
+                **self._tool_call("workspace_read", "read", path=str(workspace / "README.md")),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        prepared = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_shell",
+                    "run",
+                    command="pwd",
+                    cwd=str(workspace),
+                    timeoutSeconds=10,
+                ),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+
+        self.assertIn("README.md", str(listed))
+        self.assertEqual(read["content"], "coordinator proof\n")
+        self.assertTrue(prepared["approvalRequired"])
+        self.assertEqual(executed, [])
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = gateway.apply_approval(decided)
+
+        self.assertEqual(receipt["exitCode"], 0)
+        self.assertEqual(receipt["auditId"], approval["approvalId"])
+        self.assertEqual(len(executed), 1)
+
+    def test_task_action_requires_native_approval_then_returns_rollback_receipt(self) -> None:
+        prepared = self.gateway.execute(
+            self._tool_call(
+                "ime_planning",
+                "task_action",
+                taskId="task:1",
+                date="2026-07-13",
+                action="complete",
+            )
+        )["result"]
+        approval = prepared["approval"]
+
+        self.assertTrue(prepared["approvalRequired"])
+        self.assertEqual(self.management.tasks[0]["status"], "todo")
+        self.assertEqual(approval["preview"]["changes"][0]["after"], "已完成")
+
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+
+        self.assertTrue(receipt["mutationApplied"])
+        self.assertTrue(receipt["undoAvailable"])
+        self.assertEqual(receipt["rollback"]["operation"], "undo_task_event")
+        self.assertEqual(self.management.tasks[0]["status"], "done")
+
+    def test_memory_preview_apply_and_rollback_use_native_approval_and_revision_hash(self) -> None:
+        preview = self.gateway.execute(
+            self._call("maintenance_preview", instruction="整理本次 Pi 会话的最终事实")
+        )["result"]
+        self.assertTrue(preview["reviewRequired"])
+        self.assertEqual(preview["run"]["runId"], "memory_book_draft")
+        self.assertEqual(self.facade.memory_run_status, "draft")
+
+        review = self.gateway.execute(
+            self._call("maintenance_review", runId="memory_book_draft")
+        )["result"]
+        self.assertTrue(review["reviewRequired"])
+        self.assertTrue(review["canApply"])
+        self.assertEqual(review["run"]["changes"][0]["title"], "Pi 控制中心")
+
+        prepared = self.gateway.execute(
+            self._call("maintenance_apply", runId="memory_book_draft")
+        )["result"]
+        approval = prepared["approval"]
+        self.assertTrue(prepared["approvalRequired"])
+        self.assertEqual(approval["preview"]["changes"][0]["after"], "已应用")
+        self.assertIn("Pi 控制中心", [item["label"] for item in approval["preview"]["changes"]])
+        self.assertEqual(self.facade.memory_run_status, "draft")
+
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        applied = self.gateway.apply_approval(decided)
+        self.store.complete_approval(approval["approvalId"], state="applied", receipt=applied)
+        self.assertEqual(self.facade.memory_run_status, "applied")
+        self.assertTrue(applied["undoAvailable"])
+        self.assertEqual(applied["diffCount"], 3)
+
+        rollback = self.gateway.execute(
+            self._call("maintenance_rollback", runId="memory_book_draft")
+        )["result"]["approval"]
+        rollback_decided = self.store.decide_approval(
+            rollback["approvalId"],
+            approved=True,
+            payload_sha256=rollback["payloadSha256"],
+        )
+        rolled_back = self.gateway.apply_approval(rollback_decided)
+        self.assertEqual(self.facade.memory_run_status, "rolled_back")
+        self.assertEqual(rolled_back["revertedRunId"], "memory_book_draft")
+        self.assertFalse(rolled_back["undoAvailable"])
+
+    def test_memory_apply_fails_closed_when_draft_changes_after_preview(self) -> None:
+        prepared = self.gateway.execute(
+            self._call("maintenance_apply", runId="memory_book_draft")
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        self.facade.memory_run_status = "applied"
+
+        with self.assertRaisesRegex(ValueError, "changed after"):
+            self.gateway.apply_approval(decided)
+
+    def test_task_action_fails_closed_when_task_changes_after_preview(self) -> None:
+        prepared = self.gateway.execute(
+            self._tool_call(
+                "ime_planning",
+                "task_action",
+                taskId="task:1",
+                date="2026-07-13",
+                action="start",
+            )
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        self.management.tasks[0]["updatedAtMs"] += 1
+
+        with self.assertRaisesRegex(ValueError, "changed after"):
+            self.gateway.apply_approval(decided)
+        self.assertEqual(self.management.tasks[0]["status"], "todo")
+
+    def test_input_settings_preview_apply_and_rollback_are_hash_bound(self) -> None:
+        changes = [
+            {"key": "interaction.postCommit.idleTriggerMs", "value": 650},
+            {"key": "pinyin.pairs.nL", "value": True},
+        ]
+        preview = self.gateway.execute(
+            self._tool_call("ime_input", "preview_settings", changes=changes)
+        )["result"]
+        self.assertEqual(preview["changeCount"], 2)
+        self.assertTrue(preview["approvalRequiredForApply"])
+
+        prepared = self.gateway.execute(
+            self._tool_call("ime_input", "apply_settings", changes=changes)
+        )["result"]
+        approval = prepared["approval"]
+        self.assertEqual(self.facade.settings_payload["pinyin"]["pairs"]["nL"], False)
+        self.assertEqual(approval["preview"]["changes"][0]["before"], 420)
+
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+        self.store.complete_approval(approval["approvalId"], state="applied", receipt=receipt)
+        self.assertEqual(self.facade.settings_payload["interaction"]["postCommit"]["idleTriggerMs"], 650)
+        self.assertEqual(self.facade.settings_payload["pinyin"]["pairs"]["nL"], True)
+        self.assertTrue(receipt["undoAvailable"])
+
+        rollback = self.gateway.execute(
+            self._tool_call(
+                "ime_input",
+                "rollback_settings",
+                sourceApprovalId=approval["approvalId"],
+            )
+        )["result"]["approval"]
+        rollback_decided = self.store.decide_approval(
+            rollback["approvalId"],
+            approved=True,
+            payload_sha256=rollback["payloadSha256"],
+        )
+        rollback_receipt = self.gateway.apply_approval(rollback_decided)
+        self.assertEqual(self.facade.settings_payload["interaction"]["postCommit"]["idleTriggerMs"], 420)
+        self.assertEqual(self.facade.settings_payload["pinyin"]["pairs"]["nL"], False)
+        self.assertEqual(rollback_receipt["revertedSettingsApprovalId"], approval["approvalId"])
+
+    def test_input_settings_apply_fails_closed_after_any_settings_revision_change(self) -> None:
+        prepared = self.gateway.execute(
+            self._tool_call(
+                "ime_input",
+                "apply_settings",
+                changes=[{"key": "display.fadeAnimation", "value": False}],
+            )
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        self.facade.settings_revision += 1
+
+        with self.assertRaisesRegex(ValueError, "changed after"):
+            self.gateway.apply_approval(decided)
+        self.assertTrue(self.facade.settings_payload["display"]["fadeAnimation"])
+
+    def test_lexicon_apply_hides_review_token_redeploys_and_can_rollback(self) -> None:
+        review = self.gateway.execute(
+            self._tool_call("ime_input", "lexicon_review")
+        )["result"]
+        review_key = review["entries"][0]["reviewKey"]
+        self.assertNotIn("must-not-reach-pi", str(review))
+
+        prepared = self.gateway.execute(
+            self._tool_call(
+                "ime_input",
+                "lexicon_apply",
+                selectedKeys=[review_key],
+            )
+        )["result"]
+        approval = prepared["approval"]
+        self.assertNotIn("must-not-reach-pi", str(prepared))
+        self.assertFalse(self.facade.lexicon_applied)
+
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+        self.store.complete_approval(approval["approvalId"], state="applied", receipt=receipt)
+        self.assertTrue(self.facade.lexicon_applied)
+        self.assertEqual(receipt["deploymentStatus"], "succeeded")
+        self.assertTrue(receipt["undoAvailable"])
+
+        rollback = self.gateway.execute(
+            self._tool_call(
+                "ime_input",
+                "lexicon_rollback",
+                sourceApprovalId=approval["approvalId"],
+            )
+        )["result"]["approval"]
+        rollback_decided = self.store.decide_approval(
+            rollback["approvalId"],
+            approved=True,
+            payload_sha256=rollback["payloadSha256"],
+        )
+        rollback_receipt = self.gateway.apply_approval(rollback_decided)
+        self.assertFalse(self.facade.lexicon_applied)
+        self.assertEqual(rollback_receipt["revertedLexiconApprovalId"], approval["approvalId"])
+        self.assertFalse(rollback_receipt["undoAvailable"])
+
+    def test_runtime_pause_resume_and_restart_require_native_approval(self) -> None:
+        pause = self.gateway.execute(
+            self._tool_call("ime_runtime", "pause_ai")
+        )["result"]["approval"]
+        self.assertEqual(pause["riskLevel"], "R1")
+        self.assertFalse(self.management.ai_paused)
+        pause_decided = self.store.decide_approval(
+            pause["approvalId"],
+            approved=True,
+            payload_sha256=pause["payloadSha256"],
+        )
+        paused = self.gateway.apply_approval(pause_decided)
+        self.assertTrue(paused["mutationApplied"])
+        self.assertTrue(paused["aiPaused"])
+        self.assertTrue(self.management.ai_paused)
+
+        resume = self.gateway.execute(
+            self._tool_call("ime_runtime", "resume_ai")
+        )["result"]["approval"]
+        resume_decided = self.store.decide_approval(
+            resume["approvalId"],
+            approved=True,
+            payload_sha256=resume["payloadSha256"],
+        )
+        resumed = self.gateway.apply_approval(resume_decided)
+        self.assertTrue(resumed["mutationApplied"])
+        self.assertFalse(resumed["aiPaused"])
+
+        restart = self.gateway.execute(
+            self._tool_call("ime_runtime", "restart_predictor")
+        )["result"]["approval"]
+        self.assertEqual(restart["riskLevel"], "R2")
+        restart_decided = self.store.decide_approval(
+            restart["approvalId"],
+            approved=True,
+            payload_sha256=restart["payloadSha256"],
+        )
+        restarted = self.gateway.apply_approval(restart_decided)
+        self.assertTrue(restarted["mutationApplied"])
+        self.assertEqual(restarted["status"], "succeeded")
+
+        sidecar = self.gateway.execute(
+            self._tool_call("ime_runtime", "restart_sidecar")
+        )["result"]["approval"]
+        self.assertEqual(sidecar["riskLevel"], "R2")
+        sidecar_decided = self.store.decide_approval(
+            sidecar["approvalId"],
+            approved=True,
+            payload_sha256=sidecar["payloadSha256"],
+        )
+        external = self.gateway.apply_approval(sidecar_decided)
+        self.assertFalse(external["mutationApplied"])
+        self.assertTrue(external["externalActionPending"])
+        self.assertEqual(external["externalAction"], "restart_sidecar")
+        self.assertEqual(external["status"], "external-supervisor-required")
+        self.assertEqual(
+            external["externalCommand"],
+            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.rag-ime.sidecar"],
+        )
+        self.assertEqual(len(external["externalCommandSha256"]), 64)
+
+    def test_runtime_action_fails_closed_when_runtime_revision_changes(self) -> None:
+        prepared = self.gateway.execute(
+            self._tool_call("ime_runtime", "restart_predictor")
+        )["result"]["approval"]
+        decided = self.store.decide_approval(
+            prepared["approvalId"],
+            approved=True,
+            payload_sha256=prepared["payloadSha256"],
+        )
+        self.management.runtime_revision += 1
+        with self.assertRaisesRegex(ValueError, "changed after"):
+            self.gateway.apply_approval(decided)
+
+    def test_model_profile_preview_apply_and_rollback_preserve_secrets(self) -> None:
+        profiles = self.gateway.execute(
+            self._tool_call("ime_models", "profiles")
+        )["result"]
+        self.assertEqual(profiles["profiles"]["instant"]["provider"], "mlx")
+        self.assertFalse(profiles["secretsVisible"])
+
+        requested = {
+            "slot": "instant",
+            "provider": "ollama",
+            "endpoint": "http://127.0.0.1:11434/v1",
+            "model": "qwen3:0.6b",
+        }
+        preview = self.gateway.execute(
+            self._tool_call("ime_models", "profile_preview", **requested)
+        )["result"]
+        self.assertEqual(preview["restartComponent"], "predictor")
+        self.assertTrue(preview["secretsPreserved"])
+        self.assertEqual(len(preview["changes"]), 3)
+
+        prepared = self.gateway.execute(
+            self._tool_call("ime_models", "profile_apply", **requested)
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+        self.store.complete_approval(approval["approvalId"], state="applied", receipt=receipt)
+        self.assertEqual(self.management.provider_profiles["instant"]["provider"], "ollama")
+        self.assertEqual(receipt["activationStatus"], "succeeded")
+        self.assertTrue(receipt["secretsPreserved"])
+
+        rollback = self.gateway.execute(
+            self._tool_call(
+                "ime_models",
+                "profile_rollback",
+                sourceApprovalId=approval["approvalId"],
+            )
+        )["result"]["approval"]
+        rollback_decided = self.store.decide_approval(
+            rollback["approvalId"],
+            approved=True,
+            payload_sha256=rollback["payloadSha256"],
+        )
+        rolled_back = self.gateway.apply_approval(rollback_decided)
+        self.assertEqual(self.management.provider_profiles["instant"]["provider"], "mlx")
+        self.assertEqual(rolled_back["revertedModelProfileApprovalId"], approval["approvalId"])
+
+    def test_voice_provider_switch_and_rollback_only_change_the_provider_choice(self) -> None:
+        preview = self.gateway.execute(
+            self._tool_call(
+                "ime_voice",
+                "provider_preview",
+                provider="realtime_websocket",
+            )
+        )["result"]
+        self.assertTrue(preview["approvalRequiredForApply"])
+        self.assertTrue(preview["secretsPreserved"])
+
+        prepared = self.gateway.execute(
+            self._tool_call(
+                "ime_voice",
+                "provider_apply",
+                provider="realtime_websocket",
+            )
+        )["result"]["approval"]
+        decided = self.store.decide_approval(
+            prepared["approvalId"],
+            approved=True,
+            payload_sha256=prepared["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+        self.store.complete_approval(prepared["approvalId"], state="applied", receipt=receipt)
+        self.assertEqual(self.management.provider_profiles["voice"]["provider"], "realtime_websocket")
+        self.assertEqual(receipt["activationStatus"], "pending_external_restart")
+        self.assertTrue(receipt["secretsPreserved"])
+
+        rollback = self.gateway.execute(
+            self._tool_call(
+                "ime_voice",
+                "provider_rollback",
+                sourceApprovalId=prepared["approvalId"],
+            )
+        )["result"]["approval"]
+        rollback_decided = self.store.decide_approval(
+            rollback["approvalId"],
+            approved=True,
+            payload_sha256=rollback["payloadSha256"],
+        )
+        rolled_back = self.gateway.apply_approval(rollback_decided)
+        self.assertEqual(self.management.provider_profiles["voice"]["provider"], "native_streaming")
+        self.assertEqual(rolled_back["revertedVoiceProviderApprovalId"], prepared["approvalId"])
+
+        with self.assertRaisesRegex(ValueError, "unsupported voice provider field"):
+            self.gateway.execute(
+                self._tool_call(
+                    "ime_voice",
+                    "provider_preview",
+                    provider="http_transcription",
+                    endpoint="https://must-not-enter-agent-tool.example/v1",
+                )
+            )
+
+    def test_knowledge_provider_save_is_honest_about_pending_sidecar_restart(self) -> None:
+        requested = {
+            "slot": "knowledge",
+            "provider": "openai-compatible",
+            "endpoint": "https://models.example.test/v1",
+            "model": "knowledge-v2",
+        }
+        prepared = self.gateway.execute(
+            self._tool_call("ime_models", "profile_apply", **requested)
+        )["result"]["approval"]
+        decided = self.store.decide_approval(
+            prepared["approvalId"],
+            approved=True,
+            payload_sha256=prepared["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+        self.assertTrue(receipt["mutationApplied"])
+        self.assertEqual(receipt["activationStatus"], "pending_external_restart")
+        self.assertIn("外部 Supervisor", receipt["summary"])
+
+        with self.assertRaisesRegex(ValueError, "unsupported model profile field"):
+            self.gateway.execute(
+                self._tool_call(
+                    "ime_models",
+                    "profile_preview",
+                    **requested,
+                    apiKey="must-not-enter-pi-tool",
+                )
+            )
+
+    def test_model_profile_apply_fails_closed_after_configuration_change(self) -> None:
+        prepared = self.gateway.execute(
+            self._tool_call(
+                "ime_models",
+                "profile_apply",
+                slot="instant",
+                provider="ollama",
+                endpoint="http://127.0.0.1:11434/v1",
+                model="qwen3:0.6b",
+            )
+        )["result"]["approval"]
+        decided = self.store.decide_approval(
+            prepared["approvalId"],
+            approved=True,
+            payload_sha256=prepared["payloadSha256"],
+        )
+        self.management.provider_configuration_revision += 1
+        with self.assertRaisesRegex(ValueError, "changed after"):
+            self.gateway.apply_approval(decided)
+
+    def test_configuration_export_and_restore_are_hash_bound_and_supervised(self) -> None:
+        preview = self.gateway.execute(
+            self._tool_call("ime_configuration", "export_preview")
+        )["result"]
+        self.assertFalse(preview["secretsIncluded"])
+        self.assertTrue(preview["approvalRequiredForExport"])
+
+        prepared = self.gateway.execute(
+            self._tool_call("ime_configuration", "export")
+        )["result"]
+        approval = prepared["approval"]
+        backup_root = Path(os.environ["RAG_IME_APP_SUPPORT_DIR"]) / "Backups"
+        self.assertFalse(backup_root.exists())
+        self.assertNotIn(str(Path.home()), str(prepared))
+
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = self.gateway.apply_approval(decided)
+        self.store.complete_approval(approval["approvalId"], state="applied", receipt=receipt)
+
+        target = Path(os.environ["RAG_IME_APP_SUPPORT_DIR"]) / str(
+            receipt["managedRelativePath"]
+        )
+        self.assertTrue(target.is_file())
+        self.assertFalse(receipt["secretsIncluded"])
+        self.assertNotIn(str(Path.home()), str(receipt))
+
+        restore = self.gateway.execute(
+            self._tool_call(
+                "ime_configuration",
+                "restore_preview",
+                sourceApprovalId=approval["approvalId"],
+            )
+        )["result"]
+        self.assertTrue(restore["valid"])
+        self.assertTrue(restore["requiresRestart"])
+        self.assertTrue(restore["restoreApplyAvailable"])
+        self.assertEqual(restore["restoreApplyRisk"], "R3")
+        self.assertTrue(restore["externalSupervisorRequired"])
+        self.assertNotIn("restoreToken", str(restore))
+        self.assertNotIn(str(Path.home()), str(restore))
+
+        restore_prepared = self.gateway.execute(
+            self._tool_call(
+                "ime_configuration",
+                "restore_apply",
+                sourceApprovalId=approval["approvalId"],
+            )
+        )["result"]
+        restore_approval = restore_prepared["approval"]
+        self.assertEqual(restore_approval["riskLevel"], "R3")
+        self.assertNotIn("restoreToken", str(restore_prepared))
+
+        restore_decided = self.store.decide_approval(
+            restore_approval["approvalId"],
+            approved=True,
+            payload_sha256=restore_approval["payloadSha256"],
+        )
+        restore_receipt = self.gateway.apply_approval(restore_decided)
+        self.assertFalse(restore_receipt["mutationApplied"])
+        self.assertTrue(restore_receipt["externalActionPending"])
+        self.assertEqual(restore_receipt["externalAction"], "restore_backup")
+        self.assertEqual(restore_receipt["status"], "external-supervisor-required")
+
+    def test_applied_task_receipt_can_prepare_and_execute_one_approved_undo(self) -> None:
+        prepared = self.gateway.execute(
+            self._tool_call(
+                "ime_planning",
+                "task_action",
+                taskId="task:1",
+                date="2026-07-13",
+                action="complete",
+            )
+        )["result"]
+        action_approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            action_approval["approvalId"],
+            approved=True,
+            payload_sha256=action_approval["payloadSha256"],
+        )
+        action_receipt = self.gateway.apply_approval(decided)
+        self.store.complete_approval(
+            action_approval["approvalId"], state="applied", receipt=action_receipt
+        )
+
+        undo = self.gateway.execute(
+            self._tool_call(
+                "ime_planning",
+                "undo_task_event",
+                eventId=action_receipt["taskEventId"],
+            )
+        )["result"]["approval"]
+        undo_decided = self.store.decide_approval(
+            undo["approvalId"],
+            approved=True,
+            payload_sha256=undo["payloadSha256"],
+        )
+        undo_receipt = self.gateway.apply_approval(undo_decided)
+
+        self.assertEqual(self.management.tasks[0]["status"], "todo")
+        self.assertEqual(undo_receipt["revertedTaskEventId"], action_receipt["taskEventId"])
+        self.assertFalse(undo_receipt["undoAvailable"])
+
+        self.store.complete_approval(undo["approvalId"], state="applied", receipt=undo_receipt)
+        with self.assertRaisesRegex(ValueError, "already been rolled back"):
+            self.gateway.execute(
+                self._tool_call(
+                    "ime_planning",
+                    "undo_task_event",
+                    eventId=action_receipt["taskEventId"],
+                )
+            )
+
+    def test_overview_planning_knowledge_and_models_use_existing_services(self) -> None:
+        overview = self.gateway.execute(self._tool_call("ime_overview", "status"))["result"]
+        planning = self.gateway.execute(self._tool_call("ime_planning", "dashboard"))["result"]
+        knowledge = self.gateway.execute(
+            self._tool_call("ime_knowledge", "recall", query="为什么普通生成不经过 Pi")
+        )["result"]
+        models = self.gateway.execute(self._tool_call("ime_models", "status"))["result"]
+
+        self.assertEqual(overview["unhealthyComponents"], ["predictor"])
+        self.assertIn("1 个未完成任务", planning["summary"])
+        self.assertEqual(knowledge["items"][0]["text"], "Pi 只负责 Agent Loop")
+        self.assertIn("深度知识模型当前不可用", models["summary"])
+
+    def test_write_operations_cross_project_recall_and_secrets_fail_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not agent-manageable"):
+            self.gateway.execute(
+                self._tool_call(
+                    "ime_input",
+                    "apply_settings",
+                    changes=[{"key": "privacy.debugIncludeText", "value": True}],
+                )
+            )
+        blocked = self.gateway.execute(
+            self._tool_call("ime_knowledge", "recall", query="other", project="another-project")
+        )["result"]
+        audit = self.gateway.execute(self._tool_call("ime_configuration", "audit"))["result"]
+        lexicon = self.gateway.execute(self._tool_call("ime_input", "lexicon_review"))["result"]
+        self.assertEqual(blocked["items"], [])
+        self.assertNotIn("must-not-leak", str(audit))
+        self.assertNotIn("must-not-reach-pi", str(lexicon))
+
+    def test_pi_extension_delegates_coordinator_shell_without_node_escape_hatch(self) -> None:
+        extension = (
+            Path(__file__).parents[1] / "integrations" / "pi" / "rag-ime-control.ts"
+        ).read_text(encoding="utf-8")
+
+        forbidden = [
+            "child_process",
+            "node:fs",
+            "node:child_process",
+            "registerCommand(",
+            "execSync(",
+            "spawn(",
+        ]
+        for marker in forbidden:
+            self.assertNotIn(marker, extension)
+        for tool in (
+            "ime_overview",
+            "ime_input",
+            "ime_voice",
+            "ime_planning",
+            "ime_memory",
+            "ime_knowledge",
+            "ime_models",
+            "ime_runtime",
+            "ime_configuration",
+            "ime_agents",
+            "workspace_list",
+            "workspace_read",
+            "workspace_shell",
+        ):
+            self.assertEqual(extension.count(f'name: "{tool}"'), 1)
+        self.assertIn("RAG_IME_AGENT_TOOL_TOKEN", extension)
+        self.assertIn("RAG_IME_AGENT_SESSION_MODE", extension)
+        self.assertIn('sessionMode === "coordinator"', extension)
+        self.assertIn("/tool/approval-result", extension)
+
+    def _call(self, operation: str, **args):
+        return self._tool_call("ime_memory", operation, **args)
+
+    def _tool_call(self, tool: str, operation: str, **args):
+        return {
+            "schemaVersion": "rag-ime.agent-tool-call.v1",
+            "sessionId": self.session["id"],
+            "tool": tool,
+            "toolCallId": "tool:1",
+            "args": {"op": operation, **args},
+        }
+
+
+if __name__ == "__main__":
+    unittest.main()
