@@ -40,6 +40,10 @@ dataset/quarantine/
 rag-ime.config.yaml
 config/rag-ime.config.yaml
 config/rag-ime.config.local.yaml
+control-center-web/node_modules/
+control-center-web/dist/
+control-center-web/playwright-report/
+control-center-web/test-results/
 
 # Local-only design notes, agent logs, screenshots, and acceptance records.
 /docs/
