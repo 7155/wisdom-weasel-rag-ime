@@ -68,6 +68,8 @@ class NativeControlCenterTests(unittest.TestCase):
         self.assertIn('if [[ "$CONTROL_UI" == "web" ]]', footprint)
         self.assertIn("node_modules", footprint)
         self.assertIn("unsafe-eval", footprint)
+        self.assertIn("new Function", footprint)
+        self.assertIn("require", footprint)
 
     def test_agent_inspector_exposes_typed_tool_catalog_and_native_receipts(self) -> None:
         root = ROOT / "macos" / "RagImeControl"

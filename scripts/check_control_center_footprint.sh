@@ -48,7 +48,7 @@ if [[ "$CONTROL_UI" == "web" ]]; then
   [[ -f "$MARKER" ]]
   [[ ! -d "$WEB_RESOURCES/node_modules" ]]
   grep -q 'Content-Security-Policy' "$WEB_RESOURCES/index.html"
-  ! grep -R -q 'unsafe-eval' "$WEB_RESOURCES"
+  ! grep -R -E -q 'unsafe-eval|new Function|require\("|eval\(' "$WEB_RESOURCES"
   python3 - "$MARKER" <<'PY'
 import json
 import sys

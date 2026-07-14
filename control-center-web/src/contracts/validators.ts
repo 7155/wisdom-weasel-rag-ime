@@ -1,8 +1,12 @@
-import Ajv2020, { type AnySchema, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
-import addFormats from 'ajv-formats';
+import type { ErrorObject, ValidateFunction } from 'ajv';
 
 import type { ContractTypeMap, GeneratedContractName } from './generated';
-import { contractSchemas } from './schema-index';
+import {
+  contractValidators,
+  tolerantAgentEventValidator,
+  tolerantAgentMessageValidator,
+  tolerantRoomEventValidator,
+} from './generated-validators';
 import {
   normalizeAgentEvent,
   normalizeAgentMessage,
@@ -39,34 +43,16 @@ export class ContractValidationError extends Error {
   }
 }
 
-const ajv = new Ajv2020({
-  allErrors: true,
-  allowUnionTypes: true,
-  strict: false,
-});
-addFormats(ajv);
-
-const validators = new Map<GeneratedContractName, ValidateFunction>();
-for (const [name, schema] of Object.entries(contractSchemas) as [
+const validators = contractValidators as unknown as Record<
   GeneratedContractName,
-  (typeof contractSchemas)[GeneratedContractName],
-][]) {
-  validators.set(name, ajv.compile(schema as unknown as AnySchema));
-}
-
-const tolerantAgentEventValidator = ajv.compile(
-  tolerantEventSchema('agent-event.v1') as AnySchema,
-);
-const tolerantRoomEventValidator = ajv.compile(
-  tolerantEventSchema('agent-room-event.v1') as AnySchema,
-);
-const tolerantAgentMessageValidator = ajv.compile(tolerantAgentMessageSchema() as AnySchema);
+  ValidateFunction
+>;
 
 export function validateContract<Name extends GeneratedContractName>(
   name: Name,
   value: unknown,
 ): ContractValidationResult<ContractTypeMap[Name]> {
-  const validator = validators.get(name);
+  const validator = validators[name];
   if (!validator) {
     throw new Error(`Contract validator is not registered: ${name}`);
   }
@@ -121,28 +107,6 @@ export function tryParseAgentMessage(value: unknown): ContractValidationResult<U
     }
     throw error;
   }
-}
-
-function tolerantEventSchema(name: 'agent-event.v1' | 'agent-room-event.v1'): object {
-  const schema = cloneSchema(contractSchemas[name]);
-  delete schema.$id;
-  const properties = schema.properties as Record<string, unknown>;
-  properties.eventType = { type: 'string', minLength: 1 };
-  return schema;
-}
-
-function tolerantAgentMessageSchema(): object {
-  const schema = cloneSchema(contractSchemas['agent-message.v1']);
-  delete schema.$id;
-  const definitions = schema.$defs as Record<string, Record<string, unknown>>;
-  const block = definitions.block;
-  const properties = block.properties as Record<string, unknown>;
-  properties.type = { type: 'string', minLength: 1 };
-  return schema;
-}
-
-function cloneSchema(schema: unknown): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
 }
 
 function normalizeErrors(errors: ErrorObject[] | null | undefined): ContractIssue[] {

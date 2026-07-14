@@ -21,5 +21,9 @@ pnpm --dir "$WEB" build
   echo "missing control-center-web/dist/manifest.webmanifest" >&2
   exit 1
 }
+if grep -R -E -q 'unsafe-eval|new Function|require\("|eval\(' "$WEB/dist"; then
+  echo "control-center bundle contains runtime code generation or unresolved CommonJS" >&2
+  exit 1
+fi
 
 echo "$WEB/dist"

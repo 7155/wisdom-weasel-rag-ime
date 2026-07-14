@@ -14,8 +14,12 @@ const checkOnly = process.argv.includes('--check');
 const requireFromWeb = createRequire(path.join(webRoot, 'package.json'));
 
 let compile;
+let Ajv2020;
+let standaloneCode;
 try {
   ({ compile } = requireFromWeb('json-schema-to-typescript'));
+  ({ default: Ajv2020 } = requireFromWeb('ajv/dist/2020.js'));
+  ({ default: standaloneCode } = requireFromWeb('ajv/dist/standalone/index.js'));
 } catch (error) {
   console.error(
     'json-schema-to-typescript is unavailable. Run pnpm --dir control-center-web install --frozen-lockfile first.',
@@ -30,11 +34,13 @@ const schemaFiles = (await readdir(schemaRoot))
 const artifacts = new Map();
 const contractRows = [];
 const schemaRows = [];
+const validatorSchemas = [];
 
 for (const fileName of schemaFiles) {
   const schemaName = fileName.slice(0, -'.json'.length);
   const typeName = toPascalCase(schemaName);
   const schema = JSON.parse(await readFile(path.join(schemaRoot, fileName), 'utf8'));
+  validatorSchemas.push({ schemaName, schema });
   // Most wire schemas intentionally use $id rather than title. Injecting a
   // title only into the compiler input keeps predictable public TS names
   // without modifying the source-of-truth JSON.
@@ -61,6 +67,10 @@ for (const fileName of schemaFiles) {
 
 artifacts.set(path.join(contractsRoot, 'generated.ts'), generatedIndex(contractRows));
 artifacts.set(path.join(contractsRoot, 'schema-index.ts'), generatedSchemaIndex(schemaRows));
+artifacts.set(
+  path.join(contractsRoot, 'generated-validators.ts'),
+  generatedValidators(validatorSchemas),
+);
 
 const expectedGeneratedFiles = new Set(
   [...artifacts.keys()]
@@ -173,6 +183,95 @@ export const contractSchemaIds = Object.fromEntries(
   Object.entries(contractSchemas).map(([name, schema]) => [name, schema.$id]),
 ) as Record<ContractName, string>;
 `);
+}
+
+function generatedValidators(rows) {
+  const ajv = new Ajv2020({
+    allErrors: true,
+    allowUnionTypes: true,
+    strict: false,
+    code: { source: true, esm: true },
+  });
+  const exportsByName = {};
+  const registryRows = [];
+
+  for (const [index, { schemaName, schema }] of rows.entries()) {
+    const exportName = `validateContract${index}`;
+    ajv.addSchema(schema);
+    exportsByName[exportName] = schema.$id;
+    registryRows.push(`  ${JSON.stringify(schemaName)}: ${exportName},`);
+  }
+
+  const tolerantSchemas = [
+    {
+      exportName: 'validateTolerantAgentEvent',
+      schema: tolerantEventSchema(rows, 'agent-event.v1', 'rag-ime.tolerant.agent-event.v1'),
+    },
+    {
+      exportName: 'validateTolerantRoomEvent',
+      schema: tolerantEventSchema(rows, 'agent-room-event.v1', 'rag-ime.tolerant.agent-room-event.v1'),
+    },
+    {
+      exportName: 'validateTolerantAgentMessage',
+      schema: tolerantAgentMessageSchema(rows),
+    },
+  ];
+  for (const { exportName, schema } of tolerantSchemas) {
+    ajv.addSchema(schema);
+    exportsByName[exportName] = schema.$id;
+  }
+
+  const standalone = browserSafeStandalone(standaloneCode(ajv, exportsByName));
+  return normalizeNewline(`// @ts-nocheck
+/* eslint-disable */
+/**
+ * This file is generated. Do not edit it by hand.
+ * Ajv validators are compiled at build time so the release CSP never needs unsafe-eval.
+ */
+${standalone}
+
+export const contractValidators = {
+${registryRows.join('\n')}
+} as const;
+
+export const tolerantAgentEventValidator = validateTolerantAgentEvent;
+export const tolerantRoomEventValidator = validateTolerantRoomEvent;
+export const tolerantAgentMessageValidator = validateTolerantAgentMessage;
+`);
+}
+
+function browserSafeStandalone(source) {
+  const withUnicodeLengthInlined = source.replace(
+    /const (func\d+) = require\("ajv\/dist\/runtime\/ucs2length"\)\.default;/gu,
+    'const $1 = (value) => Array.from(value).length;',
+  );
+  const forbidden = ['require(', 'new Function', 'eval('].find((token) =>
+    withUnicodeLengthInlined.includes(token),
+  );
+  if (forbidden) {
+    throw new Error(`Standalone validator still contains CSP-incompatible code: ${forbidden}`);
+  }
+  return withUnicodeLengthInlined;
+}
+
+function tolerantEventSchema(rows, schemaName, id) {
+  const schema = clonedSchema(rows, schemaName);
+  schema.$id = id;
+  schema.properties.eventType = { type: 'string', minLength: 1 };
+  return schema;
+}
+
+function tolerantAgentMessageSchema(rows) {
+  const schema = clonedSchema(rows, 'agent-message.v1');
+  schema.$id = 'rag-ime.tolerant.agent-message.v1';
+  schema.$defs.block.properties.type = { type: 'string', minLength: 1 };
+  return schema;
+}
+
+function clonedSchema(rows, schemaName) {
+  const row = rows.find((item) => item.schemaName === schemaName);
+  if (!row) throw new Error(`Missing schema for standalone validator: ${schemaName}`);
+  return JSON.parse(JSON.stringify(row.schema));
 }
 
 function indent(value, spaces) {
