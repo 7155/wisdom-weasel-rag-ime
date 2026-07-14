@@ -4614,6 +4614,31 @@ class DebugImeService:
                 del self._prediction_live_trace[: len(self._prediction_live_trace) - 500]
 
 
+_MEMORY_ENTITY_PATH_PREFIX = "/api/memory/entities/"
+_MEMORY_GRAPH_QUERY_FIELDS = frozenset(
+    {
+        "plane",
+        "project",
+        "status",
+        "query",
+        "focusId",
+        "depth",
+        "nodeLimit",
+        "edgeLimit",
+        "minWeight",
+    }
+)
+_MEMORY_ENTITY_QUERY_FIELDS = frozenset(
+    {
+        "project",
+        "connectionsLimit",
+        "connectionsCursor",
+        "membersLimit",
+        "membersCursor",
+    }
+)
+
+
 class DebugRequestHandler(BaseHTTPRequestHandler):
     service: DebugImeService
     static_dir: Path
@@ -4858,6 +4883,29 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/api/runtime/job/"):
             job_id = unquote(parsed.path.rsplit("/", 1)[-1])
             self._write_json(HTTPStatus.OK, self.service.management.runtime_job(job_id))
+            return
+        if parsed.path == "/api/memory/graph":
+            try:
+                query = parse_qs(parsed.query or "", keep_blank_values=True)
+                payload = _strict_read_query(query, _MEMORY_GRAPH_QUERY_FIELDS)
+                response = self.service.management.memory_graph(payload)
+                validate_contract(response, "memory-graph.v1.json")
+            except ValueError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, _memory_read_error(str(exc)))
+                return
+            self._write_json(HTTPStatus.OK, response)
+            return
+        if parsed.path.startswith(_MEMORY_ENTITY_PATH_PREFIX):
+            try:
+                kind, entity_id = _memory_entity_path(parsed.path)
+                query = parse_qs(parsed.query or "", keep_blank_values=True)
+                payload = _strict_read_query(query, _MEMORY_ENTITY_QUERY_FIELDS)
+                response = self.service.management.memory_entity(kind, entity_id, payload)
+                validate_contract(response, "memory-entity.v1.json")
+            except ValueError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, _memory_read_error(str(exc)))
+                return
+            self._write_json(HTTPStatus.OK, response)
             return
         if parsed.path == "/api/memory/summary":
             self._write_json(HTTPStatus.OK, self.service.management.memory_summary())
@@ -6323,6 +6371,40 @@ def _nested_agent_configuration_value(
     section, leaf = dotted_key.split(".", 1)
     branch = configuration.get(section)
     return branch.get(leaf) if isinstance(branch, dict) else None
+
+
+def _strict_read_query(
+    query: Mapping[str, list[str]],
+    allowed: frozenset[str],
+) -> dict[str, object]:
+    unknown = sorted(set(query) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported query field: {unknown[0]}")
+    result: dict[str, object] = {}
+    for key, values in query.items():
+        if len(values) != 1:
+            raise ValueError(f"query field must appear once: {key}")
+        result[key] = values[0]
+    return result
+
+
+def _memory_entity_path(path: str) -> tuple[str, str]:
+    suffix = path.removeprefix(_MEMORY_ENTITY_PATH_PREFIX)
+    parts = suffix.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise ValueError("memory entity path must contain kind and id")
+    return unquote(parts[0]), unquote(parts[1])
+
+
+def _memory_read_error(message: str) -> dict[str, object]:
+    payload = {
+        "schemaVersion": "rag-ime.memory-read-error.v1",
+        "ok": False,
+        "errorCode": "invalid_request",
+        "error": message[:256],
+    }
+    validate_contract(payload, "memory-read-error.v1.json")
+    return payload
 
 
 def _query_first(query: dict[str, list[str]], key: str) -> str:

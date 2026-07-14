@@ -38,6 +38,9 @@ class JsonContractTests(unittest.TestCase):
             "management-work-preview.v1.json",
             "management-work-receipt.v1.json",
             "management-work-error.v1.json",
+            "memory-graph.v1.json",
+            "memory-entity.v1.json",
+            "memory-read-error.v1.json",
         ):
             with self.subTest(name=name):
                 self.assertEqual(load_contract(name)["type"], "object")

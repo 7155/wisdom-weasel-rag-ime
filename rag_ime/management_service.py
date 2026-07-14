@@ -33,6 +33,7 @@ from .daily_planner import (
 )
 from .memory_actions import execute_memory_action
 from .memory_book_lifecycle import archive_inactive_memory_books, set_memory_book_archive_status
+from .memory_graph_read import read_memory_entity, read_memory_graph
 from .memory_ingest import normalize_text
 from .management_events import ManagementEventHub
 from .management_models import MANAGEMENT_SCHEMA_VERSION, ManagementRevision, PageRequest, RuntimeJob
@@ -390,6 +391,29 @@ class ManagementService:
 
     def memory_summary(self) -> dict[str, object]:
         return {**self.revision().payload(), "ok": True, **self._summary_counts()}
+
+    def memory_graph(self, payload: Mapping[str, object]) -> dict[str, object]:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            graph = read_memory_graph(conn, payload, default_project=self.project)
+        return {**self.revision().payload(), **graph}
+
+    def memory_entity(
+        self,
+        kind: str,
+        entity_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            entity = read_memory_entity(
+                conn,
+                kind,
+                entity_id,
+                payload,
+                default_project=self.project,
+            )
+        return {**self.revision().payload(), **entity}
 
     def memory_page(self, kind: str, request: PageRequest) -> dict[str, object]:
         handlers = {

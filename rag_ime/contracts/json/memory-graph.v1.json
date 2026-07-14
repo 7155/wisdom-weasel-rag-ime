@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.memory-graph.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "ok",
+    "settingsRevision",
+    "runtimeRevision",
+    "graphRevision",
+    "plane",
+    "project",
+    "filters",
+    "nodes",
+    "edges",
+    "truncated",
+    "limits"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.memory-graph.v1"},
+    "ok": {"type": "boolean", "const": true},
+    "settingsRevision": {"type": "string", "minLength": 1},
+    "runtimeRevision": {"type": "integer", "minimum": 0},
+    "graphRevision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "plane": {"type": "string", "enum": ["tags", "groups"]},
+    "project": {"type": "string", "maxLength": 128},
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "query", "focusId", "minWeight"],
+      "properties": {
+        "status": {"type": "string", "enum": ["active", "merged", "all"]},
+        "query": {"type": "string", "maxLength": 200},
+        "focusId": {"type": "string", "maxLength": 128},
+        "minWeight": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/node"}
+    },
+    "edges": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"$ref": "#/$defs/edge"}
+    },
+    "truncated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {"type": "boolean"},
+        "edges": {"type": "boolean"}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeLimit", "edgeLimit", "depth"],
+      "properties": {
+        "nodeLimit": {"type": "integer", "minimum": 1, "maximum": 200},
+        "edgeLimit": {"type": "integer", "minimum": 1, "maximum": 500},
+        "depth": {"type": "integer", "minimum": 0, "maximum": 2}
+      }
+    }
+  },
+  "$defs": {
+    "nodeKind": {
+      "type": "string",
+      "enum": ["tag", "group", "atom", "book", "phrase"]
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "entityId",
+        "kind",
+        "label",
+        "description",
+        "color",
+        "status",
+        "source",
+        "project",
+        "qualityScore",
+        "memberCount",
+        "edgeCount",
+        "updatedAtMs"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 160},
+        "entityId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "kind": {"$ref": "#/$defs/nodeKind"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "description": {"type": "string", "maxLength": 240},
+        "color": {
+          "type": "string",
+          "enum": ["blue", "teal", "green", "orange", "pink", "purple", "gray"]
+        },
+        "status": {"type": "string", "minLength": 1, "maxLength": 32},
+        "source": {"type": "string", "maxLength": 64},
+        "project": {"type": "string", "maxLength": 128},
+        "qualityScore": {"type": "number", "minimum": 0, "maximum": 1},
+        "memberCount": {"type": "integer", "minimum": 0},
+        "edgeCount": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "sourceId",
+        "targetId",
+        "sourceKind",
+        "targetKind",
+        "relation",
+        "weight",
+        "directionBias",
+        "evidenceCount",
+        "source",
+        "updatedAtMs"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 512},
+        "kind": {"type": "string", "enum": ["tagRelation", "groupMember"]},
+        "sourceId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "targetId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "sourceKind": {"$ref": "#/$defs/nodeKind"},
+        "targetKind": {"$ref": "#/$defs/nodeKind"},
+        "relation": {"type": "string", "minLength": 1, "maxLength": 64},
+        "weight": {"type": "number", "minimum": 0, "maximum": 1},
+        "directionBias": {"type": "number", "minimum": -1, "maximum": 1},
+        "evidenceCount": {"type": "integer", "minimum": 0},
+        "source": {"type": "string", "maxLength": 64},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
