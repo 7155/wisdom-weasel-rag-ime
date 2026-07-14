@@ -1,7 +1,13 @@
 const allowedTransports = new Set(['mock', 'http', 'native']);
 
 export function bootstrapControlCenter(): void {
-  const requestedTransport = import.meta.env.VITE_CONTROL_TRANSPORT ?? 'mock';
+  const requestedTransport =
+    import.meta.env.VITE_CONTROL_TRANSPORT ??
+    (window.webkit?.messageHandlers?.ragImeNativeBridge
+      ? 'native'
+      : import.meta.env.DEV
+        ? 'mock'
+        : 'http');
   const transport = allowedTransports.has(requestedTransport)
     ? requestedTransport
     : 'mock';

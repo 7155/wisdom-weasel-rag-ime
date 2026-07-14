@@ -60,10 +60,18 @@ export class HttpControlTransport implements ControlTransport {
   }
 
   async capabilities(): Promise<FrontendCapabilities> {
-    const raw = await this.request({
-      pathId: 'control.capabilities',
-    });
-    return browserCapabilities(raw);
+    try {
+      const raw = await this.request({
+        pathId: 'control.capabilities',
+      });
+      return browserCapabilities(raw);
+    } catch (error) {
+      if (!(error instanceof ControlTransportHttpError) || error.status !== 404) throw error;
+      return browserCapabilities({
+        schemaVersion: 'rag-ime.control-capabilities.v1',
+        features: { legacyEndpointAdapter: true },
+      });
+    }
   }
 
   async request<Response = unknown>(request: ControlRequest): Promise<Response> {

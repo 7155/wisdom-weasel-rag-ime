@@ -38,6 +38,18 @@ describe('HttpControlTransport', () => {
     ).rejects.toThrow(/Invalid agent-session.v1/);
   });
 
+  it('falls back to the fixed 8766 route catalog when the facade is not mounted yet', async () => {
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: vi.fn(async () => new Response('not found', { status: 404 })) as typeof fetch,
+    });
+
+    await expect(transport.capabilities()).resolves.toMatchObject({
+      transport: 'http',
+      features: { legacyEndpointAdapter: true },
+    });
+  });
+
   it('reconnects SSE with the latest Last-Event-ID and validates envelopes', async () => {
     const headers: string[] = [];
     const payloads = [agentEventFixture(1, 'text_delta', { delta: 'A' }), agentEventFixture(2, 'turn_completed', {})];
