@@ -30,7 +30,7 @@ export function AgentFeature() {
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [railOpen, setRailOpen] = useState(true);
+  const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [error, setError] = useState('');
   const ensure = useAgentLiveStore((state) => state.ensure);
   const projectionStatus = useAgentLiveStore((state) => state.projections[selectedId]?.status ?? 'idle');
@@ -108,6 +108,11 @@ export function AgentFeature() {
   const session = sessions.find((item) => item.id === selectedId);
   const persona = personas.find((item) => item.roleId === session?.roleId) ?? personas[0];
   const busy = !['idle', 'ready', 'completed'].includes(projectionStatus);
+
+  function selectSession(sessionId: string): void {
+    setSelectedId(sessionId);
+    if (isMobileViewport()) setRailOpen(false);
+  }
 
   async function createSession(): Promise<void> {
     try {
@@ -192,7 +197,7 @@ export function AgentFeature() {
 
   return (
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen}>
-      <SessionRail sessions={sessions} selectedId={selectedId} loading={loading} onSelect={setSelectedId} onCreate={() => void createSession()} />
+      <SessionRail sessions={sessions} selectedId={selectedId} loading={loading} onSelect={selectSession} onCreate={() => void createSession()} />
       <section className="agent-conversation">
         <header className="agent-conversation__header">
           <IconButton className="agent-rail-toggle" label={railOpen ? '收起 Sessions' : '展开 Sessions'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={() => setRailOpen((value) => !value)} tooltip />
@@ -208,3 +213,4 @@ export function AgentFeature() {
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 function errorText(value: unknown): string { return value instanceof Error ? value.message : String(value); }
+function isMobileViewport(): boolean { return window.matchMedia?.('(max-width: 760px)').matches === true; }

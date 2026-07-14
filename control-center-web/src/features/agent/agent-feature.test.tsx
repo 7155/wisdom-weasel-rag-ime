@@ -12,6 +12,7 @@ import { AgentTurn } from './timeline/AgentTimeline';
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   for (const session of previewSessions) useAgentLiveStore.getState().clear(session.id);
 });
 
@@ -51,6 +52,19 @@ describe('Agent experience', () => {
     const prompt = transport.requests.find((call) => call.request.pathId === 'agent.session.prompt');
     expect(prompt?.request.params).toEqual({ sessionId: 'session-preview' });
     expect(prompt?.request.body).toMatchObject({ message: '检查 reducer 边界' });
+  });
+
+  it('starts with the session rail closed on mobile and closes it after selection', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={featureTransport()}><TooltipProvider><AgentFeature /></TooltipProvider></ControlTransportProvider>);
+    const feature = document.querySelector('.agent-feature');
+    expect(feature).toHaveAttribute('data-rail-open', 'false');
+
+    await user.click(screen.getByRole('button', { name: '展开 Sessions' }));
+    expect(feature).toHaveAttribute('data-rail-open', 'true');
+    await user.click(await screen.findByRole('button', { name: /记忆整理/ }));
+    expect(feature).toHaveAttribute('data-rail-open', 'false');
   });
 });
 
